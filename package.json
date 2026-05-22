@@ -1,0 +1,29 @@
+{
+  "name": "agent-x",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Enabled Agent - TUI-first personal assistant",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "dev": "pnpm --filter @agentx/cli run dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint packages/*/src --ext .ts,.tsx",
+    "typecheck": "pnpm -r run typecheck",
+    "clean": "pnpm -r run clean && rm -rf node_modules",
+    "format": "prettier --write \"packages/*/src/**/*.{ts,tsx}\""
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

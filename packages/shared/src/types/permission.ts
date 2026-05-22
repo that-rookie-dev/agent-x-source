@@ -1,0 +1,17 @@
+export interface Permission {
+  id: string;
+  sessionId: string;
+  toolName: string;
+  targetPath: string | null;
+  decision: PermissionDecision;
+  createdAt: string;
+}
+
+export type PermissionDecision = 'allow_once' | 'allow_always' | 'deny';
+
+export interface PermissionRequest {
+  toolName: string;
+  targetPath: string;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+}
