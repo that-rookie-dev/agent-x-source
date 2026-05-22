@@ -151,13 +151,14 @@ export class SessionStore {
     model: string;
     profileId?: string | null;
     tokensUsed?: number;
-    messageCount?: number;
+    tokenAvailable?: number;
+    scopePath?: string;
     createdAt: string;
     updatedAt: string;
   }): void {
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, title, status, provider, model, profile_id, tokens_used, message_count, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, status, provider_id, model_id, profile_id, token_used, token_available, scope_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       session.id,
@@ -167,7 +168,8 @@ export class SessionStore {
       session.model,
       session.profileId ?? null,
       session.tokensUsed ?? 0,
-      session.messageCount ?? 0,
+      session.tokenAvailable ?? 128000,
+      session.scopePath ?? process.cwd(),
       session.createdAt,
       session.updatedAt,
     );
@@ -181,11 +183,11 @@ export class SessionStore {
       id: row['id'],
       title: row['title'],
       status: row['status'],
-      provider: row['provider'],
-      model: row['model'],
+      provider: row['provider_id'],
+      model: row['model_id'],
       profileId: row['profile_id'],
-      tokensUsed: row['tokens_used'],
-      messageCount: row['message_count'],
+      tokensUsed: row['token_used'],
+      scopePath: row['scope_path'],
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     };
@@ -198,11 +200,11 @@ export class SessionStore {
     const columnMap: Record<string, string> = {
       title: 'title',
       status: 'status',
-      provider: 'provider',
-      model: 'model',
+      provider: 'provider_id',
+      model: 'model_id',
       profileId: 'profile_id',
-      tokensUsed: 'tokens_used',
-      messageCount: 'message_count',
+      tokensUsed: 'token_used',
+      scopePath: 'scope_path',
       updatedAt: 'updated_at',
     };
 
@@ -227,11 +229,11 @@ export class SessionStore {
       id: row['id'],
       title: row['title'],
       status: row['status'],
-      provider: row['provider'],
-      model: row['model'],
+      provider: row['provider_id'],
+      model: row['model_id'],
       profileId: row['profile_id'],
-      tokensUsed: row['tokens_used'],
-      messageCount: row['message_count'],
+      tokensUsed: row['token_used'],
+      scopePath: row['scope_path'],
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     }));

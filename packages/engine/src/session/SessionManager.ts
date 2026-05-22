@@ -41,7 +41,7 @@ export class SessionManager {
       model: session.modelId,
       profileId: session.profileId,
       tokensUsed: session.tokenUsed,
-      messageCount: 0,
+      tokenAvailable: contextWindow,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
     });

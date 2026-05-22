@@ -11,11 +11,17 @@ import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { ProviderFactory } from '../providers/index.js';
 import { AgentEventBus } from '../EventBus.js';
 import { TokenTracker } from '../session/TokenTracker.js';
+import { SubAgentManager } from './SubAgentManager.js';
+import { SecretSauceManager } from '../secret-sauce/index.js';
+import { ToolExecutor } from '../tools/ToolExecutor.js';
+import { ToolRegistry } from '../tools/ToolRegistry.js';
 
 export interface AgentOptions {
   config: AgentXConfig;
   sessionId: string;
   systemPrompt?: string;
+  toolExecutor?: ToolExecutor;
+  toolRegistry?: ToolRegistry;
 }
 
 export class Agent {
@@ -26,12 +32,20 @@ export class Agent {
   private config: AgentXConfig;
   private sessionId: string;
   private isProcessing = false;
+  private subAgents: SubAgentManager;
+  private secretSauce: SecretSauceManager;
+  private toolExecutor?: ToolExecutor;
+  private toolRegistry?: ToolRegistry;
 
   constructor(options: AgentOptions) {
     this.config = options.config;
     this.sessionId = options.sessionId;
     this.eventBus = new AgentEventBus();
     this.tokenTracker = new TokenTracker(this.getContextWindow());
+    this.subAgents = new SubAgentManager(this.eventBus);
+    this.secretSauce = new SecretSauceManager();
+    this.toolExecutor = options.toolExecutor;
+    this.toolRegistry = options.toolRegistry;
 
     this.provider = ProviderFactory.create(
       options.config.provider.activeProvider,
@@ -39,11 +53,16 @@ export class Agent {
       this.getBaseUrl(),
     );
 
-    // Initialize system prompt
-    if (options.systemPrompt) {
+    // Build system prompt from Secret Sauce + user override
+    const sauceContext = this.secretSauce.buildSystemContext();
+    const systemPrompt = options.systemPrompt
+      ? `${sauceContext.full}\n\n${options.systemPrompt}`
+      : sauceContext.full;
+
+    if (systemPrompt) {
       this.messages.push({
         role: 'system',
-        content: options.systemPrompt,
+        content: systemPrompt,
       });
     }
   }
@@ -58,6 +77,47 @@ export class Agent {
 
   get processing(): boolean {
     return this.isProcessing;
+  }
+
+  get agents(): SubAgentManager {
+    return this.subAgents;
+  }
+
+  get sauce(): SecretSauceManager {
+    return this.secretSauce;
+  }
+
+  /**
+   * Spawn a sub-agent to handle a delegated task.
+   */
+  spawnSubAgent(instruction: string, tools: string[], timeout?: number) {
+    const task = this.subAgents.spawn(instruction, tools, timeout);
+    this.subAgents.start(task.id);
+
+    // Execute asynchronously
+    this.executeSubAgent(task.id, instruction, tools).catch((err) => {
+      this.subAgents.fail(task.id, err instanceof Error ? err.message : 'Unknown error');
+    });
+
+    return task;
+  }
+
+  private async executeSubAgent(agentId: string, instruction: string, tools: string[]): Promise<void> {
+    // Create a lightweight sub-agent with limited tools
+    const subAgent = new Agent({
+      config: this.config,
+      sessionId: `${this.sessionId}:sub:${agentId}`,
+      systemPrompt: `You are a sub-agent. Complete this task concisely:\n${instruction}\nAvailable tools: ${tools.join(', ')}`,
+      toolExecutor: this.toolExecutor,
+      toolRegistry: this.toolRegistry,
+    });
+
+    try {
+      const result = await subAgent.sendMessage(instruction);
+      this.subAgents.complete(agentId, result.content);
+    } catch (err) {
+      this.subAgents.fail(agentId, err instanceof Error ? err.message : 'Sub-agent failed');
+    }
   }
 
   async sendMessage(content: string): Promise<Message> {

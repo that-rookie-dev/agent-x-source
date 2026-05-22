@@ -59,3 +59,9 @@ export {
   systemInfo, systemDiskSpace, systemEnv, systemWhich,
   systemPorts, systemTreeSize, securityAudit, securitySecrets, fileChecksum,
 } from './builtin/system.js';
+
+// Browser automation tools
+export { browserOpen, browserScreenshot, browserClick, browserEval } from './builtin/browser.js';
+
+// MCP tools
+export { mcpCall, mcpListTools } from './builtin/mcp.js';
