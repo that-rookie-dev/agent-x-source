@@ -226,6 +226,17 @@ export class Agent {
 
   switchModel(modelId: string): void {
     this.config.provider.activeModel = modelId;
+    this.emit({ type: 'command_action', action: 'model_switched', modelId });
+  }
+
+  async listModels(): Promise<void> {
+    const models = await this.provider.listModels();
+    this.emit({
+      type: 'command_action',
+      action: 'list_models',
+      models,
+      currentModel: this.config.provider.activeModel,
+    });
   }
 
   getMessageHistory(): CompletionMessage[] {

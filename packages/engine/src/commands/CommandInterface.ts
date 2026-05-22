@@ -16,5 +16,5 @@ export interface CommandContext {
 export interface CommandResult {
   success: boolean;
   output?: string;
-  action?: 'exit' | 'clear' | 'switch_model' | 'switch_provider' | 'switch_profile' | 'restore_session' | 'none';
+  action?: 'exit' | 'clear' | 'switch_model' | 'list_models' | 'switch_provider' | 'switch_profile' | 'restore_session' | 'none';
 }

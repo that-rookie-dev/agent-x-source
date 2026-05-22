@@ -2,14 +2,15 @@ import type { CommandInterface, CommandContext, CommandResult } from '../Command
 
 export const modelCommand: CommandInterface = {
   name: 'model',
-  description: 'Switch AI model',
+  description: 'List and switch AI models',
   aliases: ['m'],
   usage: '/model [model-id]',
-  async execute(args: string[], context: CommandContext): Promise<CommandResult> {
+  async execute(args: string[], _context: CommandContext): Promise<CommandResult> {
     if (args.length === 0) {
-      context.emit(`Current model: ${context.modelId}\nUsage: /model <model-id>`);
-      return { success: true, action: 'none' };
+      // No args: trigger interactive model picker
+      return { success: true, action: 'list_models' };
     }
-    return { success: true, output: `Switching to model: ${args[0]}`, action: 'switch_model' };
+    // Direct model switch by ID
+    return { success: true, output: args[0], action: 'switch_model' };
   },
 };

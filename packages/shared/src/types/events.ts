@@ -1,4 +1,5 @@
 import type { Message } from './message.js';
+import type { ModelInfo } from './provider.js';
 import type { ToolResult } from './tool.js';
 
 export type EngineEvent =
@@ -29,7 +30,9 @@ export type EngineEvent =
   | { type: 'task_aborted'; reason: string }
   | { type: 'compaction_start'; currentTokens: number; threshold: number }
   | { type: 'compaction_complete'; saved: number }
-  | { type: 'todo_update'; items: TodoItem[] };
+  | { type: 'todo_update'; items: TodoItem[] }
+  | { type: 'command_action'; action: 'list_models'; models: ModelInfo[]; currentModel: string }
+  | { type: 'command_action'; action: 'model_switched'; modelId: string };
 
 export interface FormattedResponse {
   content: string;
