@@ -38,36 +38,15 @@ jobs:
 
       - run: pnpm run build
 
-      # Bundle CLI with all dependencies into a single distributable
-      - name: Bundle for distribution
-        run: |
-          mkdir -p release/native
-          cd packages/cli
-          npx esbuild dist/index.js \
-            --bundle \
-            --platform=node \
-            --target=node20 \
-            --format=esm \
-            --outfile=../../release/agentx.mjs \
-            --external:better-sqlite3 \
-            --external:react-devtools-core \
-            --banner:js='#!/usr/bin/env node'
+      - name: Bundle with ncc
+        run: npx -y @vercel/ncc build packages/cli/dist/index.js -o dist --minify
 
-      # Copy native addon for the target platform
-      - name: Copy native modules
-        run: |
-          find node_modules/better-sqlite3 -name "*.node" -exec cp {} release/native/ \;
-          cp node_modules/better-sqlite3/lib/binding-path.js release/native/ 2>/dev/null || true
-
-      # Create loader wrapper that sets up native bindings
-      - name: Create launcher
-        run: |
-          printf '#!/usr/bin/env node\nimport { createRequire } from "node:module";\nimport { fileURLToPath } from "node:url";\nimport { dirname, join } from "node:path";\nconst __dirname = dirname(fileURLToPath(import.meta.url));\nconst require = createRequire(import.meta.url);\nprocess.env.BETTER_SQLITE3_BINDING = join(__dirname, "native");\nawait import("./agentx.mjs");\n' > release/agentx
-          chmod +x release/agentx
-
-      # Package as tarball
       - name: Package
         run: |
+          mkdir -p release
+          cp -r dist/* release/
+          printf '#!/usr/bin/env bash\nexec node "$(dirname "$0")/index.js" "$@"\n' > release/agentx
+          chmod +x release/agentx
           cd release
           tar -czf ../agentx-${{ matrix.platform }}.tar.gz .
 
@@ -93,13 +72,11 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
-      # Generate checksums
       - name: Generate checksums
         run: |
           cd artifacts
           sha256sum agentx-*.tar.gz > checksums.sha256
 
-      # Create release on the PUBLIC repo
       - name: Publish to public releases repo
         uses: softprops/action-gh-release@v2
         with:

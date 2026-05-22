@@ -132,7 +132,7 @@ create_symlink() {
 
   cat > "$BIN_DIR/agentx" << EOF
 #!/usr/bin/env bash
-exec node "$INSTALL_DIR/agentx" "\$@"
+exec "$INSTALL_DIR/agentx" "\$@"
 EOF
   chmod +x "$BIN_DIR/agentx"
   ok "Executable: $BIN_DIR/agentx"
@@ -165,10 +165,10 @@ ensure_path() {
 # --- Verify ---
 
 verify_install() {
-  if [ -f "$INSTALL_DIR/agentx" ] || [ -f "$INSTALL_DIR/agentx.mjs" ]; then
+  if [ -f "$INSTALL_DIR/index.js" ] && [ -f "$INSTALL_DIR/agentx" ]; then
     ok "Installation verified"
   else
-    die "Installation failed — binary not found in $INSTALL_DIR"
+    die "Installation failed — files not found in $INSTALL_DIR"
   fi
 }
 
