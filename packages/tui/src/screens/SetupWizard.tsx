@@ -40,13 +40,13 @@ export const SetupWizard: FC<SetupWizardProps> = ({ onComplete, onCancel }) => {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Handle Escape to cancel
+  // Handle Escape to cancel — disabled when ScrollableList or ConfirmDialog is active
   useInput((_input, key) => {
     if (key.escape && step !== 'cancel_confirm' && step !== 'validating' && step !== 'fetching_models') {
       setPreviousStep(step);
       setStep('cancel_confirm');
     }
-  });
+  }, { isActive: step !== 'provider' && step !== 'models' && step !== 'cancel_confirm' });
 
   const handleProviderSelect = useCallback((providerId: string) => {
     const id = providerId as ProviderId;

@@ -2,10 +2,10 @@ import type { CompletionRequest, CompletionChunk, ModelInfo, ProviderId } from '
 import type { ProviderInterface } from './ProviderInterface.js';
 
 const GOOGLE_MODELS: ModelInfo[] = [
-  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', providerId: 'google', contextWindow: 1000000, capabilities: ['text', 'function_calling', 'streaming'] },
-  { id: 'gemini-2.0-pro', name: 'Gemini 2.0 Pro', providerId: 'google', contextWindow: 1000000, capabilities: ['text', 'function_calling', 'streaming', 'reasoning'] },
-  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', providerId: 'google', contextWindow: 2000000, capabilities: ['text', 'function_calling', 'streaming'] },
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', providerId: 'google', contextWindow: 1000000, capabilities: ['text', 'function_calling', 'streaming'] },
+  { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', providerId: 'google', contextWindow: 1000000, capabilities: ['text', 'function_calling', 'streaming'] },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', providerId: 'google', contextWindow: 1000000, capabilities: ['text', 'function_calling', 'streaming', 'reasoning'] },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', providerId: 'google', contextWindow: 1000000, capabilities: ['text', 'function_calling', 'streaming', 'reasoning'] },
+  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', providerId: 'google', contextWindow: 1000000, capabilities: ['text', 'function_calling', 'streaming'] },
 ];
 
 export class GoogleProvider implements ProviderInterface {
