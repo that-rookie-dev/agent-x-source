@@ -4,8 +4,14 @@ Your AI-powered terminal agent. Multi-provider, 80+ tools, session persistence, 
 
 ## Install
 
+**macOS / Linux:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SlashpanOrg/agent-x/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/SlashpanOrg/agent-x/main/install.ps1 | iex
 ```
 
 **Requirements:** Node.js >= 20 (the only prerequisite).
@@ -56,9 +62,10 @@ All configuration is managed inside the Agent-X terminal.
 | Platform | Architecture |
 |----------|-------------|
 | macOS | Apple Silicon (arm64) |
-| macOS | Intel (x64) |
+| macOS | Intel (x64 via Rosetta) |
 | Linux | x64 |
 | Linux | arm64 |
+| Windows | x64 |
 
 ## Version Pinning
 
