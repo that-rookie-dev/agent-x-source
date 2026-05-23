@@ -56,6 +56,7 @@ Session
 - each chat should be session based. each session will be having a session id. which will show in a side control panel along with token status, time take, provider, model etc
 - agentx session <session_id>, should bring back that exact session. (use reference from secret sauce if required)
 - same session can have multiple agent profiles
+- Agent should be capable of creating and managing TODO list after a task is given and agent has summarized the work
 
 Tools
 - Agent-X will have enormous number of tools like read_file, write_file, code, delete_file, delete_folder, move_folder, open_file, open_folder, (I am not limitting this, but every possible tools in the world)

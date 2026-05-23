@@ -1,5 +1,5 @@
 import { type FC } from 'react';
-import { Box, Text, Static } from 'ink';
+import { Box, Text } from 'ink';
 import { COLORS } from '../theme/colors.js';
 import type { Message, MessageRole } from '@agentx/shared';
 
@@ -11,25 +11,23 @@ interface MessageAreaProps {
 export const MessageArea: FC<MessageAreaProps> = ({ messages, streamingContent }) => {
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Static items={messages}>
-        {(message) => (
-          <Box key={message.id} flexDirection="column" paddingX={1} marginBottom={1}>
-            <MessageHeader role={message.role} timestamp={message.createdAt} />
-            <Box paddingLeft={2}>
-              <Text color={COLORS.text} wrap="wrap">
-                {message.content}
+      {messages.map((message) => (
+        <Box key={message.id} flexDirection="column" paddingX={1} marginBottom={1}>
+          <MessageHeader role={message.role} timestamp={message.createdAt} />
+          <Box paddingLeft={2}>
+            <Text color={COLORS.text} wrap="wrap">
+              {message.content}
+            </Text>
+          </Box>
+          {message.toolCalls && message.toolCalls.length > 0 && (
+            <Box paddingLeft={2} marginTop={0}>
+              <Text color={COLORS.textDim} dimColor>
+                [{message.toolCalls.length} tool call{message.toolCalls.length > 1 ? 's' : ''}]
               </Text>
             </Box>
-            {message.toolCalls && message.toolCalls.length > 0 && (
-              <Box paddingLeft={2} marginTop={0}>
-                <Text color={COLORS.textDim} dimColor>
-                  [{message.toolCalls.length} tool call{message.toolCalls.length > 1 ? 's' : ''}]
-                </Text>
-              </Box>
-            )}
-          </Box>
-        )}
-      </Static>
+          )}
+        </Box>
+      ))}
 
       {streamingContent && (
         <Box flexDirection="column" paddingX={1}>

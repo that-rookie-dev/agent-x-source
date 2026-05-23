@@ -19,6 +19,7 @@ export { ReasoningGlimpse } from './components/ReasoningGlimpse.js';
 export { GimmickDisplay } from './components/GimmickDisplay.js';
 export { SetupWizard } from './screens/SetupWizard.js';
 export { WelcomeScreen } from './screens/WelcomeScreen.js';
+export { ProfileSelect } from './screens/ProfileSelect.js';
 export { SessionRestore } from './screens/SessionRestore.js';
 export { useSession } from './hooks/useSession.js';
 export { useSlashCommands } from './hooks/useSlashCommands.js';

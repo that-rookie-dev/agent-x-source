@@ -2,6 +2,7 @@ import { SoulManager } from './SoulManager.js';
 import { ProfileManager } from './ProfileManager.js';
 import { MemoryManager } from './MemoryManager.js';
 import { DiaryManager } from './DiaryManager.js';
+import { IdentityManager } from './IdentityManager.js';
 
 export interface SecretSauceContext {
   soul: string;
@@ -19,12 +20,14 @@ export class SecretSauceManager {
   readonly profile: ProfileManager;
   readonly memories: MemoryManager;
   readonly diary: DiaryManager;
+  readonly identity: IdentityManager;
 
   constructor() {
     this.soul = new SoulManager();
     this.profile = new ProfileManager();
     this.memories = new MemoryManager();
     this.diary = new DiaryManager();
+    this.identity = new IdentityManager();
   }
 
   /**
@@ -34,16 +37,17 @@ export class SecretSauceManager {
     const soulCtx = this.soul.buildContext();
     const profilePrompt = this.profile.getSystemPrompt();
     const profileCtx = `[PROFILE]\n${profilePrompt}\n[/PROFILE]`;
+    const identityCtx = this.identity.buildContext();
 
     // Allocate remaining budget to memories and diary
-    const usedTokens = Math.ceil((soulCtx.length + profileCtx.length) / 4);
+    const usedTokens = Math.ceil((soulCtx.length + profileCtx.length + identityCtx.length) / 4);
     const remainingBudget = Math.max(500, tokenBudget - usedTokens);
     const memBudget = Math.floor(remainingBudget * 0.6);
 
     const memoriesCtx = this.memories.buildContext(memBudget);
     const diaryCtx = this.diary.buildContext();
 
-    const full = [soulCtx, profileCtx, memoriesCtx, diaryCtx]
+    const full = [soulCtx, identityCtx, profileCtx, memoriesCtx, diaryCtx]
       .filter((s) => s.length > 0)
       .join('\n\n');
 
@@ -89,3 +93,5 @@ export { ProfileManager } from './ProfileManager.js';
 export { SoulManager } from './SoulManager.js';
 export { MemoryManager } from './MemoryManager.js';
 export { DiaryManager } from './DiaryManager.js';
+export { IdentityManager } from './IdentityManager.js';
+export { MemoryExtractor } from './MemoryExtractor.js';

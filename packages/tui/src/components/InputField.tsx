@@ -9,6 +9,7 @@ interface InputFieldProps {
   prefix?: string;
   disabled?: boolean;
   onSlashDetected?: (value: string) => void;
+  onSlashCleared?: () => void;
   completions?: string[];
 }
 
@@ -18,6 +19,7 @@ export const InputField: FC<InputFieldProps> = ({
   prefix = '❯',
   disabled = false,
   onSlashDetected,
+  onSlashCleared,
   completions = [],
 }) => {
   const [value, setValue] = useState('');
@@ -47,8 +49,10 @@ export const InputField: FC<InputFieldProps> = ({
 
   const handleChange = (newValue: string) => {
     setValue(newValue);
-    if (newValue.startsWith('/') && onSlashDetected) {
-      onSlashDetected(newValue);
+    if (newValue.startsWith('/')) {
+      if (onSlashDetected) onSlashDetected(newValue);
+    } else {
+      if (onSlashCleared) onSlashCleared();
     }
     const match = findCompletion(newValue);
     setSuggestion(match && match !== newValue ? match : '');

@@ -1,5 +1,6 @@
 export { ToolRegistry } from './ToolRegistry.js';
 export { ToolExecutor } from './ToolExecutor.js';
+export { createDefaultToolkit } from './toolkit.js';
 export type { PermissionRequestHandler } from './ToolExecutor.js';
 export { PermissionManager } from './permissions/PermissionManager.js';
 export { ScopeGuard } from './permissions/ScopeGuard.js';

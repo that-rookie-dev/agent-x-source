@@ -14,6 +14,8 @@ export { bgCommand, tasksCommand } from './builtin/tasks.js';
 export { toolsCommand } from './builtin/tools.js';
 export { permissionsCommand } from './builtin/permissions.js';
 export { sessionsCommand } from './builtin/sessions.js';
+export { rememberCommand } from './builtin/remember.js';
+export { telegramCommand } from './builtin/telegram.js';
 
 import { CommandRegistry } from './CommandRegistry.js';
 import { helpCommand } from './builtin/help.js';
@@ -27,6 +29,8 @@ import { bgCommand, tasksCommand } from './builtin/tasks.js';
 import { toolsCommand } from './builtin/tools.js';
 import { permissionsCommand } from './builtin/permissions.js';
 import { sessionsCommand } from './builtin/sessions.js';
+import { rememberCommand } from './builtin/remember.js';
+import { telegramCommand } from './builtin/telegram.js';
 
 export function createDefaultRegistry(): CommandRegistry {
   const registry = new CommandRegistry();
@@ -42,5 +46,7 @@ export function createDefaultRegistry(): CommandRegistry {
   registry.register(toolsCommand);
   registry.register(permissionsCommand);
   registry.register(sessionsCommand);
+  registry.register(rememberCommand);
+  registry.register(telegramCommand);
   return registry;
 }

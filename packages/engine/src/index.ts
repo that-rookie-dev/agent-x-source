@@ -37,6 +37,6 @@ export { browserOpen, browserScreenshot, browserClick, browserEval } from './too
 export { mcpCall, mcpListTools } from './tools/index.js';
 export { agentXConfigSchema } from './config/ConfigSchema.js';
 export * from './config/paths.js';
-export { SecretSauceManager, ProfileManager, SoulManager, MemoryManager, DiaryManager } from './secret-sauce/index.js';
+export { SecretSauceManager, ProfileManager, SoulManager, MemoryManager, DiaryManager, IdentityManager } from './secret-sauce/index.js';
 export { TelegramBridge } from './telegram/index.js';
 export type { TelegramConfig, TelegramBridgeStatus } from './telegram/index.js';

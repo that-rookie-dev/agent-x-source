@@ -8,9 +8,10 @@ interface BannerProps {
   provider?: string;
   model?: string;
   organization?: OrganizationConfig | null;
+  profileName?: string;
 }
 
-export const Banner: FC<BannerProps> = ({ provider, model, organization }) => {
+export const Banner: FC<BannerProps> = ({ provider, model, organization, profileName }) => {
   return (
     <Box flexDirection="column" paddingX={1} paddingY={0}>
       <Box>
@@ -20,6 +21,9 @@ export const Banner: FC<BannerProps> = ({ provider, model, organization }) => {
         <Text color={COLORS.textDim}> v{VERSION}</Text>
         {organization?.name && (
           <Text color={COLORS.textDim}> • {organization.name}</Text>
+        )}
+        {profileName && (
+          <Text color={COLORS.info}> • {profileName}</Text>
         )}
       </Box>
       {provider && model && (

@@ -5,10 +5,9 @@ export const providerCommand: CommandInterface = {
   description: 'Switch or reset AI provider',
   aliases: ['p'],
   usage: '/provider [provider-id | reset]',
-  async execute(args: string[], context: CommandContext): Promise<CommandResult> {
+  async execute(args: string[], _context: CommandContext): Promise<CommandResult> {
     if (args.length === 0) {
-      context.emit(`Current provider: ${context.providerId}\nUsage: /provider <provider-id | reset>`);
-      return { success: true, action: 'none' };
+      return { success: true, action: 'list_providers' };
     }
     if (args[0] === 'reset') {
       return { success: true, action: 'reset_provider' };

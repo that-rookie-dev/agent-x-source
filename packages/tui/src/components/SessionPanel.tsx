@@ -14,6 +14,7 @@ interface SessionPanelProps {
   sessionId: string;
   provider: string;
   model: string;
+  profileName?: string;
   tokensUsed: number;
   tokensTotal: number;
   elapsed: number;
@@ -25,6 +26,7 @@ export const SessionPanel: FC<SessionPanelProps> = ({
   sessionId,
   provider,
   model,
+  profileName,
   tokensUsed,
   tokensTotal,
   elapsed,
@@ -44,6 +46,7 @@ export const SessionPanel: FC<SessionPanelProps> = ({
         <Row label="ID" value={sessionId.slice(5, 13)} />
         <Row label="Provider" value={provider} />
         <Row label="Model" value={model} />
+        {profileName && <Row label="Profile" value={profileName} />}
         {isProcessing && <Row label="Time" value={formatElapsed(elapsed)} />}
       </Box>
 
