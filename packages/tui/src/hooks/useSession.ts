@@ -139,7 +139,9 @@ export function useSession(config: AgentXConfig): UseSessionReturn {
 
     if (agentRef.current.processing) return;
     setError(null);
-    void agentRef.current.sendMessage(content);
+    void agentRef.current.sendMessage(content).catch(() => {
+      // Error already handled via event bus — suppress unhandled rejection
+    });
   }, [sessionId]);
 
   const selectModel = useCallback((model: ModelInfo) => {

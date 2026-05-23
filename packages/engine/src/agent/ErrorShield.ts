@@ -29,7 +29,7 @@ export class ErrorShield {
     }
   }
 
-  private logError(error: unknown): void {
+  logError(error: unknown): void {
     const entry = {
       timestamp: new Date().toISOString(),
       message: error instanceof Error ? error.message : String(error),

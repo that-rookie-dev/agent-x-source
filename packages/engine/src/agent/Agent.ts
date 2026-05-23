@@ -13,6 +13,7 @@ import { AgentEventBus } from '../EventBus.js';
 import { TokenTracker } from '../session/TokenTracker.js';
 import { SubAgentManager } from './SubAgentManager.js';
 import { SecretSauceManager } from '../secret-sauce/index.js';
+import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { ToolRegistry } from '../tools/ToolRegistry.js';
 
@@ -34,6 +35,7 @@ export class Agent {
   private isProcessing = false;
   private subAgents: SubAgentManager;
   private secretSauce: SecretSauceManager;
+  private errorShield: ErrorShield;
   private toolExecutor?: ToolExecutor;
   private toolRegistry?: ToolRegistry;
 
@@ -44,6 +46,7 @@ export class Agent {
     this.tokenTracker = new TokenTracker(this.getContextWindow());
     this.subAgents = new SubAgentManager(this.eventBus);
     this.secretSauce = new SecretSauceManager();
+    this.errorShield = new ErrorShield();
     this.toolExecutor = options.toolExecutor;
     this.toolRegistry = options.toolRegistry;
 
@@ -198,10 +201,14 @@ export class Agent {
       return assistantMessage;
     } catch (error) {
       this.emit({ type: 'loading_end' });
+      // Log the full error for debugging
+      this.errorShield.logError(error);
+      // Show a user-friendly message (never expose raw backend errors)
+      const friendlyMessage = this.toFriendlyError(error);
       this.emit({
         type: 'error',
         code: 'AGENT_ERROR',
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: friendlyMessage,
         recoverable: true,
       });
       throw error;
@@ -272,5 +279,36 @@ export class Agent {
       lmstudio: 32_000,
     };
     return defaults[this.config.provider.activeProvider] ?? 128_000;
+  }
+
+  private toFriendlyError(error: unknown): string {
+    const msg = error instanceof Error ? error.message : String(error);
+
+    // Network / connectivity
+    if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT')) {
+      return 'Unable to reach the AI provider. Check your internet connection.';
+    }
+    // Auth issues
+    if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('Invalid API')) {
+      return 'Authentication failed. Run /model to reconfigure or check your API key.';
+    }
+    // Rate limiting
+    if (msg.includes('429') || msg.includes('rate limit') || msg.includes('Too Many Requests')) {
+      return 'Rate limited by the provider. Wait a moment and try again.';
+    }
+    // Model not found / deprecated
+    if (msg.includes('404') || msg.includes('not found') || msg.includes('no longer available')) {
+      return `Model "${this.config.provider.activeModel}" is unavailable. Use /model to switch.`;
+    }
+    // Quota / billing
+    if (msg.includes('402') || msg.includes('quota') || msg.includes('billing')) {
+      return 'Provider quota exceeded or billing issue. Check your account.';
+    }
+    // Server errors
+    if (msg.includes('500') || msg.includes('502') || msg.includes('503')) {
+      return 'The AI provider is experiencing issues. Try again shortly.';
+    }
+    // Generic fallback — never show the raw error
+    return 'Something went wrong. Check logs with: cat ~/.local/share/agentx/logs/errors.jsonl';
   }
 }

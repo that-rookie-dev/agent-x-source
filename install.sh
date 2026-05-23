@@ -103,6 +103,19 @@ clean_existing() {
     ok "Removed old binary at $BIN_DIR/agentx"
   fi
 
+  # Clear cache and logs (stale data from previous versions)
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/agentx"
+  if [ -d "$cache_dir" ]; then
+    rm -rf "$cache_dir"
+    ok "Cleared cache"
+  fi
+
+  local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/agentx"
+  if [ -d "$data_dir/logs" ]; then
+    rm -rf "$data_dir/logs"
+    ok "Cleared old logs"
+  fi
+
   # Clean global npm/pnpm installs of agentx if present
   if check_command agentx; then
     local existing_path
@@ -119,18 +132,17 @@ clean_existing() {
 
 download_and_install() {
   local url="https://github.com/${REPO}/releases/download/${VERSION}/agentx-${PLATFORM}.tar.gz"
-  local tmpdir
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  TMPDIR_INSTALL="$(mktemp -d)"
+  trap 'rm -rf "$TMPDIR_INSTALL"' EXIT
 
   info "Downloading agentx-${PLATFORM}.tar.gz..."
-  if ! curl -fsSL "$url" -o "${tmpdir}/agentx.tar.gz"; then
+  if ! curl -fsSL "$url" -o "${TMPDIR_INSTALL}/agentx.tar.gz"; then
     die "Download failed. URL: $url"
   fi
 
   info "Installing to $INSTALL_DIR..."
   mkdir -p "$INSTALL_DIR"
-  tar -xzf "${tmpdir}/agentx.tar.gz" -C "$INSTALL_DIR"
+  tar -xzf "${TMPDIR_INSTALL}/agentx.tar.gz" -C "$INSTALL_DIR"
   ok "Extracted to $INSTALL_DIR"
 }
 
