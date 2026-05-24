@@ -6,6 +6,7 @@ export interface Message {
   toolCalls: ToolCall[] | null;
   tokenCount: number;
   createdAt: string;
+  elapsed?: number;
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';

@@ -16,7 +16,6 @@ interface UseSessionReturn {
   isLoading: boolean;
   tokensUsed: number;
   tokensTotal: number;
-  elapsed: number;
   error: string | null;
   errorActions: RemediationAction[];
   sendMessage: (content: string) => void;
@@ -48,7 +47,6 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
   const [isLoading, setIsLoading] = useState(false);
   const [tokensUsed, setTokensUsed] = useState(0);
   const [tokensTotal, setTokensTotal] = useState(128_000);
-  const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [errorActions, setErrorActions] = useState<RemediationAction[]>([]);
   const [sessionId] = useState(() => restoreSessionId ?? generateSessionId());
@@ -65,8 +63,6 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
   const agentRef = useRef<Agent | null>(null);
   const configRef = useRef<AgentXConfig>(config);
   const sessionStoreRef = useRef<SessionStore>(new SessionStore());
-  const startTimeRef = useRef<number>(Date.now());
-  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const commandParserRef = useRef(new CommandParser());
   const commandRegistryRef = useRef(createDefaultRegistry());
   const lastUserMessageRef = useRef<string>('');
@@ -119,7 +115,7 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
           });
           break;
         case 'message_received':
-          setMessages((prev) => [...prev, event.message]);
+          setMessages((prev) => [...prev, { ...event.message, elapsed: event.elapsed }]);
           setStreamingContent('');
           setTokensUsed(agent.tokens.tokensUsed);
           setTokensTotal(agent.tokens.tokensTotal);
@@ -223,18 +219,6 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
     };
   }, [config, sessionId]);
 
-  // Track session elapsed time
-  useEffect(() => {
-    startTimeRef.current = Date.now();
-    elapsedIntervalRef.current = setInterval(() => {
-      setElapsed(Date.now() - startTimeRef.current);
-    }, 1000);
-
-    return () => {
-      if (elapsedIntervalRef.current) clearInterval(elapsedIntervalRef.current);
-    };
-  }, []);
-
   const sendMessage = useCallback((content: string) => {
     if (!agentRef.current) return;
 
@@ -325,15 +309,11 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
               tokenCount: 0,
             }]);
           } else if (result.action === 'telegram_status') {
-            setMessages((prev) => [...prev, {
-              id: `sys-tg-${Date.now()}`,
-              sessionId,
-              role: 'assistant' as const,
-              content: 'Telegram bridge status: Use /telegram start <token> to connect.',
-              toolCalls: null,
-              createdAt: new Date().toISOString(),
-              tokenCount: 0,
-            }]);
+            // Show setup prompt with remediation actions
+            setError('Telegram bridge is not configured. Get a bot token from @BotFather on Telegram, then use /telegram start <token>.');
+            setErrorActions([
+              { type: 'dismiss', label: 'Dismiss' },
+            ]);
           }
         });
         return;
@@ -502,7 +482,6 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
     isLoading,
     tokensUsed,
     tokensTotal,
-    elapsed,
     error,
     errorActions,
     sendMessage,

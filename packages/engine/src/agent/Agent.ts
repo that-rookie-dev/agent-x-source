@@ -98,9 +98,14 @@ export class Agent {
 
     // Build system prompt from Secret Sauce + user override
     const sauceContext = this.secretSauce.buildSystemContext();
+
+    // Build tool awareness section so the model knows its capabilities
+    const toolLines = this.toolRegistry.list().map((t) => `- ${t.name}: ${t.modelDescription}`);
+    const toolAwareness = `[TOOLS]\nYou have the following tools available. Use them proactively when they help accomplish the user's request:\n${toolLines.join('\n')}\n\nYou also have access to:\n- A scheduler for creating cron jobs and recurring tasks\n- Slash commands the user can invoke (e.g. /telegram, /schedule, /model, /provider)\n[/TOOLS]`;
+
     const systemPrompt = options.systemPrompt
-      ? `${sauceContext.full}\n\n${options.systemPrompt}`
-      : sauceContext.full;
+      ? `${sauceContext.full}\n\n${toolAwareness}\n\n${options.systemPrompt}`
+      : `${sauceContext.full}\n\n${toolAwareness}`;
 
     if (systemPrompt) {
       this.messages.push({

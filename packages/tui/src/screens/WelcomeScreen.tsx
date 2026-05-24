@@ -34,7 +34,6 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restore
     isLoading,
     tokensUsed,
     tokensTotal,
-    elapsed,
     error,
     errorActions,
     sendMessage,
@@ -149,19 +148,17 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restore
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexGrow={1}>
-        {/* Main content area */}
-        <Box flexDirection="column" flexGrow={1}>
-          {/* Banner at top */}
-          <Banner
-            provider={config.provider.activeProvider}
-            model={currentModel}
-            organization={config.organization}
-            profileName={profile.name}
-            showReady={messages.length === 0 && !isLoading && !error}
-          />
+      {/* Main content area */}
+      <Box flexDirection="column" flexGrow={1}>
+        {/* Banner at top */}
+        <Banner
+          provider={config.provider.activeProvider}
+          model={currentModel}
+          organization={config.organization}
+          profileName={profile.name}
+        />
 
-          <MessageArea messages={messages} streamingContent={streamingContent} />
+        <MessageArea messages={messages} streamingContent={streamingContent} />
 
           {isLoading && !streamingContent && (
             <Box paddingX={2}>
@@ -263,7 +260,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restore
           )}
         </Box>
 
-        {/* Side panel */}
+        {/* Session panel at bottom */}
         <SessionPanel
           sessionId={sessionId}
           provider={config.provider.activeProvider}
@@ -271,10 +268,8 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restore
           profileName={profile.name}
           tokensUsed={tokensUsed}
           tokensTotal={tokensTotal}
-          elapsed={elapsed}
           isProcessing={isLoading}
         />
-      </Box>
     </Box>
   );
 };

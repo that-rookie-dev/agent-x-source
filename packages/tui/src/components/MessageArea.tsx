@@ -13,7 +13,7 @@ export const MessageArea: FC<MessageAreaProps> = ({ messages, streamingContent }
     <Box flexDirection="column" flexGrow={1}>
       {messages.map((message) => (
         <Box key={message.id} flexDirection="column" paddingX={1} marginBottom={1}>
-          <MessageHeader role={message.role} timestamp={message.createdAt} />
+          <MessageHeader role={message.role} timestamp={message.createdAt} elapsed={message.elapsed} />
           <Box paddingLeft={2}>
             <Text color={COLORS.text} wrap="wrap">
               {message.content}
@@ -44,7 +44,7 @@ export const MessageArea: FC<MessageAreaProps> = ({ messages, streamingContent }
   );
 };
 
-const MessageHeader: FC<{ role: MessageRole; timestamp?: string }> = ({ role, timestamp }) => {
+const MessageHeader: FC<{ role: MessageRole; timestamp?: string; elapsed?: number }> = ({ role, timestamp, elapsed }) => {
   const roleConfig = getRoleConfig(role);
 
   return (
@@ -53,6 +53,11 @@ const MessageHeader: FC<{ role: MessageRole; timestamp?: string }> = ({ role, ti
       {timestamp && (
         <Text color={COLORS.textDim} dimColor>
           {' '}({formatTime(timestamp)})
+        </Text>
+      )}
+      {elapsed != null && role === 'assistant' && (
+        <Text color={COLORS.textDim} dimColor>
+          {' '}• {formatElapsed(elapsed)}
         </Text>
       )}
     </Box>
@@ -81,4 +86,12 @@ function formatTime(iso: string): string {
   } catch {
     return '';
   }
+}
+
+function formatElapsed(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${minutes}m ${secs}s`;
 }
