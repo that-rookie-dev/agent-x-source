@@ -1,18 +1,18 @@
 import React from 'react';
 import { render } from 'ink';
-import { VERSION, APP_NAME } from '@agentx/shared';
+import { VERSION, APP_NAME, TAGLINE } from '@agentx/shared';
 import { App } from '@agentx/tui';
 
 function main(): void {
   const args = process.argv.slice(2);
 
   if (args.includes('--version') || args.includes('-v')) {
-    console.log(`${APP_NAME} v${VERSION}`);
+    console.log(`✦ ${APP_NAME} v${VERSION}`);
     process.exit(0);
   }
 
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`${APP_NAME} v${VERSION} - AI Enabled Agent`);
+    console.log(`✦ ${APP_NAME} v${VERSION} — ${TAGLINE}`);
     console.log('');
     console.log('Usage: agentx [options] [session <id>]');
     console.log('');

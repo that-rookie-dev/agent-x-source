@@ -1,19 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { COLORS } from '../theme/colors.js';
-
-const GIMMICKS = [
-  'Brewing thoughts...',
-  'Consulting the matrix...',
-  'Parsing the universe...',
-  'Crunching neurons...',
-  'Synthesizing brilliance...',
-  'Channeling wisdom...',
-  'Aligning synapses...',
-  'Decoding intent...',
-  'Weaving logic...',
-  'Crystallizing insight...',
-];
+import { GIMMICK_MESSAGES } from '@agentx/shared';
 
 interface GimmickDisplayProps {
   isVisible: boolean;
@@ -25,12 +13,12 @@ export function GimmickDisplay({ isVisible }: GimmickDisplayProps) {
 
   useEffect(() => {
     if (!isVisible) return;
-    setGimmick(GIMMICKS[Math.floor(Math.random() * GIMMICKS.length)]!);
+    setGimmick(GIMMICK_MESSAGES[Math.floor(Math.random() * GIMMICK_MESSAGES.length)]!);
     const interval = setInterval(() => {
       setDots((d) => (d.length >= 3 ? '' : d + '.'));
     }, 400);
     const rotate = setInterval(() => {
-      setGimmick(GIMMICKS[Math.floor(Math.random() * GIMMICKS.length)]!);
+      setGimmick(GIMMICK_MESSAGES[Math.floor(Math.random() * GIMMICK_MESSAGES.length)]!);
     }, 3000);
     return () => { clearInterval(interval); clearInterval(rotate); };
   }, [isVisible]);

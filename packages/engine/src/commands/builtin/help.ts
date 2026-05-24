@@ -1,5 +1,5 @@
 import type { CommandInterface, CommandContext, CommandResult } from '../CommandInterface.js';
-import { VERSION, APP_NAME } from '@agentx/shared';
+import { VERSION, APP_NAME, TAGLINE } from '@agentx/shared';
 
 export const helpCommand: CommandInterface = {
   name: 'help',
@@ -8,7 +8,7 @@ export const helpCommand: CommandInterface = {
   usage: '/help [command]',
   async execute(_args: string[], context: CommandContext): Promise<CommandResult> {
     const output = [
-      `${APP_NAME} v${VERSION} - Commands:`,
+      `✦ ${APP_NAME} v${VERSION} — ${TAGLINE}`,
       '',
       '  /help          Show this help',
       '  /exit          Exit the application',

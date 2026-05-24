@@ -4,19 +4,21 @@ import { COLORS } from '../theme/colors.js';
 
 interface LoadingIndicatorProps {
   label?: string;
-  type?: 'spinner' | 'dots' | 'pulse';
+  type?: 'spinner' | 'dots' | 'pulse' | 'orbit';
 }
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const DOT_FRAMES = ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'];
-const PULSE_FRAMES = ['○', '◔', '◑', '◕', '●', '◕', '◑', '◔'];
+const PULSE_FRAMES = ['◜', '◝', '◞', '◟'];
+const ORBIT_FRAMES = ['✦', '⊹', '∗', '⋆', '✧', '⋆', '∗', '⊹'];
 
-export const LoadingIndicator: FC<LoadingIndicatorProps> = ({ label, type = 'spinner' }) => {
+export const LoadingIndicator: FC<LoadingIndicatorProps> = ({ label, type = 'orbit' }) => {
   const [frame, setFrame] = useState(0);
 
   const frames = type === 'spinner' ? SPINNER_FRAMES
     : type === 'dots' ? DOT_FRAMES
-    : PULSE_FRAMES;
+    : type === 'pulse' ? PULSE_FRAMES
+    : ORBIT_FRAMES;
 
   useEffect(() => {
     const interval = setInterval(() => {

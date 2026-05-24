@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { RemediationAction } from '@agentx/shared';
+import { STATUS_MESSAGES } from '@agentx/shared';
 import { COLORS } from '../theme/colors.js';
 
 interface ErrorBannerProps {
@@ -47,7 +48,8 @@ export const ErrorBanner: React.FC<ErrorBannerProps> = ({
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       {/* Error message */}
       <Box>
-        <Text color={COLORS.warning}>⚠ </Text>
+        <Text color={COLORS.error}>✗ </Text>
+        <Text color={COLORS.error} bold>{STATUS_MESSAGES.errorPrefix}: </Text>
         <Text color={COLORS.text}>{message}</Text>
       </Box>
 

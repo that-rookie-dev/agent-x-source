@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { COLORS } from '../theme/colors.js';
+import { STATUS_MESSAGES } from '@agentx/shared';
 
 interface PermissionPromptProps {
   toolName: string;
@@ -28,10 +29,10 @@ export function PermissionPrompt({ toolName, targetPath, riskLevel, onDecision }
   return (
     <Box flexDirection="column" borderStyle="single" borderColor={riskColor} paddingX={1}>
       <Box>
-        <Text color={COLORS.primary} bold>⚡ Permission Required</Text>
+        <Text color={COLORS.accent} bold>{STATUS_MESSAGES.permissionRequired}</Text>
       </Box>
       <Box marginTop={1}>
-        <Text color={COLORS.text}>Tool: </Text>
+        <Text color={COLORS.text}>Probe: </Text>
         <Text color={COLORS.primary} bold>{toolName}</Text>
       </Box>
       <Box>
@@ -39,7 +40,7 @@ export function PermissionPrompt({ toolName, targetPath, riskLevel, onDecision }
         <Text color={COLORS.textDim}>{targetPath}</Text>
       </Box>
       <Box>
-        <Text color={COLORS.text}>Risk: </Text>
+        <Text color={COLORS.text}>Threat Level: </Text>
         <Text color={riskColor}>{riskLevel.toUpperCase()}</Text>
       </Box>
       <Box marginTop={1} gap={2}>

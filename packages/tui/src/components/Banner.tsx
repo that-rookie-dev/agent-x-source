@@ -1,7 +1,7 @@
 import { type FC } from 'react';
 import { Box, Text } from 'ink';
 import { COLORS } from '../theme/colors.js';
-import { VERSION, APP_NAME } from '@agentx/shared';
+import { VERSION, APP_NAME, TAGLINE } from '@agentx/shared';
 import type { OrganizationConfig } from '@agentx/shared';
 
 interface BannerProps {
@@ -15,19 +15,22 @@ export const Banner: FC<BannerProps> = ({ provider, model, organization, profile
   return (
     <Box flexDirection="column" paddingX={1} paddingY={0}>
       <Box>
+        <Text color={COLORS.primary}>✦ </Text>
         <Text color={COLORS.primary} bold>
           {APP_NAME}
         </Text>
         <Text color={COLORS.textDim}> v{VERSION}</Text>
+        <Text color={COLORS.accent}> — {TAGLINE}</Text>
         {organization?.name && (
           <Text color={COLORS.textDim}> • {organization.name}</Text>
         )}
         {profileName && (
-          <Text color={COLORS.info}> • {profileName}</Text>
+          <Text color={COLORS.accent}> • {profileName}</Text>
         )}
       </Box>
       {provider && model && (
         <Box>
+          <Text color={COLORS.textDim}>  ⊹ </Text>
           <Text color={COLORS.info}>{provider}</Text>
           <Text color={COLORS.textDim}> / </Text>
           <Text color={COLORS.text}>{model}</Text>
@@ -45,7 +48,7 @@ export const Banner: FC<BannerProps> = ({ provider, model, organization, profile
       </Box>
       {!provider && (
         <Box>
-          <Text color={COLORS.textDim}>  Starting...</Text>
+          <Text color={COLORS.primaryDim}>  ⊹ Booting systems...</Text>
         </Box>
       )}
     </Box>

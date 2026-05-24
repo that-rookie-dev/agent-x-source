@@ -9,19 +9,23 @@ interface ToolActionProps {
 }
 
 export function ToolAction({ toolName, status, elapsed, output }: ToolActionProps) {
-  const statusIcon = status === 'executing' ? '⚙'
+  const statusIcon = status === 'executing' ? '⊹'
     : status === 'complete' ? '✓'
     : '✗';
 
-  const statusColor = status === 'executing' ? COLORS.primary
+  const statusColor = status === 'executing' ? COLORS.accent
     : status === 'complete' ? COLORS.success
     : COLORS.error;
+
+  const label = status === 'executing' ? `Deploying probe: ${toolName}`
+    : status === 'complete' ? `Probe returned: ${toolName}`
+    : `Probe lost: ${toolName}`;
 
   return (
     <Box flexDirection="column" marginLeft={2}>
       <Box gap={1}>
         <Text color={statusColor}>{statusIcon}</Text>
-        <Text color={COLORS.text} bold>{toolName}</Text>
+        <Text color={COLORS.text}>{label}</Text>
         {elapsed !== undefined && (
           <Text color={COLORS.textDim}>({(elapsed / 1000).toFixed(1)}s)</Text>
         )}

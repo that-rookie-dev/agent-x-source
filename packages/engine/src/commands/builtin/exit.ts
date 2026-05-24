@@ -6,6 +6,6 @@ export const exitCommand: CommandInterface = {
   aliases: ['quit', 'q'],
   usage: '/exit',
   async execute(_args: string[], _context: CommandContext): Promise<CommandResult> {
-    return { success: true, output: 'Goodbye!', action: 'exit' };
+    return { success: true, output: 'Entering cryo-sleep. See you, commander.', action: 'exit' };
   },
 };

@@ -10,7 +10,7 @@ interface AgentProgressProps {
   startedAt: number;
 }
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const ORBIT_FRAMES = ['✦', '⊹', '∗', '⋆', '✧', '⋆', '∗', '⊹'];
 
 export function AgentProgress({ agentName, status, progress, startedAt }: AgentProgressProps) {
   const [frame, setFrame] = useState(0);
@@ -19,27 +19,32 @@ export function AgentProgress({ agentName, status, progress, startedAt }: AgentP
   useEffect(() => {
     if (status !== 'running') return;
     const interval = setInterval(() => {
-      setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+      setFrame((f) => (f + 1) % ORBIT_FRAMES.length);
       setElapsed(Date.now() - startedAt);
     }, 80);
     return () => clearInterval(interval);
   }, [status, startedAt]);
 
-  const statusIcon = status === 'running' ? SPINNER_FRAMES[frame]
+  const statusIcon = status === 'running' ? ORBIT_FRAMES[frame]
     : status === 'complete' ? '✓'
     : status === 'failed' ? '✗'
     : '○';
 
-  const statusColor = status === 'running' ? COLORS.info
+  const statusColor = status === 'running' ? COLORS.accent
     : status === 'complete' ? COLORS.success
     : status === 'failed' ? COLORS.error
     : COLORS.textDim;
+
+  const label = status === 'running' ? `Satellite: ${agentName}`
+    : status === 'complete' ? `Satellite docked: ${agentName}`
+    : status === 'failed' ? `Satellite lost: ${agentName}`
+    : agentName;
 
   return (
     <Box flexDirection="column" marginLeft={1} paddingY={0}>
       <Box gap={1}>
         <Text color={statusColor}>{statusIcon}</Text>
-        <Text color={COLORS.primary} bold>⊳ {agentName}</Text>
+        <Text color={COLORS.primary} bold>{label}</Text>
         {status === 'running' && (
           <Text color={COLORS.textDim}>{(elapsed / 1000).toFixed(1)}s</Text>
         )}
