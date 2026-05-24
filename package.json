@@ -1,6 +1,6 @@
 {
   "name": "agent-x",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "Agent-X — Your AI Wingman",
   "scripts": {
