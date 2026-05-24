@@ -11,9 +11,10 @@ type AppState = 'loading' | 'setup' | 'profile' | 'main';
 
 interface AppProps {
   sessionId?: string;
+  recovered?: boolean;
 }
 
-export const App: FC<AppProps> = ({ sessionId: restoreSessionId }) => {
+export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) => {
   const configManager = new ConfigManager();
   const isConfigured = configManager.isConfigured();
 
@@ -84,7 +85,7 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId }) => {
   }
 
   if (state === 'main' && config && activeProfile) {
-    return <WelcomeScreen config={config} profile={activeProfile} restoreSessionId={restoreSessionId} />;
+    return <WelcomeScreen config={config} profile={activeProfile} restoreSessionId={restoreSessionId} recovered={recovered} />;
   }
 
   // Fallback — should not happen

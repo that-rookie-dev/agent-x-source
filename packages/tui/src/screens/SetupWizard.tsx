@@ -12,6 +12,8 @@ import {
   type ProviderId,
   type ModelInfo,
   type AgentXConfig,
+  resolveSpaceError,
+  getLogger,
 } from '@agentx/shared';
 import { ConfigManager, ProviderFactory } from '@agentx/engine';
 
@@ -96,11 +98,13 @@ export const SetupWizard: FC<SetupWizardProps> = ({ onComplete, onCancel }) => {
         if (valid) {
           setStep('fetching_models');
         } else {
-          setError('Could not connect to provider. Check your credentials.');
+          setError('🔐 Clearance Denied — Could not authenticate with the provider. Check your API key.');
           setStep('apikey');
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Validation failed');
+        getLogger().error('SETUP_VALIDATION', e);
+        const spaceErr = resolveSpaceError(e);
+        setError(`${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`);
         setStep('apikey');
       }
     };
@@ -120,10 +124,17 @@ export const SetupWizard: FC<SetupWizardProps> = ({ onComplete, onCancel }) => {
           baseUrl || undefined,
         );
         const fetchedModels = await providerInstance.listModels();
+        if (fetchedModels.length === 0) {
+          setError('🏚 Hangar Empty — No models returned by the API. Check your key permissions.');
+          setStep('apikey');
+          return;
+        }
         setModels(fetchedModels);
         setStep('models');
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to fetch models');
+        getLogger().error('SETUP_MODEL_FETCH', e);
+        const spaceErr = resolveSpaceError(e);
+        setError(`${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`);
         setStep('apikey');
       }
     };

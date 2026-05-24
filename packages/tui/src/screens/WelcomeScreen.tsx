@@ -22,9 +22,10 @@ interface WelcomeScreenProps {
   config: AgentXConfig;
   profile: Profile;
   restoreSessionId?: string;
+  recovered?: boolean;
 }
 
-export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restoreSessionId }) => {
+export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restoreSessionId, recovered }) => {
   const [slashFilter, setSlashFilter] = useState<string | null>(null);
 
   const {
@@ -166,6 +167,13 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restore
 
           {/* Todo progress */}
           {todoItems.length > 0 && <TodoProgress items={todoItems} />}
+
+          {/* Crash recovery notice */}
+          {recovered && messages.length === 0 && (
+            <Box paddingX={2} marginBottom={1}>
+              <Text color={COLORS.warning}>🔄 Emergency Reboot — Recovered from unexpected shutdown. Settings restored.</Text>
+            </Box>
+          )}
 
           {error && errorActions.length > 0 && (
             <ErrorBanner

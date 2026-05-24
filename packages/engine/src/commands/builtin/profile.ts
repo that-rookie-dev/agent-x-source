@@ -43,9 +43,6 @@ export const profileCommand: CommandInterface = {
       }
       const lines = [
         `Profile: ${profile.name} (${profile.id})`,
-        `Description: ${profile.description}`,
-        `Expertise: ${profile.expertise.join(', ') || 'none'}`,
-        `Traits: ${profile.traits.join(', ') || 'none'}`,
         `Prompt: ${profile.systemPrompt.slice(0, 120)}${profile.systemPrompt.length > 120 ? '...' : ''}`,
       ];
       context.emit(lines.join('\n'));
@@ -66,13 +63,7 @@ export const profileCommand: CommandInterface = {
       pm.create({
         id,
         name,
-        description: `Custom profile: ${name}`,
         systemPrompt: `You are a ${name}. Apply your expertise and professional judgment in all interactions.`,
-        expertise: [],
-        traits: [],
-        toolPreferences: null,
-        enabledTools: null,
-        disabledTools: null,
         isDefault: false,
       });
       context.emit(`Created profile: ${name} (${id})\nUse /profile switch ${id} to activate.`);
