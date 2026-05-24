@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Message, EngineEvent, AgentXConfig, ModelInfo, RemediationAction, ProviderId, Profile, TodoItem } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
-import { Agent, CommandParser, createDefaultRegistry, ConfigManager, SessionStore } from '@agentx/engine';
+import { Agent, CommandParser, createDefaultRegistry, ConfigManager, SessionStore, ProviderFactory } from '@agentx/engine';
 import { generateSessionId } from '@agentx/shared';
 
 interface PermissionRequest {
@@ -355,6 +355,8 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
     // Trial-before-commit: test the model with an API call before persisting
     const agent = agentRef.current;
     setIsLoading(true);
+    setError(null);
+    setErrorActions([]);
     void (async () => {
       try {
         const success = await agent.trialModel(model.id);
@@ -383,29 +385,59 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
 
   const selectProvider = useCallback((providerId: ProviderId, apiKey?: string, baseUrl?: string) => {
     setShowProviderPicker(false);
-    const configManager = new ConfigManager();
-    const current = configManager.load();
-    current.provider.activeProvider = providerId;
-    if (!current.provider.providers[providerId]) {
-      current.provider.providers[providerId] = { configured: false };
-    }
-    if (apiKey) {
-      current.provider.providers[providerId]!.apiKey = apiKey;
-    }
-    if (baseUrl) {
-      current.provider.providers[providerId]!.baseUrl = baseUrl;
-    }
-    current.provider.providers[providerId]!.configured = true;
-    configManager.save(current);
-    // Switch provider in-place (no restart needed)
-    if (agentRef.current) {
-      const key = apiKey ?? current.provider.providers[providerId]?.apiKey;
-      const url = baseUrl ?? current.provider.providers[providerId]?.baseUrl;
-      agentRef.current.switchProvider(providerId, key, url);
-    }
-    configRef.current = current;
-    setCurrentModel(current.provider.activeModel);
-    setError(`✓ Switched to ${providerId}. Use /model to pick a model.`);
+    setIsLoading(true);
+    setError(null);
+    setErrorActions([]);
+
+    void (async () => {
+      try {
+        // Validate API key before accepting the switch
+        const key = apiKey;
+        const url = baseUrl;
+        const provider = ProviderFactory.create(providerId, key, url);
+        const valid = await provider.validate();
+        if (!valid) {
+          setError(`✗ Invalid API key for ${providerId}. Please try again.`);
+          setShowProviderPicker(true);
+          return;
+        }
+
+        const configManager = new ConfigManager();
+        const current = configManager.load();
+        current.provider.activeProvider = providerId;
+        if (!current.provider.providers[providerId]) {
+          current.provider.providers[providerId] = { configured: false };
+        }
+        if (key) {
+          current.provider.providers[providerId]!.apiKey = key;
+        }
+        if (url) {
+          current.provider.providers[providerId]!.baseUrl = url;
+        }
+        current.provider.providers[providerId]!.configured = true;
+        // Clear saved model — new provider needs a fresh model pick
+        current.provider.activeModel = '';
+        configManager.save(current);
+
+        // Switch provider in-place (no restart needed)
+        if (agentRef.current) {
+          const resolvedKey = key ?? current.provider.providers[providerId]?.apiKey;
+          const resolvedUrl = url ?? current.provider.providers[providerId]?.baseUrl;
+          agentRef.current.switchProvider(providerId, resolvedKey, resolvedUrl);
+        }
+        configRef.current = current;
+        setCurrentModel('');
+
+        // Auto-trigger model picker after successful provider switch
+        void agentRef.current?.listModels();
+      } catch (err) {
+        getLogger().error('PROVIDER_SWITCH', err);
+        setError(`✗ Failed to switch to ${providerId}. Check your API key.`);
+        setShowProviderPicker(true);
+      } finally {
+        setIsLoading(false);
+      }
+    })();
   }, []);
 
   const dismissProviderPicker = useCallback(() => {
