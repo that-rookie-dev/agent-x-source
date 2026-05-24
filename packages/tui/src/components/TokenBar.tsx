@@ -33,7 +33,7 @@ export const TokenBar: FC<TokenBarProps> = ({ used, total, label }) => {
   }, [used]);
 
   const percentage = total > 0 ? Math.min(displayUsed / total, 1) : 0;
-  const barWidth = 30;
+  const barWidth = 20;
   const filledWidth = Math.round(barWidth * percentage);
   const emptyWidth = barWidth - filledWidth;
 
@@ -47,12 +47,16 @@ export const TokenBar: FC<TokenBarProps> = ({ used, total, label }) => {
   const pctStr = `${Math.round(percentage * 100)}%`;
 
   return (
-    <Box>
-      {label && <Text color={COLORS.textDim}>{label} </Text>}
-      <Text color={barColor}>{filled}</Text>
-      <Text color={COLORS.border}>{empty}</Text>
-      <Text color={barColor}> {pctStr}</Text>
-      <Text color={COLORS.textDim}> ({formatTokens(displayUsed)}/{formatTokens(total)})</Text>
+    <Box flexDirection="column">
+      {label && <Text color={COLORS.textDim}>{label}</Text>}
+      <Box>
+        <Text color={barColor}>{filled}</Text>
+        <Text color={COLORS.border}>{empty}</Text>
+        <Text color={barColor}> {pctStr}</Text>
+      </Box>
+      <Box>
+        <Text color={COLORS.textDim}>{formatTokens(displayUsed)} / {formatTokens(total)}</Text>
+      </Box>
     </Box>
   );
 };

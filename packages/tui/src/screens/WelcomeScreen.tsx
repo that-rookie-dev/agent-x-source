@@ -124,18 +124,8 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restore
             model={currentModel}
             organization={config.organization}
             profileName={profile.name}
+            showReady={messages.length === 0 && !isLoading && !error}
           />
-
-          {messages.length === 0 && !isLoading && !error && (
-            <Box paddingX={2} paddingY={1} flexDirection="column">
-              <Text color={COLORS.textDim}>
-                Profile: <Text color={COLORS.info}>{profile.name}</Text>
-              </Text>
-              <Text color={COLORS.textDim}>
-                Ready. Type a message or use / for commands.
-              </Text>
-            </Box>
-          )}
 
           <MessageArea messages={messages} streamingContent={streamingContent} />
 
