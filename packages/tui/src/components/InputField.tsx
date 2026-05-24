@@ -1,4 +1,4 @@
-import { type FC, useState, useCallback } from 'react';
+import { type FC, useState, useCallback, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { COLORS } from '../theme/colors.js';
@@ -24,12 +24,14 @@ export const InputField: FC<InputFieldProps> = ({
 }) => {
   const [value, setValue] = useState('');
   const [suggestion, setSuggestion] = useState('');
+  // Key used to force TextInput remount so cursor moves to end after tab complete
+  const inputKeyRef = useRef(0);
 
   const findCompletion = useCallback(
     (input: string): string => {
       if (!input.startsWith('/') || input.length < 2) return '';
-      const prefix = input.slice(1).toLowerCase();
-      const match = completions.find((c) => c.toLowerCase().startsWith(prefix));
+      const pfx = input.slice(1).toLowerCase();
+      const match = completions.find((c) => c.toLowerCase().startsWith(pfx));
       return match ? `/${match}` : '';
     },
     [completions],
@@ -40,10 +42,14 @@ export const InputField: FC<InputFieldProps> = ({
       onSubmit(value.trim());
       setValue('');
       setSuggestion('');
+      inputKeyRef.current += 1;
     }
     if (key.tab && suggestion && !disabled) {
       setValue(suggestion);
       setSuggestion('');
+      // Force remount to move cursor to end
+      inputKeyRef.current += 1;
+      if (onSlashDetected) onSlashDetected(suggestion);
     }
   });
 
@@ -66,6 +72,7 @@ export const InputField: FC<InputFieldProps> = ({
       ) : (
         <Box>
           <TextInput
+            key={inputKeyRef.current}
             value={value}
             onChange={handleChange}
             placeholder={placeholder}
