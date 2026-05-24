@@ -3,68 +3,23 @@ import { join } from 'node:path';
 import type { Profile } from '@agentx/shared';
 import { getSecretSauceDir } from '../config/paths.js';
 
-const DEFAULT_PROFILES: Profile[] = [
-  {
-    id: 'general',
-    name: 'General Assistant',
-    description: 'Versatile AI assistant with broad knowledge across technology, business, and creative domains.',
-    systemPrompt: 'You are a versatile, highly capable AI assistant. Be direct, concise, and proactive. Adapt depth of explanation to context.',
-    expertise: ['software engineering', 'data analysis', 'technical writing', 'problem solving'],
-    traits: ['direct', 'structured', 'proactive', 'adaptive'],
-    toolPreferences: null,
-    enabledTools: null,
-    disabledTools: null,
-    isDefault: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'architect',
-    name: 'Software Architect',
-    description: 'Senior software architect focused on system design, code quality, and engineering best practices.',
-    systemPrompt: 'You are a senior software architect. Focus on system design, scalability, maintainability, and engineering best practices. Consider trade-offs, propose alternatives, and think about long-term implications.',
-    expertise: ['system design', 'architecture patterns', 'code review', 'performance optimization', 'security'],
-    traits: ['methodical', 'thorough', 'opinionated on quality', 'considers trade-offs'],
-    toolPreferences: ['code_intelligence', 'testing', 'git_vcs'],
-    enabledTools: null,
-    disabledTools: null,
-    isDefault: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'writer',
-    name: 'Creative Writer',
-    description: 'Creative writer skilled in various formats — technical docs, marketing copy, storytelling.',
-    systemPrompt: 'You are a skilled writer. Adapt your voice and style to the format requested. Focus on clarity, engagement, and impact. Offer structural suggestions and alternative phrasings.',
-    expertise: ['technical writing', 'creative writing', 'copywriting', 'documentation', 'editing'],
-    traits: ['creative', 'articulate', 'audience-aware', 'detail-oriented'],
-    toolPreferences: ['documents', 'web_network'],
-    enabledTools: null,
-    disabledTools: ['shell_process', 'containers_infra'],
-    isDefault: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'analyst',
-    name: 'Data Analyst',
-    description: 'Data analyst focused on extracting insights, visualizing patterns, and building reports.',
-    systemPrompt: 'You are a data analyst. Focus on extracting meaningful insights from data, identifying patterns, and presenting findings clearly. Use structured approaches and validate assumptions.',
-    expertise: ['data analysis', 'statistics', 'visualization', 'SQL', 'reporting'],
-    traits: ['analytical', 'evidence-based', 'precise', 'visual thinker'],
-    toolPreferences: ['data_processing', 'database'],
-    enabledTools: null,
-    disabledTools: null,
-    isDefault: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+/**
+ * No default profiles — user creates their own.
+ * A minimal "Default" profile is auto-created only if none exist,
+ * with a generic prompt so the app can function.
+ */
+const BOOTSTRAP_PROFILE: Profile = {
+  id: 'default',
+  name: 'Default',
+  systemPrompt: 'You are a highly capable AI assistant. Be direct, concise, and helpful.',
+  isDefault: true,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+};
 
 export class ProfileManager {
   private profiles: Profile[] = [];
-  private activeProfileId: string = 'general';
+  private activeProfileId: string = 'default';
   private secretSauceDir: string;
 
   constructor() {
@@ -77,15 +32,29 @@ export class ProfileManager {
     if (existsSync(profilePath)) {
       try {
         const data = readFileSync(profilePath, 'utf-8');
-        const parsed = JSON.parse(data) as { profiles: Profile[]; activeId: string };
-        this.profiles = parsed.profiles;
+        const parsed = JSON.parse(data) as { profiles: Array<Record<string, unknown>>; activeId: string };
+        // Migrate old profiles: strip removed fields, keep name + systemPrompt
+        this.profiles = parsed.profiles.map((p) => ({
+          id: p['id'] as string,
+          name: p['name'] as string,
+          systemPrompt: (p['systemPrompt'] as string) ?? '',
+          isDefault: (p['isDefault'] as boolean) ?? false,
+          createdAt: (p['createdAt'] as string) ?? new Date().toISOString(),
+          updatedAt: (p['updatedAt'] as string) ?? new Date().toISOString(),
+        }));
         this.activeProfileId = parsed.activeId;
+        // Ensure at least one profile exists
+        if (this.profiles.length === 0) {
+          this.profiles = [BOOTSTRAP_PROFILE];
+          this.activeProfileId = 'default';
+        }
+        this.save();
       } catch {
-        this.profiles = [...DEFAULT_PROFILES];
+        this.profiles = [BOOTSTRAP_PROFILE];
         this.save();
       }
     } else {
-      this.profiles = [...DEFAULT_PROFILES];
+      this.profiles = [BOOTSTRAP_PROFILE];
       this.save();
     }
   }
@@ -123,9 +92,12 @@ export class ProfileManager {
     return profile;
   }
 
-  create(input: Omit<Profile, 'createdAt' | 'updatedAt'>): Profile {
+  create(input: { id: string; name: string; systemPrompt: string; isDefault?: boolean }): Profile {
     const profile: Profile = {
-      ...input,
+      id: input.id,
+      name: input.name,
+      systemPrompt: input.systemPrompt,
+      isDefault: input.isDefault ?? false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -136,6 +108,7 @@ export class ProfileManager {
 
   delete(id: string): boolean {
     if (id === this.activeProfileId) return false;
+    if (this.profiles.length <= 1) return false;
     const idx = this.profiles.findIndex((p) => p.id === id);
     if (idx < 0) return false;
     this.profiles.splice(idx, 1);
@@ -146,13 +119,5 @@ export class ProfileManager {
   getSystemPrompt(): string {
     const profile = this.getActive();
     return profile.systemPrompt;
-  }
-
-  getEnabledTools(): string[] | null {
-    return this.getActive().enabledTools;
-  }
-
-  getDisabledTools(): string[] | null {
-    return this.getActive().disabledTools;
   }
 }

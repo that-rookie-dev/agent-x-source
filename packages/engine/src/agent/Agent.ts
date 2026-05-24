@@ -8,7 +8,7 @@ import type {
   AgentXConfig,
   RemediationAction,
 } from '@agentx/shared';
-import { generateMessageId } from '@agentx/shared';
+import { generateMessageId, getLogger, resolveSpaceError } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { ProviderFactory } from '../providers/index.js';
 import { AgentEventBus } from '../EventBus.js';
@@ -51,6 +51,7 @@ export class Agent {
   private toolRegistry?: ToolRegistry;
   private permissionResolve: ((choice: 'allow_once' | 'allow_always' | 'deny') => void) | null = null;
   private cachedModels: Map<string, number> = new Map(); // modelId -> contextWindow
+  private groundedModels: Set<string> = new Set(); // models that failed trial this session
 
   constructor(options: AgentOptions) {
     this.config = options.config;
@@ -406,11 +407,14 @@ export class Agent {
       this.tokenTracker.setTotal(ctx);
     }
     this.emit({ type: 'command_action', action: 'model_switched', modelId });
-    // Verify model in background (fire-and-forget with error suppression)
-    void this.verifyModel(modelId).catch(() => {});
   }
 
-  private async verifyModel(modelId: string): Promise<void> {
+  /**
+   * Trial a model with a minimal API call BEFORE committing it.
+   * Returns true if the model works, false if it's grounded.
+   */
+  async trialModel(modelId: string): Promise<boolean> {
+    const logger = getLogger();
     try {
       const request = {
         model: modelId,
@@ -422,28 +426,50 @@ export class Agent {
       for await (const _chunk of this.provider.complete(request)) {
         break; // Just need first chunk to confirm it works
       }
-    } catch {
+      // Success — remove from grounded if it was there
+      this.groundedModels.delete(modelId);
+      return true;
+    } catch (err) {
+      logger.error('MODEL_TRIAL_FAILED', err, { modelId });
+      this.groundedModels.add(modelId);
+      const spaceErr = resolveSpaceError(err);
       this.emit({
         type: 'error',
-        code: 'MODEL_UNAVAILABLE',
-        message: `Model "${modelId}" is not available. Try a different model.`,
+        code: 'MODEL_TRIAL_FAILED',
+        message: `${spaceErr.icon} ${spaceErr.title} — Model "${modelId}" failed pre-flight check. ${spaceErr.message}`,
         recoverable: true,
         actions: [
           { type: 'switch_model', label: 'Pick a different model' },
           { type: 'dismiss', label: 'Dismiss' },
         ],
       });
+      return false;
     }
   }
 
+  /**
+   * Check if a model is grounded (failed trial this session).
+   */
+  isModelGrounded(modelId: string): boolean {
+    return this.groundedModels.has(modelId);
+  }
+
+  /**
+   * Get the set of grounded model IDs.
+   */
+  getGroundedModels(): Set<string> {
+    return new Set(this.groundedModels);
+  }
+
   async listModels(): Promise<void> {
+    const logger = getLogger();
     try {
       const models = await this.provider.listModels();
       if (models.length === 0) {
         this.emit({
           type: 'error',
           code: 'NO_MODELS',
-          message: 'No models available. Check your API key and provider settings.',
+          message: '🏚 Hangar Empty — No models returned by the API. Verify your key has correct permissions.',
           recoverable: true,
           actions: [{ type: 'dismiss', label: 'Dismiss' }],
         });
@@ -460,10 +486,12 @@ export class Agent {
         currentModel: this.config.provider.activeModel,
       });
     } catch (err) {
+      logger.error('MODEL_LIST_FAILED', err);
+      const spaceErr = resolveSpaceError(err);
       this.emit({
         type: 'error',
         code: 'MODEL_LIST_FAILED',
-        message: `Failed to list models: ${err instanceof Error ? err.message : String(err)}`,
+        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
         recoverable: true,
         actions: [{ type: 'dismiss', label: 'Dismiss' }],
       });
@@ -598,22 +626,13 @@ export class Agent {
   }
 
   private toFriendlyError(error: unknown): { message: string; actions: RemediationAction[] } {
+    const spaceErr = resolveSpaceError(error);
     const msg = error instanceof Error ? error.message : String(error);
 
-    // Network / connectivity
-    if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT')) {
-      return {
-        message: 'Unable to reach the AI provider. Check your internet connection.',
-        actions: [
-          { type: 'retry', label: 'Retry' },
-          { type: 'dismiss', label: 'Dismiss' },
-        ],
-      };
-    }
-    // Auth issues
+    // Determine actions based on category
     if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('Invalid API')) {
       return {
-        message: 'Authentication failed. Your API key may be invalid or expired.',
+        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
         actions: [
           { type: 'reconfigure_key', label: 'Update API key' },
           { type: 'switch_model', label: 'Switch provider' },
@@ -621,10 +640,9 @@ export class Agent {
         ],
       };
     }
-    // Rate limiting
     if (msg.includes('429') || msg.includes('rate limit') || msg.includes('Too Many Requests')) {
       return {
-        message: 'Rate limited by the provider. Wait a moment and try again.',
+        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
         actions: [
           { type: 'retry', label: 'Retry' },
           { type: 'switch_model', label: 'Switch model' },
@@ -632,40 +650,27 @@ export class Agent {
         ],
       };
     }
-    // Model not found / deprecated
-    if (msg.includes('404') || msg.includes('not found') || msg.includes('no longer available')) {
+    if (msg.includes('404') || msg.includes('not found')) {
       return {
-        message: `Model "${this.config.provider.activeModel}" is unavailable or deprecated.`,
+        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
         actions: [
           { type: 'switch_model', label: 'Pick a different model' },
           { type: 'dismiss', label: 'Dismiss' },
         ],
       };
     }
-    // Quota / billing
     if (msg.includes('402') || msg.includes('quota') || msg.includes('billing')) {
       return {
-        message: 'Provider quota exceeded or billing issue.',
+        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
         actions: [
-          { type: 'switch_model', label: 'Switch to free model' },
+          { type: 'switch_model', label: 'Switch provider' },
           { type: 'dismiss', label: 'Dismiss' },
         ],
       };
     }
-    // Server errors
-    if (msg.includes('500') || msg.includes('502') || msg.includes('503')) {
-      return {
-        message: 'The AI provider is experiencing issues.',
-        actions: [
-          { type: 'retry', label: 'Retry' },
-          { type: 'switch_model', label: 'Switch model' },
-          { type: 'dismiss', label: 'Dismiss' },
-        ],
-      };
-    }
-    // Generic fallback — never show the raw error
+    // Generic — retry + dismiss
     return {
-      message: 'Something went wrong. Please try again.',
+      message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
       actions: [
         { type: 'retry', label: 'Retry' },
         { type: 'dismiss', label: 'Dismiss' },

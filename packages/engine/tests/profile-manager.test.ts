@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ProfileManager } from '../src/secret-sauce/ProfileManager.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,24 +20,31 @@ describe('ProfileManager', () => {
     else delete process.env['XDG_DATA_HOME'];
   });
 
-  it('initializes with default profiles', () => {
+  it('initializes with bootstrap profile when fresh', () => {
     const pm = new ProfileManager();
     const profiles = pm.list();
-    expect(profiles.length).toBeGreaterThanOrEqual(4);
+    expect(profiles.length).toBe(1);
+    expect(profiles[0]!.id).toBe('default');
   });
 
-  it('has general as default active profile', () => {
+  it('has default as active profile', () => {
     const pm = new ProfileManager();
-    expect(pm.getActiveId()).toBe('general');
-    expect(pm.getActive().name).toBe('General Assistant');
+    expect(pm.getActiveId()).toBe('default');
+    expect(pm.getActive().name).toBe('Default');
   });
 
-  it('switches profiles', () => {
+  it('creates and switches profiles', () => {
     const pm = new ProfileManager();
-    const result = pm.switch('architect');
+    pm.create({
+      id: 'devops',
+      name: 'DevOps Engineer',
+      systemPrompt: 'You are a DevOps engineer.',
+      isDefault: false,
+    });
+    const result = pm.switch('devops');
     expect(result).not.toBeNull();
-    expect(result!.name).toBe('Software Architect');
-    expect(pm.getActiveId()).toBe('architect');
+    expect(result!.name).toBe('DevOps Engineer');
+    expect(pm.getActiveId()).toBe('devops');
   });
 
   it('returns null when switching to nonexistent profile', () => {
@@ -48,35 +55,38 @@ describe('ProfileManager', () => {
   it('gets system prompt for active profile', () => {
     const pm = new ProfileManager();
     const prompt = pm.getSystemPrompt();
-    expect(prompt).toContain('versatile');
+    expect(prompt).toContain('capable');
   });
 
-  it('creates new profiles', () => {
+  it('creates new profiles with name + prompt only', () => {
     const pm = new ProfileManager();
     const profile = pm.create({
       id: 'custom',
       name: 'Custom',
-      description: 'A custom profile',
       systemPrompt: 'Be custom.',
-      expertise: [],
-      traits: [],
-      toolPreferences: null,
-      enabledTools: null,
-      disabledTools: null,
       isDefault: false,
     });
     expect(profile.id).toBe('custom');
+    expect(profile.name).toBe('Custom');
+    expect(profile.systemPrompt).toBe('Be custom.');
     expect(pm.get('custom')).toBeDefined();
   });
 
   it('deletes non-active profiles', () => {
     const pm = new ProfileManager();
-    expect(pm.delete('writer')).toBe(true);
-    expect(pm.get('writer')).toBeUndefined();
+    pm.create({ id: 'temp', name: 'Temp', systemPrompt: 'temp', isDefault: false });
+    expect(pm.delete('temp')).toBe(true);
+    expect(pm.get('temp')).toBeUndefined();
   });
 
   it('cannot delete active profile', () => {
     const pm = new ProfileManager();
-    expect(pm.delete('general')).toBe(false);
+    expect(pm.delete('default')).toBe(false);
+  });
+
+  it('cannot delete last remaining profile', () => {
+    const pm = new ProfileManager();
+    // Only 1 profile (default) exists
+    expect(pm.delete('default')).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Message, EngineEvent, AgentXConfig, ModelInfo, RemediationAction, ProviderId, Profile, TodoItem } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
 import { Agent, CommandParser, createDefaultRegistry, ConfigManager, SessionStore } from '@agentx/engine';
 import { generateSessionId } from '@agentx/shared';
 
@@ -259,12 +260,22 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
             agentRef.current?.sauce.recordMemory(result.output, 'user');
             setError(`✓ Remembered: "${result.output}"`);
           } else if (result.action === 'switch_model' && result.output) {
-            agentRef.current?.switchModel(result.output);
-            // Persist to config file
-            const configManager = new ConfigManager();
-            const current = configManager.load();
-            current.provider.activeModel = result.output;
-            configManager.save(current);
+            // Trial-before-commit via slash command too
+            const modelId = result.output;
+            const agent = agentRef.current;
+            if (agent) {
+              void (async () => {
+                const success = await agent.trialModel(modelId);
+                if (success) {
+                  agent.switchModel(modelId);
+                  setCurrentModel(modelId);
+                  const cm = new ConfigManager();
+                  const cur = cm.load();
+                  cur.provider.activeModel = modelId;
+                  cm.save(cur);
+                }
+              })();
+            }
           } else if (result.action === 'reset_provider') {
             // Reset provider config and trigger setup
             const configManager = new ConfigManager();
@@ -339,14 +350,31 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
 
   const selectModel = useCallback((model: ModelInfo) => {
     if (!agentRef.current) return;
-    agentRef.current.switchModel(model.id);
     setModelPickerModels(null);
-    setCurrentModel(model.id);
-    // Persist to config
-    const configManager = new ConfigManager();
-    const current = configManager.load();
-    current.provider.activeModel = model.id;
-    configManager.save(current);
+
+    // Trial-before-commit: test the model with an API call before persisting
+    const agent = agentRef.current;
+    setIsLoading(true);
+    void (async () => {
+      try {
+        const success = await agent.trialModel(model.id);
+        if (success) {
+          agent.switchModel(model.id);
+          setCurrentModel(model.id);
+          // Persist to config only after successful trial
+          const configManager = new ConfigManager();
+          const current = configManager.load();
+          current.provider.activeModel = model.id;
+          configManager.save(current);
+        }
+        // If trial fails, agent.trialModel already emitted the error event
+      } catch (err) {
+        getLogger().error('MODEL_SELECT', err);
+        // Error already emitted via event bus inside trialModel
+      } finally {
+        setIsLoading(false);
+      }
+    })();
   }, []);
 
   const dismissModelPicker = useCallback(() => {
