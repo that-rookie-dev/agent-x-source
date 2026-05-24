@@ -40,6 +40,7 @@ export const SessionPanel: FC<SessionPanelProps> = ({
       borderColor={COLORS.border}
       paddingX={1}
       width={36}
+      alignSelf="flex-start"
     >
       <Text color={COLORS.primary} bold>Session</Text>
       <Box marginTop={1} flexDirection="column">

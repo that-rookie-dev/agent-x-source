@@ -190,11 +190,6 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restore
             </Box>
           )}
 
-          {/* Command suggestions */}
-          {slashFilter !== null && (
-            <CommandSuggestions commands={commandList} filter={slashFilter} />
-          )}
-
           {/* Permission prompt overlay */}
           {permissionRequest && (
             <PermissionPrompt
@@ -216,6 +211,11 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restore
               onSlashCleared={() => setSlashFilter(null)}
             />
           </Box>
+
+          {/* Command suggestions — below input */}
+          {slashFilter !== null && (
+            <CommandSuggestions commands={commandList} filter={slashFilter} />
+          )}
         </Box>
 
         {/* Side panel */}
