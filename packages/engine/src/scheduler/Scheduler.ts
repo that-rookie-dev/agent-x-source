@@ -1,6 +1,9 @@
 import type { EngineEvent } from '@agentx/shared';
 import { generateId } from '@agentx/shared';
 import type { AgentEventBus } from '../EventBus.js';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 export interface ScheduledJob {
   id: string;
@@ -11,6 +14,7 @@ export interface ScheduledJob {
   lastRun?: number;
   nextRun: number;
   runCount: number;
+  oneShot?: boolean; // If true, runs once then auto-removes
 }
 
 interface ParsedCron {
@@ -95,9 +99,48 @@ export class Scheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private eventBus: AgentEventBus;
   private onJobTrigger: ((job: ScheduledJob) => void) | null = null;
+  private persistPath: string;
 
   constructor(eventBus: AgentEventBus) {
     this.eventBus = eventBus;
+    const dataDir = process.env['XDG_DATA_HOME']
+      ? join(process.env['XDG_DATA_HOME'], 'agentx')
+      : join(homedir(), '.local', 'share', 'agentx');
+    mkdirSync(dataDir, { recursive: true });
+    this.persistPath = join(dataDir, 'scheduler.json');
+    this.restore();
+  }
+
+  /**
+   * Persist all non-oneshot jobs to disk.
+   */
+  private persist(): void {
+    try {
+      const jobs = [...this.jobs.values()].filter((j) => !j.oneShot);
+      writeFileSync(this.persistPath, JSON.stringify(jobs, null, 2));
+    } catch { /* silent — persistence is best-effort */ }
+  }
+
+  /**
+   * Restore recurring jobs from disk on startup.
+   */
+  private restore(): void {
+    try {
+      if (!existsSync(this.persistPath)) return;
+      const data = JSON.parse(readFileSync(this.persistPath, 'utf-8')) as ScheduledJob[];
+      const now = Date.now();
+      for (const job of data) {
+        if (job.oneShot) continue; // Don't restore expired one-shots
+        // Recompute next run time from now
+        try {
+          const parsed = parseCron(job.cron);
+          job.nextRun = getNextRunTime(parsed);
+        } catch {
+          job.nextRun = now + 60_000; // fallback
+        }
+        this.jobs.set(job.id, job);
+      }
+    } catch { /* silent — if corrupt, start fresh */ }
   }
 
   /**
@@ -127,12 +170,40 @@ export class Scheduler {
       instruction: `Scheduled job "${name}" (${cron}) — next run: ${new Date(job.nextRun).toLocaleTimeString()}`,
     } as EngineEvent);
 
+    this.persist();
+    this.ensureTimerRunning();
+    return job;
+  }
+
+  /**
+   * Add a one-shot timer that fires once after a delay (in seconds), then auto-removes.
+   */
+  addTimer(name: string, delaySecs: number, instruction: string): ScheduledJob {
+    const job: ScheduledJob = {
+      id: generateId(),
+      name,
+      cron: `@timer:${delaySecs}s`,
+      instruction,
+      enabled: true,
+      nextRun: Date.now() + delaySecs * 1000,
+      runCount: 0,
+      oneShot: true,
+    };
+
+    this.jobs.set(job.id, job);
+    this.eventBus.emit({
+      type: 'steer_message',
+      taskId: job.id,
+      instruction: `Timer "${name}" set — fires in ${delaySecs}s`,
+    } as EngineEvent);
+
     this.ensureTimerRunning();
     return job;
   }
 
   removeJob(jobId: string): boolean {
     const deleted = this.jobs.delete(jobId);
+    if (deleted) this.persist();
     if (this.jobs.size === 0) this.stop();
     return deleted;
   }
@@ -149,6 +220,7 @@ export class Scheduler {
     const job = this.jobs.get(jobId);
     if (job) {
       job.enabled = !job.enabled;
+      this.persist();
       return job.enabled;
     }
     return false;
@@ -167,8 +239,8 @@ export class Scheduler {
 
   private ensureTimerRunning(): void {
     if (this.timer) return;
-    // Check every 30 seconds for jobs that need to fire
-    this.timer = setInterval(() => this.tick(), 30_000);
+    // Check every 5 seconds for jobs/timers that need to fire
+    this.timer = setInterval(() => this.tick(), 5_000);
   }
 
   private tick(): void {
@@ -179,20 +251,33 @@ export class Scheduler {
         job.lastRun = now;
         job.runCount++;
 
-        // Compute next run time
-        const parsed = parseCron(job.cron);
-        job.nextRun = getNextRunTime(parsed);
+        if (job.oneShot) {
+          // One-shot timer — fire and remove
+          this.jobs.delete(job.id);
+          this.eventBus.emit({
+            type: 'steer_message',
+            taskId: job.id,
+            instruction: `⏰ Reminder: "${job.name}" — time's up!`,
+          } as EngineEvent);
+        } else {
+          // Recurring cron — compute next run
+          const parsed = parseCron(job.cron);
+          job.nextRun = getNextRunTime(parsed);
 
-        this.eventBus.emit({
-          type: 'steer_message',
-          taskId: job.id,
-          instruction: `⏰ Scheduled job "${job.name}" triggered (run #${job.runCount})`,
-        } as EngineEvent);
+          this.eventBus.emit({
+            type: 'steer_message',
+            taskId: job.id,
+            instruction: `⏰ Scheduled job "${job.name}" triggered (run #${job.runCount})`,
+          } as EngineEvent);
+        }
 
         if (this.onJobTrigger) {
           this.onJobTrigger(job);
         }
       }
     }
+
+    // Stop timer if no jobs left
+    if (this.jobs.size === 0) this.stop();
   }
 }

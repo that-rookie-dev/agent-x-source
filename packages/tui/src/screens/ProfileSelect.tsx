@@ -4,10 +4,23 @@ import TextInput from 'ink-text-input';
 import { COLORS } from '../theme/colors.js';
 import { ScrollableList } from '../components/ScrollableList.js';
 import { Banner } from '../components/Banner.js';
-import type { Profile } from '@agentx/shared';
+import type { Profile, ProfileEmotion } from '@agentx/shared';
 import { ProfileManager } from '@agentx/engine';
 
-type ScreenState = 'select' | 'create_name' | 'create_prompt' | 'create_confirm';
+type ScreenState = 'select' | 'create_name' | 'create_prompt' | 'create_tone' | 'create_confirm';
+
+const TONE_OPTIONS: Array<{ id: ProfileEmotion; label: string; description: string }> = [
+  { id: 'professional', label: '💼 Professional', description: 'Precise, formal, business-like' },
+  { id: 'friendly', label: '😊 Friendly', description: 'Warm, approachable, casual' },
+  { id: 'witty', label: '🧠 Witty', description: 'Clever, sharp, dry humor' },
+  { id: 'funny', label: '😂 Funny', description: 'Humorous, entertaining, jokes' },
+  { id: 'kind', label: '💛 Kind', description: 'Gentle, empathetic, supportive' },
+  { id: 'sarcastic', label: '😏 Sarcastic', description: 'Dry, ironic, deadpan' },
+  { id: 'flirty', label: '😘 Flirty', description: 'Playful, charming, teasing' },
+  { id: 'arrogant', label: '👑 Arrogant', description: 'Supremely confident, show-off' },
+  { id: 'happy', label: '🌟 Happy', description: 'Enthusiastic, upbeat, energetic' },
+  { id: 'sad', label: '🌧 Melancholic', description: 'Thoughtful, reflective, poetic' },
+];
 
 interface ProfileSelectProps {
   onSelect: (profile: Profile) => void;
@@ -28,17 +41,20 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
     return userProfiles.length === 0 ? 'create_name' : 'select';
   });
 
-  // Create profile form state (name + prompt only)
+  // Create profile form state
   const [newName, setNewName] = useState('');
   const [newPrompt, setNewPrompt] = useState('');
+  const [newTone, setNewTone] = useState<ProfileEmotion>('friendly');
 
   useInput((_input, key) => {
     if (screen === 'create_name' && key.escape) {
       setScreen('select');
     } else if (screen === 'create_prompt' && key.escape) {
       setScreen('create_name');
-    } else if (screen === 'create_confirm' && key.escape) {
+    } else if (screen === 'create_tone' && key.escape) {
       setScreen('create_prompt');
+    } else if (screen === 'create_confirm' && key.escape) {
+      setScreen('create_tone');
     }
   });
 
@@ -53,6 +69,7 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
       id,
       name: newName.trim(),
       systemPrompt: newPrompt.trim(),
+      emotion: newTone,
       isDefault: false,
     });
     pm.switch(profile.id);
@@ -66,7 +83,7 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
         <Banner provider={currentProvider} model={currentModel} />
         <Box flexDirection="column" marginTop={1} paddingX={1}>
           <Text color={COLORS.primary} bold>Create New Profile</Text>
-          <Text color={COLORS.textDim}>Step 1/2 — Give your profile a name</Text>
+          <Text color={COLORS.textDim}>Step 1/3 — Give your profile a name</Text>
           <Box marginTop={1}>
             <Text color={COLORS.text}>Name: </Text>
             <TextInput
@@ -89,14 +106,14 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
         <Banner provider={currentProvider} model={currentModel} />
         <Box flexDirection="column" marginTop={1} paddingX={1}>
           <Text color={COLORS.primary} bold>Create New Profile</Text>
-          <Text color={COLORS.textDim}>Step 2/2 — System prompt (how the agent should behave)</Text>
+          <Text color={COLORS.textDim}>Step 2/3 — Describe who this agent is (what it knows, what it helps with)</Text>
           <Box marginTop={1}>
             <Text color={COLORS.text}>Prompt: </Text>
             <TextInput
               value={newPrompt}
               onChange={setNewPrompt}
               placeholder="You are a..."
-              onSubmit={() => { if (newPrompt.trim()) setScreen('create_confirm'); }}
+              onSubmit={() => { if (newPrompt.trim()) setScreen('create_tone'); }}
             />
           </Box>
           <Text color={COLORS.textDim} dimColor>Enter to continue • Esc to go back</Text>
@@ -105,8 +122,40 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
     );
   }
 
+  // Create profile flow — Step 3: Tone / Emotion
+  if (screen === 'create_tone') {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Banner provider={currentProvider} model={currentModel} />
+        <Box flexDirection="column" marginTop={1} paddingX={1}>
+          <Text color={COLORS.primary} bold>Create New Profile</Text>
+          <Text color={COLORS.textDim}>Step 3/3 — Pick a personality tone for your agent</Text>
+        </Box>
+        <Box marginTop={1}>
+          <ScrollableList
+            items={TONE_OPTIONS}
+            label="Tones"
+            onSelect={(item) => {
+              setNewTone(item.id);
+              setScreen('create_confirm');
+            }}
+            renderItem={(item, isSelected: boolean) => (
+              <Box>
+                <Text color={isSelected ? COLORS.primary : COLORS.text} bold={isSelected}>
+                  {item.label}
+                </Text>
+                <Text color={COLORS.textDim}> — {item.description}</Text>
+              </Box>
+            )}
+          />
+        </Box>
+      </Box>
+    );
+  }
+
   // Create profile flow — Confirm
   if (screen === 'create_confirm') {
+    const toneLabel = TONE_OPTIONS.find((t) => t.id === newTone)?.label ?? newTone;
     return (
       <Box flexDirection="column" padding={1}>
         <Banner provider={currentProvider} model={currentModel} />
@@ -115,6 +164,7 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
           <Box marginTop={1} flexDirection="column">
             <Text color={COLORS.text}>Name: <Text color={COLORS.info}>{newName}</Text></Text>
             <Text color={COLORS.text}>Prompt: <Text color={COLORS.textDim}>{newPrompt.slice(0, 80)}{newPrompt.length > 80 ? '...' : ''}</Text></Text>
+            <Text color={COLORS.text}>Tone: <Text color={COLORS.info}>{toneLabel}</Text></Text>
           </Box>
           <Box marginTop={1}>
             <Text color={COLORS.success}>Press Enter to create and activate • Esc to go back</Text>
@@ -147,6 +197,7 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
               setScreen('create_name');
               setNewName('');
               setNewPrompt('');
+              setNewTone('friendly');
             } else {
               handleSelect(item);
             }

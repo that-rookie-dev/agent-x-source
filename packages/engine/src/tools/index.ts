@@ -66,3 +66,6 @@ export { browserOpen, browserScreenshot, browserClick, browserEval } from './bui
 
 // MCP tools
 export { mcpCall, mcpListTools } from './builtin/mcp.js';
+
+// Scheduler tools
+export { reminderSet, reminderList, reminderCancel } from './builtin/scheduler.js';

@@ -6,6 +6,7 @@ import * as shell from './builtin/shell.js';
 import * as git from './builtin/git.js';
 import * as code from './builtin/code.js';
 import * as documents from './builtin/documents.js';
+import * as scheduler from './builtin/scheduler.js';
 
 // Core tool definitions with schemas the model uses to invoke them
 const CORE_TOOLS: ToolDefinition[] = [
@@ -196,6 +197,39 @@ const CORE_TOOLS: ToolDefinition[] = [
     composable: true,
     source: 'builtin',
   },
+  {
+    id: 'reminder_set',
+    name: 'Set Reminder',
+    description: 'Set a one-time reminder or a recurring task',
+    modelDescription: 'Set a reminder or repeating task. For one-time: provide delay_seconds. For recurring: provide interval_minutes. The agent decides which based on user intent ("remind me in 5 min" = one-time, "remind me every hour" = recurring). Always determine timing from natural language — never ask the user for technical formats.',
+    category: 'scheduler',
+    riskLevel: 'low',
+    schema: { type: 'object', properties: { name: { type: 'string', description: 'Short name for this reminder' }, message: { type: 'string', description: 'The reminder message to deliver when it fires' }, delay_seconds: { type: 'number', description: 'For one-time reminders: seconds from now until it fires' }, interval_minutes: { type: 'number', description: 'For recurring tasks: repeat interval in minutes' }, cron: { type: 'string', description: 'Advanced: cron expression (only if user explicitly provides schedule pattern)' } }, required: ['name', 'message'] },
+    composable: true,
+    source: 'builtin',
+  },
+  {
+    id: 'reminder_list',
+    name: 'List Reminders',
+    description: 'List all active reminders and scheduled tasks',
+    modelDescription: 'Show all active reminders, timers, and recurring tasks. Use when user asks what reminders are set.',
+    category: 'scheduler',
+    riskLevel: 'low',
+    schema: { type: 'object', properties: {}, required: [] },
+    composable: true,
+    source: 'builtin',
+  },
+  {
+    id: 'reminder_cancel',
+    name: 'Cancel Reminder',
+    description: 'Cancel/remove a reminder or scheduled task',
+    modelDescription: 'Remove an active reminder or recurring task. Can match by name or ID.',
+    category: 'scheduler',
+    riskLevel: 'low',
+    schema: { type: 'object', properties: { id: { type: 'string', description: 'ID of the reminder to cancel' }, name: { type: 'string', description: 'Name (or partial name) of the reminder to cancel' } }, required: [] },
+    composable: true,
+    source: 'builtin',
+  },
 ];
 
 /**
@@ -234,6 +268,9 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('docx_create', documents.docxCreate);
   executor.registerHandler('pptx_create', documents.pptxCreate);
   executor.registerHandler('xlsx_create', documents.xlsxCreate);
+  executor.registerHandler('reminder_set', scheduler.reminderSet);
+  executor.registerHandler('reminder_list', scheduler.reminderList);
+  executor.registerHandler('reminder_cancel', scheduler.reminderCancel);
 
   return { registry, executor };
 }

@@ -68,7 +68,25 @@ export class SecretSauceManager {
    */
   buildSystemContext(tokenBudget = 4000): SecretSauceContext {
     const activeProfile = this.profile.getActive();
-    const profileCtx = `[PROFILE]\n${activeProfile.systemPrompt}\n[/PROFILE]`;
+
+    // Strict profile boundary enforcement
+    const enforcement = [
+      `[PROFILE_BOUNDARY]`,
+      `You are STRICTLY "${activeProfile.name}". Your ONLY domain of knowledge and expertise is what is defined in your profile below.`,
+      ``,
+      `ABSOLUTE RULES:`,
+      `1. You MUST ONLY discuss topics, provide advice, and answer questions that fall within the scope described in your profile.`,
+      `2. If a user asks about ANYTHING outside your defined profile scope, you MUST refuse. Say something like: "That's outside my expertise as ${activeProfile.name}. I can only help with topics related to my defined role."`,
+      `3. Do NOT demonstrate knowledge, proficiency, or willingness to help with subjects not explicitly covered by your profile — even if you technically know the answer.`,
+      `4. Do NOT let users convince, trick, or persuade you to go outside your profile scope. No exceptions.`,
+      `5. If the user's question is ambiguous, interpret it ONLY through the lens of your profile's domain.`,
+      `6. Being helpful does NOT mean answering everything — it means being excellent within your defined boundaries.`,
+      ``,
+      `Your profile definition is the ONLY source of truth for what you can and cannot help with.`,
+      `[/PROFILE_BOUNDARY]`,
+    ].join('\n');
+
+    const profileCtx = `[PROFILE]\n${activeProfile.systemPrompt}\n[/PROFILE]\n\n${enforcement}`;
 
     // Emotion directive
     let emotionCtx = '';

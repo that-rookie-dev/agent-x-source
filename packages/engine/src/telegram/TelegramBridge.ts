@@ -29,10 +29,31 @@ export class TelegramBridge {
   private messageCount = 0;
   private botUsername?: string;
   private connected = false;
+  private commandHandler: ((cmd: string, args: string[], chatId: number) => Promise<string | null>) | null = null;
+  private callbackHandlers: Map<string, (data: string, chatId: number) => void> = new Map();
+  private messageHandler: ((text: string, chatId: number) => void) | null = null;
 
   constructor(config: TelegramConfig) {
     this.config = config;
     this.eventBus = new AgentEventBus();
+  }
+
+  /**
+   * Register a handler for /commands received via Telegram.
+   * If the handler returns a string, it's sent as a reply.
+   * If it returns null, the message is passed to the agent.
+   */
+  setCommandHandler(handler: (cmd: string, args: string[], chatId: number) => Promise<string | null>): void {
+    this.commandHandler = handler;
+  }
+
+  /**
+   * Register a message handler that intercepts ALL non-command messages.
+   * When set, the bridge will NOT call agent.sendMessage directly — instead it delegates to this handler.
+   * The handler is responsible for processing the message and sending a response.
+   */
+  setMessageHandler(handler: (text: string, chatId: number) => void): void {
+    this.messageHandler = handler;
   }
 
   /**
@@ -88,6 +109,13 @@ export class TelegramBridge {
     if (!this.connected) return;
     const updateId = update['update_id'] as number;
     if (updateId) this.lastUpdateId = updateId;
+
+    const callbackQuery = update['callback_query'] as { id: string; data?: string; message?: { chat: { id: number } }; from?: { id: number } } | undefined;
+    if (callbackQuery) {
+      await this.handleCallbackQuery(callbackQuery);
+      return;
+    }
+
     const message = update['message'] as { chat: { id: number }; from?: { id: number }; text?: string } | undefined;
     if (message?.text) {
       await this.handleMessage(message as { chat: { id: number }; from?: { id: number }; text: string });
@@ -125,13 +153,15 @@ export class TelegramBridge {
       const updates = await this.apiCall('getUpdates', {
         offset: this.lastUpdateId + 1,
         timeout: 30,
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'callback_query'],
       });
 
       if (updates.ok && updates.result?.length > 0) {
         for (const update of updates.result) {
           this.lastUpdateId = update.update_id;
-          if (update.message?.text) {
+          if (update.callback_query) {
+            await this.handleCallbackQuery(update.callback_query);
+          } else if (update.message?.text) {
             await this.handleMessage(update.message);
           }
         }
@@ -163,9 +193,30 @@ export class TelegramBridge {
 
     this.messageCount++;
 
+    // Intercept /commands if a handler is registered
+    if (this.commandHandler && msg.text.startsWith('/')) {
+      const [cmd, ...args] = msg.text.slice(1).split(/\s+/);
+      if (cmd) {
+        try {
+          const response = await this.commandHandler(cmd, args, msg.chat.id);
+          if (response !== null) {
+            await this.sendMessage(msg.chat.id, response);
+            return;
+          }
+        } catch { /* fall through to agent */ }
+      }
+    }
+
     // Process through agent
     if (!this.agent) {
       await this.sendMessage(msg.chat.id, '⚠️ Agent not attached to Telegram bridge.');
+      return;
+    }
+
+    // If a message handler is registered (e.g., daemon queue), delegate to it
+    if (this.messageHandler) {
+      await this.apiCall('sendChatAction', { chat_id: msg.chat.id, action: 'typing' });
+      this.messageHandler(msg.text, msg.chat.id);
       return;
     }
 
@@ -195,6 +246,70 @@ export class TelegramBridge {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Processing failed';
       await this.sendMessage(msg.chat.id, `❌ Error: ${errMsg}`);
+    }
+  }
+
+  /**
+   * Handle inline keyboard callback queries.
+   */
+  private async handleCallbackQuery(query: { id: string; data?: string; message?: { chat: { id: number } }; from?: { id: number } }): Promise<void> {
+    const data = query.data;
+    const chatId = query.message?.chat?.id;
+    if (!data || !chatId) return;
+
+    // Acknowledge the callback to remove loading indicator
+    await this.apiCall('answerCallbackQuery', { callback_query_id: query.id });
+
+    // Find handler by prefix (format: "prefix:payload")
+    const [prefix] = data.split(':');
+    if (prefix) {
+      const handler = this.callbackHandlers.get(prefix);
+      if (handler) {
+        handler(data, chatId);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Register a callback query handler for a given prefix.
+   * When a button with callback_data starting with "prefix:" is pressed, handler is called.
+   */
+  onCallback(prefix: string, handler: (data: string, chatId: number) => void): void {
+    this.callbackHandlers.set(prefix, handler);
+  }
+
+  /**
+   * Remove a callback handler.
+   */
+  offCallback(prefix: string): void {
+    this.callbackHandlers.delete(prefix);
+  }
+
+  /**
+   * Send a message to a specific chat (public API for daemon use).
+   */
+  async sendToChat(chatId: number, text: string): Promise<void> {
+    await this.sendMessage(chatId, text);
+  }
+
+  /**
+   * Send a message with inline keyboard buttons.
+   */
+  async sendWithButtons(chatId: number, text: string, buttons: Array<{ text: string; callbackData: string }>): Promise<void> {
+    const inlineKeyboard = [buttons.map((b) => ({ text: b.text, callback_data: b.callbackData }))];
+    const result = await this.apiCall('sendMessage', {
+      chat_id: chatId,
+      text,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: inlineKeyboard },
+    });
+    if (!result.ok && result.description?.includes('parse')) {
+      await this.apiCall('sendMessage', {
+        chat_id: chatId,
+        text,
+        reply_markup: { inline_keyboard: inlineKeyboard },
+      });
     }
   }
 
