@@ -5,6 +5,7 @@ export interface AgentXConfig {
   ui: UISettings;
   organization: OrganizationConfig | null;
   telemetry: boolean;
+  timezone?: string; // IANA timezone (e.g. 'Asia/Kolkata'). Auto-detected if not set.
 }
 
 export interface ProviderSettings {

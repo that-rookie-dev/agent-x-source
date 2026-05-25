@@ -165,6 +165,7 @@ export const SetupWizard: FC<SetupWizardProps> = ({ onComplete, onCancel }) => {
       },
       organization: null,
       telemetry: false,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     };
 
     const configManager = new ConfigManager();

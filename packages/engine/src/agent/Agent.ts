@@ -158,8 +158,9 @@ export class Agent {
       ``,
       `[CURRENT_TIME]`,
       `Now: ${new Date().toISOString()}`,
-      `Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
-      `Local: ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long' })}`,
+      `User timezone: ${this.getUserTimezone()}`,
+      `Local time (user): ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: this.getUserTimezone() })}`,
+      `UTC offset: ${this.getUtcOffset()}`,
       `[/CURRENT_TIME]`,
       ``,
       `[SCHEDULING]`,
@@ -595,8 +596,9 @@ export class Agent {
       ``,
       `[CURRENT_TIME]`,
       `Now: ${new Date().toISOString()}`,
-      `Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
-      `Local: ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long' })}`,
+      `User timezone: ${this.getUserTimezone()}`,
+      `Local time (user): ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: this.getUserTimezone() })}`,
+      `UTC offset: ${this.getUtcOffset()}`,
       `[/CURRENT_TIME]`,
       ``,
       `[SCHEDULING]`,
@@ -844,6 +846,38 @@ export class Agent {
   private getBaseUrl(): string | undefined {
     const providerSettings = this.config.provider.providers?.[this.config.provider.activeProvider];
     return providerSettings?.baseUrl;
+  }
+
+  /**
+   * Get the user's timezone from config, falling back to system timezone.
+   */
+  private getUserTimezone(): string {
+    return this.config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  }
+
+  /**
+   * Get the UTC offset string for the user's timezone (e.g. "+05:30", "-04:00").
+   */
+  private getUtcOffset(): string {
+    const tz = this.getUserTimezone();
+    const now = new Date();
+    // Use Intl to get the offset for the target timezone
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'longOffset',
+    });
+    const parts = formatter.formatToParts(now);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName');
+    // Format is like "GMT+5:30" or "GMT-4" — normalize to "+05:30"
+    const raw = tzPart?.value ?? '';
+    const match = raw.match(/GMT([+-])(\d{1,2}):?(\d{2})?/);
+    if (match) {
+      const sign = match[1];
+      const hrs = match[2]!.padStart(2, '0');
+      const mins = (match[3] ?? '00').padStart(2, '0');
+      return `${sign}${hrs}:${mins}`;
+    }
+    return '+00:00';
   }
 
   private getContextWindow(): number {

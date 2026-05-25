@@ -611,10 +611,36 @@ async function handleTelegramCommand(
         '🧰 Other:',
         '  /remember <text> — Save to memory',
         '  /tools — List available tools',
+        '  /timezone [tz] — View or set timezone',
         '  /status — Show daemon status',
         '',
         'Or just type a message to chat with the agent!',
       ].join('\n');
+
+    // ─── Timezone ───
+    case 'timezone':
+    case 'tz': {
+      const newTz = args.join(' ').trim();
+      if (!newTz) {
+        const currentTz = config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const now = new Date().toLocaleString('en-US', { timeZone: currentTz, dateStyle: 'full', timeStyle: 'long' });
+        return `🕐 Timezone: ${currentTz}\n📅 Current time: ${now}\n\nUse /timezone <IANA timezone> to change.\nExample: /timezone Asia/Kolkata`;
+      }
+      // Validate timezone
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: newTz }).format(new Date());
+      } catch {
+        return `❌ Invalid timezone: "${newTz}"\n\nUse IANA format like: Asia/Kolkata, America/New_York, Europe/London, UTC`;
+      }
+      const cur = configManager.load();
+      cur.timezone = newTz;
+      configManager.save(cur);
+      config.timezone = newTz;
+      // Rebuild prompt so the agent knows the new timezone
+      agent.rebuildSystemPrompt();
+      const now = new Date().toLocaleString('en-US', { timeZone: newTz, dateStyle: 'full', timeStyle: 'long' });
+      return `✅ Timezone set to: ${newTz}\n📅 Current time: ${now}`;
+    }
 
     default:
       return null; // Unknown command — pass to agent
