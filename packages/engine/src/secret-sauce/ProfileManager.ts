@@ -118,6 +118,19 @@ export class ProfileManager {
     return true;
   }
 
+  update(id: string, updates: { name?: string; systemPrompt?: string; emotion?: ProfileEmotion }): Profile | null {
+    const idx = this.profiles.findIndex((p) => p.id === id);
+    if (idx < 0) return null;
+    const profile = this.profiles[idx]!;
+    if (updates.name !== undefined) profile.name = updates.name;
+    if (updates.systemPrompt !== undefined) profile.systemPrompt = updates.systemPrompt;
+    if (updates.emotion !== undefined) profile.emotion = updates.emotion;
+    profile.updatedAt = new Date().toISOString();
+    this.profiles[idx] = profile;
+    this.save();
+    return profile;
+  }
+
   getSystemPrompt(): string {
     const profile = this.getActive();
     return profile.systemPrompt;
