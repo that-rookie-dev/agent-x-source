@@ -282,8 +282,12 @@ main() {
   echo -e "  ${GREEN}│${NC}  ${BOLD}Mission ready. Welcome aboard, commander.${NC} ${GREEN}│${NC}"
   echo -e "  ${GREEN}╰────────────────────────────────────────────╯${NC}"
   echo ""
-  echo -e "  ${CYAN}Launch:${NC}      agentx"
-  echo -e "  ${CYAN}Mission log:${NC} agentx --help"
+  echo -e "  ${CYAN}Get started:${NC}"
+  echo -e "    ${BOLD}agentx${NC}                             Launch interactive TUI"
+  echo -e "    ${BOLD}agentx start --token <bot-token>${NC}   Connect Telegram & start daemon"
+  echo ""
+  echo -e "  ${DIM}To get a bot token: open Telegram → @BotFather → /newbot${NC}"
+  echo -e "  ${DIM}More info: agentx --help${NC}"
   echo ""
 }
 
