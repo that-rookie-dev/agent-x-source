@@ -41,7 +41,7 @@ interface UseSessionReturn {
   subAgents: Array<{ agentId: string; name: string; status: string; startTime: number }>;
 }
 
-export function useSession(config: AgentXConfig, _profile?: Profile, restoreSessionId?: string): UseSessionReturn {
+export function useSession(config: AgentXConfig, _profile?: Profile, restoreSessionId?: string, onProfileSwitch?: () => void): UseSessionReturn {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingContent, setStreamingContent] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -272,8 +272,10 @@ export function useSession(config: AgentXConfig, _profile?: Profile, restoreSess
             configManager.reset();
             process.exit(0);
           } else if (result.action === 'switch_profile') {
-            // Profile switch persisted to disk by command — restart to apply
-            process.exit(0);
+            // Show profile picker UI
+            if (onProfileSwitch) {
+              onProfileSwitch();
+            }
           } else if (result.action === 'clear') {
             setMessages([]);
             agentRef.current?.clearHistory();

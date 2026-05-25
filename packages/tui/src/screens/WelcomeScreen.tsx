@@ -23,9 +23,10 @@ interface WelcomeScreenProps {
   profile: Profile;
   restoreSessionId?: string;
   recovered?: boolean;
+  onProfileSwitch?: () => void;
 }
 
-export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restoreSessionId, recovered }) => {
+export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restoreSessionId, recovered, onProfileSwitch }) => {
   const [slashFilter, setSlashFilter] = useState<string | null>(null);
 
   const {
@@ -56,7 +57,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, profile, restore
     isReasoning,
     activeTools,
     subAgents,
-  } = useSession(config, profile, restoreSessionId);
+  } = useSession(config, profile, restoreSessionId, onProfileSwitch);
 
   // Double-ESC to cancel processing
   const [escState, setEscState] = useState<'idle' | 'first_press'>('idle');

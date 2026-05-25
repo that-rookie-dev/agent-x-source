@@ -22,10 +22,6 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) =>
   const [state, setState] = useState<AppState>(() => {
     if (!isConfigured) return 'setup';
     if (restoreSessionId) return 'main'; // Skip profile select on restore
-    // If only 1 user-created profile, auto-select it
-    const pm = new ProfileManager();
-    const userProfiles = pm.list().filter((p) => !p.isDefault);
-    if (userProfiles.length === 1) return 'main';
     return 'profile';
   });
 
@@ -57,15 +53,6 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) =>
       const pm = new ProfileManager();
       return pm.getActive();
     }
-    // Auto-select if only 1 user-created profile
-    if (isConfigured) {
-      const pm = new ProfileManager();
-      const userProfiles = pm.list().filter((p) => !p.isDefault);
-      if (userProfiles.length === 1) {
-        pm.switch(userProfiles[0]!.id);
-        return userProfiles[0]!;
-      }
-    }
     return null;
   });
 
@@ -87,6 +74,10 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) =>
     return <SetupWizard onComplete={handleSetupComplete} onCancel={handleSetupCancel} />;
   }
 
+  const handleProfileSwitch = useCallback(() => {
+    setState('profile');
+  }, []);
+
   if (state === 'profile' && config) {
     return (
       <ProfileSelect
@@ -98,7 +89,7 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) =>
   }
 
   if (state === 'main' && config && activeProfile) {
-    return <WelcomeScreen config={config} profile={activeProfile} restoreSessionId={restoreSessionId} recovered={recovered} />;
+    return <WelcomeScreen config={config} profile={activeProfile} restoreSessionId={restoreSessionId} recovered={recovered} onProfileSwitch={handleProfileSwitch} />;
   }
 
   // Fallback — should not happen
