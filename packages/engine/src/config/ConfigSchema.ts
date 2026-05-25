@@ -25,12 +25,17 @@ export const organizationConfigSchema = z.object({
   contact: z.string().optional(),
 }).nullable();
 
+export const userConfigSchema = z.object({
+  callsign: z.string().min(1).max(30),
+}).optional();
+
 export const agentXConfigSchema = z.object({
   provider: providerSettingsSchema,
   ui: uiSettingsSchema.default({}),
   organization: organizationConfigSchema.default(null),
   telemetry: z.boolean().default(false),
   timezone: z.string().optional(),
+  user: userConfigSchema,
 });
 
 export type ValidatedConfig = z.infer<typeof agentXConfigSchema>;
