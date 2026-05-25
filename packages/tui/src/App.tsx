@@ -1,6 +1,6 @@
 import { type FC, useState, useCallback } from 'react';
 import { Box } from 'ink';
-import { SetupWizard } from './screens/SetupWizard.js';
+import { MissionControl } from './screens/MissionControl.js';
 import { ProfileSelect } from './screens/ProfileSelect.js';
 import { WelcomeScreen } from './screens/WelcomeScreen.js';
 import { ConfigManager, SessionStore } from '@agentx/engine';
@@ -56,9 +56,10 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) =>
     return null;
   });
 
-  const handleSetupComplete = useCallback((newConfig: AgentXConfig) => {
+  const handleMissionComplete = useCallback((newConfig: AgentXConfig, profile: Profile) => {
     setConfig(newConfig);
-    setState('profile');
+    setActiveProfile(profile);
+    setState('main'); // Skip profile select — wizard already created one
   }, []);
 
   const handleSetupCancel = useCallback(() => {
@@ -71,7 +72,7 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) =>
   }, []);
 
   if (state === 'setup') {
-    return <SetupWizard onComplete={handleSetupComplete} onCancel={handleSetupCancel} />;
+    return <MissionControl onComplete={handleMissionComplete} onCancel={handleSetupCancel} />;
   }
 
   const handleProfileSwitch = useCallback(() => {
@@ -95,7 +96,7 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) =>
   // Fallback — should not happen
   return (
     <Box>
-      <SetupWizard onComplete={handleSetupComplete} onCancel={handleSetupCancel} />
+      <MissionControl onComplete={handleMissionComplete} onCancel={handleSetupCancel} />
     </Box>
   );
 };

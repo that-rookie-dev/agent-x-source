@@ -18,6 +18,7 @@ export { AgentProgress } from './components/AgentProgress.js';
 export { ReasoningGlimpse } from './components/ReasoningGlimpse.js';
 export { GimmickDisplay } from './components/GimmickDisplay.js';
 export { SetupWizard } from './screens/SetupWizard.js';
+export { MissionControl } from './screens/MissionControl.js';
 export { WelcomeScreen } from './screens/WelcomeScreen.js';
 export { ProfileSelect } from './screens/ProfileSelect.js';
 export { SessionRestore } from './screens/SessionRestore.js';
