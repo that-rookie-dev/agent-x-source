@@ -65,11 +65,11 @@ const TONE_OPTIONS: Array<{ id: ProfileEmotion; label: string; desc: string }> =
 // ─── Provider Descriptions ───────────────────────────────────────────
 
 const PROVIDER_DESCRIPTIONS: Record<string, string> = {
-  openai: 'GPT-4o, o1, o3',
-  anthropic: 'Claude 4, Sonnet',
-  google: 'Gemini 2.5 Pro/Flash',
-  ollama: 'Local models • Private',
-  lmstudio: 'Local models • Private',
+  openai: 'OpenAI • Cloud',
+  anthropic: 'Anthropic • Cloud',
+  google: 'Google AI • Cloud',
+  ollama: 'Local • Private',
+  lmstudio: 'Local • Private',
 };
 
 // ─── Main Component ──────────────────────────────────────────────────
@@ -234,6 +234,31 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel }
     const store = new TelegramStore();
     store.save({ botToken: token });
     setTelegramConfigured(true);
+
+    // Send a welcome message to the user's Telegram chat
+    (async () => {
+      try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limit: 1, offset: -1 }),
+          signal: AbortSignal.timeout(5000),
+        });
+        const data = await res.json() as { ok: boolean; result: Array<{ message?: { chat: { id: number } } }> };
+        if (data.ok && data.result.length > 0) {
+          const chatId = data.result[0]?.message?.chat?.id;
+          if (chatId) {
+            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: '🚀 Comms link established. I\'m online and ready for action, Commander.' }),
+              signal: AbortSignal.timeout(5000),
+            });
+          }
+        }
+      } catch { /* non-critical — don't block setup */ }
+    })();
+
     setStep('transition_3');
   }, [telegramToken]);
 

@@ -71,13 +71,13 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) =>
     setState('main');
   }, []);
 
-  if (state === 'setup') {
-    return <MissionControl onComplete={handleMissionComplete} onCancel={handleSetupCancel} />;
-  }
-
   const handleProfileSwitch = useCallback(() => {
     setState('profile');
   }, []);
+
+  if (state === 'setup') {
+    return <MissionControl onComplete={handleMissionComplete} onCancel={handleSetupCancel} />;
+  }
 
   if (state === 'profile' && config) {
     return (
