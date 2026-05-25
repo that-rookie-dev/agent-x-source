@@ -99,13 +99,15 @@ async function main(): Promise<void> {
     console.log('Usage: agentx [command] [options]');
     console.log('');
     console.log('Commands:');
-    console.log('  agentx                  Launch interactive TUI');
-    console.log('  agentx start            Start background daemon (Telegram)');
-    console.log('  agentx stop             Stop background daemon');
-    console.log('  agentx status           Show daemon status');
-    console.log('  agentx session <id>     Restore a previous session');
+    console.log('  agentx                              Launch interactive TUI');
+    console.log('  agentx start --token <bot-token>    Connect Telegram & start daemon');
+    console.log('  agentx start                        Start daemon (if already connected)');
+    console.log('  agentx stop                         Stop background daemon');
+    console.log('  agentx status                       Show daemon status');
+    console.log('  agentx session <id>                 Restore a previous session');
     console.log('');
     console.log('Options:');
+    console.log('  --token <token>  Telegram bot token (from @BotFather)');
     console.log('  -v, --version    Show version');
     console.log('  -h, --help       Show help');
     process.exit(0);
@@ -114,6 +116,10 @@ async function main(): Promise<void> {
   // ───── Daemon commands ─────
 
   if (args[0] === 'start') {
+    // Parse --token flag
+    const tokenIdx = args.indexOf('--token');
+    const inlineToken = tokenIdx !== -1 ? args[tokenIdx + 1] : undefined;
+
     if (isDaemonRunning()) {
       const status = getDaemonStatus();
       // Auto-restart if running an older version
@@ -128,7 +134,7 @@ async function main(): Promise<void> {
       }
     }
 
-    // Pre-check: Agent-X must be configured
+    // Auto-configure on first run if no config exists
     const configMgr = new ConfigManager();
     if (!configMgr.isConfigured()) {
       console.error('✗ Agent-X is not configured yet.\n');
@@ -136,21 +142,24 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    // Pre-check: Telegram bot token must be configured for daemon mode
+    // If --token is provided, save it and proceed
     const telegramStore = new TelegramStore();
+    if (inlineToken) {
+      telegramStore.save({ botToken: inlineToken });
+      console.log('✓ Telegram bot token saved.');
+    }
+
+    // Check Telegram config
     const telegramConfig = telegramStore.load();
     if (!telegramConfig?.botToken) {
-      console.error('✗ Telegram bot is not configured. The daemon requires Telegram as its interface.\n');
-      console.error('  Follow these steps to configure:\n');
-      console.error('  1. Open Telegram and search for @BotFather');
-      console.error('  2. Send /newbot and follow the prompts to create a bot');
-      console.error('  3. Copy the bot token (looks like: 123456789:ABCdefGhIjKlMnOpQrStUvWxYz)');
-      console.error('  4. Start Agent-X TUI:  agentx');
-      console.error('  5. Run the command:    /telegram start <your-bot-token>');
-      console.error('  6. Open your bot in Telegram and send /start');
-      console.error('  7. Then run:           agentx start\n');
-      console.error('  Alternatively, create ~/.config/agentx/telegram.json with:');
-      console.error('  { "botToken": "<your-bot-token>" }');
+      console.error('✗ Telegram bot is not connected.\n');
+      console.error('  To connect, get a bot token from @BotFather on Telegram, then run:\n');
+      console.error('    agentx start --token <your-bot-token>\n');
+      console.error('  Steps:');
+      console.error('    1. Open Telegram and search for @BotFather');
+      console.error('    2. Send /newbot and follow the prompts');
+      console.error('    3. Copy the token (looks like: 123456789:ABCdefGhIjKlMnOpQrStUvWxYz)');
+      console.error('    4. Run: agentx start --token <token>');
       process.exit(1);
     }
 
@@ -170,7 +179,7 @@ async function main(): Promise<void> {
       console.log(`  Profile: ${status.profile ?? 'default'}`);
       if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
     } else {
-      console.error('✗ Failed to start daemon. Check logs at: ~/.local/share/agentx/logs/');
+      console.error('✗ Daemon failed to start. Run `agentx` for diagnostics.');
     }
     process.exit(0);
   }
