@@ -160,6 +160,9 @@ const CORE_TOOLS: ToolDefinition[] = [
 
   // ═══ PROJECT ═══
   { id: 'project_detect', name: 'Detect Project', description: 'Auto-detect project type and tools', modelDescription: 'Detect language, framework, package manager, build tool, and test framework from project files.', category: 'project_management', riskLevel: 'low', schema: { type: 'object', properties: {}, required: [] }, composable: true, source: 'builtin' },
+
+  // ═══ TELEGRAM ═══
+  { id: 'telegram_send_file', name: 'Send File via Telegram', description: 'Upload and send a file to the user via Telegram', modelDescription: 'Send/upload a file to the user via Telegram. Use this when the user asks you to share, send, or upload a file. The file must exist on disk.', category: 'communication', riskLevel: 'medium', schema: { type: 'object', properties: { path: { type: 'string', description: 'Path to the file to send' }, caption: { type: 'string', description: 'Optional caption/description for the file' } }, required: ['path'] }, composable: true, source: 'builtin' },
 ];
 
 /**
@@ -311,6 +314,14 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
 
   // ═══ Project ═══
   executor.registerHandler('project_detect', project.projectDetect);
+
+  // ═══ Telegram ═══
+  // Default handler — overridden by daemon when Telegram bridge is active
+  executor.registerHandler('telegram_send_file', async () => ({
+    success: false,
+    output: 'Telegram file sending is only available when running in daemon mode with Telegram bridge.',
+    error: 'NOT_AVAILABLE',
+  }));
 
   return { registry, executor };
 }

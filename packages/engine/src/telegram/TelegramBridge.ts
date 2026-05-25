@@ -342,6 +342,41 @@ export class TelegramBridge {
     }
   }
 
+  /**
+   * Send a file (document) to a specific chat.
+   * Uses multipart/form-data to upload the file to Telegram.
+   */
+  async sendDocumentToChat(chatId: number, filePath: string, caption?: string): Promise<{ ok: boolean; description?: string }> {
+    const { statSync, readFileSync } = await import('node:fs');
+    const { basename } = await import('node:path');
+
+    // Verify file exists and is reasonable size (Telegram limit: 50MB)
+    const stat = statSync(filePath);
+    if (stat.size > 50 * 1024 * 1024) {
+      return { ok: false, description: 'File exceeds Telegram 50MB limit' };
+    }
+
+    const fileName = basename(filePath);
+    const url = `https://api.telegram.org/bot${this.config.botToken}/sendDocument`;
+
+    const fileBuffer = readFileSync(filePath);
+    const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
+
+    const formData = new FormData();
+    formData.append('chat_id', String(chatId));
+    formData.append('document', blob, fileName);
+    if (caption) {
+      formData.append('caption', caption.slice(0, 1024));
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+      signal: AbortSignal.timeout(60_000),
+    });
+    return response.json() as Promise<{ ok: boolean; description?: string }>;
+  }
+
   private async apiCall(method: string, params?: Record<string, unknown>): Promise<any> {
     const url = `https://api.telegram.org/bot${this.config.botToken}/${method}`;
     const response = await fetch(url, {

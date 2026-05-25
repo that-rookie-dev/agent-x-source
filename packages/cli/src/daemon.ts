@@ -251,6 +251,34 @@ export async function startDaemon(): Promise<void> {
     }
   });
 
+  // ─── Telegram file sending tool ───
+  // Override the default no-op handler with the real implementation
+  if (toolExecutor?.registerHandler) {
+    toolExecutor.registerHandler('telegram_send_file', async (args: Record<string, unknown>) => {
+      const filePath = args['path'] as string;
+      if (!filePath) {
+        return { success: false, output: 'Missing required parameter: path', error: 'INVALID_ARGS' };
+      }
+      if (!activeChatId) {
+        return { success: false, output: 'No active Telegram chat. Send a message first.', error: 'NO_CHAT' };
+      }
+      // Verify file exists
+      if (!existsSync(filePath)) {
+        return { success: false, output: `File not found: ${filePath}`, error: 'FILE_NOT_FOUND' };
+      }
+      const caption = args['caption'] as string | undefined;
+      try {
+        const result = await bridge.sendDocumentToChat(activeChatId, filePath, caption);
+        if (result.ok) {
+          return { success: true, output: `File sent successfully: ${filePath}` };
+        }
+        return { success: false, output: `Telegram API error: ${result.description ?? 'Unknown error'}`, error: 'TELEGRAM_ERROR' };
+      } catch (err) {
+        return { success: false, output: `Failed to send file: ${err instanceof Error ? err.message : String(err)}`, error: 'SEND_FAILED' };
+      }
+    });
+  }
+
   // Set up Telegram command handler — full feature parity
   bridge.setCommandHandler(async (cmd, args, chatId) => {
     activeChatId = chatId;
