@@ -116,9 +116,16 @@ async function main(): Promise<void> {
   if (args[0] === 'start') {
     if (isDaemonRunning()) {
       const status = getDaemonStatus();
-      console.log(`✦ Agent-X daemon is already running (PID: ${status.pid})`);
-      if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
-      process.exit(0);
+      // Auto-restart if running an older version
+      if (status.version && status.version !== VERSION) {
+        console.log(`✦ Agent-X updated (${status.version} → ${VERSION}). Restarting daemon...`);
+        stopDaemon();
+        await new Promise((r) => setTimeout(r, 1000));
+      } else {
+        console.log(`✦ Agent-X daemon is already running (PID: ${status.pid})`);
+        if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+        process.exit(0);
+      }
     }
     // Spawn daemon as detached background process
     const daemonScript = join(dirname(new URL(import.meta.url).pathname), 'daemon.js');

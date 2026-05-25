@@ -1,5 +1,5 @@
 import { Agent, ConfigManager, TelegramBridge, TelegramStore, ProfileManager, SessionStore, ProviderFactory } from '@agentx/engine';
-import { getLogger, generateSessionId } from '@agentx/shared';
+import { getLogger, generateSessionId, VERSION } from '@agentx/shared';
 import type { AgentXConfig, EngineEvent } from '@agentx/shared';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,7 +34,7 @@ export function isDaemonRunning(): boolean {
   }
 }
 
-export function getDaemonStatus(): { running: boolean; pid?: number; profile?: string; telegram?: boolean; botUsername?: string; startedAt?: string } {
+export function getDaemonStatus(): { running: boolean; pid?: number; profile?: string; telegram?: boolean; botUsername?: string; startedAt?: string; version?: string } {
   const statusPath = getStatusPath();
   if (!isDaemonRunning()) {
     return { running: false };
@@ -264,6 +264,7 @@ export async function startDaemon(): Promise<void> {
       botUsername: status.botUsername,
       startedAt: new Date().toISOString(),
       sessionId,
+      version: VERSION,
     });
 
     console.log(`✦ Agent-X daemon started (PID: ${process.pid})`);
@@ -355,6 +356,7 @@ export async function startDaemon(): Promise<void> {
       messageCount: status.messageCount,
       startedAt: readStatusStartTime(),
       sessionId,
+      version: VERSION,
     });
   }, 30_000);
 }
