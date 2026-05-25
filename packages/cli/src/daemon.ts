@@ -34,7 +34,7 @@ export function isDaemonRunning(): boolean {
   }
 }
 
-export function getDaemonStatus(): { running: boolean; pid?: number; profile?: string; telegram?: boolean; startedAt?: string } {
+export function getDaemonStatus(): { running: boolean; pid?: number; profile?: string; telegram?: boolean; botUsername?: string; startedAt?: string } {
   const statusPath = getStatusPath();
   if (!isDaemonRunning()) {
     return { running: false };
