@@ -15,10 +15,27 @@ export async function reminderSet(
   const intervalSeconds = args['interval_seconds'] as number | undefined;
   const intervalMinutes = args['interval_minutes'] as number | undefined;
   const cron = args['cron'] as string | undefined;
+  const atTime = args['at_time'] as string | undefined;
 
   const scheduler = getSchedulerInstance();
   if (!scheduler) {
     return { success: false, output: 'Scheduler not available', error: 'NO_SCHEDULER' };
+  }
+
+  // Absolute time — convert ISO 8601 string to delay_seconds from now
+  if (atTime) {
+    const targetMs = new Date(atTime).getTime();
+    if (isNaN(targetMs)) {
+      return { success: false, output: `Invalid at_time format: "${atTime}". Use ISO 8601 (e.g. 2026-05-25T17:04:00+05:30).`, error: 'INVALID_TIME' };
+    }
+    const nowMs = Date.now();
+    const delaySecs = Math.round((targetMs - nowMs) / 1000);
+    if (delaySecs <= 0) {
+      return { success: false, output: `The time "${atTime}" is in the past. Current time: ${new Date().toISOString()}`, error: 'TIME_IN_PAST' };
+    }
+    const job = scheduler.addTimer(name, delaySecs, message);
+    const targetStr = new Date(targetMs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    return { success: true, output: `Reminder "${name}" set for ${targetStr} (in ${delaySecs}s). (ID: ${job.id})` };
   }
 
   // Recurring timer with sub-minute interval (seconds-level)

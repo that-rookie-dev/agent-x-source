@@ -156,12 +156,22 @@ export class Agent {
       `- When creating projects, always include: dependency management, build config, and a working entry point at minimum.`,
       `[/DEVELOPER_EXECUTION]`,
       ``,
+      `[CURRENT_TIME]`,
+      `Now: ${new Date().toISOString()}`,
+      `User timezone: ${this.getUserTimezone()}`,
+      `Local time (user): ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: this.getUserTimezone() })}`,
+      `UTC offset: ${this.getUtcOffset()}`,
+      `[/CURRENT_TIME]`,
+      ``,
       `[SCHEDULING]`,
       `For reminders and recurring tasks, use the reminder_set tool:`,
       `- "remind me in X" / "ping me in X" / "alert me after X" → one-time (delay_seconds)`,
+      `- "remind me at <time>" / "at 5pm" / "at 3:30 PM" → one-time (at_time in ISO 8601, e.g. "2026-05-25T17:04:00+05:30")`,
       `- "remind me every X" / "check every X" / "repeat every X" → recurring (interval_minutes)`,
-      `- Convert natural language: "half an hour" = 1800s, "2 hours" = 7200s, "every day" = 1440 min`,
-      `- Confirm in plain language after setting: "Done! I'll ping you in 5 minutes."`,
+      `- For absolute times: use [CURRENT_TIME] above to compute the ISO 8601 target. Include timezone offset.`,
+      `- Convert relative: "half an hour" = 1800s, "2 hours" = 7200s, "every day" = 1440 min`,
+      `- IMPORTANT: If user says a specific clock time, ALWAYS use at_time (not delay_seconds). This avoids calculation errors.`,
+      `- Confirm in plain language after setting: "Done! I'll ping you at 5:04 PM."`,
       `[/SCHEDULING]`,
       ``,
       `[COMMUNICATION_STYLE]`,
@@ -584,12 +594,22 @@ export class Agent {
       `- Read existing code before modifying — understand the patterns in use.`,
       `[/DEVELOPER_EXECUTION]`,
       ``,
+      `[CURRENT_TIME]`,
+      `Now: ${new Date().toISOString()}`,
+      `User timezone: ${this.getUserTimezone()}`,
+      `Local time (user): ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: this.getUserTimezone() })}`,
+      `UTC offset: ${this.getUtcOffset()}`,
+      `[/CURRENT_TIME]`,
+      ``,
       `[SCHEDULING]`,
       `For reminders and recurring tasks, use the reminder_set tool:`,
       `- "remind me in X" / "ping me in X" / "alert me after X" → one-time (delay_seconds)`,
+      `- "remind me at <time>" / "at 5pm" / "at 3:30 PM" → one-time (at_time in ISO 8601, e.g. "2026-05-25T17:04:00+05:30")`,
       `- "remind me every X" / "check every X" / "repeat every X" → recurring (interval_minutes)`,
-      `- Convert natural language: "half an hour" = 1800s, "2 hours" = 7200s, "every day" = 1440 min`,
-      `- Confirm in plain language after setting: "Done! I'll ping you in 5 minutes."`,
+      `- For absolute times: use [CURRENT_TIME] above to compute the ISO 8601 target. Include timezone offset.`,
+      `- Convert relative: "half an hour" = 1800s, "2 hours" = 7200s, "every day" = 1440 min`,
+      `- IMPORTANT: If user says a specific clock time, ALWAYS use at_time (not delay_seconds). This avoids calculation errors.`,
+      `- Confirm in plain language after setting: "Done! I'll ping you at 5:04 PM."`,
       `[/SCHEDULING]`,
       ``,
       `[COMMUNICATION_STYLE]`,
@@ -826,6 +846,38 @@ export class Agent {
   private getBaseUrl(): string | undefined {
     const providerSettings = this.config.provider.providers?.[this.config.provider.activeProvider];
     return providerSettings?.baseUrl;
+  }
+
+  /**
+   * Get the user's timezone from config, falling back to system timezone.
+   */
+  private getUserTimezone(): string {
+    return this.config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  }
+
+  /**
+   * Get the UTC offset string for the user's timezone (e.g. "+05:30", "-04:00").
+   */
+  private getUtcOffset(): string {
+    const tz = this.getUserTimezone();
+    const now = new Date();
+    // Use Intl to get the offset for the target timezone
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'longOffset',
+    });
+    const parts = formatter.formatToParts(now);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName');
+    // Format is like "GMT+5:30" or "GMT-4" — normalize to "+05:30"
+    const raw = tzPart?.value ?? '';
+    const match = raw.match(/GMT([+-])(\d{1,2}):?(\d{2})?/);
+    if (match) {
+      const sign = match[1];
+      const hrs = match[2]!.padStart(2, '0');
+      const mins = (match[3] ?? '00').padStart(2, '0');
+      return `${sign}${hrs}:${mins}`;
+    }
+    return '+00:00';
   }
 
   private getContextWindow(): number {

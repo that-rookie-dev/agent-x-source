@@ -31,6 +31,10 @@ export class ConfigManager {
       const parsed = JSON.parse(raw) as unknown;
       const validated = agentXConfigSchema.parse(parsed);
       this.config = validated as AgentXConfig;
+      // Auto-detect timezone if not set (migration for existing configs)
+      if (!this.config.timezone) {
+        this.config.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      }
       return this.config;
     } catch (err) {
       // Config corrupted — try backup

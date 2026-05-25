@@ -251,6 +251,65 @@ export async function startDaemon(): Promise<void> {
     }
   });
 
+  // ─── Telegram file sending tool ───
+  // Override the default no-op handler with the real implementation
+  if (toolExecutor?.registerHandler) {
+    toolExecutor.registerHandler('telegram_send_file', async (args: Record<string, unknown>) => {
+      const filePath = args['path'] as string;
+      if (!filePath) {
+        return { success: false, output: 'Missing required parameter: path', error: 'INVALID_ARGS' };
+      }
+      if (!activeChatId) {
+        return { success: false, output: 'No active Telegram chat. Send a message first.', error: 'NO_CHAT' };
+      }
+      // Verify file exists
+      if (!existsSync(filePath)) {
+        return { success: false, output: `File not found: ${filePath}`, error: 'FILE_NOT_FOUND' };
+      }
+      const caption = args['caption'] as string | undefined;
+      try {
+        const result = await bridge.sendDocumentToChat(activeChatId, filePath, caption);
+        if (result.ok) {
+          return { success: true, output: `File sent successfully: ${filePath}` };
+        }
+        return { success: false, output: `Telegram API error: ${result.description ?? 'Unknown error'}`, error: 'TELEGRAM_ERROR' };
+      } catch (err) {
+        return { success: false, output: `Failed to send file: ${err instanceof Error ? err.message : String(err)}`, error: 'SEND_FAILED' };
+      }
+    });
+  }
+
+  // ─── File receiving from Telegram ───
+  // Downloads files sent by the user, saves to a dedicated folder, and informs the agent.
+  const filesDir = join(getDataDir(), 'files');
+  mkdirSync(filesDir, { recursive: true });
+
+  bridge.setFileHandler((fileId, fileName, mimeType, caption, chatId) => {
+    activeChatId = chatId;
+    // Download and save asynchronously, then inform the agent
+    void (async () => {
+      try {
+        await bridge.sendToChat(chatId, `📥 Receiving file: ${fileName}...`);
+        const fileBuffer = await bridge.downloadFile(fileId);
+
+        // Generate unique filename to avoid collisions
+        const timestamp = Date.now();
+        const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const savedPath = join(filesDir, `${timestamp}_${safeName}`);
+        writeFileSync(savedPath, fileBuffer);
+
+        // Inform the agent about the received file via the message queue
+        const fileMsg = caption
+          ? `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. Caption: "${caption}". You can read and analyze this file.`
+          : `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. You can read and analyze this file.`;
+        enqueueMessage(fileMsg, chatId);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        bridge.sendToChat(chatId, `❌ Failed to receive file: ${errMsg}`).catch(() => {});
+      }
+    })();
+  });
+
   // Set up Telegram command handler — full feature parity
   bridge.setCommandHandler(async (cmd, args, chatId) => {
     activeChatId = chatId;
@@ -611,10 +670,36 @@ async function handleTelegramCommand(
         '🧰 Other:',
         '  /remember <text> — Save to memory',
         '  /tools — List available tools',
+        '  /timezone [tz] — View or set timezone',
         '  /status — Show daemon status',
         '',
         'Or just type a message to chat with the agent!',
       ].join('\n');
+
+    // ─── Timezone ───
+    case 'timezone':
+    case 'tz': {
+      const newTz = args.join(' ').trim();
+      if (!newTz) {
+        const currentTz = config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const now = new Date().toLocaleString('en-US', { timeZone: currentTz, dateStyle: 'full', timeStyle: 'long' });
+        return `🕐 Timezone: ${currentTz}\n📅 Current time: ${now}\n\nUse /timezone <IANA timezone> to change.\nExample: /timezone Asia/Kolkata`;
+      }
+      // Validate timezone
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: newTz }).format(new Date());
+      } catch {
+        return `❌ Invalid timezone: "${newTz}"\n\nUse IANA format like: Asia/Kolkata, America/New_York, Europe/London, UTC`;
+      }
+      const cur = configManager.load();
+      cur.timezone = newTz;
+      configManager.save(cur);
+      config.timezone = newTz;
+      // Rebuild prompt so the agent knows the new timezone
+      agent.rebuildSystemPrompt();
+      const now = new Date().toLocaleString('en-US', { timeZone: newTz, dateStyle: 'full', timeStyle: 'long' });
+      return `✅ Timezone set to: ${newTz}\n📅 Current time: ${now}`;
+    }
 
     default:
       return null; // Unknown command — pass to agent
