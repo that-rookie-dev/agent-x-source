@@ -251,6 +251,19 @@ export async function startDaemon(): Promise<void> {
     }
   });
 
+  // Set up Telegram command handler — full feature parity
+  bridge.setCommandHandler(async (cmd, args, chatId) => {
+    activeChatId = chatId;
+    return handleTelegramCommand(cmd, args, { agent, pm, config, configManager, sessionStore, sessionId, bridge, lastUserMessage: () => lastUserMessage });
+  });
+
+  // Route all user messages through the queue (no direct agent.sendMessage from bridge)
+  bridge.setMessageHandler((text, chatId) => {
+    activeChatId = chatId;
+    lastUserMessage = text;
+    enqueueMessage(text, chatId);
+  });
+
   try {
     await bridge.start();
     const status = bridge.getStatus();
@@ -316,19 +329,6 @@ export async function startDaemon(): Promise<void> {
         logger.error('DAEMON', event.message);
         break;
     }
-  });
-
-  // Set up Telegram command handler — full feature parity
-  bridge.setCommandHandler(async (cmd, args, chatId) => {
-    activeChatId = chatId;
-    return handleTelegramCommand(cmd, args, { agent, pm, config, configManager, sessionStore, sessionId, bridge, lastUserMessage: () => lastUserMessage });
-  });
-
-  // Route all user messages through the queue (no direct agent.sendMessage from bridge)
-  bridge.setMessageHandler((text, chatId) => {
-    activeChatId = chatId;
-    lastUserMessage = text;
-    enqueueMessage(text, chatId);
   });
 
   // Graceful shutdown
