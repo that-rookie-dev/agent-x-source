@@ -106,6 +106,34 @@ function Test-Installation {
     }
 }
 
+# --- Install optional dependencies (Tesseract for OCR) ---
+
+function Install-OptionalDeps {
+    $tesseract = Get-Command tesseract -ErrorAction SilentlyContinue
+    if ($tesseract) {
+        Write-Ok "Tesseract OCR already installed"
+        return
+    }
+
+    # Try choco or winget
+    $choco = Get-Command choco -ErrorAction SilentlyContinue
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+
+    if ($choco) {
+        Write-Info "Installing Tesseract OCR via Chocolatey..."
+        choco install tesseract -y 2>$null | Out-Null
+        if ($?) { Write-Ok "Tesseract OCR installed"; return }
+    }
+    if ($winget) {
+        Write-Info "Installing Tesseract OCR via winget..."
+        winget install UB-Mannheim.TesseractOCR --silent 2>$null | Out-Null
+        if ($?) { Write-Ok "Tesseract OCR installed"; return }
+    }
+
+    Write-Warn "Tesseract OCR not installed (needed for image text extraction)"
+    Write-Host "    Install manually: choco install tesseract  OR  winget install UB-Mannheim.TesseractOCR" -ForegroundColor DarkGray
+}
+
 # --- Main ---
 
 Write-Host ""
@@ -121,6 +149,7 @@ Remove-Existing
 Install-AgentX
 Add-ToPath
 Test-Installation
+Install-OptionalDeps
 
 Write-Host ""
 Write-Host "  ╔═══════════════════════════════════════╗" -ForegroundColor Green

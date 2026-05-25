@@ -236,6 +236,36 @@ verify_install() {
   fi
 }
 
+# --- Install optional dependencies (Tesseract for OCR) ---
+
+install_optional_deps() {
+  if check_command tesseract; then
+    return 0 # Already installed
+  fi
+
+  # Attempt auto-install based on platform
+  if [ "$OS" = "darwin" ]; then
+    if check_command brew; then
+      brew install tesseract >/dev/null 2>&1 || true
+    fi
+  elif [ "$OS" = "linux" ]; then
+    if check_command apt-get; then
+      sudo apt-get install -y tesseract-ocr >/dev/null 2>&1 || true
+    elif check_command dnf; then
+      sudo dnf install -y tesseract >/dev/null 2>&1 || true
+    elif check_command pacman; then
+      sudo pacman -S --noconfirm tesseract >/dev/null 2>&1 || true
+    fi
+  fi
+
+  # Verify it installed
+  if ! check_command tesseract; then
+    printf "  ${YELLOW}⚠${NC}  Tesseract OCR not installed (needed for image text extraction)\n"
+    printf "  ${DIM}  Install manually: brew install tesseract (macOS) or sudo apt install tesseract-ocr (Ubuntu)${NC}\n"
+  fi
+  return 0
+}
+
 # --- Animated step runner ---
 
 run_step() {
@@ -274,6 +304,7 @@ main() {
   run_step "Assembling quantum modules..." rebuild_native
   run_step "Locking navigation coordinates..." create_symlink
   run_step "Verifying mission integrity..." verify_install
+  run_step "Installing optical sensors (OCR)..." install_optional_deps
 
   ensure_path
 
