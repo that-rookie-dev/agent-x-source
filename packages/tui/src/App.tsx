@@ -57,9 +57,11 @@ export const App: FC<AppProps> = ({ sessionId: restoreSessionId, recovered }) =>
   });
 
   const handleMissionComplete = useCallback((newConfig: AgentXConfig, crew: Crew) => {
+    // Clear terminal so wizard residue doesn't show behind chat
+    process.stdout.write('\x1Bc');
     setConfig(newConfig);
     setActiveCrew(crew);
-    setState('main'); // Skip crew select — wizard already created one
+    setState('main');
   }, []);
 
   const handleSetupCancel = useCallback(() => {
