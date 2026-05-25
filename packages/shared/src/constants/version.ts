@@ -1,3 +1,3 @@
-export const VERSION = '0.1.17';
+export const VERSION = '0.1.33';
 export const APP_NAME = 'Agent-X';
 export const CLI_NAME = 'agentx';
