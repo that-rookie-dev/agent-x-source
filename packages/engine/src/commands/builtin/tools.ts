@@ -4,6 +4,7 @@ export const toolsCommand: CommandInterface = {
   name: 'tools',
   description: 'List available tools and their status',
   usage: '/tools [list|search <query>|info <name>]',
+  hidden: true,
   async execute(args: string[], context: CommandContext): Promise<CommandResult> {
     const subcommand = args[0] ?? 'list';
 

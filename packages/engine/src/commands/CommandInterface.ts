@@ -3,6 +3,7 @@ export interface CommandInterface {
   description: string;
   aliases?: string[];
   usage?: string;
+  hidden?: boolean;
   execute(args: string[], context: CommandContext): Promise<CommandResult>;
 }
 

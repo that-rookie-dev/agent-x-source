@@ -21,11 +21,11 @@ export class CommandRegistry {
   }
 
   list(): CommandInterface[] {
-    // Deduplicate (aliases point to same command)
+    // Deduplicate (aliases point to same command), exclude hidden
     const seen = new Set<string>();
     const result: CommandInterface[] = [];
     for (const cmd of this.commands.values()) {
-      if (!seen.has(cmd.name)) {
+      if (!seen.has(cmd.name) && !cmd.hidden) {
         seen.add(cmd.name);
         result.push(cmd);
       }

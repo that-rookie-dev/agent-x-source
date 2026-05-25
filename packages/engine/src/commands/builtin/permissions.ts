@@ -4,6 +4,7 @@ export const permissionsCommand: CommandInterface = {
   name: 'permissions',
   description: 'View and manage tool permissions',
   usage: '/permissions [list|revoke <tool>|revoke-all]',
+  hidden: true,
   async execute(args: string[], context: CommandContext): Promise<CommandResult> {
     const subcommand = args[0] ?? 'list';
 

@@ -15,8 +15,6 @@ export const BUILTIN_COMMANDS: CommandDefinition[] = [
   { name: 'session', description: 'Session management (list/restore)' },
   { name: 'config', description: 'Open configuration' },
   { name: 'telegram', description: 'Telegram bot configuration' },
-  { name: 'tools', description: 'List available tools' },
-  { name: 'permissions', description: 'Manage permissions' },
   { name: 'bg', description: 'Move current task to background' },
   { name: 'tasks', description: 'List active/completed background tasks' },
 ];
