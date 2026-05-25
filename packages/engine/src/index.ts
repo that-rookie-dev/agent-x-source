@@ -35,6 +35,7 @@ export { ghIssueList, ghIssueCreate, ghPrList, ghPrCreate, ghPrView, ghRepoView,
 export { systemInfo, systemDiskSpace, systemEnv, systemWhich, systemPorts, systemTreeSize, securityAudit, securitySecrets, fileChecksum } from './tools/index.js';
 export { browserOpen, browserScreenshot, browserClick, browserEval } from './tools/index.js';
 export { mcpCall, mcpListTools } from './tools/index.js';
+export { reminderSet, reminderList, reminderCancel } from './tools/index.js';
 export { agentXConfigSchema } from './config/ConfigSchema.js';
 export * from './config/paths.js';
 export { SecretSauceManager, ProfileManager, SoulManager, MemoryManager, DiaryManager, IdentityManager } from './secret-sauce/index.js';

@@ -31,7 +31,8 @@ export type ToolCategory =
   | 'project_management'
   | 'media_image'
   | 'mcp_integration'
-  | 'workspace_ide';
+  | 'workspace_ide'
+  | 'scheduler';
 
 export type ToolRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 

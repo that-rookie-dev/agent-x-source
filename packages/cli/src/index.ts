@@ -6,6 +6,8 @@ import { ConfigManager } from '@agentx/engine';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { spawn } from 'node:child_process';
+import { isDaemonRunning, getDaemonStatus, stopDaemon } from './daemon.js';
 
 /** Crash marker — written on start, removed on clean exit */
 function getCrashMarkerPath(): string {
@@ -56,7 +58,7 @@ function handleCrashRecovery(): boolean {
   return true;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const logger = getLogger();
 
   // Install global crash handlers
@@ -94,15 +96,77 @@ function main(): void {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`✦ ${APP_NAME} v${VERSION} — ${TAGLINE}`);
     console.log('');
-    console.log('Usage: agentx [options] [session <id>]');
+    console.log('Usage: agentx [command] [options]');
+    console.log('');
+    console.log('Commands:');
+    console.log('  agentx                  Launch interactive TUI');
+    console.log('  agentx start            Start background daemon (Telegram)');
+    console.log('  agentx stop             Stop background daemon');
+    console.log('  agentx status           Show daemon status');
+    console.log('  agentx session <id>     Restore a previous session');
     console.log('');
     console.log('Options:');
     console.log('  -v, --version    Show version');
     console.log('  -h, --help       Show help');
-    console.log('');
-    console.log('Commands:');
-    console.log('  agentx                  Launch agent (setup wizard if not configured)');
-    console.log('  agentx session <id>     Restore a previous session');
+    process.exit(0);
+  }
+
+  // ───── Daemon commands ─────
+
+  if (args[0] === 'start') {
+    if (isDaemonRunning()) {
+      const status = getDaemonStatus();
+      console.log(`✦ Agent-X daemon is already running (PID: ${status.pid})`);
+      if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+      process.exit(0);
+    }
+    // Spawn daemon as detached background process
+    const daemonScript = join(dirname(new URL(import.meta.url).pathname), 'daemon.js');
+    const child = spawn(process.execPath, [daemonScript, '--daemon'], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, AGENTX_DAEMON: '1' },
+    });
+    child.unref();
+    // Wait briefly for daemon to start and write status
+    await new Promise((r) => setTimeout(r, 2000));
+    if (isDaemonRunning()) {
+      const status = getDaemonStatus();
+      console.log(`✦ Agent-X daemon started (PID: ${status.pid})`);
+      console.log(`  Profile: ${status.profile ?? 'default'}`);
+      if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+    } else {
+      console.error('✗ Failed to start daemon. Check logs or run `agentx` to configure.');
+    }
+    process.exit(0);
+  }
+
+  if (args[0] === 'stop') {
+    if (!isDaemonRunning()) {
+      console.log('✦ Agent-X daemon is not running.');
+      process.exit(0);
+    }
+    const status = getDaemonStatus();
+    if (stopDaemon()) {
+      console.log(`✦ Agent-X daemon stopped (was PID: ${status.pid})`);
+    } else {
+      console.error('✗ Failed to stop daemon.');
+    }
+    process.exit(0);
+  }
+
+  if (args[0] === 'status') {
+    if (!isDaemonRunning()) {
+      console.log('✦ Agent-X daemon: not running');
+      console.log('  Use `agentx start` to launch the background agent.');
+      process.exit(0);
+    }
+    const status = getDaemonStatus();
+    console.log('✦ Agent-X daemon: running');
+    console.log(`  PID: ${status.pid}`);
+    console.log(`  Profile: ${status.profile ?? 'unknown'}`);
+    if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+    if (status.startedAt) console.log(`  Started: ${status.startedAt}`);
     process.exit(0);
   }
 
@@ -126,4 +190,7 @@ function main(): void {
   render(React.createElement(App, { sessionId, recovered }));
 }
 
-main();
+main().catch((err) => {
+  console.error('Fatal:', err);
+  process.exit(1);
+});
