@@ -1,6 +1,7 @@
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 
 /**
@@ -521,4 +522,191 @@ function escapeXml(str: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+// ─── PDF Reader (zero-dependency text extraction) ───────────────────────────
+
+/**
+ * Extract text content from a PDF file.
+ * Handles FlateDecode compressed streams and standard text operators (Tj, TJ, ', ").
+ */
+export async function pdfRead(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const file = args['path'] as string ?? args['file'] as string;
+  if (!file) return { success: false, output: 'path is required', error: 'MISSING_INPUT' };
+
+  const filePath = resolve(context.scopePath, file);
+  if (!existsSync(filePath)) {
+    return { success: false, output: `File not found: ${file}`, error: 'FILE_NOT_FOUND' };
+  }
+
+  try {
+    const buffer = readFileSync(filePath);
+    const text = extractPdfText(buffer);
+    if (!text.trim()) {
+      return { success: true, output: '(PDF contains no extractable text — it may be image-based/scanned)' };
+    }
+    // Limit output to avoid overwhelming context
+    const maxChars = 100_000;
+    const truncated = text.length > maxChars ? text.slice(0, maxChars) + '\n\n... [truncated, file too large]' : text;
+    return { success: true, output: truncated };
+  } catch (err) {
+    return { success: false, output: `Failed to read PDF: ${err instanceof Error ? err.message : String(err)}`, error: 'PDF_READ_ERROR' };
+  }
+}
+
+function extractPdfText(buffer: Buffer): string {
+  const bytes = buffer;
+  const textParts: string[] = [];
+
+  // Find all stream...endstream blocks
+  let pos = 0;
+  while (pos < bytes.length) {
+    // Find "stream" keyword (preceded by \r\n or \n after the dictionary >>)
+    const streamIdx = indexOfBytes(bytes, Buffer.from('stream'), pos);
+    if (streamIdx === -1) break;
+
+    // Find the corresponding "endstream"
+    const endstreamIdx = indexOfBytes(bytes, Buffer.from('endstream'), streamIdx + 6);
+    if (endstreamIdx === -1) break;
+
+    // Stream data starts after "stream\r\n" or "stream\n"
+    let dataStart = streamIdx + 6;
+    if (bytes[dataStart] === 0x0d && bytes[dataStart + 1] === 0x0a) dataStart += 2;
+    else if (bytes[dataStart] === 0x0a) dataStart += 1;
+    else if (bytes[dataStart] === 0x0d) dataStart += 1;
+
+    // Stream data ends before "endstream" (may have trailing \r\n)
+    let dataEnd = endstreamIdx;
+    if (dataEnd > dataStart && bytes[dataEnd - 1] === 0x0a) dataEnd--;
+    if (dataEnd > dataStart && bytes[dataEnd - 1] === 0x0d) dataEnd--;
+
+    const streamData = bytes.subarray(dataStart, dataEnd);
+
+    // Check if this stream's dictionary has /FlateDecode
+    const dictStart = Math.max(0, streamIdx - 500);
+    const dictRegion = bytes.subarray(dictStart, streamIdx).toString('latin1');
+
+    let decoded: Buffer | null = null;
+    if (dictRegion.includes('/FlateDecode')) {
+      try {
+        decoded = inflateSync(streamData) as Buffer;
+      } catch {
+        // Not valid zlib — skip
+      }
+    } else {
+      // Try as-is (uncompressed stream)
+      decoded = streamData as Buffer;
+    }
+
+    if (decoded) {
+      const streamText = extractTextFromContentStream(decoded.toString('latin1'));
+      if (streamText.trim()) {
+        textParts.push(streamText);
+      }
+    }
+
+    pos = endstreamIdx + 9;
+  }
+
+  return textParts.join('\n');
+}
+
+/**
+ * Parse PDF content stream operators to extract text.
+ * Handles Tj, TJ, ', " operators.
+ */
+function extractTextFromContentStream(content: string): string {
+  const lines: string[] = [];
+  let currentLine = '';
+
+  // Match text showing operators:
+  // (text) Tj — show string
+  // [(text)(text)] TJ — show array of strings
+  // (text) ' — move to next line and show
+  // (text) " — set spacing, move to next line, show
+
+  // Handle TJ arrays: [(string)num(string)...]TJ
+  const tjArrayRegex = /\[((?:[^[\]]*?))\]\s*TJ/g;
+  let match: RegExpExecArray | null;
+
+  // Replace TJ arrays with extracted text
+  let processedContent = content;
+
+  // First pass: extract TJ array text
+  match = tjArrayRegex.exec(content);
+  while (match !== null) {
+    const arrayContent = match[1]!;
+    let text = '';
+    const strRegex = /\(([^)]*)\)/g;
+    let strMatch: RegExpExecArray | null;
+    strMatch = strRegex.exec(arrayContent);
+    while (strMatch !== null) {
+      text += decodePdfString(strMatch[1]!);
+      strMatch = strRegex.exec(arrayContent);
+    }
+    if (text) currentLine += text;
+    match = tjArrayRegex.exec(content);
+  }
+
+  // Second pass: handle single Tj operators (not inside TJ arrays)
+  const tjRegex = /\(([^)]*)\)\s*Tj/g;
+  match = tjRegex.exec(processedContent);
+  while (match !== null) {
+    currentLine += decodePdfString(match[1]!);
+    match = tjRegex.exec(processedContent);
+  }
+
+  // Handle ' and " operators
+  const tickRegex = /\(([^)]*)\)\s*['"]/g;
+  match = tickRegex.exec(processedContent);
+  while (match !== null) {
+    if (currentLine) { lines.push(currentLine); currentLine = ''; }
+    currentLine += decodePdfString(match[1]!);
+    match = tickRegex.exec(processedContent);
+  }
+
+  // Handle text position operators for line breaks
+  // Td, TD, T* indicate new text positioning (often new lines)
+  if (currentLine) lines.push(currentLine);
+
+  // If we got nothing from operator parsing, try a more aggressive approach
+  if (lines.join('').trim().length === 0) {
+    // Fallback: extract all parenthesized strings
+    const fallbackRegex = /\(([^)]+)\)/g;
+    const fallbackLines: string[] = [];
+    match = fallbackRegex.exec(content);
+    while (match !== null) {
+      const decoded = decodePdfString(match[1]!);
+      if (decoded.trim() && !/^[0-9.]+$/.test(decoded.trim())) {
+        fallbackLines.push(decoded);
+      }
+      match = fallbackRegex.exec(content);
+    }
+    return fallbackLines.join(' ');
+  }
+
+  return lines.join('\n');
+}
+
+function decodePdfString(str: string): string {
+  // Decode PDF escape sequences
+  return str
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\\(/g, '(')
+    .replace(/\\\)/g, ')')
+    .replace(/\\\\/g, '\\')
+    .replace(/\\(\d{1,3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
+}
+
+function indexOfBytes(buf: Buffer, search: Buffer, from: number): number {
+  for (let i = from; i <= buf.length - search.length; i++) {
+    let found = true;
+    for (let j = 0; j < search.length; j++) {
+      if (buf[i + j] !== search[j]) { found = false; break; }
+    }
+    if (found) return i;
+  }
+  return -1;
 }
