@@ -12,12 +12,22 @@ export async function reminderSet(
   const name = (args['name'] as string) ?? 'Reminder';
   const message = (args['message'] as string) ?? name;
   const delaySeconds = args['delay_seconds'] as number | undefined;
+  const intervalSeconds = args['interval_seconds'] as number | undefined;
   const intervalMinutes = args['interval_minutes'] as number | undefined;
   const cron = args['cron'] as string | undefined;
 
   const scheduler = getSchedulerInstance();
   if (!scheduler) {
     return { success: false, output: 'Scheduler not available', error: 'NO_SCHEDULER' };
+  }
+
+  // Recurring timer with sub-minute interval (seconds-level)
+  if (intervalSeconds && intervalSeconds > 0) {
+    const job = scheduler.addRecurringTimer(name, intervalSeconds, message);
+    const timeStr = intervalSeconds >= 60
+      ? `${Math.round(intervalSeconds / 60)} minute(s)`
+      : `${intervalSeconds} second(s)`;
+    return { success: true, output: `Recurring reminder "${name}" set — repeats every ${timeStr}. (ID: ${job.id})` };
   }
 
   // One-shot reminder (delay in seconds)

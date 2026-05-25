@@ -29,6 +29,7 @@ export type EngineEvent =
   | { type: 'task_consolidated_time'; totalElapsed: number; breakdown: Array<{ tool: string; elapsed: number }> }
   | { type: 'task_backgrounded'; taskId: string }
   | { type: 'steer_message'; taskId: string; instruction: string }
+  | { type: 'reminder_fired'; taskId: string; name: string; message: string }
   | { type: 'background_task_complete'; taskId: string; summary: string }
   | { type: 'reasoning_start' }
   | { type: 'reasoning_glimpse'; text: string }

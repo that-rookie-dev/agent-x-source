@@ -132,11 +132,17 @@ export class Scheduler {
       for (const job of data) {
         if (job.oneShot) continue; // Don't restore expired one-shots
         // Recompute next run time from now
-        try {
-          const parsed = parseCron(job.cron);
-          job.nextRun = getNextRunTime(parsed);
-        } catch {
-          job.nextRun = now + 60_000; // fallback
+        if (job.cron.startsWith('@every:')) {
+          const match = job.cron.match(/@every:(\d+)s/);
+          const intervalSecs = match ? parseInt(match[1]!, 10) : 60;
+          job.nextRun = now + intervalSecs * 1000;
+        } else {
+          try {
+            const parsed = parseCron(job.cron);
+            job.nextRun = getNextRunTime(parsed);
+          } catch {
+            job.nextRun = now + 60_000; // fallback
+          }
         }
         this.jobs.set(job.id, job);
       }
@@ -201,6 +207,33 @@ export class Scheduler {
     return job;
   }
 
+  /**
+   * Add a recurring timer that fires every N seconds. Useful for sub-minute intervals.
+   */
+  addRecurringTimer(name: string, intervalSecs: number, instruction: string): ScheduledJob {
+    const job: ScheduledJob = {
+      id: generateId(),
+      name,
+      cron: `@every:${intervalSecs}s`,
+      instruction,
+      enabled: true,
+      nextRun: Date.now() + intervalSecs * 1000,
+      runCount: 0,
+      oneShot: false,
+    };
+
+    this.jobs.set(job.id, job);
+    this.eventBus.emit({
+      type: 'steer_message',
+      taskId: job.id,
+      instruction: `Recurring timer "${name}" set — repeats every ${intervalSecs}s`,
+    } as EngineEvent);
+
+    this.persist();
+    this.ensureTimerRunning();
+    return job;
+  }
+
   removeJob(jobId: string): boolean {
     const deleted = this.jobs.delete(jobId);
     if (deleted) this.persist();
@@ -259,10 +292,25 @@ export class Scheduler {
             taskId: job.id,
             instruction: `⏰ Reminder: "${job.name}" — time's up!`,
           } as EngineEvent);
+        } else if (job.cron.startsWith('@every:')) {
+          // Recurring timer with second-level interval
+          const match = job.cron.match(/@every:(\d+)s/);
+          const intervalSecs = match ? parseInt(match[1]!, 10) : 60;
+          job.nextRun = now + intervalSecs * 1000;
+
+          this.eventBus.emit({
+            type: 'steer_message',
+            taskId: job.id,
+            instruction: `⏰ Recurring reminder "${job.name}" (every ${intervalSecs}s, run #${job.runCount})`,
+          } as EngineEvent);
         } else {
           // Recurring cron — compute next run
-          const parsed = parseCron(job.cron);
-          job.nextRun = getNextRunTime(parsed);
+          try {
+            const parsed = parseCron(job.cron);
+            job.nextRun = getNextRunTime(parsed);
+          } catch {
+            job.nextRun = now + 60_000; // fallback: 1 minute
+          }
 
           this.eventBus.emit({
             type: 'steer_message',

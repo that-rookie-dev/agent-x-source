@@ -7,6 +7,7 @@ import * as git from './builtin/git.js';
 import * as code from './builtin/code.js';
 import * as documents from './builtin/documents.js';
 import * as scheduler from './builtin/scheduler.js';
+import * as subagent from './builtin/subagent.js';
 import * as browser from './builtin/browser.js';
 import * as containers from './builtin/containers.js';
 import * as data from './builtin/data.js';
@@ -69,9 +70,14 @@ const CORE_TOOLS: ToolDefinition[] = [
   { id: 'xlsx_create', name: 'Create Spreadsheet', description: 'Create an XLSX spreadsheet', modelDescription: 'Create a .xlsx with headers and rows.', category: 'documents', riskLevel: 'medium', schema: { type: 'object', properties: { file: { type: 'string', description: 'Output path' }, sheet_name: { type: 'string', description: 'Sheet name' }, headers: { type: 'array', description: 'Column headers' }, rows: { type: 'array', description: 'Row arrays' } }, required: ['file', 'headers', 'rows'] }, composable: true, source: 'builtin' },
 
   // ═══ SCHEDULER ═══
-  { id: 'reminder_set', name: 'Set Reminder', description: 'Set a reminder or recurring task', modelDescription: 'Set a reminder. One-time: delay_seconds. Recurring: interval_minutes.', category: 'scheduler', riskLevel: 'low', schema: { type: 'object', properties: { name: { type: 'string', description: 'Short name' }, message: { type: 'string', description: 'Reminder message' }, delay_seconds: { type: 'number', description: 'Seconds until fire (one-time)' }, interval_minutes: { type: 'number', description: 'Interval in minutes (recurring)' }, cron: { type: 'string', description: 'Cron expression (advanced)' } }, required: ['name', 'message'] }, composable: true, source: 'builtin' },
+  { id: 'reminder_set', name: 'Set Reminder', description: 'Set a reminder or recurring task', modelDescription: 'Set a reminder. One-time: delay_seconds. Recurring: interval_seconds (for sub-minute) or interval_minutes. Use interval_seconds for anything less than 60s.', category: 'scheduler', riskLevel: 'low', schema: { type: 'object', properties: { name: { type: 'string', description: 'Short name' }, message: { type: 'string', description: 'Reminder message' }, delay_seconds: { type: 'number', description: 'Seconds until fire (one-time)' }, interval_seconds: { type: 'number', description: 'Interval in seconds (recurring, sub-minute)' }, interval_minutes: { type: 'number', description: 'Interval in minutes (recurring)' }, cron: { type: 'string', description: 'Cron expression (advanced)' } }, required: ['name', 'message'] }, composable: true, source: 'builtin' },
   { id: 'reminder_list', name: 'List Reminders', description: 'List active reminders', modelDescription: 'Show all active reminders and recurring tasks.', category: 'scheduler', riskLevel: 'low', schema: { type: 'object', properties: {}, required: [] }, composable: true, source: 'builtin' },
   { id: 'reminder_cancel', name: 'Cancel Reminder', description: 'Cancel a reminder', modelDescription: 'Remove a reminder by ID or name.', category: 'scheduler', riskLevel: 'low', schema: { type: 'object', properties: { id: { type: 'string', description: 'Reminder ID' }, name: { type: 'string', description: 'Reminder name (partial match)' } }, required: [] }, composable: true, source: 'builtin' },
+
+  // ═══ SUB-AGENTS ═══
+  { id: 'sub_agent_spawn', name: 'Spawn Sub-Agent', description: 'Delegate a task to a background sub-agent', modelDescription: 'Spawn a background sub-agent to handle a complex task independently. Use for research, analysis, or any task that can run in parallel. The sub-agent gets its own LLM context.', category: 'agent_orchestration', riskLevel: 'medium', schema: { type: 'object', properties: { instruction: { type: 'string', description: 'Detailed instruction for the sub-agent' }, tools: { type: 'string', description: 'Comma-separated tool IDs the sub-agent can use' }, timeout: { type: 'number', description: 'Timeout in ms (default: 60000)' } }, required: ['instruction'] }, composable: true, source: 'builtin' },
+  { id: 'sub_agent_status', name: 'Sub-Agent Status', description: 'Check status of running sub-agents', modelDescription: 'Check status of a specific sub-agent by ID, or list all running sub-agents.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { agent_id: { type: 'string', description: 'Agent ID (optional — omit to list all)' } }, required: [] }, composable: true, source: 'builtin' },
+  { id: 'sub_agent_cancel', name: 'Cancel Sub-Agent', description: 'Cancel a running sub-agent', modelDescription: 'Cancel and abort a running sub-agent by its ID.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { agent_id: { type: 'string', description: 'Agent ID to cancel' } }, required: ['agent_id'] }, composable: true, source: 'builtin' },
 
   // ═══ BROWSER ═══
   { id: 'browser_open', name: 'Open Web Page', description: 'Open URL in headless browser', modelDescription: 'Open a URL, return page title and text content.', category: 'browser_automation', riskLevel: 'medium', schema: { type: 'object', properties: { url: { type: 'string', description: 'URL to open' } }, required: ['url'] }, composable: true, source: 'builtin' },
@@ -218,6 +224,11 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('reminder_set', scheduler.reminderSet);
   executor.registerHandler('reminder_list', scheduler.reminderList);
   executor.registerHandler('reminder_cancel', scheduler.reminderCancel);
+
+  // ═══ Sub-Agents ═══
+  executor.registerHandler('sub_agent_spawn', subagent.subAgentSpawn);
+  executor.registerHandler('sub_agent_status', subagent.subAgentStatus);
+  executor.registerHandler('sub_agent_cancel', subagent.subAgentCancel);
 
   // ═══ Browser ═══
   executor.registerHandler('browser_open', browser.browserOpen);

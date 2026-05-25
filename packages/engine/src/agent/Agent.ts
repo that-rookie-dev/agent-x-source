@@ -18,6 +18,7 @@ import { TaskManager } from './TaskManager.js';
 import { Scheduler } from '../scheduler/Scheduler.js';
 import { setSchedulerInstance } from '../commands/builtin/schedule.js';
 import { setTaskManagerInstance } from '../commands/builtin/tasks.js';
+import { setSubAgentManagerInstance } from '../tools/builtin/subagent.js';
 import { SecretSauceManager } from '../secret-sauce/index.js';
 import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ErrorShield } from './ErrorShield.js';
@@ -60,6 +61,7 @@ export class Agent {
     this.eventBus = new AgentEventBus();
     this.tokenTracker = new TokenTracker(this.getContextWindow());
     this.subAgents = new SubAgentManager(this.eventBus);
+    setSubAgentManagerInstance(this.subAgents);
     this.taskManager = new TaskManager(this.eventBus);
     setTaskManagerInstance(this.taskManager);
     this.scheduler = new Scheduler(this.eventBus);
@@ -189,9 +191,20 @@ export class Agent {
     // Configure sub-agents with provider so they can make real LLM calls
     this.subAgents.configure(this.provider, this.config, systemPrompt ?? '');
 
-    // When a scheduled job fires, process it as a user message
+    // When a scheduled job fires, emit it as a notification message (non-blocking).
+    // Simple reminders don't need an LLM round-trip — just display the message.
     this.scheduler.setTriggerHandler((job) => {
-      void this.sendMessage(job.instruction);
+      const reminderMessage: Message = {
+        id: generateMessageId(),
+        sessionId: this.sessionId,
+        role: 'assistant',
+        content: `⏰ **Reminder**: ${job.instruction}`,
+        toolCalls: null,
+        createdAt: new Date().toISOString(),
+        tokenCount: 0,
+      };
+      this.emit({ type: 'reminder_fired', taskId: job.id, name: job.name, message: job.instruction });
+      this.emit({ type: 'message_received', message: reminderMessage, elapsed: 0 });
     });
     this.scheduler.start();
 
