@@ -44,11 +44,19 @@ export class ToolExecutor {
     }
 
     // Check scope for path-based tools
-    const path = (args['path'] ?? args['filePath'] ?? args['target']) as string | undefined;
+    const path = (args['path'] ?? args['filePath'] ?? args['file'] ?? args['target'] ?? args['from']) as string | undefined;
     if (path) {
       const validation = this.scopeGuard.validatePath(path);
       if (!validation.valid) {
         return { success: false, output: validation.error ?? 'Path outside scope', error: 'SCOPE_VIOLATION' };
+      }
+    }
+    // Also check 'to' destination for move operations
+    const toPath = args['to'] as string | undefined;
+    if (toPath) {
+      const validation = this.scopeGuard.validatePath(toPath);
+      if (!validation.valid) {
+        return { success: false, output: validation.error ?? 'Destination path outside scope', error: 'SCOPE_VIOLATION' };
       }
     }
 

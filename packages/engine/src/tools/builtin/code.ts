@@ -6,7 +6,8 @@ import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 export async function codeSearch(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const pattern = args['pattern'] as string;
   const glob = args['glob'] as string | undefined;
-  const cwd = resolve(context.scopePath);
+  const searchPath = (args['path'] as string) ?? '.';
+  const cwd = resolve(context.scopePath, searchPath);
 
   try {
     let cmd = `grep -rn --include='*.{ts,tsx,js,jsx,py,rs,go,java,c,cpp,h,hpp,rb,php}' "${pattern.replace(/"/g, '\\"')}"`;
@@ -62,9 +63,9 @@ export async function codeDefinitions(args: Record<string, unknown>, context: To
 }
 
 export async function codeReplace(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const file = resolve(context.scopePath, args['file'] as string);
-  const oldStr = args['old'] as string;
-  const newStr = args['new'] as string;
+  const file = resolve(context.scopePath, (args['path'] ?? args['file']) as string);
+  const oldStr = (args['search'] ?? args['old']) as string;
+  const newStr = (args['replace'] ?? args['new']) as string;
 
   if (!existsSync(file)) {
     return { success: false, output: 'File not found', error: 'NOT_FOUND' };

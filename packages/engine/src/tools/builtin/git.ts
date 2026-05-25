@@ -7,10 +7,10 @@ export async function gitStatus(_args: Record<string, unknown>, context: ToolExe
 }
 
 export async function gitDiff(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const staged = args['staged'] as boolean;
-  const file = args['file'] as string | undefined;
+  const ref = args['ref'] as string | undefined;
+  const file = (args['path'] ?? args['file']) as string | undefined;
   let cmd = 'diff';
-  if (staged) cmd += ' --cached';
+  if (ref) cmd += ` ${ref}`;
   if (file) cmd += ` -- ${file}`;
   return gitCommand(cmd, context);
 }
@@ -25,10 +25,15 @@ export async function gitLog(args: Record<string, unknown>, context: ToolExecuti
 
 export async function gitCommit(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const message = args['message'] as string;
-  const all = args['all'] as boolean;
-  let cmd = 'commit';
-  if (all) cmd += ' -a';
-  cmd += ` -m "${message.replace(/"/g, '\\"')}"`;
+  const files = args['files'] as string | undefined;
+
+  // Stage files if provided
+  if (files) {
+    const addResult = await gitCommand(`add ${files}`, context);
+    if (!addResult.success) return addResult;
+  }
+
+  const cmd = `commit -m "${message.replace(/"/g, '\\"')}"`;
   return gitCommand(cmd, context);
 }
 

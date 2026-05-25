@@ -61,7 +61,7 @@ export async function folderDelete(args: Record<string, unknown>, context: ToolE
 }
 
 export async function folderList(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const dirPath = resolve(context.scopePath, args['path'] as string);
+  const dirPath = resolve(context.scopePath, (args['path'] as string) ?? '.');
   try {
     if (!existsSync(dirPath)) {
       return { success: false, output: 'Directory does not exist', error: 'NOT_FOUND' };
@@ -82,8 +82,8 @@ export async function folderList(args: Record<string, unknown>, context: ToolExe
 }
 
 export async function folderMove(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const source = resolve(context.scopePath, args['source'] as string);
-  const destination = resolve(context.scopePath, args['destination'] as string);
+  const source = resolve(context.scopePath, args['from'] as string);
+  const destination = resolve(context.scopePath, args['to'] as string);
   try {
     if (!existsSync(source)) {
       return { success: false, output: 'Source does not exist', error: 'NOT_FOUND' };
