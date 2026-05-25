@@ -6,7 +6,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'OpenAI',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: true,
+    baseUrlConfigurable: false,
     defaultBaseUrl: 'https://api.openai.com/v1',
   },
   anthropic: {
@@ -14,7 +14,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Anthropic',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: true,
+    baseUrlConfigurable: false,
     defaultBaseUrl: 'https://api.anthropic.com',
   },
   google: {

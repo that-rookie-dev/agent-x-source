@@ -240,7 +240,7 @@ export const SetupWizard: FC<SetupWizardProps> = ({ onComplete, onCancel }) => {
 
       {step === 'baseurl' && (
         <Box flexDirection="column">
-          <Text color={COLORS.text}>Base URL (press Enter for default):</Text>
+          <Text color={COLORS.text}>Server URL (press Enter for default):</Text>
           <Box marginTop={1}>
             <Text color={COLORS.primary}>❯ </Text>
             <TextInput
