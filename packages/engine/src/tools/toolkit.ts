@@ -161,6 +161,7 @@ const CORE_TOOLS: ToolDefinition[] = [
   { id: 'image_view', name: 'Image Info', description: 'Get image metadata', modelDescription: 'Show image dimensions, format, and file size.', category: 'media_image', riskLevel: 'low', schema: { type: 'object', properties: { file: { type: 'string', description: 'Image file path' } }, required: ['file'] }, composable: true, source: 'builtin' },
   { id: 'image_resize', name: 'Resize Image', description: 'Resize an image', modelDescription: 'Resize an image to specified width (and optionally height). Uses sips (macOS) or ImageMagick.', category: 'media_image', riskLevel: 'medium', schema: { type: 'object', properties: { file: { type: 'string', description: 'Image file path' }, width: { type: 'number', description: 'Target width in pixels' }, height: { type: 'number', description: 'Target height (optional, maintains aspect ratio)' }, output: { type: 'string', description: 'Output file path (default: overwrite)' } }, required: ['file', 'width'] }, composable: true, source: 'builtin' },
   { id: 'image_convert', name: 'Convert Image', description: 'Convert image format', modelDescription: 'Convert an image to a different format (png, jpg, webp, gif, bmp).', category: 'media_image', riskLevel: 'medium', schema: { type: 'object', properties: { file: { type: 'string', description: 'Source image path' }, format: { type: 'string', description: 'Target format: png, jpg, webp, gif, bmp' }, output: { type: 'string', description: 'Output path (optional)' } }, required: ['file', 'format'] }, composable: true, source: 'builtin' },
+  { id: 'image_ocr', name: 'Image OCR', description: 'Extract text from an image', modelDescription: 'Extract text from an image using OCR (Tesseract). Use this to read text from screenshots, photos of documents, scanned pages, etc.', category: 'media_image', riskLevel: 'low', schema: { type: 'object', properties: { path: { type: 'string', description: 'Path to the image file' } }, required: ['path'] }, composable: true, source: 'builtin' },
 
   // ═══ PROJECT ═══
   { id: 'project_detect', name: 'Detect Project', description: 'Auto-detect project type and tools', modelDescription: 'Detect language, framework, package manager, build tool, and test framework from project files.', category: 'project_management', riskLevel: 'low', schema: { type: 'object', properties: {}, required: [] }, composable: true, source: 'builtin' },
@@ -319,6 +320,7 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('image_view', image.imageView);
   executor.registerHandler('image_resize', image.imageResize);
   executor.registerHandler('image_convert', image.imageConvert);
+  executor.registerHandler('image_ocr', image.imageOcr);
 
   // ═══ Project ═══
   executor.registerHandler('project_detect', project.projectDetect);

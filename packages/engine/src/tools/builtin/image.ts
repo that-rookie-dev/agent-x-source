@@ -99,3 +99,41 @@ export async function imageConvert(args: Record<string, unknown>, context: ToolE
     }
   }
 }
+
+/**
+ * Extract text from an image using OCR (Tesseract).
+ */
+export async function imageOcr(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const file = args['path'] as string ?? args['file'] as string;
+  if (!file) return { success: false, output: 'path is required', error: 'MISSING_INPUT' };
+
+  const filePath = resolve(context.scopePath, file);
+  if (!existsSync(filePath)) {
+    return { success: false, output: `File not found: ${file}`, error: 'NOT_FOUND' };
+  }
+
+  // Check if tesseract is available
+  try {
+    execSync('which tesseract', { encoding: 'utf-8', stdio: 'pipe' });
+  } catch {
+    return {
+      success: false,
+      output: 'Tesseract OCR is not installed. Install it:\n  macOS: brew install tesseract\n  Linux: sudo apt install tesseract-ocr\n  Windows: choco install tesseract',
+      error: 'TOOL_MISSING',
+    };
+  }
+
+  try {
+    const text = execSync(`tesseract "${filePath}" stdout 2>/dev/null`, {
+      encoding: 'utf-8',
+      timeout: 30_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    if (!text.trim()) {
+      return { success: true, output: '(No text detected in image)' };
+    }
+    return { success: true, output: text.trim() };
+  } catch (err) {
+    return { success: false, output: `OCR failed: ${err instanceof Error ? err.message : String(err)}`, error: 'OCR_ERROR' };
+  }
+}
