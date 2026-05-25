@@ -173,8 +173,25 @@ export class TelegramBridge {
       // Send "typing" indicator
       await this.apiCall('sendChatAction', { chat_id: msg.chat.id, action: 'typing' });
 
+      // Wait if agent is busy processing another message
+      let waitAttempts = 0;
+      while (this.agent.processing && waitAttempts < 60) {
+        await new Promise((r) => setTimeout(r, 1000));
+        await this.apiCall('sendChatAction', { chat_id: msg.chat.id, action: 'typing' });
+        waitAttempts++;
+      }
+
+      if (this.agent.processing) {
+        await this.sendMessage(msg.chat.id, '⏳ Agent is busy. Please try again in a moment.');
+        return;
+      }
+
       const response = await this.agent.sendMessage(msg.text);
-      await this.sendMessage(msg.chat.id, response.content);
+      if (response.content) {
+        await this.sendMessage(msg.chat.id, response.content);
+      } else {
+        await this.sendMessage(msg.chat.id, '(No response generated)');
+      }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Processing failed';
       await this.sendMessage(msg.chat.id, `❌ Error: ${errMsg}`);
@@ -184,23 +201,27 @@ export class TelegramBridge {
   private async sendMessage(chatId: number, text: string): Promise<void> {
     // Telegram has a 4096 character limit per message
     const maxLen = 4096;
+    const chunks: string[] = [];
     if (text.length <= maxLen) {
-      await this.apiCall('sendMessage', {
-        chat_id: chatId,
-        text,
-        parse_mode: 'Markdown',
-      });
+      chunks.push(text);
     } else {
-      // Split into chunks
-      const chunks = [];
       for (let i = 0; i < text.length; i += maxLen) {
         chunks.push(text.slice(i, i + maxLen));
       }
-      for (const chunk of chunks) {
+    }
+
+    for (const chunk of chunks) {
+      // Try Markdown first, fall back to plain text if parsing fails
+      const result = await this.apiCall('sendMessage', {
+        chat_id: chatId,
+        text: chunk,
+        parse_mode: 'Markdown',
+      });
+      if (!result.ok && result.description?.includes('parse')) {
+        // Markdown parsing failed — send as plain text
         await this.apiCall('sendMessage', {
           chat_id: chatId,
           text: chunk,
-          parse_mode: 'Markdown',
         });
       }
     }
