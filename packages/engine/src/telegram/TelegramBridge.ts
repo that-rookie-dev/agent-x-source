@@ -32,6 +32,7 @@ export class TelegramBridge {
   private commandHandler: ((cmd: string, args: string[], chatId: number) => Promise<string | null>) | null = null;
   private callbackHandlers: Map<string, (data: string, chatId: number) => void> = new Map();
   private messageHandler: ((text: string, chatId: number) => void) | null = null;
+  private fileHandler: ((fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => void) | null = null;
 
   constructor(config: TelegramConfig) {
     this.config = config;
@@ -54,6 +55,14 @@ export class TelegramBridge {
    */
   setMessageHandler(handler: (text: string, chatId: number) => void): void {
     this.messageHandler = handler;
+  }
+
+  /**
+   * Register a handler for file messages (documents, photos, audio, video).
+   * Called with the Telegram file_id, file name, MIME type, optional caption, and chat ID.
+   */
+  setFileHandler(handler: (fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => void): void {
+    this.fileHandler = handler;
   }
 
   /**
@@ -116,9 +125,9 @@ export class TelegramBridge {
       return;
     }
 
-    const message = update['message'] as { chat: { id: number }; from?: { id: number }; text?: string } | undefined;
-    if (message?.text) {
-      await this.handleMessage(message as { chat: { id: number }; from?: { id: number }; text: string });
+    const message = update['message'] as Record<string, any> | undefined;
+    if (message) {
+      await this.handleMessage(message);
     }
   }
 
@@ -161,7 +170,7 @@ export class TelegramBridge {
           this.lastUpdateId = update.update_id;
           if (update.callback_query) {
             await this.handleCallbackQuery(update.callback_query);
-          } else if (update.message?.text) {
+          } else if (update.message) {
             await this.handleMessage(update.message);
           }
         }
@@ -182,25 +191,63 @@ export class TelegramBridge {
     }
   }
 
-  private async handleMessage(msg: { chat: { id: number }; from?: { id: number }; text: string }): Promise<void> {
+  private async handleMessage(msg: Record<string, any>): Promise<void> {
+    const chatId = msg.chat?.id as number;
+    const fromId = msg.from?.id as number | undefined;
+    if (!chatId) return;
+
     // Check if user is allowed
     if (this.config.allowedUserIds?.length) {
-      if (!msg.from || !this.config.allowedUserIds.includes(msg.from.id)) {
-        await this.sendMessage(msg.chat.id, '⚠️ Unauthorized. This bot is restricted to specific users.');
+      if (!fromId || !this.config.allowedUserIds.includes(fromId)) {
+        await this.sendMessage(chatId, '⚠️ Unauthorized. This bot is restricted to specific users.');
         return;
       }
     }
 
     this.messageCount++;
 
+    // ─── Handle file messages (document, photo, audio, video, voice) ───
+    const doc = msg.document as { file_id: string; file_name?: string; mime_type?: string } | undefined;
+    const photo = msg.photo as Array<{ file_id: string; width: number; height: number }> | undefined;
+    const audio = msg.audio as { file_id: string; file_name?: string; mime_type?: string } | undefined;
+    const video = msg.video as { file_id: string; file_name?: string; mime_type?: string } | undefined;
+    const voice = msg.voice as { file_id: string; mime_type?: string } | undefined;
+
+    const fileInfo = doc
+      ? { fileId: doc.file_id, fileName: doc.file_name ?? 'document', mimeType: doc.mime_type ?? 'application/octet-stream' }
+      : photo?.length
+        ? { fileId: photo[photo.length - 1]!.file_id, fileName: 'photo.jpg', mimeType: 'image/jpeg' }
+        : audio
+          ? { fileId: audio.file_id, fileName: audio.file_name ?? 'audio', mimeType: audio.mime_type ?? 'audio/mpeg' }
+          : video
+            ? { fileId: video.file_id, fileName: video.file_name ?? 'video.mp4', mimeType: video.mime_type ?? 'video/mp4' }
+            : voice
+              ? { fileId: voice.file_id, fileName: 'voice.ogg', mimeType: voice.mime_type ?? 'audio/ogg' }
+              : null;
+
+    if (fileInfo && this.fileHandler) {
+      const caption = msg.caption as string | undefined;
+      this.fileHandler(fileInfo.fileId, fileInfo.fileName, fileInfo.mimeType, caption, chatId);
+      return;
+    }
+
+    // If file message but no handler, inform user
+    if (fileInfo && !this.fileHandler) {
+      await this.sendMessage(chatId, '⚠️ File receiving is not supported in this mode.');
+      return;
+    }
+
+    const text = msg.text as string | undefined;
+    if (!text) return;
+
     // Intercept /commands if a handler is registered
-    if (this.commandHandler && msg.text.startsWith('/')) {
-      const [cmd, ...args] = msg.text.slice(1).split(/\s+/);
+    if (this.commandHandler && text.startsWith('/')) {
+      const [cmd, ...args] = text.slice(1).split(/\s+/);
       if (cmd) {
         try {
-          const response = await this.commandHandler(cmd, args, msg.chat.id);
+          const response = await this.commandHandler(cmd, args, chatId);
           if (response !== null) {
-            await this.sendMessage(msg.chat.id, response);
+            await this.sendMessage(chatId, response);
             return;
           }
         } catch { /* fall through to agent */ }
@@ -209,43 +256,43 @@ export class TelegramBridge {
 
     // Process through agent
     if (!this.agent) {
-      await this.sendMessage(msg.chat.id, '⚠️ Agent not attached to Telegram bridge.');
+      await this.sendMessage(chatId, '⚠️ Agent not attached to Telegram bridge.');
       return;
     }
 
     // If a message handler is registered (e.g., daemon queue), delegate to it
     if (this.messageHandler) {
-      await this.apiCall('sendChatAction', { chat_id: msg.chat.id, action: 'typing' });
-      this.messageHandler(msg.text, msg.chat.id);
+      await this.apiCall('sendChatAction', { chat_id: chatId, action: 'typing' });
+      this.messageHandler(text, chatId);
       return;
     }
 
     try {
       // Send "typing" indicator
-      await this.apiCall('sendChatAction', { chat_id: msg.chat.id, action: 'typing' });
+      await this.apiCall('sendChatAction', { chat_id: chatId, action: 'typing' });
 
       // Wait if agent is busy processing another message
       let waitAttempts = 0;
       while (this.agent.processing && waitAttempts < 60) {
         await new Promise((r) => setTimeout(r, 1000));
-        await this.apiCall('sendChatAction', { chat_id: msg.chat.id, action: 'typing' });
+        await this.apiCall('sendChatAction', { chat_id: chatId, action: 'typing' });
         waitAttempts++;
       }
 
       if (this.agent.processing) {
-        await this.sendMessage(msg.chat.id, '⏳ Agent is busy. Please try again in a moment.');
+        await this.sendMessage(chatId, '⏳ Agent is busy. Please try again in a moment.');
         return;
       }
 
-      const response = await this.agent.sendMessage(msg.text);
+      const response = await this.agent.sendMessage(text);
       if (response.content) {
-        await this.sendMessage(msg.chat.id, response.content);
+        await this.sendMessage(chatId, response.content);
       } else {
-        await this.sendMessage(msg.chat.id, '(No response generated)');
+        await this.sendMessage(chatId, '(No response generated)');
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Processing failed';
-      await this.sendMessage(msg.chat.id, `❌ Error: ${errMsg}`);
+      await this.sendMessage(chatId, `❌ Error: ${errMsg}`);
     }
   }
 
@@ -291,6 +338,26 @@ export class TelegramBridge {
    */
   async sendToChat(chatId: number, text: string): Promise<void> {
     await this.sendMessage(chatId, text);
+  }
+
+  /**
+   * Download a file from Telegram by file_id.
+   * Returns the file contents as a Buffer.
+   */
+  async downloadFile(fileId: string): Promise<Buffer> {
+    // Step 1: Get file path from Telegram
+    const fileInfo = await this.apiCall('getFile', { file_id: fileId });
+    if (!fileInfo.ok || !fileInfo.result?.file_path) {
+      throw new Error(`Failed to get file info: ${fileInfo.description ?? 'Unknown error'}`);
+    }
+    // Step 2: Download from Telegram's file server
+    const downloadUrl = `https://api.telegram.org/file/bot${this.config.botToken}/${fileInfo.result.file_path}`;
+    const response = await fetch(downloadUrl, { signal: AbortSignal.timeout(60_000) });
+    if (!response.ok) {
+      throw new Error(`Failed to download file: HTTP ${response.status}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
   }
 
   /**

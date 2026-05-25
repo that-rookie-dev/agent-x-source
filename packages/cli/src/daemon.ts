@@ -279,6 +279,37 @@ export async function startDaemon(): Promise<void> {
     });
   }
 
+  // ─── File receiving from Telegram ───
+  // Downloads files sent by the user, saves to a dedicated folder, and informs the agent.
+  const filesDir = join(getDataDir(), 'files');
+  mkdirSync(filesDir, { recursive: true });
+
+  bridge.setFileHandler((fileId, fileName, mimeType, caption, chatId) => {
+    activeChatId = chatId;
+    // Download and save asynchronously, then inform the agent
+    void (async () => {
+      try {
+        await bridge.sendToChat(chatId, `📥 Receiving file: ${fileName}...`);
+        const fileBuffer = await bridge.downloadFile(fileId);
+
+        // Generate unique filename to avoid collisions
+        const timestamp = Date.now();
+        const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const savedPath = join(filesDir, `${timestamp}_${safeName}`);
+        writeFileSync(savedPath, fileBuffer);
+
+        // Inform the agent about the received file via the message queue
+        const fileMsg = caption
+          ? `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. Caption: "${caption}". You can read and analyze this file.`
+          : `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. You can read and analyze this file.`;
+        enqueueMessage(fileMsg, chatId);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        bridge.sendToChat(chatId, `❌ Failed to receive file: ${errMsg}`).catch(() => {});
+      }
+    })();
+  });
+
   // Set up Telegram command handler — full feature parity
   bridge.setCommandHandler(async (cmd, args, chatId) => {
     activeChatId = chatId;
