@@ -2,12 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [release]
+    branches: [main, release]
   pull_request:
-    branches: [release]
+    branches: [main, release]
 
 jobs:
-  lint-test-build:
+  test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -25,8 +25,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm build
+      - run: pnpm run build
 
-      - run: pnpm typecheck
+      - run: pnpm run typecheck
 
-      - run: pnpm test
+      - run: pnpm run test

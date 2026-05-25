@@ -1,5 +1,9 @@
 name: Release
 
+# Only runs after CI passes on the release branch.
+# STRICT RULE: Will only create a release if the version in source code
+# is NEWER than the latest tag on the public repo. No version bump = no release.
+
 on:
   workflow_run:
     workflows: [CI]
@@ -13,8 +17,43 @@ env:
   PUBLIC_REPO: SlashpanOrg/agent-x
 
 jobs:
+  # Gate: check if version was bumped before doing any work
+  check-version:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release
+
+      - name: Check if version is new
+        id: check
+        run: |
+          # Read version from the single source of truth
+          VERSION=$(grep -oP "VERSION = '\K[^']+" packages/shared/src/constants/version.ts)
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          # Check if this tag already exists on the public repo
+          EXISTING=$(gh api repos/${{ env.PUBLIC_REPO }}/releases/tags/${TAG} --jq '.tag_name' 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::Version ${VERSION} already released. Skipping."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::New version ${VERSION} detected. Proceeding with release."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+
   build:
-    if: "${{ github.event.workflow_run.conclusion == 'success' && !contains(github.event.workflow_run.head_commit.message, 'chore: bump version') }}"
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
     strategy:
       matrix:
         include:
@@ -29,6 +68,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: release
 
       - uses: pnpm/action-setup@v4
 
@@ -41,14 +82,14 @@ jobs:
 
       - run: pnpm run build
 
-      - name: Bundle with ncc
-        run: npx -y @vercel/ncc build packages/cli/dist/index.js -o dist --minify
-
-      - name: Prepare native module rebuild package
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
-          # Include better-sqlite3 as a dependency for postinstall rebuild
-          cat > dist/package.json << 'EOF'
+          mkdir -p release-pkg
+          cp packages/cli/dist/index.js release-pkg/
+          cp packages/cli/dist/daemon.js release-pkg/
+          cat > release-pkg/package.json << 'EOF'
           {
             "type": "module",
             "dependencies": {
@@ -59,27 +100,28 @@ jobs:
             }
           }
           EOF
-          # Remove the prebuilt .node file — it will be rebuilt on install
-          rm -rf dist/build
-
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          mkdir -p release
-          cp -r dist/* release/
-          printf '#!/usr/bin/env bash\nexec node "$(dirname "$0")/index.js" "$@"\n' > release/agentx
-          chmod +x release/agentx
-          cd release
+          printf '#!/usr/bin/env bash\nexec node "$(dirname "$0")/index.js" "$@"\n' > release-pkg/agentx
+          chmod +x release-pkg/agentx
+          cd release-pkg
           tar -czf ../agentx-${{ matrix.platform }}.tar.gz .
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path release
-          Copy-Item dist/* release/ -Recurse
-          '@echo off`r`nnode "%~dp0index.js" %*' | Out-File -Encoding ascii release/agentx.cmd
-          Compress-Archive -Path release/* -DestinationPath agentx-${{ matrix.platform }}.zip
+          New-Item -ItemType Directory -Force -Path release-pkg
+          Copy-Item packages/cli/dist/index.js release-pkg/
+          Copy-Item packages/cli/dist/daemon.js release-pkg/
+          @'
+          {
+            "type": "module",
+            "dependencies": {
+              "better-sqlite3": "^11.0.0"
+            }
+          }
+          '@ | Out-File -Encoding utf8 release-pkg/package.json
+          '@echo off`r`nnode "%~dp0index.js" %*' | Out-File -Encoding ascii release-pkg/agentx.cmd
+          Compress-Archive -Path release-pkg/* -DestinationPath agentx-${{ matrix.platform }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -89,68 +131,31 @@ jobs:
             agentx-${{ matrix.platform }}.zip
 
   publish:
-    needs: build
+    needs: [check-version, build]
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: release
-          fetch-depth: 0
-
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
-
-      - name: Auto-bump patch version
-        id: version
-        run: |
-          CURRENT=$(node -p "require('./package.json').version")
-          # Check if this version tag already exists in the public repo
-          EXISTING=$(gh api repos/${{ env.PUBLIC_REPO }}/releases/tags/v${CURRENT} --jq '.tag_name' 2>/dev/null || echo "")
-          if [ -n "$EXISTING" ]; then
-            # Bump patch version
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-            PATCH=$((PATCH + 1))
-            NEW="${MAJOR}.${MINOR}.${PATCH}"
-            # Update package.json
-            node -e "const p=require('./package.json'); p.version='${NEW}'; require('fs').writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n')"
-            # Update the in-app version constant
-            sed -i "s/export const VERSION = '.*'/export const VERSION = '${NEW}'/" packages/shared/src/constants/version.ts
-            echo "tag=v${NEW}" >> "$GITHUB_OUTPUT"
-            echo "version=${NEW}" >> "$GITHUB_OUTPUT"
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=v${CURRENT}" >> "$GITHUB_OUTPUT"
-            echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-
-      - name: Commit version bump
-        if: steps.version.outputs.bumped == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json packages/shared/src/constants/version.ts
-          git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
-          git push origin release
 
       - name: Generate checksums
         run: |
           cd artifacts
           sha256sum agentx-*.tar.gz agentx-*.zip 2>/dev/null > checksums.sha256 || true
 
-      - name: Publish to public releases repo
+      - name: Publish release to public repo
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.PUBLIC_REPO }}
           token: ${{ secrets.RELEASE_PAT }}
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Agent-X ${{ steps.version.outputs.tag }}
+          tag_name: ${{ needs.check-version.outputs.tag }}
+          name: Agent-X ${{ needs.check-version.outputs.tag }}
           body: |
-            ## Install
+            ## Agent-X ${{ needs.check-version.outputs.tag }}
+
+            ### Install
 
             **macOS / Linux:**
             ```bash
@@ -162,7 +167,7 @@ jobs:
             irm https://raw.githubusercontent.com/${{ env.PUBLIC_REPO }}/main/install.ps1 | iex
             ```
 
-            ## Checksums
+            ### Checksums
             See `checksums.sha256` in assets.
           files: |
             artifacts/agentx-*.tar.gz

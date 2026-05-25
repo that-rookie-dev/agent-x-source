@@ -11,7 +11,9 @@
     "lint": "eslint packages/*/src --ext .ts,.tsx",
     "typecheck": "pnpm -r run typecheck",
     "clean": "pnpm -r run clean && rm -rf node_modules",
-    "format": "prettier --write \"packages/*/src/**/*.{ts,tsx}\""
+    "format": "prettier --write \"packages/*/src/**/*.{ts,tsx}\"",
+    "version:sync": "node scripts/sync-version.mjs",
+    "version:check": "node scripts/sync-version.mjs --check"
   },
   "engines": {
     "node": ">=20.0.0",
