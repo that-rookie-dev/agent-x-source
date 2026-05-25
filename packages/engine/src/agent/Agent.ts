@@ -191,15 +191,23 @@ export class Agent {
       ? `${sauceContext.full}\n\n${toolAwareness}\n\n${options.systemPrompt}`
       : `${sauceContext.full}\n\n${toolAwareness}`;
 
-    if (systemPrompt) {
+    // Inject user callsign so the agent knows who it's talking to
+    const callsign = this.config.user?.callsign;
+    const userSection = callsign
+      ? `\n\n[USER]\nThe user's name/callsign is "${callsign}". Address them by this name when appropriate.\n[/USER]`
+      : '';
+
+    const finalSystemPrompt = systemPrompt + userSection;
+
+    if (finalSystemPrompt) {
       this.messages.push({
         role: 'system',
-        content: systemPrompt,
+        content: finalSystemPrompt,
       });
     }
 
     // Configure sub-agents with provider so they can make real LLM calls
-    this.subAgents.configure(this.provider, this.config, systemPrompt ?? '');
+    this.subAgents.configure(this.provider, this.config, finalSystemPrompt ?? '');
 
     // When a scheduled job fires, emit it as a notification message (non-blocking).
     // Simple reminders don't need an LLM round-trip — just display the message.
@@ -626,7 +634,14 @@ export class Agent {
     ].join('\n');
 
     const prompt = `${sauceContext.full}\n\n${toolAwareness}`;
-    this.setSystemPrompt(prompt);
+
+    // Inject user callsign
+    const callsign = this.config.user?.callsign;
+    const userSection = callsign
+      ? `\n\n[USER]\nThe user's name/callsign is "${callsign}". Address them by this name when appropriate.\n[/USER]`
+      : '';
+
+    this.setSystemPrompt(prompt + userSection);
   }
 
   switchProvider(providerId: ProviderId, apiKey?: string, baseUrl?: string): void {
