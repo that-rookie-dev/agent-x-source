@@ -21,8 +21,12 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
   currentModel,
 }) => {
   const [pm] = useState(() => new ProfileManager());
-  const [profiles] = useState<Profile[]>(() => pm.list());
-  const [screen, setScreen] = useState<ScreenState>('select');
+  const [profiles] = useState<Profile[]>(() => pm.list().filter((p) => !p.isDefault));
+  const [screen, setScreen] = useState<ScreenState>(() => {
+    // If no user-created profiles, go straight to create flow
+    const userProfiles = pm.list().filter((p) => !p.isDefault);
+    return userProfiles.length === 0 ? 'create_name' : 'select';
+  });
 
   // Create profile form state (name + prompt only)
   const [newName, setNewName] = useState('');

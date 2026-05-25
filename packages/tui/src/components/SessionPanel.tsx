@@ -29,16 +29,13 @@ export const SessionPanel: FC<SessionPanelProps> = ({
 }) => {
   return (
     <Box
-      flexDirection="row"
+      flexDirection="column"
       borderStyle="single"
       borderColor={COLORS.border}
       paddingX={1}
-      gap={2}
     >
       <Row label="Session" value={sessionId.slice(5, 13)} />
-      <Box flexGrow={1}>
-        <TokenBar used={tokensUsed} total={tokensTotal} />
-      </Box>
+      <TokenBar used={tokensUsed} total={tokensTotal} />
 
       {backgroundTasks.length > 0 && (
         <Box gap={1}>
