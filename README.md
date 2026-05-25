@@ -197,5 +197,5 @@ MIT
 ---
 
 <p align="center">
-  <em>Ground control to Major Tom — systems nominal.</em>
+  <em>Ground control to Major — systems nominal.</em>
 </p>
