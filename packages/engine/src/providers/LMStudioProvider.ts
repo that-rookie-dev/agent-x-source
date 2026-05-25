@@ -7,7 +7,9 @@ export class LMStudioProvider implements ProviderInterface {
   private baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl = baseUrl ?? 'http://localhost:1234/v1';
+    const url = baseUrl ?? 'http://localhost:1234/v1';
+    // Ensure the base URL ends with /v1 (LM Studio's OpenAI-compatible endpoint)
+    this.baseUrl = url.replace(/\/+$/, '').endsWith('/v1') ? url.replace(/\/+$/, '') : `${url.replace(/\/+$/, '')}/v1`;
   }
 
   async validate(): Promise<boolean> {
