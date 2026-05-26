@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Message, EngineEvent, AgentXConfig, ModelInfo, RemediationAction, ProviderId,Crew, TodoItem } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
-import { Agent, CommandParser, createDefaultRegistry, ConfigManager, SessionStore, ProviderFactory, TelegramBridge, TelegramStore } from '@agentx/engine';
+import { Agent, CommandParser, createDefaultRegistry, ConfigManager, SessionStore, TelegramBridge, TelegramStore } from '@agentx/engine';
 import { generateSessionId } from '@agentx/shared';
 
 interface PermissionRequest {
@@ -30,7 +30,7 @@ interface UseSessionReturn {
   commandNames: string[];
   commandList: Array<{ name: string; description: string }>;
   showProviderPicker: boolean;
-  selectProvider: (providerId: ProviderId, apiKey?: string, baseUrl?: string) => void;
+  selectProvider: (providerId: ProviderId, modelId: string, apiKey?: string, baseUrl?: string) => void;
   dismissProviderPicker: () => void;
   permissionRequest: PermissionRequest | null;
   respondToPermission: (choice: 'allow_once' | 'allow_always' | 'deny') => void;
@@ -425,61 +425,43 @@ export function useSession(config: AgentXConfig, _crew?: Crew, restoreSessionId?
     setModelPickerModels(null);
   }, []);
 
-  const selectProvider = useCallback((providerId: ProviderId, apiKey?: string, baseUrl?: string) => {
+  const selectProvider = useCallback((providerId: ProviderId, modelId: string, apiKey?: string, baseUrl?: string) => {
     setShowProviderPicker(false);
-    setIsLoading(true);
     setError(null);
     setErrorActions([]);
 
-    void (async () => {
-      try {
-        // Validate API key before accepting the switch
-        const key = apiKey;
-        const url = baseUrl;
-        const provider = ProviderFactory.create(providerId, key, url);
-        const valid = await provider.validate();
-        if (!valid) {
-          setError(`✗ Invalid API key for ${providerId}. Please try again.`);
-          setShowProviderPicker(true);
-          return;
-        }
-
-        const configManager = new ConfigManager();
-        const current = configManager.load();
-        current.provider.activeProvider = providerId;
-        if (!current.provider.providers[providerId]) {
-          current.provider.providers[providerId] = { configured: false };
-        }
-        if (key) {
-          current.provider.providers[providerId]!.apiKey = key;
-        }
-        if (url) {
-          current.provider.providers[providerId]!.baseUrl = url;
-        }
-        current.provider.providers[providerId]!.configured = true;
-        // Clear saved model — new provider needs a fresh model pick
-        current.provider.activeModel = '';
-        configManager.save(current);
-
-        // Switch provider in-place (no restart needed)
-        if (agentRef.current) {
-          const resolvedKey = key ?? current.provider.providers[providerId]?.apiKey;
-          const resolvedUrl = url ?? current.provider.providers[providerId]?.baseUrl;
-          agentRef.current.switchProvider(providerId, resolvedKey, resolvedUrl);
-        }
-        configRef.current = current;
-        setCurrentModel('');
-
-        // Auto-trigger model picker after successful provider switch
-        void agentRef.current?.listModels();
-      } catch (err) {
-        getLogger().error('PROVIDER_SWITCH', err);
-        setError(`✗ Failed to switch to ${providerId}. Check your API key.`);
-        setShowProviderPicker(true);
-      } finally {
-        setIsLoading(false);
+    // ProviderPicker already validated + listed models + user picked one.
+    // Just persist config and switch the agent.
+    try {
+      const configManager = new ConfigManager();
+      const current = configManager.load();
+      current.provider.activeProvider = providerId;
+      current.provider.activeModel = modelId;
+      if (!current.provider.providers[providerId]) {
+        current.provider.providers[providerId] = { configured: false };
       }
-    })();
+      if (apiKey) {
+        current.provider.providers[providerId]!.apiKey = apiKey;
+      }
+      if (baseUrl) {
+        current.provider.providers[providerId]!.baseUrl = baseUrl;
+      }
+      current.provider.providers[providerId]!.configured = true;
+      configManager.save(current);
+
+      // Switch provider and model in-place
+      if (agentRef.current) {
+        const resolvedKey = apiKey ?? current.provider.providers[providerId]?.apiKey;
+        const resolvedUrl = baseUrl ?? current.provider.providers[providerId]?.baseUrl;
+        agentRef.current.switchProvider(providerId, resolvedKey, resolvedUrl);
+        agentRef.current.switchModel(modelId);
+      }
+      configRef.current = current;
+      setCurrentModel(modelId);
+    } catch (err) {
+      getLogger().error('PROVIDER_SWITCH', err);
+      setError(`✗ Failed to switch to ${providerId}.`);
+    }
   }, []);
 
   const dismissProviderPicker = useCallback(() => {
