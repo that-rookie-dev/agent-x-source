@@ -136,6 +136,7 @@ export function useSession(config: AgentXConfig, _crew?: Crew, restoreSessionId?
             setCurrentModel(event.currentModel);
           } else if (event.action === 'model_switched') {
             setCurrentModel(event.modelId);
+            setTokensTotal(event.contextWindow);
           }
           break;
         case 'error':
@@ -403,7 +404,7 @@ export function useSession(config: AgentXConfig, _crew?: Crew, restoreSessionId?
       try {
         const success = await agent.trialModel(model.id);
         if (success) {
-          agent.switchModel(model.id);
+          agent.switchModel(model.id, model.contextWindow);
           setCurrentModel(model.id);
           // Persist to config only after successful trial
           const configManager = new ConfigManager();

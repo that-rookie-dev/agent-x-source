@@ -657,7 +657,7 @@ export class Agent {
       this.cachedModels.set(modelId, ctx);
       this.tokenTracker.setTotal(ctx);
     }
-    this.emit({ type: 'command_action', action: 'model_switched', modelId });
+    this.emit({ type: 'command_action', action: 'model_switched', modelId, contextWindow: ctx ?? this.tokenTracker.tokensTotal });
   }
 
   /**

@@ -40,7 +40,7 @@ export type EngineEvent =
   | { type: 'compaction_complete'; saved: number }
   | { type: 'todo_update'; items: TodoItem[] }
   | { type: 'command_action'; action: 'list_models'; models: ModelInfo[]; currentModel: string }
-  | { type: 'command_action'; action: 'model_switched'; modelId: string };
+  | { type: 'command_action'; action: 'model_switched'; modelId: string; contextWindow: number };
 
 export interface FormattedResponse {
   content: string;
