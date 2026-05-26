@@ -139,7 +139,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, restoreSes
         <Box marginTop={1}>
           <ProviderPicker
             currentProvider={config.provider.activeProvider}
-            onSelect={selectProvider}
+            onComplete={selectProvider}
             onDismiss={dismissProviderPicker}
           />
         </Box>
