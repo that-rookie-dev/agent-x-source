@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
 import { execSync } from 'node:child_process';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { IS_WINDOWS } from '../platform.js';
 
 export async function codeSearch(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const pattern = args['pattern'] as string;
@@ -9,15 +10,23 @@ export async function codeSearch(args: Record<string, unknown>, context: ToolExe
   const searchPath = (args['path'] as string) ?? '.';
   const cwd = resolve(context.scopePath, searchPath);
 
+  const defaultExts = ['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'go', 'java', 'c', 'cpp', 'h', 'hpp', 'rb', 'php'];
+  const exts = glob ? [glob.replace(/^\*?\.?/, '')] : defaultExts;
+
   try {
-    let cmd = `grep -rn --include='*.{ts,tsx,js,jsx,py,rs,go,java,c,cpp,h,hpp,rb,php}' "${pattern.replace(/"/g, '\\"')}"`;
-    if (glob) cmd = `grep -rn --include='${glob}' "${pattern.replace(/"/g, '\\"')}"`;
-    cmd += ' . | head -50';
+    let cmd: string;
+    if (IS_WINDOWS) {
+      const extPatterns = exts.map(e => `*.${e}`).join(' ');
+      cmd = `findstr /s /n /r "${pattern}" ${extPatterns} 2>nul | findstr /v node_modules | findstr /v .git | head -50`;
+    } else {
+      const p = pattern.replace(/"/g, '\\"');
+      const nameExpr = exts.map(e => `-name '*.${e}'`).join(' -o ');
+      cmd = `find . \\( ${nameExpr} \\) ! -path '*/node_modules/*' ! -path '*/.git/*' -exec grep -rn "${p}" {} + 2>/dev/null | head -50`;
+    }
 
     const output = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 10000 });
     return { success: true, output: output.trim() || 'No matches found' };
   } catch {
-    // grep returns exit code 1 when no matches
     return { success: true, output: 'No matches found' };
   }
 }

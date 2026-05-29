@@ -1,4 +1,5 @@
 export { ConfigManager } from './config/index.js';
+export * from './tools/platform.js';
 export { SessionStore } from './session/SessionStore.js';
 export { SessionManager } from './session/SessionManager.js';
 export { TokenTracker } from './session/TokenTracker.js';
@@ -20,6 +21,7 @@ export { LMStudioProvider } from './providers/LMStudioProvider.js';
 export { CommandParser, CommandRegistry, createDefaultRegistry } from './commands/index.js';
 export type { CommandInterface, CommandContext, CommandResult } from './commands/index.js';
 export { ToolRegistry, ToolExecutor, PermissionManager, ScopeGuard } from './tools/index.js';
+export { createDefaultToolkit } from './tools/index.js';
 export type { PermissionRequestHandler } from './tools/index.js';
 export { fileRead, fileWrite, fileDelete, folderCreate, folderDelete, folderList, folderMove } from './tools/index.js';
 export { shellExec, shellBackground, processKill, processList } from './tools/index.js';

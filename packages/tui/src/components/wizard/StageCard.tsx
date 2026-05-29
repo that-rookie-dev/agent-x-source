@@ -1,4 +1,4 @@
-import { type FC, type ReactNode } from 'react';
+import { type FC, type ReactNode, useEffect } from 'react';
 import { Box, Text, useStdout } from 'ink';
 import { COLORS } from '../../theme/colors.js';
 import { LAYOUT } from '../../theme/layout.js';
@@ -35,6 +35,16 @@ export const StageCard: FC<StageCardProps> = ({
   }
 
   const separatorWidth = Math.max(0, cardWidth - 6);
+
+  useEffect(() => {
+    const TRACE = process.env.AGENTX_TRACE === '1' || process.env.AGENTX_TRACE === 'true';
+    if (!TRACE) return;
+    const stage = stageNumber ?? 'none';
+    console.log(`[TRACE] StageCard mounted stageNumber=${stage} stageLabel=${stageLabel} currentStage=${currentStage} cols=${cols} rows=${rows} ts=${Date.now()}`);
+    return () => {
+      console.log(`[TRACE] StageCard unmounted stageNumber=${stage} stageLabel=${stageLabel} currentStage=${currentStage} ts=${Date.now()}`);
+    };
+  }, [stageNumber, stageLabel, currentStage, cols, rows]);
 
   return (
     <Box width={cols} height={rows} flexDirection="column" justifyContent="center" alignItems="center">

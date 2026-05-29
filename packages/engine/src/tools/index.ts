@@ -4,6 +4,12 @@ export { createDefaultToolkit } from './toolkit.js';
 export type { PermissionRequestHandler } from './ToolExecutor.js';
 export { PermissionManager } from './permissions/PermissionManager.js';
 export { ScopeGuard } from './permissions/ScopeGuard.js';
+export {
+  IS_WINDOWS, IS_MACOS, IS_LINUX,
+  getShellCommand, getWhichCommand, getProcessListCommand,
+  getDiskSpaceCommand, getPortListCommand, getDirectorySizeCommand,
+  getGrepCommand, getFindCommand, checkCommandExists,
+} from './platform.js';
 
 // Filesystem tools
 export {

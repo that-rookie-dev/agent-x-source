@@ -2,6 +2,7 @@ import { existsSync, statSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
 import { execSync } from 'node:child_process';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { IS_MACOS, getOcrCheckCommand } from '../platform.js';
 
 export async function imageView(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const filePath = resolve(context.scopePath, args['file'] as string);
@@ -23,13 +24,20 @@ export async function imageView(args: Record<string, unknown>, context: ToolExec
     `Size: ${(stat.size / 1024).toFixed(1)} KB`,
   ];
 
-  // Try to get dimensions via sips (macOS) or identify (ImageMagick)
-  try {
-    const dims = execSync(`sips -g pixelWidth -g pixelHeight "${filePath}" 2>/dev/null | grep pixel`, { encoding: 'utf-8' });
-    const width = dims.match(/pixelWidth:\s*(\d+)/)?.[1];
-    const height = dims.match(/pixelHeight:\s*(\d+)/)?.[1];
-    if (width && height) info.push(`Dimensions: ${width}x${height}`);
-  } catch {
+  // Try to get dimensions via sips (macOS) or identify (ImageMagick) or sharp (Node.js)
+  if (IS_MACOS) {
+    try {
+      const dims = execSync(`sips -g pixelWidth -g pixelHeight "${filePath}" 2>/dev/null | grep pixel`, { encoding: 'utf-8' });
+      const width = dims.match(/pixelWidth:\s*(\d+)/)?.[1];
+      const height = dims.match(/pixelHeight:\s*(\d+)/)?.[1];
+      if (width && height) info.push(`Dimensions: ${width}x${height}`);
+    } catch {
+      /* fall through */
+    }
+  }
+
+  if (info.length === 3) {
+    // No dimensions yet, try ImageMagick
     try {
       const dims = execSync(`identify -format "%wx%h" "${filePath}" 2>/dev/null`, { encoding: 'utf-8' });
       if (dims.trim()) info.push(`Dimensions: ${dims.trim()}`);
@@ -51,21 +59,26 @@ export async function imageResize(args: Record<string, unknown>, context: ToolEx
   }
 
   // Try sips (macOS built-in) first, then ImageMagick
-  try {
-    const dims = height ? `--resampleWidth ${width} --resampleHeight ${height}` : `--resampleWidth ${width}`;
-    if (outputPath !== filePath) {
-      execSync(`cp "${filePath}" "${outputPath}"`, { encoding: 'utf-8' });
-    }
-    execSync(`sips ${dims} "${outputPath}" 2>/dev/null`, { encoding: 'utf-8' });
-    return { success: true, output: `Resized to ${width}${height ? `x${height}` : 'w'} → ${outputPath}` };
-  } catch {
+  if (IS_MACOS) {
     try {
-      const geometry = height ? `${width}x${height}` : `${width}`;
-      execSync(`convert "${filePath}" -resize ${geometry} "${outputPath}"`, { encoding: 'utf-8' });
-      return { success: true, output: `Resized to ${geometry} → ${outputPath}` };
-    } catch (err) {
-      return { success: false, output: `No image tool available (sips/ImageMagick): ${(err as Error).message}`, error: 'TOOL_MISSING' };
+      const dims = height ? `--resampleWidth ${width} --resampleHeight ${height}` : `--resampleWidth ${width}`;
+      if (outputPath !== filePath) {
+        const cpCmd = IS_MACOS ? 'cp' : 'copy';
+        execSync(`${cpCmd} "${filePath}" "${outputPath}"`, { encoding: 'utf-8' });
+      }
+      execSync(`sips ${dims} "${outputPath}" 2>/dev/null`, { encoding: 'utf-8' });
+      return { success: true, output: `Resized to ${width}${height ? `x${height}` : 'w'} → ${outputPath}` };
+    } catch {
+      /* fall through to ImageMagick */
     }
+  }
+
+  try {
+    const geometry = height ? `${width}x${height}` : `${width}`;
+    execSync(`convert "${filePath}" -resize ${geometry} "${outputPath}"`, { encoding: 'utf-8' });
+    return { success: true, output: `Resized to ${geometry} → ${outputPath}` };
+  } catch (err) {
+    return { success: false, output: `No image tool available (sips/ImageMagick): ${(err as Error).message}`, error: 'TOOL_MISSING' };
   }
 }
 
@@ -86,23 +99,23 @@ export async function imageConvert(args: Record<string, unknown>, context: ToolE
   const defaultOutput = filePath.replace(/\.[^.]+$/, `.${format}`);
   const outPath = outputFile ? resolve(context.scopePath, outputFile) : defaultOutput;
 
-  try {
-    // Try sips for macOS
-    execSync(`sips -s format ${format === 'jpg' ? 'jpeg' : format} "${filePath}" --out "${outPath}" 2>/dev/null`, { encoding: 'utf-8' });
-    return { success: true, output: `Converted → ${outPath}` };
-  } catch {
+  if (IS_MACOS) {
     try {
-      execSync(`convert "${filePath}" "${outPath}"`, { encoding: 'utf-8' });
+      execSync(`sips -s format ${format === 'jpg' ? 'jpeg' : format} "${filePath}" --out "${outPath}" 2>/dev/null`, { encoding: 'utf-8' });
       return { success: true, output: `Converted → ${outPath}` };
-    } catch (err) {
-      return { success: false, output: `No image tool available: ${(err as Error).message}`, error: 'TOOL_MISSING' };
+    } catch {
+      /* fall through */
     }
+  }
+
+  try {
+    execSync(`convert "${filePath}" "${outPath}"`, { encoding: 'utf-8' });
+    return { success: true, output: `Converted → ${outPath}` };
+  } catch (err) {
+    return { success: false, output: `No image tool available: ${(err as Error).message}`, error: 'TOOL_MISSING' };
   }
 }
 
-/**
- * Extract text from an image using OCR (Tesseract).
- */
 export async function imageOcr(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const file = args['path'] as string ?? args['file'] as string;
   if (!file) return { success: false, output: 'path is required', error: 'MISSING_INPUT' };
@@ -112,9 +125,9 @@ export async function imageOcr(args: Record<string, unknown>, context: ToolExecu
     return { success: false, output: `File not found: ${file}`, error: 'NOT_FOUND' };
   }
 
-  // Check if tesseract is available
   try {
-    execSync('which tesseract', { encoding: 'utf-8', stdio: 'pipe' });
+    const ocrCheck = getOcrCheckCommand();
+    execSync(ocrCheck, { encoding: 'utf-8', stdio: 'pipe' });
   } catch {
     return {
       success: false,

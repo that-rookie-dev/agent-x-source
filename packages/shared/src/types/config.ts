@@ -20,10 +20,24 @@ export interface ProviderSettings {
   providers: Record<string, ProviderCredentials>;
 }
 
+export interface ProviderProfile {
+  label: string;
+  apiKey?: string;
+  baseUrl?: string;
+  createdAt?: string;
+}
+
+// Backwards-compatible provider credentials structure with
+// optional multi-profile support.
 export interface ProviderCredentials {
+  // legacy single-key fields (kept for compatibility)
   apiKey?: string;
   baseUrl?: string;
   configured: boolean;
+
+  // new multi-profile support
+  activeProfile?: string;
+  profiles?: Record<string, ProviderProfile>;
 }
 
 export interface UISettings {

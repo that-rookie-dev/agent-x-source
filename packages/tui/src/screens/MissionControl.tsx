@@ -77,6 +77,7 @@ const PROVIDER_DESCRIPTIONS: Record<string, string> = {
 export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel }) => {
   const { exit } = useApp();
   const [step, setStep] = useState<MissionStep>('splash');
+  const TRACE = process.env.AGENTX_TRACE === '1' || process.env.AGENTX_TRACE === 'true';
 
   // Stage 1 state
   const [selectedProvider, setSelectedProvider] = useState<ProviderId | null>(null);
@@ -100,6 +101,7 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel }
     if (step !== 'stage1_validating' || !selectedProvider) return;
 
     const validate = async () => {
+      if (TRACE) console.log(`[TRACE] MissionControl validate start step=${step} provider=${selectedProvider} apiKeySet=${!!apiKey} baseUrl=${baseUrl} ts=${Date.now()}`);
       try {
         const provider = ProviderFactory.create(
           selectedProvider,
@@ -119,9 +121,11 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel }
           setStep('stage1_credentials');
           return;
         }
+        if (TRACE) console.log(`[TRACE] MissionControl validate success models=${fetchedModels.length} ts=${Date.now()}`);
         setModels(fetchedModels);
         setStep('stage1_models');
       } catch (e) {
+        if (TRACE) console.log(`[TRACE] MissionControl validate error ${String(e)} ts=${Date.now()}`);
         getLogger().error('MISSION_VALIDATION', e);
         setError('⚠ Connection failed — Check your network or credentials.');
         setStep('stage1_credentials');
@@ -160,6 +164,7 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel }
 
   const handleModelSelect = useCallback((model: ModelInfo) => {
     // Save config immediately (so partial completion doesn't brick the app)
+    if (TRACE) console.log(`[TRACE] MissionControl handleModelSelect provider=${selectedProvider} model=${model.id} apiKeySet=${!!apiKey} baseUrl=${baseUrl} ts=${Date.now()}`);
     if (!selectedProvider) return;
     const config: AgentXConfig = {
       provider: {
@@ -282,6 +287,7 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel }
 
   useInput((_input, key) => {
     if (!key.escape) return;
+    if (TRACE) console.log(`[TRACE] MissionControl global ESC pressed step=${step} ts=${Date.now()}`);
 
     switch (step) {
       case 'splash':
@@ -322,6 +328,7 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel }
 
   useInput((input) => {
     if (input === '\t' && step === 'stage3_telegram') {
+      if (TRACE) console.log(`[TRACE] MissionControl TAB pressed at step=${step} ts=${Date.now()}`);
       handleTelegramSkip();
     }
   }, { isActive: step === 'stage3_telegram' });

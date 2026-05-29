@@ -4,10 +4,10 @@ import TextInput from 'ink-text-input';
 import { COLORS } from '../theme/colors.js';
 import { LoadingIndicator } from './LoadingIndicator.js';
 import { PROVIDERS } from '@agentx/shared';
-import type { ProviderConfig, ProviderId, ModelInfo } from '@agentx/shared';
-import { ProviderFactory } from '@agentx/engine';
+import type { ProviderConfig, ProviderId, ModelInfo, ProviderProfile } from '@agentx/shared';
+import { ProviderFactory, ConfigManager } from '@agentx/engine';
 
-type Step = 'pick' | 'api_key' | 'base_url' | 'validating' | 'models';
+type Step = 'pick' | 'profiles' | 'api_key' | 'base_url' | 'add_profile' | 'confirm_delete' | 'validating' | 'models';
 
 interface ProviderPickerProps {
   currentProvider: string;
@@ -30,6 +30,11 @@ export const ProviderPicker: React.FC<ProviderPickerProps> = ({
   const [baseUrl, setBaseUrl] = useState('');
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<Array<{ id: string; profile: ProviderProfile }>>([]);
+  const [selectedProfileIndex, setSelectedProfileIndex] = useState(0);
+  const [newProfileLabel, setNewProfileLabel] = useState('');
+  const [newProfileKey, setNewProfileKey] = useState('');
+  const [newProfileUrl, setNewProfileUrl] = useState('');
 
   // Validation + model fetch effect
   useEffect(() => {
@@ -69,32 +74,36 @@ export const ProviderPicker: React.FC<ProviderPickerProps> = ({
 
     return () => { cancelled = true; };
   }, [step, selectedProvider, apiKey, baseUrl]);
-
   useInput((_input, key) => {
-    if (step === 'validating') return; // no input during validation
-
-    if (key.escape) {
-      if (step === 'models') {
-        setStep(selectedProvider?.baseUrlConfigurable ? 'base_url' : selectedProvider?.apiKeyRequired ? 'api_key' : 'pick');
-      } else if (step === 'api_key' || step === 'base_url') {
-        setStep('pick');
-        setError(null);
-      } else {
-        onDismiss();
-      }
-      return;
-    }
+    if (step === 'validating') return;
 
     if (step === 'pick') {
       if (key.upArrow) {
         setSelectedIndex((i) => Math.max(0, i - 1));
-      } else if (key.downArrow) {
+        return;
+      }
+      if (key.downArrow) {
         setSelectedIndex((i) => Math.min(providerList.length - 1, i + 1));
-      } else if (key.return) {
+        return;
+      }
+      if (key.escape) {
+        onDismiss();
+        return;
+      }
+      if (key.return) {
         const provider = providerList[selectedIndex]!;
         setSelectedProvider(provider);
         setError(null);
-
+        try {
+          const cm = new ConfigManager();
+          const pv = cm.getProviderProfiles(provider.id);
+          if (pv.profiles && Object.keys(pv.profiles).length > 0) {
+            setProfiles(Object.keys(pv.profiles).map((id) => ({ id, profile: pv.profiles![id]! })));
+            setSelectedProfileIndex(0);
+            setStep('profiles');
+            return;
+          }
+        } catch { /* ignore */ }
         if (provider.apiKeyRequired) {
           setStep('api_key');
         } else if (provider.baseUrlConfigurable) {
@@ -103,8 +112,106 @@ export const ProviderPicker: React.FC<ProviderPickerProps> = ({
         } else {
           setStep('validating');
         }
+        return;
+      }
+    } else if (step === 'profiles') {
+      if (key.upArrow) {
+        setSelectedProfileIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSelectedProfileIndex((i) => Math.min(profiles.length, i + 1));
+        return;
+      }
+      if (key.escape) {
+        setStep('pick');
+        setError(null);
+        return;
+      }
+      if (key.return) {
+        if (!selectedProvider) return;
+        if (selectedProfileIndex >= profiles.length) {
+          setNewProfileLabel('');
+          setNewProfileKey('');
+          setNewProfileUrl('');
+          setStep('add_profile');
+        } else {
+          const sel = profiles[selectedProfileIndex];
+          if (!sel) return;
+          const cm = new ConfigManager();
+          cm.setActiveProviderProfile(selectedProvider.id, sel.id);
+          setApiKey(sel.profile.apiKey ?? '');
+          setBaseUrl(sel.profile.baseUrl ?? '');
+          setStep('validating');
+        }
+        return;
+      }
+      if (_input === 'd') {
+        if (selectedProfileIndex < profiles.length) {
+          setStep('confirm_delete');
+        }
+        return;
+      }
+    } else if (step === 'add_profile') {
+      if (key.escape) {
+        setStep('profiles');
+        setError(null);
+        return;
+      }
+      if (key.return) {
+        if (!selectedProvider) return;
+        const isLocal = selectedProvider.baseUrlConfigurable;
+        if (!newProfileLabel.trim()) {
+          setError('Label required');
+          return;
+        }
+        if (!isLocal && !newProfileKey.trim()) {
+          setError('API key required');
+          return;
+        }
+        if (isLocal && !newProfileUrl.trim()) {
+          setError('Base URL required');
+          return;
+        }
+        const id = newProfileLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || `p-${Date.now()}`;
+        const profile: ProviderProfile = {
+          label: newProfileLabel.trim(),
+          apiKey: newProfileKey.trim() || undefined,
+          baseUrl: newProfileUrl.trim() || undefined,
+          createdAt: new Date().toISOString(),
+        };
+        try {
+          const cm = new ConfigManager();
+          cm.addProviderProfile(selectedProvider.id, id, profile, true);
+          const pv = cm.getProviderProfiles(selectedProvider.id);
+          setProfiles(Object.keys(pv.profiles ?? {}).map((pid) => ({ id: pid, profile: pv.profiles![pid]! })));
+          setApiKey(profile.apiKey ?? '');
+          setBaseUrl(profile.baseUrl ?? '');
+          setStep('validating');
+        } catch {
+          setError('Failed to save profile');
+        }
+        return;
+      }
+    } else if (step === 'confirm_delete') {
+      if (!selectedProvider) return;
+      if (_input === 'y' || _input === 'Y') {
+        try {
+          const cm = new ConfigManager();
+          const sel = profiles[selectedProfileIndex];
+          if (sel) cm.removeProviderProfile(selectedProvider.id, sel.id);
+          const pv = cm.getProviderProfiles(selectedProvider.id);
+          setProfiles(Object.keys(pv.profiles ?? {}).map((id) => ({ id, profile: pv.profiles![id]! })));
+          setSelectedProfileIndex(0);
+        } catch {}
+        setStep('profiles');
+        return;
+      } else {
+        setStep('profiles');
+        return;
       }
     } else if (step === 'api_key') {
+      if (key.escape) { setStep('pick'); setError(null); return; }
       if (key.return && apiKey.trim()) {
         setError(null);
         if (selectedProvider?.baseUrlConfigurable) {
@@ -113,18 +220,15 @@ export const ProviderPicker: React.FC<ProviderPickerProps> = ({
         } else {
           setStep('validating');
         }
+        return;
       }
     } else if (step === 'base_url') {
-      if (key.return) {
-        setError(null);
-        setStep('validating');
-      }
+      if (key.escape) { setStep('pick'); setError(null); return; }
+      if (key.return) { setError(null); setStep('validating'); return; }
     } else if (step === 'models') {
-      if (key.upArrow) {
-        setModelIndex((i) => Math.max(0, i - 1));
-      } else if (key.downArrow) {
-        setModelIndex((i) => Math.min(models.length - 1, i + 1));
-      } else if (key.return) {
+      if (key.upArrow) { setModelIndex((i) => Math.max(0, i - 1)); return; }
+      if (key.downArrow) { setModelIndex((i) => Math.min(models.length - 1, i + 1)); return; }
+      if (key.return) {
         const model = models[modelIndex];
         if (model) {
           onComplete(
@@ -135,7 +239,9 @@ export const ProviderPicker: React.FC<ProviderPickerProps> = ({
             baseUrl.trim() || selectedProvider?.defaultBaseUrl,
           );
         }
+        return;
       }
+      if (key.escape) { setStep('pick'); setError(null); return; }
     }
   });
 
@@ -161,6 +267,32 @@ export const ProviderPicker: React.FC<ProviderPickerProps> = ({
       </Box>
     );
   }
+
+    if (step === 'profiles') {
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor={COLORS.primary} paddingX={1} marginX={1}>
+          <Text color={COLORS.primary} bold>Clearance Vault — {selectedProvider!.name}</Text>
+          <Text color={COLORS.textDim} dimColor>↑↓ navigate • Enter select • Esc back • d delete</Text>
+          <Box flexDirection="column" marginTop={1}>
+            {profiles.map((p, i) => (
+              <Box key={p.id}>
+                <Text color={i === selectedProfileIndex ? COLORS.primary : COLORS.text}>
+                  {i === selectedProfileIndex ? '▸ ' : '  '}{p.profile.label}
+                </Text>
+                <Text color={COLORS.textDim} dimColor>
+                  {' '}{p.profile.apiKey ? '☁ key' : ''}{p.profile.baseUrl ? '🖥 url' : ''}
+                </Text>
+              </Box>
+            ))}
+            <Box>
+              <Text color={selectedProfileIndex === profiles.length ? COLORS.primary : COLORS.text}>
+                {selectedProfileIndex === profiles.length ? '▸ ' : '  '}+ Add new profile
+              </Text>
+            </Box>
+          </Box>
+        </Box>
+      );
+    }
 
   if (step === 'api_key') {
     return (
@@ -198,6 +330,44 @@ export const ProviderPicker: React.FC<ProviderPickerProps> = ({
           />
         </Box>
         <Text color={COLORS.textDim} dimColor>Enter to confirm (empty = default) • Esc back</Text>
+      </Box>
+    );
+  }
+
+  if (step === 'add_profile') {
+    const isLocal = selectedProvider?.baseUrlConfigurable ?? false;
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor={COLORS.primary} paddingX={1} marginX={1}>
+        <Text color={COLORS.primary} bold>Add Profile — {selectedProvider!.name}</Text>
+        <Box marginTop={1}>
+          <Text color={COLORS.text}>Label: </Text>
+          <TextInput value={newProfileLabel} onChange={(v) => setNewProfileLabel(v)} placeholder="e.g. Personal, Work" />
+        </Box>
+        {!isLocal && (
+          <Box marginTop={1}>
+            <Text color={COLORS.text}>API Key: </Text>
+            <TextInput value={newProfileKey} onChange={(v) => setNewProfileKey(v)} placeholder="sk-..." mask="*" />
+          </Box>
+        )}
+        {isLocal && (
+          <Box marginTop={1}>
+            <Text color={COLORS.text}>Base URL: </Text>
+            <TextInput value={newProfileUrl} onChange={(v) => setNewProfileUrl(v)} placeholder={selectedProvider?.defaultBaseUrl ?? 'http://localhost:...'} />
+          </Box>
+        )}
+        <Text color={COLORS.textDim} dimColor>Enter to save • Esc back</Text>
+      </Box>
+    );
+  }
+
+  if (step === 'confirm_delete') {
+    const sel = profiles[selectedProfileIndex];
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor={COLORS.primary} paddingX={1} marginX={1}>
+        <Text color={COLORS.primary} bold>Delete Profile</Text>
+        <Box marginTop={1}>
+          <Text color={COLORS.text}>Delete "{sel?.profile.label}"? (y/N)</Text>
+        </Box>
       </Box>
     );
   }

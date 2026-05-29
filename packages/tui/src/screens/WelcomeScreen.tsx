@@ -29,6 +29,19 @@ interface WelcomeScreenProps {
 export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, restoreSessionId, recovered, onCrewSwitch }) => {
   const [slashFilter, setSlashFilter] = useState<string | null>(null);
 
+  // derive active profile label (if any) for banner display
+  const activeProviderId = config.provider.activeProvider;
+  const providerSettings = config.provider.providers?.[activeProviderId];
+  let profileLabel: string | null = null;
+  if (providerSettings) {
+    const activeId = providerSettings.activeProfile;
+    if (activeId && providerSettings.profiles && providerSettings.profiles[activeId]) {
+      profileLabel = providerSettings.profiles[activeId].label;
+    } else if (providerSettings.apiKey || providerSettings.baseUrl) {
+      profileLabel = 'Default';
+    }
+  }
+
   const {
     messages,
     streamingContent,
@@ -100,6 +113,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, restoreSes
           model={currentModel}
           organization={config.organization}
           crewName={crew.name}
+          profileLabel={profileLabel}
         />
         <Box marginTop={1}>
           <ScrollableList

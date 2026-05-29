@@ -3,10 +3,19 @@ import { homedir, platform, arch, cpus, totalmem, freemem, hostname, uptime } fr
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import {
+  IS_WINDOWS,
+  getDiskSpaceCommand,
+  getPortListCommand,
+  getDirectorySizeCommand,
+  getGrepCommand,
+} from '../platform.js';
+
+const currentPlatform = platform();
 
 export async function systemInfo(_args: Record<string, unknown>): Promise<ToolResult> {
   const info = {
-    platform: platform(),
+    platform: currentPlatform,
     arch: arch(),
     hostname: hostname(),
     cpus: cpus().length,
@@ -24,7 +33,7 @@ export async function systemInfo(_args: Record<string, unknown>): Promise<ToolRe
 
 export async function systemDiskSpace(_args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   try {
-    const cmd = platform() === 'darwin' ? 'df -h /' : 'df -h --total';
+    const cmd = getDiskSpaceCommand();
     const output = execSync(cmd, {
       cwd: context.scopePath,
       encoding: 'utf-8',
@@ -53,7 +62,8 @@ export async function systemEnv(args: Record<string, unknown>): Promise<ToolResu
 export async function systemWhich(args: Record<string, unknown>): Promise<ToolResult> {
   const command = args['command'] as string;
   try {
-    const output = execSync(`which ${command}`, { encoding: 'utf-8', timeout: 5000 });
+    const whichCmd = IS_WINDOWS ? 'where' : 'which';
+    const output = execSync(`${whichCmd} ${command}`, { encoding: 'utf-8', timeout: 5000 });
     return { success: true, output: output.trim() };
   } catch {
     return { success: false, output: `"${command}" not found in PATH`, error: 'NOT_FOUND' };
@@ -62,9 +72,7 @@ export async function systemWhich(args: Record<string, unknown>): Promise<ToolRe
 
 export async function systemPorts(_args: Record<string, unknown>): Promise<ToolResult> {
   try {
-    const cmd = platform() === 'darwin'
-      ? 'lsof -iTCP -sTCP:LISTEN -P -n | head -30'
-      : 'ss -tlnp | head -30';
+    const cmd = getPortListCommand();
     const output = execSync(cmd, { encoding: 'utf-8', timeout: 5000 });
     return { success: true, output: output.trim() || 'No listening ports' };
   } catch (error) {
@@ -77,7 +85,8 @@ export async function systemTreeSize(args: Record<string, unknown>, context: Too
   const target = resolve(context.scopePath, path ?? '.');
 
   try {
-    const output = execSync(`du -sh "${target}" 2>/dev/null | sort -rh | head -20`, {
+    const cmd = getDirectorySizeCommand(target);
+    const output = execSync(cmd, {
       encoding: 'utf-8',
       timeout: 10000,
     });
@@ -94,13 +103,14 @@ export async function securityAudit(args: Record<string, unknown>, context: Tool
   try {
     let cmd: string;
     if (target === 'npm' && existsSync(join(cwd, 'package.json'))) {
-      cmd = 'npm audit --json 2>/dev/null | head -100';
+      cmd = IS_WINDOWS
+        ? 'npm audit --json 2>nul'
+        : 'npm audit --json 2>/dev/null | head -100';
     } else {
       return { success: true, output: 'No supported audit target found' };
     }
 
     const output = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 30000 });
-    // Parse JSON audit output
     try {
       const audit = JSON.parse(output) as { metadata?: { vulnerabilities?: Record<string, number> } };
       const vulns = audit.metadata?.vulnerabilities;
@@ -123,7 +133,6 @@ export async function securitySecrets(args: Record<string, unknown>, context: To
   void args;
 
   try {
-    // Search for common secret patterns
     const patterns = [
       'api[_-]?key',
       'secret[_-]?key',
@@ -132,10 +141,8 @@ export async function securitySecrets(args: Record<string, unknown>, context: To
       'private[_-]?key',
     ];
     const grepPattern = patterns.join('|');
-    const output = execSync(
-      `grep -rn --include='*.{ts,js,json,env,yaml,yml,toml}' -i -E '(${grepPattern})\\s*[=:]' . | grep -v node_modules | grep -v '.git/' | head -20`,
-      { cwd, encoding: 'utf-8', timeout: 10000 },
-    );
+    const cmd = getGrepCommand(grepPattern, '*.{ts,js,json,env,yaml,yml,toml}');
+    const output = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 10000 });
     if (!output.trim()) {
       return { success: true, output: 'No potential secrets found' };
     }

@@ -9,9 +9,10 @@ interface BannerProps {
   model?: string;
   organization?: OrganizationConfig | null;
   crewName?: string;
+  profileLabel?: string | null;
 }
 
-export const Banner: FC<BannerProps> = ({ provider, model, organization, crewName }) => {
+export const Banner: FC<BannerProps> = ({ provider, model, organization, crewName, profileLabel }) => {
   return (
     <Box
       flexDirection="column"
@@ -39,6 +40,10 @@ export const Banner: FC<BannerProps> = ({ provider, model, organization, crewNam
           <Text color={COLORS.info}>{provider}</Text>
           <Text color={COLORS.textDim}> / </Text>
           <Text color={COLORS.text}>{model}</Text>
+          {/** show active profile if present */}
+          {profileLabel && (
+            <Text color={COLORS.textDim}> {' '}• [{profileLabel}]</Text>
+          )}
         </Box>
       )}
 

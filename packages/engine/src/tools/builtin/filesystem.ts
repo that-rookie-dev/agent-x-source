@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, readdir
 import { resolve, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { IS_WINDOWS } from '../platform.js';
 
 export async function fileRead(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const filePath = resolve(context.scopePath, args['path'] as string);
@@ -103,8 +104,9 @@ export async function fileFind(args: Record<string, unknown>, context: ToolExecu
   const cwd = resolve(context.scopePath, searchPath);
 
   try {
-    // Use find with -name for glob patterns, exclude node_modules/.git
-    const cmd = `find . -name "${pattern.replace(/"/g, '\\"')}" -not -path "*/node_modules/*" -not -path "*/.git/*" | head -100`;
+    const cmd = IS_WINDOWS
+      ? `dir /s /b "${pattern}" 2>nul | findstr /v node_modules | findstr /v .git | findstr /v dist`
+      : `find . -name "${pattern.replace(/"/g, '\\"')}" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | head -100`;
     const output = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 10000 });
     const files = output.trim().split('\n').filter(Boolean);
     if (files.length === 0) {

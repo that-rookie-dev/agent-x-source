@@ -1,7 +1,17 @@
-import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createRequire } from 'module';
 import { getDbPath } from '../config/paths.js';
+
+// Try to load better-sqlite3, but don't crash if native bindings are missing.
+let BetterSqlite3: any = null;
+try {
+  const require = createRequire(import.meta.url);
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  BetterSqlite3 = require('better-sqlite3');
+} catch (err) {
+  BetterSqlite3 = null;
+}
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -124,22 +134,36 @@ CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(sessio
 `;
 
 export class SessionStore {
-  private db: Database.Database;
+  // If BetterSqlite3 is unavailable we operate in in-memory fallback mode.
+  private db: any | null = null;
+  private memMode = false;
+  private memSessions: Map<string, Record<string, unknown>> = new Map();
+  private memMessages: Map<string, Array<Record<string, unknown>>> = new Map();
+  private memTokenLogs: Map<string, Array<Record<string, unknown>>> = new Map();
+  private memPermissions: Map<string, Array<Record<string, unknown>>> = new Map();
 
   constructor(dbPath?: string) {
     const path = dbPath ?? getDbPath();
     mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
+
+    if (!BetterSqlite3) {
+      this.memMode = true;
+      this.db = null;
+      return;
+    }
+
+    this.db = new BetterSqlite3(path);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.initialize();
   }
 
   private initialize(): void {
+    if (this.memMode || !this.db) return;
     this.db.exec(SCHEMA_SQL);
   }
 
-  getDb(): Database.Database {
+  getDb(): unknown {
     return this.db;
   }
 
@@ -156,6 +180,23 @@ export class SessionStore {
     createdAt: string;
     updatedAt: string;
   }): void {
+    if (this.memMode) {
+      this.memSessions.set(session.id, {
+        id: session.id,
+        title: session.title,
+        status: session.status,
+        provider: session.provider,
+        model: session.model,
+        crewId: session.crewId ?? null,
+        tokensUsed: session.tokensUsed ?? 0,
+        tokenAvailable: session.tokenAvailable ?? 128000,
+        scopePath: session.scopePath ?? process.cwd(),
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+      });
+      return;
+    }
+
     const stmt = this.db.prepare(`
       INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -176,6 +217,11 @@ export class SessionStore {
   }
 
   getSession(sessionId: string): Record<string, unknown> | null {
+    if (this.memMode) {
+      const s = this.memSessions.get(sessionId);
+      return s ?? null;
+    }
+
     const stmt = this.db.prepare('SELECT * FROM sessions WHERE id = ?');
     const row = stmt.get(sessionId) as Record<string, unknown> | undefined;
     if (!row) return null;
@@ -194,6 +240,17 @@ export class SessionStore {
   }
 
   updateSession(sessionId: string, updates: Record<string, unknown>): void {
+    if (this.memMode) {
+      const s = this.memSessions.get(sessionId);
+      if (!s) return;
+      for (const [k, v] of Object.entries(updates)) {
+        if (k === 'updatedAt') s.updatedAt = v as string;
+        else s[k] = v as unknown;
+      }
+      this.memSessions.set(sessionId, s);
+      return;
+    }
+
     const fields: string[] = [];
     const values: unknown[] = [];
 
@@ -223,6 +280,17 @@ export class SessionStore {
   }
 
   listSessions(limit = 20): Array<Record<string, unknown>> {
+    if (this.memMode) {
+      const all = Array.from(this.memSessions.values());
+      // sort by updatedAt desc if present
+      all.sort((a: any, b: any) => {
+        const ta = a.updatedAt ?? '';
+        const tb = b.updatedAt ?? '';
+        return tb.localeCompare(ta);
+      });
+      return all.slice(0, limit) as Array<Record<string, unknown>>;
+    }
+
     const stmt = this.db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?');
     const rows = stmt.all(limit) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
@@ -248,6 +316,21 @@ export class SessionStore {
     toolCalls?: string;
     createdAt: string;
   }): void {
+    if (this.memMode) {
+      const arr = this.memMessages.get(message.sessionId) ?? [];
+      arr.push({
+        id: message.id,
+        session_id: message.sessionId,
+        role: message.role,
+        content: message.content,
+        token_count: message.tokenCount ?? 0,
+        tool_calls: message.toolCalls ?? null,
+        created_at: message.createdAt,
+      });
+      this.memMessages.set(message.sessionId, arr);
+      return;
+    }
+
     const stmt = this.db.prepare(`
       INSERT INTO messages (id, session_id, role, content, token_count, tool_calls, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -264,16 +347,29 @@ export class SessionStore {
   }
 
   getMessages(sessionId: string): Array<Record<string, unknown>> {
+    if (this.memMode) {
+      return (this.memMessages.get(sessionId) ?? []) as Array<Record<string, unknown>>;
+    }
+
     const stmt = this.db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC');
     return stmt.all(sessionId) as Array<Record<string, unknown>>;
   }
 
   deleteMessages(sessionId: string): void {
+    if (this.memMode) {
+      this.memMessages.set(sessionId, []);
+      return;
+    }
+
     const stmt = this.db.prepare('DELETE FROM messages WHERE session_id = ?');
     stmt.run(sessionId);
   }
 
   getMessageCount(sessionId: string): number {
+    if (this.memMode) {
+      return (this.memMessages.get(sessionId) ?? []).length;
+    }
+
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM messages WHERE session_id = ?');
     const row = stmt.get(sessionId) as { count: number } | undefined;
     return row?.count ?? 0;
@@ -290,6 +386,23 @@ export class SessionStore {
     reasoningTokens?: number;
     costUsd?: number;
   }): void {
+    if (this.memMode) {
+      const arr = this.memTokenLogs.get(log.sessionId) ?? [];
+      arr.push({
+        id: log.id,
+        session_id: log.sessionId,
+        message_id: log.messageId ?? null,
+        provider_id: log.providerId,
+        model_id: log.modelId,
+        input_tokens: log.inputTokens,
+        output_tokens: log.outputTokens,
+        reasoning_tokens: log.reasoningTokens ?? 0,
+        cost_usd: log.costUsd ?? null,
+      });
+      this.memTokenLogs.set(log.sessionId, arr);
+      return;
+    }
+
     const stmt = this.db.prepare(`
       INSERT INTO token_logs (id, session_id, message_id, provider_id, model_id, input_tokens, output_tokens, reasoning_tokens, cost_usd)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -308,6 +421,10 @@ export class SessionStore {
   }
 
   getTokenLogs(sessionId: string): Array<Record<string, unknown>> {
+    if (this.memMode) {
+      return (this.memTokenLogs.get(sessionId) ?? []) as Array<Record<string, unknown>>;
+    }
+
     const stmt = this.db.prepare('SELECT * FROM token_logs WHERE session_id = ? ORDER BY created_at ASC');
     return stmt.all(sessionId) as Array<Record<string, unknown>>;
   }
@@ -322,6 +439,12 @@ export class SessionStore {
     success?: boolean;
     elapsedMs?: number;
   }): void {
+    if (this.memMode) {
+      // Tool executions not needed for basic TUI flows; store minimally.
+      // No-op or store in permissions map for debug.
+      return;
+    }
+
     const stmt = this.db.prepare(`
       INSERT INTO tool_executions (id, session_id, agent_task_id, tool_name, input, output, success, elapsed_ms)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -345,6 +468,13 @@ export class SessionStore {
     targetPath?: string;
     decision: string;
   }): void {
+    if (this.memMode) {
+      const arr = this.memPermissions.get(perm.sessionId) ?? [];
+      arr.push({ id: perm.id, session_id: perm.sessionId, tool_name: perm.toolName, target_path: perm.targetPath ?? null, decision: perm.decision });
+      this.memPermissions.set(perm.sessionId, arr);
+      return;
+    }
+
     const stmt = this.db.prepare(`
       INSERT INTO permissions (id, session_id, tool_name, target_path, decision)
       VALUES (?, ?, ?, ?, ?)
@@ -353,11 +483,23 @@ export class SessionStore {
   }
 
   getPermissions(sessionId: string): Array<Record<string, unknown>> {
+    if (this.memMode) {
+      return (this.memPermissions.get(sessionId) ?? []) as Array<Record<string, unknown>>;
+    }
+
     const stmt = this.db.prepare('SELECT * FROM permissions WHERE session_id = ? ORDER BY created_at ASC');
     return stmt.all(sessionId) as Array<Record<string, unknown>>;
   }
 
   deleteSession(sessionId: string): void {
+    if (this.memMode) {
+      this.memSessions.delete(sessionId);
+      this.memMessages.delete(sessionId);
+      this.memTokenLogs.delete(sessionId);
+      this.memPermissions.delete(sessionId);
+      return;
+    }
+
     this.db.prepare('DELETE FROM tool_executions WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM token_logs WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM permissions WHERE session_id = ?').run(sessionId);
@@ -366,7 +508,24 @@ export class SessionStore {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   }
 
+  clearAll(): void {
+    if (this.memMode) {
+      this.memSessions.clear();
+      this.memMessages.clear();
+      this.memTokenLogs.clear();
+      this.memPermissions.clear();
+      return;
+    }
+    this.db.exec('DELETE FROM tool_executions');
+    this.db.exec('DELETE FROM token_logs');
+    this.db.exec('DELETE FROM permissions');
+    this.db.exec('DELETE FROM agent_tasks');
+    this.db.exec('DELETE FROM messages');
+    this.db.exec('DELETE FROM sessions');
+  }
+
   close(): void {
-    this.db.close();
+    if (this.memMode) return;
+    if (this.db) this.db.close();
   }
 }

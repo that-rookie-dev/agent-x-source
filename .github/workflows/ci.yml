@@ -2,15 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [launch]
+    branches: [main, launch]
   pull_request:
-    branches: [launch]
+    branches: [main, launch]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         node-version: [20, 22]
 
     steps:
@@ -25,8 +26,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - run: pnpm run lint
+
       - run: pnpm run build
 
       - run: pnpm run typecheck
+
+      - run: pnpm run check:platform
 
       - run: pnpm run test

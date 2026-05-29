@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
@@ -16,7 +16,7 @@ export async function dbQuery(args: Record<string, unknown>, context: ToolExecut
     }
 
     try {
-      const output = execSync(`sqlite3 "${dbPath}" "${query.replace(/"/g, '\\"')}" -header -separator '|'`, {
+      const output = execFileSync('sqlite3', [dbPath, query, '-header', '-separator', '|'], {
         cwd,
         encoding: 'utf-8',
         timeout: 15000,
@@ -44,7 +44,7 @@ export async function dbSchema(args: Record<string, unknown>, context: ToolExecu
     const query = table
       ? `.schema ${table}`
       : `.tables`;
-    const output = execSync(`sqlite3 "${dbPath}" "${query}"`, {
+    const output = execFileSync('sqlite3', [dbPath, query], {
       encoding: 'utf-8',
       timeout: 10000,
     });
@@ -65,14 +65,13 @@ export async function dbExport(args: Record<string, unknown>, context: ToolExecu
   }
 
   try {
-    let cmd: string;
+    const sql = `SELECT * FROM ${table} LIMIT 100`;
+    let output: string;
     if (format === 'csv') {
-      cmd = `sqlite3 "${dbPath}" -header -csv "SELECT * FROM ${table} LIMIT 100"`;
+      output = execFileSync('sqlite3', [dbPath, '-header', '-csv', sql], { encoding: 'utf-8', timeout: 10000 });
     } else {
-      cmd = `sqlite3 "${dbPath}" -header -separator '\t' "SELECT * FROM ${table} LIMIT 100"`;
+      output = execFileSync('sqlite3', [dbPath, '-header', '-separator', '\t', sql], { encoding: 'utf-8', timeout: 10000 });
     }
-
-    const output = execSync(cmd, { encoding: 'utf-8', timeout: 10000 });
     return { success: true, output: output.trim() };
   } catch (error) {
     return { success: false, output: (error as Error).message, error: 'EXPORT_ERROR' };

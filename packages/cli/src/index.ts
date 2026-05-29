@@ -1,6 +1,7 @@
 import React from 'react';
 import { render } from 'ink';
 import { VERSION, APP_NAME, TAGLINE, getLogger } from '@agentx/shared';
+import { initSessionTrace } from './sessionTrace.js';
 import { App } from '@agentx/tui';
 import { ConfigManager, TelegramStore } from '@agentx/engine';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
@@ -8,6 +9,50 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { isDaemonRunning, getDaemonStatus, stopDaemon } from './daemon.js';
+
+async function isWebApiRunning(): Promise<boolean> {
+  try {
+    const res = await fetch('http://127.0.0.1:3333/api/health', { method: 'GET' });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureWebApiRunning(): Promise<void> {
+  if (await isWebApiRunning()) return;
+  try {
+    const webApiDir = join(dirname(dirname(new URL(import.meta.url).pathname)), '..', 'web-api');
+    const builtScript = join(webApiDir, 'dist', 'index.js');
+    const sourceScript = join(webApiDir, 'src', 'index.ts');
+
+    let child;
+    if (existsSync(builtScript)) {
+      child = spawn(process.execPath, [builtScript], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, AGENTX_AUTO_STARTED: '1' },
+      });
+    } else {
+      // Dev mode — use tsx to run the TypeScript source directly
+      const tsxPath = join(webApiDir, 'node_modules', '.bin', 'tsx');
+      child = spawn(tsxPath, [sourceScript], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, AGENTX_AUTO_STARTED: '1' },
+      });
+    }
+    child.unref();
+    // wait up to 3s for server to respond
+    for (let i = 0; i < 6; i++) {
+      if (await isWebApiRunning()) return;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    console.warn('Web API did not respond after auto-start.');
+  } catch (e) {
+    console.warn('Failed to auto-start Web API:', e);
+  }
+}
 
 /** Crash marker — written on start, removed on clean exit */
 function getCrashMarkerPath(): string {
@@ -137,6 +182,13 @@ async function handleUninstall(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Initialize session tracing (writes last N events to a single session file)
+  try {
+    initSessionTrace({ path: process.env.AGENTX_SESSION_TRACE_PATH ?? '/tmp/agentx-last-session.json', maxEvents: 50 });
+  } catch {
+    // non-fatal
+  }
+
   const logger = getLogger();
 
   // Install global crash handlers
@@ -239,6 +291,9 @@ async function main(): Promise<void> {
       console.log('✓ Telegram bot token saved.');
     }
 
+    // Ensure web API (backend + static UI) is running so daemon and UI can interact
+    await ensureWebApiRunning();
+
     // Check Telegram config
     const telegramConfig = telegramStore.load();
     if (!telegramConfig?.botToken) {
@@ -318,6 +373,9 @@ async function main(): Promise<void> {
 
   // Clear terminal before launching
   process.stdout.write('\x1Bc');
+
+  // Ensure backend is available for TUI features and the Web UI
+  try { await ensureWebApiRunning(); } catch { /* non-fatal */ }
 
   // Render the TUI
   render(React.createElement(App, { sessionId, recovered }));
