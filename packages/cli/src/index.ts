@@ -373,10 +373,21 @@ async function main(): Promise<void> {
       console.log(`  PID: ${status.pid}`);
       console.log(`  Crew: ${status.crew ?? 'unknown'}`);
       if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
-      if (status.startedAt) console.log(`  Started: ${status.startedAt}`);
+      if (status.startedAt) {
+        console.log(`  Started: ${status.startedAt}`);
+        const elapsed = Date.now() - new Date(status.startedAt).getTime();
+        const hrs = Math.floor(elapsed / 3600000);
+        const mins = Math.floor((elapsed % 3600000) / 60000);
+        const secs = Math.floor((elapsed % 60000) / 1000);
+        const parts = [];
+        if (hrs) parts.push(`${hrs}h`);
+        if (mins) parts.push(`${mins}m`);
+        parts.push(`${secs}s`);
+        console.log(`  Uptime: ${parts.join(' ')}`);
+      }
+      const webOk = await isWebApiRunning();
+      console.log(`  Web API: ${webOk ? 'running' : 'not running'}`);
     }
-    const webOk = await isWebApiRunning();
-    console.log(`  Web API: ${webOk ? 'running' : 'not running'}`);
     process.exit(0);
   }
 
