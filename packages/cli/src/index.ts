@@ -341,6 +341,8 @@ async function main(): Promise<void> {
       console.log(`✦ Agent-X daemon started (PID: ${status.pid})`);
       console.log(`  Crew: ${status.crew ?? 'default'}`);
       if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+      const webOk = await isWebApiRunning();
+      console.log(`  Web API: ${webOk ? 'running' : 'not running'}`);
     } else {
       console.error('✗ Daemon failed to start. Run `agentx` for diagnostics.');
     }
@@ -365,14 +367,16 @@ async function main(): Promise<void> {
     if (!isDaemonRunning()) {
       console.log('✦ Agent-X daemon: not running');
       console.log('  Use `agentx start` to launch the background agent.');
-      process.exit(0);
+    } else {
+      const status = getDaemonStatus();
+      console.log('✦ Agent-X daemon: running');
+      console.log(`  PID: ${status.pid}`);
+      console.log(`  Crew: ${status.crew ?? 'unknown'}`);
+      if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+      if (status.startedAt) console.log(`  Started: ${status.startedAt}`);
     }
-    const status = getDaemonStatus();
-    console.log('✦ Agent-X daemon: running');
-    console.log(`  PID: ${status.pid}`);
-    console.log(`  Crew: ${status.crew ?? 'unknown'}`);
-    if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
-    if (status.startedAt) console.log(`  Started: ${status.startedAt}`);
+    const webOk = await isWebApiRunning();
+    console.log(`  Web API: ${webOk ? 'running' : 'not running'}`);
     process.exit(0);
   }
 
