@@ -21,12 +21,28 @@ async function isWebApiRunning(): Promise<boolean> {
 
 async function ensureWebApiRunning(): Promise<void> {
   if (await isWebApiRunning()) return;
-  try {
-    const webApiDir = join(dirname(dirname(new URL(import.meta.url).pathname)), '..', 'web-api');
-    const builtScript = join(webApiDir, 'dist', 'index.js');
-    const sourceScript = join(webApiDir, 'src', 'index.ts');
 
-    let child;
+  // Resolve web-api relative to the source package location.
+  // When running from the installed bundle (~/.agentx/index.js),
+  // walk up from the bundle directory to find the source tree.
+  let webApiDir: string | undefined;
+  const bundlePath = new URL(import.meta.url).pathname;
+
+  // Check monorepo layout: packages/cli/dist/../.. → source root
+  const candidates = [
+    join(dirname(dirname(bundlePath)), '..', 'web-api'),        // monorepo sibling (dev)
+    join(dirname(dirname(dirname(dirname(bundlePath)))), 'packages', 'web-api'), // monorepo deep
+  ];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, 'package.json'))) { webApiDir = dir; break; }
+  }
+  if (!webApiDir) return; // web-api not available in this installation
+
+  const builtScript = join(webApiDir, 'dist', 'index.js');
+  const sourceScript = join(webApiDir, 'src', 'index.ts');
+
+  let child;
+  try {
     if (existsSync(builtScript)) {
       child = spawn(process.execPath, [builtScript], {
         detached: true,
@@ -34,7 +50,6 @@ async function ensureWebApiRunning(): Promise<void> {
         env: { ...process.env, AGENTX_AUTO_STARTED: '1' },
       });
     } else {
-      // Dev mode — use tsx to run the TypeScript source directly
       const tsxPath = join(webApiDir, 'node_modules', '.bin', 'tsx');
       child = spawn(tsxPath, [sourceScript], {
         detached: true,
@@ -42,16 +57,13 @@ async function ensureWebApiRunning(): Promise<void> {
         env: { ...process.env, AGENTX_AUTO_STARTED: '1' },
       });
     }
+    child.on('error', () => { /* spawn failure — non-fatal */ });
     child.unref();
-    // wait up to 3s for server to respond
     for (let i = 0; i < 6; i++) {
       if (await isWebApiRunning()) return;
       await new Promise((r) => setTimeout(r, 500));
     }
-    console.warn('Web API did not respond after auto-start.');
-  } catch (e) {
-    console.warn('Failed to auto-start Web API:', e);
-  }
+  } catch { /* non-fatal */ }
 }
 
 /** Crash marker — written on start, removed on clean exit */
@@ -194,6 +206,8 @@ async function main(): Promise<void> {
   // Install global crash handlers
   process.on('uncaughtException', (err) => {
     logger.error('UNCAUGHT_EXCEPTION', err);
+    console.error('\n✦ Agent-X encountered an error and will exit.');
+    console.error(`  ${err.message}`);
     removeCrashMarker();
     process.exit(1);
   });
@@ -382,6 +396,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('Fatal:', err);
+  console.error('\n✦ Agent-X fatal error:', err instanceof Error ? err.message : err);
   process.exit(1);
 });
