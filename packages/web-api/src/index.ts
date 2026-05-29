@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer } from 'node:http';
 import { join, dirname } from 'node:path';
 import { existsSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { getEngine, createAgent, getOrCreateAgent, destroyAgent } from './engine.js';
 import { setupWebSocket, ensureSubscribed } from './ws.js';
@@ -507,14 +508,24 @@ app.delete('/api/sessions', (_req, res) => {
 app.post('/api/reset', (_req, res) => {
   try {
     destroyAgent();
-    // Delete config file
-    const cm = new ConfigManager();
-    try { rmSync((cm as unknown as { configPath: string }).configPath); } catch { /* ok */ }
-    // Delete sessions DB
-    try {
-      const dbPath = join(process.env['HOME'] || '/tmp', '.config', 'agentx', 'agentx.db');
-      rmSync(dbPath);
-    } catch { /* ok */ }
+
+    const HOME = homedir();
+    const configDir = process.env['XDG_CONFIG_HOME']
+      ? join(process.env['XDG_CONFIG_HOME'], 'agentx')
+      : join(HOME, '.config', 'agentx');
+    const dataDir = process.env['XDG_DATA_HOME']
+      ? join(process.env['XDG_DATA_HOME'], 'agentx')
+      : join(HOME, '.local', 'share', 'agentx');
+    const cacheDir = process.env['XDG_CACHE_HOME']
+      ? join(process.env['XDG_CACHE_HOME'], 'agentx')
+      : join(HOME, '.cache', 'agentx');
+
+    // Delete everything
+    const dirs = [configDir, dataDir, cacheDir];
+    for (const dir of dirs) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ok */ }
+    }
+
     // Reset engine state
     const eng = getEngine();
     (eng as unknown as { configured: boolean }).configured = false;
