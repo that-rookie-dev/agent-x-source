@@ -194,7 +194,7 @@ app.post('/api/provider/profile/switch', (req, res) => {
     const eng = getEngine();
     eng.configManager.setActiveProviderProfile(provider, profileId);
     destroyAgent();
-    const agent = createAgent();
+    createAgent();
     res.json({ ok: true, provider, profileId });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
