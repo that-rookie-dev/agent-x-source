@@ -241,7 +241,17 @@ export function useSession(config: AgentXConfig, _crew?: Crew, restoreSessionId?
           sessionId,
           providerId: configRef.current.provider.activeProvider,
           modelId: configRef.current.provider.activeModel,
-          emit: (msg: string) => setError(msg),
+          emit: (msg: string) => {
+            setMessages((prev) => [...prev, {
+              id: `sys-cmd-${Date.now()}`,
+              sessionId,
+              role: 'assistant' as const,
+              content: msg,
+              toolCalls: null,
+              createdAt: new Date().toISOString(),
+              tokenCount: 0,
+            }]);
+          },
         }).then((result) => {
           if (result.action === 'list_models') {
             void agentRef.current?.listModels();

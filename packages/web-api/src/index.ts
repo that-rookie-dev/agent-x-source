@@ -118,8 +118,20 @@ app.post('/api/provider/validate', async (req, res) => {
 app.get('/api/provider/models', async (req, res) => {
   try {
     const providerId = (req.query['provider'] as string) || '';
-    const apiKey = (req.query['apiKey'] as string) || undefined;
-    const baseUrl = (req.query['baseUrl'] as string) || undefined;
+    let apiKey = (req.query['apiKey'] as string) || undefined;
+    let baseUrl = (req.query['baseUrl'] as string) || undefined;
+    if (!apiKey && !baseUrl) {
+      try {
+        const eng = getEngine();
+        const cfg = eng.configManager.load();
+        const creds = cfg.provider.providers[providerId];
+        if (creds?.activeProfile && creds.profiles?.[creds.activeProfile]) {
+          const active = creds.profiles[creds.activeProfile];
+          apiKey = active.apiKey;
+          baseUrl = active.baseUrl;
+        }
+      } catch { /* use provided values */ }
+    }
     const prov = ProviderFactory.create(providerId as ProviderId, apiKey, baseUrl);
     const models = await prov.listModels();
     res.json(models);

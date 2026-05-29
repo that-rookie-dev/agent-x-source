@@ -17,5 +17,5 @@ export interface CommandContext {
 export interface CommandResult {
   success: boolean;
   output?: string;
-  action?: 'exit' | 'clear' | 'switch_model' | 'list_models' | 'switch_provider' | 'reset_provider' | 'list_providers' | 'save_memory' | 'switch_crew' | 'restore_session' | 'telegram_start' | 'telegram_stop' | 'telegram_status' | 'none';
+  action?: 'exit' | 'clear' | 'switch_model' | 'list_models' | 'switch_provider' | 'reset_provider' | 'list_providers' | 'list_profiles' | 'add_profile' | 'delete_profile' | 'switch_profile' | 'save_memory' | 'switch_crew' | 'restore_session' | 'telegram_start' | 'telegram_stop' | 'telegram_status' | 'none';
 }
