@@ -88,6 +88,18 @@ app.put('/api/config', (req, res) => {
 });
 
 // ───── Providers ─────
+const AVAILABLE_PROVIDERS = [
+  { id: 'openai', name: 'OpenAI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.openai.com/v1' },
+  { id: 'anthropic', name: 'Anthropic', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.anthropic.com' },
+  { id: 'google', name: 'Google', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  { id: 'ollama', name: 'Ollama', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:11434' },
+  { id: 'lmstudio', name: 'LM Studio', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:1234/v1' },
+];
+
+app.get('/api/providers/available', (_req, res) => {
+  res.json({ providers: AVAILABLE_PROVIDERS });
+});
+
 app.post('/api/provider/validate', async (req, res) => {
   try {
     const { provider, apiKey, baseUrl } = req.body as { provider: string; apiKey?: string; baseUrl?: string };
@@ -137,6 +149,19 @@ app.post('/api/provider/configure', (req, res) => {
     config.provider.providers[provider] = providerCfg;
 
     eng.configManager.save(config);
+
+    // Create a profile for this provider configuration
+    const profileId = (req.body as Record<string, string>).profileName || 'default';
+    eng.configManager.addProviderProfile(provider, profileId, {
+      label: profileId,
+      apiKey,
+      baseUrl,
+      createdAt: new Date().toISOString(),
+    }, true);
+    const cfg = eng.configManager.load();
+    cfg.provider.activeProvider = provider as ProviderId;
+    eng.configManager.save(cfg);
+
     res.json({ ok: true, provider });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
