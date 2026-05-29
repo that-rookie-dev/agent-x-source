@@ -2,8 +2,9 @@ import { Agent, ConfigManager, TelegramBridge, TelegramStore, CrewManager, Sessi
 import { getLogger, generateSessionId, VERSION } from '@agentx/shared';
 import type { AgentXConfig, EngineEvent } from '@agentx/shared';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { spawn } from 'node:child_process';
 
 function getDataDir(): string {
   return process.env['XDG_DATA_HOME']
@@ -71,6 +72,45 @@ function writeStatus(status: Record<string, unknown>): void {
 }
 
 /**
+ * Best-effort start of the web API server.
+ * Tries multiple candidate paths to locate the web-api package.
+ */
+async function startWebApiIfAvailable(): Promise<void> {
+  // Check if already running
+  try {
+    const res = await fetch('http://127.0.0.1:3333/api/health', { method: 'GET' });
+    if (res.ok) return;
+  } catch { /* not running */ }
+
+  const bundlePath = new URL(import.meta.url).pathname;
+  const candidates = [
+    join(dirname(dirname(bundlePath)), '..', 'web-api'),
+    join(process.cwd(), 'packages', 'web-api'),
+    process.env['AGENTX_SOURCE'] ? join(process.env['AGENTX_SOURCE'], 'packages', 'web-api') : null,
+    join(dirname(bundlePath), 'web-api'),
+  ].filter(Boolean) as string[];
+
+  let webApiDir: string | undefined;
+  for (const dir of candidates) {
+    if (existsSync(join(dir, 'package.json'))) { webApiDir = dir; break; }
+  }
+  if (!webApiDir) return;
+
+  const builtScript = join(webApiDir, 'dist', 'index.js');
+  if (!existsSync(builtScript)) return;
+
+  try {
+    const child = spawn(process.execPath, [builtScript], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, AGENTX_AUTO_STARTED: '1' },
+    });
+    child.on('error', () => {});
+    child.unref();
+  } catch { /* non-fatal */ }
+}
+
+/**
  * Main daemon entry point.
  * Runs the agent in the background with Telegram as the primary interface.
  * Full feature parity with TUI: session persistence, all commands, permissions, error recovery.
@@ -86,6 +126,9 @@ export async function startDaemon(): Promise<void> {
   }
 
   const config: AgentXConfig = configManager.load();
+
+  // Ensure web API is running (non-blocking, best-effort)
+  startWebApiIfAvailable().catch(() => {});
 
   // Load telegram config
   const telegramStore = new TelegramStore();
