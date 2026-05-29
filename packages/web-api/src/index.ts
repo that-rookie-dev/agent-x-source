@@ -4,9 +4,9 @@ import { join, dirname } from 'node:path';
 import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { getEngine, createAgent, getOrCreateAgent, destroyAgent, clearEngine } from './engine.js';
+import { getEngine, createAgent, destroyAgent, clearEngine } from './engine.js';
 import { setupWebSocket, ensureSubscribed } from './ws.js';
-import { ProviderFactory, TelegramStore, ConfigManager } from '@agentx/engine';
+import { ProviderFactory, TelegramStore } from '@agentx/engine';
 import type { ProviderId, AgentXConfig } from '@agentx/shared';
 
 const PORT = Number(process.env['PORT']) || 3333;
@@ -130,9 +130,11 @@ app.get('/api/provider/models', async (req, res) => {
         const cfg = eng.configManager.load();
         const creds = cfg.provider.providers[providerId];
         if (creds?.activeProfile && creds.profiles?.[creds.activeProfile]) {
-          const active = creds.profiles[creds.activeProfile];
-          apiKey = active.apiKey;
-          baseUrl = active.baseUrl;
+          const active = creds.profiles[creds.activeProfile] as { apiKey?: string; baseUrl?: string } | undefined;
+          if (active) {
+            apiKey = active.apiKey;
+            baseUrl = active.baseUrl;
+          }
         }
       } catch { /* use provided values */ }
     }
@@ -246,9 +248,10 @@ app.post('/api/provider/profile/switch', (req, res) => {
 app.post('/api/model/switch', (req, res) => {
   try {
     const { modelId, contextWindow } = req.body as { modelId: string; contextWindow?: number };
-    const agent = getOrCreateAgent();
-    agent.switchModel(modelId, contextWindow);
     const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    agent.switchModel(modelId, contextWindow);
     try {
       const config = eng.configManager.load();
       config.provider.activeModel = modelId;
@@ -265,7 +268,9 @@ app.post('/api/model/switch', (req, res) => {
 app.post('/api/model/trial', async (req, res) => {
   try {
     const { modelId } = req.body as { modelId: string };
-    const agent = getOrCreateAgent();
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ ok: false, error: 'no-session' }); return; }
     const ok = await agent.trialModel(modelId);
     res.json({ ok, model: modelId });
   } catch (e: unknown) {
@@ -275,9 +280,10 @@ app.post('/api/model/trial', async (req, res) => {
 
 app.get('/api/models', async (_req, res) => {
   try {
-    const agent = getOrCreateAgent();
-    await agent.listModels();
     const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    await agent.listModels();
     const config = eng.configManager.load();
     res.json({ currentModel: config.provider.activeModel });
   } catch (e: unknown) {
@@ -359,8 +365,9 @@ app.post('/api/chat/message', async (req, res) => {
   try {
     const { text } = req.body as { text: string };
     if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
-
-    const agent = getOrCreateAgent();
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     ensureSubscribed();
     const message = await agent.sendMessage(text);
     res.json({ ok: true, message });
@@ -371,7 +378,9 @@ app.post('/api/chat/message', async (req, res) => {
 
 app.post('/api/chat/cancel', (_req, res) => {
   try {
-    const agent = getOrCreateAgent();
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     agent.cancel();
     res.json({ ok: true });
   } catch {
@@ -381,7 +390,9 @@ app.post('/api/chat/cancel', (_req, res) => {
 
 app.get('/api/chat/history', (_req, res) => {
   try {
-    const agent = getOrCreateAgent();
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.json([]); return; }
     const history = agent.getMessageHistory();
     res.json(history);
   } catch {
@@ -391,7 +402,9 @@ app.get('/api/chat/history', (_req, res) => {
 
 app.post('/api/chat/clear', (_req, res) => {
   try {
-    const agent = getOrCreateAgent();
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     agent.clearHistory();
     res.json({ ok: true });
   } catch {
@@ -403,7 +416,9 @@ app.post('/api/chat/clear', (_req, res) => {
 app.post('/api/permission/respond', (req, res) => {
   try {
     const { choice } = req.body as { choice: 'allow_once' | 'allow_always' | 'deny' };
-    const agent = getOrCreateAgent();
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     agent.respondToPermission(choice);
     res.json({ ok: true });
   } catch (e: unknown) {
