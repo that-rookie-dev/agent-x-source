@@ -22,17 +22,21 @@ async function isWebApiRunning(): Promise<boolean> {
 async function ensureWebApiRunning(): Promise<void> {
   if (await isWebApiRunning()) return;
 
-  // Resolve web-api relative to the source package location.
-  // When running from the installed bundle (~/.agentx/index.js),
-  // walk up from the bundle directory to find the source tree.
   let webApiDir: string | undefined;
   const bundlePath = new URL(import.meta.url).pathname;
 
-  // Check monorepo layout: packages/cli/dist/../.. → source root
+  // Try candidate paths to find the web-api package
   const candidates = [
-    join(dirname(dirname(bundlePath)), '..', 'web-api'),        // monorepo sibling (dev)
-    join(dirname(dirname(dirname(dirname(bundlePath)))), 'packages', 'web-api'), // monorepo deep
-  ];
+    // Monorepo sibling (dev from packages/cli/dist/)
+    join(dirname(dirname(bundlePath)), '..', 'web-api'),
+    // Monorepo from source root
+    join(process.cwd(), 'packages', 'web-api'),
+    // AGENTX_SOURCE env var
+    process.env['AGENTX_SOURCE'] ? join(process.env['AGENTX_SOURCE'], 'packages', 'web-api') : null,
+    // Installed alongside CLI bundle (~/.agentx/web-api/)
+    join(dirname(bundlePath), 'web-api'),
+  ].filter(Boolean) as string[];
+
   for (const dir of candidates) {
     if (existsSync(join(dir, 'package.json'))) { webApiDir = dir; break; }
   }
@@ -337,6 +341,8 @@ async function main(): Promise<void> {
       console.log(`✦ Agent-X daemon started (PID: ${status.pid})`);
       console.log(`  Crew: ${status.crew ?? 'default'}`);
       if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+      const webOk = await isWebApiRunning();
+      console.log(`  Web API: ${webOk ? 'running' : 'not running'}`);
     } else {
       console.error('✗ Daemon failed to start. Run `agentx` for diagnostics.');
     }
@@ -361,14 +367,27 @@ async function main(): Promise<void> {
     if (!isDaemonRunning()) {
       console.log('✦ Agent-X daemon: not running');
       console.log('  Use `agentx start` to launch the background agent.');
-      process.exit(0);
+    } else {
+      const status = getDaemonStatus();
+      console.log('✦ Agent-X daemon: running');
+      console.log(`  PID: ${status.pid}`);
+      console.log(`  Crew: ${status.crew ?? 'unknown'}`);
+      if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+      if (status.startedAt) {
+        console.log(`  Started: ${status.startedAt}`);
+        const elapsed = Date.now() - new Date(status.startedAt).getTime();
+        const hrs = Math.floor(elapsed / 3600000);
+        const mins = Math.floor((elapsed % 3600000) / 60000);
+        const secs = Math.floor((elapsed % 60000) / 1000);
+        const parts = [];
+        if (hrs) parts.push(`${hrs}h`);
+        if (mins) parts.push(`${mins}m`);
+        parts.push(`${secs}s`);
+        console.log(`  Uptime: ${parts.join(' ')}`);
+      }
+      const webOk = await isWebApiRunning();
+      console.log(`  Web API: ${webOk ? 'running' : 'not running'}`);
     }
-    const status = getDaemonStatus();
-    console.log('✦ Agent-X daemon: running');
-    console.log(`  PID: ${status.pid}`);
-    console.log(`  Crew: ${status.crew ?? 'unknown'}`);
-    if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
-    if (status.startedAt) console.log(`  Started: ${status.startedAt}`);
     process.exit(0);
   }
 
