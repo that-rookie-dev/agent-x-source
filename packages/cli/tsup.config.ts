@@ -8,7 +8,7 @@ export default defineConfig({
   splitting: false,
   shims: true,
   banner: {
-    js: '#!/usr/bin/env node\nimport{createRequire}from"module";const require=createRequire(import.meta.url);',
+    js: '#!/usr/bin/env node',
   },
   clean: true,
   noExternal: [/^(?!better-sqlite3).*/],
