@@ -455,7 +455,21 @@ export class Agent {
         return await fn();
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        if (attempt < this.maxRetries && !this.abortController?.signal.aborted) {
+
+        // If the operation was aborted, rethrow immediately — no retries.
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw error;
+        }
+
+        // Treat certain client/auth errors as non-retryable (tests depend on immediate failure
+        // for things like 401 Unauthorized). If we detect these, rethrow immediately.
+        const msg = error instanceof Error ? error.message : String(error);
+        if (/401|Unauthorized|404|not found|402|quota|billing|Invalid API/i.test(msg)) {
+          throw lastError;
+        }
+
+        // Otherwise, retry with exponential backoff (unless we've exhausted attempts).
+        if (attempt < this.maxRetries) {
           const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
           getLogger().warn('RETRY', `${label} failed (attempt ${attempt + 1}/${this.maxRetries + 1}), retrying in ${delay}ms`);
           await new Promise((r) => setTimeout(r, delay));
