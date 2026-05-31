@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
-import { apiGet, connectWs } from './api';
+import { apiGet, connectWs, getAuthStatus, checkAuthRequired } from './api';
 import Layout from './Layout';
 import HealthCheck from './pages/HealthCheck';
 import Wizard from './pages/Wizard';
@@ -11,10 +11,15 @@ import Sessions from './pages/Sessions';
 import Settings from './pages/Settings';
 import PluginHub from './pages/PluginHub';
 import PluginDetail from './pages/PluginDetail';
+import Login from './pages/Login';
+import SetupAuth from './pages/SetupAuth';
+
+type AuthPhase = 'checking' | 'setup-auth' | 'login' | 'authenticated';
 
 export default function App() {
   const [health, setHealth] = useState<'checking' | 'ok' | 'down'>('checking');
   const [setupComplete, setSetupComplete] = useState(false);
+  const [authPhase, setAuthPhase] = useState<AuthPhase>('checking');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -27,15 +32,11 @@ export default function App() {
       const urls = ['http://127.0.0.1:3333/api/health', 'http://localhost:3333/api/health', '/api/health'];
       for (const u of urls) {
         try {
-          const r = await fetch(u, { cache: 'no-store' });
+          const r = await fetch(u, { cache: 'no-store', credentials: 'include' });
           if (r.ok) {
             setHealth('ok');
-            try {
-              const status = await fetch('/api/setup/status').then((r) => r.json());
-              setSetupComplete(status.setupComplete);
-            } catch {
-              // ignore setup status fetch failures
-            }
+            // After health is ok, check auth state
+            checkAuthState();
             return;
           }
         } catch {
@@ -47,6 +48,42 @@ export default function App() {
       setHealth('down');
     }
   }, []);
+
+  const checkAuthState = useCallback(async () => {
+    try {
+      // First check if a root user exists
+      const authCheck = await checkAuthRequired();
+      
+      if (!authCheck.hasRootUser) {
+        // No root user yet — show auth setup
+        setAuthPhase('setup-auth');
+        return;
+      }
+
+      // Root user exists — check if we're already authenticated
+      const status = await getAuthStatus();
+      if (status.isAuthenticated) {
+        setAuthPhase('authenticated');
+        // Also check setup status
+        try {
+          const setupStatus = await apiGet<{ setupComplete: boolean }>('/api/setup/status');
+          setSetupComplete(setupStatus.setupComplete);
+        } catch {
+          setSetupComplete(false);
+        }
+      } else {
+        setAuthPhase('login');
+      }
+    } catch {
+      // If auth check fails, assume we need login
+      setAuthPhase('login');
+    }
+  }, []);
+
+  const onAuthComplete = useCallback(() => {
+    setAuthPhase('authenticated');
+    checkAuthState();
+  }, [checkAuthState]);
 
   const onWizardComplete = useCallback(() => {
     setSetupComplete(true);
@@ -75,7 +112,25 @@ export default function App() {
     return <HealthCheck onRetry={checkHealth} />;
   }
 
-  // Agent up, not setup → wizard only
+  // Auth required but no root user yet
+  if (authPhase === 'setup-auth') {
+    return (
+      <Routes>
+        <Route path="*" element={<SetupAuth onComplete={onAuthComplete} />} />
+      </Routes>
+    );
+  }
+
+  // Root user exists but not logged in
+  if (authPhase === 'login') {
+    return (
+      <Routes>
+        <Route path="*" element={<Login onLogin={onAuthComplete} />} />
+      </Routes>
+    );
+  }
+
+  // Authenticated but setup not complete
   if (!setupComplete) {
     return (
       <Routes>
@@ -84,7 +139,7 @@ export default function App() {
     );
   }
 
-  // Agent up + setup complete → portal landing at /, app at /chat/*
+  // Fully authenticated and setup complete
   return (
     <Routes>
       <Route path="/" element={<HealthCheck onRetry={checkHealth} />} />

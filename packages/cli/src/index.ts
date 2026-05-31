@@ -380,48 +380,20 @@ async function main(): Promise<void> {
       } else {
         console.log(`✦ Agent-X daemon is already running (PID: ${status.pid})`);
         if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+        const webOk = await isWebApiRunning();
+        if (webOk) console.log('  Web-UI: http://localhost:3333');
         process.exit(0);
       }
     }
 
-    // Always start the web API first so the web-ui setup wizard is reachable
-    await ensureWebApiRunning();
-
-    // If --token is provided, save it regardless of config state
-    const telegramStore = new TelegramStore();
+    // If --token is provided, save it before starting the daemon
     if (inlineToken) {
+      const telegramStore = new TelegramStore();
       telegramStore.save({ botToken: inlineToken });
       console.log('✓ Telegram bot token saved.');
     }
 
-    // If not configured yet, point the user to the web-ui instead of crashing
-    const configMgr = new ConfigManager();
-    if (!configMgr.isConfigured()) {
-      console.log('✦ Agent-X is not configured yet.');
-      console.log('');
-      console.log('  You can complete setup via:');
-      console.log('    • Web-UI');
-      console.log('    • TUI:     Run `agentx` for the interactive terminal setup');
-      console.log('');
-      console.log('  Run `agentx start` again after completing setup to launch the daemon.');
-      process.exit(0);
-    }
-
-    // Check Telegram config
-    const telegramConfig = telegramStore.load();
-    if (!telegramConfig?.botToken) {
-      console.error('✗ Telegram bot is not connected.\n');
-      console.error('  To connect, get a bot token from @BotFather on Telegram, then run:\n');
-      console.error('    agentx start --token <your-bot-token>\n');
-      console.error('  Steps:');
-      console.error('    1. Open Telegram and search for @BotFather');
-      console.error('    2. Send /newbot and follow the prompts');
-      console.error('    3. Copy the token (looks like: 123456789:ABCdefGhIjKlMnOpQrStUvWxYz)');
-      console.error('    4. Run: agentx start --token <token>');
-      process.exit(1);
-    }
-
-    // Spawn daemon as detached background process
+    // Spawn daemon as detached background process (daemon handles web-api + config checks)
     const daemonScript = join(dirname(new URL(import.meta.url).pathname), 'daemon.js');
     const child = spawn(process.execPath, [daemonScript, '--daemon'], {
       detached: true,
@@ -429,15 +401,22 @@ async function main(): Promise<void> {
       env: { ...process.env, AGENTX_DAEMON: '1' },
     });
     child.unref();
+
     // Wait briefly for daemon to start and write status
     await new Promise((r) => setTimeout(r, 2000));
+
     if (isDaemonRunning()) {
       const status = getDaemonStatus();
       console.log(`✦ Agent-X daemon started (PID: ${status.pid})`);
-      console.log(`  Crew: ${status.crew ?? 'default'}`);
+      if (status.crew) console.log(`  Crew: ${status.crew}`);
       if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+
       const webOk = await isWebApiRunning();
-      console.log(`  Web API: ${webOk ? 'running' : 'not running'}`);
+      if (webOk) {
+        console.log('  Web-UI: http://localhost:3333');
+      } else {
+        console.log('  Web API: not running');
+      }
     } else {
       console.error('✗ Daemon failed to start. Run `agentx` for diagnostics.');
     }
@@ -464,7 +443,13 @@ async function main(): Promise<void> {
       console.log('  Use `agentx start` to launch the background agent.');
     } else {
       const status = getDaemonStatus();
-      console.log('✦ Agent-X daemon: running');
+      if (status.setupMode) {
+        console.log('✦ Agent-X daemon: running (setup mode)');
+      } else if (status.locked) {
+        console.log('✦ Agent-X daemon: running (secure mode — login required)');
+      } else {
+        console.log('✦ Agent-X daemon: running');
+      }
       console.log(`  PID: ${status.pid}`);
       console.log(`  Crew: ${status.crew ?? 'unknown'}`);
       if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
@@ -481,7 +466,11 @@ async function main(): Promise<void> {
         console.log(`  Uptime: ${parts.join(' ')}`);
       }
       const webOk = await isWebApiRunning();
-      console.log(`  Web API: ${webOk ? 'running' : 'not running'}`);
+      if (webOk) {
+        console.log('  Web-UI: http://localhost:3333');
+      } else {
+        console.log('  Web API: not running');
+      }
     }
     process.exit(0);
   }

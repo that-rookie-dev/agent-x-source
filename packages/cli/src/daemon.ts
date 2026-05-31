@@ -1,5 +1,5 @@
 import { Agent, ConfigManager, TelegramBridge, TelegramStore, CrewManager, SessionStore, ProviderFactory } from '@agentx/engine';
-import { getLogger, generateSessionId, VERSION } from '@agentx/shared';
+import { getLogger, generateSessionId, VERSION, authManager } from '@agentx/shared';
 import type { AgentXConfig, EngineEvent } from '@agentx/shared';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -35,7 +35,7 @@ export function isDaemonRunning(): boolean {
   }
 }
 
-export function getDaemonStatus(): { running: boolean; pid?: number; crew?: string; telegram?: boolean; botUsername?: string; startedAt?: string; version?: string } {
+export function getDaemonStatus(): { running: boolean; pid?: number; crew?: string; telegram?: boolean; botUsername?: string; startedAt?: string; version?: string; setupMode?: boolean } {
   const statusPath = getStatusPath();
   if (!isDaemonRunning()) {
     return { running: false };
@@ -188,29 +188,10 @@ export async function startDaemon(): Promise<void> {
 
   // Load config
   const configManager = new ConfigManager();
-  if (!configManager.isConfigured()) {
-    console.error('Agent-X is not configured. Complete setup via the web UI, then restart the daemon.');
-    // Ensure web API is available for the setup wizard
-    await startWebApiIfAvailable();
-    process.exit(0);
-  }
-
-  const config: AgentXConfig = configManager.load();
+  const isConfigured = configManager.isConfigured();
 
   // Ensure web API is running and keep it alive (non-blocking, best-effort)
   maintainWebApi();
-
-  // Load telegram config
-  const telegramStore = new TelegramStore();
-  const telegramConfig = telegramStore.load();
-  if (!telegramConfig?.botToken) {
-    console.error('Telegram bot not configured. Run `agentx start --token <your-bot-token>` first.');
-    process.exit(0);
-  }
-
-  // Get active crew member
-  const pm = new CrewManager();
-  const activeCrew = pm.getActive();
 
   // Write PID file
   const pidPath = getPidPath();
@@ -218,6 +199,100 @@ export async function startDaemon(): Promise<void> {
   writeFileSync(pidPath, String(process.pid));
 
   logger.info('DAEMON', `Starting Agent-X daemon (PID: ${process.pid})`);
+
+  // If not configured yet, run in "setup mode" or "locked mode"
+  if (!isConfigured) {
+    const hasAuth = authManager.hasRootUser();
+
+    if (hasAuth) {
+      // Auth exists but config is encrypted (locked) — user needs to log in via web-ui
+      console.log('✦ Agent-X daemon started in secure mode.');
+      console.log('');
+      console.log('  Config is encrypted. Log in via Web-UI to unlock.');
+      console.log('  Web-UI: http://localhost:3333');
+      console.log('');
+
+      writeStatus({
+        pid: process.pid,
+        crew: 'Default',
+        telegram: false,
+        startedAt: new Date().toISOString(),
+        version: VERSION,
+        setupMode: false,
+        locked: true,
+      });
+    } else {
+      // No auth, no config — first-time setup
+      console.log('✦ Agent-X daemon started in setup mode.');
+      console.log('');
+      console.log('  Complete setup at: http://localhost:3333');
+      console.log('');
+      console.log('  Or run `agentx` for the interactive terminal setup.');
+
+      writeStatus({
+        pid: process.pid,
+        crew: 'Default',
+        telegram: false,
+        startedAt: new Date().toISOString(),
+        version: VERSION,
+        setupMode: true,
+      });
+    }
+
+    // Keep daemon alive in setup/locked mode
+    const setupShutdown = () => {
+      try { unlinkSync(pidPath); } catch { /* ignore */ }
+      try { unlinkSync(getStatusPath()); } catch { /* ignore */ }
+      process.exit(0);
+    };
+    process.on('SIGTERM', setupShutdown);
+    process.on('SIGINT', setupShutdown);
+
+    // Heartbeat to keep status fresh
+    setInterval(() => {
+      if (hasAuth) {
+        writeStatus({
+          pid: process.pid,
+          crew: 'Default',
+          telegram: false,
+          startedAt: new Date().toISOString(),
+          version: VERSION,
+          setupMode: false,
+          locked: true,
+        });
+      } else {
+        writeStatus({
+          pid: process.pid,
+          crew: 'Default',
+          telegram: false,
+          startedAt: new Date().toISOString(),
+          version: VERSION,
+          setupMode: true,
+        });
+      }
+    }, 30_000);
+
+    return; // Stay running; event loop keeps process alive
+  }
+
+  const config: AgentXConfig = configManager.load();
+
+  // Load telegram config
+  const telegramStore = new TelegramStore();
+  const telegramConfig = telegramStore.load();
+  if (!telegramConfig?.botToken) {
+    console.log('✦ Agent-X daemon started.');
+    console.log('');
+    console.log('  Telegram not connected.');
+    console.log('  To connect, run: agentx start --token <your-bot-token>');
+    console.log('');
+    console.log('  Web-UI: http://localhost:3333');
+  }
+
+  // Get active crew member
+  const pm = new CrewManager();
+  const activeCrew = pm.getActive();
+
   logger.info('DAEMON', `Crew: ${activeCrew.name}`);
 
   // Session persistence — same as TUI
@@ -245,9 +320,12 @@ export async function startDaemon(): Promise<void> {
     });
   } catch { /* session may already exist */ }
 
-  // Start Telegram bridge
-  const bridge = new TelegramBridge({ botToken: telegramConfig.botToken });
-  bridge.attach(agent);
+  // Start Telegram bridge only if configured
+  let bridge: TelegramBridge | null = null;
+  if (telegramConfig?.botToken) {
+    bridge = new TelegramBridge({ botToken: telegramConfig.botToken });
+    bridge.attach(agent);
+  }
 
   // Track the active chat ID for proactive messages (errors, etc.)
   let activeChatId: number | null = null;
@@ -267,12 +345,12 @@ export async function startDaemon(): Promise<void> {
       const item = messageQueue.shift()!;
       try {
         const response = await agent.sendMessage(item.text);
-        if (item.chatId && response.content) {
+        if (item.chatId && response.content && bridge) {
           await bridge.sendToChat(item.chatId, response.content);
         }
       } catch (err) {
         // Report error to Telegram if possible
-        if (item.chatId) {
+        if (item.chatId && bridge) {
           const errMsg = err instanceof Error ? err.message : String(err);
           await bridge.sendToChat(item.chatId, `⚠️ Error: ${errMsg}`).catch(() => {});
         }
@@ -290,7 +368,7 @@ export async function startDaemon(): Promise<void> {
 
   // Override scheduler trigger to route reminders through Telegram via queue
   agent.cron.setTriggerHandler((job) => {
-    if (activeChatId) {
+    if (activeChatId && bridge) {
       // Send the notification immediately (doesn't need LLM)
       const reminderMsg = job.oneShot
         ? `⏰ Reminder: ${job.instruction}`
@@ -308,11 +386,11 @@ export async function startDaemon(): Promise<void> {
   const pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
 
   const toolExecutor = (agent as any).toolExecutor;
-  if (toolExecutor?.setPermissionRequestHandler) {
+  if (bridge && toolExecutor?.setPermissionRequestHandler) {
     toolExecutor.setPermissionRequestHandler(
       async (toolId: string, path: string, riskLevel: string) => {
         // If no active chat, deny by default (guardrail)
-        if (!activeChatId) return 'deny' as const;
+        if (!activeChatId || !bridge) return 'deny' as const;
 
         const permId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const riskEmoji = riskLevel === 'high' ? '🔴' : riskLevel === 'medium' ? '🟡' : '🟢';
@@ -332,7 +410,7 @@ export async function startDaemon(): Promise<void> {
         return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
           const timeout = setTimeout(() => {
             pendingPermissions.delete(permId);
-            if (activeChatId) {
+            if (activeChatId && bridge) {
               bridge.sendToChat(activeChatId, '⏰ Permission request timed out — denied.').catch(() => {});
             }
             resolve('deny');
@@ -348,105 +426,129 @@ export async function startDaemon(): Promise<void> {
     );
   }
 
-  // Register callback handler for permission buttons
-  bridge.onCallback('perm', (data, chatId) => {
-    // Format: perm:<id>:<choice>
-    const parts = data.split(':');
-    const permId = parts[1];
-    const choice = parts[2] as 'allow_once' | 'allow_always' | 'deny';
-    if (!permId || !choice) return;
+  if (bridge) {
+    // Register callback handler for permission buttons
+    bridge.onCallback('perm', (data, chatId) => {
+      // Format: perm:<id>:<choice>
+      const parts = data.split(':');
+      const permId = parts[1];
+      const choice = parts[2] as 'allow_once' | 'allow_always' | 'deny';
+      if (!permId || !choice) return;
 
-    const resolver = pendingPermissions.get(permId);
-    if (resolver) {
-      resolver(choice);
-      const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';
-      bridge.sendToChat(chatId, label).catch(() => {});
-    }
-  });
+      const resolver = pendingPermissions.get(permId);
+      if (resolver) {
+        resolver(choice);
+        const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';
+        bridge!.sendToChat(chatId, label).catch(() => {});
+      }
+    });
 
-  // ─── Telegram file sending tool ───
-  // Override the default no-op handler with the real implementation
-  if (toolExecutor?.registerHandler) {
-    toolExecutor.registerHandler('telegram_send_file', async (args: Record<string, unknown>) => {
-      const filePath = args['path'] as string;
-      if (!filePath) {
-        return { success: false, output: 'Missing required parameter: path', error: 'INVALID_ARGS' };
-      }
-      if (!activeChatId) {
-        return { success: false, output: 'No active Telegram chat. Send a message first.', error: 'NO_CHAT' };
-      }
-      // Verify file exists
-      if (!existsSync(filePath)) {
-        return { success: false, output: `File not found: ${filePath}`, error: 'FILE_NOT_FOUND' };
-      }
-      const caption = args['caption'] as string | undefined;
-      try {
-        const result = await bridge.sendDocumentToChat(activeChatId, filePath, caption);
-        if (result.ok) {
-          return { success: true, output: `File sent successfully: ${filePath}` };
+    // ─── Telegram file sending tool ───
+    // Override the default no-op handler with the real implementation
+    if (toolExecutor?.registerHandler) {
+      toolExecutor.registerHandler('telegram_send_file', async (args: Record<string, unknown>) => {
+        const filePath = args['path'] as string;
+        if (!filePath) {
+          return { success: false, output: 'Missing required parameter: path', error: 'INVALID_ARGS' };
         }
-        return { success: false, output: `Telegram API error: ${result.description ?? 'Unknown error'}`, error: 'TELEGRAM_ERROR' };
-      } catch (err) {
-        return { success: false, output: `Failed to send file: ${err instanceof Error ? err.message : String(err)}`, error: 'SEND_FAILED' };
-      }
+        if (!activeChatId) {
+          return { success: false, output: 'No active Telegram chat. Send a message first.', error: 'NO_CHAT' };
+        }
+        // Verify file exists
+        if (!existsSync(filePath)) {
+          return { success: false, output: `File not found: ${filePath}`, error: 'FILE_NOT_FOUND' };
+        }
+        const caption = args['caption'] as string | undefined;
+        try {
+          const result = await bridge.sendDocumentToChat(activeChatId, filePath, caption);
+          if (result.ok) {
+            return { success: true, output: `File sent successfully: ${filePath}` };
+          }
+          return { success: false, output: `Telegram API error: ${result.description ?? 'Unknown error'}`, error: 'TELEGRAM_ERROR' };
+        } catch (err) {
+          return { success: false, output: `Failed to send file: ${err instanceof Error ? err.message : String(err)}`, error: 'SEND_FAILED' };
+        }
+      });
+    }
+
+    // ─── File receiving from Telegram ───
+    // Downloads files sent by the user, saves to a dedicated folder, and informs the agent.
+    const filesDir = join(getDataDir(), 'files');
+    mkdirSync(filesDir, { recursive: true });
+
+    bridge.setFileHandler((fileId, fileName, mimeType, caption, chatId) => {
+      activeChatId = chatId;
+      // Download and save asynchronously, then inform the agent
+      void (async () => {
+        try {
+          await bridge!.sendToChat(chatId, `📥 Receiving file: ${fileName}...`);
+          const fileBuffer = await bridge!.downloadFile(fileId);
+
+          // Generate unique filename to avoid collisions
+          const timestamp = Date.now();
+          const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const savedPath = join(filesDir, `${timestamp}_${safeName}`);
+          writeFileSync(savedPath, fileBuffer);
+
+          // Inform the agent about the received file via the message queue
+          const fileMsg = caption
+            ? `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. Caption: "${caption}". You can read and analyze this file.`
+            : `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. You can read and analyze this file.`;
+          enqueueMessage(fileMsg, chatId);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          bridge!.sendToChat(chatId, `❌ Failed to receive file: ${errMsg}`).catch(() => {});
+        }
+      })();
+    });
+
+    // Set up Telegram command handler — full feature parity
+    bridge.setCommandHandler(async (cmd, args, chatId) => {
+      activeChatId = chatId;
+      return handleTelegramCommand(cmd, args, { agent, pm, config, configManager, sessionStore, sessionId, bridge: bridge!, lastUserMessage: () => lastUserMessage });
+    });
+
+    // Route all user messages through the queue (no direct agent.sendMessage from bridge)
+    bridge.setMessageHandler((text, chatId) => {
+      activeChatId = chatId;
+      lastUserMessage = text;
+      enqueueMessage(text, chatId);
     });
   }
 
-  // ─── File receiving from Telegram ───
-  // Downloads files sent by the user, saves to a dedicated folder, and informs the agent.
-  const filesDir = join(getDataDir(), 'files');
-  mkdirSync(filesDir, { recursive: true });
+  if (bridge) {
+    try {
+      await bridge.start();
+      const tgStatus = bridge.getStatus();
+      logger.info('DAEMON', `Telegram connected: @${tgStatus.botUsername}`);
 
-  bridge.setFileHandler((fileId, fileName, mimeType, caption, chatId) => {
-    activeChatId = chatId;
-    // Download and save asynchronously, then inform the agent
-    void (async () => {
-      try {
-        await bridge.sendToChat(chatId, `📥 Receiving file: ${fileName}...`);
-        const fileBuffer = await bridge.downloadFile(fileId);
+      writeStatus({
+        pid: process.pid,
+        crew: activeCrew.name,
+        crewId: activeCrew.id,
+        telegram: true,
+        botUsername: tgStatus.botUsername,
+        startedAt: new Date().toISOString(),
+        sessionId,
+        version: VERSION,
+      });
 
-        // Generate unique filename to avoid collisions
-        const timestamp = Date.now();
-        const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const savedPath = join(filesDir, `${timestamp}_${safeName}`);
-        writeFileSync(savedPath, fileBuffer);
-
-        // Inform the agent about the received file via the message queue
-        const fileMsg = caption
-          ? `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. Caption: "${caption}". You can read and analyze this file.`
-          : `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. You can read and analyze this file.`;
-        enqueueMessage(fileMsg, chatId);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        bridge.sendToChat(chatId, `❌ Failed to receive file: ${errMsg}`).catch(() => {});
-      }
-    })();
-  });
-
-  // Set up Telegram command handler — full feature parity
-  bridge.setCommandHandler(async (cmd, args, chatId) => {
-    activeChatId = chatId;
-    return handleTelegramCommand(cmd, args, { agent, pm, config, configManager, sessionStore, sessionId, bridge, lastUserMessage: () => lastUserMessage });
-  });
-
-  // Route all user messages through the queue (no direct agent.sendMessage from bridge)
-  bridge.setMessageHandler((text, chatId) => {
-    activeChatId = chatId;
-    lastUserMessage = text;
-    enqueueMessage(text, chatId);
-  });
-
-  try {
-    await bridge.start();
-    const status = bridge.getStatus();
-    logger.info('DAEMON', `Telegram connected: @${status.botUsername}`);
-
+      console.log(`✦ Agent-X daemon started (PID: ${process.pid})`);
+      console.log(`  Crew: ${activeCrew.name}`);
+      console.log(`  Telegram: @${tgStatus.botUsername}`);
+      console.log('  Web-UI: http://localhost:3333');
+    } catch (err) {
+      console.error(`Failed to start Telegram bridge: ${err instanceof Error ? err.message : String(err)}`);
+      try { unlinkSync(pidPath); } catch { /* ignore */ }
+      process.exit(1);
+    }
+  } else {
+    // No Telegram — still write status and keep running
     writeStatus({
       pid: process.pid,
       crew: activeCrew.name,
       crewId: activeCrew.id,
-      telegram: true,
-      botUsername: status.botUsername,
+      telegram: false,
       startedAt: new Date().toISOString(),
       sessionId,
       version: VERSION,
@@ -454,11 +556,8 @@ export async function startDaemon(): Promise<void> {
 
     console.log(`✦ Agent-X daemon started (PID: ${process.pid})`);
     console.log(`  Crew: ${activeCrew.name}`);
-    console.log(`  Telegram: @${status.botUsername}`);
-  } catch (err) {
-    console.error(`Failed to start Telegram bridge: ${err instanceof Error ? err.message : String(err)}`);
-    try { unlinkSync(pidPath); } catch { /* ignore */ }
-    process.exit(1);
+    console.log('  Telegram: not connected');
+    console.log('  Web-UI: http://localhost:3333');
   }
 
   // Subscribe to agent events — persist messages, handle errors
@@ -494,7 +593,7 @@ export async function startDaemon(): Promise<void> {
 
       case 'error':
         // Report errors to Telegram
-        if (activeChatId) {
+        if (activeChatId && bridge) {
           const errorMsg = `⚠️ Error: ${event.message}`;
           bridge.sendToChat(activeChatId, errorMsg).catch(() => {});
         }
@@ -506,7 +605,7 @@ export async function startDaemon(): Promise<void> {
   // Graceful shutdown
   const shutdown = () => {
     logger.info('DAEMON', 'Shutting down...');
-    bridge.stop();
+    if (bridge) bridge.stop();
     agent.endSession();
     try { unlinkSync(pidPath); } catch { /* ignore */ }
     try { unlinkSync(getStatusPath()); } catch { /* ignore */ }
@@ -518,14 +617,22 @@ export async function startDaemon(): Promise<void> {
 
   // Heartbeat — keep status up to date
   setInterval(() => {
-    const status = bridge.getStatus();
+    let tgConnected = false;
+    let tgBotUsername: string | undefined;
+    let tgMessageCount = 0;
+    if (bridge) {
+      const status = bridge.getStatus();
+      tgConnected = status.connected;
+      tgBotUsername = status.botUsername;
+      tgMessageCount = status.messageCount;
+    }
     writeStatus({
       pid: process.pid,
       crew: pm.getActive().name,
       crewId: pm.getActive().id,
-      telegram: status.connected,
-      botUsername: status.botUsername,
-      messageCount: status.messageCount,
+      telegram: tgConnected,
+      botUsername: tgBotUsername,
+      messageCount: tgMessageCount,
       startedAt: readStatusStartTime(),
       sessionId,
       version: VERSION,

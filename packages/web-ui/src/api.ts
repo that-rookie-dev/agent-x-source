@@ -39,7 +39,7 @@ function makeError(status: number, bodyOrText: unknown) {
 }
 
 export async function apiGet<T = unknown>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { cache: 'no-store' });
+  const res = await fetch(`${BASE}${path}`, { cache: 'no-store', credentials: 'include' });
   if (!res.ok) {
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('application/json')) {
@@ -77,6 +77,7 @@ export async function apiPost<T = unknown>(path: string, body?: unknown): Promis
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) await handleNonOk(res, 'POST', path);
@@ -87,6 +88,7 @@ export async function apiPut<T = unknown>(path: string, body: unknown): Promise<
   const res = await fetch(`${BASE}${path}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(body),
   });
   if (!res.ok) await handleNonOk(res, 'PUT', path);
@@ -94,7 +96,7 @@ export async function apiPut<T = unknown>(path: string, body: unknown): Promise<
 }
 
 export async function apiDelete<T = unknown>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' });
+  const res = await fetch(`${BASE}${path}`, { method: 'DELETE', credentials: 'include' });
   if (!res.ok) await handleNonOk(res, 'DELETE', path);
   return res.json().catch(() => ({}) as T);
 }
@@ -143,4 +145,32 @@ export function sendWs(msg: Record<string, unknown>): void {
 export function onWsEvent(handler: WsHandler): () => void {
   handlers.add(handler);
   return () => handlers.delete(handler);
+}
+
+// ───── Auth API ─────
+
+export interface AuthStatus {
+  hasRootUser: boolean;
+  isAuthenticated: boolean;
+  username: string | null;
+}
+
+export async function getAuthStatus(): Promise<AuthStatus> {
+  return apiGet<AuthStatus>('/api/auth/status');
+}
+
+export async function checkAuthRequired(): Promise<{ hasRootUser: boolean }> {
+  return apiGet<{ hasRootUser: boolean }>('/api/auth/check');
+}
+
+export async function login(username: string, password: string): Promise<{ ok: boolean; username: string }> {
+  return apiPost<{ ok: boolean; username: string }>('/api/auth/login', { username, password });
+}
+
+export async function setupAuth(username: string, password: string): Promise<{ ok: boolean; username: string }> {
+  return apiPost<{ ok: boolean; username: string }>('/api/auth/setup', { username, password });
+}
+
+export async function logout(): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>('/api/auth/logout');
 }

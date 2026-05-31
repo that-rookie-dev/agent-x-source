@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { generateId } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine } from './engine.js';
 import { setupWebSocket, ensureSubscribed } from './ws.js';
+import { authMiddleware, createAuthRouter } from './auth.js';
 import { ProviderFactory } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
 
@@ -65,6 +66,12 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true });
+
+// Auth routes (must be before auth middleware)
+app.use(createAuthRouter());
+
+// Auth middleware — protects all /api/* routes except auth endpoints
+app.use(authMiddleware);
 
 // CORS + cache prevention
 app.use((_req, res, next) => {

@@ -28,6 +28,7 @@ export interface EngineState {
   pluginRegistry: PluginRegistry;
   telegramBridge: TelegramBridge | null;
   mcpBridge: MCPBridge;
+  dek: Buffer | null;
 }
 
 let state: EngineState | null = null;
@@ -110,9 +111,21 @@ export function getEngine(): EngineState {
     pluginRegistry,
     telegramBridge: null,
     mcpBridge,
+    dek: null,
   };
 
   return state;
+}
+
+/**
+ * Set the Data Encryption Key on the engine.
+ * This enables encrypted config read/write.
+ */
+export function setEngineDEK(dek: Buffer | null): void {
+  if (state) {
+    state.dek = dek;
+    state.configManager.setDEK(dek);
+  }
 }
 
 export function createAgent(config?: AgentXConfig): Agent {

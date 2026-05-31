@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, copyFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 import type { AgentXConfig, ProviderProfile } from '@agentx/shared';
-import { getLogger } from '@agentx/shared';
+import { getLogger, encrypt, decrypt } from '@agentx/shared';
 import { agentXConfigSchema } from './ConfigSchema.js';
 import { getConfigPath, getConfigDir, getDataDir, getCacheDir, getLogDir } from './paths.js';
 
@@ -9,14 +10,48 @@ export class ConfigManager {
   private configPath: string;
   private backupPath: string;
   private config: AgentXConfig | null = null;
+  private dek: Buffer | null = null;
 
-  constructor(configPath?: string) {
+  constructor(configPath?: string, dek?: Buffer) {
     this.configPath = configPath ?? getConfigPath();
     this.backupPath = this.configPath + '.bak';
+    this.dek = dek ?? null;
+  }
+
+  /**
+   * Set or clear the Data Encryption Key.
+   * When set, config is encrypted at rest with AES-256-GCM.
+   * When cleared, falls back to plaintext (for migration or setup mode).
+   */
+  setDEK(dek: Buffer | null): void {
+    this.dek = dek;
+    this.config = null; // Force reload with new encryption state
+  }
+
+  private getEncryptedPath(): string {
+    return this.configPath.replace(/\.json$/, '.enc.json');
+  }
+
+  private getEncryptedBackupPath(): string {
+    return this.backupPath.replace(/\.bak$/, '.enc.bak');
   }
 
   isConfigured(): boolean {
-    return existsSync(this.configPath);
+    const encryptedPath = this.getEncryptedPath();
+    const hasEncrypted = existsSync(encryptedPath);
+    const hasPlaintext = existsSync(this.configPath);
+
+    // If we have a DEK, we can read encrypted configs
+    if (this.dek) {
+      return hasEncrypted || hasPlaintext;
+    }
+
+    // Without DEK, only plaintext configs are readable
+    if (hasEncrypted && !hasPlaintext) {
+      return false; // Config exists but is encrypted — need auth first
+    }
+
+    return hasPlaintext;
   }
 
   /**
@@ -41,7 +76,22 @@ export class ConfigManager {
     }
 
     try {
-      const raw = readFileSync(this.configPath, 'utf-8');
+      let raw: string;
+      const encryptedPath = this.getEncryptedPath();
+      const hasEncrypted = existsSync(encryptedPath);
+
+      if (hasEncrypted && this.dek) {
+        // Decrypt encrypted config
+        const secureRaw = readFileSync(encryptedPath, 'utf-8');
+        const secureFile = JSON.parse(secureRaw) as { version: number; encrypted: { ciphertext: string; iv: string; tag: string }; checksum: string };
+        raw = decrypt(secureFile.encrypted, this.dek);
+      } else if (hasEncrypted && !this.dek) {
+        throw new Error('Config is encrypted but no decryption key is available. Please authenticate first.');
+      } else {
+        // Plaintext config (backwards compatibility or pre-auth state)
+        raw = readFileSync(this.configPath, 'utf-8');
+      }
+
       const parsed = JSON.parse(raw) as unknown;
       const validated = agentXConfigSchema.parse(parsed);
       this.config = validated as AgentXConfig;
@@ -83,6 +133,24 @@ export class ConfigManager {
       const logger = getLogger();
       logger.error('CONFIG_LOAD_FAILED', err);
 
+      const encryptedBackupPath = this.getEncryptedBackupPath();
+      if (existsSync(encryptedBackupPath) && this.dek) {
+        logger.info('CONFIG_ROLLBACK', 'Attempting to load encrypted backup config');
+        try {
+          const secureRaw = readFileSync(encryptedBackupPath, 'utf-8');
+          const secureFile = JSON.parse(secureRaw) as { version: number; encrypted: { ciphertext: string; iv: string; tag: string }; checksum: string };
+          const raw = decrypt(secureFile.encrypted, this.dek);
+          const parsed = JSON.parse(raw) as unknown;
+          const validated = agentXConfigSchema.parse(parsed);
+          this.config = validated as AgentXConfig;
+          // Restore backup as primary
+          writeFileSync(this.getEncryptedPath(), secureRaw, 'utf-8');
+          return this.config;
+        } catch (backupErr) {
+          logger.error('CONFIG_BACKUP_ALSO_CORRUPT', backupErr);
+        }
+      }
+
       if (existsSync(this.backupPath)) {
         logger.info('CONFIG_ROLLBACK', 'Attempting to load backup config');
         try {
@@ -107,16 +175,52 @@ export class ConfigManager {
     const dir = dirname(this.configPath);
     mkdirSync(dir, { recursive: true });
 
-    // Backup current config before writing
-    if (existsSync(this.configPath)) {
-      try {
-        copyFileSync(this.configPath, this.backupPath);
-      } catch {
-        // Backup failure is non-critical
+    const plaintext = JSON.stringify(validated, null, 2);
+
+    if (this.dek) {
+      // Encrypt config with DEK
+      const encryptedPath = this.getEncryptedPath();
+      const encryptedBackupPath = this.getEncryptedBackupPath();
+
+      // Backup current encrypted config before writing
+      if (existsSync(encryptedPath)) {
+        try {
+          copyFileSync(encryptedPath, encryptedBackupPath);
+        } catch {
+          // Backup failure is non-critical
+        }
       }
+
+      const encrypted = encrypt(plaintext, this.dek);
+      const secureFile = {
+        version: 1,
+        encrypted,
+        checksum: createHash('sha256').update(plaintext).digest('hex'),
+      };
+
+      writeFileSync(encryptedPath, JSON.stringify(secureFile, null, 2), 'utf-8');
+
+      // Remove plaintext config if it exists (we've migrated to encrypted)
+      if (existsSync(this.configPath)) {
+        try { unlinkSync(this.configPath); } catch { /* ignore */ }
+      }
+      if (existsSync(this.backupPath)) {
+        try { unlinkSync(this.backupPath); } catch { /* ignore */ }
+      }
+    } else {
+      // Plaintext save (backwards compatibility or setup mode)
+      // Backup current config before writing
+      if (existsSync(this.configPath)) {
+        try {
+          copyFileSync(this.configPath, this.backupPath);
+        } catch {
+          // Backup failure is non-critical
+        }
+      }
+
+      writeFileSync(this.configPath, plaintext, 'utf-8');
     }
 
-    writeFileSync(this.configPath, JSON.stringify(validated, null, 2), 'utf-8');
     this.config = validated as AgentXConfig;
   }
 
