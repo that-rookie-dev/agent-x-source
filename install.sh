@@ -174,9 +174,13 @@ select_install_mode() {
   echo ""
 
   local choice=""
-  if [ -t 0 ]; then
-    # Interactive shell
-    read -p "  Select [1/2] (default: 2): " choice
+
+  # Allow overriding via environment variable for non-interactive installs
+  if [ -n "${AGENTX_INSTALL_MODE:-}" ]; then
+    choice="${AGENTX_INSTALL_MODE}"
+  # When piped (curl | bash), stdin is not a TTY. Read from /dev/tty instead.
+  elif [ -e /dev/tty ]; then
+    read -p "  Select [1/2] (default: 2): " choice < /dev/tty
   fi
 
   if [ "$choice" = "1" ]; then
