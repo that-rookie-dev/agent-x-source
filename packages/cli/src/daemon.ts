@@ -20,6 +20,10 @@ function getStatusPath(): string {
   return join(getDataDir(), 'daemon.status');
 }
 
+function getWebApiPidPath(): string {
+  return join(getDataDir(), 'webapi.pid');
+}
+
 export function isDaemonRunning(): boolean {
   const pidPath = getPidPath();
   if (!existsSync(pidPath)) return false;
@@ -56,11 +60,17 @@ export function stopDaemon(): boolean {
   try {
     const pid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
     process.kill(pid, 'SIGTERM');
+    // Also stop web-api immediately (in case daemon is hung)
+    stopWebApi();
     // Clean up
     try { unlinkSync(pidPath); } catch { /* ignore */ }
     try { unlinkSync(getStatusPath()); } catch { /* ignore */ }
     return true;
   } catch {
+    // Daemon may already be dead — still clean up files and web-api
+    stopWebApi();
+    try { unlinkSync(pidPath); } catch { /* ignore */ }
+    try { unlinkSync(getStatusPath()); } catch { /* ignore */ }
     return false;
   }
 }
@@ -81,6 +91,15 @@ async function startWebApiIfAvailable(): Promise<void> {
     const res = await fetch('http://127.0.0.1:3333/api/health', { method: 'GET' });
     if (res.ok) return;
   } catch { /* not running */ }
+
+  // Clean up stale PID file before spawning a new instance
+  const webApiPidPath = getWebApiPidPath();
+  if (existsSync(webApiPidPath)) {
+    try {
+      const stalePid = parseInt(readFileSync(webApiPidPath, 'utf-8').trim(), 10);
+      try { process.kill(stalePid, 0); } catch { /* dead */ unlinkSync(webApiPidPath); }
+    } catch { /* ignore */ }
+  }
 
   const bundlePath = new URL(import.meta.url).pathname;
   const bundleDir = dirname(bundlePath);
@@ -160,10 +179,65 @@ async function startWebApiIfAvailable(): Promise<void> {
     child.on('error', (err) => {
       console.error(`⚠ Daemon: Failed to spawn web-api: ${err.message}`);
     });
+    // Persist web-api PID so we can shut it down gracefully later
+    if (child.pid) {
+      try {
+        mkdirSync(getDataDir(), { recursive: true });
+        writeFileSync(getWebApiPidPath(), String(child.pid));
+      } catch {
+        // non-critical
+      }
+    }
     child.unref();
   } catch (err) {
     console.error(`⚠ Daemon: startWebApiIfAvailable error: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/**
+ * Gracefully stop the web API server.
+ * Sends SIGTERM, blocks up to 3s polling, then SIGKILL if still alive.
+ * Cleans up the PID file regardless.
+ */
+export function stopWebApi(): void {
+  const pidPath = getWebApiPidPath();
+  if (!existsSync(pidPath)) return;
+
+  let pid: number;
+  try {
+    pid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
+  } catch {
+    try { unlinkSync(pidPath); } catch { /* ignore */ }
+    return;
+  }
+
+  // Try SIGTERM first
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // Already dead or permission denied — clean up and bail
+    try { unlinkSync(pidPath); } catch { /* ignore */ }
+    return;
+  }
+
+  // Synchronous poll for up to 3 seconds
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0); // still alive
+    } catch {
+      // Process is dead — clean up and exit
+      try { unlinkSync(pidPath); } catch { /* ignore */ }
+      return;
+    }
+    // 50ms busy-wait (acceptable for shutdown path)
+    const waitUntil = Date.now() + 50;
+    while (Date.now() < waitUntil) { /* spin */ }
+  }
+
+  // Timeout — force kill
+  try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
+  try { unlinkSync(pidPath); } catch { /* ignore */ }
 }
 
 /**
@@ -241,6 +315,7 @@ export async function startDaemon(): Promise<void> {
 
     // Keep daemon alive in setup/locked mode
     const setupShutdown = () => {
+      stopWebApi();
       try { unlinkSync(pidPath); } catch { /* ignore */ }
       try { unlinkSync(getStatusPath()); } catch { /* ignore */ }
       process.exit(0);
@@ -605,6 +680,7 @@ export async function startDaemon(): Promise<void> {
   // Graceful shutdown
   const shutdown = () => {
     logger.info('DAEMON', 'Shutting down...');
+    stopWebApi();
     if (bridge) bridge.stop();
     agent.endSession();
     try { unlinkSync(pidPath); } catch { /* ignore */ }
