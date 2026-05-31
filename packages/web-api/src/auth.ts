@@ -193,7 +193,7 @@ export function createAuthRouter(): Router {
       const hasUpper = /[A-Z]/.test(password);
       const hasLower = /[a-z]/.test(password);
       const hasNumber = /[0-9]/.test(password);
-      const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
+      const hasSpecial = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password);
 
       if (!hasUpper || !hasLower || !hasNumber || !hasSpecial) {
         res.status(400).json({
