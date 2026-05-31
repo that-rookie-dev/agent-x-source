@@ -181,7 +181,7 @@ jobs:
 
             ### Docker
             ```bash
-            docker pull slashpan-org/agentx:${{ needs.check-version.outputs.tag }}
+            docker pull slashpanorg/agentx:${{ needs.check-version.outputs.tag }}
             ```
 
             ### Checksums
@@ -215,7 +215,7 @@ jobs:
           context: .
           push: true
           tags: |
-            slashpan-org/agentx:${{ needs.check-version.outputs.version }}
-            slashpan-org/agentx:latest
+            slashpanorg/agentx:${{ needs.check-version.outputs.version }}
+            slashpanorg/agentx:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
