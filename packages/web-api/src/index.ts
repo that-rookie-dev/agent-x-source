@@ -1,4 +1,5 @@
 import express from 'express';
+import type { Express } from 'express';
 import multer from 'multer';
 import { createServer } from 'node:http';
 import { join, dirname, basename } from 'node:path';
@@ -8,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { generateId } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine } from './engine.js';
 import { setupWebSocket, ensureSubscribed } from './ws.js';
-import { ProviderFactory, TelegramStore } from '@agentx/engine';
+import { ProviderFactory } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
 
 const PORT = Number(process.env['PORT']) || 3333;
@@ -44,6 +45,12 @@ function ensureSessionDir(sessionId: string): string {
 
 const UPLOADS_DIR = join(DATA_DIR, 'uploads');
 
+// Map plan objects to their creating orchestrator without mutating the plan
+// Use a WeakMap so entries are eligible for GC when the plan object is no longer referenced
+const planOrchestratorMap = new WeakMap<object, unknown>();
+// Also keep a Map from plan id -> orchestrator to allow execution by plan id
+const planOrchestratorById = new Map<string, unknown>();
+
 // Atomic file write — write to temp file, then rename to prevent partial writes
 function atomicWriteFileSync(filePath: string, content: string): void {
   const tmpPath = filePath + '.tmp.' + Date.now();
@@ -51,7 +58,7 @@ function atomicWriteFileSync(filePath: string, content: string): void {
   renameSync(tmpPath, filePath);
 }
 
-const app = express();
+const app: Express = express();
 app.use(express.json({ limit: '50mb' }));
 
 const upload = multer({
@@ -999,7 +1006,7 @@ app.post('/api/orchestrator/plan', async (req, res) => {
   try {
     const { AgentOrchestrator } = await import('@agentx/engine');
     const orchestrator = new AgentOrchestrator(eng.agent.agents, eng.agent.events);
-    const plan = orchestrator.createPlan(goal);
+    const plan = await orchestrator.createPlan(goal);
 
     if (steps) {
       for (const step of steps) {
@@ -1007,8 +1014,10 @@ app.post('/api/orchestrator/plan', async (req, res) => {
       }
     }
 
-    // Store for later execution
-    (plan as Record<string, unknown>)['_orchestrator'] = orchestrator;
+    // Store for later execution — store orchestrator in a WeakMap keyed by the plan
+    planOrchestratorMap.set(plan as object, orchestrator);
+    // Also map by plan id for lookup during execute endpoint
+    planOrchestratorById.set(plan.id, orchestrator);
 
     res.json({ plan: { id: plan.id, goal: plan.goal, steps: plan.steps, status: plan.status, createdAt: plan.createdAt } });
   } catch (e: unknown) {
@@ -1023,10 +1032,29 @@ app.post('/api/orchestrator/plan/:id/execute', async (req, res) => {
     return;
   }
   try {
+    // If an orchestrator was stored earlier for this plan id, use it. Otherwise fall back
+    // to creating a fresh orchestrator and running a dynamic plan from the request body.
+    const stored = planOrchestratorById.get(req.params['id']!);
+    if (stored) {
+      // We stored the orchestrator instance; assume it exposes execute and getPlan methods
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const orches = stored as any;
+        const result = await orches.execute(req.params['id']!);
+        // Cleanup stored orchestrator for this plan id now that execution finished
+        try { planOrchestratorById.delete(req.params['id']!); } catch { /* ignore */ }
+        res.json({ plan: result });
+        return;
+      } catch (e) {
+        // If stored orchestrator failed, continue to fallback creation
+        try { planOrchestratorById.delete(req.params['id']!); } catch { /* ignore */ }
+      }
+    }
+
     const { AgentOrchestrator } = await import('@agentx/engine');
     const orchestrator = new AgentOrchestrator(eng.agent.agents, eng.agent.events);
-    // Re-build the plan from agent orchestrator state
-    const plan = orchestrator.createPlan('dynamic');
+    // Re-build the plan from agent orchestrator state using provided steps (if any)
+    const plan = await orchestrator.createPlan('dynamic');
     if (req.body?.['steps']) {
       for (const step of (req.body as { steps: Array<{ description: string; instruction: string; tools: string[]; dependsOn: string[] }> }).steps) {
         orchestrator.addStep(plan.id, step.description, step.instruction, step.tools, step.dependsOn);
@@ -1136,6 +1164,9 @@ app.post('/api/plugins/postgresql/test-connection', async (req, res) => {
     return;
   }
   try {
+    // Dynamically import pg to avoid requiring it during typecheck in environments
+    // where pg is not installed. This will throw at runtime if pg is missing.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { Pool } = await import('pg');
     const pool = new Pool({ connectionString, max: 1 });
     const client = await pool.connect();

@@ -60,10 +60,12 @@ export function getEngine(): EngineState {
   let sessionManager: SessionManager;
   if (pgPlugin?.enabled && pgConfig['connectionString']) {
     try {
+      // Cast to any to avoid excess property checks against the upstream PostgresConfig
+      // type which may not include ``connectionString`` in some type definitions.
       const pgAdapter = new PostgresStorageAdapter({
         connectionString: pgConfig['connectionString'] as string,
         max: (pgConfig['poolSize'] as number) ?? 5,
-      });
+      } as any);
       sessionManager = new SessionManager({ storageAdapter: pgAdapter });
     } catch (e) {
       console.error('Failed to initialize PostgreSQL adapter, falling back to SQLite', e);
@@ -168,10 +170,12 @@ export function createAgent(config?: AgentXConfig): Agent {
       });
       bridge.setMessageHandler((text: string, chatId: number) => {
         agent.sendMessage(text).then((reply) => {
-          bridge.sendMessage(chatId, reply);
+          // agent.sendMessage returns a Message object; bridge.sendMessage expects a string
+          const out = (reply as any)?.content ?? String(reply);
+          bridge.sendMessage(chatId, out);
         }).catch(() => {});
       });
-      bridge.setCommandHandler(async (cmd: string, _args: string[], chatId: number) => {
+      bridge.setCommandHandler(async (cmd: string, _args: string[], _chatId: number) => {
         if (cmd === 'start' || cmd === 'help') {
           return 'Agent-X Telegram bot connected. Send me a message and I\'ll forward it to your agent.';
         }
