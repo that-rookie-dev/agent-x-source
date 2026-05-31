@@ -739,6 +739,11 @@ export function useSession(
                 tokenCount: 0,
               }]);
             }
+          } else if (result.action === 'research' && result.output) {
+            const question = String(result.output);
+            if (agentRef.current) {
+              void agentRef.current.research(question).catch(() => {});
+            }
           }
         });
         return;

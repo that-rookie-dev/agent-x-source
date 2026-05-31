@@ -74,7 +74,33 @@ export type EngineEvent =
   | { type: 'indexing_complete'; indexed: number; total: number; chunks: number }
   | { type: 'watch_event'; event: string; filePath: string; command: string; timestamp: number }
   | { type: 'diff_preview'; tool: string; filePath: string; diff: string; oldContent?: string; newContent?: string }
-  | { type: 'command_action'; action: 'show_watch_status'; entries: Array<{ pattern: string; command: string }> };
+  | { type: 'command_action'; action: 'show_watch_status'; entries: Array<{ pattern: string; command: string }> }
+  | { type: 'clarification_required'; question: string; options: string[]; allowFreeform: boolean }
+  | { type: 'intent_detected'; intent: string; confidence: number }
+  | { type: 'rag_queried'; resultCount: number; elapsed: number }
+  | { type: 'subagent_event'; subagentId: string; parentEvent: EngineEvent }
+  | { type: 'context_compacted'; saved: number; summary: string }
+  | { type: 'discord_connected'; code: string; message: string; recoverable: boolean }
+  | { type: 'discord_message'; code: string; message: string; recoverable: boolean }
+  | { type: 'discord_error'; code: string; message: string; recoverable: boolean }
+  // Tree of Thoughts events
+  | { type: 'tot_start'; problem: string }
+  | { type: 'tot_thought_generated'; thoughtId: string; content: string; parentId?: string; depth: number }
+  | { type: 'tot_evaluation'; thoughtId: string; score: number }
+  | { type: 'tot_complete'; bestThoughtId: string; score: number; content: string }
+  // Research Mode events
+  | { type: 'research_start'; question: string }
+  | { type: 'research_query'; queryId: string; question: string; sources: string }
+  | { type: 'research_subagent_complete'; queryId: string; result: { queryId: string; question: string; answer: string; sources: string[]; elapsed: number } }
+  | { type: 'research_synthesis'; resultCount: number }
+  | { type: 'research_complete'; report: string }
+  | { type: 'agent_message'; message: Record<string, unknown> }
+  | { type: 'decomposition_start'; task: string }
+  | { type: 'decomposition_ready'; subtaskCount: number }
+  | { type: 'decomposition_complete'; subResultCount: number; totalElapsed: number }
+  | { type: 'decomposition_fallback'; task: string }
+  | { type: 'reflection_complete'; result: Record<string, unknown> }
+  | { type: 'skill_generated'; skill: Record<string, unknown> };
 
 export interface FormattedResponse {
   content: string;

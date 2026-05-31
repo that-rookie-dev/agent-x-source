@@ -73,9 +73,12 @@ export default function Layout() {
     { path: '/crews', label: 'Crews', icon: '<path d="M5.5 5.5v5M10.5 5.5v5M3 3h10v10H3z"/><circle cx="8" cy="5" r="1"/><circle cx="8" cy="11" r="1"/>' },
     { path: '/sessions', label: 'Sessions', icon: '<circle cx="5.5" cy="5.5" r="1.5"/><circle cx="10.5" cy="5.5" r="1.5"/><circle cx="5.5" cy="10.5" r="1.5"/><circle cx="10.5" cy="10.5" r="1.5"/>' },
     { path: '/subagents', label: 'Sub-Agents', icon: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>' },
+    { path: '/files', label: 'Files', icon: '<path d="M3 3h4l1 2h6v8H3V3z"/><path d="M8 8h4v4H8z"/>' },
+    { path: '/scheduler', label: 'Scheduler', icon: '<circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 2"/>' },
   ];
 
   const sysItems = [
+    { path: '/rag', label: 'RAG Admin', icon: '<path d="M2 2h8v8H2V2zM10 10h4v4h-4v-4z"/><path d="M10 10l-8-8M14 14l4 4"/>' },
     { path: '/settings', label: 'Settings', icon: '<circle cx="8" cy="8" r="2.8" strokeWidth="1.2" fill="none"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.2 3.2l1 1M11.8 11.8l1 1M3.2 12.8l1-1M11.8 4.2l1-1" strokeWidth="1.5" strokeLinecap="round"/>' },
   ];
 

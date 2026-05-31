@@ -1,4 +1,4 @@
-import { Agent, ConfigManager, TelegramBridge, TelegramStore, CrewManager, SessionStore, ProviderFactory } from '@agentx/engine';
+import { Agent, ConfigManager, TelegramBridge, TelegramStore, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, PluginRegistry, CrewManager, SessionStore, ProviderFactory } from '@agentx/engine';
 import { getLogger, generateSessionId, VERSION, authManager } from '@agentx/shared';
 import type { AgentXConfig, EngineEvent } from '@agentx/shared';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
@@ -39,7 +39,7 @@ export function isDaemonRunning(): boolean {
   }
 }
 
-export function getDaemonStatus(): { running: boolean; pid?: number; crew?: string; telegram?: boolean; botUsername?: string; startedAt?: string; version?: string; setupMode?: boolean } {
+export function getDaemonStatus(): { running: boolean; pid?: number; crew?: string; telegram?: boolean; botUsername?: string; discord?: boolean; discordUsername?: string; startedAt?: string; version?: string; setupMode?: boolean; locked?: boolean } {
   const statusPath = getStatusPath();
   if (!isDaemonRunning()) {
     return { running: false };
@@ -174,7 +174,7 @@ async function startWebApiIfAvailable(): Promise<void> {
     const child = spawn(args[0]!, args.slice(1), {
       detached: true,
       stdio: 'ignore',
-      env: { ...process.env, AGENTX_AUTO_STARTED: '1' },
+      env: { ...process.env, AGENTX_AUTO_STARTED: '1', AGENTX_DAEMON_HANDLES_TG: '1' },
     });
     child.on('error', (err) => {
       console.error(`⚠ Daemon: Failed to spawn web-api: ${err.message}`);
@@ -355,13 +355,40 @@ export async function startDaemon(): Promise<void> {
   // Load telegram config
   const telegramStore = new TelegramStore();
   const telegramConfig = telegramStore.load();
-  if (!telegramConfig?.botToken) {
+
+  // Load discord config
+  const discordStore = new DiscordStore();
+  const discordConfig = discordStore.load();
+
+  // Load slack config
+  const slackStore = new SlackStore();
+  const slackConfig = slackStore.load();
+
+  // Load email config from plugin registry
+  const pluginRegistry = new PluginRegistry();
+  const emailPlugin = pluginRegistry.getPlugin('email');
+  const emailConfig = emailPlugin?.enabled ? (emailPlugin.config as Record<string, unknown> | undefined) : undefined;
+
+  if (!telegramConfig?.botToken && !discordConfig?.botToken && !slackConfig?.botToken && !emailConfig?.['smtpHost']) {
     console.log('✦ Agent-X daemon started.');
     console.log('');
     console.log('  Telegram not connected.');
+    console.log('  Discord not connected.');
+    console.log('  Slack not connected.');
     console.log('  To connect, run: agentx start --token <your-bot-token>');
     console.log('');
     console.log('  Web-UI: http://localhost:3333');
+  } else {
+    if (!telegramConfig?.botToken) {
+      console.log('  Telegram not connected.');
+      console.log('  To connect, run: agentx start --token <your-bot-token>');
+    }
+    if (!discordConfig?.botToken) {
+      console.log('  Discord not connected.');
+    }
+    if (!slackConfig?.botToken) {
+      console.log('  Slack not connected.');
+    }
   }
 
   // Get active crew member
@@ -400,6 +427,87 @@ export async function startDaemon(): Promise<void> {
   if (telegramConfig?.botToken) {
     bridge = new TelegramBridge({ botToken: telegramConfig.botToken });
     bridge.attach(agent);
+  }
+
+  // Start Discord bridge only if configured
+  let discordBridge: DiscordBridge | null = null;
+  if (discordConfig?.botToken) {
+    discordBridge = new DiscordBridge();
+    discordBridge.setAgentFactory(async (userId: string) => {
+      const userSessionId = generateSessionId();
+      const userAgent = new Agent({
+        config,
+        sessionId: userSessionId,
+      });
+      // Create session record
+      try {
+        sessionStore.createSession({
+          id: userSessionId,
+          title: `Discord Session ${userId}`,
+          status: 'active',
+          provider: config.provider.activeProvider,
+          model: config.provider.activeModel,
+          scopePath: process.cwd(),
+          tokenAvailable: userAgent.tokens.tokensTotal,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      } catch { /* session may already exist */ }
+      return userAgent;
+    });
+  }
+
+  // Start Slack bridge only if configured
+  let slackBridge: SlackBridge | null = null;
+  if (slackConfig?.botToken && slackConfig?.appToken) {
+    slackBridge = new SlackBridge(slackConfig);
+    slackBridge.setAgentFactory((userId) => {
+      const userSessionId = `${sessionId}-slack-${userId}`;
+      const userAgent = new Agent({
+        config,
+        sessionId: userSessionId,
+        systemPrompt: activeCrew.systemPrompt,
+      });
+      try {
+        sessionStore.createSession({
+          id: userSessionId,
+          title: `Slack Session ${userId}`,
+          status: 'active',
+          provider: config.provider.activeProvider,
+          model: config.provider.activeModel,
+          scopePath: process.cwd(),
+          tokenAvailable: userAgent.tokens.tokensTotal,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      } catch { /* session may already exist */ }
+      return userAgent;
+    });
+  }
+
+  // Start Email bridge only if configured
+  let emailBridge: EmailBridge | null = null;
+  if (emailConfig?.['smtpHost']) {
+    try {
+      emailBridge = new EmailBridge();
+      emailBridge.setAgentDeps({
+        config,
+        systemPrompt: activeCrew.systemPrompt,
+      });
+      await emailBridge.start({
+        smtpHost: String(emailConfig['smtpHost']),
+        smtpPort: Number(emailConfig['smtpPort'] ?? 587),
+        smtpUser: String(emailConfig['smtpUser']),
+        smtpPass: String(emailConfig['smtpPass']),
+        fromAddress: String(emailConfig['fromAddress'] ?? emailConfig['smtpUser']),
+        imapHost: emailConfig['imapHost'] ? String(emailConfig['imapHost']) : undefined,
+        imapPort: emailConfig['imapPort'] ? Number(emailConfig['imapPort']) : undefined,
+      });
+      console.log('  Email bridge: connected');
+    } catch (err) {
+      console.error(`Failed to start Email bridge: ${err instanceof Error ? err.message : String(err)}`);
+      emailBridge = null;
+    }
   }
 
   // Track the active chat ID for proactive messages (errors, etc.)
@@ -596,44 +704,64 @@ export async function startDaemon(): Promise<void> {
       await bridge.start();
       const tgStatus = bridge.getStatus();
       logger.info('DAEMON', `Telegram connected: @${tgStatus.botUsername}`);
-
-      writeStatus({
-        pid: process.pid,
-        crew: activeCrew.name,
-        crewId: activeCrew.id,
-        telegram: true,
-        botUsername: tgStatus.botUsername,
-        startedAt: new Date().toISOString(),
-        sessionId,
-        version: VERSION,
-      });
-
-      console.log(`✦ Agent-X daemon started (PID: ${process.pid})`);
-      console.log(`  Crew: ${activeCrew.name}`);
-      console.log(`  Telegram: @${tgStatus.botUsername}`);
-      console.log('  Web-UI: http://localhost:3333');
     } catch (err) {
       console.error(`Failed to start Telegram bridge: ${err instanceof Error ? err.message : String(err)}`);
       try { unlinkSync(pidPath); } catch { /* ignore */ }
       process.exit(1);
     }
-  } else {
-    // No Telegram — still write status and keep running
-    writeStatus({
-      pid: process.pid,
-      crew: activeCrew.name,
-      crewId: activeCrew.id,
-      telegram: false,
-      startedAt: new Date().toISOString(),
-      sessionId,
-      version: VERSION,
-    });
-
-    console.log(`✦ Agent-X daemon started (PID: ${process.pid})`);
-    console.log(`  Crew: ${activeCrew.name}`);
-    console.log('  Telegram: not connected');
-    console.log('  Web-UI: http://localhost:3333');
   }
+
+  if (discordBridge) {
+    try {
+      await discordBridge.start(discordConfig!.botToken, discordConfig!.channelId);
+      const dcStatus = discordBridge.getStatus();
+      logger.info('DAEMON', `Discord connected: ${dcStatus.botUsername ?? 'unknown'}`);
+    } catch (err) {
+      console.error(`Failed to start Discord bridge: ${err instanceof Error ? err.message : String(err)}`);
+      // Don't exit — Discord failure is non-fatal
+    }
+  }
+
+  if (slackBridge) {
+    try {
+      await slackBridge.start();
+      const slStatus = slackBridge.getStatus();
+      logger.info('DAEMON', `Slack connected: ${slStatus.team ?? 'unknown'}`);
+    } catch (err) {
+      console.error(`Failed to start Slack bridge: ${err instanceof Error ? err.message : String(err)}`);
+      // Don't exit — Slack failure is non-fatal
+    }
+  }
+
+  // Write status and console output
+  const tgStatus = bridge?.getStatus();
+  const dcStatus = discordBridge?.getStatus();
+  const slStatus = slackBridge?.getStatus();
+  const emStatus = emailBridge?.getStatus();
+  writeStatus({
+    pid: process.pid,
+    crew: activeCrew.name,
+    crewId: activeCrew.id,
+    telegram: tgStatus?.connected ?? false,
+    botUsername: tgStatus?.botUsername,
+    discord: dcStatus?.connected ?? false,
+    discordUsername: dcStatus?.botUsername,
+    slack: slStatus?.connected ?? false,
+    slackTeam: slStatus?.team,
+    email: emStatus?.connected ?? false,
+    emailConfigured: emStatus?.configured ?? false,
+    startedAt: new Date().toISOString(),
+    sessionId,
+    version: VERSION,
+  });
+
+  console.log(`✦ Agent-X daemon started (PID: ${process.pid})`);
+  console.log(`  Crew: ${activeCrew.name}`);
+  console.log(`  Telegram: ${tgStatus?.connected ? `@${tgStatus.botUsername}` : 'not connected'}`);
+  console.log(`  Discord: ${dcStatus?.connected ? dcStatus.botUsername : 'not connected'}`);
+  console.log(`  Slack: ${slStatus?.connected ? slStatus.team : 'not connected'}`);
+  console.log(`  Email: ${emStatus?.connected ? 'connected' : 'not connected'}`);
+  console.log('  Web-UI: http://localhost:3333');
 
   // Subscribe to agent events — persist messages, handle errors
   agent.events.on((event: EngineEvent) => {
@@ -682,6 +810,9 @@ export async function startDaemon(): Promise<void> {
     logger.info('DAEMON', 'Shutting down...');
     stopWebApi();
     if (bridge) bridge.stop();
+    if (discordBridge) discordBridge.stop();
+    if (slackBridge) slackBridge.stop();
+    if (emailBridge) emailBridge.stop();
     agent.endSession();
     try { unlinkSync(pidPath); } catch { /* ignore */ }
     try { unlinkSync(getStatusPath()); } catch { /* ignore */ }
@@ -702,6 +833,29 @@ export async function startDaemon(): Promise<void> {
       tgBotUsername = status.botUsername;
       tgMessageCount = status.messageCount;
     }
+    let dcConnected = false;
+    let dcBotUsername: string | undefined;
+    let dcMessageCount = 0;
+    if (discordBridge) {
+      const status = discordBridge.getStatus();
+      dcConnected = status.connected;
+      dcBotUsername = status.botUsername;
+      dcMessageCount = status.messageCount;
+    }
+    let slConnected = false;
+    let slTeam: string | undefined;
+    if (slackBridge) {
+      const status = slackBridge.getStatus();
+      slConnected = status.connected;
+      slTeam = status.team;
+    }
+    let emConnected = false;
+    let emConfigured = false;
+    if (emailBridge) {
+      const status = emailBridge.getStatus();
+      emConnected = status.connected;
+      emConfigured = status.configured;
+    }
     writeStatus({
       pid: process.pid,
       crew: pm.getActive().name,
@@ -709,6 +863,13 @@ export async function startDaemon(): Promise<void> {
       telegram: tgConnected,
       botUsername: tgBotUsername,
       messageCount: tgMessageCount,
+      discord: dcConnected,
+      discordUsername: dcBotUsername,
+      discordMessageCount: dcMessageCount,
+      slack: slConnected,
+      slackTeam: slTeam,
+      email: emConnected,
+      emailConfigured: emConfigured,
       startedAt: readStatusStartTime(),
       sessionId,
       version: VERSION,

@@ -24,6 +24,8 @@ import * as ai from './builtin/ai.js';
 import * as notifications from './builtin/notifications.js';
 import * as security from './builtin/security.js';
 import * as media from './builtin/media.js';
+import { getPythonRPC } from './PythonRPCExecutor.js';
+import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 
 // All tool definitions with schemas the model uses to invoke them
 const CORE_TOOLS: ToolDefinition[] = [
@@ -239,6 +241,12 @@ const CORE_TOOLS: ToolDefinition[] = [
 
   // ═══ TELEGRAM ═══
   { id: 'telegram_send_file', name: 'Send File via Telegram', description: 'Upload and send a file to the user via Telegram', modelDescription: 'Send/upload a file to the user via Telegram. Use this when the user asks you to share, send, or upload a file. The file must exist on disk.', category: 'communication', riskLevel: 'medium', schema: { type: 'object', properties: { path: { type: 'string', description: 'Path to the file to send' }, caption: { type: 'string', description: 'Optional caption/description for the file' } }, required: ['path'] }, composable: true, source: 'builtin' },
+
+  // ═══ AGENT META-TOOLS ═══
+  { id: 'ask_clarification', name: 'Ask Clarifying Question', description: 'Ask the user a clarifying question before proceeding', modelDescription: 'Use this tool when you need more information to complete a task. The user will respond with an answer or select from options. Do NOT use this for simple confirmations — only when you genuinely cannot proceed without more details.', category: 'agent_meta', riskLevel: 'low', schema: { type: 'object', properties: { question: { type: 'string', description: 'The clarifying question to ask the user' }, options: { type: 'array', description: 'Optional array of choice strings. If provided, user can pick one. If empty, freeform text response.' }, allowFreeform: { type: 'boolean', description: 'Whether to allow freeform text input (default: true)' } }, required: ['question'] }, composable: false, source: 'builtin' },
+  { id: 'delegate_to_subagent', name: 'Delegate to Sub-Agent', description: 'Spawn a specialist sub-agent to handle a parallel task', modelDescription: 'Delegate a specific task to an isolated sub-agent that will execute it with its own tools and memory. Use for parallelizable work: research, analysis, testing, documentation, or any task that can run independently. The sub-agent will return a summary of results.', category: 'agent_meta', riskLevel: 'low', schema: { type: 'object', properties: { mission: { type: 'string', description: 'Clear, specific mission for the sub-agent' }, tools: { type: 'array', description: 'Optional list of tool IDs the sub-agent can use. If omitted, all tools are available.' }, timeout: { type: 'number', description: 'Timeout in milliseconds (default: 120000)' } }, required: ['mission'] }, composable: false, source: 'builtin' },
+  { id: 'python_rpc', name: 'Execute Python Script', description: 'Run Python code in an isolated subprocess', modelDescription: 'Execute Python code with optional JSON arguments. Returns stdout/stderr/exit code. Use for data processing, computations, or running scripts. Args are passed as a JSON object via PYTHON_RPC_ARGS env var accessible with os.environ.get("PYTHON_RPC_ARGS").', category: 'agent_meta', riskLevel: 'medium', schema: { type: 'object', properties: { script: { type: 'string', description: 'Python code to execute' }, args: { type: 'object', description: 'Arguments to pass to the script (accessible via os.environ)' }, timeout: { type: 'number', description: 'Timeout in ms (default: 60000)' } }, required: ['script'] }, composable: false, source: 'builtin' },
+
 ];
 
 /**
@@ -463,6 +471,17 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('chart_generate', media.chartGenerate);
   executor.registerHandler('qr_generate', media.qrGenerate);
 
+  // ═══ Agent Meta-Tools ═══
+  executor.registerHandler('ask_clarification', async () => ({
+    success: true,
+    output: 'Clarification requested.',
+  }));
+  executor.registerHandler('delegate_to_subagent', async () => ({
+    success: true,
+    output: 'Sub-agent delegation handled by agent core.',
+  }));
+  executor.registerHandler('python_rpc', pythonRpcHandler);
+
   // ═══ Telegram ═══
   // Default handler — overridden by daemon when Telegram bridge is active
   executor.registerHandler('telegram_send_file', async () => ({
@@ -472,6 +491,29 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   }));
 
   return { registry, executor };
+}
+
+// Handler for python_rpc tool
+async function pythonRpcHandler(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+  const script = args['script'] as string;
+  if (!script) return { success: false, output: 'script is required', error: 'INVALID_ARGS' };
+  const rpcArgs = (args['args'] as Record<string, unknown>) ?? {};
+  const timeout = (args['timeout'] as number) || 60000;
+  const executor = getPythonRPC();
+  const result = executor.executeScript(script, rpcArgs, { timeout });
+  if (result.success) {
+    return {
+      success: true,
+      output: result.stdout || '(no output)',
+      metadata: { elapsed: result.elapsed },
+    };
+  }
+  return {
+    success: false,
+    output: result.stderr || result.stdout || 'Python execution failed',
+    error: `EXIT_${result.exitCode}`,
+    metadata: { elapsed: result.elapsed },
+  };
 }
 
 export { CORE_TOOLS };

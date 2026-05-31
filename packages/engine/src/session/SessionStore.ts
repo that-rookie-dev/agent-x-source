@@ -7,7 +7,7 @@ import { getDbPath } from '../config/paths.js';
 let BetterSqlite3: any = null;
 try {
   const require = createRequire(import.meta.url);
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   BetterSqlite3 = require('better-sqlite3');
 } catch (err) {
   BetterSqlite3 = null;

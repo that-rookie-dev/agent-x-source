@@ -35,6 +35,7 @@ export { agentsCommand } from './builtin/agents.js';
 export { recipeCommand } from './builtin/recipe.js';
 export { copyCommand } from './builtin/copy.js';
 export { voiceCommand } from './builtin/voice.js';
+export { researchCommand } from './builtin/research.js';
 
 import { CommandRegistry } from './CommandRegistry.js';
 import { helpCommand } from './builtin/help.js';
@@ -67,6 +68,7 @@ import { agentsCommand } from './builtin/agents.js';
 import { recipeCommand } from './builtin/recipe.js';
 import { copyCommand } from './builtin/copy.js';
 import { voiceCommand } from './builtin/voice.js';
+import { researchCommand } from './builtin/research.js';
 
 export function createDefaultRegistry(): CommandRegistry {
   const registry = new CommandRegistry();
@@ -102,5 +104,6 @@ export function createDefaultRegistry(): CommandRegistry {
   registry.register(recipeCommand);
   registry.register(copyCommand);
   registry.register(voiceCommand);
+  registry.register(researchCommand);
   return registry;
 }

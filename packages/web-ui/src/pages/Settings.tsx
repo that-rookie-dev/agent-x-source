@@ -20,23 +20,28 @@ export default function Settings() {
 
   // Discord
   const [dcConfigured, setDcConfigured] = useState(false);
+  const [dcConnected, setDcConnected] = useState(false);
+  const [dcGuilds, setDcGuilds] = useState(0);
   const [dcToken, setDcToken] = useState('');
   const [dcChannel, setDcChannel] = useState('');
   const [dcSaving, setDcSaving] = useState(false);
 
   // Slack
   const [slConfigured, setSlConfigured] = useState(false);
-  const [slWebhook, setSlWebhook] = useState('');
   const [slBotToken, setSlBotToken] = useState('');
-  const [slChannel, setSlChannel] = useState('');
+  const [slAppToken, setSlAppToken] = useState('');
   const [slSaving, setSlSaving] = useState(false);
 
   // Email
   const [emConfigured, setEmConfigured] = useState(false);
+  const [emConnected, setEmConnected] = useState(false);
+  const [emUnreadCount, setEmUnreadCount] = useState(0);
   const [emSmtpHost, setEmSmtpHost] = useState('');
   const [emSmtpPort, setEmSmtpPort] = useState('587');
   const [emSmtpUser, setEmSmtpUser] = useState('');
   const [emSmtpPass, setEmSmtpPass] = useState('');
+  const [emImapHost, setEmImapHost] = useState('');
+  const [emImapPort, setEmImapPort] = useState('993');
   const [emFrom, setEmFrom] = useState('');
   const [emSaving, setEmSaving] = useState(false);
 
@@ -89,8 +94,10 @@ export default function Settings() {
 
   async function loadDiscord() {
     try {
-      const dc = await apiGet<{ configured: boolean }>('/api/discord/status');
+      const dc = await apiGet<{ configured: boolean; connected: boolean; guilds: number }>('/api/discord/status');
       setDcConfigured(dc.configured);
+      setDcConnected(dc.connected);
+      setDcGuilds(dc.guilds);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load Discord status';
       try { toast.push(msg, 'error'); } catch { /* ignore */ }
@@ -109,8 +116,10 @@ export default function Settings() {
 
   async function loadEmail() {
     try {
-      const em = await apiGet<{ configured: boolean }>('/api/email/status');
+      const em = await apiGet<{ configured: boolean; connected: boolean; unreadCount: number }>('/api/email/status');
       setEmConfigured(em.configured);
+      setEmConnected(em.connected);
+      setEmUnreadCount(em.unreadCount);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load Email status';
       try { toast.push(msg, 'error'); } catch { /* ignore */ }
@@ -207,14 +216,13 @@ export default function Settings() {
   }
 
   async function saveSlack() {
-    if (!slWebhook.trim() && !slBotToken.trim()) return;
+    if (!slBotToken.trim() || !slAppToken.trim()) return;
     setSlSaving(true);
     try {
-      await apiPost('/api/slack/start', { webhookUrl: slWebhook.trim() || undefined, botToken: slBotToken.trim() || undefined, channel: slChannel.trim() || undefined });
+      await apiPost('/api/slack/start', { botToken: slBotToken.trim(), appToken: slAppToken.trim() });
       setSlConfigured(true);
-      setSlWebhook('');
       setSlBotToken('');
-      setSlChannel('');
+      setSlAppToken('');
       try { toast.push('Slack connected', 'success'); } catch { /* ignore */ }
     } catch (e) {
       const raw = e instanceof Error ? e.message : 'Failed to connect Slack';
@@ -244,12 +252,17 @@ export default function Settings() {
         smtpUser: emSmtpUser.trim(),
         smtpPass: emSmtpPass.trim(),
         fromAddress: emFrom.trim() || emSmtpUser.trim(),
+        imapHost: emImapHost.trim() || undefined,
+        imapPort: emImapPort.trim() || undefined,
       });
       setEmConfigured(true);
+      setEmConnected(true);
       setEmSmtpHost('');
       setEmSmtpPort('587');
       setEmSmtpUser('');
       setEmSmtpPass('');
+      setEmImapHost('');
+      setEmImapPort('993');
       setEmFrom('');
       try { toast.push('Email bridge connected', 'success'); } catch { /* ignore */ }
     } catch (e) {
@@ -263,6 +276,8 @@ export default function Settings() {
     try {
       await apiPost('/api/email/stop');
       setEmConfigured(false);
+      setEmConnected(false);
+      setEmUnreadCount(0);
       try { toast.push('Email bridge disconnected', 'success'); } catch { /* ignore */ }
     } catch (e) {
       const raw = e instanceof Error ? e.message : 'Failed to disconnect Email';
@@ -408,7 +423,7 @@ export default function Settings() {
             {dcConfigured ? (
               <div>
                 <div style={{ color: '#888', fontSize: '0.85rem', marginBottom: 12 }}>
-                  Discord bot is configured and active.
+                  Discord bot is configured{dcConnected ? ` and connected (${dcGuilds} guild${dcGuilds === 1 ? '' : 's'})` : ''}.
                 </div>
                 <button className="btn btn-sm btn-secondary" onClick={stopDiscord}>Disconnect</button>
               </div>
@@ -435,25 +450,27 @@ export default function Settings() {
             {slConfigured ? (
               <div>
                 <div style={{ color: '#888', fontSize: '0.85rem', marginBottom: 12 }}>
-                  Slack integration is configured and active.
+                  Slack bridge is configured and active.
                 </div>
                 <button className="btn btn-sm btn-secondary" onClick={stopSlack}>Disconnect</button>
               </div>
             ) : (
               <div>
                 <div className="field">
-                  <label className="label">Webhook URL (optional)</label>
-                  <input className="input" value={slWebhook} onChange={(e) => setSlWebhook(e.target.value)} placeholder="https://hooks.slack.com/services/..." />
-                </div>
-                <div className="field">
-                  <label className="label">Bot Token (optional)</label>
+                  <label className="label">Bot Token</label>
                   <input className="input" value={slBotToken} onChange={(e) => setSlBotToken(e.target.value)} placeholder="xoxb-..." />
                 </div>
                 <div className="field">
-                  <label className="label">Channel (optional)</label>
-                  <input className="input" value={slChannel} onChange={(e) => setSlChannel(e.target.value)} placeholder="#general" />
+                  <label className="label">App Token</label>
+                  <input className="input" value={slAppToken} onChange={(e) => setSlAppToken(e.target.value)} placeholder="xapp-..." />
+                  <div className="mt-8 text-muted" style={{ fontSize: '0.78rem', lineHeight: 1.8 }}>
+                    <strong style={{ color: '#aaa' }}>How to get tokens:</strong><br />
+                    1. Go to <a href="https://api.slack.com/apps" target="_blank" rel="noopener" style={{ color: '#888', textDecoration: 'underline' }}>api.slack.com/apps</a> and create an app<br />
+                    2. Under <em>OAuth & Permissions</em>, install the app and copy the <strong>Bot User OAuth Token</strong> (starts with xoxb-)<br />
+                    3. Under <em>Basic Information</em>, generate an <strong>App-Level Token</strong> (starts with xapp-) with the <code>connections:write</code> scope
+                  </div>
                 </div>
-                <button className="btn btn-sm btn-primary" onClick={saveSlack} disabled={slSaving || (!slWebhook.trim() && !slBotToken.trim())}>
+                <button className="btn btn-sm btn-primary" onClick={saveSlack} disabled={slSaving || !slBotToken.trim() || !slAppToken.trim()}>
                   {slSaving ? 'Connecting...' : 'Connect'}
                 </button>
               </div>
@@ -466,7 +483,10 @@ export default function Settings() {
             {emConfigured ? (
               <div>
                 <div style={{ color: '#888', fontSize: '0.85rem', marginBottom: 12 }}>
-                  Email bridge is configured and active.
+                  Email bridge is configured {emConnected ? 'and connected' : 'but not connected'}.
+                  {emUnreadCount > 0 && (
+                    <span style={{ marginLeft: 8, color: '#4caf50' }}>{emUnreadCount} unread</span>
+                  )}
                 </div>
                 <button className="btn btn-sm btn-secondary" onClick={stopEmail}>Disconnect</button>
               </div>
@@ -487,6 +507,14 @@ export default function Settings() {
                 <div className="field">
                   <label className="label">SMTP Password</label>
                   <input className="input" type="password" value={emSmtpPass} onChange={(e) => setEmSmtpPass(e.target.value)} placeholder="App-specific password" />
+                </div>
+                <div className="field">
+                  <label className="label">IMAP Host (optional)</label>
+                  <input className="input" value={emImapHost} onChange={(e) => setEmImapHost(e.target.value)} placeholder="imap.gmail.com" />
+                </div>
+                <div className="field">
+                  <label className="label">IMAP Port (optional)</label>
+                  <input className="input" value={emImapPort} onChange={(e) => setEmImapPort(e.target.value)} placeholder="993" />
                 </div>
                 <div className="field">
                   <label className="label">From Address</label>

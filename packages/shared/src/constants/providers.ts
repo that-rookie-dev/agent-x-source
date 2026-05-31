@@ -45,7 +45,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Moonshot AI',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: false,
+    baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.moonshot.cn/v1',
   },
   deepseek: {
@@ -53,7 +53,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'DeepSeek',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: false,
+    baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.deepseek.com',
   },
   groq: {
@@ -61,7 +61,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Groq',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: false,
+    baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.groq.com/openai/v1',
   },
   mistral: {
@@ -69,7 +69,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Mistral AI',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: false,
+    baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.mistral.ai/v1',
   },
   together: {
@@ -77,7 +77,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Together AI',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: false,
+    baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.together.xyz/v1',
   },
   xai: {
@@ -85,7 +85,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'xAI (Grok)',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: false,
+    baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.x.ai/v1',
   },
   fireworks: {
@@ -93,7 +93,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Fireworks AI',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: false,
+    baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.fireworks.ai/inference/v1',
   },
   perplexity: {
@@ -101,7 +101,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Perplexity',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: false,
+    baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.perplexity.ai',
   },
   azure: {
@@ -117,7 +117,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     name: 'Cohere',
     type: 'cloud',
     apiKeyRequired: true,
-    baseUrlConfigurable: false,
+    baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.cohere.com/compatibility/v1',
   },
 } as const;

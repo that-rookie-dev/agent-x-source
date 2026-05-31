@@ -103,6 +103,27 @@ const SPACE_THEME_LIGHT: SpaceTheme = {
 
 function detectSystemTheme(): 'dark' | 'light' | 'unknown' {
   try {
+    // COLORFGBG: most terminals set this (e.g., "15;0" = light text on dark bg)
+    const colorFgBg = process.env['COLORFGBG'] || '';
+    if (colorFgBg) {
+      const parts = colorFgBg.split(';');
+      const bgColor = parseInt(parts[1] || '0', 10);
+      // ANSI colors 0-6 are dark, 7-15 are light
+      // Background 0 = black, 7 = light gray, 15 = white
+      if (bgColor >= 7) return 'light';
+      if (bgColor < 7 && parts.length >= 2) return 'dark';
+    }
+
+    // Check ITERM_PROFILE or terminal type for known light setups
+    const termBg = (process.env['TERM_BG'] || '').toLowerCase();
+    if (termBg === 'light' || termBg === 'white') return 'light';
+    if (termBg === 'dark' || termBg === 'black') return 'dark';
+
+    // VS Code terminal theme
+    const vscodeTheme = process.env['VSCODE_THEME'] || '';
+    if (/light/i.test(vscodeTheme)) return 'light';
+    if (/dark/i.test(vscodeTheme)) return 'dark';
+
     // macOS
     if (process.platform === 'darwin') {
       try {
@@ -131,14 +152,23 @@ function detectSystemTheme(): 'dark' | 'light' | 'unknown' {
       if (/dark/i.test(out)) return 'dark';
       if (/light/i.test(out)) return 'light';
     } catch {
-      // fallback to checking gtk theme name
       try {
         const out2 = execSync('gsettings get org.gnome.desktop.interface gtk-theme', { encoding: 'utf-8' }).trim();
         if (/dark/i.test(out2)) return 'dark';
         return 'light';
-      } catch {
-        // unknown
-      }
+      } catch { /* fallthrough */ }
+    }
+
+    // For terminals that don't set COLORFGBG (tmux without config, etc.),
+    // probe the terminal directly via OSC escape sequence.
+    // Background 0-6 = dark, 7+ = light (ANSI 8-color range).
+    // We don't do OSC probing here because it requires async I/O;
+    // instead, we check the TERM variable as a heuristic.
+    const term = (process.env['TERM'] || '').toLowerCase();
+    if (term.includes('256color') || term.includes('truecolor') || term.includes('24bit')) {
+      // Modern true-color terminals are usually dark by default
+      // Light themes in modern terminals typically set COLORFGBG
+      return 'dark';
     }
 
     return 'unknown';

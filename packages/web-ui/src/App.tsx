@@ -13,6 +13,9 @@ import PluginHub from './pages/PluginHub';
 import PluginDetail from './pages/PluginDetail';
 import MCPHub from './pages/MCPHub';
 import SubAgentDashboard from './pages/SubAgentDashboard';
+import RAGAdmin from './pages/RAGAdmin';
+import Scheduler from './pages/Scheduler';
+import FileManager from './pages/FileManager';
 import Login from './pages/Login';
 import SetupAuth from './pages/SetupAuth';
 
@@ -179,6 +182,9 @@ export default function App() {
         <Route path="/plugins/:id" element={<PluginDetail />} />
         <Route path="/mcp" element={<MCPHub />} />
         <Route path="/subagents" element={<SubAgentDashboard />} />
+        <Route path="/rag" element={<RAGAdmin />} />
+        <Route path="/scheduler" element={<Scheduler />} />
+        <Route path="/files" element={<FileManager />} />
       </Route>
     </Routes>
   );

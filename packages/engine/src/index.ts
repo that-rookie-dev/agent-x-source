@@ -9,12 +9,25 @@ export { FileWatcher } from './session/FileWatcher.js';
 export { BackgroundQueue } from './session/BackgroundQueue.js';
 export { ModelRouter } from './session/ModelRouter.js';
 export { RecipeEngine } from './session/RecipeEngine.js';
+export { AgentBus, getAgentBus, setAgentBus } from './agent/AgentBus.js';
+export type { AgentMessage, AgentSubscription } from './agent/AgentBus.js';
+export { SpecialistRegistry } from './agent/SpecialistRegistry.js';
+export type { Specialist, SpecialistType } from './agent/SpecialistRegistry.js';
+export { SkillGenerator } from './agent/SkillGenerator.js';
+export { BUNDLED_SKILLS, getBundledSkills, findBundledSkill } from './agent/BundledSkills.js';
+export type { GeneratedSkill } from './agent/SkillGenerator.js';
+export { ReflectionLoop } from './agent/ReflectionLoop.js';
+export type { ReflectionResult } from './agent/ReflectionLoop.js';
 export { Agent } from './agent/Agent.js';
 export type { AgentOptions } from './agent/Agent.js';
 export { ResponseFormatter } from './agent/ResponseFormatter.js';
 export type { FormattedSegment } from './agent/ResponseFormatter.js';
 export { SubAgentManager } from './agent/SubAgentManager.js';
 export type { SubAgentTask } from './agent/SubAgentManager.js';
+export { SmartSubAgent } from './agent/SmartSubAgent.js';
+export type { SmartSubAgentOptions, SmartSubAgentResult } from './agent/SmartSubAgent.js';
+export { PromptEngine } from './prompt/PromptEngine.js';
+export type { IntentResult, PromptBudget } from './prompt/PromptEngine.js';
 export { AgentEventBus } from './EventBus.js';
 export { ProviderFactory } from './providers/index.js';
 export type { ProviderInterface } from './providers/index.js';
@@ -26,6 +39,8 @@ export { LMStudioProvider } from './providers/LMStudioProvider.js';
 export { CommandParser, CommandRegistry, createDefaultRegistry } from './commands/index.js';
 export type { CommandInterface, CommandContext, CommandResult } from './commands/index.js';
 export { ToolRegistry, ToolExecutor, PermissionManager, ScopeGuard } from './tools/index.js';
+export { PythonRPCExecutor, getPythonRPC } from './tools/PythonRPCExecutor.js';
+export type { PythonTask, PythonResult } from './tools/PythonRPCExecutor.js';
 export { createDefaultToolkit } from './tools/index.js';
 export type { PermissionRequestHandler } from './tools/index.js';
 export { fileRead, fileWrite, fileDelete, folderCreate, folderDelete, folderList, folderMove } from './tools/index.js';
@@ -48,6 +63,12 @@ export * from './config/paths.js';
 export { SecretSauceManager, CrewManager, SoulManager, MemoryManager, DiaryManager, IdentityManager } from './secret-sauce/index.js';
 export { TelegramBridge, TelegramStore } from './telegram/index.js';
 export type { TelegramConfig, TelegramBridgeStatus } from './telegram/index.js';
+export { DiscordBridge, DiscordStore } from './discord/index.js';
+export type { DiscordConfig, DiscordBridgeStatus } from './discord/index.js';
+export { SlackBridge, SlackStore } from './slack/index.js';
+export type { SlackConfig, SlackBridgeStatus } from './slack/index.js';
+export { EmailBridge } from './email/index.js';
+export type { EmailBridgeConfig, EmailBridgeStatus } from './email/index.js';
 export { Scheduler } from './scheduler/index.js';
 export type { ScheduledJob } from './scheduler/index.js';
 export { TaskManager } from './agent/TaskManager.js';
@@ -64,6 +85,12 @@ export type { StorageAdapter, StorableSession, StorableMessage, StorableTokenLog
 
 // Phase 2: Plugin system
 export { DefaultPluginLoader, MCPBridge, ACPBridge, PluginRegistry, getBuiltinCatalog, getBuiltinPlugin, getMarketplaceExtensions, getMarketplaceExtension } from './plugin/index.js';
+export { RedisCacheRuntime } from './plugin/runtime/RedisRuntime.js';
+export { WebhookNotifierRuntime } from './plugin/runtime/WebhookNotifierRuntime.js';
+export { SQLiteBrowserRuntime } from './plugin/runtime/SQLiteBrowserRuntime.js';
+export type { RedisCacheConfig } from './plugin/runtime/RedisRuntime.js';
+export type { WebhookNotifierConfig } from './plugin/runtime/WebhookNotifierRuntime.js';
+export type { SQLiteBrowserConfig } from './plugin/runtime/SQLiteBrowserRuntime.js';
 export type { AcpServerConfig } from './plugin/index.js';
 export type { PluginManifest, PluginInstance, PluginLoader, MCPBridgeConfig, PluginHubEntry, PluginCategory, InstalledPlugin } from '@agentx/shared';
 
@@ -104,3 +131,9 @@ export type { CloudSession, CloudWorkerConfig, CloudAuthToken } from './cloud/in
 // Phase 8: Remote tunneling
 export { TunnelServer, TunnelClient } from './tunnel/index.js';
 export type { TunnelConfig, TunnelSession } from './tunnel/index.js';
+
+// Reasoning modules
+export { TreeOfThoughts } from './reasoning/TreeOfThoughts.js';
+export type { ThoughtNode, TreeOfThoughtsOptions } from './reasoning/TreeOfThoughts.js';
+export { ResearchEngine } from './reasoning/ResearchEngine.js';
+export type { ResearchQuery, ResearchResult, ResearchEngineOptions } from './reasoning/ResearchEngine.js';

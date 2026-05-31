@@ -459,6 +459,7 @@ async function main(): Promise<void> {
       console.log(`  PID: ${status.pid}`);
       console.log(`  Crew: ${status.crew ?? 'unknown'}`);
       if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
+      if (status.discord) console.log(`  Discord: ${status.discordUsername ?? 'connected'}`);
       if (status.startedAt) {
         console.log(`  Started: ${status.startedAt}`);
         const elapsed = Date.now() - new Date(status.startedAt).getTime();

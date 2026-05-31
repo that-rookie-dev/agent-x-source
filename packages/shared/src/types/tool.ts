@@ -33,7 +33,8 @@ export type ToolCategory =
   | 'mcp_integration'
   | 'workspace_ide'
   | 'scheduler'
-  | 'agent_orchestration';
+  | 'agent_orchestration'
+  | 'agent_meta';
 
 export type ToolRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 

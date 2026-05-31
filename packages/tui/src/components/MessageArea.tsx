@@ -3,13 +3,35 @@ import { Box, Text } from 'ink';
 import { COLORS } from '../theme/colors.js';
 import type { Message, MessageRole } from '@agentx/shared';
 
+interface ToolExecInfo {
+  id: string;
+  name: string;
+  status: 'running' | 'complete' | 'error';
+  elapsed?: number;
+  output?: string;
+}
+
+interface SubAgentInfo {
+  id: string;
+  action: 'spawned' | 'complete' | 'failed';
+  instruction?: string;
+  elapsed?: number;
+}
+
 interface MessageAreaProps {
   messages: Message[];
   streamingContent?: string;
   pendingDiff?: { tool: string; filePath: string; diff: string };
+  toolExecutions?: ToolExecInfo[];
+  reasoningContent?: string;
+  subAgentEvents?: SubAgentInfo[];
+  agentStatus?: { intent?: string; ragCount?: number };
 }
 
-export const MessageArea: FC<MessageAreaProps> = ({ messages, streamingContent, pendingDiff }) => {
+export const MessageArea: FC<MessageAreaProps> = ({
+  messages, streamingContent, pendingDiff,
+  toolExecutions, reasoningContent, subAgentEvents, agentStatus,
+}) => {
   const bottomRef = useRef<any>(null);
 
   useEffect(() => {
@@ -18,6 +40,19 @@ export const MessageArea: FC<MessageAreaProps> = ({ messages, streamingContent, 
 
   return (
     <Box flexDirection="column" flexGrow={1}>
+      {/* Agent status bar */}
+      {agentStatus && (agentStatus.intent || (agentStatus.ragCount ?? 0) > 0) && (
+        <Box paddingX={1} marginBottom={1}>
+          <Text color={COLORS.textDim} dimColor>
+            ───
+            {agentStatus.intent && <Text color={COLORS.accent}> ◆ INTENT: {agentStatus.intent} </Text>}
+            {(agentStatus.ragCount ?? 0) > 0 && <Text color={COLORS.success}> ◆ RAG: {agentStatus.ragCount} docs </Text>}
+            {(toolExecutions?.length ?? 0) > 0 && <Text color={COLORS.warning}> ◆ PROCESSING </Text>}
+            ───
+          </Text>
+        </Box>
+      )}
+
       {messages.map((message) => (
         <Box key={message.id} flexDirection="column" paddingX={1} marginBottom={1}>
           <MessageHeader role={message.role} timestamp={message.createdAt} elapsed={message.elapsed} tokenCost={message.tokenCost} />
@@ -26,13 +61,70 @@ export const MessageArea: FC<MessageAreaProps> = ({ messages, streamingContent, 
           </Box>
           {message.toolCalls && message.toolCalls.length > 0 && (
             <Box paddingLeft={2} marginTop={0}>
-              <Text color={COLORS.textDim} dimColor>
-                [{message.toolCalls.length} tool call{message.toolCalls.length > 1 ? 's' : ''}]
+              <Text color={COLORS.warning}>
+                ⚡ [{message.toolCalls.length} tool call{message.toolCalls.length > 1 ? 's' : ''}]
               </Text>
             </Box>
           )}
         </Box>
       ))}
+
+      {/* Reasoning panel */}
+      {reasoningContent && (
+        <Box flexDirection="column" paddingX={1} marginBottom={1} borderStyle="single" borderColor={COLORS.accent}>
+          <Box paddingX={1} paddingY={0}>
+            <Text color={COLORS.accent} bold>🧠 REASONING</Text>
+          </Box>
+          <Box paddingX={1}>
+            <Text color={COLORS.textDim} wrap="wrap">{reasoningContent}</Text>
+          </Box>
+        </Box>
+      )}
+
+      {/* Tool execution cards */}
+      {toolExecutions && toolExecutions.length > 0 && (
+        <Box flexDirection="column" paddingX={1} marginBottom={1}>
+          {toolExecutions.map((t) => (
+            <Box key={t.id} paddingLeft={2}>
+              <Text color={
+                t.status === 'running' ? COLORS.warning :
+                t.status === 'complete' ? COLORS.success : COLORS.error
+              }>
+                {t.status === 'running' ? '◌' : t.status === 'complete' ? '●' : '✗'}
+              </Text>
+              <Text color={COLORS.primaryDim}> {t.name}</Text>
+              {t.status === 'running' && <Text color={COLORS.textDim}> running...</Text>}
+              {t.elapsed != null && (
+                <Text color={COLORS.textDim}> ({formatElapsed(t.elapsed)})</Text>
+              )}
+            </Box>
+          ))}
+        </Box>
+      )}
+
+      {/* Sub-agent events */}
+      {subAgentEvents && subAgentEvents.length > 0 && (
+        <Box flexDirection="column" paddingX={1} marginBottom={1}>
+          {subAgentEvents.map((s) => (
+            <Box key={s.id + '-' + s.action} paddingLeft={2}>
+              <Text color={COLORS.info}>
+                {s.action === 'spawned' ? '◆' : s.action === 'complete' ? '✓' : '✗'}
+              </Text>
+              <Text color={COLORS.info}> Sub-Agent {s.id?.slice(0, 12)} </Text>
+              <Text color={
+                s.action === 'spawned' ? COLORS.warning :
+                s.action === 'complete' ? COLORS.success : COLORS.error
+              }>
+                {s.action.toUpperCase()}
+              </Text>
+              {s.instruction && <Text color={COLORS.textDim}> — {s.instruction.slice(0, 50)}</Text>}
+              {s.elapsed != null && (
+                <Text color={COLORS.textDim}> ({formatElapsed(s.elapsed)})</Text>
+              )}
+            </Box>
+          ))}
+        </Box>
+      )}
 
       {pendingDiff && (
         <Box flexDirection="column" paddingX={1} marginBottom={1}>
@@ -43,7 +135,7 @@ export const MessageArea: FC<MessageAreaProps> = ({ messages, streamingContent, 
                 const color = line.startsWith('+') ? COLORS.success
                   : line.startsWith('-') ? COLORS.error
                   : COLORS.textDim;
-                return <Text key={i} color={color}>{line}</Text>;
+                return <Text key={i} color={color}>{line}{'\n'}</Text>;
               })}
             </Text>
             {pendingDiff.diff.split('\n').length > 20 && (
@@ -76,27 +168,20 @@ function renderMessageContent(message: Message) {
   if (message.role === 'tool') {
     const isError = content.startsWith('✗');
     const trimmed = content.length > 30000 ? content.slice(0, 30000) + '\n… [truncated]' : content;
-
-    if (isError) {
-      return <Text color={COLORS.error}>{trimmed}</Text>;
-    }
+    if (isError) return <Text color={COLORS.error}>{trimmed}</Text>;
 
     const lines = trimmed.split('\n');
-    const threshold = 200;
-
-    if (lines.length > threshold) {
-      const visible = lines.slice(0, threshold).join('\n');
-      const hidden = lines.length - threshold;
+    if (lines.length > 200) {
+      const visible = lines.slice(0, 200).join('\n');
       return (
         <Box flexDirection="column">
           <Text color={COLORS.text} wrap="wrap">{visible}</Text>
           <Text color={COLORS.textDim} dimColor>
-            … [{hidden} more lines — use `/tools file_read` to view full output]
+            … [{lines.length - 200} more lines]
           </Text>
         </Box>
       );
     }
-
     return <Text color={COLORS.text} wrap="wrap">{trimmed}</Text>;
   }
 
@@ -106,19 +191,12 @@ function renderMessageContent(message: Message) {
 
 const MessageHeader: FC<{ role: MessageRole; timestamp?: string; elapsed?: number; tokenCost?: number }> = ({ role, timestamp, elapsed, tokenCost }) => {
   const roleConfig = getRoleConfig(role);
-
   return (
     <Box>
       <Text color={roleConfig.color} bold>{roleConfig.icon} {roleConfig.label}</Text>
-      {timestamp && (
-        <Text color={COLORS.textDim} dimColor>
-          {' '}({formatTime(timestamp)})
-        </Text>
-      )}
+      {timestamp && <Text color={COLORS.textDim} dimColor> ({formatTime(timestamp)})</Text>}
       {elapsed != null && role === 'assistant' && (
-        <Text color={COLORS.textDim} dimColor>
-          {' '}• {formatElapsed(elapsed)}
-        </Text>
+        <Text color={COLORS.textDim} dimColor> • {formatElapsed(elapsed)}</Text>
       )}
       {tokenCost != null && tokenCost > 0 && role === 'assistant' && (
         <Text color={COLORS.warning}>
@@ -131,32 +209,20 @@ const MessageHeader: FC<{ role: MessageRole; timestamp?: string; elapsed?: numbe
 
 function getRoleConfig(role: MessageRole): { icon: string; label: string; color: string } {
   switch (role) {
-    case 'user':
-      return { icon: '▸', label: 'You', color: COLORS.info };
-    case 'assistant':
-      return { icon: '◆', label: 'Agent-X', color: COLORS.primary };
-    case 'system':
-      return { icon: '⚙', label: 'System', color: COLORS.textDim };
-    case 'tool':
-      return { icon: '⚡', label: 'Tool', color: COLORS.success };
-    default:
-      return { icon: '•', label: role, color: COLORS.textDim };
+    case 'user': return { icon: '▸', label: 'You', color: COLORS.info };
+    case 'assistant': return { icon: '◆', label: 'Agent-X', color: COLORS.primary };
+    case 'system': return { icon: '⚙', label: 'System', color: COLORS.textDim };
+    case 'tool': return { icon: '⚡', label: 'Tool', color: COLORS.success };
+    default: return { icon: '•', label: role, color: COLORS.textDim };
   }
 }
 
 function formatTime(iso: string): string {
-  try {
-    const date = new Date(iso);
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return '';
-  }
+  try { return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
 }
 
 function formatElapsed(ms: number): string {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${minutes}m ${secs}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }

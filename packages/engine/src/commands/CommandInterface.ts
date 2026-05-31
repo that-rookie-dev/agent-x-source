@@ -25,4 +25,4 @@ export interface CommandResult {
   payload?: Record<string, unknown>;
 }
 
-export type ActionType = 'exit' | 'clear' | 'switch_model' | 'list_models' | 'switch_provider' | 'reset_provider' | 'list_providers' | 'list_profiles' | 'add_profile' | 'delete_profile' | 'switch_profile' | 'save_memory' | 'switch_crew' | 'restore_session' | 'telegram_start' | 'telegram_stop' | 'telegram_status' | 'plan_mode' | 'list_sessions' | 'delete_session' | 'fork_session' | 'export_session' | 'copy_session' | 'checkpoint' | 'rewind' | 'show_cost' | 'theme_changed' | 'none';
+export type ActionType = 'exit' | 'clear' | 'switch_model' | 'list_models' | 'switch_provider' | 'reset_provider' | 'list_providers' | 'list_profiles' | 'add_profile' | 'delete_profile' | 'switch_profile' | 'save_memory' | 'switch_crew' | 'restore_session' | 'telegram_start' | 'telegram_stop' | 'telegram_status' | 'plan_mode' | 'list_sessions' | 'delete_session' | 'fork_session' | 'export_session' | 'copy_session' | 'checkpoint' | 'rewind' | 'show_cost' | 'theme_changed' | 'research' | 'none';

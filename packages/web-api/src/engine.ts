@@ -12,6 +12,12 @@ import {
   PluginRegistry,
   PostgresStorageAdapter,
   TelegramBridge,
+  DiscordBridge,
+  SlackBridge,
+  EmailBridge,
+  RedisCacheRuntime,
+  WebhookNotifierRuntime,
+  SQLiteBrowserRuntime,
   MCPBridge,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus } from '@agentx/shared';
@@ -27,6 +33,12 @@ export interface EngineState {
   rag: RAGEngine | null;
   pluginRegistry: PluginRegistry;
   telegramBridge: TelegramBridge | null;
+  discordBridge: DiscordBridge | null;
+  slackBridge: SlackBridge | null;
+  emailBridge: EmailBridge | null;
+  redisRuntime: RedisCacheRuntime | null;
+  webhookRuntime: WebhookNotifierRuntime | null;
+  sqliteBrowser: SQLiteBrowserRuntime | null;
   mcpBridge: MCPBridge;
   dek: Buffer | null;
 }
@@ -110,6 +122,9 @@ export function getEngine(): EngineState {
     rag,
     pluginRegistry,
     telegramBridge: null,
+    discordBridge: null,
+    slackBridge: null,
+    emailBridge: null,
     mcpBridge,
     dek: null,
   };
@@ -189,9 +204,10 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
   eng.agent = agent;
 
   // Start Telegram bridge if plugin is configured
+  // Skip if running in daemon mode — the daemon handles Telegram directly
   const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
   const tgConfig = tgPlugin?.config ?? {};
-  if (tgPlugin?.enabled && tgConfig['botToken'] && !eng.telegramBridge) {
+  if (tgPlugin?.enabled && tgConfig['botToken'] && !eng.telegramBridge && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
     try {
       const bridge = new TelegramBridge({
         botToken: tgConfig['botToken'] as string,
@@ -199,7 +215,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       bridge.setMessageHandler((text: string, chatId: number) => {
         agent.sendMessage(text).then((reply) => {
           // agent.sendMessage returns a Message object; bridge.sendMessage expects a string
-          const out = (reply as any)?.content ?? String(reply);
+          const out = (reply as unknown as { content?: string })?.content ?? String(reply);
           bridge.sendMessage(chatId, out);
         }).catch(() => {});
       });
@@ -216,6 +232,151 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       });
     } catch (e) {
       console.error('Failed to start Telegram bridge', e);
+    }
+  }
+
+  // Start Discord bridge if plugin is configured
+  const dcPlugin = eng.pluginRegistry.getPlugin('discord');
+  const dcConfig = dcPlugin?.config ?? {};
+  if (dcPlugin?.enabled && dcConfig['botToken'] && !eng.discordBridge) {
+    try {
+      const bridge = new DiscordBridge();
+      bridge.setAgentFactory(async () => {
+        const userCfg = eng.configManager.load();
+        const userProvider = userCfg.provider.activeProvider as ProviderId;
+        const userCrew = eng.crewManager.getActive();
+        const userSession = eng.sessionManager.createSession(
+          userProvider,
+          userCfg.provider.activeModel,
+          userCrew.id,
+          process.cwd(),
+        );
+        return new Agent({
+          config: userCfg,
+          sessionId: userSession.id,
+          systemPrompt: userCrew.systemPrompt,
+          toolExecutor: eng.toolkit.executor,
+          toolRegistry: eng.toolkit.registry,
+        });
+      });
+      bridge.start(dcConfig['botToken'] as string, dcConfig['channelId'] as string | undefined).then(() => {
+        eng.discordBridge = bridge;
+      }).catch((e: unknown) => {
+        console.error('Failed to start Discord bridge', e);
+      });
+    } catch (e) {
+      console.error('Failed to start Discord bridge', e);
+    }
+  }
+
+  // Start Slack bridge if plugin is configured
+  const slPlugin = eng.pluginRegistry.getPlugin('slack');
+  const slConfig = slPlugin?.config ?? {};
+  if (slPlugin?.enabled && slConfig['botToken'] && slConfig['appToken'] && !eng.slackBridge) {
+    try {
+      const bridge = new SlackBridge({
+        botToken: slConfig['botToken'] as string,
+        appToken: slConfig['appToken'] as string,
+      });
+      bridge.setAgentFactory(async (userId: string) => {
+        const userCfg = eng.configManager.load();
+        const userProvider = userCfg.provider.activeProvider as ProviderId;
+        const userCrew = eng.crewManager.getActive();
+        const userSession = eng.sessionManager.createSession(
+          userProvider,
+          userCfg.provider.activeModel,
+          userCrew.id,
+          process.cwd(),
+        );
+        return new Agent({
+          config: userCfg,
+          sessionId: userSession.id,
+          systemPrompt: userCrew.systemPrompt,
+          toolExecutor: eng.toolkit.executor,
+          toolRegistry: eng.toolkit.registry,
+        });
+      });
+      bridge.start().then(() => {
+        eng.slackBridge = bridge;
+      }).catch((e: unknown) => {
+        console.error('Failed to start Slack bridge', e);
+      });
+    } catch (e) {
+      console.error('Failed to start Slack bridge', e);
+    }
+  }
+
+  // Start Email bridge if plugin is configured
+  const emPlugin = eng.pluginRegistry.getPlugin('email');
+  const emConfig = emPlugin?.config ?? {};
+  if (emPlugin?.enabled && emConfig['smtpHost'] && !eng.emailBridge) {
+    try {
+      const bridge = new EmailBridge();
+      bridge.setAgentDeps({
+        config: cfg,
+        systemPrompt: activeCrew.systemPrompt,
+        toolExecutor: eng.toolkit.executor,
+        toolRegistry: eng.toolkit.registry,
+      });
+      bridge.start({
+        smtpHost: String(emConfig['smtpHost']),
+        smtpPort: Number(emConfig['smtpPort'] ?? 587),
+        smtpUser: String(emConfig['smtpUser']),
+        smtpPass: String(emConfig['smtpPass']),
+        fromAddress: String(emConfig['fromAddress'] ?? emConfig['smtpUser']),
+        imapHost: emConfig['imapHost'] ? String(emConfig['imapHost']) : undefined,
+        imapPort: emConfig['imapPort'] ? Number(emConfig['imapPort']) : undefined,
+      }).then(() => {
+        eng.emailBridge = bridge;
+      }).catch((e: unknown) => {
+        console.error('Failed to start Email bridge', e);
+      });
+    } catch (e) {
+      console.error('Failed to start Email bridge', e);
+    }
+  }
+
+  // Start Redis cache runtime if plugin is enabled
+  if (!eng.redisRuntime) {
+    const redisPlugin = eng.pluginRegistry.getPlugin('redis-cache');
+    const redisConfig = redisPlugin?.config ?? {};
+    if (redisPlugin?.enabled) {
+      eng.redisRuntime = new RedisCacheRuntime({
+        url: redisConfig['url'] as string,
+        ttl: (redisConfig['ttl'] as number) || 300000,
+      });
+    }
+  }
+
+  // Start Webhook notifier if plugin is enabled
+  if (!eng.webhookRuntime) {
+    const whPlugin = eng.pluginRegistry.getPlugin('webhook-notifier');
+    const whConfig = whPlugin?.config ?? {};
+    if (whPlugin?.enabled && whConfig['url']) {
+      eng.webhookRuntime = new WebhookNotifierRuntime({
+        url: whConfig['url'] as string,
+        events: whConfig['events'] as string[],
+        secret: whConfig['secret'] as string,
+      });
+      // Wire into agent event bus
+      agent.events.on((event) => {
+        const e = event as unknown as { type?: string; [key: string]: unknown };
+        if (e.type && eng.webhookRuntime) {
+          void eng.webhookRuntime.notify(e.type, e as Record<string, unknown>);
+        }
+      });
+    }
+  }
+
+  // Start SQLite browser if plugin is enabled
+  if (!eng.sqliteBrowser) {
+    const sqlPlugin = eng.pluginRegistry.getPlugin('sqlite-web');
+    if (sqlPlugin?.enabled) {
+      eng.sqliteBrowser = new SQLiteBrowserRuntime(
+        { readOnly: (sqlPlugin.config['readOnly'] as boolean) ?? true },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        eng.sessionManager.getStore?.() as any,
+      );
     }
   }
 
@@ -264,6 +425,29 @@ export function destroyAgent(): void {
   if (eng.telegramBridge) {
     eng.telegramBridge.stop();
     eng.telegramBridge = null;
+  }
+  if (eng.discordBridge) {
+    eng.discordBridge.stop();
+    eng.discordBridge = null;
+  }
+  if (eng.slackBridge) {
+    eng.slackBridge.stop();
+    eng.slackBridge = null;
+  }
+  if (eng.emailBridge) {
+    eng.emailBridge.stop();
+    eng.emailBridge = null;
+  }
+  if (eng.redisRuntime) {
+    void eng.redisRuntime.disconnect();
+    eng.redisRuntime = null;
+  }
+  if (eng.webhookRuntime) {
+    eng.webhookRuntime.setEnabled(false);
+    eng.webhookRuntime = null;
+  }
+  if (eng.sqliteBrowser) {
+    eng.sqliteBrowser = null;
   }
 }
 

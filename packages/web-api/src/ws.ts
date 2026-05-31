@@ -93,6 +93,13 @@ async function handleWsMessage(msg: { type: string; [key: string]: unknown }): P
       if (agent) agent.respondToPermission(choice);
       break;
     }
+    case 'clarification_response': {
+      const eng = getEngine();
+      const agent = eng.agent;
+      const response = msg.response as string;
+      if (agent && response) agent.respondToClarification(response);
+      break;
+    }
     default:
       break;
   }

@@ -202,7 +202,9 @@ export class MCPBridge {
   }
 
   private loadConfig(): Record<string, MCPBridgeConfig> {
-    if (!existsSync(MCP_CONFIG_PATH)) return {};
+    if (!existsSync(MCP_CONFIG_PATH)) {
+      this.seedDefaultServers();
+    }
     try {
       const raw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
       const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -224,6 +226,39 @@ export class MCPBridge {
 
   protected saveConfig(configs: Record<string, MCPBridgeConfig>): void {
     writeFileSync(MCP_CONFIG_PATH, JSON.stringify(configs, null, 2));
+  }
+
+  /**
+   * Seed default MCP servers on first run.
+   * User only needs to configure the command/args/env — everything else is ready.
+   */
+  private seedDefaultServers(): void {
+    const defaults: Record<string, MCPBridgeConfig> = {
+      'filesystem': { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/'], transport: 'stdio', env: {}, enabled: false },
+      'github': { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], transport: 'stdio', env: { GITHUB_PERSONAL_ACCESS_TOKEN: '' }, enabled: false },
+      'postgres': { command: 'npx', args: ['-y', '@anthropic/mcp-server-postgres'], transport: 'stdio', env: { DATABASE_URL: '' }, enabled: false },
+      'sqlite': { command: 'npx', args: ['-y', '@anthropic/mcp-server-sqlite'], transport: 'stdio', env: { SQLITE_PATH: '' }, enabled: false },
+      'brave-search': { command: 'npx', args: ['-y', '@anthropic/mcp-server-brave-search'], transport: 'stdio', env: { BRAVE_API_KEY: '' }, enabled: false },
+      'puppeteer': { command: 'npx', args: ['-y', '@anthropic/mcp-server-puppeteer'], transport: 'stdio', env: {}, enabled: false },
+      'memory': { command: 'npx', args: ['-y', '@anthropic/mcp-server-memory'], transport: 'stdio', env: {}, enabled: false },
+      'git': { command: 'npx', args: ['-y', '@anthropic/mcp-server-git'], transport: 'stdio', env: { GIT_ROOT: '.' }, enabled: false },
+      'google-maps': { command: 'npx', args: ['-y', '@anthropic/mcp-server-google-maps'], transport: 'stdio', env: { GOOGLE_MAPS_API_KEY: '' }, enabled: false },
+      'slack': { command: 'npx', args: ['-y', '@anthropic/mcp-server-slack'], transport: 'stdio', env: { SLACK_BOT_TOKEN: '' }, enabled: false },
+      'everart': { command: 'npx', args: ['-y', '@anthropic/mcp-server-everart'], transport: 'stdio', env: { EVERART_API_KEY: '' }, enabled: false },
+      'sequential-thinking': { command: 'npx', args: ['-y', '@anthropic/mcp-server-sequential-thinking'], transport: 'stdio', env: {}, enabled: false },
+      'exa-search': { command: 'npx', args: ['-y', '@anthropic/mcp-server-exa-search'], transport: 'stdio', env: { EXA_API_KEY: '' }, enabled: false },
+      'notion': { command: 'npx', args: ['-y', '@anthropic/mcp-server-notion'], transport: 'stdio', env: { NOTION_API_TOKEN: '' }, enabled: false },
+      'airtable': { command: 'npx', args: ['-y', '@anthropic/mcp-server-airtable'], transport: 'stdio', env: { AIRTABLE_API_KEY: '', AIRTABLE_BASE_ID: '', AIRTABLE_TABLE_ID: '' }, enabled: false },
+      'docker': { command: 'docker', args: ['run', '-i', '--rm', 'mcp/docker'], transport: 'stdio', env: {}, enabled: false },
+      'playwright': { command: 'npx', args: ['-y', '@anthropic/mcp-server-playwright'], transport: 'stdio', env: {}, enabled: false },
+      'fetch': { command: 'npx', args: ['-y', '@anthropic/mcp-server-fetch'], transport: 'stdio', env: {}, enabled: false },
+      'mysql': { command: 'npx', args: ['-y', '@anthropic/mcp-server-mysql'], transport: 'stdio', env: { MYSQL_URL: '' }, enabled: false },
+      'redis': { command: 'npx', args: ['-y', '@anthropic/mcp-server-redis'], transport: 'stdio', env: { REDIS_URL: '' }, enabled: false },
+      'elasticsearch': { command: 'npx', args: ['-y', '@anthropic/mcp-server-elasticsearch'], transport: 'stdio', env: { ELASTICSEARCH_URL: '' }, enabled: false },
+      'rag': { command: 'npx', args: ['-y', '@anthropic/mcp-server-rag'], transport: 'stdio', env: { OPENAI_API_KEY: '', CHROMA_URL: '' }, enabled: false },
+    };
+    writeFileSync(MCP_CONFIG_PATH, JSON.stringify(defaults, null, 2));
+    logger.info('MCP', `Seeded ${Object.keys(defaults).length} default servers`);
   }
 
   private async startServer(name: string, config: MCPBridgeConfig): Promise<void> {

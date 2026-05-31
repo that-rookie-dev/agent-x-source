@@ -10,7 +10,7 @@ import { generateId } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent } from './engine.js';
 import { setupWebSocket, ensureSubscribed } from './ws.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
-import { ProviderFactory } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
 
 const PORT = Number(process.env['PORT']) || 3333;
@@ -698,6 +698,114 @@ app.post('/api/sessions/:id/compact', async (req, res) => {
   }
 });
 
+// ───── Checkpoints (Message Branching) ─────
+app.post('/api/sessions/:id/checkpoint', (req, res) => {
+  try {
+    const dir = getSessionDir(req.params['id']!);
+    if (!existsSync(dir)) { res.status(404).json({ error: 'session-not-found' }); return; }
+    const label = (req.body as Record<string, string>)['label'] || new Date().toLocaleTimeString();
+    const convPath = join(dir, 'conversation.json');
+    const messages = existsSync(convPath) ? JSON.parse(readFileSync(convPath, 'utf-8') || '[]') : [];
+    const checkpointId = `ckpt-${Date.now()}`;
+    const checkpointsDir = join(dir, 'checkpoints');
+    if (!existsSync(checkpointsDir)) mkdirSync(checkpointsDir, { recursive: true });
+    writeFileSync(join(checkpointsDir, `${checkpointId}.json`), JSON.stringify({ id: checkpointId, label, messages, createdAt: new Date().toISOString() }, null, 2));
+    res.json({ checkpointId, label });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'checkpoint-failed' });
+  }
+});
+
+app.get('/api/sessions/:id/checkpoints', (req, res) => {
+  try {
+    const dir = getSessionDir(req.params['id']!);
+    const checkpointsDir = join(dir, 'checkpoints');
+    if (!existsSync(checkpointsDir)) { res.json({ checkpoints: [] }); return; }
+    const files = readdirSync(checkpointsDir).filter((f) => f.endsWith('.json'));
+    const checkpoints = files.map((f) => {
+      const data = JSON.parse(readFileSync(join(checkpointsDir, f), 'utf-8'));
+      return { id: data.id, label: data.label, createdAt: data.createdAt, messageCount: (data.messages || []).length };
+    }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    res.json({ checkpoints });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'list-failed' });
+  }
+});
+
+app.post('/api/sessions/:id/checkpoint/:checkpointId/restore', (req, res) => {
+  try {
+    const dir = getSessionDir(req.params['id']!);
+    const checkpointId = req.params['checkpointId']!;
+    const checkpointPath = join(dir, 'checkpoints', `${checkpointId}.json`);
+    if (!existsSync(checkpointPath)) { res.status(404).json({ error: 'checkpoint-not-found' }); return; }
+    const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf-8'));
+    // Write messages back to conversation.json
+    const convPath = join(dir, 'conversation.json');
+    atomicWriteFileSync(convPath, JSON.stringify(checkpoint.messages || [], null, 2));
+    res.json({ ok: true, label: checkpoint.label, messageCount: (checkpoint.messages || []).length });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
+  }
+});
+
+app.delete('/api/sessions/:id/checkpoint/:checkpointId', (req, res) => {
+  try {
+    const dir = getSessionDir(req.params['id']!);
+    const checkpointId = req.params['checkpointId']!;
+    const checkpointPath = join(dir, 'checkpoints', `${checkpointId}.json`);
+    if (!existsSync(checkpointPath)) { res.status(404).json({ error: 'checkpoint-not-found' }); return; }
+    rmSync(checkpointPath);
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'delete-failed' });
+  }
+});
+
+// ───── TODO List ─────
+app.get('/api/todos', (req, res) => {
+  try {
+    const sessionId = (req.query['sessionId'] as string) || '';
+    const dir = sessionId ? getSessionDir(sessionId) : getSessionDir('default');
+    const todoPath = join(dir, 'todos.json');
+    const todos = existsSync(todoPath) ? JSON.parse(readFileSync(todoPath, 'utf-8') || '[]') : [];
+    res.json({ todos });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'list-failed' });
+  }
+});
+
+app.post('/api/todos', (req, res) => {
+  try {
+    const sessionId = (req.body as Record<string, string>)['sessionId'] || '';
+    const todos = (req.body as Record<string, unknown>)['todos'] as Array<{ id: string; title: string; status: string }>;
+    const dir = sessionId ? getSessionDir(sessionId) : getSessionDir('default');
+    const todoPath = join(dir, 'todos.json');
+    atomicWriteFileSync(todoPath, JSON.stringify(todos || [], null, 2));
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'save-failed' });
+  }
+});
+
+app.put('/api/todos/:itemId', (req, res) => {
+  try {
+    const sessionId = (req.body as Record<string, string>)['sessionId'] || '';
+    const dir = sessionId ? getSessionDir(sessionId) : getSessionDir('default');
+    const todoPath = join(dir, 'todos.json');
+    const todos: Array<{ id: string; title: string; status: string }> = existsSync(todoPath)
+      ? JSON.parse(readFileSync(todoPath, 'utf-8') || '[]') : [];
+    const idx = todos.findIndex((t) => t.id === req.params['itemId']);
+    if (idx >= 0) {
+      todos[idx].status = (req.body as Record<string, string>)['status'] || todos[idx].status;
+      todos[idx].title = (req.body as Record<string, string>)['title'] || todos[idx].title;
+    }
+    atomicWriteFileSync(todoPath, JSON.stringify(todos, null, 2));
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'update-failed' });
+  }
+});
+
 // ───── Telegram ─────
 app.post('/api/telegram/start', async (req, res) => {
   try {
@@ -755,7 +863,41 @@ app.post('/api/discord/start', async (req, res) => {
         eng.pluginRegistry.updateConfig('discord', { botToken: token, channelId });
       }
     }
-    res.json({ ok: true, message: 'Discord bot configured.' });
+
+    // Persist to disk
+    const store = new DiscordStore();
+    store.save({ botToken: token, channelId });
+
+    // Stop existing bridge if any
+    if (eng.discordBridge) {
+      eng.discordBridge.stop();
+      eng.discordBridge = null;
+    }
+
+    // Start the actual bridge
+    const bridge = new DiscordBridge();
+    bridge.setAgentFactory(async () => {
+      const userCfg = eng.configManager.load();
+      const userProvider = userCfg.provider.activeProvider as ProviderId;
+      const userCrew = eng.crewManager.getActive();
+      const userSession = eng.sessionManager.createSession(
+        userProvider,
+        userCfg.provider.activeModel,
+        userCrew.id,
+        process.cwd(),
+      );
+      return new Agent({
+        config: userCfg,
+        sessionId: userSession.id,
+        systemPrompt: userCrew.systemPrompt,
+        toolExecutor: eng.toolkit.executor,
+        toolRegistry: eng.toolkit.registry,
+      });
+    });
+    await bridge.start(token, channelId);
+    eng.discordBridge = bridge;
+
+    res.json({ ok: true, message: 'Discord bot connected.', status: bridge.getStatus() });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
   }
@@ -764,9 +906,15 @@ app.post('/api/discord/start', async (req, res) => {
 app.post('/api/discord/stop', (_req, res) => {
   try {
     const eng = getEngine();
+    if (eng.discordBridge) {
+      eng.discordBridge.stop();
+      eng.discordBridge = null;
+    }
     if (eng.pluginRegistry.isInstalled('discord')) {
       eng.pluginRegistry.uninstall('discord');
     }
+    const store = new DiscordStore();
+    store.clear();
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'clear-failed' });
@@ -777,57 +925,91 @@ app.get('/api/discord/status', (_req, res) => {
   const eng = getEngine();
   const plugin = eng.pluginRegistry.getPlugin('discord');
   const configured = !!plugin?.enabled && !!plugin?.config?.['botToken'];
-  res.json({ configured, botToken: configured ? '***configured***' : null });
+  const bridge = eng.discordBridge;
+  const connected = bridge?.getStatus().connected ?? false;
+  const guilds = bridge?.getStatus().guilds ?? 0;
+  res.json({ configured, connected, guilds });
 });
 
 // ───── Slack Bridge ─────
 app.post('/api/slack/start', async (req, res) => {
   try {
-    const { webhookUrl, botToken, channel } = req.body as { webhookUrl?: string; botToken?: string; channel?: string };
-    const eng = getEngine();
-    const existing = eng.pluginRegistry.getPlugin('slack');
-    if (existing) {
-      eng.pluginRegistry.updateConfig('slack', { webhookUrl, botToken, channel });
-    } else {
-      const { getBuiltinPlugin } = await import('@agentx/engine');
-      const entry = getBuiltinPlugin('slack');
-      if (entry) {
-        eng.pluginRegistry.install(entry);
-        eng.pluginRegistry.updateConfig('slack', { webhookUrl, botToken, channel });
-      }
+    const { botToken, appToken } = req.body as { botToken: string; appToken: string };
+    if (!botToken || !appToken) {
+      res.status(400).json({ error: 'botToken and appToken are required' });
+      return;
     }
-    res.json({ ok: true, message: 'Slack integration configured.' });
+    const eng = getEngine();
+    if (eng.slackBridge) {
+      eng.slackBridge.stop();
+      eng.slackBridge = null;
+    }
+    const bridge = new SlackBridge({ botToken, appToken });
+    bridge.setAgentFactory((_userId) => {
+      const cfg = eng.configManager.load();
+      const activeCrew = eng.crewManager.getActive();
+      const session = eng.sessionManager.createSession(
+        cfg.provider.activeProvider,
+        cfg.provider.activeModel,
+        activeCrew.id,
+        process.cwd(),
+      );
+      return new Agent({
+        config: cfg,
+        sessionId: session.id,
+        systemPrompt: activeCrew.systemPrompt,
+        toolExecutor: eng.toolkit.executor,
+        toolRegistry: eng.toolkit.registry,
+      });
+    });
+    await bridge.start();
+    eng.slackBridge = bridge;
+    new SlackStore().save({ botToken, appToken });
+    res.json({ ok: true, message: 'Slack bridge started.', status: bridge.getStatus() });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
+    res.status(400).json({ error: e instanceof Error ? e.message : 'start-failed' });
   }
 });
 
 app.post('/api/slack/stop', (_req, res) => {
   try {
     const eng = getEngine();
-    if (eng.pluginRegistry.isInstalled('slack')) {
-      eng.pluginRegistry.uninstall('slack');
+    if (eng.slackBridge) {
+      eng.slackBridge.stop();
+      eng.slackBridge = null;
     }
+    new SlackStore().clear();
     res.json({ ok: true });
   } catch {
-    res.status(500).json({ error: 'clear-failed' });
+    res.status(500).json({ error: 'stop-failed' });
   }
 });
 
 app.get('/api/slack/status', (_req, res) => {
-  const eng = getEngine();
-  const plugin = eng.pluginRegistry.getPlugin('slack');
-  const configured = !!plugin?.enabled && (!!plugin?.config?.['webhookUrl'] || !!plugin?.config?.['botToken']);
-  res.json({ configured });
+  try {
+    const store = new SlackStore();
+    const cfg = store.load();
+    const eng = getEngine();
+    const bridge = eng.slackBridge;
+    const configured = !!cfg?.botToken && !!cfg?.appToken;
+    const status = bridge?.getStatus();
+    res.json({
+      configured,
+      connected: status?.connected ?? false,
+      team: status?.team ?? '',
+    });
+  } catch {
+    res.json({ configured: false, connected: false, team: '' });
+  }
 });
 
 // ───── Email Bridge ─────
 app.post('/api/email/start', async (req, res) => {
   try {
-    const { smtpHost, smtpPort, smtpUser, smtpPass, fromAddress, imapHost, imapPort, imapUser, imapPass } = req.body as Record<string, string>;
+    const { smtpHost, smtpPort, smtpUser, smtpPass, fromAddress, imapHost, imapPort } = req.body as Record<string, string>;
     const eng = getEngine();
     const existing = eng.pluginRegistry.getPlugin('email');
-    const config = { smtpHost, smtpPort, smtpUser, smtpPass, fromAddress, imapHost, imapPort, imapUser, imapPass };
+    const config = { smtpHost, smtpPort, smtpUser, smtpPass, fromAddress, imapHost, imapPort };
     if (existing) {
       eng.pluginRegistry.updateConfig('email', config);
     } else {
@@ -838,7 +1020,35 @@ app.post('/api/email/start', async (req, res) => {
         eng.pluginRegistry.updateConfig('email', config);
       }
     }
-    res.json({ ok: true, message: 'Email bridge configured.' });
+
+    // Stop existing bridge if any
+    if (eng.emailBridge) {
+      eng.emailBridge.stop();
+      eng.emailBridge = null;
+    }
+
+    // Start the real bridge
+    const cfg = eng.configManager.load();
+    const activeCrew = eng.crewManager.getActive();
+    const bridge = new EmailBridge();
+    bridge.setAgentDeps({
+      config: cfg,
+      systemPrompt: activeCrew.systemPrompt,
+      toolExecutor: eng.toolkit.executor,
+      toolRegistry: eng.toolkit.registry,
+    });
+    await bridge.start({
+      smtpHost: smtpHost.trim(),
+      smtpPort: Number(smtpPort) || 587,
+      smtpUser: smtpUser.trim(),
+      smtpPass: smtpPass.trim(),
+      fromAddress: (fromAddress || smtpUser).trim(),
+      imapHost: imapHost?.trim() || undefined,
+      imapPort: imapPort ? Number(imapPort) : undefined,
+    });
+    eng.emailBridge = bridge;
+
+    res.json({ ok: true, message: 'Email bridge configured and started.' });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
   }
@@ -847,6 +1057,10 @@ app.post('/api/email/start', async (req, res) => {
 app.post('/api/email/stop', (_req, res) => {
   try {
     const eng = getEngine();
+    if (eng.emailBridge) {
+      eng.emailBridge.stop();
+      eng.emailBridge = null;
+    }
     if (eng.pluginRegistry.isInstalled('email')) {
       eng.pluginRegistry.uninstall('email');
     }
@@ -857,10 +1071,20 @@ app.post('/api/email/stop', (_req, res) => {
 });
 
 app.get('/api/email/status', (_req, res) => {
-  const eng = getEngine();
-  const plugin = eng.pluginRegistry.getPlugin('email');
-  const configured = !!plugin?.enabled && !!plugin?.config?.['smtpHost'];
-  res.json({ configured });
+  try {
+    const eng = getEngine();
+    const plugin = eng.pluginRegistry.getPlugin('email');
+    const configured = !!plugin?.enabled && !!plugin?.config?.['smtpHost'];
+    const bridge = eng.emailBridge;
+    const status = bridge?.getStatus();
+    res.json({
+      configured,
+      connected: status?.connected ?? false,
+      unreadCount: status?.unreadCount ?? 0,
+    });
+  } catch {
+    res.json({ configured: false, connected: false, unreadCount: 0 });
+  }
 });
 
 // ───── Tools ─────
@@ -1105,7 +1329,7 @@ app.post('/api/scheduler/parse-cron', async (req, res) => {
   }
   try {
     const eng = getEngine();
-    const agent = getOrCreateAgent();
+    getOrCreateAgent();
     const prompt = `Convert the following natural language schedule to a standard 5-field cron expression (minute hour day-of-month month day-of-week).
 
 Examples:
@@ -1370,7 +1594,7 @@ app.post('/api/plugins/postgresql/test-connection', async (req, res) => {
   try {
     // Dynamically import pg to avoid requiring it during typecheck in environments
     // where pg is not installed. This will throw at runtime if pg is missing.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     const { Pool } = await import('pg');
     const pool = new Pool({ connectionString, max: 1 });
     const client = await pool.connect();

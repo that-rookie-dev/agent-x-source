@@ -48,6 +48,18 @@ import { setUserCommandRegistryInstance } from '../commands/builtin/commands.js'
 import { getRAGEngineInstance, setIndexerEventBus } from '../commands/builtin/rag_index.js';
 import type { UserCommandConfig } from '../commands/UserCommandRegistry.js';
 import { UserCommandRegistry } from '../commands/UserCommandRegistry.js';
+import { PromptEngine } from '../prompt/PromptEngine.js';
+import { SmartSubAgent } from './SmartSubAgent.js';
+import type { IntentResult } from '../prompt/PromptEngine.js';
+import { AgentBus, getAgentBus } from './AgentBus.js';
+import { SpecialistRegistry } from './SpecialistRegistry.js';
+import type { SpecialistType } from './SpecialistRegistry.js';
+import { SkillGenerator } from './SkillGenerator.js';
+import { ReflectionLoop } from './ReflectionLoop.js';
+import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
+import { ResearchEngine } from '../reasoning/ResearchEngine.js';
+import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
+import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 
 export interface AgentOptions {
   config: AgentXConfig;
@@ -91,6 +103,29 @@ export class Agent {
   private modelRouter: ModelRouter | null = null;
   private userCommandRegistry: UserCommandRegistry | null = null;
   private recipeEngine: RecipeEngine | null = null;
+  private promptEngine: PromptEngine;
+  private currentIntent: IntentResult | null = null;
+  private treeOfThoughts: TreeOfThoughts | null = null;
+  private researchEngine: ResearchEngine | null = null;
+  private lastRagResults: Array<{ content: string; score?: number; metadata?: Record<string, unknown> }> = [];
+  private clarificationPending = false;
+  private clarificationResolve: ((response: string) => void) | null = null;
+  private agentBus: AgentBus;
+  private specialistRegistry: SpecialistRegistry;
+  private skillGenerator: SkillGenerator;
+  private reflectionLoop: ReflectionLoop;
+  private treeOfThoughts: TreeOfThoughts | null = null;
+  private researchEngine: ResearchEngine | null = null;
+  private toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
+
+  /**
+   * Respond to a pending clarification request.
+   */
+  respondToClarification(response: string): void {
+    if (this.clarificationResolve) {
+      this.clarificationResolve(response);
+    }
+  }
 
   constructor(options: AgentOptions) {
     this.config = options.config;
@@ -208,6 +243,20 @@ export class Agent {
       this.getBaseUrl(),
     );
 
+    // Initialize prompt engine for token-efficient prompting
+    this.promptEngine = new PromptEngine(this.getContextWindow());
+
+    // Initialize agent mesh components
+    this.agentBus = getAgentBus();
+    this.agentBus.attachEventBus(this.eventBus);
+    this.specialistRegistry = new SpecialistRegistry(this.agentBus);
+    this.specialistRegistry.registerDefaults();
+    this.skillGenerator = new SkillGenerator();
+    this.reflectionLoop = new ReflectionLoop();
+
+    // Register this agent on the bus
+    this.agentBus.registerAgent(this.sessionId, ['main', 'orchestrator']);
+
     // Auto health check on startup (non-blocking)
     // Skip automatic model trial when running under test to avoid
     // consuming mocked provider responses during unit tests.
@@ -228,26 +277,40 @@ export class Agent {
       `You have the following tools available:`,
       toolLines.join('\n'),
       ``,
-      `[AUTONOMOUS_EXECUTION]`,
-      `You are a fully autonomous agent. Your job is to COMPLETE tasks, not describe them.`,
+      `[MASTER_CONTROLLER]`,
+      `You are a MASTER agent controlling a fleet of sub-agents and tools. Your job: achieve the goal with MINIMUM tokens and MAXIMUM efficiency.`,
       ``,
-      `Core principles:`,
-      `1. INTERPRET INTENT — Understand what the user truly wants from their natural language. "Ping me in telegram" means set a reminder. "Save this" means write to a file. "Check my code" means read + analyze.`,
-      `2. ACT IMMEDIATELY — If you can determine what tools to use, use them. Do NOT ask the user which tool to use or how — that's YOUR job.`,
-      `3. CHAIN TOOLS — Complex tasks need multiple tools. Plan the sequence, then execute them one by one. Example: "Create a project summary" → code_search → file_read (multiple files) → file_write (summary).`,
-      `4. INFER PARAMETERS — Derive tool parameters from context. If the user says "remind me in 5 minutes to stretch", you know: name="stretch", message="Time to stretch!", delay_seconds=300. Never ask for what you can infer.`,
-      `5. SELF-CORRECT — If a tool fails, try an alternative approach. If file_read fails, maybe the path is wrong — use folder_list to find it.`,
-      `6. MULTI-STEP AUTONOMY — You can call up to 10 tools in a single turn. Use as many as needed to fully complete the task before responding.`,
+      `Core Moto: Maximum output with minimum communication. Reach the goal faster. Be precise.`,
       ``,
-      `Decision framework:`,
-      `- User mentions time/reminder/notify/ping → reminder_set`,
-      `- User mentions files/code/read/write/create → filesystem or code tools`,
-      `- User mentions run/execute/install/build → shell_exec`,
-      `- User mentions git/commit/push/branch → git tools`,
-      `- User mentions search/find/look for → code_search or folder_list`,
-      `- User mentions document/report/pdf/excel → document creation tools`,
-      `- Ambiguous request → ask ONE clarifying question, then act`,
-      `[/AUTONOMOUS_EXECUTION]`,
+      `AUTONOMOUS DECISIONS (decide yourself — NEVER ask permission):`,
+      `1. SPAWN SUB-AGENTS: When a task is complex or parallelizable, spawn specialists via delegate_to_subagent. Each sub-agent works independently on its piece. The master merges results.`,
+      `2. BUILD TODO LISTS: After receiving a multi-step task, auto-create a TODO list with clear items. Mark items in-progress/completed. Update as you work. Use the TODO tracking internally.`,
+      `3. INTERNET SEARCH: When you need current information, use web_search/web_scrape without asking.`,
+      `4. INTER-AGENT COMMUNICATION: When multiple sub-agents can share findings, use the agent bus to coordinate. Avoid redundant work.`,
+      `5. TOOL SELECTION: Pick the right tool for the job. Chain tools efficiently. Minimize tool calls — each call costs time.`,
+      `6. FILE OPERATIONS: Read files to understand before modifying. Use code_replace for targeted edits (cheaper than file_write of entire file).`,
+      ``,
+      `DELEGATION STRATEGY:`,
+      `- Simple task (1-3 steps) → do it yourself. Be quick.`,
+      `- Medium task (4-8 steps, multiple files) → spawn 2-3 specialists in parallel.`,
+      `- Complex task (8+ steps, multi-domain) → decompose into subtasks, spawn specialists, merge results with synthesis.`,
+      `- Research task → use web_search + web_scrape. For deep research, spawn researcher sub-agents.`,
+      `- Code task → coder + tester + reviewer in parallel for quality.`,
+      ``,
+      `OUTPUT RULES (CRITICAL — SAVE TOKENS):`,
+      `1. PRECISE RESPONSES: Respond with 1-3 sentences for most tasks. Never write paragraphs unless asked.`,
+      `2. CONFIRMATION FORMAT: Use "Done: [what you did]" NOT "I have successfully completed the task of..."`,
+      `3. ONLY ELABORATE when user explicitly says "explain more", "go deeper", "elaborate".`,
+      `4. CODE/TECHNICAL OUTPUT: Be as detailed as necessary. No length limit on code, configs, or structured data.`,
+      `5. NEVER REPEAT: Don't restate what the user said. Don't summarize your process. Just deliver the result.`,
+      `6. BULLET POINTS > PARAGRAPHS: When listing things, use bullets. Faster to read.`,
+      ``,
+      `EXECUTION PATTERNS:`,
+      `- New project → shell_exec (init) → file_write (configs, source) → shell_exec (install, build, test)`,
+      `- Bug fix → code_search → file_read → code_replace → test_run`,
+      `- Refactor → file_read → plan → code_replace/file_write → shell_exec (verify)`,
+      `- Research → web_search → web_scrape → synthesize → respond concisely`,
+      `[/MASTER_CONTROLLER]`,
       ``,
       `[DEVELOPER_EXECUTION]`,
       `You are an expert-level software engineer. When the user asks you to build, create, or fix software:`,
@@ -294,16 +357,13 @@ export class Agent {
       `- Confirm in plain language after setting: "Done! I'll ping you at 5:04 PM."`,
       `[/SCHEDULING]`,
       ``,
-      `[COMMUNICATION_STYLE]`,
-      `- KEEP RESPONSES SHORT. 1-3 sentences for conversational replies. No paragraphs, no walls of text.`,
-      `- Only elaborate when the user explicitly asks: "explain more", "go deeper", "elaborate", "define", "tell me more".`,
-      `- Use simple, everyday language. NO technical jargon unless the user's crew is technical.`,
-      `- Never ask for cron expressions, URLs, file paths, commands, or API details — figure it out yourself.`,
-      `- If the request is clear enough to act on, ACT. Don't ask unnecessary questions.`,
-      `- When you must ask, keep it natural: "What should I remind you about?" not "Provide the instruction payload."`,
-      `- After completing a task, briefly confirm what you did. Don't over-explain.`,
-      `- For tool outputs, schemas, code, and structured data: no length limit. Be as detailed as needed.`,
-      `[/COMMUNICATION_STYLE]`,
+      `[/SCHEDULING]`,
+      ``,
+      `[OUTPUT_FORMAT]`,
+      `ALWAYS respond in minimal, precise form. No fluff. Just the result.`,
+      `- Replies: 1-3 sentences max. Bullet points preferred over paragraphs.`,
+      `- Confirmations: "Done: [what]". Errors: "Failed: [why] — [fix]".`,
+      `- Technical output, code, configs: unlimited length. Be thorough.`,
       `[/TOOLS]`,
     ].join('\n');
 
@@ -405,6 +465,28 @@ export class Agent {
 
   get sauce(): SecretSauceManager {
     return this.secretSauce;
+  }
+
+  get treeOfThoughtsCapability(): TreeOfThoughts {
+    if (!this.treeOfThoughts) {
+      this.treeOfThoughts = new TreeOfThoughts({
+        provider: this.provider,
+        model: this.config.provider.activeModel,
+        emit: (event) => this.emit(event),
+      });
+    }
+    return this.treeOfThoughts;
+  }
+
+  get researchEngineCapability(): ResearchEngine {
+    if (!this.researchEngine) {
+      this.researchEngine = new ResearchEngine({
+        provider: this.provider,
+        model: this.config.provider.activeModel,
+        emit: (event) => this.emit(event),
+      });
+    }
+    return this.researchEngine;
   }
 
   /**
@@ -602,7 +684,53 @@ Return ONLY valid JSON, no other text.`;
 
     this.emit({ type: 'message_sent', message: userMessage });
 
+    // ─── SMART PROMPTING & RAG ───
+    // Detect intent for dynamic tool selection and reasoning mode
+    this.currentIntent = this.promptEngine.detectIntent(content);
+    this.emit({ type: 'intent_detected', intent: this.currentIntent.intent, confidence: this.currentIntent.confidence });
+
+    // Auto-query RAG for relevant documents
+    this.lastRagResults = [];
+    const rag = getRAGEngineInstance();
+    if (rag && rag.isEnabled) {
+      try {
+        const ragStart = Date.now();
+        const docs = await rag.search(content, 3);
+        this.lastRagResults = docs.map((d) => ({ content: d.content, score: d.score, metadata: d.metadata }));
+        this.emit({ type: 'rag_queried', resultCount: docs.length, elapsed: Date.now() - ragStart });
+      } catch (e) {
+        getLogger().warn('RAG_QUERY', e);
+      }
+    }
+
     try {
+      // Tree of Thoughts reasoning mode
+      if (this.currentIntent?.reasoningMode === 'tree') {
+        this.emit({ type: 'loading_start', stage: 'tree_of_thoughts' });
+        const bestThought = await this.treeOfThoughtsCapability.solve(content, {
+          maxDepth: 3,
+          beamWidth: 3,
+          thoughtsPerNode: 3,
+        });
+
+        const treeContent = `**Tree of Thoughts Analysis**\n\nBest reasoning path (score: ${(bestThought.score * 10).toFixed(1)}/10):\n\n${bestThought.content}`;
+        this.messages.push({ role: 'assistant', content: treeContent });
+
+        const assistantMessage: Message = {
+          id: generateMessageId(),
+          sessionId: this.sessionId,
+          role: 'assistant',
+          content: treeContent,
+          toolCalls: null,
+          createdAt: new Date().toISOString(),
+          tokenCount: Math.ceil(treeContent.length / 4),
+        };
+
+        this.emit({ type: 'loading_end' });
+        this.emit({ type: 'message_received', message: assistantMessage, elapsed: Date.now() - startTime });
+        return assistantMessage;
+      }
+
       // Plan mode: generate plan and wait for approval
       if (this.planMode) {
         this.emit({ type: 'loading_start', stage: 'planning' });
@@ -694,6 +822,17 @@ Return ONLY valid JSON, no other text.`;
       // Extract and persist memories (non-blocking)
       this.extractMemories(content, assistantMessage.content);
 
+      // Auto-generate skill if task was novel
+      if (this.skillGenerator.shouldGenerateSkill(content, this.toolCallLogForReflection)) {
+        void this.skillGenerator.generateSkill(this, content, this.toolCallLogForReflection as Array<{ name: string; args: Record<string, unknown> }>, assistantMessage.content);
+      }
+
+      // Run reflection loop for continuous improvement
+      if (this.toolCallLogForReflection.length >= 2) {
+        void this.reflectionLoop.reflect(this, content, this.toolCallLogForReflection, assistantMessage.content);
+      }
+
+      this.toolCallLogForReflection = [];
       return assistantMessage;
     } catch (error) {
       this.emit({ type: 'loading_end' });
@@ -737,14 +876,68 @@ Return ONLY valid JSON, no other text.`;
     const MAX_TOOL_ROUNDS = 10;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      // Build tools schema from registry
-      const toolSchemas = this.toolRegistry
-        ? this.toolRegistry.toSchemas()
+      // ─── SMART TOOL SELECTION ───
+      // Filter tools based on detected intent to reduce token usage
+      let filteredTools = this.toolRegistry?.list() ?? [];
+      if (this.currentIntent && this.toolRegistry) {
+        const categoryMap = new Map<string, string>();
+        for (const t of this.toolRegistry.list()) {
+          categoryMap.set(t.id, t.category ?? 'General');
+        }
+        const selectedSchemas = this.promptEngine.selectTools(
+          this.toolRegistry.toSchemas(),
+          this.currentIntent,
+          categoryMap,
+        );
+        filteredTools = selectedSchemas.map((s) => ({
+          id: s.function.name,
+          name: s.function.name,
+          modelDescription: s.function.description,
+          schema: s.function.parameters,
+          category: categoryMap.get(s.function.name) ?? 'General',
+          riskLevel: 'low' as const,
+        }));
+      }
+      const toolSchemas = filteredTools.length > 0
+        ? filteredTools.map((t) => ({
+            type: 'function' as const,
+            function: {
+              name: t.id,
+              description: t.modelDescription,
+              parameters: t.schema as unknown as Record<string, unknown>,
+            },
+          }))
         : undefined;
+
+      // ─── BUILD MESSAGES WITH RAG + COMPACTION ───
+      let requestMessages = [...this.messages];
+
+      // Inject RAG results as temporary context
+      if (this.lastRagResults.length > 0) {
+        const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
+        // Insert before the last user message
+        const userIdx = requestMessages.findLastIndex((m) => m.role === 'user');
+        if (userIdx >= 0) {
+          requestMessages.splice(userIdx, 0, { role: 'system', content: ragCtx });
+        }
+      }
+
+      // Inject reasoning directive
+      if (this.currentIntent) {
+        const reasoningDirective = this.promptEngine.buildReasoningDirective(this.currentIntent.reasoningMode);
+        requestMessages.splice(1, 0, { role: 'system', content: reasoningDirective });
+      }
+
+      // Compact conversation if needed
+      const budget = this.promptEngine.calculateBudget(this.messages.length, this.lastRagResults.length > 0);
+      const compacted = this.promptEngine.compactConversation(requestMessages, budget.conversation);
+      if (compacted.summary) {
+        requestMessages = compacted.messages;
+      }
 
       const request: CompletionRequest = {
         model: this.config.provider.activeModel,
-        messages: this.messages,
+        messages: requestMessages,
         stream: true,
         tools: toolSchemas && toolSchemas.length > 0 ? toolSchemas : undefined,
         signal: this.abortController?.signal,
@@ -847,6 +1040,58 @@ Return ONLY valid JSON, no other text.`;
 
         // Execute each tool call
         for (const tc of toolCalls) {
+          // ─── CLARIFICATION TOOL (special handling) ───
+          if (tc.function.name === 'ask_clarification') {
+            let args: Record<string, unknown> = {};
+            try { args = JSON.parse(tc.function.arguments); } catch { /* ignore */ }
+            this.clarificationPending = true;
+            this.emit({
+              type: 'clarification_required',
+              question: String(args['question'] ?? 'I need more information to proceed.'),
+              options: Array.isArray(args['options']) ? args['options'] : [],
+              allowFreeform: Boolean(args['allowFreeform'] ?? true),
+            });
+            const userResponse = await new Promise<string>((resolve) => {
+              this.clarificationResolve = resolve;
+            });
+            this.clarificationPending = false;
+            this.clarificationResolve = null;
+            this.messages.push({
+              role: 'tool',
+              content: userResponse,
+              toolCallId: tc.id,
+            });
+            continue;
+          }
+
+          // ─── SMART SUBAGENT DELEGATION ───
+          if (tc.function.name === 'delegate_to_subagent') {
+            let args: Record<string, unknown> = {};
+            try { args = JSON.parse(tc.function.arguments); } catch { /* ignore */ }
+            const subStart = Date.now();
+            this.emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${args['mission']}`, startTime: subStart });
+
+            const subAgent = new SmartSubAgent({
+              parentAgent: this,
+              instruction: String(args['mission'] ?? ''),
+              tools: Array.isArray(args['tools']) ? args['tools'].map(String) : undefined,
+              timeout: typeof args['timeout'] === 'number' ? args['timeout'] : 120_000,
+            });
+
+            const subResult = await subAgent.execute();
+            const subOutput = subResult.success
+              ? `[Sub-agent completed in ${subResult.elapsed}ms]\n${subResult.output}`
+              : `[Sub-agent failed: ${subResult.output}]`;
+
+            this.emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: subResult.success, output: subOutput }, elapsed: Date.now() - subStart });
+            this.messages.push({
+              role: 'tool',
+              content: subOutput,
+              toolCallId: tc.id,
+            });
+            continue;
+          }
+
           // Debug: log tool execution attempt
           // eslint-disable-next-line no-console
           console.debug('[Agent] executing tool', tc.function.name);
@@ -881,6 +1126,14 @@ Return ONLY valid JSON, no other text.`;
             type: 'tool_complete',
             tool: tc.function.name,
             result,
+            elapsed: Date.now() - toolStartTime,
+          });
+
+          // Log for reflection/skill generation
+          this.toolCallLogForReflection.push({
+            name: tc.function.name,
+            success: result.success,
+            output: result.output,
             elapsed: Date.now() - toolStartTime,
           });
 
@@ -1096,16 +1349,11 @@ Return ONLY valid JSON, no other text.`;
       `- Confirm in plain language after setting: "Done! I'll ping you at 5:04 PM."`,
       `[/SCHEDULING]`,
       ``,
-      `[COMMUNICATION_STYLE]`,
-      `- KEEP RESPONSES SHORT. 1-3 sentences for conversational replies. No paragraphs, no walls of text.`,
-      `- Only elaborate when the user explicitly asks: "explain more", "go deeper", "elaborate", "define", "tell me more".`,
-      `- Use simple, everyday language. NO technical jargon unless the user's crew is technical.`,
-      `- Never ask for cron expressions, URLs, file paths, commands, or API details — figure it out yourself.`,
-      `- If the request is clear enough to act on, ACT. Don't ask unnecessary questions.`,
-      `- When you must ask, keep it natural: "What should I remind you about?" not "Provide the instruction payload."`,
-      `- After completing a task, briefly confirm what you did. Don't over-explain.`,
-      `- For tool outputs, schemas, code, and structured data: no length limit. Be as detailed as needed.`,
-      `[/COMMUNICATION_STYLE]`,
+      `[OUTPUT_FORMAT]`,
+      `ALWAYS respond in minimal, precise form. No fluff. Just the result.`,
+      `- Replies: 1-3 sentences max. Bullet points preferred over paragraphs.`,
+      `- Confirmations: "Done: [what]". Errors: "Failed: [why] — [fix]".`,
+      `- Technical output, code, configs: unlimited length. Be thorough.`,
       `[/TOOLS]`,
     ].join('\n');
 
@@ -1299,6 +1547,65 @@ Return ONLY valid JSON, no other text.`;
   }
 
   /**
+   * Run deep research on a question using parallel sub-agents and synthesis.
+   */
+  async research(question: string): Promise<Message> {
+    const startTime = Date.now();
+    this.isProcessing = true;
+    this.abortController = new AbortController();
+
+    const userMessage: Message = {
+      id: generateMessageId(),
+      sessionId: this.sessionId,
+      role: 'user',
+      content: `/research ${question}`,
+      toolCalls: null,
+      createdAt: new Date().toISOString(),
+      tokenCount: 0,
+    };
+
+    this.messages.push({ role: 'user', content: userMessage.content });
+    this.emit({ type: 'message_sent', message: userMessage });
+    this.emit({ type: 'loading_start', stage: 'research' });
+
+    try {
+      const report = await this.researchEngineCapability.research(question, this);
+      this.messages.push({ role: 'assistant', content: report });
+
+      const assistantMessage: Message = {
+        id: generateMessageId(),
+        sessionId: this.sessionId,
+        role: 'assistant',
+        content: report,
+        toolCalls: null,
+        createdAt: new Date().toISOString(),
+        tokenCount: Math.ceil(report.length / 4),
+      };
+
+      this.emit({ type: 'loading_end' });
+      this.emit({ type: 'message_received', message: assistantMessage, elapsed: Date.now() - startTime });
+      return assistantMessage;
+    } catch (error) {
+      this.emit({ type: 'loading_end' });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const fallback: Message = {
+        id: generateMessageId(),
+        sessionId: this.sessionId,
+        role: 'assistant',
+        content: `Research failed: ${errorMessage}`,
+        toolCalls: null,
+        createdAt: new Date().toISOString(),
+        tokenCount: 0,
+      };
+      this.emit({ type: 'message_received', message: fallback, elapsed: Date.now() - startTime });
+      return fallback;
+    } finally {
+      this.isProcessing = false;
+      this.abortController = null;
+    }
+  }
+
+  /**
    * End the session — records diary entry and updates identity.
    */
   endSession(): void {
@@ -1372,6 +1679,146 @@ Return ONLY valid JSON, no other text.`;
     }
     return result;
   }
+
+  /**
+   * Decompose a complex task into subtasks and delegate to specialist sub-agents in parallel.
+   */
+  async decomposeAndDelegate(task: string): Promise<{
+    subResults: Array<{ specialist: SpecialistType; output: string; elapsed: number }>;
+    synthesized: string;
+    totalElapsed: number;
+  }> {
+    const start = Date.now();
+    this.emit({ type: 'decomposition_start', task });
+
+    // LLM-driven decomposition: break task into subtasks per specialist
+    const decompositionPrompt = `Break this complex task into subtasks that can be handled by specialist agents:
+"${task.slice(0, 500)}"
+
+Available specialists: coder, reviewer, tester, researcher, devops, docs_writer, architect, debugger
+
+For each specialist that is relevant, write a SUBTASK in one line.
+Format:
+CODER: <subtask>
+REVIEWER: <subtask>
+... etc.
+
+Only include specialists that are actually needed for this task.`;
+
+    const prov = this.provider;
+    let decomposition = '';
+    try {
+      const stream = prov.complete({
+        messages: [{ role: 'user', content: decompositionPrompt }],
+        model: this.config.provider.activeModel,
+        maxTokens: 500,
+        stream: true,
+      });
+      for await (const chunk of stream) {
+        if (chunk.type === 'text_delta' && chunk.content) decomposition += chunk.content;
+      }
+    } catch (e) {
+      // Fallback: single sub-agent
+      this.emit({ type: 'decomposition_fallback', task });
+      const sub = new SmartSubAgent({ parentAgent: this, instruction: task });
+      const result = await sub.execute();
+      return {
+        subResults: [{ specialist: 'coder' as SpecialistType, output: result.output, elapsed: result.elapsed }],
+        synthesized: result.output,
+        totalElapsed: Date.now() - start,
+      };
+    }
+
+    // Parse decomposition into specialist tasks
+    const subtasks: Array<{ specialist: SpecialistType; instruction: string }> = [];
+    const lines = decomposition.split('\n');
+    for (const line of lines) {
+      const match = line.match(/^(\w+):\s*(.+)/);
+      if (match) {
+        const spec = match[1].toLowerCase() as SpecialistType;
+        const instruction = match[2];
+        if (this.specialistRegistry.getByType(spec)) {
+          subtasks.push({ specialist: spec, instruction });
+        }
+      }
+    }
+
+    if (subtasks.length === 0) {
+      subtasks.push({ specialist: 'coder' as SpecialistType, instruction: task });
+    }
+
+    this.emit({ type: 'decomposition_ready', subtaskCount: subtasks.length });
+
+    // Spawn parallel sub-agents
+    const subPromises = subtasks.map(async ({ specialist, instruction }) => {
+      const spec = this.specialistRegistry.getByType(specialist)!;
+      const sub = new SmartSubAgent({
+        parentAgent: this,
+        instruction: `[SPECIALIST: ${spec.name}]\n${instruction}`,
+        tools: spec.preferredTools,
+        config: { ...this.config },
+        sessionId: `sub-${specialist}-${Date.now()}`,
+      });
+
+      this.agentBus.publish(this.sessionId, spec.agentId, 'subtask', {
+        instruction,
+        parentTask: task,
+      });
+
+      const result = await sub.execute();
+      return { specialist, output: result.output, elapsed: result.elapsed };
+    });
+
+    const subResults = await Promise.all(subPromises);
+
+    // Synthesize results
+    const parts = subResults.map((r, i) =>
+      `--- ${r.specialist.toUpperCase()} (${r.elapsed}ms) ---\n${r.output.slice(0, 2000)}`
+    );
+    const synthesisPrompt = `Synthesize these specialist reports into a single coherent response:\n\n${parts.join('\n\n')}\n\nConsolidated response:`;
+
+    let synthesized = '';
+    try {
+      const synthStream = prov.complete({
+        messages: [{ role: 'user', content: synthesisPrompt }],
+        model: this.config.provider.activeModel,
+        maxTokens: 2000,
+        stream: true,
+      });
+      for await (const chunk of synthStream) {
+        if (chunk.type === 'text_delta' && chunk.content) synthesized += chunk.content;
+      }
+    } catch {
+      synthesized = subResults.map((r) => `${r.specialist}: ${r.output}`).join('\n\n');
+    }
+
+    const totalElapsed = Date.now() - start;
+    this.emit({ type: 'decomposition_complete', subResultCount: subResults.length, totalElapsed });
+
+    return { subResults, synthesized, totalElapsed };
+  }
+
+  /**
+   * Run a full research pipeline: decompose → parallel search → synthesize.
+   */
+  async research(question: string): Promise<string> {
+    if (!this.researchEngine) {
+      this.researchEngine = new ResearchEngine();
+    }
+    return this.researchEngine.research(question, this);
+  }
+
+  /**
+   * Get cumulative learnings from reflection loop to inject into system prompt.
+   */
+  getLearningsContext(): string {
+    return this.reflectionLoop.getCumulativeLearnings();
+  }
+
+  get agentBusInstance(): AgentBus { return this.agentBus; }
+  get specialistRegistryInstance(): SpecialistRegistry { return this.specialistRegistry; }
+  get skillGeneratorInstance(): SkillGenerator { return this.skillGenerator; }
+  get reflectionLoopInstance(): ReflectionLoop { return this.reflectionLoop; }
 
   private emit(event: EngineEvent): void {
     this.eventBus.emit(event);
