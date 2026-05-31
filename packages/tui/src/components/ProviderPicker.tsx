@@ -214,9 +214,13 @@ export const ProviderPicker: React.FC<ProviderPickerProps> = ({
       if (key.escape) { setStep('pick'); setError(null); return; }
       if (key.return && apiKey.trim()) {
         setError(null);
-        if (selectedProvider?.baseUrlConfigurable) {
-          setBaseUrl(selectedProvider.defaultBaseUrl ?? '');
+        // Only show base URL step for local providers or providers that require custom URL (like Azure)
+        if (selectedProvider?.baseUrlConfigurable && !selectedProvider.defaultBaseUrl) {
+          setBaseUrl('');
           setStep('base_url');
+        } else if (selectedProvider?.baseUrlConfigurable) {
+          setBaseUrl(selectedProvider.defaultBaseUrl ?? '');
+          setStep('validating');
         } else {
           setStep('validating');
         }

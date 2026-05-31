@@ -46,7 +46,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     type: 'cloud',
     apiKeyRequired: true,
     baseUrlConfigurable: true,
-    defaultBaseUrl: 'https://api.moonshot.cn/v1',
+    defaultBaseUrl: 'https://api.moonshot.ai/v1',
   },
   deepseek: {
     id: 'deepseek',

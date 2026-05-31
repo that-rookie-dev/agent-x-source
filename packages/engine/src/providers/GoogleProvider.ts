@@ -78,12 +78,18 @@ export class GoogleProvider implements ProviderInterface {
   }
 
   async *complete(request: CompletionRequest): AsyncIterable<CompletionChunk> {
-    // Google's OpenAI-compatible endpoint supports full tool calling
+    // Google's OpenAI-compatible endpoint supports tool calling
+    // but requires thought_signature on assistant tool calls in follow-up turns.
     const body: Record<string, unknown> = {
       model: request.model,
       messages: request.messages.map((m) => {
         if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-          return { role: m.role, content: m.content || null, tool_calls: m.toolCalls };
+          // Add empty thought_signature to each tool call for Gemini compatibility
+          const toolCalls = m.toolCalls.map((tc) => ({
+            ...tc,
+            thought_signature: tc.thought_signature ?? '',
+          }));
+          return { role: m.role, content: m.content || null, tool_calls: toolCalls };
         }
         if (m.role === 'tool') {
           return { role: m.role, content: m.content, tool_call_id: m.toolCallId };

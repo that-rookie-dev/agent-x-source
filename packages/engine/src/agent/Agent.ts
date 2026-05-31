@@ -968,7 +968,12 @@ Return ONLY valid JSON, no other text.`;
         } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
           if (chunk.toolCall.id) {
             if (currentToolCall?.id) toolCalls.push(currentToolCall as CompletionToolCall);
-            currentToolCall = { id: chunk.toolCall.id, type: 'function', function: { name: chunk.toolCall.function?.name ?? '', arguments: chunk.toolCall.function?.arguments ?? '' } };
+            currentToolCall = {
+              id: chunk.toolCall.id,
+              type: 'function',
+              function: { name: chunk.toolCall.function?.name ?? '', arguments: chunk.toolCall.function?.arguments ?? '' },
+              thought_signature: (chunk.toolCall as Record<string, unknown>)['thought_signature'] as string | undefined,
+            };
           } else if (currentToolCall) {
             if (chunk.toolCall.function?.name) currentToolCall.function = { name: (currentToolCall.function?.name ?? '') + chunk.toolCall.function.name, arguments: currentToolCall.function?.arguments ?? '' };
             if (chunk.toolCall.function?.arguments) currentToolCall.function = { name: currentToolCall.function?.name ?? '', arguments: (currentToolCall.function?.arguments ?? '') + chunk.toolCall.function.arguments };
