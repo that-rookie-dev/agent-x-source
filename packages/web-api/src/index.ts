@@ -7,7 +7,7 @@ import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { generateId } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine } from './engine.js';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent } from './engine.js';
 import { setupWebSocket, ensureSubscribed } from './ws.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { ProviderFactory } from '@agentx/engine';
@@ -317,8 +317,7 @@ app.post('/api/model/switch', (req, res) => {
   try {
     const { modelId, contextWindow } = req.body as { modelId: string; contextWindow?: number };
     const eng = getEngine();
-    const agent = eng.agent;
-    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    const agent = eng.agent ?? getOrCreateAgent();
     agent.switchModel(modelId, contextWindow);
     try {
       const config = eng.configManager.load();
@@ -336,9 +335,7 @@ app.post('/api/model/switch', (req, res) => {
 app.post('/api/model/trial', async (req, res) => {
   try {
     const { modelId } = req.body as { modelId: string };
-    const eng = getEngine();
-    const agent = eng.agent;
-    if (!agent) { res.status(400).json({ ok: false, error: 'no-session' }); return; }
+    const agent = getOrCreateAgent();
     const ok = await agent.trialModel(modelId);
     res.json({ ok, model: modelId });
   } catch (e: unknown) {
@@ -349,8 +346,7 @@ app.post('/api/model/trial', async (req, res) => {
 app.get('/api/models', async (_req, res) => {
   try {
     const eng = getEngine();
-    const agent = eng.agent;
-    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    const agent = eng.agent ?? getOrCreateAgent();
     await agent.listModels();
     const config = eng.configManager.load();
     res.json({ currentModel: config.provider.activeModel });
