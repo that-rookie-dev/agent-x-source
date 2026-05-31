@@ -399,7 +399,9 @@ async function main(): Promise<void> {
     if (!configMgr.isConfigured()) {
       console.log('✦ Agent-X is not configured yet.');
       console.log('');
-      console.log('  Complete setup at: http://localhost:3333');
+      console.log('  You can complete setup via:');
+      console.log('    • Web-UI');
+      console.log('    • TUI:     Run `agentx` for the interactive terminal setup');
       console.log('');
       console.log('  Run `agentx start` again after completing setup to launch the daemon.');
       process.exit(0);
