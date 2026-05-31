@@ -384,23 +384,26 @@ async function main(): Promise<void> {
       }
     }
 
-    // Auto-configure on first run if no config exists
-    const configMgr = new ConfigManager();
-    if (!configMgr.isConfigured()) {
-      console.error('✗ Agent-X is not configured yet.\n');
-      console.error('  Run `agentx` to launch the interactive setup first.');
-      process.exit(1);
-    }
+    // Always start the web API first so the web-ui setup wizard is reachable
+    await ensureWebApiRunning();
 
-    // If --token is provided, save it and proceed
+    // If --token is provided, save it regardless of config state
     const telegramStore = new TelegramStore();
     if (inlineToken) {
       telegramStore.save({ botToken: inlineToken });
       console.log('✓ Telegram bot token saved.');
     }
 
-    // Ensure web API (backend + static UI) is running so daemon and UI can interact
-    await ensureWebApiRunning();
+    // If not configured yet, point the user to the web-ui instead of crashing
+    const configMgr = new ConfigManager();
+    if (!configMgr.isConfigured()) {
+      console.log('✦ Agent-X is not configured yet.');
+      console.log('');
+      console.log('  Complete setup at: http://localhost:3333');
+      console.log('');
+      console.log('  Run `agentx start` again after completing setup to launch the daemon.');
+      process.exit(0);
+    }
 
     // Check Telegram config
     const telegramConfig = telegramStore.load();

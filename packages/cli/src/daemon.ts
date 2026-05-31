@@ -189,8 +189,10 @@ export async function startDaemon(): Promise<void> {
   // Load config
   const configManager = new ConfigManager();
   if (!configManager.isConfigured()) {
-    console.error('Agent-X is not configured. Run `agentx` first to set up.');
-    process.exit(1);
+    console.error('Agent-X is not configured. Complete setup via the web UI, then restart the daemon.');
+    // Ensure web API is available for the setup wizard
+    await startWebApiIfAvailable();
+    process.exit(0);
   }
 
   const config: AgentXConfig = configManager.load();
@@ -202,8 +204,8 @@ export async function startDaemon(): Promise<void> {
   const telegramStore = new TelegramStore();
   const telegramConfig = telegramStore.load();
   if (!telegramConfig?.botToken) {
-    console.error('Telegram bot not configured. Run `agentx` and use /telegram start <token> first.');
-    process.exit(1);
+    console.error('Telegram bot not configured. Run `agentx start --token <your-bot-token>` first.');
+    process.exit(0);
   }
 
   // Get active crew member
