@@ -81,22 +81,29 @@ app.use((_req, res, next) => {
 
 // ───── Health ─────
 app.get('/api/health', (_req, res) => {
-  const eng = getEngine();
+  let eng: ReturnType<typeof getEngine> | null = null;
+  try {
+    eng = getEngine();
+  } catch { /* engine init may fail before setup — still report healthy */ }
   let sessionCount = 0;
   let crewCount = 0;
-  try {
-    const sessions = eng.sessionManager.listSessions(9999);
-    sessionCount = sessions.length;
-  } catch { /* ignore */ }
-  try {
-    const crews = eng.crewManager.list();
-    crewCount = crews.length;
-  } catch { /* ignore */ }
+  let agentActive = false;
   let configInfo: Record<string, unknown> = {};
-  try {
-    const cfg = eng.configManager.load();
-    configInfo = { provider: cfg.provider.activeProvider, model: cfg.provider.activeModel, user: cfg.user?.callsign || null };
-  } catch { /* ignore */ }
+  if (eng) {
+    try {
+      const sessions = eng.sessionManager.listSessions(9999);
+      sessionCount = sessions.length;
+    } catch { /* ignore */ }
+    try {
+      const crews = eng.crewManager.list();
+      crewCount = crews.length;
+    } catch { /* ignore */ }
+    try {
+      const cfg = eng.configManager.load();
+      configInfo = { provider: cfg.provider.activeProvider, model: cfg.provider.activeModel, user: cfg.user?.callsign || null };
+    } catch { /* ignore */ }
+    agentActive = !!eng.agent;
+  }
   res.json({
     status: 'ok',
     pid: process.pid,
@@ -107,16 +114,20 @@ app.get('/api/health', (_req, res) => {
     config: configInfo,
     sessions: sessionCount,
     crews: crewCount,
-    agentActive: !!eng.agent,
+    agentActive,
   });
 });
 
 // ───── Setup / Config ─────
 app.get('/api/setup/status', (_req, res) => {
-  const eng = getEngine();
-  const complete = eng.configManager.isSetupComplete();
-  const configured = eng.configManager.isConfigured();
-  res.json({ setupComplete: complete, configured });
+  try {
+    const eng = getEngine();
+    const complete = eng.configManager.isSetupComplete();
+    const configured = eng.configManager.isConfigured();
+    res.json({ setupComplete: complete, configured });
+  } catch {
+    res.json({ setupComplete: false, configured: false });
+  }
 });
 
 app.get('/api/config', (_req, res) => {
