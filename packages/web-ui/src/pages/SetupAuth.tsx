@@ -66,6 +66,7 @@ export default function SetupAuth({ onComplete }: Props) {
 
   const strengthLabels = ['Very Weak', 'Weak', 'Fair', 'Good', 'Strong', 'Very Strong'];
   const strengthColors = ['#c44', '#c84', '#cc4', '#8c4', '#4c4', '#4c8'];
+  const strengthIndex = Math.min(pwdStrength, strengthLabels.length - 1);
 
   return (
     <div className="wizard" style={{ maxWidth: 480, paddingTop: '10vh' }}>
@@ -110,21 +111,21 @@ export default function SetupAuth({ onComplete }: Props) {
             autoComplete="new-password"
           />
           {password && (
-            <div style={{ marginTop: 8 }}>
+              <div style={{ marginTop: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <div style={{ flex: 1, height: 4, background: '#1a1a1a', borderRadius: 2, overflow: 'hidden' }}>
                   <div
                     style={{
                       height: '100%',
                       width: `${(pwdStrength / 6) * 100}%`,
-                      background: strengthColors[pwdStrength] || '#c44',
+                      background: strengthColors[strengthIndex],
                       transition: 'all .3s',
                       borderRadius: 2,
                     }}
                   />
                 </div>
-                <span style={{ fontSize: '0.7rem', color: strengthColors[pwdStrength] || '#c44', fontWeight: 600 }}>
-                  {strengthLabels[pwdStrength] || 'Very Weak'}
+                <span style={{ fontSize: '0.7rem', color: strengthColors[strengthIndex], fontWeight: 600 }}>
+                  {strengthLabels[strengthIndex]}
                 </span>
               </div>
               <div style={{ fontSize: '0.7rem', color: '#555' }}>
