@@ -14,8 +14,7 @@ import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared
 
 const PORT = Number(process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, '..', '..', '..', '..');
-const UI_DIST = join(ROOT, 'web-ui', 'dist');
+const UI_DIST = join(__dirname, '..', '..', 'web-ui', 'dist');
 
 const HOME = homedir();
 const DATA_DIR = process.env['XDG_DATA_HOME']

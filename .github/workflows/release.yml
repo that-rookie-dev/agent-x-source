@@ -47,8 +47,40 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
 
-  build:
+  # Build web-ui once, cache by version hash to skip when unchanged
+  build-webui:
     needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Restore web-ui dist cache
+        uses: actions/cache@v4
+        id: webui-cache
+        with:
+          path: packages/web-ui/dist
+          key: webui-dist-${{ hashFiles('packages/web-ui/VERSION', 'packages/web-ui/src/**', 'packages/web-ui/package.json', 'packages/web-ui/vite.config.ts', 'packages/web-ui/index.html') }}
+
+      - name: Build web-ui
+        if: steps.webui-cache.outputs.cache-hit != 'true'
+        run: |
+          cd packages/web-ui
+          npm install
+          npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webui-dist
+          path: packages/web-ui/dist
+          retention-days: 1
+
+  build:
+    needs: [check-version, build-webui]
     if: needs.check-version.outputs.should_release == 'true'
     strategy:
       matrix:
@@ -76,18 +108,26 @@ jobs:
 
       - run: pnpm run build
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: packages/web-ui/dist
+
       - name: Package (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          # --- Full package (TUI + Web-UI) ---
           mkdir -p release-pkg
           cp packages/cli/dist/index.js release-pkg/
           cp packages/cli/dist/daemon.js release-pkg/
-          # Include web-api so the CLI/daemon can auto-start it
           mkdir -p release-pkg/web-api/dist
           cp -r packages/web-api/dist/* release-pkg/web-api/dist/ 2>/dev/null || true
           cp packages/web-api/server.js release-pkg/web-api/ 2>/dev/null || true
           cp packages/web-api/package.json release-pkg/web-api/ 2>/dev/null || true
+          mkdir -p release-pkg/web-ui/dist
+          cp -r packages/web-ui/dist/* release-pkg/web-ui/dist/ 2>/dev/null || true
+          cp packages/web-ui/package.json release-pkg/web-ui/ 2>/dev/null || true
           cat > release-pkg/package.json << 'EOF'
           {
             "type": "module",
@@ -103,19 +143,28 @@ jobs:
           chmod +x release-pkg/agentx
           cd release-pkg
           tar -czf ../agentx-${{ matrix.platform }}.tar.gz .
+          cd ..
+
+          # --- TUI-only package ---
+          rm -rf release-pkg/web-ui
+          cd release-pkg
+          tar -czf ../agentx-${{ matrix.platform }}-tui.tar.gz .
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Full package
           New-Item -ItemType Directory -Force -Path release-pkg
           Copy-Item packages/cli/dist/index.js release-pkg/
           Copy-Item packages/cli/dist/daemon.js release-pkg/
-          # Include web-api so the CLI/daemon can auto-start it
           New-Item -ItemType Directory -Force -Path release-pkg/web-api/dist
           Copy-Item -Path packages/web-api/dist/* -Destination release-pkg/web-api/dist/ -Recurse -ErrorAction SilentlyContinue
           Copy-Item packages/web-api/server.js release-pkg/web-api/ -ErrorAction SilentlyContinue
           Copy-Item packages/web-api/package.json release-pkg/web-api/ -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path release-pkg/web-ui/dist
+          Copy-Item -Path packages/web-ui/dist/* -Destination release-pkg/web-ui/dist/ -Recurse -ErrorAction SilentlyContinue
+          Copy-Item packages/web-ui/package.json release-pkg/web-ui/ -ErrorAction SilentlyContinue
           @'
           {
             "type": "module",
@@ -127,12 +176,18 @@ jobs:
           '@echo off`r`nnode "%~dp0index.js" %*' | Out-File -Encoding ascii release-pkg/agentx.cmd
           Compress-Archive -Path release-pkg/* -DestinationPath agentx-${{ matrix.platform }}.zip
 
+          # TUI-only package
+          Remove-Item -Recurse -Force release-pkg/web-ui -ErrorAction SilentlyContinue
+          Compress-Archive -Path release-pkg/* -DestinationPath agentx-${{ matrix.platform }}-tui.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: agentx-${{ matrix.platform }}
           path: |
             agentx-${{ matrix.platform }}.tar.gz
+            agentx-${{ matrix.platform }}-tui.tar.gz
             agentx-${{ matrix.platform }}.zip
+            agentx-${{ matrix.platform }}-tui.zip
 
   publish:
     needs: [check-version, build]
