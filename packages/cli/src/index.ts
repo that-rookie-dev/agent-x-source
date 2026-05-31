@@ -741,9 +741,6 @@ async function main(): Promise<void> {
   // Clear terminal before launching TUI
   process.stdout.write('\x1Bc');
 
-  // Ensure backend is available for TUI features and the Web UI
-  try { await ensureWebApiRunning(); } catch { /* non-fatal */ }
-
   // Render the TUI
   render(React.createElement(App, { sessionId, recovered, planMode, fallbackModel, maxBudget, gitAutoCommit, gitAware }));
 }
