@@ -254,6 +254,12 @@ async function main(): Promise<void> {
 
   const args = process.argv.slice(2);
 
+  // Check for --bg flag (background queue) early — used later to short-circuit and
+  // run a single background command without launching the TUI. Declare it here
+  // before any early usage to avoid temporal dead zone errors.
+  const bgIdx = args.indexOf('--bg');
+  const bgCommand = bgIdx !== -1 && args[bgIdx + 1] ? args.slice(bgIdx + 1).join(' ') : undefined;
+
   if (args.includes('--version') || args.includes('-v')) {
     console.log(`✦ ${APP_NAME} v${VERSION}`);
     process.exit(0);
@@ -466,9 +472,6 @@ async function main(): Promise<void> {
   const gitAutoCommit = args.includes('--git-auto-commit');
   const gitAware = args.includes('--git-aware');
 
-  // Check for --bg flag (background queue)
-  const bgIdx = args.indexOf('--bg');
-  const bgCommand = bgIdx !== -1 && args[bgIdx + 1] ? args.slice(bgIdx + 1).join(' ') : undefined;
 
   // Check for CI/CD mode flags
   const jsonMode = args.includes('--json');
