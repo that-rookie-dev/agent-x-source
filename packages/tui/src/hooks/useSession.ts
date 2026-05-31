@@ -195,14 +195,20 @@ export function useSession(
           }
           break;
         case 'message_sent':
-          setMessages((prev) => [...prev, { ...event.message, tokenCost: 0 }]);
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === event.message.id)) return prev;
+            return [...prev, { ...event.message, tokenCost: 0 }];
+          });
           persistMessage(event.message);
           break;
         case 'message_received': {
           const currentCost = agent.tokens.totalCost;
           const msgCost = currentCost - prevCostRef.current;
           prevCostRef.current = currentCost;
-          setMessages((prev) => [...prev, { ...event.message, elapsed: event.elapsed, tokenCost: msgCost }]);
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === event.message.id)) return prev;
+            return [...prev, { ...event.message, elapsed: event.elapsed, tokenCost: msgCost }];
+          });
           setStreamingContent('');
           setTokensUsed(agent.tokens.tokensUsed);
           setTokensTotal(agent.tokens.tokensTotal);

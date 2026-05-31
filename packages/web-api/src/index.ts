@@ -164,7 +164,7 @@ const AVAILABLE_PROVIDERS = [
   { id: 'openai', name: 'OpenAI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.openai.com/v1' },
   { id: 'anthropic', name: 'Anthropic', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.anthropic.com' },
   { id: 'google', name: 'Google', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
-  { id: 'moonshot', name: 'Moonshot AI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.moonshot.cn/v1' },
+  { id: 'moonshot', name: 'Moonshot AI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.moonshot.ai/v1' },
   { id: 'deepseek', name: 'DeepSeek', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.deepseek.com' },
   { id: 'groq', name: 'Groq', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.groq.com/openai/v1' },
   { id: 'mistral', name: 'Mistral AI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.mistral.ai/v1' },
@@ -368,7 +368,8 @@ app.get('/api/models', async (_req, res) => {
 // ───── Crews ─────
 app.get('/api/crews', (_req, res) => {
   const eng = getEngine();
-  const crews = eng.crewManager.list();
+  const allCrews = eng.crewManager.list();
+  const crews = allCrews.filter((c) => !c.isDefault);
   const activeId = eng.crewManager.getActiveId();
   res.json({ crews, activeId });
 });

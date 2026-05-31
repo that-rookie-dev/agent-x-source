@@ -1,36 +1,16 @@
 /* ─── Space-Themed Chat Styles ─── */
 @import './theme/vars.css';
 
-/* Chat area background — deep space (dark) or solar surface (light) */
+/* Chat area background */
 .chat-area {
-  background: linear-gradient(180deg,
-    var(--space-bg) 0%,
-    color-mix(in srgb, var(--space-bg) 90%, var(--space-surface) 10%) 50%,
-    color-mix(in srgb, var(--space-bg) 85%, var(--space-surface) 15%) 100%
-  );
-  position: relative;
+  background: var(--space-bg);
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  padding-bottom: 24px;
 }
 
-/* Subtle starfield in chat background — only on dark theme */
-@media (prefers-color-scheme: dark), [data-theme="dark"] {
-  .chat-area::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
-    pointer-events: none;
-    background-image:
-      radial-gradient(1px 1px at 10% 15%, rgba(255,255,255,0.15), transparent),
-      radial-gradient(1px 1px at 25% 35%, rgba(255,255,255,0.1), transparent),
-      radial-gradient(1px 1px at 40% 55%, rgba(255,255,255,0.12), transparent),
-      radial-gradient(1px 1px at 55% 20%, rgba(255,255,255,0.08), transparent),
-      radial-gradient(1px 1px at 70% 65%, rgba(255,255,255,0.14), transparent),
-      radial-gradient(1px 1px at 85% 45%, rgba(255,255,255,0.09), transparent),
-      radial-gradient(2px 2px at 15% 80%, rgba(179, 136, 255, 0.1), transparent),
-      radial-gradient(1px 1px at 60% 90%, rgba(0, 212, 255, 0.08), transparent),
-      radial-gradient(1px 1px at 90% 10%, rgba(255,255,255,0.1), transparent);
-    animation: star-drift 60s linear infinite;
-  }
-}
+/* Starfield disabled for performance */
+.chat-area::before { display: none; }
 
 @keyframes star-drift {
   0% { background-position: 0 0; }
@@ -84,20 +64,14 @@
 
 .event-card:hover {
   border-color: var(--space-border-light);
-  box-shadow: var(--space-glow);
 }
 
 .event-card.running {
   border-color: rgba(255, 215, 64, 0.3);
-  box-shadow: 0 0 8px rgba(255, 215, 64, 0.08);
 }
 
 .event-card-glow {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  opacity: 0;
-  transition: opacity 200ms ease;
-  pointer-events: none;
+  display: none;
 }
 
 .event-card:hover .event-card-glow {

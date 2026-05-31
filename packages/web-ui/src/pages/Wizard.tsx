@@ -18,7 +18,7 @@ const PROVIDERS = [
   { id: 'openai', name: 'OpenAI', needsKey: true, defaultBaseUrl: 'https://api.openai.com/v1' },
   { id: 'anthropic', name: 'Anthropic', needsKey: true, defaultBaseUrl: 'https://api.anthropic.com' },
   { id: 'google', name: 'Google AI', needsKey: true, defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
-  { id: 'moonshot', name: 'Moonshot AI', needsKey: true, defaultBaseUrl: 'https://api.moonshot.cn/v1' },
+  { id: 'moonshot', name: 'Moonshot AI', needsKey: true, defaultBaseUrl: 'https://api.moonshot.ai/v1' },
   { id: 'deepseek', name: 'DeepSeek', needsKey: true, defaultBaseUrl: 'https://api.deepseek.com' },
   { id: 'groq', name: 'Groq', needsKey: true, defaultBaseUrl: 'https://api.groq.com/openai/v1' },
   { id: 'mistral', name: 'Mistral AI', needsKey: true, defaultBaseUrl: 'https://api.mistral.ai/v1' },

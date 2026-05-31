@@ -9,7 +9,7 @@ import { OpenAICompatibleProvider } from './OpenAICompatibleProvider.js';
 
 function getDefaultBaseUrl(providerId: ProviderId): string {
   switch (providerId) {
-    case 'moonshot': return 'https://api.moonshot.cn/v1';
+    case 'moonshot': return 'https://api.moonshot.ai/v1';
     case 'deepseek': return 'https://api.deepseek.com';
     case 'groq': return 'https://api.groq.com/openai/v1';
     case 'mistral': return 'https://api.mistral.ai/v1';

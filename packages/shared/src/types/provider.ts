@@ -70,6 +70,7 @@ export interface CompletionToolCall {
     name: string;
     arguments: string;
   };
+  thought_signature?: string;
 }
 
 export interface CompletionChunk {
