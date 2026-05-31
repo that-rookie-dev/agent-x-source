@@ -68,7 +68,8 @@ const upload = multer({
 if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true });
 
 // Auth routes (must be before auth middleware)
-app.use(createAuthRouter());
+// Mount under /api so endpoints are /api/auth/*, matching web-ui calls
+app.use('/api', createAuthRouter());
 
 // Auth middleware — protects all /api/* routes except auth endpoints
 app.use(authMiddleware);

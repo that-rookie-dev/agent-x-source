@@ -17,7 +17,23 @@ const ERROR_MESSAGES: Record<string, string> = {
   'delete-failed': 'Delete failed',
   'create-failed': 'Create failed',
   'respond-failed': 'Permission response failed',
+  'unauthorized': 'Please sign in first',
+  'invalid-credentials': 'Incorrect username or password',
+  'weak-password': 'Password is too weak',
+  'already-configured': 'Root user already exists',
+  'rate-limited': 'Too many failed attempts — please try again later',
 };
+
+/**
+ * Strip HTML tags and collapse whitespace so raw HTML responses
+ * (e.g. from the SPA fallback on a 404) never leak into the UI.
+ */
+function sanitizeErrorText(text: string): string {
+  return text
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function makeError(status: number, bodyOrText: unknown) {
   let code: string | undefined;
@@ -27,10 +43,24 @@ function makeError(status: number, bodyOrText: unknown) {
     code = b.error || b.code || b.err;
     userMessage = b.message || b.error || b.msg || undefined;
   } else if (typeof bodyOrText === 'string') {
-    userMessage = bodyOrText;
+    userMessage = sanitizeErrorText(bodyOrText);
   }
   if (!userMessage && code && ERROR_MESSAGES[code]) userMessage = ERROR_MESSAGES[code];
-  if (!userMessage) userMessage = `Request failed (${status})`;
+  if (!userMessage) {
+    // Human-friendly status descriptions
+    switch (status) {
+      case 400: userMessage = 'Invalid request'; break;
+      case 401: userMessage = 'Please sign in first'; break;
+      case 403: userMessage = 'You do not have permission to do that'; break;
+      case 404: userMessage = 'Service not available — try again shortly'; break;
+      case 409: userMessage = 'That action is not possible right now'; break;
+      case 429: userMessage = 'Too many attempts — please slow down'; break;
+      case 500: userMessage = 'Something went wrong on our end'; break;
+      case 502: userMessage = 'Service temporarily unavailable'; break;
+      case 503: userMessage = 'Service is busy — please try again later'; break;
+      default: userMessage = `Request failed (${status})`; break;
+    }
+  }
   const err = new Error(userMessage);
   (err as any).status = status;
   if (code) (err as any).code = code;

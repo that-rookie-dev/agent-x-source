@@ -14,12 +14,13 @@ import PluginDetail from './pages/PluginDetail';
 import Login from './pages/Login';
 import SetupAuth from './pages/SetupAuth';
 
-type AuthPhase = 'checking' | 'setup-auth' | 'login' | 'authenticated';
+type AuthPhase = 'checking' | 'setup-auth' | 'login' | 'authenticated' | 'error';
 
 export default function App() {
   const [health, setHealth] = useState<'checking' | 'ok' | 'down'>('checking');
   const [setupComplete, setSetupComplete] = useState(false);
   const [authPhase, setAuthPhase] = useState<AuthPhase>('checking');
+  const [authError, setAuthError] = useState<string>('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -53,10 +54,11 @@ export default function App() {
     try {
       // First check if a root user exists
       const authCheck = await checkAuthRequired();
-      
+
       if (!authCheck.hasRootUser) {
         // No root user yet — show auth setup
         setAuthPhase('setup-auth');
+        setAuthError('');
         return;
       }
 
@@ -64,6 +66,7 @@ export default function App() {
       const status = await getAuthStatus();
       if (status.isAuthenticated) {
         setAuthPhase('authenticated');
+        setAuthError('');
         // Also check setup status
         try {
           const setupStatus = await apiGet<{ setupComplete: boolean }>('/api/setup/status');
@@ -73,10 +76,13 @@ export default function App() {
         }
       } else {
         setAuthPhase('login');
+        setAuthError('');
       }
-    } catch {
-      // If auth check fails, assume we need login
-      setAuthPhase('login');
+    } catch (err: any) {
+      // Auth endpoint unreachable — show a retryable error screen
+      const msg = err instanceof Error ? err.message : 'Unable to reach Agent-X server';
+      setAuthError(msg);
+      setAuthPhase('error');
     }
   }, []);
 
@@ -110,6 +116,23 @@ export default function App() {
   // Agent down → always show portal with offline state
   if (health === 'down') {
     return <HealthCheck onRetry={checkHealth} />;
+  }
+
+  // Auth service error — allow retry
+  if (authPhase === 'error') {
+    return (
+      <div className="wizard" style={{ maxWidth: 420, paddingTop: '20vh', textAlign: 'center' }}>
+        <div style={{ fontSize: '2rem', marginBottom: 16, opacity: 0.6 }}>
+          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 8v4M12 16h.01"/>
+          </svg>
+        </div>
+        <div className="wizard-title" style={{ fontSize: '1.3rem' }}>Connection Issue</div>
+        <div className="wizard-desc" style={{ marginBottom: 24 }}>{authError}</div>
+        <button className="btn btn-primary" onClick={checkAuthState}>Retry</button>
+      </div>
+    );
   }
 
   // Auth required but no root user yet
