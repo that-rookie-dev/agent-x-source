@@ -402,8 +402,8 @@ async function main(): Promise<void> {
     });
     child.unref();
 
-    // Wait briefly for daemon to start and write status
-    await new Promise((r) => setTimeout(r, 2000));
+    // Wait briefly for daemon to start and write status, then poll for web-api
+    await new Promise((r) => setTimeout(r, 1500));
 
     if (isDaemonRunning()) {
       const status = getDaemonStatus();
@@ -411,7 +411,13 @@ async function main(): Promise<void> {
       if (status.crew) console.log(`  Crew: ${status.crew}`);
       if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
 
-      const webOk = await isWebApiRunning();
+      // Poll web-api health for up to 4 seconds (it may need time to boot)
+      let webOk = false;
+      for (let i = 0; i < 8; i++) {
+        webOk = await isWebApiRunning();
+        if (webOk) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
       if (webOk) {
         console.log('  Web-UI: http://localhost:3333');
       } else {

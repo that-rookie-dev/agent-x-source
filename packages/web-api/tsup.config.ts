@@ -6,6 +6,13 @@ export default defineConfig({
   platform: 'node',
   target: 'node20',
   splitting: false,
-  shims: true,
+  shims: false,
   clean: true,
+  // Bundle everything into a single self-contained file so the release
+  // tarball works without node_modules (matching CLI behaviour).
+  noExternal: [/^(?!better-sqlite3).*/],
+  external: ['better-sqlite3'],
+  banner: {
+    js: "import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);",
+  },
 });
