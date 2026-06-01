@@ -143,7 +143,7 @@ export function DockingStation() {
               const fontWeight = line.type === 'heading' ? 700 : 400;
               const letterSpacing = line.type === 'heading' ? '2px' : undefined;
               return (
-                <Box key={i} sx={{ color, fontWeight, letterSpacing, whiteSpace: 'pre' }}>
+                <Box key={i} sx={{ color, fontWeight, letterSpacing, whiteSpace: 'pre', ...(line.type === 'banner' && { lineHeight: 1 }) }}>
                   {line.text}
                 </Box>
               );

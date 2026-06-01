@@ -80,6 +80,7 @@ export class Agent {
   private sessionId: string;
   private isProcessing = false;
   private abortController: AbortController | null = null;
+  private pendingInstruction: string | null = null;
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
   private scheduler: Scheduler;
@@ -669,7 +670,7 @@ Return ONLY valid JSON, no other text.`;
     }
   }
 
-  async sendMessage(content: string): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string }): Promise<Message> {
     if (this.isProcessing) {
       throw new Error('Agent is already processing a message');
     }
@@ -678,7 +679,10 @@ Return ONLY valid JSON, no other text.`;
     this.abortController = new AbortController();
     const startTime = Date.now();
 
-    // Add user message
+    // Store the per-message instruction for injection during completion (not in history)
+    this.pendingInstruction = options?.instruction || null;
+
+    // Add user message (clean, without instruction)
     this.messages.push({ role: 'user', content });
 
     const userMessage: Message = {
@@ -711,7 +715,24 @@ Return ONLY valid JSON, no other text.`;
         const fastMessage = await this.runFastReply(content, startTime);
         return fastMessage;
       } catch (e) {
-        // Fall through to normal path if fast reply fails
+        // If cancelled/aborted, return cancelled message directly
+        if ((e instanceof Error && e.name === 'AbortError') || !this.abortController) {
+          this.emit({ type: 'loading_end' });
+          const cancelledMessage: Message = {
+            id: generateMessageId(),
+            sessionId: this.sessionId,
+            role: 'assistant',
+            content: '⏹ Cancelled.',
+            toolCalls: null,
+            createdAt: new Date().toISOString(),
+            tokenCount: 0,
+          };
+          this.emit({ type: 'message_received', message: cancelledMessage, elapsed: Date.now() - startTime });
+          this.isProcessing = false;
+          this.abortController = null;
+          return cancelledMessage;
+        }
+        // Fall through to normal path if fast reply fails for other reasons
         getLogger().warn('FAST_REPLY', 'Fast reply failed, falling through to standard path');
       }
     }
@@ -932,13 +953,29 @@ Return ONLY valid JSON, no other text.`;
     };
 
     let fullContent = '';
-    const stream = await this.provider.complete(request);
+    const streamHandle = await this.retryWithBackoff(async () => {
+      const iter = this.provider.complete(request);
+      const it = iter[Symbol.asyncIterator]();
+      const first = await it.next();
+      return { it, first };
+    }, 'fast_reply');
 
-    for await (const chunk of stream) {
+    if (!streamHandle.first.done && streamHandle.first.value) {
+      const chunk = streamHandle.first.value;
       if (chunk.type === 'text_delta' && chunk.content) {
         fullContent += chunk.content;
         this.emit({ type: 'stream_chunk', content: chunk.content, fullContent });
       }
+    }
+
+    let next = await streamHandle.it.next();
+    while (!next.done) {
+      const chunk = next.value;
+      if (chunk.type === 'text_delta' && chunk.content) {
+        fullContent += chunk.content;
+        this.emit({ type: 'stream_chunk', content: chunk.content, fullContent });
+      }
+      next = await streamHandle.it.next();
     }
 
     // Add to conversation history
@@ -1010,6 +1047,15 @@ Return ONLY valid JSON, no other text.`;
 
       // ─── BUILD MESSAGES WITH RAG + COMPACTION ───
       let requestMessages = [...this.messages];
+
+      // Inject per-message instruction as a system directive (not stored in history)
+      if (this.pendingInstruction) {
+        const userIdx = requestMessages.findLastIndex((m) => m.role === 'user');
+        if (userIdx >= 0) {
+          requestMessages.splice(userIdx, 0, { role: 'system', content: this.pendingInstruction });
+        }
+        this.pendingInstruction = null; // Clear after injection
+      }
 
       // Inject RAG results as temporary context
       if (this.lastRagResults.length > 0) {
@@ -1224,9 +1270,15 @@ Return ONLY valid JSON, no other text.`;
             // Bad JSON from model
           }
 
-            const result = this.toolExecutor
-              ? await this.toolExecutor.execute(tc.function.name, args, this.sessionId)
-              : { success: false, output: 'No tool executor configured', error: 'NO_EXECUTOR' };
+            let result: ToolResult;
+            try {
+              result = this.toolExecutor
+                ? await this.toolExecutor.execute(tc.function.name, args, this.sessionId)
+                : { success: false, output: 'No tool executor configured', error: 'NO_EXECUTOR' };
+            } catch (toolErr) {
+              result = { success: false, output: `Tool execution failed: ${toolErr instanceof Error ? toolErr.message : String(toolErr)}`, error: 'TOOL_CRASH' };
+              getLogger().error('TOOL_EXEC', `Tool ${tc.function.name} crashed: ${toolErr}`);
+            }
 
           // Auto-commit after file edit operations
           if (this.gitAutoCommit && this.gitManager && this.isEditTool(tc.function.name) && result.success) {
@@ -1269,6 +1321,16 @@ Return ONLY valid JSON, no other text.`;
       }
 
       // No tool calls — this is the final assistant response
+      // Guard against empty response from model — retry once or return error
+      if (!fullContent.trim() && round < MAX_TOOL_ROUNDS - 1) {
+        getLogger().warn('COMPLETION', `Empty response from model on round ${round}, retrying...`);
+        continue;
+      }
+      if (!fullContent.trim()) {
+        fullContent = 'I apologize, I was unable to generate a response. Please try rephrasing your question.';
+        this.emit({ type: 'stream_chunk', content: fullContent, fullContent });
+      }
+
       this.messages.push({ role: 'assistant', content: fullContent });
 
       const tokenCount = lastUsage

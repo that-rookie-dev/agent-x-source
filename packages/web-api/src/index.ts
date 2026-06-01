@@ -227,6 +227,9 @@ app.get('/api/provider/models', async (req, res) => {
             baseUrl = active.baseUrl;
           }
         }
+        // Fallback: use flat apiKey/baseUrl on the provider creds if no profile matched
+        if (!apiKey && creds?.apiKey) apiKey = creds.apiKey;
+        if (!baseUrl && creds?.baseUrl) baseUrl = creds.baseUrl;
       } catch { /* use provided values */ }
     }
     const prov = ProviderFactory.create(providerId as ProviderId, apiKey, baseUrl);
@@ -335,6 +338,23 @@ app.post('/api/provider/profile/switch', (req, res) => {
   }
 });
 
+// ───── Provider Switch (clears active model) ─────
+app.post('/api/provider/switch', (req, res) => {
+  try {
+    const { provider } = req.body as { provider: string };
+    if (!provider) { res.status(400).json({ error: 'provider-required' }); return; }
+    const eng = getEngine();
+    const config = eng.configManager.load();
+    config.provider.activeProvider = provider as ProviderId;
+    config.provider.activeModel = ''; // Clear model on provider change
+    eng.configManager.save(config);
+    destroyAgent();
+    res.json({ ok: true, provider, model: '' });
+  } catch (e: unknown) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
+  }
+});
+
 // ───── Models ─────
 app.post('/api/model/switch', (req, res) => {
   try {
@@ -369,13 +389,55 @@ app.post('/api/model/trial', async (req, res) => {
 app.get('/api/models', async (_req, res) => {
   try {
     const eng = getEngine();
-    const agent = eng.agent ?? getOrCreateAgent();
-    await agent.listModels();
     const config = eng.configManager.load();
-    res.json({ currentModel: config.provider.activeModel });
+    // Try to list models via agent if it exists, but don't fail if no agent
+    if (eng.agent) {
+      try { await eng.agent.listModels(); } catch { /* ignore */ }
+    }
+    res.json({ model: config.provider.activeModel, provider: config.provider.activeProvider, currentModel: config.provider.activeModel });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'failed' });
   }
+});
+
+app.get('/api/cwd', (_req, res) => {
+  res.json({ cwd: process.cwd() });
+});
+
+// ───── Session Mode & Approval ─────
+// Agent mode: 'agent' (full), 'ask' (answer only), 'plan' (plan only)
+// Approval: 'default' (deny-first), 'moderate' (tools allowed), 'auto' (full access)
+const sessionSettings: { mode: 'agent' | 'ask' | 'plan'; approval: 'default' | 'moderate' | 'auto' } = {
+  mode: 'agent',
+  approval: 'default',
+};
+
+app.get('/api/session/settings', (_req, res) => {
+  res.json(sessionSettings);
+});
+
+app.post('/api/session/mode', (req, res) => {
+  const { mode } = req.body as { mode: 'agent' | 'ask' | 'plan' };
+  if (!['agent', 'ask', 'plan'].includes(mode)) { res.status(400).json({ error: 'invalid-mode' }); return; }
+  sessionSettings.mode = mode;
+  // Apply mode to agent if exists
+  const eng = getEngine();
+  if (eng.agent) {
+    eng.agent.setPlanMode(mode === 'plan');
+  }
+  res.json({ ok: true, mode });
+});
+
+app.post('/api/session/approval', (req, res) => {
+  const { approval } = req.body as { approval: 'default' | 'moderate' | 'auto' };
+  if (!['default', 'moderate', 'auto'].includes(approval)) { res.status(400).json({ error: 'invalid-approval' }); return; }
+  sessionSettings.approval = approval;
+  // Apply to agent if exists — auto means auto-approve all tool calls
+  const eng = getEngine();
+  if (eng.agent) {
+    (eng.agent as unknown as { autoApproveTools: boolean }).autoApproveTools = (approval === 'auto' || approval === 'moderate');
+  }
+  res.json({ ok: true, approval });
 });
 
 // ───── Crews ─────
@@ -462,6 +524,10 @@ app.post('/api/chat/message', async (req, res) => {
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     ensureSubscribed();
 
+    // Apply session mode to agent
+    agent.setPlanMode(sessionSettings.mode === 'plan');
+    (agent as unknown as { autoApproveTools: boolean }).autoApproveTools = (sessionSettings.approval === 'auto' || sessionSettings.approval === 'moderate');
+
     // Build the full message content with attachments if provided
     let fullText = text;
     if (attachments && attachments.length > 0) {
@@ -469,7 +535,14 @@ app.post('/api/chat/message', async (req, res) => {
       fullText = text + attachmentSection;
     }
 
-    const message = await agent.sendMessage(fullText);
+    // Build instruction based on mode (kept separate from user content)
+    const instruction = sessionSettings.mode === 'ask'
+      ? 'Only provide an answer/explanation. Do NOT execute any tools, make changes, or take actions. Just reply with knowledge.'
+      : sessionSettings.mode === 'plan'
+        ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
+        : undefined;
+
+    const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
     res.json({ ok: true, message });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'chat-failed' });
@@ -485,6 +558,89 @@ app.post('/api/chat/cancel', (_req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'cancel-failed' });
+  }
+});
+
+// ───── Message Queue & Steer ─────
+// Queue: messages waiting to be sent after current task completes
+const messageQueue: Array<{ text: string; attachments?: { name: string; content: string }[] }> = [];
+
+app.post('/api/chat/queue', (req, res) => {
+  try {
+    const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
+    if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
+    messageQueue.push({ text, attachments });
+    res.json({ ok: true, queueLength: messageQueue.length });
+  } catch {
+    res.status(500).json({ error: 'queue-failed' });
+  }
+});
+
+app.get('/api/chat/queue', (_req, res) => {
+  res.json({ queue: messageQueue, length: messageQueue.length });
+});
+
+app.delete('/api/chat/queue', (_req, res) => {
+  messageQueue.length = 0;
+  res.json({ ok: true });
+});
+
+// Steer: cancel current task, then immediately send a new message
+app.post('/api/chat/steer', async (req, res) => {
+  try {
+    const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
+    if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    // Cancel current execution
+    agent.cancel();
+    // Small delay to let cancellation propagate
+    await new Promise(resolve => setTimeout(resolve, 100));
+    // Send the steer message
+    let fullText = text;
+    if (attachments && attachments.length > 0) {
+      const attachmentSection = attachments.map(a => `\n\n--- File: ${a.name} ---\n${a.content}`).join('');
+      fullText = text + attachmentSection;
+    }
+    const instruction = sessionSettings.mode === 'ask'
+      ? 'Only provide an answer/explanation. Do NOT execute any tools, make changes, or take actions. Just reply with knowledge.'
+      : undefined;
+    const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
+    res.json({ ok: true, message });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'steer-failed' });
+  }
+});
+
+// Stop and Send: cancel current task, then send a new message fresh
+app.post('/api/chat/stop-and-send', async (req, res) => {
+  try {
+    const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
+    if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    // Cancel current execution
+    agent.cancel();
+    await new Promise(resolve => setTimeout(resolve, 150));
+    ensureSubscribed();
+    agent.setPlanMode(sessionSettings.mode === 'plan');
+    (agent as unknown as { autoApproveTools: boolean }).autoApproveTools = (sessionSettings.approval === 'auto' || sessionSettings.approval === 'moderate');
+    let fullText = text;
+    if (attachments && attachments.length > 0) {
+      const attachmentSection = attachments.map(a => `\n\n--- File: ${a.name} ---\n${a.content}`).join('');
+      fullText = text + attachmentSection;
+    }
+    const instruction = sessionSettings.mode === 'ask'
+      ? 'Only provide an answer/explanation. Do NOT execute any tools, make changes, or take actions. Just reply with knowledge.'
+      : sessionSettings.mode === 'plan'
+        ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
+        : undefined;
+    const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
+    res.json({ ok: true, message });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'stop-and-send-failed' });
   }
 });
 

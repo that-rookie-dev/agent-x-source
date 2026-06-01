@@ -63,6 +63,8 @@ export { reminderSet, reminderList, reminderCancel } from './tools/index.js';
 export { agentXConfigSchema } from './config/ConfigSchema.js';
 export * from './config/paths.js';
 export { SecretSauceManager, CrewManager, SoulManager, MemoryManager, DiaryManager, IdentityManager } from './secret-sauce/index.js';
+export { CrewOrchestrator } from './agent/CrewOrchestrator.js';
+export type { CrewMember, CrewMessage, OrchestratorEvent } from './agent/CrewOrchestrator.js';
 export { TelegramBridge, TelegramStore } from './telegram/index.js';
 export type { TelegramConfig, TelegramBridgeStatus } from './telegram/index.js';
 export { DiscordBridge, DiscordStore } from './discord/index.js';

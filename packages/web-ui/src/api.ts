@@ -45,9 +45,11 @@ export const health = {
 export const providers = {
   available: () => request<{ providers: ProviderInfo[] }>('/providers/available').then(r => r.providers),
   configured: () => request<{ active: string; providers: ConfiguredProvider[] }>('/providers').then(r => r.providers),
+  active: () => request<{ active: string; providers: ConfiguredProvider[] }>('/providers').then(r => r.active),
   validate: (provider: string, apiKey?: string, baseUrl?: string) => request<{ valid: boolean; error?: string }>('/provider/validate', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) }),
   configure: (provider: string, apiKey?: string, baseUrl?: string) => request<{ ok: boolean }>('/provider/configure', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) }),
   models: (provider: string) => request<ModelInfo[]>('/provider/models?provider=' + provider),
+  switch: (provider: string) => request<{ ok: boolean; provider: string; model: string }>('/provider/switch', { method: 'POST', body: JSON.stringify({ provider }) }),
   createProfile: (providerId: string, label: string, apiKey: string, baseUrl?: string) => request<{ ok: boolean }>('/provider/profile', { method: 'POST', body: JSON.stringify({ providerId, label, apiKey, baseUrl }) }),
   switchProfile: (providerId: string, profileId: string) => request<{ ok: boolean }>('/provider/profile/switch', { method: 'POST', body: JSON.stringify({ providerId, profileId }) }),
 };
@@ -74,6 +76,11 @@ export const chat = {
   cancel: () => request<{ ok: boolean }>('/chat/cancel', { method: 'POST' }),
   history: () => request<ChatMessage[]>('/chat/history'),
   clear: () => request<{ ok: boolean }>('/chat/clear', { method: 'POST' }),
+  queue: (text: string, attachments?: { name: string; content: string }[]) => request<{ ok: boolean; queueLength: number }>('/chat/queue', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
+  getQueue: () => request<{ queue: Array<{ text: string }>; length: number }>('/chat/queue'),
+  clearQueue: () => request<{ ok: boolean }>('/chat/queue', { method: 'DELETE' }),
+  steer: (text: string, attachments?: { name: string; content: string }[]) => request<{ ok: boolean; message: ChatMessage }>('/chat/steer', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
+  stopAndSend: (text: string, attachments?: { name: string; content: string }[]) => request<{ ok: boolean; message: ChatMessage }>('/chat/stop-and-send', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
 };
 
 // ─── Sessions ───
@@ -89,6 +96,21 @@ export const sessions = {
 // ─── Permissions ───
 export const permissions = {
   respond: (choice: 'allow_once' | 'allow_always' | 'deny') => request<{ ok: boolean }>('/permission/respond', { method: 'POST', body: JSON.stringify({ choice }) }),
+};
+
+// ─── System ───
+export const system = {
+  cwd: () => request<{ cwd: string }>('/cwd'),
+};
+
+// ─── Session Settings ───
+export type AgentMode = 'agent' | 'ask' | 'plan';
+export type ApprovalType = 'default' | 'moderate' | 'auto';
+
+export const sessionSettings = {
+  get: () => request<{ mode: AgentMode; approval: ApprovalType }>('/session/settings'),
+  setMode: (mode: AgentMode) => request<{ ok: boolean; mode: AgentMode }>('/session/mode', { method: 'POST', body: JSON.stringify({ mode }) }),
+  setApproval: (approval: ApprovalType) => request<{ ok: boolean; approval: ApprovalType }>('/session/approval', { method: 'POST', body: JSON.stringify({ approval }) }),
 };
 
 // ─── Tools ───
