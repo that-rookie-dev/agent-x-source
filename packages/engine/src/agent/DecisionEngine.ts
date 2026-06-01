@@ -187,7 +187,7 @@ export class DecisionEngine {
     if (conjunctions >= 2) score += 1;
 
     // Numbered lists or bullet points
-    if (/\d+[\.\)]\s/.test(lower) || /[-*]\s/.test(lower)) score += 1;
+    if (/\d+[.)\s]/.test(lower) || /[-*]\s/.test(lower)) score += 1;
 
     return score;
   }

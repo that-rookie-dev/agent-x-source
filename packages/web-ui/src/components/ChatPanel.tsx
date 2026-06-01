@@ -386,9 +386,6 @@ export function ChatPanel() {
     return (
       <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: colors.bg.primary }}>
         <Box sx={{ px: 2, py: 1.5, borderBottom: `1px solid ${colors.border.default}`, display: 'flex', alignItems: 'center', gap: 1 }}>
-          <IconButton size="small" onClick={() => setView('chat')} sx={{ color: colors.text.secondary }}>
-            <ArrowBackIcon sx={{ fontSize: 18 }} />
-          </IconButton>
           <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, flex: 1 }}>Sessions</Typography>
           <Button size="small" startIcon={<AddIcon sx={{ fontSize: 14 }} />} onClick={handleNewSession} sx={{ color: colors.accent.blue, fontSize: '0.65rem', textTransform: 'none' }}>
             New Session
