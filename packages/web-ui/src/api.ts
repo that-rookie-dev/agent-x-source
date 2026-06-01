@@ -45,16 +45,16 @@ export const health = {
 export const providers = {
   available: () => request<ProviderInfo[]>('/providers/available'),
   configured: () => request<ConfiguredProvider[]>('/providers'),
-  validate: (providerId: string, apiKey: string, baseUrl?: string) => request<{ valid: boolean; error?: string }>('/provider/validate', { method: 'POST', body: JSON.stringify({ providerId, apiKey, baseUrl }) }),
-  configure: (providerId: string, apiKey: string, baseUrl?: string) => request<{ ok: boolean }>('/provider/configure', { method: 'POST', body: JSON.stringify({ providerId, apiKey, baseUrl }) }),
-  models: (providerId: string) => request<ModelInfo[]>('/provider/models?providerId=' + providerId),
+  validate: (provider: string, apiKey: string, baseUrl?: string) => request<{ valid: boolean; error?: string }>('/provider/validate', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) }),
+  configure: (provider: string, apiKey: string, baseUrl?: string) => request<{ ok: boolean }>('/provider/configure', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) }),
+  models: (provider: string) => request<ModelInfo[]>('/provider/models?provider=' + provider),
   createProfile: (providerId: string, label: string, apiKey: string, baseUrl?: string) => request<{ ok: boolean }>('/provider/profile', { method: 'POST', body: JSON.stringify({ providerId, label, apiKey, baseUrl }) }),
   switchProfile: (providerId: string, profileId: string) => request<{ ok: boolean }>('/provider/profile/switch', { method: 'POST', body: JSON.stringify({ providerId, profileId }) }),
 };
 
 // ─── Models ───
 export const models = {
-  switch: (model: string) => request<{ ok: boolean }>('/model/switch', { method: 'POST', body: JSON.stringify({ model }) }),
+  switch: (modelId: string) => request<{ ok: boolean }>('/model/switch', { method: 'POST', body: JSON.stringify({ modelId }) }),
   current: () => request<{ model: string; provider: string }>('/models'),
 };
 
@@ -62,7 +62,7 @@ export const models = {
 export const crews = {
   list: () => request<Crew[]>('/crews'),
   current: () => request<Crew>('/crew/current'),
-  switch: (crewId: string) => request<{ ok: boolean }>('/crew/switch', { method: 'POST', body: JSON.stringify({ crewId }) }),
+  switch: (id: string) => request<{ ok: boolean }>('/crew/switch', { method: 'POST', body: JSON.stringify({ id }) }),
   create: (data: CrewInput) => request<{ ok: boolean; crew: Crew }>('/crews', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: Partial<CrewInput>) => request<{ ok: boolean }>(`/crews/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) => request<{ ok: boolean }>(`/crews/${id}`, { method: 'DELETE' }),

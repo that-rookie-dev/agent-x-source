@@ -66,61 +66,67 @@ export function ChatPanel() {
         const last = msgs[msgs.length - 1];
 
         switch (ev.type) {
-          case 'stream_start':
-            msgs.push({ id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true });
+          case 'loading_start':
+            if (!last || last.role !== 'assistant' || !last.streaming) {
+              msgs.push({ id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true });
+            }
             setStreaming(true);
             break;
 
-          case 'stream_token':
-          case 'token':
+          case 'stream_chunk':
             if (last?.role === 'assistant' && last.streaming) {
-              last.content += (ev.token as string) ?? '';
+              last.content = (ev.fullContent as string) ?? (last.content + ((ev.content as string) ?? ''));
             }
             break;
 
-          case 'stream_end':
-          case 'response_complete':
+          case 'loading_end':
             if (last?.role === 'assistant') last.streaming = false;
             setStreaming(false);
             break;
 
-          case 'thinking_start':
-          case 'reasoning':
+          case 'message_received':
+            // Final complete message from engine
             if (last?.role === 'assistant') {
-              last.thinking = (last.thinking ?? '') + ((ev.content as string) ?? '');
+              const msg = ev.message as { content?: string } | undefined;
+              if (msg?.content) last.content = msg.content;
+              last.streaming = false;
             }
+            setStreaming(false);
             break;
 
-          case 'tool_start':
-          case 'tool_call': {
+          case 'tool_executing': {
             if (last?.role === 'assistant') {
-              const tc: ToolCall = { id: (ev.callId as string) ?? crypto.randomUUID(), name: (ev.toolName ?? ev.name) as string, args: ev.args as string, status: 'running' };
-              last.toolCalls = [...(last.toolCalls ?? []), tc];
+              const toolName = (ev.tool as string) ?? 'unknown';
+              // Sub-agent spawning is a special tool call
+              if (toolName === 'delegate_to_subagent') {
+                const sa: SubAgent = { id: crypto.randomUUID(), name: 'Sub-Agent', task: (ev.description as string) ?? '', status: 'running' };
+                last.subAgents = [...(last.subAgents ?? []), sa];
+              } else {
+                const tc: ToolCall = { id: crypto.randomUUID(), name: toolName, args: (ev.description as string) ?? '', status: 'running' };
+                last.toolCalls = [...(last.toolCalls ?? []), tc];
+              }
             }
             break;
           }
 
-          case 'tool_end':
-          case 'tool_result': {
-            if (last?.role === 'assistant' && last.toolCalls) {
-              const tc = last.toolCalls.find((t) => t.id === ev.callId || t.name === ev.toolName);
-              if (tc) { tc.status = 'done'; tc.result = (ev.result ?? ev.output) as string; }
-            }
-            break;
-          }
-
-          case 'sub_agent_spawn': {
+          case 'tool_complete': {
             if (last?.role === 'assistant') {
-              const sa: SubAgent = { id: (ev.agentId as string) ?? crypto.randomUUID(), name: (ev.agentName as string) ?? 'Sub-Agent', task: (ev.task as string) ?? '', status: 'running' };
-              last.subAgents = [...(last.subAgents ?? []), sa];
-            }
-            break;
-          }
-
-          case 'sub_agent_complete': {
-            if (last?.role === 'assistant' && last.subAgents) {
-              const sa = last.subAgents.find((a) => a.id === ev.agentId);
-              if (sa) { sa.status = 'done'; sa.result = ev.result as string; }
+              const toolName = (ev.tool as string) ?? '';
+              if (toolName === 'delegate_to_subagent' && last.subAgents) {
+                const sa = last.subAgents.find((a) => a.status === 'running');
+                if (sa) {
+                  sa.status = 'done';
+                  const result = ev.result as { output?: string; success?: boolean } | string | undefined;
+                  sa.result = typeof result === 'string' ? result : result?.output ?? 'Done';
+                }
+              } else if (last.toolCalls) {
+                const tc = last.toolCalls.find((t) => t.name === toolName && t.status === 'running');
+                if (tc) {
+                  tc.status = 'done';
+                  const result = ev.result;
+                  tc.result = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+                }
+              }
             }
             break;
           }
@@ -132,20 +138,33 @@ export function ChatPanel() {
             break;
           }
 
-          case 'plan_update': {
+          case 'plan_generated': {
             if (last?.role === 'assistant') {
-              last.plan = ev.steps as string[];
+              const plan = ev.plan as { steps?: { description: string }[] } | undefined;
+              if (plan?.steps) {
+                last.plan = plan.steps.map((s) => s.description);
+              }
             }
             break;
           }
 
-          case 'permission_request':
-            setPermissionPrompt(ev.description as string);
+          case 'plan_step_executing': {
+            // Could update plan step status in future
+            break;
+          }
+
+          case 'plan_step_complete':
+          case 'plan_step_failed': {
+            break;
+          }
+
+          case 'permission_required':
+            setPermissionPrompt((ev.tool as string) + ': ' + ((ev.path as string) ?? ''));
             break;
 
           case 'error':
             if (last?.role === 'assistant') {
-              last.content += `\n\n⚠️ Error: ${ev.message ?? ev.error}`;
+              last.content += `\n\n[ERROR] ${ev.message ?? ev.error}`;
               last.streaming = false;
             }
             setStreaming(false);
