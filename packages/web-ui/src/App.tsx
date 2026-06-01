@@ -1,21 +1,36 @@
-import { useState, useCallback } from 'react';
+import { useEffect } from 'react';
 import Box from '@mui/material/Box';
-import { Sidebar } from './components/Sidebar';
-import { ChatPanel } from './components/ChatPanel';
-import { Header } from './components/Header';
+import CircularProgress from '@mui/material/CircularProgress';
+import { useApp } from './store/AppContext';
+import { DockingStation } from './pages/DockingStation';
+import { SetupAuth } from './pages/SetupAuth';
+import { SetupWizard } from './pages/SetupWizard';
+import { Login } from './pages/Login';
+import { Console } from './pages/Console';
 
 export function App() {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const { view, initialize } = useApp();
 
-  const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), []);
+  useEffect(() => { initialize(); }, [initialize]);
 
-  return (
-    <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      {sidebarOpen && <Sidebar />}
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        <Header onToggleSidebar={toggleSidebar} sidebarOpen={sidebarOpen} />
-        <ChatPanel />
-      </Box>
-    </Box>
-  );
+  switch (view) {
+    case 'loading':
+      return (
+        <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CircularProgress size={32} sx={{ color: '#fff' }} />
+        </Box>
+      );
+    case 'docking':
+      return <DockingStation />;
+    case 'setup-auth':
+      return <SetupAuth />;
+    case 'setup-wizard':
+      return <SetupWizard />;
+    case 'login':
+      return <Login />;
+    case 'console':
+      return <Console />;
+    default:
+      return null;
+  }
 }
