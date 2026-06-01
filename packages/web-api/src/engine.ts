@@ -125,11 +125,14 @@ export function getEngine(): EngineState {
     discordBridge: null,
     slackBridge: null,
     emailBridge: null,
+    redisRuntime: null,
+    webhookRuntime: null,
+    sqliteBrowser: null,
     mcpBridge,
     dek: null,
   };
 
-  return state;
+  return state!;
 }
 
 /**
@@ -278,12 +281,11 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
         botToken: slConfig['botToken'] as string,
         appToken: slConfig['appToken'] as string,
       });
-      bridge.setAgentFactory(async (userId: string) => {
+      bridge.setAgentFactory((_userId: string) => {
         const userCfg = eng.configManager.load();
-        const userProvider = userCfg.provider.activeProvider as ProviderId;
         const userCrew = eng.crewManager.getActive();
         const userSession = eng.sessionManager.createSession(
-          userProvider,
+          userCfg.provider.activeProvider,
           userCfg.provider.activeModel,
           userCrew.id,
           process.cwd(),
@@ -374,8 +376,6 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     if (sqlPlugin?.enabled) {
       eng.sqliteBrowser = new SQLiteBrowserRuntime(
         { readOnly: (sqlPlugin.config['readOnly'] as boolean) ?? true },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        eng.sessionManager.getStore?.() as any,
       );
     }
   }

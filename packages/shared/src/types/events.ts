@@ -5,7 +5,7 @@ import type { ToolResult } from './tool.js';
 export interface PlanStep {
   id: string;
   description: string;
-  status: 'pending' | 'approved' | 'rejected' | 'executing' | 'done' | 'failed';
+  status: 'pending' | 'approved' | 'rejected' | 'awaiting_approval' | 'executing' | 'done' | 'failed' | 'skipped';
   tool?: string;
   targetPath?: string;
 }

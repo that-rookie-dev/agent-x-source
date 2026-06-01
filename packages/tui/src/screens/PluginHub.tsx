@@ -4,7 +4,7 @@ import TextInput from 'ink-text-input';
 import { COLORS } from '../theme/colors.js';
 import { ScrollableList } from '../components/ScrollableList.js';
 import { Banner } from '../components/Banner.js';
-import { PluginRegistry, PostgresStorageAdapter, getBuiltinPlugin, getMarketplaceExtensions, getMarketplaceExtension } from '@agentx/engine';
+import { PluginRegistry, PostgresStorageAdapter, getBuiltinPlugin, getMarketplaceExtensions } from '@agentx/engine';
 import type { MCPBridge, ACPBridge, MarketplaceExtension } from '@agentx/engine';
 import type { PluginHubEntry, InstalledPlugin, PluginConfigField } from '@agentx/shared';
 
@@ -123,14 +123,14 @@ export const PluginHub: React.FC<PluginHubProps> = ({ currentProvider, currentMo
         setTab((prev) => {
           const order: HubTab[] = ['installed', 'available', 'mcp', 'acp', 'marketplace'];
           const idx = order.indexOf(prev);
-          return order[Math.max(0, idx - 1)];
+          return order[Math.max(0, idx - 1)] ?? prev;
         });
       }
       if (key.rightArrow || input === 'l') {
         setTab((prev) => {
           const order: HubTab[] = ['installed', 'available', 'mcp', 'acp', 'marketplace'];
           const idx = order.indexOf(prev);
-          return order[Math.min(order.length - 1, idx + 1)];
+          return order[Math.min(order.length - 1, idx + 1)] ?? prev;
         });
       }
     } else if (view === 'detail_installed') {
@@ -534,7 +534,7 @@ export const PluginHub: React.FC<PluginHubProps> = ({ currentProvider, currentMo
   // ── Detail: ACP server ──
   if (view === 'detail_acp' && focusPlugin && acpBridge) {
     const serverId = (focusPlugin as { id: string }).id;
-    const config = acpBridge.getServerConfig(serverId) ?? {};
+    const config = (acpBridge.getServerConfig(serverId) ?? {}) as { name?: string; command?: string; args?: string[]; host?: string; port?: number; enabled?: boolean };
     const status = acpServerStatus.find((s) => s.id === serverId);
     return (
       <Box flexDirection="column" padding={1}>

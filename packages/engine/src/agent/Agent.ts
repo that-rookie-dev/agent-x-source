@@ -1,10 +1,10 @@
-// @ts-nocheck — TODO: fix type drift with CompletionChunk, StepStatus, ProviderSettings
 import type {
   Message,
   EngineEvent,
   CompletionRequest,
   CompletionMessage,
   CompletionToolCall,
+  CompletionChunk,
   ProviderId,
   AgentXConfig,
   RemediationAction,
@@ -58,8 +58,6 @@ import { SkillGenerator } from './SkillGenerator.js';
 import { ReflectionLoop } from './ReflectionLoop.js';
 import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
 import { ResearchEngine } from '../reasoning/ResearchEngine.js';
-import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
-import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 
 export interface AgentOptions {
   config: AgentXConfig;
@@ -94,7 +92,7 @@ export class Agent {
   private planMode = false;
   private currentPlan: Plan | null = null;
   private pendingPlanApproval: ((approved: boolean) => void) | null = null;
-  private pendingStepApproval: ((stepId: string, approved: boolean) => void) | null = null;
+  private pendingStepApproval: ((stepId: string, approved: boolean, description?: string) => void) | null = null;
   private fallbackModel: string | null = null;
   private gitAutoCommit = false;
   private gitManager: GitManager | null = null;
@@ -108,14 +106,11 @@ export class Agent {
   private treeOfThoughts: TreeOfThoughts | null = null;
   private researchEngine: ResearchEngine | null = null;
   private lastRagResults: Array<{ content: string; score?: number; metadata?: Record<string, unknown> }> = [];
-  private clarificationPending = false;
   private clarificationResolve: ((response: string) => void) | null = null;
   private agentBus: AgentBus;
   private specialistRegistry: SpecialistRegistry;
   private skillGenerator: SkillGenerator;
   private reflectionLoop: ReflectionLoop;
-  private treeOfThoughts: TreeOfThoughts | null = null;
-  private researchEngine: ResearchEngine | null = null;
   private toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
 
   /**
@@ -497,7 +492,7 @@ export class Agent {
   }
 
   get planModeEnabled(): boolean {
-    return this._planModeEnabled;
+    return this.planMode;
   }
 
   get ragIndexStats(): { indexedCount: number; indexedAt: number | null } {
@@ -582,7 +577,7 @@ export class Agent {
 
   private async checkConnectivity(baseUrl?: string): Promise<boolean> {
     if (this.connectivityChecked) return true;
-    const url = baseUrl ?? this.config.provider.baseUrl;
+    const url = baseUrl ?? this.getBaseUrl();
     if (!url) return true;
     try {
       const controller = new AbortController();
@@ -620,13 +615,20 @@ Example: [{"description": "Step 1 description"}, {"description": "Step 2 descrip
 Return ONLY valid JSON, no other text.`;
 
     try {
-      const provider = ProviderFactory.createProvider(this.config);
-      const response = await provider.complete([{ role: 'user', content: planPrompt }], {
+      let text = '';
+      const stream = this.provider.complete({
+        messages: [{ role: 'user', content: planPrompt }],
         model: this.config.provider.activeModel,
         maxTokens: 2000,
+        stream: true,
       });
+      for await (const chunk of stream) {
+        if (chunk.type === 'text_delta' && chunk.content) {
+          text += chunk.content;
+        }
+      }
 
-      const text = response.content.trim();
+      text = text.trim();
       const jsonStart = text.indexOf('[');
       const jsonEnd = text.lastIndexOf(']');
       if (jsonStart === -1 || jsonEnd === -1) throw new Error('No JSON array found in plan response');
@@ -699,7 +701,7 @@ Return ONLY valid JSON, no other text.`;
         this.lastRagResults = docs.map((d) => ({ content: d.content, score: d.score, metadata: d.metadata }));
         this.emit({ type: 'rag_queried', resultCount: docs.length, elapsed: Date.now() - ragStart });
       } catch (e) {
-        getLogger().warn('RAG_QUERY', e);
+        getLogger().warn('RAG_QUERY', e instanceof Error ? e.message : String(e));
       }
     }
 
@@ -768,7 +770,7 @@ Return ONLY valid JSON, no other text.`;
 
           // Wait for user to approve/skip/modify this step
           const stepAction = await new Promise<{ action: 'approve' | 'skip' | 'modify'; description?: string }>((resolve) => {
-            this.pendingStepApproval = (stepId: string, approved: boolean, description?: string) => {
+            this.pendingStepApproval = (_stepId: string, approved: boolean, description?: string) => {
               if (!approved) {
                 resolve({ action: 'skip' });
               } else if (description) {
@@ -824,7 +826,8 @@ Return ONLY valid JSON, no other text.`;
 
       // Auto-generate skill if task was novel
       if (this.skillGenerator.shouldGenerateSkill(content, this.toolCallLogForReflection)) {
-        void this.skillGenerator.generateSkill(this, content, this.toolCallLogForReflection as Array<{ name: string; args: Record<string, unknown> }>, assistantMessage.content);
+        const toolsForSkill = this.toolCallLogForReflection.map((t) => ({ name: t.name, args: {} as Record<string, unknown> }));
+        void this.skillGenerator.generateSkill(this, content, toolsForSkill, assistantMessage.content);
       }
 
       // Run reflection loop for continuous improvement
@@ -878,7 +881,7 @@ Return ONLY valid JSON, no other text.`;
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       // ─── SMART TOOL SELECTION ───
       // Filter tools based on detected intent to reduce token usage
-      let filteredTools = this.toolRegistry?.list() ?? [];
+      let filteredTools: Array<{ id: string; name: string; modelDescription: string; schema: unknown; category: string; riskLevel: string }> = this.toolRegistry?.list() ?? [];
       if (this.currentIntent && this.toolRegistry) {
         const categoryMap = new Map<string, string>();
         for (const t of this.toolRegistry.list()) {
@@ -948,7 +951,8 @@ Return ONLY valid JSON, no other text.`;
       // Stream response with retry support
       let fullContent = '';
       const toolCalls: CompletionToolCall[] = [];
-      let currentToolCall: Partial<CompletionToolCall> | null = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let currentToolCall: any = null;
       let lastUsage: { inputTokens: number; outputTokens: number } | undefined;
 
       const stream = await this.retryWithBackoff(async () => {
@@ -956,27 +960,35 @@ Return ONLY valid JSON, no other text.`;
         const iter = this.provider.complete(request);
         const it = iter[Symbol.asyncIterator]();
         const first = await it.next();
-        return { it, first };
+        return { it, first } as { it: AsyncIterator<CompletionChunk>; first: IteratorResult<CompletionChunk> };
       }, `LLM completion (round ${round})`);
 
       // Process first chunk
-      if (stream.first.value) {
-        const chunk = stream.first.value as any;
+      if (!stream.first.done && stream.first.value) {
+        const chunk: CompletionChunk = stream.first.value;
         if (chunk.type === 'text_delta' && chunk.content) {
           fullContent += chunk.content;
           this.emit({ type: 'stream_chunk', content: chunk.content, fullContent });
         } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
-          if (chunk.toolCall.id) {
-            if (currentToolCall?.id) toolCalls.push(currentToolCall as CompletionToolCall);
+          const tc = chunk.toolCall;
+          if (tc.id) {
+            // Push previous tool call if exists
+            const prev = currentToolCall;
+            if (prev && prev.id) {
+              toolCalls.push(prev as CompletionToolCall);
+            }
             currentToolCall = {
-              id: chunk.toolCall.id,
+              id: tc.id,
               type: 'function',
-              function: { name: chunk.toolCall.function?.name ?? '', arguments: chunk.toolCall.function?.arguments ?? '' },
-              thought_signature: (chunk.toolCall as Record<string, unknown>)['thought_signature'] as string | undefined,
+              function: { name: tc.function?.name ?? '', arguments: tc.function?.arguments ?? '' },
+              thought_signature: (tc as Record<string, unknown>)['thought_signature'] as string | undefined,
             };
-          } else if (currentToolCall) {
-            if (chunk.toolCall.function?.name) currentToolCall.function = { name: (currentToolCall.function?.name ?? '') + chunk.toolCall.function.name, arguments: currentToolCall.function?.arguments ?? '' };
-            if (chunk.toolCall.function?.arguments) currentToolCall.function = { name: currentToolCall.function?.name ?? '', arguments: (currentToolCall.function?.arguments ?? '') + chunk.toolCall.function.arguments };
+          } else {
+            const cur = currentToolCall;
+            if (cur && cur.function) {
+              if (tc.function?.name) cur.function.name += tc.function.name;
+              if (tc.function?.arguments) cur.function.arguments += tc.function.arguments;
+            }
           }
         } else if (chunk.type === 'done' && chunk.usage) {
           lastUsage = chunk.usage;
@@ -984,7 +996,9 @@ Return ONLY valid JSON, no other text.`;
       }
 
       // Process remaining chunks
-      for await (const chunk of stream.it) {
+      let next = await stream.it.next();
+      while (!next.done) {
+        const chunk = next.value;
         if (chunk.type === 'text_delta' && chunk.content) {
           fullContent += chunk.content;
           this.emit({
@@ -1025,6 +1039,7 @@ Return ONLY valid JSON, no other text.`;
         } else if (chunk.type === 'done' && chunk.usage) {
           lastUsage = chunk.usage;
         }
+        next = await stream.it.next();
       }
 
       // Push last accumulated tool call
@@ -1049,7 +1064,6 @@ Return ONLY valid JSON, no other text.`;
           if (tc.function.name === 'ask_clarification') {
             let args: Record<string, unknown> = {};
             try { args = JSON.parse(tc.function.arguments); } catch { /* ignore */ }
-            this.clarificationPending = true;
             this.emit({
               type: 'clarification_required',
               question: String(args['question'] ?? 'I need more information to proceed.'),
@@ -1059,7 +1073,6 @@ Return ONLY valid JSON, no other text.`;
             const userResponse = await new Promise<string>((resolve) => {
               this.clarificationResolve = resolve;
             });
-            this.clarificationPending = false;
             this.clarificationResolve = null;
             this.messages.push({
               role: 'tool',
@@ -1224,28 +1237,50 @@ Return ONLY valid JSON, no other text.`;
 
     const stream = this.provider.complete(request);
     let fullContent = '';
+    const toolCalls: CompletionToolCall[] = [];
+    let currentToolCall: Partial<CompletionToolCall> | null = null;
 
     for await (const chunk of stream) {
       if (chunk.type === 'text_delta' && chunk.content) {
         fullContent += chunk.content;
-      } else if (chunk.type === 'tool_use' && chunk.name && chunk.input) {
-        this.emit({ type: 'tool_executing', tool: chunk.name, description: `Plan step: ${stepDescription}`, startTime: Date.now() });
-        try {
-          const result = await this.toolExecutor?.execute(chunk.name, chunk.input as Record<string, unknown>, this.sessionId);
-          if (result) {
-            // Auto-commit after file edit operations in plan steps
-            if (this.gitAutoCommit && this.gitManager && this.isEditTool(chunk.name) && result.success) {
-              const filePath = (chunk.input as Record<string, unknown>)['path'] ?? (chunk.input as Record<string, unknown>)['file'] ?? '';
-              if (typeof filePath === 'string' && filePath) {
-                this.gitManager.commitAfterEdit(filePath, this.sessionId);
-              }
-            }
-            this.emit({ type: 'tool_complete', tool: chunk.name, result, elapsed: 0 });
+      } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
+        if (chunk.toolCall.id) {
+          if (currentToolCall?.id) toolCalls.push(currentToolCall as CompletionToolCall);
+          currentToolCall = {
+            id: chunk.toolCall.id,
+            type: 'function',
+            function: { name: chunk.toolCall.function?.name ?? '', arguments: chunk.toolCall.function?.arguments ?? '' },
+          };
+        } else if (currentToolCall) {
+          if (chunk.toolCall.function?.name) {
+            currentToolCall.function = { name: (currentToolCall.function?.name ?? '') + chunk.toolCall.function.name, arguments: currentToolCall.function?.arguments ?? '' };
           }
-        } catch (err) {
-          const errorResult: ToolResult = { success: false, output: (err as Error).message, error: 'STEP_ERROR' };
-          this.emit({ type: 'tool_complete', tool: chunk.name, result: errorResult, elapsed: 0 });
+          if (chunk.toolCall.function?.arguments) {
+            currentToolCall.function = { name: currentToolCall.function?.name ?? '', arguments: (currentToolCall.function?.arguments ?? '') + chunk.toolCall.function.arguments };
+          }
         }
+      }
+    }
+    if (currentToolCall?.id) toolCalls.push(currentToolCall as CompletionToolCall);
+
+    // Execute accumulated tool calls
+    for (const tc of toolCalls) {
+      const toolStartTime = Date.now();
+      this.emit({ type: 'tool_executing', tool: tc.function.name, description: `Plan step: ${stepDescription}`, startTime: toolStartTime });
+      try {
+        let args: Record<string, unknown> = {};
+        try { args = JSON.parse(tc.function.arguments); } catch { /* bad JSON */ }
+        const result = await this.toolExecutor?.execute(tc.function.name, args, this.sessionId);
+        if (result) {
+          if (this.gitAutoCommit && this.gitManager && this.isEditTool(tc.function.name) && result.success) {
+            const filePath = (args['path'] ?? args['file'] ?? '') as string;
+            if (filePath) this.gitManager.commitAfterEdit(filePath, this.sessionId);
+          }
+          this.emit({ type: 'tool_complete', tool: tc.function.name, result, elapsed: Date.now() - toolStartTime });
+        }
+      } catch (err) {
+        const errorResult: ToolResult = { success: false, output: (err as Error).message, error: 'STEP_ERROR' };
+        this.emit({ type: 'tool_complete', tool: tc.function.name, result: errorResult, elapsed: Date.now() - toolStartTime });
       }
     }
 
@@ -1739,7 +1774,7 @@ Only include specialists that are actually needed for this task.`;
     const lines = decomposition.split('\n');
     for (const line of lines) {
       const match = line.match(/^(\w+):\s*(.+)/);
-      if (match) {
+      if (match && match[1] && match[2]) {
         const spec = match[1].toLowerCase() as SpecialistType;
         const instruction = match[2];
         if (this.specialistRegistry.getByType(spec)) {
@@ -1777,7 +1812,7 @@ Only include specialists that are actually needed for this task.`;
     const subResults = await Promise.all(subPromises);
 
     // Synthesize results
-    const parts = subResults.map((r, i) =>
+    const parts = subResults.map((r) =>
       `--- ${r.specialist.toUpperCase()} (${r.elapsed}ms) ---\n${r.output.slice(0, 2000)}`
     );
     const synthesisPrompt = `Synthesize these specialist reports into a single coherent response:\n\n${parts.join('\n\n')}\n\nConsolidated response:`;
@@ -1801,16 +1836,6 @@ Only include specialists that are actually needed for this task.`;
     this.emit({ type: 'decomposition_complete', subResultCount: subResults.length, totalElapsed });
 
     return { subResults, synthesized, totalElapsed };
-  }
-
-  /**
-   * Run a full research pipeline: decompose → parallel search → synthesize.
-   */
-  async research(question: string): Promise<string> {
-    if (!this.researchEngine) {
-      this.researchEngine = new ResearchEngine();
-    }
-    return this.researchEngine.research(question, this);
   }
 
   /**

@@ -797,8 +797,9 @@ app.put('/api/todos/:itemId', (req, res) => {
       ? JSON.parse(readFileSync(todoPath, 'utf-8') || '[]') : [];
     const idx = todos.findIndex((t) => t.id === req.params['itemId']);
     if (idx >= 0) {
-      todos[idx].status = (req.body as Record<string, string>)['status'] || todos[idx].status;
-      todos[idx].title = (req.body as Record<string, string>)['title'] || todos[idx].title;
+      const todo = todos[idx]!;
+      todo.status = (req.body as Record<string, string>)['status'] || todo.status;
+      todo.title = (req.body as Record<string, string>)['title'] || todo.title;
     }
     atomicWriteFileSync(todoPath, JSON.stringify(todos, null, 2));
     res.json({ ok: true });
@@ -1007,7 +1008,14 @@ app.get('/api/slack/status', (_req, res) => {
 // ───── Email Bridge ─────
 app.post('/api/email/start', async (req, res) => {
   try {
-    const { smtpHost, smtpPort, smtpUser, smtpPass, fromAddress, imapHost, imapPort } = req.body as Record<string, string>;
+    const body = req.body as Record<string, string | undefined>;
+    const smtpHost = body['smtpHost'] ?? '';
+    const smtpPort = body['smtpPort'] ?? '';
+    const smtpUser = body['smtpUser'] ?? '';
+    const smtpPass = body['smtpPass'] ?? '';
+    const fromAddress = body['fromAddress'] ?? '';
+    const imapHost = body['imapHost'];
+    const imapPort = body['imapPort'];
     const eng = getEngine();
     const existing = eng.pluginRegistry.getPlugin('email');
     const config = { smtpHost, smtpPort, smtpUser, smtpPass, fromAddress, imapHost, imapPort };

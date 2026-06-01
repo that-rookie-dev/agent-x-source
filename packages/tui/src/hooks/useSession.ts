@@ -56,6 +56,11 @@ interface UseSessionReturn {
   messageCount: number;
   sessionCreatedAt: string;
   totalCost: number;
+  watcherCount: number;
+  schedulerCount: number;
+  ragIndexStats: { indexedCount: number; indexedAt: number | null };
+  currentTaskType: string | null;
+  pendingDiff: { tool: string; filePath: string; diff: string } | null;
   isIndexing: boolean;
   indexingProgress: { indexed: number; total: number } | null;
 }
@@ -95,8 +100,8 @@ export function useSession(
   const [planMode, setPlanModeState] = useState(false);
   const [checkpoints, setCheckpoints] = useState<Array<{ label: string; messages: Message[]; createdAt: string }>>([]);
   const [pendingDiff, setPendingDiff] = useState<{ tool: string; filePath: string; diff: string } | null>(null);
-  const [awaitingStepApproval, setAwaitingStepApproval] = useState(false);
-  const [pendingStepId, setPendingStepId] = useState<string | null>(null);
+  const [_awaitingStepApproval, setAwaitingStepApproval] = useState(false);
+  const [_pendingStepId, setPendingStepId] = useState<string | null>(null);
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexingProgress, setIndexingProgress] = useState<{ indexed: number; total: number } | null>(null);
 
@@ -215,7 +220,7 @@ export function useSession(
           persistMessage(event.message);
           // Budget check
           if (maxBudgetRef.current > 0 && agent.tokens.totalCost >= maxBudgetRef.current) {
-            agent.cancelProcessing();
+            agent.cancel();
             setError(`💰 Budget limit reached: $${maxBudgetRef.current.toFixed(2)}. Use --max-budget to increase.`);
             setErrorActions([{ type: 'dismiss', label: 'OK' }]);
             budgetWarningShownRef.current = false;

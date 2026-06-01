@@ -85,6 +85,7 @@ export type { StorageAdapter, StorableSession, StorableMessage, StorableTokenLog
 
 // Phase 2: Plugin system
 export { DefaultPluginLoader, MCPBridge, ACPBridge, PluginRegistry, getBuiltinCatalog, getBuiltinPlugin, getMarketplaceExtensions, getMarketplaceExtension } from './plugin/index.js';
+export type { MarketplaceExtension } from './plugin/index.js';
 export { RedisCacheRuntime } from './plugin/runtime/RedisRuntime.js';
 export { WebhookNotifierRuntime } from './plugin/runtime/WebhookNotifierRuntime.js';
 export { SQLiteBrowserRuntime } from './plugin/runtime/SQLiteBrowserRuntime.js';

@@ -92,7 +92,7 @@ describe('Crypto Primitives', () => {
     const encrypted = encrypt(plaintext, dek);
     // Flip a bit in the ciphertext
     const tamperedCiphertext = Buffer.from(encrypted.ciphertext, 'base64');
-    tamperedCiphertext[0] ^= 0xFF;
+    tamperedCiphertext[0] = (tamperedCiphertext[0]! ^ 0xFF) as number;
     encrypted.ciphertext = tamperedCiphertext.toString('base64');
     expect(() => decrypt(encrypted, dek)).toThrow();
   });
@@ -102,7 +102,7 @@ describe('Crypto Primitives', () => {
     const plaintext = 'sensitive data';
     const encrypted = encrypt(plaintext, dek);
     const tamperedIV = Buffer.from(encrypted.iv, 'base64');
-    tamperedIV[0] ^= 0xFF;
+    tamperedIV[0] = (tamperedIV[0]! ^ 0xFF) as number;
     encrypted.iv = tamperedIV.toString('base64');
     expect(() => decrypt(encrypted, dek)).toThrow();
   });
@@ -112,7 +112,7 @@ describe('Crypto Primitives', () => {
     const plaintext = 'sensitive data';
     const encrypted = encrypt(plaintext, dek);
     const tamperedTag = Buffer.from(encrypted.tag, 'base64');
-    tamperedTag[0] ^= 0xFF;
+    tamperedTag[0] = (tamperedTag[0]! ^ 0xFF) as number;
     encrypted.tag = tamperedTag.toString('base64');
     expect(() => decrypt(encrypted, dek)).toThrow();
   });
@@ -393,7 +393,7 @@ describe('SecureConfigManager', () => {
     const filePath = join(tmpDir, 'agentx', 'config.enc.json');
     const raw = readFileSync(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
-    parsed.encrypted.ciphertext = Buffer.from(parsed.encrypted.ciphertext, 'base64').map((b: number) => b ^ 0xFF).toString('base64');
+    parsed.encrypted.ciphertext = Buffer.from(Buffer.from(parsed.encrypted.ciphertext, 'base64').map((b: number) => b ^ 0xFF)).toString('base64');
     writeFileSync(filePath, JSON.stringify(parsed));
 
     expect(() => configManager.load(dek)).toThrow();

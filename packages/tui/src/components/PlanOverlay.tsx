@@ -1,7 +1,7 @@
 import { type FC, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { COLORS } from '../theme/colors.js';
-import type { Plan, PlanStep } from '@agentx/shared';
+import type { Plan } from '@agentx/shared';
 
 interface PlanOverlayProps {
   plan: Plan;

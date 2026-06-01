@@ -284,7 +284,7 @@ async function main(): Promise<void> {
     logger.info('SIGNAL', 'Received SIGTERM — saving state and exiting');
     // Save crash recovery state for resume on next launch
     try {
-      const { initSessionTrace } = await import('./session-trace.js');
+      const { initSessionTrace } = await import('./sessionTrace.js');
       initSessionTrace({ path: '/tmp/agentx-last-session.json', maxEvents: 50 });
     } catch {
       // non-fatal
@@ -489,7 +489,7 @@ async function main(): Promise<void> {
   if (bgCommand) {
     const { BackgroundQueue } = await import('@agentx/engine');
     const queue = new BackgroundQueue();
-    const task = queue.enqueue(bgCommand, { timeout: 300_000 });
+    queue.enqueue(bgCommand);
     const { execSync } = await import('node:child_process');
     try {
       execSync(bgCommand, { timeout: 300_000, maxBuffer: 10 * 1024 * 1024, stdio: 'inherit' });
@@ -517,7 +517,7 @@ async function main(): Promise<void> {
 
   // Check for --max-budget flag
   const budgetIdx = args.indexOf('--max-budget');
-  const maxBudget = budgetIdx !== -1 && args[budgetIdx + 1] ? parseFloat(args[budgetIdx + 1]) : undefined;
+  const maxBudget = budgetIdx !== -1 && args[budgetIdx + 1] ? parseFloat(args[budgetIdx + 1]!) : undefined;
 
   // Check for git flags
   const gitAutoCommit = args.includes('--git-auto-commit');
@@ -676,7 +676,7 @@ async function main(): Promise<void> {
     if (voiceFlag) {
       try {
         const { execSync } = await import('node:child_process');
-        const { writeFileSync, unlinkSync, existsSync } = await import('node:fs');
+        const { unlinkSync, existsSync } = await import('node:fs');
         const { join } = await import('node:path');
         const { tmpdir } = await import('node:os');
         const filePath = join(tmpdir(), `agentx-voice-${Date.now()}.wav`);
@@ -695,7 +695,8 @@ async function main(): Promise<void> {
             const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
               method: 'POST',
               headers: { Authorization: `Bearer ${key}` },
-              body: form as unknown as BodyInit,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              body: form as any,
             });
             const data = await res.json() as { text?: string };
             if (data.text) input = (input ? `${input}\n` : '') + data.text;
@@ -721,11 +722,11 @@ async function main(): Promise<void> {
     }
 
     try {
-      const result = await agent.processUserInput(input);
+      const result = await agent.sendMessage(input);
       if (jsonMode) {
-        console.log(JSON.stringify({ status: 'complete', output: result.output, tokensUsed: agent.tokens.tokensUsed, totalCost: agent.tokens.totalCost }));
+        console.log(JSON.stringify({ status: 'complete', output: result.content, tokensUsed: agent.tokens.tokensUsed, totalCost: agent.tokens.totalCost }));
       } else {
-        console.log(result.output);
+        console.log(result.content);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -743,7 +744,7 @@ async function main(): Promise<void> {
   process.stdout.write('\x1Bc');
 
   // Render the TUI
-  render(React.createElement(App, { sessionId, recovered, planMode, fallbackModel, maxBudget, gitAutoCommit, gitAware }));
+  render(React.createElement(App, { sessionId, recovered, planMode, fallbackModel, maxBudget, gitAutoCommit, gitAware } as React.ComponentProps<typeof App>));
 }
 
 main().catch((err) => {

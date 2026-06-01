@@ -21,7 +21,7 @@ import { ReasoningGlimpse } from '../components/ReasoningGlimpse.js';
 import { PlanOverlay } from '../components/PlanOverlay.js';
 import { useSession } from '../hooks/useSession.js';
 import type { AgentXConfig, ModelInfo, Crew } from '@agentx/shared';
-import type { PluginRegistry, PostgresStorageAdapter, TelegramBridge, ToolRegistry, MCPBridge, ACPBridge } from '@agentx/engine';
+import type { PluginRegistry, PostgresStorageAdapter, TelegramBridge, MCPBridge, ACPBridge } from '@agentx/engine';
 
 interface WelcomeScreenProps {
   config: AgentXConfig;
@@ -93,19 +93,21 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, restoreSes
     rejectPlan,
     togglePlanStep,
     cancelPlan,
-    togglePlanMode,
+    togglePlanMode: _togglePlanMode,
     toolCount,
     messageCount,
     sessionCreatedAt,
     totalCost,
-    watcherCount,
-    schedulerCount,
     isIndexing,
     indexingProgress,
-    ragIndexStats,
-    currentTaskType,
-    pendingDiff,
   } = useSession(config, crew, restoreSessionId, onCrewSwitch, storageAdapter, telegramBridge, initialPlanMode, fallbackModel, maxBudget, gitAutoCommit, gitAware);
+
+  // Placeholders for planned features not yet in UseSessionReturn
+  const watcherCount = 0;
+  const schedulerCount = 0;
+  const ragIndexStats: { indexedCount: number; indexedAt: number | null } | undefined = undefined;
+  const currentTaskType: string | null = null;
+  const pendingDiff: string | null = null;
 
   // Double-ESC to cancel processing
   const [escState, setEscState] = useState<'idle' | 'first_press'>('idle');

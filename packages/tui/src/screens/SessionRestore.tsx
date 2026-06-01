@@ -54,7 +54,7 @@ export function SessionRestore({ sessions, onRestore, onNew, onBack }: SessionRe
   const [showSort, setShowSort] = useState(false);
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
-  const [showProviderFilter, setShowProviderFilter] = useState(false);
+  const [_showProviderFilter, _setShowProviderFilter] = useState(false);
   const [groupByDate, setGroupByDate] = useState(false);
 
   const availableProviders = useMemo(() => {
@@ -62,7 +62,8 @@ export function SessionRestore({ sessions, onRestore, onNew, onBack }: SessionRe
     return [...set].sort();
   }, [sessions]);
 
-  const toggleSort = useCallback((key: SortKey) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _toggleSort = useCallback((key: SortKey) => {
     if (sortKey === key) {
       setSortDir((d) => d === 'desc' ? 'asc' : 'desc');
     } else {
@@ -71,6 +72,7 @@ export function SessionRestore({ sessions, onRestore, onNew, onBack }: SessionRe
     }
     setShowSort(false);
   }, [sortKey]);
+  void _toggleSort;
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -153,7 +155,8 @@ export function SessionRestore({ sessions, onRestore, onNew, onBack }: SessionRe
   }, [groups, groupByDate, pageItems]);
 
   const totalItems = displayItems.length + 4; // New Session, Back, Sort/Page status lines
-  const scrollOffset = 0;
+  const _scrollOffset = 0;
+  void _scrollOffset;
 
   useInput(useCallback((input: string, key: { upArrow?: boolean; downArrow?: boolean; return?: boolean; escape?: boolean; leftArrow?: boolean; rightArrow?: boolean }) => {
     if (showSearch) {
