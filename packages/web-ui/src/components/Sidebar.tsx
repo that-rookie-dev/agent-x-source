@@ -1,72 +1,85 @@
 import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import List from '@mui/material/List';
-import ListItemButton from '@mui/material/ListItemButton';
-import ListItemText from '@mui/material/ListItemText';
-import ChatBubbleOutlineIcon from '@mui/icons-material/ChatBubbleOutline';
-import { palette } from '../theme';
+import Divider from '@mui/material/Divider';
+import ChatIcon from '@mui/icons-material/Chat';
+import HistoryIcon from '@mui/icons-material/History';
+import BuildIcon from '@mui/icons-material/Build';
+import ExtensionIcon from '@mui/icons-material/Extension';
+import HubIcon from '@mui/icons-material/Hub';
+import CellTowerIcon from '@mui/icons-material/CellTower';
+import SettingsIcon from '@mui/icons-material/Settings';
+import ChecklistIcon from '@mui/icons-material/Checklist';
+import ScheduleIcon from '@mui/icons-material/Schedule';
+import LogoutIcon from '@mui/icons-material/Logout';
+import { auth } from '../api';
+import { useApp } from '../store/AppContext';
+import { colors } from '../theme';
+import type { PanelId } from '../pages/Console';
 
-export function Sidebar() {
+interface Props {
+  active: PanelId;
+  onNavigate: (id: PanelId) => void;
+}
+
+const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
+  { id: 'chat', icon: ChatIcon, label: 'Chat' },
+  { id: 'sessions', icon: HistoryIcon, label: 'Sessions' },
+  { id: 'todos', icon: ChecklistIcon, label: 'Todos' },
+  { id: 'tools', icon: BuildIcon, label: 'Tools' },
+  { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
+  { id: 'mcp', icon: HubIcon, label: 'MCP Servers' },
+  { id: 'bridges', icon: CellTowerIcon, label: 'Bridges' },
+  { id: 'scheduler', icon: ScheduleIcon, label: 'Scheduler' },
+  { id: 'settings', icon: SettingsIcon, label: 'Settings' },
+];
+
+export function Sidebar({ active, onNavigate }: Props) {
+  const { setView, setAuthenticated } = useApp();
+
+  const handleLogout = async () => {
+    try { await auth.logout(); } catch { /* ignore */ }
+    setAuthenticated(false);
+    setView('login');
+  };
+
   return (
-    <Box
-      sx={{
-        width: 260,
-        minWidth: 260,
-        height: '100%',
-        borderRight: `1px solid ${palette.border.subtle}`,
-        bgcolor: palette.bg.primary,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Logo */}
-      <Box sx={{ px: 2, py: 1.5, borderBottom: `1px solid ${palette.border.subtle}` }}>
-        <Typography
-          sx={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontWeight: 700,
-            fontSize: '1rem',
-            letterSpacing: '3px',
-            color: palette.text.primary,
-          }}
-        >
-          AGENT<span style={{ color: palette.text.dim }}>-</span>X
-        </Typography>
-      </Box>
+    <Box sx={{
+      width: 56, minWidth: 56, height: '100%', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', py: 1.5, borderRight: `1px solid ${colors.border.default}`,
+      bgcolor: colors.bg.secondary,
+    }}>
+      {/* Brand mark */}
+      <Typography sx={{ fontSize: '0.6rem', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: colors.accent.blue, mb: 2, letterSpacing: '1px' }}>
+        AX
+      </Typography>
 
-      {/* Session list */}
-      <Box sx={{ flex: 1, overflow: 'auto', py: 1 }}>
-        <Typography variant="overline" sx={{ px: 2, display: 'block', mb: 0.5 }}>
-          Recent
-        </Typography>
-        <List dense disablePadding>
-          <ListItemButton
-            selected
+      {/* Nav items */}
+      {NAV_ITEMS.map((item) => (
+        <Tooltip key={item.id} title={item.label} placement="right">
+          <IconButton
+            onClick={() => onNavigate(item.id)}
             sx={{
-              mx: 1,
-              borderRadius: 1,
-              '&.Mui-selected': {
-                bgcolor: palette.bg.elevated,
-                '&:hover': { bgcolor: palette.bg.hover },
-              },
+              mb: 0.5, width: 40, height: 40, borderRadius: 1,
+              color: active === item.id ? colors.text.primary : colors.text.dim,
+              bgcolor: active === item.id ? colors.border.default : 'transparent',
+              '&:hover': { bgcolor: colors.border.default, color: colors.text.primary },
             }}
           >
-            <ChatBubbleOutlineIcon sx={{ fontSize: 14, mr: 1.5, color: palette.text.dim }} />
-            <ListItemText
-              primary="New conversation"
-              primaryTypographyProps={{ fontSize: '0.8125rem', noWrap: true }}
-            />
-          </ListItemButton>
-        </List>
-      </Box>
+            <item.icon sx={{ fontSize: 20 }} />
+          </IconButton>
+        </Tooltip>
+      ))}
 
-      {/* Footer */}
-      <Box sx={{ px: 2, py: 1.5, borderTop: `1px solid ${palette.border.subtle}` }}>
-        <Typography variant="caption" sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.65rem', color: palette.text.dim }}>
-          v0.1.0 • Local
-        </Typography>
-      </Box>
+      <Box sx={{ flex: 1 }} />
+      <Divider sx={{ width: 30, mb: 1, borderColor: colors.border.default }} />
+
+      <Tooltip title="Logout" placement="right">
+        <IconButton onClick={handleLogout} sx={{ color: colors.text.dim, '&:hover': { color: colors.accent.red } }}>
+          <LogoutIcon sx={{ fontSize: 18 }} />
+        </IconButton>
+      </Tooltip>
     </Box>
   );
 }
