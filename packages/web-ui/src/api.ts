@@ -493,8 +493,10 @@ export interface SchedulerJob {
   name: string;
   cron: string;
   instruction: string;
-  lastRun?: string;
-  nextRun?: string;
+  lastRun?: string | number;
+  nextRun?: string | number;
+  runCount?: number;
+  enabled?: boolean;
 }
 
 export interface TodoItem {
