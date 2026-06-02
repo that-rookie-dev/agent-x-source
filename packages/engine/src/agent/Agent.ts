@@ -961,6 +961,9 @@ Return ONLY valid JSON, no other text.`;
         }
         // Fall through to normal path if fast reply fails for other reasons
         getLogger().warn('FAST_REPLY', 'Fast reply failed, falling through to standard path');
+        // ─── Cleanup: close the fast-reply streaming state so the UI
+        //     doesn't show duplicate responses when the standard path runs ───
+        this.emit({ type: 'loading_end' });
       }
     }
 

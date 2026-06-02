@@ -501,6 +501,33 @@ describe('Agent', () => {
       expect(executor.execute).toHaveBeenCalled();
       expect(executor.execute.mock.calls.length).toBeLessThanOrEqual(10);
     });
+
+    it('does not produce duplicate replies when fast-reply fails and falls through', async () => {
+      // Use non-retryable error so fast reply fails immediately (no backoff delays)
+      let callCount = 0;
+      mockProvider.complete.mockImplementation(function* () {
+        callCount++;
+        if (callCount <= 1) {
+          throw new Error('401 Unauthorized — fast reply unavailable');
+        }
+        yield { type: 'text_delta', content: 'Hello from standard path' };
+        yield { type: 'done' };
+      });
+
+      const receivedMessages: Array<{ type: string }> = [];
+      mockEventBus.emit.mockImplementation((event: { type: string }) => {
+        if (event.type === 'message_received') receivedMessages.push(event);
+      });
+
+      const agent = createTestAgent();
+      const result = await agent.sendMessage('Yo');
+
+      expect(result.role).toBe('assistant');
+      expect(result.content).toContain('Hello from standard path');
+
+      // Should emit exactly ONE message_received (not two)
+      expect(receivedMessages.length).toBe(1);
+    });
   });
 
   // ─── cancel ─────────────────────────────────────────────────────────
