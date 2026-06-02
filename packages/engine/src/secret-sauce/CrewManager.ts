@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Crew, CrewEmotion } from '@agentx/shared';
-import { encrypt, decrypt } from '@agentx/shared';
+import { encrypt, decrypt, getLogger } from '@agentx/shared';
 import type { EncryptedData } from '@agentx/shared';
 import { getSecretSauceDir } from '../config/paths.js';
 
@@ -57,6 +57,7 @@ export class CrewManager {
         if (rawParsed.__enc === true) {
           if (!this.dek) {
             // Cannot decrypt without DEK — will reload after login injects DEK
+            getLogger().warn('CREW_MGR', 'Encrypted crews.json found but no DEK set. Showing bootstrap crew only. Call setDEK() to unlock.');
             this.crews = [BOOTSTRAP_CREW];
             this.activeCrewId = 'default';
             return;

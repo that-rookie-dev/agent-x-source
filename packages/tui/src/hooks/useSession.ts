@@ -682,6 +682,8 @@ export function useSession(
               }]);
             }
           } else if (result.action === 'exit') {
+            // Clear terminal and reset cursor before exiting
+            process.stdout.write('\x1b[2J\x1b[H');
             process.exit(0);
           } else if (result.action === 'telegram_start') {
             void (async () => {

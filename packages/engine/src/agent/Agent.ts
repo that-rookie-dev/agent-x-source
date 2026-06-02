@@ -864,7 +864,13 @@ Return ONLY valid JSON, no other text.`;
     this.abortController = new AbortController();
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
-    this.runStateMgr.ensureRunning(this.sessionId);
+    try {
+      this.runStateMgr.ensureRunning(this.sessionId);
+    } catch (e) {
+      this.isProcessing = false;
+      this.abortController = null;
+      throw e;
+    }
     void this.commandQueue.enqueue(this.sessionId, {
       turnId: `turn-${Date.now()}`,
       sessionId: this.sessionId,
