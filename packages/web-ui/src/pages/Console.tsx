@@ -1,4 +1,5 @@
-import { useState, Component, type ReactNode } from 'react';
+import { Component, type ReactNode } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { Sidebar } from '../components/Sidebar';
@@ -11,9 +12,12 @@ import { ChannelsPanel } from '../components/ChannelsPanel';
 import { SettingsPanel } from '../components/SettingsPanel';
 import { SchedulerPanel } from '../components/SchedulerPanel';
 import { KnowledgePanel } from '../components/KnowledgePanel';
+import { OrchestratorPanel } from '../components/OrchestratorPanel';
+import { CrewsPanel } from '../components/CrewsPanel';
+import { SoulPanel } from '../components/SoulPanel';
 import { colors } from '../theme';
 
-export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'knowledge';
+export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'knowledge' | 'orchestrator' | 'crews' | 'soul';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -35,15 +39,21 @@ class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: str
 }
 
 export function Console() {
-  const [activePanel, setActivePanel] = useState<PanelId>('chat');
+  const { panel, sessionId } = useParams<{ panel?: string; sessionId?: string }>();
+  const navigate = useNavigate();
+  const activePanel = (panel || 'chat') as PanelId;
+
+  const handleNavigate = (p: PanelId) => {
+    navigate(`/console/${p}`);
+  };
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <Sidebar active={activePanel} onNavigate={setActivePanel} />
+        <Sidebar active={activePanel} onNavigate={handleNavigate} />
         <Box sx={{ flex: 1, overflow: 'hidden' }}>
           <PanelErrorBoundary key={activePanel}>
-            {activePanel === 'chat' && <ChatPanel />}
+            {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
             {activePanel === 'tools' && <ToolsPanel />}
             {activePanel === 'plugins' && <PluginsPanel />}
             {activePanel === 'mcp' && <MCPPanel />}
@@ -51,6 +61,9 @@ export function Console() {
             {activePanel === 'settings' && <SettingsPanel />}
             {activePanel === 'scheduler' && <SchedulerPanel />}
             {activePanel === 'knowledge' && <KnowledgePanel />}
+            {activePanel === 'orchestrator' && <OrchestratorPanel />}
+            {activePanel === 'crews' && <CrewsPanel />}
+            {activePanel === 'soul' && <SoulPanel />}
           </PanelErrorBoundary>
         </Box>
       </Box>

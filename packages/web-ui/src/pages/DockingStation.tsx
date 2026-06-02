@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
@@ -51,7 +52,8 @@ function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'b
 }
 
 export function DockingStation() {
-  const { serverOnline, setView, refreshHealth, healthData } = useApp();
+  const { serverOnline, refreshHealth, healthData } = useApp();
+  const navigate = useNavigate();
   const [checking, setChecking] = useState(true);
   const [visibleLines, setVisibleLines] = useState(0);
   const [lines, setLines] = useState<ReturnType<typeof buildTerminalLines>>([]);
@@ -82,7 +84,7 @@ export function DockingStation() {
     return () => clearTimeout(timeout);
   }, [visibleLines, lines]);
 
-  const handleLaunch = () => { setView('console'); };
+  const handleLaunch = () => { navigate('/console/chat'); };
   const version = healthData?.version || '0.1.0';
 
   return (

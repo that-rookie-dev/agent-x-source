@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -47,7 +48,8 @@ function clearProgress() {
 }
 
 export function SetupWizard() {
-  const { setView, setConfig } = useApp();
+  const { setConfig } = useApp();
+  const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -206,10 +208,10 @@ export function SetupWizard() {
       const cfg = await config.get();
       setConfig(cfg);
       clearProgress();
-      setView('docking');
+      navigate('/');
     } catch {
       clearProgress();
-      setView('docking');
+      navigate('/');
     } finally {
       setLoading(false);
     }

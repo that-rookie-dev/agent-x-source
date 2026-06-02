@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -30,16 +31,36 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import QueueIcon from '@mui/icons-material/PlaylistAdd';
+import BoltIcon from '@mui/icons-material/Bolt';
 import SvgIcon from '@mui/material/SvgIcon';
 
 import QuestionAnswerIcon from '@mui/icons-material/QuestionAnswer';
 import RouteIcon from '@mui/icons-material/Route';
+import SearchIcon from '@mui/icons-material/Search';
+import HistoryIcon from '@mui/icons-material/History';
+import DownloadIcon from '@mui/icons-material/Download';
+import FlagIcon from '@mui/icons-material/Flag';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ApprovalType, type ModelInfo } from '../api';
+import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ApprovalType, type ModelInfo, type ConnectionState } from '../api';
 import { colors } from '../theme';
+import {
+  ConnectionHealthDot,
+  ScrollToBottomPill,
+  SlashCommandMenu,
+  CommandPalette,
+  SessionSearchModal,
+  DoomLoopWarning,
+  ReasoningBlock,
+  CheckpointDrawer,
+  TurnTokenBadge,
+  StreamingCursor,
+  SLASH_COMMANDS,
+  type SlashCommand,
+  type PaletteAction,
+} from './ChatEnhancements';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -81,12 +102,17 @@ function ShieldAutoIcon(props: React.ComponentProps<typeof SvgIcon>) {
 
 interface UIMessage extends ChatMessage {
   thinking?: string;
+  thinkingStartedAt?: number;
+  thinkingDoneAt?: number;
   toolCalls?: ToolCall[];
   subAgents?: SubAgent[];
   todos?: TodoItem[];
   streaming?: boolean;
   plan?: string[];
   attachments?: { name: string }[];
+  turnTokens?: number;
+  turnCostUsd?: number;
+  doomLoop?: { toolName: string; count: number } | null;
 }
 
 interface ToolCall {
@@ -112,8 +138,13 @@ interface FileAttachment {
 
 type ChatView = 'sessions' | 'chat';
 
-export function ChatPanel() {
-  const [view, setView] = useState<ChatView>('chat');
+interface ChatPanelProps {
+  sessionId?: string;
+}
+
+export function ChatPanel({ sessionId }: ChatPanelProps) {
+  const navigate = useNavigate();
+  const [view, setView] = useState<ChatView>(sessionId ? 'chat' : 'sessions');
   const [sessionList, setSessionList] = useState<SessionInfo[]>([]);
   const [currentSessionTitle, setCurrentSessionTitle] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -128,6 +159,46 @@ export function ChatPanel() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const disconnectRef = useRef<(() => void) | null>(null);
+
+  // Provider error band state
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const providerErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Extract a clean, human-readable message from raw provider errors
+  const extractProviderError = useCallback((raw: string): string => {
+    // Try to extract the "message" field from JSON error responses
+    const msgMatch = raw.match(/"message"\s*:\s*"([^"]+)"/);
+    let msg = '';
+    if (msgMatch?.[1]) {
+      msg = msgMatch[1];
+    } else {
+      // Try pattern: "Provider API error (CODE): ..."
+      const prefixMatch = raw.match(/^\w+\s+API\s+error\s*\(\d+\):\s*(.*)/is);
+      msg = prefixMatch?.[1] ?? raw;
+    }
+    // Decode unicode escapes, escaped sequences, and strip non-readable chars
+    try { msg = JSON.parse(`"${msg.replace(/"/g, '\\"')}"`); } catch { /* use as-is */ }
+    msg = msg
+      .replace(/\\n/g, ' ')
+      .replace(/\\t/g, ' ')
+      .replace(/\\r/g, '')
+      .replace(/[\x00-\x1F\x7F]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Strip URLs for cleaner display
+    msg = msg.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+    return msg.length > 500 ? msg.slice(0, 500) + '...' : msg;
+  }, []);
+
+  // Sync view with sessionId prop from URL
+  useEffect(() => {
+    if (sessionId) {
+      setView('chat');
+      setCurrentSessionId(sessionId);
+    } else {
+      setView('sessions');
+    }
+  }, [sessionId]);
 
   // Right sidebar state
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
@@ -164,8 +235,52 @@ export function ChatPanel() {
   // Crew selection dialog for new sessions
   const [showCrewPicker, setShowCrewPicker] = useState(false);
 
-  // Auto-scroll
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, streaming]);
+  // ─── Enhancements: connection health, palette, slash, search, checkpoints ───
+  const [connState, setConnState] = useState<ConnectionState>('connecting');
+  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [checkpointsOpen, setCheckpointsOpen] = useState(false);
+  const [showSlash, setShowSlash] = useState(false);
+  const slashQuery = useMemo(() => {
+    if (!input.startsWith('/')) return '';
+    const line = input.split('\n')[0] ?? '';
+    if (line.includes(' ')) return '';
+    return line;
+  }, [input]);
+  useEffect(() => { setShowSlash(slashQuery.length > 0); }, [slashQuery]);
+
+  // Smart auto-scroll state
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef<boolean>(true);
+  const [showJumpPill, setShowJumpPill] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // ─── Smart auto-scroll: track user scroll position ───
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      isAtBottomRef.current = atBottom;
+      if (atBottom) {
+        setShowJumpPill(false);
+        setUnreadCount(0);
+      }
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [view]);
+
+  // Auto-scroll only when user is at bottom
+  useEffect(() => {
+    if (isAtBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      setShowJumpPill(true);
+      setUnreadCount(c => c + 1);
+    }
+  }, [messages, streaming]);
 
   // Load sessions
   const loadSessions = useCallback(() => {
@@ -215,6 +330,10 @@ export function ChatPanel() {
   // Connect SSE for streaming events
   useEffect(() => {
     const handleEvent = (ev: TelemetryEvent) => {
+      // Reset activity timer on every event from the agent
+      lastActivityRef.current = Date.now();
+      setLastEventAt(Date.now());
+
       setMessages((prev) => {
         const msgs = [...prev];
         const last = msgs[msgs.length - 1];
@@ -244,14 +363,18 @@ export function ChatPanel() {
             setStreaming(false);
             break;
 
-          case 'message_received':
+          case 'message_received': {
+            const msg = ev.message as { id?: string; content?: string; role?: string } | undefined;
             if (last?.role === 'assistant') {
-              const msg = ev.message as { content?: string } | undefined;
               if (msg?.content) last.content = msg.content;
               last.streaming = false;
+            } else if (msg?.content && msg.role === 'assistant') {
+              // Edge case: no streaming placeholder existed — add the message directly
+              msgs.push({ id: msg.id || crypto.randomUUID(), role: 'assistant', content: msg.content, streaming: false });
             }
             setStreaming(false);
             break;
+          }
 
           case 'tool_executing': {
             if (last?.role === 'assistant') {
@@ -262,7 +385,21 @@ export function ChatPanel() {
               } else {
                 const tc: ToolCall = { id: crypto.randomUUID(), name: toolName, args: (ev.description as string) ?? '', status: 'running' };
                 last.toolCalls = [...(last.toolCalls ?? []), tc];
+                // Doom-loop detection: same tool called 3+ times in a row with similar args
+                const recent = (last.toolCalls ?? []).slice(-4);
+                if (recent.length >= 3) {
+                  const same = recent.slice(-3).every(t => t.name === toolName && (t.args ?? '').slice(0, 80) === (tc.args ?? '').slice(0, 80));
+                  if (same) last.doomLoop = { toolName, count: recent.filter(t => t.name === toolName).length };
+                  else last.doomLoop = null;
+                }
               }
+            }
+            break;
+          }
+
+          case 'doom_loop': {
+            if (last?.role === 'assistant') {
+              last.doomLoop = { toolName: (ev.tool as string) ?? 'unknown', count: (ev.count as number) ?? 3 };
             }
             break;
           }
@@ -314,6 +451,30 @@ export function ChatPanel() {
           case 'token_usage': {
             const used = ev.totalTokens as number | undefined;
             if (used) setTokenUsed(used);
+            // Per-turn delta on the current assistant message
+            if (last?.role === 'assistant') {
+              const turn = ev.turnTokens as number | undefined;
+              const cost = ev.costUsd as number | undefined;
+              if (turn != null) last.turnTokens = turn;
+              if (cost != null) last.turnCostUsd = cost;
+            }
+            break;
+          }
+
+          case 'reasoning_delta':
+          case 'thinking_delta': {
+            if (last?.role === 'assistant') {
+              if (!last.thinking) { last.thinking = ''; last.thinkingStartedAt = Date.now(); }
+              last.thinking += (ev.content as string) ?? (ev.text as string) ?? '';
+            }
+            break;
+          }
+
+          case 'reasoning_end':
+          case 'thinking_end': {
+            if (last?.role === 'assistant' && last.thinking) {
+              last.thinkingDoneAt = Date.now();
+            }
             break;
           }
 
@@ -331,13 +492,27 @@ export function ChatPanel() {
             setPermissionPrompt((ev.tool as string) + ': ' + ((ev.path as string) ?? ''));
             break;
 
-          case 'error':
+          case 'error': {
+            const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
+            // Detect provider/quota/auth errors and show in the error band (not in chat)
+            const isProviderError = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired/i.test(errorText);
+            if (isProviderError) {
+              setProviderError(extractProviderError(errorText));
+              if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
+            }
             if (last?.role === 'assistant') {
-              last.content += `\n\n[ERROR] ${ev.message ?? ev.error}`;
+              if (!isProviderError) {
+                if (last.content) {
+                  last.content += `\n\n⚠️ ${errorText}`;
+                } else {
+                  last.content = `⚠️ ${errorText}`;
+                }
+              }
               last.streaming = false;
             }
             setStreaming(false);
             break;
+          }
 
           default:
             break;
@@ -347,7 +522,10 @@ export function ChatPanel() {
       });
     };
 
-    disconnectRef.current = connectSSE(handleEvent);
+    disconnectRef.current = connectSSE({
+      onEvent: handleEvent,
+      onState: (state) => { setConnState(state); if (state === 'open') setLastEventAt(Date.now()); },
+    });
     return () => { disconnectRef.current?.(); };
   }, []);
 
@@ -361,20 +539,25 @@ export function ChatPanel() {
     }).catch(() => {});
   }, []);
 
-  // Streaming timeout — if no content arrives within 45s, fail gracefully
+  // Streaming timeout — if no content or events arrive within 120s, fail gracefully
+  // Uses a ref to reset the timer on each new event (activity-based timeout)
+  const lastActivityRef = useRef<number>(Date.now());
   useEffect(() => {
     if (!streaming) return;
-    const timer = setTimeout(() => {
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === 'assistant' && last.streaming && !last.content) {
-          return [...prev.slice(0, -1), { ...last, content: '⚠️ Request timed out. The agent took too long to respond. Please try again.', streaming: false }];
-        }
-        return prev;
-      });
-      setStreaming(false);
-    }, 45000);
-    return () => clearTimeout(timer);
+    lastActivityRef.current = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - lastActivityRef.current > 120000) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'assistant' && last.streaming && !last.content) {
+            return [...prev.slice(0, -1), { ...last, content: '⚠️ Request timed out. The agent took too long to respond. Please try again.', streaming: false }];
+          }
+          return prev;
+        });
+        setStreaming(false);
+      }
+    }, 5000);
+    return () => clearInterval(timer);
   }, [streaming]);
 
   // Compute whether send is blocked due to missing provider/model
@@ -384,6 +567,14 @@ export function ChatPanel() {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
+    // Intercept slash commands first
+    if (text.startsWith('/')) {
+      const handled = await runSlashCommand(text);
+      if (handled) {
+        setInput('');
+        return;
+      }
+    }
     if (!currentProvider || !currentModel) return; // Guard
     setInput('');
     setStreaming(true);
@@ -408,7 +599,9 @@ export function ChatPanel() {
     try {
       const result = await chat.send(text, fileRefs);
       // Fallback: if SSE didn't deliver the response (e.g., first message before agent existed),
-      // display the response from the API call directly
+      // display the response from the API call directly.
+      // The API only resolves after agent.sendMessage() completes, so SSE should have
+      // already delivered the content. This fallback handles edge cases where SSE missed it.
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === 'assistant' && last.streaming && !last.content) {
@@ -418,15 +611,31 @@ export function ChatPanel() {
             return [...prev.slice(0, -1), { ...result.message, streaming: false }];
           }
         }
+        // If SSE already delivered content, just finalize the streaming state
+        if (last?.role === 'assistant' && last.streaming) {
+          return [...prev.slice(0, -1), { ...last, streaming: false }];
+        }
         return prev;
       });
       setStreaming(false);
-    } catch {
-      // Show error in the placeholder message
+    } catch (err) {
+      // Show actual error in the placeholder message
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
+      // Show provider error band for quota/auth errors (not in chat)
+      const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired/i.test(errorMsg);
+      if (isProviderErr) {
+        setProviderError(extractProviderError(errorMsg));
+        if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
+      }
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === 'assistant' && last.streaming) {
-          return [...prev.slice(0, -1), { ...last, content: '⚠️ Failed to get a response. Please try again.', streaming: false }];
+          if (isProviderErr) {
+            // Remove the empty streaming placeholder — don't show error in chat
+            return prev.slice(0, -1);
+          }
+          return [...prev.slice(0, -1), { ...last, content: last.content || `⚠️ ${displayError}`, streaming: false }];
         }
         return prev;
       });
@@ -438,6 +647,161 @@ export function ChatPanel() {
     try { await chat.cancel(); } catch { /* ignore */ }
     setStreaming(false);
   };
+
+  // ─── Slash command handler ───
+  const runSlashCommand = useCallback(async (raw: string): Promise<boolean> => {
+    const line = raw.trim();
+    if (!line.startsWith('/')) return false;
+    const [cmd, ...rest] = line.slice(1).split(/\s+/);
+    const argStr = rest.join(' ');
+    const sid = currentSessionId;
+    switch (cmd) {
+      case 'help': {
+        const helpText = 'Available slash commands:\n\n' + SLASH_COMMANDS.map(c => `**${c.name}** — ${c.description}`).join('\n');
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: helpText, streaming: false }]);
+        return true;
+      }
+      case 'clear': {
+        try { await chat.clear(); } catch { /* ignore */ }
+        setMessages([]);
+        setTokenUsed(0);
+        return true;
+      }
+      case 'compact': {
+        if (!sid) return true;
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '✨ Compacting session…', streaming: true }]);
+        try {
+          const r = await sessions.compact(sid);
+          setMessages(prev => {
+            const m = [...prev];
+            const last = m[m.length - 1];
+            if (last?.streaming) { last.streaming = false; last.content = `✨ Session compacted.\n\n${r.summary || ''}`; }
+            return m;
+          });
+        } catch (e) {
+          setMessages(prev => [...prev.slice(0, -1), { id: crypto.randomUUID(), role: 'assistant', content: `⚠️ Compaction failed: ${e instanceof Error ? e.message : 'unknown'}`, streaming: false }]);
+        }
+        return true;
+      }
+      case 'retry': {
+        const lastUser = [...messages].reverse().find(m => m.role === 'user');
+        if (lastUser?.content) {
+          setInput(lastUser.content);
+          setTimeout(() => handleSend(), 50);
+        }
+        return true;
+      }
+      case 'undo': {
+        if (!sid) return true;
+        try {
+          const list = await sessions.checkpoints(sid);
+          if (list.length === 0) {
+            setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '⚠️ No checkpoints available. Use `/checkpoint` to save one first.', streaming: false }]);
+            return true;
+          }
+          await sessions.restoreCheckpoint(sid, list[0]!.id);
+          const h = await chat.history();
+          setMessages(h.filter(m => m.role !== 'system').map(m => ({ ...m, streaming: false })));
+        } catch { /* ignore */ }
+        return true;
+      }
+      case 'checkpoint': {
+        if (!sid) return true;
+        try {
+          const r = await sessions.checkpoint(sid, argStr || undefined);
+          setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `📝 Checkpoint saved: **${r.label}**`, streaming: false }]);
+        } catch { /* ignore */ }
+        return true;
+      }
+      case 'checkpoints': {
+        setCheckpointsOpen(true);
+        return true;
+      }
+      case 'search': {
+        setSearchOpen(true);
+        return true;
+      }
+      case 'yolo': {
+        const next = approvalType === 'auto' ? 'default' : 'auto';
+        setApprovalType(next);
+        sessionSettings.setApproval(next).catch(() => {});
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `⚡ YOLO mode **${next === 'auto' ? 'enabled' : 'disabled'}**`, streaming: false }]);
+        return true;
+      }
+      case 'think': {
+        // Force plan mode for this turn
+        setAgentMode('plan');
+        sessionSettings.setMode('plan').catch(() => {});
+        if (argStr) {
+          setInput(argStr);
+          setTimeout(() => handleSend(), 30);
+        }
+        return true;
+      }
+      case 'export': {
+        if (!sid) return true;
+        sessions.exportTrajectory(sid);
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `📦 Exporting trajectory for session **${sid.slice(0, 8)}**…`, streaming: false }]);
+        return true;
+      }
+      case 'goal': {
+        if (!argStr) {
+          setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '⚠️ Usage: `/goal <multi-step objective>`', streaming: false }]);
+          return true;
+        }
+        // Goal mode: force plan mode + prepend a goal-framing instruction
+        setAgentMode('plan');
+        sessionSettings.setMode('plan').catch(() => {});
+        setInput(`🎯 GOAL: ${argStr}\n\nBreak this down into concrete steps, then execute them. Use the task tracker. Stop and report after each major milestone.`);
+        setTimeout(() => handleSend(), 30);
+        return true;
+      }
+      default:
+        return false;
+    }
+  }, [currentSessionId, messages, approvalType]);
+
+  // ─── Global keyboard shortcuts (declared after runSlashCommand to avoid TDZ) ───
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen(o => !o);
+      } else if (mod && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setSearchOpen(true);
+      } else if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        if (currentSessionId) {
+          e.preventDefault();
+          runSlashCommand('/undo');
+        }
+      } else if (e.key === 'Escape' && streaming) {
+        e.preventDefault();
+        handleCancel();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [currentSessionId, streaming, runSlashCommand]);
+
+  // ─── Command palette actions (declared after runSlashCommand to avoid TDZ) ───
+  const paletteActions: PaletteAction[] = useMemo(() => [
+    { id: 'new-session', label: 'New session', hint: 'N', icon: <AddIcon sx={{ fontSize: 14 }} />, run: () => handleNewSession() },
+    { id: 'sessions', label: 'Show all sessions', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => handleShowSessions() },
+    { id: 'search', label: 'Search sessions', hint: '⌘F', icon: <SearchIcon sx={{ fontSize: 14 }} />, run: () => setSearchOpen(true) },
+    { id: 'checkpoints', label: 'Open checkpoints', icon: <HistoryIcon sx={{ fontSize: 14 }} />, run: () => setCheckpointsOpen(true) },
+    { id: 'clear', label: 'Clear chat', icon: <DeleteIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/clear') },
+    { id: 'compact', label: 'Compact session', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/compact') },
+    { id: 'undo', label: 'Undo (restore latest checkpoint)', hint: '⌘Z', icon: <ArrowBackIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/undo') },
+    { id: 'retry', label: 'Retry last message', icon: <SendIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/retry') },
+    { id: 'yolo', label: `Toggle YOLO mode (now ${approvalType})`, icon: <ShieldAutoIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/yolo') },
+    { id: 'export', label: 'Export trajectory (JSON)', icon: <DownloadIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/export') },
+    { id: 'goal', label: 'Set Goal Mode objective', icon: <FlagIcon sx={{ fontSize: 14 }} />, run: () => { setInput('/goal '); } },
+    { id: 'mode-agent', label: 'Switch mode → Agent', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('agent'); sessionSettings.setMode('agent').catch(() => {}); } },
+    { id: 'mode-plan', label: 'Switch mode → Plan', icon: <RouteIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('plan'); sessionSettings.setMode('plan').catch(() => {}); } },
+    { id: 'mode-ask', label: 'Switch mode → Ask', icon: <QuestionAnswerIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('ask'); sessionSettings.setMode('ask').catch(() => {}); } },
+  ], [approvalType, runSlashCommand]);
 
   const handleStopAndSend = async () => {
     const text = input.trim();
@@ -520,7 +884,7 @@ export function ChatPanel() {
 
   const handleShowSessions = () => {
     loadSessions();
-    setView('sessions');
+    navigate('/console/chat');
   };
 
   const handleSelectSession = async (s: SessionInfo) => {
@@ -532,7 +896,7 @@ export function ChatPanel() {
       setCurrentSessionTitle(s.title ?? `Session ${s.id.slice(0, 8)}`);
       setCurrentSessionId(s.id);
       setTokenUsed(s.tokensUsed ?? 0);
-      setView('chat');
+      navigate(`/console/chat/${s.id}`);
       loadTodos();
     } catch { /* ignore */ }
   };
@@ -555,10 +919,12 @@ export function ChatPanel() {
       const result = await sessions.create();
       setMessages([]);
       setCurrentSessionTitle(null);
-      setCurrentSessionId(result?.sessionId ?? null);
+      const newId = result?.sessionId ?? null;
+      setCurrentSessionId(newId);
       setTokenUsed(0);
       setTodoItems([]);
-      setView('chat');
+      if (newId) navigate(`/console/chat/${newId}`);
+      else setView('chat');
     } catch { /* ignore */ }
   };
 
@@ -663,6 +1029,53 @@ export function ChatPanel() {
           <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {currentSessionTitle ?? 'New Session'}
           </Typography>
+          <ConnectionHealthDot state={connState} lastEventAt={lastEventAt} />
+          <Tooltip title={approvalType === 'auto' ? 'YOLO mode ON · click to disable' : 'YOLO mode OFF · click to enable full-auto'} arrow>
+            <IconButton
+              size="small"
+              onClick={() => {
+                const next = approvalType === 'auto' ? 'default' : 'auto';
+                setApprovalType(next);
+                sessionSettings.setApproval(next).catch(() => {});
+              }}
+              sx={{
+                color: approvalType === 'auto' ? colors.accent.orange : colors.text.dim,
+                p: 0.5,
+                '&:hover': { color: colors.accent.orange },
+                ...(approvalType === 'auto' ? {
+                  background: 'rgba(255,165,0,0.1)',
+                  border: `1px solid ${colors.accent.orange}`,
+                } : {}),
+              }}
+            >
+              <BoltIcon sx={{ fontSize: 14 }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Search all sessions (⌘F)" arrow>
+            <IconButton size="small" onClick={() => setSearchOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.blue } }}>
+              <SearchIcon sx={{ fontSize: 14 }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Checkpoints (rollback)" arrow>
+            <IconButton size="small" onClick={() => setCheckpointsOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.blue } }}>
+              <HistoryIcon sx={{ fontSize: 14 }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Export trajectory (JSON)" arrow>
+            <IconButton
+              size="small"
+              onClick={() => { if (currentSessionId) sessions.exportTrajectory(currentSessionId); }}
+              disabled={!currentSessionId}
+              sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.green } }}
+            >
+              <DownloadIcon sx={{ fontSize: 14 }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Command palette (⌘K)" arrow>
+            <IconButton size="small" onClick={() => setPaletteOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.purple } }}>
+              <BoltIcon sx={{ fontSize: 14 }} />
+            </IconButton>
+          </Tooltip>
           <Button size="small" startIcon={<AddIcon sx={{ fontSize: 12 }} />} onClick={() => handleNewSession()}
             sx={{ color: colors.accent.green, fontSize: '0.55rem', textTransform: 'none', minWidth: 'auto' }}>
             New
@@ -670,7 +1083,7 @@ export function ChatPanel() {
         </Box>
 
         {/* Messages */}
-        <Box sx={{ flex: 1, overflow: 'auto', px: 2, py: 1.5 }}>
+        <Box ref={messagesContainerRef} sx={{ flex: 1, overflow: 'auto', px: 2, py: 1.5, position: 'relative' }}>
           {visibleMessages.length === 0 && !streaming && (
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <Box sx={{ textAlign: 'center', maxWidth: 300 }}>
@@ -701,10 +1114,63 @@ export function ChatPanel() {
           )}
 
           <div ref={bottomRef} />
+          <ScrollToBottomPill
+            visible={showJumpPill}
+            unread={unreadCount}
+            onClick={() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); setShowJumpPill(false); setUnreadCount(0); }}
+          />
         </Box>
 
         {/* ─── Unified Input Module ─── */}
-        <Box sx={{ px: 2, pb: 1.5, pt: 1 }}>
+        <Box sx={{ px: 2, pb: 1.5, pt: 1, position: 'relative' }}>
+          {/* Provider error band — slides from behind the input card */}
+          <Box sx={{
+            position: 'relative',
+            zIndex: 0,
+            overflow: 'hidden',
+            maxHeight: providerError ? 140 : 0,
+            opacity: providerError ? 1 : 0,
+            transition: 'max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease',
+            mb: providerError ? '-20px' : 0,
+          }}>
+            <Box sx={{
+              bgcolor: colors.accent.orange + '18',
+              border: `1px solid ${colors.accent.orange}30`,
+              borderBottom: 'none',
+              borderRadius: '14px 14px 0 0',
+              px: 1.5,
+              pt: 1,
+              pb: 3,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 0.75,
+            }}>
+              <Typography sx={{
+                fontSize: '0.58rem',
+                color: colors.accent.orange,
+                fontFamily: "'Inter', sans-serif",
+                fontWeight: 500,
+                whiteSpace: 'normal',
+                overflow: 'hidden',
+                display: '-webkit-box',
+                WebkitLineClamp: 5,
+                WebkitBoxOrient: 'vertical',
+                flex: 1,
+                letterSpacing: '0.2px',
+                lineHeight: 1.5,
+              }}>
+                ⚠ {providerError}
+              </Typography>
+              <IconButton
+                size="small"
+                onClick={() => setProviderError(null)}
+                sx={{ color: colors.accent.orange + 'cc', p: 0, minWidth: 0, '&:hover': { bgcolor: colors.accent.orange + '20' } }}
+              >
+                <CloseIcon sx={{ fontSize: 11 }} />
+              </IconButton>
+            </Box>
+          </Box>
+
           {/* Attachment chips */}
           {attachments.length > 0 && (
             <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.75 }}>
@@ -724,12 +1190,27 @@ export function ChatPanel() {
 
           {/* Single unified box: input + toolbar — border tinted by agent mode */}
           <Box sx={{
+            position: 'relative',
+            zIndex: 1,
             border: `1px solid ${agentMode === 'agent' ? colors.accent.orange + '60' : agentMode === 'plan' ? colors.accent.purple + '60' : colors.border.default}`,
             borderRadius: '14px',
-            bgcolor: agentMode === 'agent' ? colors.accent.orange + '08' : agentMode === 'plan' ? colors.accent.purple + '08' : colors.bg.tertiary,
+            bgcolor: colors.bg.tertiary,
+            backgroundImage: agentMode === 'agent' ? `linear-gradient(${colors.accent.orange}08, ${colors.accent.orange}08)` : agentMode === 'plan' ? `linear-gradient(${colors.accent.purple}08, ${colors.accent.purple}08)` : 'none',
             transition: 'border-color 0.2s, background-color 0.2s',
             '&:focus-within': { borderColor: agentMode === 'agent' ? colors.accent.orange + '90' : agentMode === 'plan' ? colors.accent.purple + '90' : colors.border.strong },
           }}>
+            {/* Slash command autocomplete */}
+            {showSlash && (
+              <SlashCommandMenu
+                query={slashQuery}
+                onSelect={(cmd: SlashCommand) => {
+                  // Replace the slash text in input with the chosen command + a trailing space if it takes args
+                  setInput(cmd.example ? cmd.name + ' ' : cmd.name);
+                  setShowSlash(false);
+                }}
+                onClose={() => setShowSlash(false)}
+              />
+            )}
             {/* Input row */}
             <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 0.5, px: 1.25, py: 0.5 }}>
               <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
@@ -1104,6 +1585,25 @@ export function ChatPanel() {
           )}
         </Box>
       </Box>
+
+      {/* ─── Global enhancement modals ─── */}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
+      <SessionSearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onPickSession={(sid) => { navigate(`/console/chat/${sid}`); }}
+      />
+      <CheckpointDrawer
+        open={checkpointsOpen}
+        onClose={() => setCheckpointsOpen(false)}
+        sessionId={currentSessionId}
+        onRestored={async () => {
+          try {
+            const h = await chat.history();
+            setMessages(h.filter(m => m.role !== 'system').map(m => ({ ...m, streaming: false })));
+          } catch { /* ignore */ }
+        }}
+      />
     </Box>
   );
 }
@@ -1135,7 +1635,6 @@ function ThinkingIndicator() {
 
 function MessageBubble({ message }: { message: UIMessage }) {
   const isUser = message.role === 'user';
-  const [showThinking, setShowThinking] = useState(false);
 
   if (message.role === 'system') return null;
 
@@ -1166,16 +1665,23 @@ function MessageBubble({ message }: { message: UIMessage }) {
           px: 1.75, py: 1,
         } : {}),
       }}>
-        {/* Thinking */}
-        {message.thinking && (
-          <Box sx={{ mb: 0.75 }}>
-            <Chip size="small" label={showThinking ? 'Hide reasoning' : 'Show reasoning'} onClick={() => setShowThinking(!showThinking)} icon={showThinking ? <ExpandLessIcon /> : <ExpandMoreIcon />} sx={{ fontSize: '0.55rem', bgcolor: colors.bg.tertiary, height: 20 }} />
-            <Collapse in={showThinking}>
-              <Box sx={{ mt: 0.5, p: 1, borderRadius: 1, bgcolor: colors.bg.tertiary, border: `1px solid ${colors.border.default}`, fontSize: '0.7rem', color: colors.text.dim, fontStyle: 'italic' }}>
-                {message.thinking}
-              </Box>
-            </Collapse>
-          </Box>
+        {/* Reasoning (first-class) */}
+        {message.thinking && !isUser && (
+          <ReasoningBlock
+            text={message.thinking}
+            streaming={message.streaming && !message.thinkingDoneAt}
+            durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined}
+          />
+        )}
+
+        {/* Doom-loop warning */}
+        {message.doomLoop && !isUser && (
+          <DoomLoopWarning
+            toolName={message.doomLoop.toolName}
+            count={message.doomLoop.count}
+            onContinue={() => { /* user dismisses; cleared on next user turn */ }}
+            onStop={() => { chat.cancel().catch(() => {}); }}
+          />
         )}
 
         {/* Plan */}
@@ -1247,12 +1753,20 @@ function MessageBubble({ message }: { message: UIMessage }) {
 
         {/* Shimmer bar while streaming content */}
         {message.streaming && message.content && (
-          <Box sx={{
-            mt: 0.5, height: 2, borderRadius: 1, width: '50%',
-            background: `linear-gradient(90deg, transparent, ${colors.accent.purple}50, transparent)`,
-            backgroundSize: '200% 100%',
-            animation: 'agentx-shimmer 1.5s infinite linear',
-          }} />
+          <>
+            <Box component="span" sx={{ display: 'inline' }}><StreamingCursor /></Box>
+            <Box sx={{
+              mt: 0.5, height: 2, borderRadius: 1, width: '50%',
+              background: `linear-gradient(90deg, transparent, ${colors.accent.purple}50, transparent)`,
+              backgroundSize: '200% 100%',
+              animation: 'agentx-shimmer 1.5s infinite linear',
+            }} />
+          </>
+        )}
+
+        {/* Per-turn token economics badge */}
+        {!isUser && !message.streaming && (message.turnTokens != null || message.turnCostUsd != null) && (
+          <TurnTokenBadge tokens={message.turnTokens} costUsd={message.turnCostUsd} />
         )}
       </Box>
     </Box>

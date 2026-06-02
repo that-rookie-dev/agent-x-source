@@ -11,26 +11,12 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Alert from '@mui/material/Alert';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import { orchestrator, type OrchestratorPlan, type OrchestratorStep } from '../api';
 import { colors } from '../theme';
-
-interface PlanStep {
-  id: string;
-  description: string;
-  status: 'pending' | 'executing' | 'done' | 'failed';
-  result?: string;
-  dependsOn?: string[];
-}
-
-interface Plan {
-  id: string;
-  goal: string;
-  steps: PlanStep[];
-  status: 'created' | 'executing' | 'complete' | 'failed';
-}
 
 export function OrchestratorPanel() {
   const [goal, setGoal] = useState('');
-  const [plan, setPlan] = useState<Plan | null>(null);
+  const [plan, setPlan] = useState<OrchestratorPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -39,14 +25,8 @@ export function OrchestratorPanel() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/orchestrator/plan', {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Failed');
-      const data = await res.json();
-      setPlan(data.plan ?? data);
+      const p = await orchestrator.createPlan(goal);
+      setPlan(p);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Plan creation failed');
     } finally {
@@ -59,13 +39,8 @@ export function OrchestratorPanel() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/orchestrator/plan/${plan.id}/execute`, {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) throw new Error((await res.json()).error ?? 'Execution failed');
-      const data = await res.json();
-      setPlan(data.plan ?? { ...plan, status: 'complete' });
+      const p = await orchestrator.execute(plan.id);
+      setPlan(p);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Execution failed');
     } finally {
@@ -73,7 +48,7 @@ export function OrchestratorPanel() {
     }
   };
 
-  const stepColor = (status: PlanStep['status']) => {
+  const stepColor = (status: OrchestratorStep['status']) => {
     switch (status) {
       case 'done': return colors.accent.green;
       case 'executing': return colors.accent.orange;

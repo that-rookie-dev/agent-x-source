@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useApp } from './store/AppContext';
@@ -8,29 +9,57 @@ import { SetupWizard } from './pages/SetupWizard';
 import { Login } from './pages/Login';
 import { Console } from './pages/Console';
 
+function AuthGuard({ children }: { children: React.ReactNode }) {
+  const { authState } = useApp();
+  if (authState === 'loading') {
+    return (
+      <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <CircularProgress size={32} sx={{ color: '#fff' }} />
+      </Box>
+    );
+  }
+  if (authState === 'no-root-user') return <Navigate to="/setup" replace />;
+  if (authState === 'unauthenticated') return <Navigate to="/login" replace />;
+  if (authState === 'needs-setup') return <Navigate to="/setup/wizard" replace />;
+  return <>{children}</>;
+}
+
+function GuestGuard({ children }: { children: React.ReactNode }) {
+  const { authState } = useApp();
+  if (authState === 'loading') {
+    return (
+      <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <CircularProgress size={32} sx={{ color: '#fff' }} />
+      </Box>
+    );
+  }
+  if (authState === 'authenticated') return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 export function App() {
-  const { view, initialize } = useApp();
+  const { initialize, authState } = useApp();
 
   useEffect(() => { initialize(); }, [initialize]);
 
-  switch (view) {
-    case 'loading':
-      return (
-        <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <CircularProgress size={32} sx={{ color: '#fff' }} />
-        </Box>
-      );
-    case 'docking':
-      return <DockingStation />;
-    case 'setup-auth':
-      return <SetupAuth />;
-    case 'setup-wizard':
-      return <SetupWizard />;
-    case 'login':
-      return <Login />;
-    case 'console':
-      return <Console />;
-    default:
-      return null;
+  if (authState === 'loading') {
+    return (
+      <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <CircularProgress size={32} sx={{ color: '#fff' }} />
+      </Box>
+    );
   }
+
+  return (
+    <Routes>
+      <Route path="/login" element={<GuestGuard><Login /></GuestGuard>} />
+      <Route path="/setup" element={<GuestGuard><SetupAuth /></GuestGuard>} />
+      <Route path="/setup/wizard" element={<AuthGuard><SetupWizard /></AuthGuard>} />
+      <Route path="/" element={<AuthGuard><DockingStation /></AuthGuard>} />
+      <Route path="/console" element={<Navigate to="/console/chat" replace />} />
+      <Route path="/console/:panel" element={<AuthGuard><Console /></AuthGuard>} />
+      <Route path="/console/chat/:sessionId" element={<AuthGuard><Console /></AuthGuard>} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
 }

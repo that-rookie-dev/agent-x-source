@@ -1,14 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import TextField from '@mui/material/TextField';
+import InputAdornment from '@mui/material/InputAdornment';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import SettingsIcon from '@mui/icons-material/Settings';
+import SearchIcon from '@mui/icons-material/Search';
 import { plugins, type PluginInfo } from '../api';
 import { colors } from '../theme';
 
@@ -17,6 +19,8 @@ export function PluginsPanel() {
   const [installed, setInstalled] = useState<PluginInfo[]>([]);
   const [configPlugin, setConfigPlugin] = useState<PluginInfo | null>(null);
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
   const load = () => {
     plugins.available().then(setAvailable).catch(() => {});
@@ -60,6 +64,21 @@ export function PluginsPanel() {
 
   const allPlugins = [...installed, ...available.filter((a) => !installed.find((i) => i.id === a.id))];
 
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    allPlugins.forEach((p) => { if (p.category) set.add(p.category); });
+    return ['all', ...Array.from(set).sort()];
+  }, [allPlugins]);
+
+  const visiblePlugins = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allPlugins.filter((p) => {
+      if (categoryFilter !== 'all' && p.category !== categoryFilter) return false;
+      if (!q) return true;
+      return p.name.toLowerCase().includes(q) || (p.description ?? '').toLowerCase().includes(q) || p.id.toLowerCase().includes(q);
+    });
+  }, [allPlugins, search, categoryFilter]);
+
   return (
     <Box sx={{ height: '100%', overflow: 'auto', p: 2 }}>
       <Typography sx={{ fontSize: '1rem', fontWeight: 600, mb: 0.5 }}>Plugin Hub</Typography>
@@ -67,13 +86,51 @@ export function PluginsPanel() {
         Project tools and integrations to extend Agent-X capabilities
       </Typography>
 
-      {allPlugins.length === 0 && (
-        <Box sx={{ p: 3, textAlign: 'center', border: `1px dashed ${colors.border.default}`, borderRadius: 1 }}>
-          <Typography sx={{ fontSize: '0.75rem', color: colors.text.dim }}>No plugins available</Typography>
+      <Box sx={{ display: 'flex', gap: 1, mb: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+        <TextField
+          size="small"
+          placeholder="Search plugins..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          sx={{ flex: 1, minWidth: 220 }}
+          InputProps={{
+            startAdornment: (<InputAdornment position="start"><SearchIcon sx={{ fontSize: 16, color: colors.text.dim }} /></InputAdornment>),
+            sx: { fontSize: '0.75rem' },
+          }}
+        />
+        <Typography sx={{ fontSize: '0.65rem', color: colors.text.dim }}>
+          {visiblePlugins.length}/{allPlugins.length}
+        </Typography>
+      </Box>
+
+      {categories.length > 1 && (
+        <Box sx={{ display: 'flex', gap: 0.5, mb: 1.5, flexWrap: 'wrap' }}>
+          {categories.map((cat) => (
+            <Chip
+              key={cat}
+              size="small"
+              label={cat === 'all' ? `All (${allPlugins.length})` : `${cat} (${allPlugins.filter((p) => p.category === cat).length})`}
+              onClick={() => setCategoryFilter(cat)}
+              sx={{
+                fontSize: '0.55rem', height: 22, cursor: 'pointer',
+                bgcolor: categoryFilter === cat ? colors.accent.blue + '30' : 'transparent',
+                border: `1px solid ${categoryFilter === cat ? colors.accent.blue : colors.border.default}`,
+                color: categoryFilter === cat ? colors.text.primary : colors.text.dim,
+              }}
+            />
+          ))}
         </Box>
       )}
 
-      {allPlugins.map((p) => {
+      {visiblePlugins.length === 0 && (
+        <Box sx={{ p: 3, textAlign: 'center', border: `1px dashed ${colors.border.default}`, borderRadius: 1 }}>
+          <Typography sx={{ fontSize: '0.75rem', color: colors.text.dim }}>
+            {allPlugins.length === 0 ? 'No plugins available' : 'No plugins match your filters'}
+          </Typography>
+        </Box>
+      )}
+
+      {visiblePlugins.map((p) => {
         const isInstalled = p.installed;
         const isActive = p.enabled;
         return (

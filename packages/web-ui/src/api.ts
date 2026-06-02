@@ -10,7 +10,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   });
   if (res.status === 401) {
     // Redirect to login
-    window.location.hash = '#/login';
+    window.location.href = '/login';
     throw new Error('Unauthorized');
   }
   if (!res.ok) {
@@ -84,6 +84,13 @@ export const chat = {
 };
 
 // ─── Sessions ───
+export interface Checkpoint {
+  id: string;
+  label: string;
+  createdAt: string;
+  messageCount: number;
+}
+
 export const sessions = {
   list: () => request<SessionInfo[]>('/sessions'),
   create: () => request<{ sessionId: string }>('/sessions', { method: 'POST' }),
@@ -91,6 +98,53 @@ export const sessions = {
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
   restore: (id: string) => request<{ ok: boolean }>(`/sessions/${id}/restore`, { method: 'POST' }),
   context: (id: string) => request<SessionContext>(`/sessions/${id}/context`),
+  compact: (id: string) => request<{ ok: boolean; summary: string }>(`/sessions/${id}/compact`, { method: 'POST' }),
+  checkpoint: (id: string, label?: string) => request<{ checkpointId: string; label: string }>(`/sessions/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ label }) }),
+  checkpoints: (id: string) => request<{ checkpoints: Checkpoint[] }>(`/sessions/${id}/checkpoints`).then(r => r.checkpoints ?? []),
+  restoreCheckpoint: (id: string, checkpointId: string) => request<{ ok: boolean; label: string; messageCount: number }>(`/sessions/${id}/checkpoint/${checkpointId}/restore`, { method: 'POST' }),
+  deleteCheckpoint: (id: string, checkpointId: string) => request<{ ok: boolean }>(`/sessions/${id}/checkpoint/${checkpointId}`, { method: 'DELETE' }),
+  // Trigger a browser download of the full trajectory JSON
+  exportTrajectory: (id: string): void => {
+    const a = document.createElement('a');
+    a.href = `/api/sessions/${id}/export`;
+    a.download = `agentx-session-${id.slice(0, 8)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  },
+  // Cross-session search — uses server-side scan endpoint, falls back to client-side
+  search: async (query: string): Promise<Array<{ sessionId: string; sessionTitle: string; matches: Array<{ role: string; content: string; snippet: string }> }>> => {
+    const q = query.trim();
+    if (!q) return [];
+    try {
+      const r = await request<{ results: Array<{ sessionId: string; title?: string; snippet: string; matchCount: number }> }>(`/sessions/search?q=${encodeURIComponent(q)}`);
+      if (r && Array.isArray(r.results)) {
+        return r.results.map(x => ({
+          sessionId: x.sessionId,
+          sessionTitle: x.title ?? `Session ${x.sessionId.slice(0, 8)}`,
+          matches: [{ role: 'mixed', content: x.snippet, snippet: x.snippet }],
+        }));
+      }
+    } catch { /* fall back to client-side */ }
+    const list = await request<SessionInfo[]>('/sessions');
+    const needle = q.toLowerCase();
+    const results: Array<{ sessionId: string; sessionTitle: string; matches: Array<{ role: string; content: string; snippet: string }> }> = [];
+    for (const s of list) {
+      try {
+        const ctx = await request<SessionContext>(`/sessions/${s.id}/context`);
+        const text = (ctx as { content?: string }).content ?? '';
+        if (text.toLowerCase().includes(needle)) {
+          const lines = text.split('\n').filter(l => l.toLowerCase().includes(needle)).slice(0, 3);
+          results.push({
+            sessionId: s.id,
+            sessionTitle: s.title ?? `Session ${s.id.slice(0, 8)}`,
+            matches: lines.map(line => ({ role: 'mixed', content: line, snippet: line.slice(0, 200) })),
+          });
+        }
+      } catch { /* skip */ }
+    }
+    return results;
+  },
 };
 
 // ─── Permissions ───
@@ -180,7 +234,24 @@ export const scheduler = {
   jobs: () => request<{ jobs: SchedulerJob[] }>('/scheduler/jobs').then(r => r.jobs ?? []),
   create: (name: string, cron: string, instruction: string) => request<{ ok: boolean }>('/scheduler/jobs', { method: 'POST', body: JSON.stringify({ name, cron, instruction }) }),
   delete: (id: string) => request<{ ok: boolean }>(`/scheduler/jobs/${id}`, { method: 'DELETE' }),
+  run: (id: string) => request<{ ok: boolean }>(`/scheduler/jobs/${id}/run`, { method: 'POST' }),
   parseCron: (natural: string) => request<{ cron: string; description: string }>('/scheduler/parse-cron', { method: 'POST', body: JSON.stringify({ natural }) }),
+};
+
+// ─── Secret Sauce (Soul / Identity / Diary / Memories / Permission / Crew) ───
+export type SecretSauceFile = 'SOUL' | 'IDENTITY' | 'DIARY' | 'MEMORIES' | 'PERMISSION' | 'CREW';
+export const secretSauce = {
+  list: () => request<{ files: Array<{ file: SecretSauceFile; size: number; exists: boolean }> }>('/secret-sauce').then(r => r.files),
+  get: (file: SecretSauceFile) => request<{ content: string; exists: boolean }>(`/secret-sauce/${file}`),
+  save: (file: SecretSauceFile, content: string) => request<{ ok: boolean; size: number }>(`/secret-sauce/${file}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+};
+
+// ─── Orchestrator ───
+export interface OrchestratorStep { id: string; description: string; status: 'pending' | 'executing' | 'done' | 'failed'; result?: string; dependsOn?: string[]; }
+export interface OrchestratorPlan { id: string; goal: string; steps: OrchestratorStep[]; status: 'created' | 'executing' | 'complete' | 'failed'; }
+export const orchestrator = {
+  createPlan: (goal: string) => request<{ plan: OrchestratorPlan }>('/orchestrator/plan', { method: 'POST', body: JSON.stringify({ goal }) }).then(r => r.plan),
+  execute: (planId: string) => request<{ plan: OrchestratorPlan }>(`/orchestrator/plan/${planId}/execute`, { method: 'POST' }).then(r => r.plan),
 };
 
 // ─── Todos ───
@@ -191,31 +262,47 @@ export const todos = {
 };
 
 // ─── SSE Stream Connection ───
-export function connectSSE(onEvent: (event: TelemetryEvent) => void): () => void {
+export type ConnectionState = 'connecting' | 'open' | 'reconnecting' | 'closed';
+
+export interface SSEHandlers {
+  onEvent: (event: TelemetryEvent) => void;
+  onState?: (state: ConnectionState, info?: { retryIn?: number; attempt?: number }) => void;
+}
+
+export function connectSSE(
+  arg: ((event: TelemetryEvent) => void) | SSEHandlers,
+): () => void {
+  const handlers: SSEHandlers = typeof arg === 'function' ? { onEvent: arg } : arg;
   let es: EventSource | null = null;
   let closed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryCount = 0;
 
+  function setState(state: ConnectionState, info?: { retryIn?: number; attempt?: number }) {
+    handlers.onState?.(state, info);
+  }
+
   function connect() {
     if (closed) return;
+    setState(retryCount === 0 ? 'connecting' : 'reconnecting', { attempt: retryCount });
     es = new EventSource(`${BASE}/chat/stream`, { withCredentials: true });
 
     es.addEventListener('telemetry', (e) => {
       try {
         retryCount = 0; // Reset on successful message
         const data = JSON.parse(e.data) as TelemetryEvent;
-        onEvent(data);
+        handlers.onEvent(data);
       } catch { /* ignore parse errors */ }
     });
 
-    es.onopen = () => { retryCount = 0; };
+    es.onopen = () => { retryCount = 0; setState('open'); };
 
     es.onerror = () => {
       es?.close();
       if (!closed) {
         retryCount++;
         const delay = Math.min(3000 * Math.pow(2, retryCount - 1), 30000); // Exponential backoff, max 30s
+        setState('reconnecting', { retryIn: delay, attempt: retryCount });
         retryTimer = setTimeout(connect, delay);
       }
     };
@@ -225,6 +312,7 @@ export function connectSSE(onEvent: (event: TelemetryEvent) => void): () => void
 
   return () => {
     closed = true;
+    setState('closed');
     if (retryTimer) clearTimeout(retryTimer);
     es?.close();
   };

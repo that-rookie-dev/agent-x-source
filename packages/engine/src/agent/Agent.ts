@@ -81,6 +81,9 @@ export class Agent {
   private isProcessing = false;
   private abortController: AbortController | null = null;
   private pendingInstruction: string | null = null;
+  private _turnStartTokens = 0;
+  private _turnStartCost = 0;
+  private _recentToolSignatures: string[] = [];
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
   private scheduler: Scheduler;
@@ -549,7 +552,7 @@ export class Agent {
         // Treat certain client/auth errors as non-retryable (tests depend on immediate failure
         // for things like 401 Unauthorized). If we detect these, rethrow immediately.
         const msg = error instanceof Error ? error.message : String(error);
-        if (/401|Unauthorized|404|not found|402|quota|billing|Invalid API/i.test(msg)) {
+        if (/401|Unauthorized|403|Forbidden|404|not found|402|429|quota|billing|Invalid API|suspended/i.test(msg)) {
           throw lastError;
         }
 
@@ -678,6 +681,12 @@ Return ONLY valid JSON, no other text.`;
     this.isProcessing = true;
     this.abortController = new AbortController();
     const startTime = Date.now();
+    // Per-turn token snapshot for delta + cost emissions
+    const turnStartTokens = this.tokenTracker.tokensUsed;
+    const turnStartCost = this.tokenTracker.totalCost;
+    this._turnStartTokens = turnStartTokens;
+    this._turnStartCost = turnStartCost;
+    this._recentToolSignatures = [];
 
     // Store the per-message instruction for injection during completion (not in history)
     this.pendingInstruction = options?.instruction || null;
@@ -706,7 +715,7 @@ Return ONLY valid JSON, no other text.`;
       executionPath: this.currentDecision.executionPath,
       confidence: this.currentDecision.confidence,
       reasoning: this.currentDecision.reasoning,
-    } as EngineEvent);
+    } as unknown as EngineEvent);
 
     // ─── FAST REPLY PATH: Greetings, farewells, conversational ───
     if (this.currentDecision.executionPath === 'fast_reply' && this.currentDecision.confidence >= 0.85) {
@@ -965,6 +974,8 @@ Return ONLY valid JSON, no other text.`;
       if (chunk.type === 'text_delta' && chunk.content) {
         fullContent += chunk.content;
         this.emit({ type: 'stream_chunk', content: chunk.content, fullContent });
+      } else if ((chunk as { type?: string }).type === 'reasoning_delta' && (chunk as { content?: string }).content) {
+        this.emit({ type: 'reasoning_delta', content: (chunk as { content: string }).content } as unknown as EngineEvent);
       }
     }
 
@@ -974,6 +985,8 @@ Return ONLY valid JSON, no other text.`;
       if (chunk.type === 'text_delta' && chunk.content) {
         fullContent += chunk.content;
         this.emit({ type: 'stream_chunk', content: chunk.content, fullContent });
+      } else if ((chunk as { type?: string }).type === 'reasoning_delta' && (chunk as { content?: string }).content) {
+        this.emit({ type: 'reasoning_delta', content: (chunk as { content: string }).content } as unknown as EngineEvent);
       }
       next = await streamHandle.it.next();
     }
@@ -997,10 +1010,11 @@ Return ONLY valid JSON, no other text.`;
     // Update token tracker
     const tokensUsed = Math.ceil((fastPrompt.length + content.length + fullContent.length) / 4);
     this.tokenTracker.addUsage(tokensUsed);
-    this.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.getContextWindow() } as EngineEvent);
+    const turnTokens = this.tokenTracker.tokensUsed - (this._turnStartTokens ?? 0);
+    const costUsd = this.tokenTracker.totalCost - (this._turnStartCost ?? 0);
+    this.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.getContextWindow(), turnTokens, costUsd } as unknown as EngineEvent);
 
-    this.isProcessing = false;
-    this.abortController = null;
+    // Note: isProcessing and abortController are cleaned up by sendMessage's finally block
     return assistantMessage;
   }
 
@@ -1010,6 +1024,8 @@ Return ONLY valid JSON, no other text.`;
    */
   private async runCompletionLoop(startTime: number): Promise<Message> {
     const MAX_TOOL_ROUNDS = 10;
+    // Track accumulated content across ALL rounds for proper streaming to UI
+    let accumulatedContent = '';
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       // ─── SMART TOOL SELECTION ───
@@ -1091,7 +1107,7 @@ Return ONLY valid JSON, no other text.`;
       this.emit({ type: 'loading_start', stage: round === 0 ? 'thinking' : 'tool_execution' });
 
       // Stream response with retry support
-      let fullContent = '';
+      let fullContent = '';  // Content for THIS round only
       const toolCalls: CompletionToolCall[] = [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let currentToolCall: any = null;
@@ -1110,7 +1126,10 @@ Return ONLY valid JSON, no other text.`;
         const chunk: CompletionChunk = stream.first.value;
         if (chunk.type === 'text_delta' && chunk.content) {
           fullContent += chunk.content;
-          this.emit({ type: 'stream_chunk', content: chunk.content, fullContent });
+          accumulatedContent += chunk.content;
+          this.emit({ type: 'stream_chunk', content: chunk.content, fullContent: accumulatedContent });
+        } else if ((chunk as { type?: string }).type === 'reasoning_delta' && (chunk as { content?: string }).content) {
+          this.emit({ type: 'reasoning_delta', content: (chunk as { content: string }).content } as unknown as EngineEvent);
         } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
           const tc = chunk.toolCall;
           if (tc.id) {
@@ -1143,11 +1162,14 @@ Return ONLY valid JSON, no other text.`;
         const chunk = next.value;
         if (chunk.type === 'text_delta' && chunk.content) {
           fullContent += chunk.content;
+          accumulatedContent += chunk.content;
           this.emit({
             type: 'stream_chunk',
             content: chunk.content,
-            fullContent,
+            fullContent: accumulatedContent,
           });
+        } else if ((chunk as { type?: string }).type === 'reasoning_delta' && (chunk as { content?: string }).content) {
+          this.emit({ type: 'reasoning_delta', content: (chunk as { content: string }).content } as unknown as EngineEvent);
         } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
           // Accumulate tool call
           if (chunk.toolCall.id) {
@@ -1189,9 +1211,7 @@ Return ONLY valid JSON, no other text.`;
         toolCalls.push(currentToolCall as CompletionToolCall);
       }
 
-      this.emit({ type: 'loading_end' });
-
-      // If there are tool calls, execute them and loop
+      // If there are tool calls, execute them and loop (do NOT emit loading_end yet)
       if (toolCalls.length > 0) {
         // Add assistant message with tool calls to history
         this.messages.push({
@@ -1256,6 +1276,16 @@ Return ONLY valid JSON, no other text.`;
           // eslint-disable-next-line no-console
           console.debug('[Agent] executing tool', tc.function.name);
           const toolStartTime = Date.now();
+
+          // Doom-loop detection: same tool + args invoked 3+ times in a row
+          const sig = `${tc.function.name}|${tc.function.arguments.slice(0, 200)}`;
+          this._recentToolSignatures.push(sig);
+          if (this._recentToolSignatures.length > 6) this._recentToolSignatures.shift();
+          const lastThree = this._recentToolSignatures.slice(-3);
+          if (lastThree.length === 3 && lastThree.every((s) => s === sig)) {
+            this.emit({ type: 'doom_loop', tool: tc.function.name, count: lastThree.length } as unknown as EngineEvent);
+          }
+
           this.emit({
             type: 'tool_executing',
             tool: tc.function.name,
@@ -1328,14 +1358,18 @@ Return ONLY valid JSON, no other text.`;
       }
       if (!fullContent.trim()) {
         fullContent = 'I apologize, I was unable to generate a response. Please try rephrasing your question.';
-        this.emit({ type: 'stream_chunk', content: fullContent, fullContent });
+        accumulatedContent += fullContent;
+        this.emit({ type: 'stream_chunk', content: fullContent, fullContent: accumulatedContent });
       }
 
-      this.messages.push({ role: 'assistant', content: fullContent });
+      // Emit loading_end now that we have the final response
+      this.emit({ type: 'loading_end' });
+
+      this.messages.push({ role: 'assistant', content: accumulatedContent });
 
       const tokenCount = lastUsage
         ? lastUsage.inputTokens + lastUsage.outputTokens
-        : Math.ceil(fullContent.length / 4);
+        : Math.ceil(accumulatedContent.length / 4);
       if (lastUsage) {
         this.tokenTracker.addTokenUsage(lastUsage.inputTokens, lastUsage.outputTokens);
       } else {
@@ -1346,13 +1380,16 @@ Return ONLY valid JSON, no other text.`;
         id: generateMessageId(),
         sessionId: this.sessionId,
         role: 'assistant',
-        content: fullContent,
+        content: accumulatedContent,
         toolCalls: null,
         createdAt: new Date().toISOString(),
         tokenCount,
       };
 
       const elapsed = Date.now() - startTime;
+      const turnTokens = this.tokenTracker.tokensUsed - (this._turnStartTokens ?? 0);
+      const costUsd = this.tokenTracker.totalCost - (this._turnStartCost ?? 0);
+      this.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.getContextWindow(), turnTokens, costUsd } as unknown as EngineEvent);
       this.emit({
         type: 'message_received',
         message: assistantMessage,
@@ -1363,6 +1400,7 @@ Return ONLY valid JSON, no other text.`;
     }
 
     // Exhausted rounds — return what we have
+    this.emit({ type: 'loading_end' });
     const fallback: Message = {
       id: generateMessageId(),
       sessionId: this.sessionId,

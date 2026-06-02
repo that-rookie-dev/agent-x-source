@@ -245,6 +245,22 @@ export class Scheduler {
     return deleted;
   }
 
+  /** Trigger a scheduled job immediately (manual "Run Now"). */
+  runJob(jobId: string): boolean {
+    const job = this.jobs.get(jobId);
+    if (!job) return false;
+    job.lastRun = Date.now();
+    job.runCount++;
+    this.persist();
+    this.eventBus.emit({
+      type: 'steer_message',
+      taskId: job.id,
+      instruction: `▶ Manually triggered job "${job.name}" (run #${job.runCount})`,
+    } as EngineEvent);
+    if (this.onJobTrigger) this.onJobTrigger(job);
+    return true;
+  }
+
   getJobs(): ScheduledJob[] {
     return [...this.jobs.values()];
   }

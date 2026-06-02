@@ -3,7 +3,7 @@ import type { Express } from 'express';
 import multer from 'multer';
 import { createServer } from 'node:http';
 import { join, dirname, basename } from 'node:path';
-import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION } from '@agentx/shared';
@@ -542,6 +542,31 @@ app.post('/api/chat/message', async (req, res) => {
         ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
         : undefined;
 
+    // Auto-checkpoint before each user turn — enables /undo to roll back this turn
+    try {
+      const sid = (agent as unknown as { sessionId: string }).sessionId;
+      if (sid) {
+        const dir = getSessionDir(sid);
+        if (existsSync(dir)) {
+          const convPath = join(dir, 'conversation.json');
+          const messages = existsSync(convPath) ? JSON.parse(readFileSync(convPath, 'utf-8') || '[]') : [];
+          const checkpointsDir = join(dir, 'checkpoints');
+          if (!existsSync(checkpointsDir)) mkdirSync(checkpointsDir, { recursive: true });
+          // Keep only most recent 20 auto-checkpoints to avoid unbounded growth
+          try {
+            const autos = readdirSync(checkpointsDir).filter(f => f.startsWith('auto-')).sort();
+            while (autos.length > 19) {
+              const oldest = autos.shift();
+              if (oldest) { try { unlinkSync(join(checkpointsDir, oldest)); } catch { /* ignore */ } }
+            }
+          } catch { /* ignore */ }
+          const ckptId = `auto-${Date.now()}`;
+          const label = `Auto · ${new Date().toLocaleTimeString()}`;
+          writeFileSync(join(checkpointsDir, `${ckptId}.json`), JSON.stringify({ id: ckptId, label, messages, createdAt: new Date().toISOString() }, null, 2));
+        }
+      }
+    } catch { /* checkpoint failure shouldn't block the message */ }
+
     const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
     res.json({ ok: true, message });
   } catch (e: unknown) {
@@ -563,6 +588,14 @@ app.post('/api/chat/cancel', (_req, res) => {
 
 // ───── Message Queue & Steer ─────
 // Queue: messages waiting to be sent after current task completes
+// Helper: wait for agent to finish processing (max 3s) after a cancel
+async function waitForIdle(agent: { processing: boolean }, maxWait = 3000): Promise<void> {
+  const start = Date.now();
+  while (agent.processing && (Date.now() - start) < maxWait) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+
 const messageQueue: Array<{ text: string; attachments?: { name: string; content: string }[] }> = [];
 
 app.post('/api/chat/queue', (req, res) => {
@@ -593,10 +626,9 @@ app.post('/api/chat/steer', async (req, res) => {
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
-    // Cancel current execution
+    // Cancel current execution and wait for it to finish
     agent.cancel();
-    // Small delay to let cancellation propagate
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await waitForIdle(agent);
     // Send the steer message
     let fullText = text;
     if (attachments && attachments.length > 0) {
@@ -621,9 +653,9 @@ app.post('/api/chat/stop-and-send', async (req, res) => {
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
-    // Cancel current execution
+    // Cancel current execution and wait for it to finish
     agent.cancel();
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await waitForIdle(agent);
     ensureSubscribed();
     agent.setPlanMode(sessionSettings.mode === 'plan');
     (agent as unknown as { autoApproveTools: boolean }).autoApproveTools = (sessionSettings.approval === 'auto' || sessionSettings.approval === 'moderate');
@@ -650,7 +682,14 @@ app.get('/api/chat/history', (_req, res) => {
     const agent = eng.agent;
     if (!agent) { res.json([]); return; }
     const history = agent.getMessageHistory();
-    res.json(history);
+    // Ensure each message has an id for the UI (CompletionMessage doesn't guarantee id)
+    const formatted = history.map((m, i) => ({
+      id: (m as Record<string, unknown>).id || `hist-${i}`,
+      role: m.role,
+      content: m.content || '',
+      tokenCount: Math.ceil((m.content?.length ?? 0) / 4),
+    }));
+    res.json(formatted);
   } catch {
     res.json([]);
   }
@@ -680,26 +719,25 @@ app.get('/api/chat/stream', (req, res) => {
   });
 
   const sendEvent = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* connection closed */ }
   };
 
   sendEvent('connected', { timestamp: new Date().toISOString() });
 
+  // Subscribe to telemetry bus ONLY — agent events are already bridged to telemetry
+  // in createAgent(). Subscribing to both would cause duplicate events.
   const unsub = eng.telemetry.onEvent((ev) => {
     sendEvent('telemetry', ev);
   });
 
-  // Also subscribe to agent events if agent exists
-  let agentUnsub: (() => void) | null = null;
-  if (eng.agent) {
-    agentUnsub = eng.agent.events.on((event) => {
-      sendEvent('telemetry', event);
-    });
-  }
+  // Heartbeat to detect dead connections (every 25s)
+  const heartbeat = setInterval(() => {
+    sendEvent('ping', { ts: Date.now() });
+  }, 25000);
 
   req.on('close', () => {
+    clearInterval(heartbeat);
     unsub();
-    agentUnsub?.();
     res.end();
   });
 });
@@ -740,6 +778,97 @@ app.get('/api/sessions', (_req, res) => {
   const eng = getEngine();
   const sessions = eng.sessionManager.listSessions(50);
   res.json(sessions);
+});
+
+// Cross-session full-text search. Scans each session's conversation.json.
+app.get('/api/sessions/search', (req, res) => {
+  try {
+    const q = String(req.query['q'] ?? '').trim();
+    if (!q) { res.json({ results: [] }); return; }
+    const needle = q.toLowerCase();
+    const eng = getEngine();
+    const sessions = eng.sessionManager.listSessions(200);
+    const results: Array<{ sessionId: string; title?: string; createdAt?: string; snippet: string; matchCount: number }> = [];
+    for (const s of sessions) {
+      const sid = (s as unknown as { id?: string; sessionId?: string }).id ?? (s as unknown as { sessionId?: string }).sessionId;
+      if (!sid) continue;
+      const conv = join(getSessionDir(sid), 'conversation.json');
+      if (!existsSync(conv)) continue;
+      let messages: Array<{ role?: string; content?: string }> = [];
+      try { messages = JSON.parse(readFileSync(conv, 'utf-8')) as Array<{ role?: string; content?: string }>; } catch { continue; }
+      let matchCount = 0;
+      let snippet = '';
+      for (const m of messages) {
+        const c = String(m.content ?? '');
+        const lc = c.toLowerCase();
+        if (lc.includes(needle)) {
+          matchCount++;
+          if (!snippet) {
+            const idx = lc.indexOf(needle);
+            const start = Math.max(0, idx - 40);
+            const end = Math.min(c.length, idx + needle.length + 80);
+            snippet = (start > 0 ? '…' : '') + c.slice(start, end) + (end < c.length ? '…' : '');
+          }
+        }
+      }
+      if (matchCount > 0) {
+        results.push({
+          sessionId: sid,
+          title: (s as unknown as { title?: string; name?: string }).title ?? (s as unknown as { name?: string }).name,
+          createdAt: (s as unknown as { createdAt?: string }).createdAt,
+          snippet,
+          matchCount,
+        });
+      }
+    }
+    results.sort((a, b) => b.matchCount - a.matchCount);
+    res.json({ results: results.slice(0, 50) });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'search-failed' });
+  }
+});
+
+// Export full session trajectory (conversation + context files + checkpoint list)
+app.get('/api/sessions/:id/export', (req, res) => {
+  try {
+    const sid = req.params['id']!;
+    const dir = getSessionDir(sid);
+    if (!existsSync(dir)) { res.status(404).json({ error: 'not-found' }); return; }
+    let messages: unknown[] = [];
+    try { messages = JSON.parse(readFileSync(join(dir, 'conversation.json'), 'utf-8')) as unknown[]; } catch { /* empty */ }
+    const ctxFiles = ['context.txt', 'memories.txt', 'pending.txt', 'completed.txt', 'suggestions.txt'];
+    const contextFiles: Record<string, string> = {};
+    for (const f of ctxFiles) {
+      try { contextFiles[f.replace('.txt', '')] = readFileSync(join(dir, f), 'utf-8'); } catch { /* skip */ }
+    }
+    const cpDir = join(dir, 'checkpoints');
+    const checkpoints: Array<{ id: string; label?: string; createdAt?: string; messageCount?: number }> = [];
+    if (existsSync(cpDir)) {
+      try {
+        const files = readdirSync(cpDir).filter((f: string) => f.endsWith('.json'));
+        for (const f of files) {
+          try {
+            const cp = JSON.parse(readFileSync(join(cpDir, f), 'utf-8')) as { id?: string; label?: string; createdAt?: string; messages?: unknown[] };
+            checkpoints.push({ id: cp.id ?? f.replace('.json', ''), label: cp.label, createdAt: cp.createdAt, messageCount: Array.isArray(cp.messages) ? cp.messages.length : 0 });
+          } catch { /* skip bad cp */ }
+        }
+      } catch { /* skip */ }
+    }
+    const exportData = {
+      sessionId: sid,
+      exportedAt: new Date().toISOString(),
+      version: '1.0',
+      messageCount: messages.length,
+      messages,
+      contextFiles,
+      checkpoints,
+    };
+    res.setHeader('Content-Disposition', `attachment; filename="agentx-session-${sid.slice(0, 8)}-${Date.now()}.json"`);
+    res.setHeader('Content-Type', 'application/json');
+    res.send(JSON.stringify(exportData, null, 2));
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'export-failed' });
+  }
 });
 
 app.post('/api/sessions', (_req, res) => {
@@ -1646,6 +1775,70 @@ app.delete('/api/scheduler/jobs/:id', (req, res) => {
     res.json({ ok: true });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'remove-job-failed' });
+  }
+});
+
+app.post('/api/scheduler/jobs/:id/run', (req, res) => {
+  const eng = getEngine();
+  if (!eng.agent) { res.status(400).json({ error: 'No active agent' }); return; }
+  try {
+    const ok = eng.agent.cron.runJob(req.params['id']!);
+    if (!ok) { res.status(404).json({ error: 'job-not-found' }); return; }
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'run-job-failed' });
+  }
+});
+
+// ───── Secret Sauce (Soul / Identity / Diary / Memories / Permission / Crew docs) ─────
+const SECRET_SAUCE_FILES = ['SOUL', 'IDENTITY', 'DIARY', 'MEMORIES', 'PERMISSION', 'CREW'] as const;
+type SecretSauceFile = typeof SECRET_SAUCE_FILES[number];
+function secretSaucePath(file: string): string | null {
+  const upper = file.toUpperCase();
+  if (!(SECRET_SAUCE_FILES as readonly string[]).includes(upper)) return null;
+  return join(process.cwd(), 'data', 'secret-sauce', `${upper}.md`);
+}
+
+app.get('/api/secret-sauce', (_req, res) => {
+  const files: Array<{ file: SecretSauceFile; size: number; exists: boolean }> = [];
+  for (const f of SECRET_SAUCE_FILES) {
+    const p = join(process.cwd(), 'data', 'secret-sauce', `${f}.md`);
+    if (existsSync(p)) {
+      try {
+        const stat = readFileSync(p, 'utf-8');
+        files.push({ file: f, size: stat.length, exists: true });
+      } catch { files.push({ file: f, size: 0, exists: true }); }
+    } else {
+      files.push({ file: f, size: 0, exists: false });
+    }
+  }
+  res.json({ files });
+});
+
+app.get('/api/secret-sauce/:file', (req, res) => {
+  const p = secretSaucePath(req.params['file']!);
+  if (!p) { res.status(400).json({ error: 'invalid-file' }); return; }
+  if (!existsSync(p)) { res.json({ content: '', exists: false }); return; }
+  try {
+    const content = readFileSync(p, 'utf-8');
+    res.json({ content, exists: true });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'read-failed' });
+  }
+});
+
+app.put('/api/secret-sauce/:file', (req, res) => {
+  const p = secretSaucePath(req.params['file']!);
+  if (!p) { res.status(400).json({ error: 'invalid-file' }); return; }
+  const { content } = req.body as { content?: string };
+  if (typeof content !== 'string') { res.status(400).json({ error: 'content-required' }); return; }
+  try {
+    const dir = join(process.cwd(), 'data', 'secret-sauce');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(p, content, 'utf-8');
+    res.json({ ok: true, size: content.length });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'write-failed' });
   }
 });
 

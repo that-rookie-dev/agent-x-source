@@ -6,8 +6,26 @@ import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import Alert from '@mui/material/Alert';
 import Divider from '@mui/material/Divider';
+import Collapse from '@mui/material/Collapse';
+import Link from '@mui/material/Link';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { bridges, type BridgeStatus } from '../api';
 import { colors } from '../theme';
+
+function TelegramWizardSteps() {
+  return (
+    <Box sx={{ mt: 1, p: 1.25, bgcolor: colors.bg.tertiary, borderRadius: 1, border: `1px solid ${colors.border.default}` }}>
+      <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, fontWeight: 600, mb: 0.75 }}>SETUP STEPS</Typography>
+      <Box component="ol" sx={{ pl: 2, m: 0, '& li': { fontSize: '0.65rem', color: colors.text.tertiary, mb: 0.5 } }}>
+        <li>Open Telegram and chat with <Link href="https://t.me/BotFather" target="_blank" sx={{ color: colors.accent.blue }}>@BotFather</Link>.</li>
+        <li>Send <code style={{ color: colors.accent.green }}>/newbot</code>, pick a name and username ending in <code>bot</code>.</li>
+        <li>Copy the API token BotFather returns into the field below.</li>
+        <li>(Optional) Open your bot, send it any message, then visit <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> to grab your chat ID.</li>
+        <li>Click <strong>Connect</strong>. Agent-X will start polling for messages.</li>
+      </Box>
+    </Box>
+  );
+}
 
 interface ChannelCardProps {
   name: string;
@@ -102,6 +120,7 @@ export function ChannelsPanel() {
   const [dcChannel, setDcChannel] = useState('');
   const [slBotToken, setSlBotToken] = useState('');
   const [slAppToken, setSlAppToken] = useState('');
+  const [tgWizardOpen, setTgWizardOpen] = useState(false);
 
   const loadAll = async () => {
     const [tg, dc, sl, em] = await Promise.allSettled([
@@ -141,6 +160,14 @@ export function ChannelsPanel() {
         onClear={() => wrap(async () => { await bridges.telegram.stop(); })}
       >
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, fontWeight: 600 }}>Credentials</Typography>
+            <Button size="small" startIcon={<HelpOutlineIcon sx={{ fontSize: 14 }} />} onClick={() => setTgWizardOpen((v) => !v)}
+              sx={{ fontSize: '0.6rem', textTransform: 'none', color: colors.accent.blue, minWidth: 'auto' }}>
+              {tgWizardOpen ? 'Hide setup steps' : 'Show setup wizard'}
+            </Button>
+          </Box>
+          <Collapse in={tgWizardOpen} unmountOnExit><TelegramWizardSteps /></Collapse>
           <TextField size="small" label="Bot Token" value={tgToken} onChange={(e) => setTgToken(e.target.value)} type="password"
             placeholder="123456:ABC-DEF1234..." sx={{ fontSize: '0.8rem' }} />
           <TextField size="small" label="Chat ID (optional)" value={tgChatId} onChange={(e) => setTgChatId(e.target.value)}

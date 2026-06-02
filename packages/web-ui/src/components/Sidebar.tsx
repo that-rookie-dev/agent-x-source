@@ -11,7 +11,11 @@ import CellTowerIcon from '@mui/icons-material/CellTower';
 import SettingsIcon from '@mui/icons-material/Settings';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import StorageIcon from '@mui/icons-material/Storage';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import GroupsIcon from '@mui/icons-material/Groups';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LogoutIcon from '@mui/icons-material/Logout';
+import { useNavigate } from 'react-router-dom';
 import { auth } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
@@ -24,6 +28,9 @@ interface Props {
 
 const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
   { id: 'chat', icon: ChatIcon, label: 'Chat' },
+  { id: 'crews', icon: GroupsIcon, label: 'Crews' },
+  { id: 'soul', icon: AutoAwesomeIcon, label: 'Soul' },
+  { id: 'orchestrator', icon: AccountTreeIcon, label: 'Orchestrator' },
   { id: 'tools', icon: BuildIcon, label: 'Tools' },
   { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
   { id: 'mcp', icon: HubIcon, label: 'MCP Servers' },
@@ -34,12 +41,13 @@ const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
 ];
 
 export function Sidebar({ active, onNavigate }: Props) {
-  const { setView, setAuthenticated } = useApp();
+  const { setAuthenticated } = useApp();
+  const navigate = useNavigate();
 
   const handleLogout = async () => {
     try { await auth.logout(); } catch { /* ignore */ }
     setAuthenticated(false);
-    setView('login');
+    navigate('/login');
   };
 
   return (

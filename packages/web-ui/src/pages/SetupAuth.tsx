@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -28,7 +29,8 @@ function getPasswordStrength(pw: string): { score: number; label: string; color:
 }
 
 export function SetupAuth() {
-  const { setView, setAuthenticated } = useApp();
+  const { setAuthenticated } = useApp();
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -58,7 +60,7 @@ export function SetupAuth() {
     try {
       await auth.setup(username, password);
       setAuthenticated(true, username);
-      setView('setup-wizard');
+      navigate('/setup/wizard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
     } finally {
