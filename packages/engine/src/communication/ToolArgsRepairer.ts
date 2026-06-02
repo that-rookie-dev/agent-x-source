@@ -143,6 +143,7 @@ export class ToolArgsRepairer {
 
     const result = text.replace(pattern, (match) => {
       const cleaned = match.replace(
+        // eslint-disable-next-line no-control-regex
         /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g,
         '',
       );
