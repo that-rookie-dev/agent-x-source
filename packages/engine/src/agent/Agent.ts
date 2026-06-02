@@ -864,7 +864,13 @@ Return ONLY valid JSON, no other text.`;
     this.abortController = new AbortController();
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
-    this.runStateMgr.ensureRunning(this.sessionId);
+    try {
+      this.runStateMgr.ensureRunning(this.sessionId);
+    } catch (e) {
+      this.isProcessing = false;
+      this.abortController = null;
+      throw e;
+    }
     void this.commandQueue.enqueue(this.sessionId, {
       turnId: `turn-${Date.now()}`,
       sessionId: this.sessionId,
@@ -961,6 +967,9 @@ Return ONLY valid JSON, no other text.`;
         }
         // Fall through to normal path if fast reply fails for other reasons
         getLogger().warn('FAST_REPLY', 'Fast reply failed, falling through to standard path');
+        // ─── Cleanup: close the fast-reply streaming state so the UI
+        //     doesn't show duplicate responses when the standard path runs ───
+        this.emit({ type: 'loading_end' });
       }
     }
 

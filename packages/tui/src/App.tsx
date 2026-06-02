@@ -45,6 +45,7 @@ export const App: FC<AppProps> = ({
   const [activeCrew, setActiveCrew] = useState<Crew | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [sessionDEK, setSessionDEK] = useState<Buffer | null>(null);
 
   // Shared plugin registry
   const [pluginRegistry] = useState(() => new PluginRegistry());
@@ -155,6 +156,7 @@ export const App: FC<AppProps> = ({
     // Set DEK on ConfigManager so encrypted config can be read
     const configManager = new ConfigManager();
     configManager.setDEK(session.dek);
+    setSessionDEK(session.dek);
 
     const isSetupDone = configManager.isSetupComplete();
 
@@ -165,6 +167,7 @@ export const App: FC<AppProps> = ({
         const sess = store.getSession(restoreSessionId);
         if (sess) {
           const pm = new CrewManager();
+          pm.setDEK(session.dek);
           const crewId = sess['crew_id'] as string | null;
           const crew = crewId ? pm.get(crewId) ?? pm.getActive() : pm.getActive();
           setActiveCrew(crew);
@@ -180,6 +183,7 @@ export const App: FC<AppProps> = ({
         setConfig(cfg);
         if (!activeCrew) {
           const pm = new CrewManager();
+          pm.setDEK(session.dek);
           setActiveCrew(pm.getActive());
         }
         setState('crew');
@@ -254,6 +258,7 @@ export const App: FC<AppProps> = ({
         onSelect={handleCrewSelect}
         currentProvider={config.provider.activeProvider}
         currentModel={config.provider.activeModel}
+        dek={sessionDEK}
       />
     );
   }

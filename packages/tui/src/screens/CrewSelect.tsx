@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { COLORS } from '../theme/colors.js';
@@ -26,15 +26,26 @@ interface CrewSelectProps {
   onSelect: (crew: Crew) => void;
   currentProvider?: string;
   currentModel?: string;
+  dek?: Buffer | null;
 }
 
 export const CrewSelect: React.FC<CrewSelectProps> = ({
   onSelect,
   currentProvider,
   currentModel,
+  dek,
 }) => {
   const [pm] = useState(() => new CrewManager());
-  const [crews] = useState<Crew[]>(() => pm.list().filter((p) => !p.isDefault));
+
+  // Apply DEK when available so encrypted crews can be read
+  useEffect(() => {
+    if (dek) {
+      pm.setDEK(dek);
+      setCrews(pm.list().filter((p) => !p.isDefault));
+    }
+  }, [dek, pm]);
+
+  const [crews, setCrews] = useState<Crew[]>(() => pm.list().filter((p) => !p.isDefault));
   const [screen, setScreen] = useState<ScreenState>(() => {
     // If no user-created crews, go straight to create flow
     const userCrews = pm.list().filter((p) => !p.isDefault);

@@ -211,6 +211,7 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel, 
   const handleToneSelect = useCallback((tone: { id: CrewEmotion }) => {
     // Create crew and save callsign to config
     const pm = new CrewManager();
+    if (dek) pm.setDEK(dek);
     const id = crewName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     pm.create({ id, name: crewName.trim(), systemPrompt: crewPrompt.trim(), emotion: tone.id, isDefault: false });
     pm.switch(id);
@@ -286,6 +287,7 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel, 
       cm.setDEK(dek);
     }
     const pm = new CrewManager();
+    if (dek) pm.setDEK(dek);
     const config = cm.load();
     config.setupComplete = true;
     cm.save(config);
