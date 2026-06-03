@@ -328,14 +328,21 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // Connect SSE for streaming events
   useEffect(() => {
+    // Helper to immutably update the last message (avoids React mutation anti-pattern)
+    const updateLastMessage = (msgs: UIMessage[], updates: Partial<UIMessage>): UIMessage[] => {
+      if (msgs.length === 0) return msgs;
+      const last = msgs[msgs.length - 1];
+      if (last?.role !== 'assistant') return msgs;
+      return [...msgs.slice(0, -1), { ...last, ...updates }];
+    };
+
     const handleEvent = (ev: TelemetryEvent) => {
       // Reset activity timer on every event from the agent
       lastActivityRef.current = Date.now();
       setLastEventAt(Date.now());
 
       setMessages((prev) => {
-        const msgs = [...prev];
-        const last = msgs[msgs.length - 1];
+        const last = prev[prev.length - 1];
 
         switch (ev.type) {
           case 'loading_start':
@@ -343,157 +350,144 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             // a prior loading_end from a fast-reply failure), reuse it instead
             // of creating a duplicate placeholder.
             if (last?.role === 'assistant' && !last.streaming && last.content) {
-              last.streaming = true;
+              setStreaming(true);
+              return updateLastMessage(prev, { streaming: true });
             } else if (!last || last.role !== 'assistant' || !last.streaming) {
-              msgs.push({ id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true });
+              setStreaming(true);
+              return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
             }
             setStreaming(true);
-            break;
+            return prev;
 
           case 'stream_chunk':
             if (last?.role === 'assistant' && last.streaming) {
-              last.content = (ev.fullContent as string) ?? (last.content + ((ev.content as string) ?? ''));
+              const newContent = (ev.fullContent as string) ?? (last.content + ((ev.content as string) ?? ''));
+              return updateLastMessage(prev, { content: newContent });
             } else {
               // If no streaming placeholder exists, create one
-              const newMsg: UIMessage = { id: crypto.randomUUID(), role: 'assistant', content: (ev.content as string) ?? '', streaming: true };
-              msgs.push(newMsg);
               setStreaming(true);
+              return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: (ev.content as string) ?? '', streaming: true }];
             }
-            break;
 
           case 'loading_end':
-            if (last?.role === 'assistant') last.streaming = false;
             setStreaming(false);
-            break;
+            return updateLastMessage(prev, { streaming: false });
 
           case 'message_received': {
             const msg = ev.message as { id?: string; content?: string; role?: string } | undefined;
+            setStreaming(false);
             if (last?.role === 'assistant') {
-              if (msg?.content) last.content = msg.content;
-              last.streaming = false;
+              return updateLastMessage(prev, { content: msg?.content ?? last.content, streaming: false });
             } else if (msg?.content && msg.role === 'assistant') {
               // Edge case: no streaming placeholder existed — add the message directly
-              msgs.push({ id: msg.id || crypto.randomUUID(), role: 'assistant', content: msg.content, streaming: false });
+              return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant', content: msg.content, streaming: false }];
             }
-            setStreaming(false);
-            break;
+            return prev;
           }
 
           case 'tool_executing': {
-            if (last?.role === 'assistant') {
-              const toolName = (ev.tool as string) ?? 'unknown';
-              if (toolName === 'delegate_to_subagent') {
-                const sa: SubAgent = { id: crypto.randomUUID(), name: 'Sub-Agent', task: (ev.description as string) ?? '', status: 'running' };
-                last.subAgents = [...(last.subAgents ?? []), sa];
-              } else {
-                const tc: ToolCall = { id: crypto.randomUUID(), name: toolName, args: (ev.description as string) ?? '', status: 'running' };
-                last.toolCalls = [...(last.toolCalls ?? []), tc];
-                // Doom-loop detection: same tool called 3+ times in a row with similar args
-                const recent = (last.toolCalls ?? []).slice(-4);
-                if (recent.length >= 3) {
-                  const same = recent.slice(-3).every(t => t.name === toolName && (t.args ?? '').slice(0, 80) === (tc.args ?? '').slice(0, 80));
-                  if (same) last.doomLoop = { toolName, count: recent.filter(t => t.name === toolName).length };
-                  else last.doomLoop = null;
-                }
+            if (last?.role !== 'assistant') return prev;
+            const toolName = (ev.tool as string) ?? 'unknown';
+            if (toolName === 'delegate_to_subagent') {
+              const sa: SubAgent = { id: crypto.randomUUID(), name: 'Sub-Agent', task: (ev.description as string) ?? '', status: 'running' };
+              return updateLastMessage(prev, { subAgents: [...(last.subAgents ?? []), sa] });
+            } else {
+              const tc: ToolCall = { id: crypto.randomUUID(), name: toolName, args: (ev.description as string) ?? '', status: 'running' };
+              const newToolCalls = [...(last.toolCalls ?? []), tc];
+              // Doom-loop detection: same tool called 3+ times in a row with similar args
+              const recent = newToolCalls.slice(-4);
+              let doomLoop = last.doomLoop;
+              if (recent.length >= 3) {
+                const same = recent.slice(-3).every(t => t.name === toolName && (t.args ?? '').slice(0, 80) === (tc.args ?? '').slice(0, 80));
+                doomLoop = same ? { toolName, count: recent.filter(t => t.name === toolName).length } : null;
               }
+              return updateLastMessage(prev, { toolCalls: newToolCalls, doomLoop });
             }
-            break;
           }
 
-          case 'doom_loop': {
-            if (last?.role === 'assistant') {
-              last.doomLoop = { toolName: (ev.tool as string) ?? 'unknown', count: (ev.count as number) ?? 3 };
-            }
-            break;
-          }
+          case 'doom_loop':
+            return last?.role === 'assistant'
+              ? updateLastMessage(prev, { doomLoop: { toolName: (ev.tool as string) ?? 'unknown', count: (ev.count as number) ?? 3 } })
+              : prev;
 
           case 'tool_complete': {
-            if (last?.role === 'assistant') {
-              const toolName = (ev.tool as string) ?? '';
-              if (toolName === 'delegate_to_subagent' && last.subAgents) {
-                const sa = last.subAgents.find((a) => a.status === 'running');
-                if (sa) {
-                  sa.status = 'done';
-                  const result = ev.result as { output?: string; success?: boolean } | string | undefined;
-                  sa.result = typeof result === 'string' ? result : result?.output ?? 'Done';
-                }
-              } else if (last.toolCalls) {
-                const tc = last.toolCalls.find((t) => t.name === toolName && t.status === 'running');
-                if (tc) {
-                  tc.status = 'done';
-                  const result = ev.result;
-                  tc.result = typeof result === 'string' ? result : JSON.stringify(result ?? '');
-                  const resObj = typeof result === 'object' && result !== null ? result as Record<string, unknown> : null;
-                  if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') {
-                    setToolEnablePrompt({ toolId: toolName, toolName });
-                  }
-                }
-              }
+            if (last?.role !== 'assistant') return prev;
+            const toolName = (ev.tool as string) ?? '';
+            if (toolName === 'delegate_to_subagent' && last.subAgents) {
+              const newSubAgents = last.subAgents.map((a) => {
+                if (a.status !== 'running') return a;
+                const result = ev.result as { output?: string; success?: boolean } | string | undefined;
+                return { ...a, status: 'done' as const, result: typeof result === 'string' ? result : result?.output ?? 'Done' };
+              });
+              return updateLastMessage(prev, { subAgents: newSubAgents });
+            } else if (last.toolCalls) {
+              let foundToolError = false;
+              const newToolCalls = last.toolCalls.map((t) => {
+                if (t.name !== toolName || t.status !== 'running') return t;
+                const result = ev.result;
+                const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+                const resObj = typeof result === 'object' && result !== null ? result as Record<string, unknown> : null;
+                if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') foundToolError = true;
+                return { ...t, status: 'done' as const, result: resultStr };
+              });
+              if (foundToolError) setToolEnablePrompt({ toolId: toolName, toolName });
+              return updateLastMessage(prev, { toolCalls: newToolCalls });
             }
-            break;
+            return prev;
           }
 
           case 'todo_update': {
-            if (last?.role === 'assistant') {
-              last.todos = ev.items as TodoItem[];
-            }
             setTodoItems(ev.items as TodoItem[]);
-            break;
+            return last?.role === 'assistant' ? updateLastMessage(prev, { todos: ev.items as TodoItem[] }) : prev;
           }
 
           case 'plan_generated': {
-            if (last?.role === 'assistant') {
-              const plan = ev.plan as { steps?: { description: string }[] } | undefined;
-              if (plan?.steps) {
-                last.plan = plan.steps.map((s) => s.description);
-              }
+            if (last?.role !== 'assistant') return prev;
+            const plan = ev.plan as { steps?: { description: string }[] } | undefined;
+            if (plan?.steps) {
+              return updateLastMessage(prev, { plan: plan.steps.map((s) => s.description) });
             }
-            break;
+            return prev;
           }
 
           case 'token_usage': {
             const used = ev.totalTokens as number | undefined;
             if (used) setTokenUsed(used);
             // Per-turn delta on the current assistant message
-            if (last?.role === 'assistant') {
-              const turn = ev.turnTokens as number | undefined;
-              const cost = ev.costUsd as number | undefined;
-              if (turn != null) last.turnTokens = turn;
-              if (cost != null) last.turnCostUsd = cost;
-            }
-            break;
+            if (last?.role !== 'assistant') return prev;
+            const turn = ev.turnTokens as number | undefined;
+            const cost = ev.costUsd as number | undefined;
+            const updates: Partial<UIMessage> = {};
+            if (turn != null) updates.turnTokens = turn;
+            if (cost != null) updates.turnCostUsd = cost;
+            return Object.keys(updates).length > 0 ? updateLastMessage(prev, updates) : prev;
           }
 
           case 'reasoning_delta':
           case 'thinking_delta': {
-            if (last?.role === 'assistant') {
-              if (!last.thinking) { last.thinking = ''; last.thinkingStartedAt = Date.now(); }
-              last.thinking += (ev.content as string) ?? (ev.text as string) ?? '';
-            }
-            break;
+            if (last?.role !== 'assistant') return prev;
+            const delta = (ev.content as string) ?? (ev.text as string) ?? '';
+            return updateLastMessage(prev, {
+              thinking: (last.thinking ?? '') + delta,
+              thinkingStartedAt: last.thinkingStartedAt ?? Date.now(),
+            });
           }
 
           case 'reasoning_end':
-          case 'thinking_end': {
-            if (last?.role === 'assistant' && last.thinking) {
-              last.thinkingDoneAt = Date.now();
-            }
-            break;
-          }
+          case 'thinking_end':
+            return last?.role === 'assistant' && last.thinking ? updateLastMessage(prev, { thinkingDoneAt: Date.now() }) : prev;
 
           case 'decision_made': {
             // Show decision as thinking phase on the streaming assistant message
-            if (last?.role === 'assistant' && last.streaming) {
-              const path = (ev.executionPath as string) ?? '';
-              const cls = (ev.messageClass as string) ?? '';
-              last.thinking = `${cls} → ${path}`;
-            }
-            break;
+            if (last?.role !== 'assistant' || !last.streaming) return prev;
+            const path = (ev.executionPath as string) ?? '';
+            const cls = (ev.messageClass as string) ?? '';
+            return updateLastMessage(prev, { thinking: `${cls} → ${path}` });
           }
 
           case 'permission_required':
             setPermissionPrompt((ev.tool as string) + ': ' + ((ev.path as string) ?? ''));
-            break;
+            return prev;
 
           case 'error': {
             const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
@@ -503,25 +497,18 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               setProviderError(extractProviderError(errorText));
               if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
             }
-            if (last?.role === 'assistant') {
-              if (!isProviderError) {
-                if (last.content) {
-                  last.content += `\n\n⚠️ ${errorText}`;
-                } else {
-                  last.content = `⚠️ ${errorText}`;
-                }
-              }
-              last.streaming = false;
-            }
             setStreaming(false);
-            break;
+            if (last?.role !== 'assistant') return prev;
+            if (!isProviderError) {
+              const newContent = last.content ? `${last.content}\n\n⚠️ ${errorText}` : `⚠️ ${errorText}`;
+              return updateLastMessage(prev, { content: newContent, streaming: false });
+            }
+            return updateLastMessage(prev, { streaming: false });
           }
 
           default:
-            break;
+            return prev;
         }
-
-        return msgs;
       });
     };
 

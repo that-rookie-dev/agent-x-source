@@ -232,6 +232,8 @@ export function useSession(
             if (prev.some((m) => m.id === event.message.id)) return prev;
             return [...prev, { ...event.message, elapsed: event.elapsed, tokenCost: msgCost }];
           });
+          // Clear both the ref AND state to prevent race condition with setTimeout in stream_chunk
+          latestContentRef.current = '';
           setStreamingContent('');
           setTokensUsed(agent.tokens.tokensUsed);
           setTokensTotal(agent.tokens.tokensTotal);

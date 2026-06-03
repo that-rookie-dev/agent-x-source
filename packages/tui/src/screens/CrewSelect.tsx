@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { COLORS } from '../theme/colors.js';
@@ -35,20 +35,30 @@ export const CrewSelect: React.FC<CrewSelectProps> = ({
   currentModel,
   dek,
 }) => {
-  const [pm] = useState(() => {
-    const mgr = new CrewManager();
-    if (dek) mgr.setDEK(dek);
-    return mgr;
-  });
+  const [pm] = useState(() => new CrewManager());
 
-  const [crews] = useState<Crew[]>(() =>
-    pm.list().filter((p) => !p.isDefault),
-  );
+  // Apply DEK whenever it changes
+  if (dek) pm.setDEK(dek);
 
-  const [screen, setScreen] = useState<ScreenState>(() => {
-    const userCrews = pm.list().filter((p) => !p.isDefault);
-    return userCrews.length === 0 ? 'create_name' : 'select';
-  });
+  // Derive current state on every render
+  const userCrews = pm.list().filter((p) => !p.isDefault);
+
+  // Track whether DEK has been applied at least once
+  const [dekApplied, setDekApplied] = useState(!!dek);
+  useEffect(() => {
+    if (dek && !dekApplied) setDekApplied(true);
+  }, [dek, dekApplied]);
+
+  // Initialize screen to 'select' by default - only determine actual state after DEK is applied
+  const [screen, setScreen] = useState<ScreenState>('select');
+
+  // Keep screen in sync when userCrews changes after DEK arrives
+  useEffect(() => {
+    // Only make screen decisions after DEK has been applied
+    if (!dekApplied) return;
+    const desired = userCrews.length === 0 ? ('create_name' as const) : ('select' as const);
+    if (screen !== desired) setScreen(desired);
+  }, [userCrews.length, screen, dekApplied]);
 
   // Create crew form state
   const [newName, setNewName] = useState('');
@@ -230,7 +240,7 @@ export const CrewSelect: React.FC<CrewSelectProps> = ({
         </Box>
         <Box marginTop={1}>
           <ScrollableList
-            items={crews}
+            items={userCrews}
             label="Crew"
             onSelect={(item) => handleEditStart(item)}
             onCancel={() => setScreen('select')}
@@ -349,7 +359,7 @@ export const CrewSelect: React.FC<CrewSelectProps> = ({
 
   // Main crew selection screen
   const items = [
-    ...crews,
+    ...userCrews,
     { id: '__edit__', name: '~ Edit a crew member', systemPrompt: '', isDefault: false, createdAt: '', updatedAt: '' } as Crew,
     { id: '__create__', name: '+ Create new crew member', systemPrompt: '', isDefault: false, createdAt: '', updatedAt: '' } as Crew,
   ];

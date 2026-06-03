@@ -142,11 +142,23 @@ app.get('/api/health', (_req, res) => {
 app.get('/api/setup/status', (_req, res) => {
   try {
     const eng = getEngine();
-    const complete = eng.configManager.isSetupComplete();
     const configured = eng.configManager.isConfigured();
-    res.json({ setupComplete: complete, configured });
-  } catch {
-    res.json({ setupComplete: false, configured: false });
+    if (!configured) {
+      res.json({ setupComplete: false, configured: false, reason: 'No config file found. Run setup wizard first.' });
+      return;
+    }
+    const complete = eng.configManager.isSetupComplete();
+    res.json({
+      setupComplete: complete,
+      configured: true,
+      reason: complete ? undefined : 'Config exists but is encrypted. Login with the same credentials used during initial setup (TUI or Web-UI) to unlock.',
+    });
+  } catch (err) {
+    res.status(500).json({
+      setupComplete: false,
+      configured: false,
+      reason: `Config read error: ${err instanceof Error ? err.message : String(err)}`,
+    });
   }
 });
 
@@ -532,6 +544,16 @@ app.post('/api/chat/message', async (req, res) => {
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     ensureSubscribed();
 
+    // ─── Safety: reset stuck agent if processing flag leaked from previous call ───
+    if (agent.processing) {
+      try { agent.cancel(); } catch { /* ignore */ }
+      await new Promise(r => setTimeout(r, 100));
+      if (agent.processing) {
+        res.status(503).json({ error: 'Agent is busy. Please try again in a moment.' });
+        return;
+      }
+    }
+
     // Apply session mode to agent
     agent.setPlanMode(sessionSettings.mode === 'plan');
     (agent as unknown as { autoApproveTools: boolean }).autoApproveTools = (sessionSettings.approval === 'auto' || sessionSettings.approval === 'moderate');
@@ -692,7 +714,7 @@ app.get('/api/chat/history', (_req, res) => {
     const history = agent.getMessageHistory();
     // Ensure each message has an id for the UI (CompletionMessage doesn't guarantee id)
     const formatted = history.map((m, i) => ({
-      id: (m as Record<string, unknown>).id || `hist-${i}`,
+      id: (m as unknown as Record<string, unknown>).id || `hist-${i}`,
       role: m.role,
       content: m.content || '',
       tokenCount: Math.ceil((m.content?.length ?? 0) / 4),
