@@ -339,8 +339,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
         switch (ev.type) {
           case 'loading_start':
-            // Only add a new placeholder if there isn't one already
-            if (!last || last.role !== 'assistant' || !last.streaming) {
+            // If the last assistant message is no longer streaming (closed by
+            // a prior loading_end from a fast-reply failure), reuse it instead
+            // of creating a duplicate placeholder.
+            if (last?.role === 'assistant' && !last.streaming && last.content) {
+              last.streaming = true;
+            } else if (!last || last.role !== 'assistant' || !last.streaming) {
               msgs.push({ id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true });
             }
             setStreaming(true);

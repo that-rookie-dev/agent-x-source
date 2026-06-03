@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { COLORS } from '../theme/colors.js';
@@ -35,19 +35,17 @@ export const CrewSelect: React.FC<CrewSelectProps> = ({
   currentModel,
   dek,
 }) => {
-  const [pm] = useState(() => new CrewManager());
+  const [pm] = useState(() => {
+    const mgr = new CrewManager();
+    if (dek) mgr.setDEK(dek);
+    return mgr;
+  });
 
-  // Apply DEK when available so encrypted crews can be read
-  useEffect(() => {
-    if (dek) {
-      pm.setDEK(dek);
-      setCrews(pm.list().filter((p) => !p.isDefault));
-    }
-  }, [dek, pm]);
+  const [crews] = useState<Crew[]>(() =>
+    pm.list().filter((p) => !p.isDefault),
+  );
 
-  const [crews, setCrews] = useState<Crew[]>(() => pm.list().filter((p) => !p.isDefault));
   const [screen, setScreen] = useState<ScreenState>(() => {
-    // If no user-created crews, go straight to create flow
     const userCrews = pm.list().filter((p) => !p.isDefault);
     return userCrews.length === 0 ? 'create_name' : 'select';
   });
