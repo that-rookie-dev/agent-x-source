@@ -268,7 +268,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, restoreSes
           {activeTools.length > 0 && (
             <Box flexDirection="column" paddingX={2}>
               {activeTools.map((t) => (
-                <ProcessTimer key={t.tool} label={t.description || t.tool} active={true} startTime={t.startTime} />
+                <ProcessTimer key={t.id} label={t.description || t.tool} active={true} startTime={t.startTime} />
               ))}
             </Box>
           )}

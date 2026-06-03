@@ -76,8 +76,7 @@ import { CompactionManager } from '../communication/CompactionManager.js';
 import { TelemetryEmitter } from '../communication/telemetry/TelemetryEmitter.js';
 import { LiveProjector } from '../communication/LiveProjector.js';
 import { DoomLoopDetector } from '../tools/DoomLoopDetector.js';
-import { ParallelClassifier } from '../tools/ParallelClassifier.js';
-import { ToolCallRepairer } from '../tools/ToolCallRepairer.js';
+import { CompletionLoop } from './CompletionLoop.js';
 import { AuthProfileManager } from '../providers/AuthProfileManager.js';
 import { ProviderRouter } from '../providers/ProviderRouter.js';
 import { makeRoute, openAIProtocol } from '../providers/routes/Route.js';
@@ -166,11 +165,9 @@ export class Agent {
   private authProfileManager: AuthProfileManager = null!;
   private providerRouter: ProviderRouter = null!;
   private projector: LiveProjector = null!;
-  private parallelClassifier: ParallelClassifier = null!;
   private sessionProcessor: SessionProcessor = null!;
   private retryEngine: RetryEngine = null!;
   private broadcaster: EventBroadcaster = null!;
-  private toolCallRepairer: ToolCallRepairer = null!;
   private visualBridge: VisualEventBridge = null!;
   private commandQueue: CommandQueue = null!;
   private runStateMgr: RunStateManager = null!;
@@ -387,9 +384,7 @@ export class Agent {
 
     this.projector = new LiveProjector();
     this.compactionManager = new CompactionManager({ contextLimit: this.getContextWindow() });
-    this.parallelClassifier = new ParallelClassifier();
     this.doomLoopDetector = new DoomLoopDetector();
-    this.toolCallRepairer = new ToolCallRepairer();
     this.telemetry = new TelemetryEmitter();
     this.visualBridge = new VisualEventBridge();
 
@@ -1287,442 +1282,48 @@ Return ONLY valid JSON, no other text.`;
   /**
    * Runs the model completion loop, handling tool calls iteratively.
    * Max 10 tool-call rounds to prevent infinite loops.
+   *
+   * Delegates to CompletionLoop which contains the full implementation.
    */
   private async runCompletionLoop(startTime: number): Promise<Message> {
-    const MAX_TOOL_ROUNDS = 10;
-    // Track accumulated content across ALL rounds for proper streaming to UI
-    let accumulatedContent = '';
-
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      // ─── SMART TOOL SELECTION ───
-      // Filter tools based on detected intent to reduce token usage
-      let filteredTools: Array<{ id: string; name: string; modelDescription: string; schema: unknown; category: string; riskLevel: string }> = this.toolRegistry?.list() ?? [];
-      if (this.currentIntent && this.toolRegistry) {
-        const categoryMap = new Map<string, string>();
-        for (const t of this.toolRegistry.list()) {
-          categoryMap.set(t.id, t.category ?? 'General');
-        }
-        const selectedSchemas = this.promptEngine.selectTools(
-          this.toolRegistry.toSchemas(),
-          this.currentIntent,
-          categoryMap,
-        );
-        filteredTools = selectedSchemas.map((s) => ({
-          id: s.function.name,
-          name: s.function.name,
-          modelDescription: s.function.description,
-          schema: s.function.parameters,
-          category: categoryMap.get(s.function.name) ?? 'General',
-          riskLevel: 'low' as const,
-        }));
-      }
-      const toolSchemas = filteredTools.length > 0
-        ? filteredTools.map((t) => ({
-            type: 'function' as const,
-            function: {
-              name: t.id,
-              description: t.modelDescription,
-              parameters: t.schema as unknown as Record<string, unknown>,
-            },
-          }))
-        : undefined;
-
-      // ─── BUILD MESSAGES WITH RAG + COMPACTION ───
-      let requestMessages = [...this.messages];
-
-      // Inject per-message instruction as a system directive (not stored in history)
-      if (this.pendingInstruction) {
-        const userIdx = requestMessages.findLastIndex((m) => m.role === 'user');
-        if (userIdx >= 0) {
-          requestMessages.splice(userIdx, 0, { role: 'system', content: this.pendingInstruction });
-        }
-        this.pendingInstruction = null; // Clear after injection
-      }
-
-      // Inject RAG results as temporary context
-      if (this.lastRagResults.length > 0) {
-        const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
-        // Insert before the last user message
-        const userIdx = requestMessages.findLastIndex((m) => m.role === 'user');
-        if (userIdx >= 0) {
-          requestMessages.splice(userIdx, 0, { role: 'system', content: ragCtx });
-        }
-      }
-
-      // Inject reasoning directive
-      if (this.currentIntent) {
-        const reasoningDirective = this.promptEngine.buildReasoningDirective(this.currentIntent.reasoningMode);
-        requestMessages.splice(1, 0, { role: 'system', content: reasoningDirective });
-      }
-
-      // ─── UNIFIED: Compaction via CompactionManager ───
-      const currentTokens = this.tokenTracker.tokensUsed;
-      if (this.compactionManager.needsCompaction(currentTokens)) {
-        this.emit({ type: 'compaction_start', currentTokens, threshold: Math.floor(this.getContextWindow() * 0.85) });
-        try {
-          const compactResult = await this.compactionManager.compact(
-            this.messages.map((m, i) => ({
-              id: `cm-${i}`,
-              sessionId: this.sessionId,
-              role: m.role as Message['role'],
-              content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
-              toolCalls: (m.toolCalls ?? []).map((tc) => ({
-                id: tc.id, name: tc.function.name, arguments: tc.function.arguments, result: '',
-              })),
-              tokenCount: Math.ceil((typeof m.content === 'string' ? m.content.length : 0) / 4),
-              createdAt: new Date().toISOString(),
-            })),
-            this.sessionId,
-          );
-          this.emit({ type: 'compaction_complete', saved: compactResult.tokensSaved });
-          this.compactionManager.getGuard().recordCompaction(this.sessionId);
-        } catch (e) {
-          getLogger().warn('COMPACTION', String(e));
-        }
-      }
-      // Also run the classic PromptEngine compaction as fallback
-      const budget = this.promptEngine.calculateBudget(this.messages.length, this.lastRagResults.length > 0);
-      const compacted = this.promptEngine.compactConversation(requestMessages, budget.conversation);
-      if (compacted.summary) {
-        requestMessages = compacted.messages;
-      }
-
-      const request: CompletionRequest = {
-        model: this.config.provider.activeModel,
-        messages: requestMessages,
-        stream: true,
-        tools: toolSchemas && toolSchemas.length > 0 ? toolSchemas : undefined,
-        signal: this.abortController?.signal,
-      };
-
-      this.emit({ type: 'loading_start', stage: round === 0 ? 'thinking' : 'tool_execution' });
-
-      // Stream response with retry support
-      let fullContent = '';  // Content for THIS round only
-      const toolCalls: CompletionToolCall[] = [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let currentToolCall: any = null;
-      let lastUsage: { inputTokens: number; outputTokens: number } | undefined;
-
-      const stream = await this.retryWithBackoff(async () => {
-        // Force the provider to start streaming — catches network/auth errors early
-        const iter = this._unifiedStream(request);
-        const it = iter[Symbol.asyncIterator]();
-        const first = await it.next();
-        return { it, first } as { it: AsyncIterator<CompletionChunk>; first: IteratorResult<CompletionChunk> };
-      }, `LLM completion (round ${round})`);
-
-      // Process first chunk
-      if (!stream.first.done && stream.first.value) {
-        const chunk: CompletionChunk = stream.first.value;
-        if (chunk.type === 'text_delta' && chunk.content) {
-          fullContent += chunk.content;
-          accumulatedContent += chunk.content;
-          this.emit({ type: 'stream_chunk', content: chunk.content, fullContent: accumulatedContent });
-        } else if ((chunk as { type?: string }).type === 'reasoning_delta' && (chunk as { content?: string }).content) {
-          this.emit({ type: 'reasoning_delta', content: (chunk as { content: string }).content } as unknown as EngineEvent);
-        } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
-          const tc = chunk.toolCall;
-          if (tc.id) {
-            // Push previous tool call if exists
-            const prev = currentToolCall;
-            if (prev && prev.id) {
-              toolCalls.push(prev as CompletionToolCall);
-            }
-            currentToolCall = {
-              id: tc.id,
-              type: 'function',
-              function: { name: tc.function?.name ?? '', arguments: tc.function?.arguments ?? '' },
-              thought_signature: (tc as Record<string, unknown>)['thought_signature'] as string | undefined,
-            };
-          } else {
-            const cur = currentToolCall;
-            if (cur && cur.function) {
-              if (tc.function?.name) cur.function.name += tc.function.name;
-              if (tc.function?.arguments) cur.function.arguments += tc.function.arguments;
-            }
-          }
-        } else if (chunk.type === 'done' && chunk.usage) {
-          lastUsage = chunk.usage;
-        }
-      }
-
-      // Process remaining chunks
-      let next = await stream.it.next();
-      while (!next.done) {
-        const chunk = next.value;
-        if (chunk.type === 'text_delta' && chunk.content) {
-          fullContent += chunk.content;
-          accumulatedContent += chunk.content;
-          this.emit({
-            type: 'stream_chunk',
-            content: chunk.content,
-            fullContent: accumulatedContent,
-          });
-        } else if ((chunk as { type?: string }).type === 'reasoning_delta' && (chunk as { content?: string }).content) {
-          this.emit({ type: 'reasoning_delta', content: (chunk as { content: string }).content } as unknown as EngineEvent);
-        } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
-          // Accumulate tool call
-          if (chunk.toolCall.id) {
-            // New tool call starting
-            if (currentToolCall?.id) {
-              toolCalls.push(currentToolCall as CompletionToolCall);
-            }
-            currentToolCall = {
-              id: chunk.toolCall.id,
-              type: 'function',
-              function: {
-                name: chunk.toolCall.function?.name ?? '',
-                arguments: chunk.toolCall.function?.arguments ?? '',
-              },
-            };
-          } else if (currentToolCall) {
-            // Continuation of existing tool call
-            if (chunk.toolCall.function?.name) {
-              currentToolCall.function = {
-                name: (currentToolCall.function?.name ?? '') + chunk.toolCall.function.name,
-                arguments: currentToolCall.function?.arguments ?? '',
-              };
-            }
-            if (chunk.toolCall.function?.arguments) {
-              currentToolCall.function = {
-                name: currentToolCall.function?.name ?? '',
-                arguments: (currentToolCall.function?.arguments ?? '') + chunk.toolCall.function.arguments,
-              };
-            }
-          }
-        } else if (chunk.type === 'done' && chunk.usage) {
-          lastUsage = chunk.usage;
-        }
-        next = await stream.it.next();
-      }
-
-      // Push last accumulated tool call
-      if (currentToolCall?.id) {
-        toolCalls.push(currentToolCall as CompletionToolCall);
-      }
-
-      // If there are tool calls, execute them and loop (do NOT emit loading_end yet)
-      if (toolCalls.length > 0) {
-        // Add assistant message with tool calls to history
-        this.messages.push({
-          role: 'assistant',
-          content: fullContent || '',
-          toolCalls,
-        });
-
-        // Execute each tool call
-        const specialTools = ['ask_clarification', 'delegate_to_subagent'];
-        const regularToolCalls = toolCalls.filter((tc) => !specialTools.includes(tc.function.name));
-        const specialToolCallList = toolCalls.filter((tc) => specialTools.includes(tc.function.name));
-
-        // Handle special tools individually first
-        for (const tc of specialToolCallList) {
-          // ─── CLARIFICATION TOOL ───
-          if (tc.function.name === 'ask_clarification') {
-            let sargs: Record<string, unknown> = {};
-            try { sargs = JSON.parse(tc.function.arguments); } catch { /* ignore */ }
-            this.emit({ type: 'clarification_required', question: String(sargs['question'] ?? 'I need more information to proceed.'), options: Array.isArray(sargs['options']) ? sargs['options'] : [], allowFreeform: Boolean(sargs['allowFreeform'] ?? true) });
-            const userResponse = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
-            this.clarificationResolve = null;
-            this.messages.push({ role: 'tool', content: userResponse, toolCallId: tc.id });
-            continue;
-          }
-
-          // ─── SMART SUBAGENT DELEGATION ───
-          if (tc.function.name === 'delegate_to_subagent') {
-            let dargs: Record<string, unknown> = {};
-            try { dargs = JSON.parse(tc.function.arguments); } catch { /* ignore */ }
-            const subStart = Date.now();
-            this.emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${dargs['mission']}`, startTime: subStart });
-            const subAgent = new SmartSubAgent({ parentAgent: this, instruction: String(dargs['mission'] ?? ''), tools: Array.isArray(dargs['tools']) ? dargs['tools'].map(String) : undefined, timeout: typeof dargs['timeout'] === 'number' ? dargs['timeout'] : 120_000 });
-            const subResult = await subAgent.execute();
-            const subOutput = subResult.success ? `[Sub-agent completed in ${subResult.elapsed}ms]\n${subResult.output}` : `[Sub-agent failed: ${subResult.output}]`;
-            this.emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: subResult.success, output: subOutput }, elapsed: Date.now() - subStart });
-            this.messages.push({ role: 'tool', content: subOutput, toolCallId: tc.id });
-            continue;
-          }
-        }
-
-        // ─── UNIFIED: Batch execute regular tools with parallel classifier ───
-        if (regularToolCalls.length > 0) {
-          const parsedCalls = regularToolCalls.map((tc) => {
-            let args: Record<string, unknown> = {};
-            try { args = JSON.parse(tc.function.arguments); } catch { /* bad JSON */ }
-            // Doom-loop check per tool
-            const doomResult = this.doomLoopDetector.check(this.sessionId, tc.function.name, args);
-            if (doomResult.shouldBreak) {
-              return { tc, args, skip: true, doomCount: doomResult.consecutiveCount };
-            }
-            return { tc, args, skip: false, doomCount: 0 };
-          });
-
-          const batchCalls = parsedCalls
-            .filter((p) => !p.skip)
-            .map((p) => ({ id: p.tc.id, name: p.tc.function.name, arguments: p.args }));
-
-          // Execute doom-looped tools — push error messages
-          for (const p of parsedCalls) {
-            if (p.skip) {
-              this.emit({ type: 'error', code: 'DOOM_LOOP', message: `${p.tc.function.name} called ${p.doomCount}x consecutively — breaking loop.`, recoverable: true } as unknown as EngineEvent);
-              this.messages.push({ role: 'tool', content: `[DOOM LOOP DETECTED] ${p.tc.function.name} repeated ${p.doomCount} times`, toolCallId: p.tc.id });
-            }
-          }
-
-          if (batchCalls.length > 0) {
-            // Emit tool_executing events
-            for (const bc of batchCalls) {
-              this.emit({ type: 'tool_executing', tool: bc.name, description: `Executing ${bc.name}`, startTime: Date.now() });
-            }
-
-            const batchResults = await this._executeToolBatch(batchCalls, this.sessionId);
-
-            for (const r of batchResults) {
-              this.emit({ type: 'tool_complete', tool: r.id, result: { success: r.success, output: r.output }, elapsed: r.elapsed });
-              this.telemetry.recordToolCall(`turn-${this._turnStartTokens}`, r.success);
-              this.toolCallLogForReflection.push({ name: r.id, success: r.success, output: r.output, elapsed: r.elapsed });
-
-              // Auto-commit after file edit operations
-              if (this.gitAutoCommit && this.gitManager && this.isEditTool(r.id) && r.success) {
-                const tc = regularToolCalls.find((t) => t.id === r.id);
-                if (tc) {
-                  try {
-                    const a = JSON.parse(tc.function.arguments);
-                    const fp = (a['path'] ?? a['file']) as string;
-                    if (fp) this.gitManager.commitAfterEdit(fp, this.sessionId);
-                  } catch { /* ignore */ }
-                }
-              }
-
-              this.messages.push({ role: 'tool', content: r.output, toolCallId: r.id });
-            }
-          }
-        }
-
-        // Track token usage for tool-call rounds too
-        if (lastUsage) {
-          this.tokenTracker.addTokenUsage(lastUsage.inputTokens, lastUsage.outputTokens);
-        }
-
-        // Continue the loop — model will see tool results and generate next response
-        continue;
-      }
-
-      // No tool calls — this is the final assistant response
-      // ─── UNIFIED: Record telemetry on final response ───
-      this.telemetry.endTurn(`turn-${startTime}`, lastUsage ? { promptTokens: lastUsage.inputTokens, completionTokens: lastUsage.outputTokens, totalTokens: lastUsage.inputTokens + lastUsage.outputTokens } : { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, this.sessionId, this.config.provider.activeProvider);
-
-      // Guard against empty response from model — retry once or return error
-      if (!fullContent.trim() && round < MAX_TOOL_ROUNDS - 1) {
-        getLogger().warn('COMPLETION', `Empty response from model on round ${round}, retrying...`);
-        continue;
-      }
-      if (!fullContent.trim()) {
-        fullContent = 'I apologize, I was unable to generate a response. Please try rephrasing your question.';
-        accumulatedContent += fullContent;
-        this.emit({ type: 'stream_chunk', content: fullContent, fullContent: accumulatedContent });
-      }
-
-      // Emit loading_end now that we have the final response
-      this.emit({ type: 'loading_end' });
-
-      this.messages.push({ role: 'assistant', content: accumulatedContent });
-
-      const tokenCount = lastUsage
-        ? lastUsage.inputTokens + lastUsage.outputTokens
-        : Math.ceil(accumulatedContent.length / 4);
-      if (lastUsage) {
-        this.tokenTracker.addTokenUsage(lastUsage.inputTokens, lastUsage.outputTokens);
-      } else {
-        this.tokenTracker.addTokenUsage(Math.ceil(tokenCount * 0.5), Math.ceil(tokenCount * 0.5));
-      }
-
-      const assistantMessage: Message = {
-        id: generateMessageId(),
-        sessionId: this.sessionId,
-        role: 'assistant',
-        content: accumulatedContent,
-        toolCalls: null,
-        createdAt: new Date().toISOString(),
-        tokenCount,
-      };
-
-      const elapsed = Date.now() - startTime;
-      const turnTokens = this.tokenTracker.tokensUsed - (this._turnStartTokens ?? 0);
-      const costUsd = this.tokenTracker.totalCost - (this._turnStartCost ?? 0);
-      this.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.getContextWindow(), turnTokens, costUsd } as unknown as EngineEvent);
-      this.emit({
-        type: 'message_received',
-        message: assistantMessage,
-        elapsed,
-      });
-
-      return assistantMessage;
-    }
-
-    // ─── UNIFIED: Grace Call (budget-exhausted recovery) ───
-    // One extra API call to let the model finish its thought without tool access.
-    // Prevents mid-sentence truncation when budget is exhausted.
-    if (accumulatedContent.length > 0) {
-      const graceInstruction =
-        '\n[SYSTEM] You have exhausted your tool budget. Do NOT make any more tool calls. ' +
-        'If you were in the middle of a response, please finish your thought concisely. ' +
-        'If you were about to start a new tool chain, summarize what remains to be done.';
-      this.messages.push({ role: 'user', content: graceInstruction });
-
-      try {
-        const graceStream = this._unifiedStream({
-          model: this.config.provider.activeModel,
-          messages: [...this.messages],
-          stream: true,
-          tools: [],
-          signal: this.abortController?.signal,
-        });
-
-        let graceText = '';
-        for await (const chunk of graceStream) {
-          if (chunk.type === 'text_delta' && chunk.content) {
-            graceText += chunk.content;
-            accumulatedContent += chunk.content;
-            this.emit({ type: 'stream_chunk', content: chunk.content, fullContent: accumulatedContent });
-          }
-        }
-
-        if (graceText.trim()) {
-          this.emit({ type: 'loading_end' });
-          this.messages.push({ role: 'assistant', content: accumulatedContent });
-
-          const graceMessage: Message = {
-            id: generateMessageId(),
-            sessionId: this.sessionId,
-            role: 'assistant',
-            content: accumulatedContent,
-            toolCalls: null,
-            createdAt: new Date().toISOString(),
-            tokenCount: Math.ceil(accumulatedContent.length / 4),
-          };
-
-          this.emit({ type: 'message_received', message: graceMessage, elapsed: Date.now() - startTime });
-          return graceMessage;
-        }
-      } catch {
-        // Grace call failed — fall through to fallback
-      }
-    }
-
-    // Exhausted rounds — return what we have
-    this.emit({ type: 'loading_end' });
-    const fallback: Message = {
-      id: generateMessageId(),
+    const loop = new CompletionLoop({
+      config: this.config,
       sessionId: this.sessionId,
-      role: 'assistant',
-      content: 'I apologize, I ran into a processing limit. Please try a simpler request.',
-      toolCalls: null,
-      createdAt: new Date().toISOString(),
-      tokenCount: 0,
-    };
-    this.emit({ type: 'message_received', message: fallback, elapsed: Date.now() - startTime });
-    return fallback;
+      gitAutoCommit: this.gitAutoCommit,
+      gitManager: this.gitManager,
+      turnStartTokens: this._turnStartTokens,
+      turnStartCost: this._turnStartCost,
+      messages: this.messages,
+      toolCallLogForReflection: this.toolCallLogForReflection,
+      ragResults: this.lastRagResults,
+      toolRegistry: this.toolRegistry,
+      toolExecutor: this.toolExecutor,
+      promptEngine: this.promptEngine,
+      compactionManager: this.compactionManager,
+      telemetry: this.telemetry,
+      doomLoopDetector: this.doomLoopDetector,
+      tokenTracker: this.tokenTracker,
+      getIntent: () => this.currentIntent,
+      getAbortController: () => this.abortController,
+      getPendingInstruction: () => this.pendingInstruction,
+      clearPendingInstruction: () => { this.pendingInstruction = null; },
+      emit: (e) => this.emit(e),
+      retryWithBackoff: (fn, label) => this.retryWithBackoff(fn, label),
+      unifiedStream: (req) => this._unifiedStream(req),
+      isEditTool: (id) => this.isEditTool(id),
+      getContextWindow: () => this.getContextWindow(),
+      runSubAgent: async (instruction, tools, timeout) => {
+        const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools, timeout });
+        return subAgent.execute();
+      },
+      waitForClarification: async (question, options, allowFreeform) => {
+        this.emit({ type: 'clarification_required', question, options, allowFreeform });
+        const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
+        this.clarificationResolve = null;
+        return response;
+      },
+    });
+    return loop.run(startTime);
   }
 
   /**
@@ -2641,76 +2242,6 @@ Only include specialists that are actually needed for this task.`;
 
   // _retryableStream kept as available infrastructure for future integration
 
-  // ─── UNIFIED PIPELINE: Batch tool execution with parallel classifier ───
-
-  private async _executeToolBatch(
-    toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>,
-    sessionId: string,
-  ): Promise<Array<{ id: string; success: boolean; output: string; error?: string; elapsed: number }>> {
-    // Classify for parallel execution
-    const classified = this.parallelClassifier.classify(
-      toolCalls.map((tc) => ({
-        toolCallId: tc.id,
-        tool: {
-          id: tc.name,
-          name: tc.name,
-          description: '',
-          modelDescription: '',
-          category: 'ai_meta' as const,
-          riskLevel: 'medium' as const,
-          schema: { type: 'object' as const, properties: {} },
-          composable: false,
-          source: 'builtin' as const,
-        },
-        args: tc.arguments,
-      })),
-    );
-
-    const results: Array<{ id: string; success: boolean; output: string; error?: string; elapsed: number }> = [];
-    const executed = new Set<string>();
-
-    const execOne = async (tc: typeof toolCalls[number]) => {
-      const start = Date.now();
-      // ─── UNIFIED: Repair tool name via ToolCallRepairer ───
-      const knownNames = this.toolRegistry?.list().map((t) => t.name) ?? [];
-      const repairedName = this.toolCallRepairer.repairToolName(tc.name, knownNames);
-      const effectiveName = repairedName !== tc.name ? repairedName : tc.name;
-
-      try {
-        const result = this.toolExecutor
-          ? await this.toolExecutor.execute(effectiveName, tc.arguments, sessionId)
-          : { success: false, output: 'No executor', error: 'NO_EXECUTOR' };
-        results.push({ id: tc.id, success: result.success, output: result.output, error: result.error, elapsed: Date.now() - start });
-      } catch (err) {
-        results.push({ id: tc.id, success: false, output: String(err), error: 'EXEC_ERROR', elapsed: Date.now() - start });
-      }
-    };
-
-    // Execute parallel batch first
-    if (classified.parallel.length > 0) {
-      const parallelCalls = classified.parallel.map((ct) => toolCalls.find((tc) => tc.id === ct.toolCallId)).filter((tc): tc is typeof toolCalls[number] => !!tc);
-      await Promise.all(parallelCalls.map((tc) => { executed.add(tc.id); return execOne(tc); }));
-    }
-
-    // Then sequential
-    for (const ct of classified.sequential) {
-      const tc = toolCalls.find((t) => t.id === ct.toolCallId);
-      if (tc && !executed.has(tc.id)) {
-        executed.add(tc.id);
-        await execOne(tc);
-      }
-    }
-
-    // Any remaining (shouldn't happen, but safety)
-    for (const tc of toolCalls) {
-      if (!executed.has(tc.id)) {
-        executed.add(tc.id);
-        await execOne(tc);
-      }
-    }
-
-    return results;
-  }
 }
 
 function generateDiff(oldText: string, newText: string): string {

@@ -42,7 +42,7 @@ interface UseSessionReturn {
   todoItems: TodoItem[];
   reasoningText: string;
   isReasoning: boolean;
-  activeTools: Array<{ tool: string; description: string; startTime: number }>;
+  activeTools: Array<{ id: string; tool: string; description: string; startTime: number }>;
   subAgents: Array<{ agentId: string; name: string; status: string; startTime: number; summary?: string; endTime?: number }>;
   currentPlan: Plan | null;
   visualState: VisualState | null;
@@ -96,7 +96,7 @@ export function useSession(
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
   const [reasoningText, setReasoningText] = useState('');
   const [isReasoning, setIsReasoning] = useState(false);
-  const [activeTools, setActiveTools] = useState<Array<{ tool: string; description: string; startTime: number }>>([]);
+  const [activeTools, setActiveTools] = useState<Array<{ id: string; tool: string; description: string; startTime: number }>>([]);
   const [subAgents, setSubAgents] = useState<Array<{ agentId: string; name: string; status: string; startTime: number; summary?: string; endTime?: number }>>([]);
   const [modelPickerModels, setModelPickerModels] = useState<ModelInfo[] | null>(null);
   const [currentPlan, setCurrentPlan] = useState<Plan | null>(null);
@@ -263,6 +263,9 @@ export function useSession(
         case 'error':
           setError(event.message);
           setErrorActions(event.actions ?? []);
+          // Clear stale tool state so ghost timers don't persist into the next message
+          setActiveTools([]);
+          setPermissionRequest(null);
           break;
         case 'permission_required':
           setPermissionRequest({
@@ -272,10 +275,16 @@ export function useSession(
           });
           break;
         case 'tool_executing':
-          setActiveTools((prev) => [...prev, { tool: event.tool, description: event.description, startTime: event.startTime }]);
+          setActiveTools((prev) => [...prev, { id: `${event.tool}-${Date.now()}-${Math.random()}`, tool: event.tool, description: event.description, startTime: event.startTime }]);
           break;
-        case 'tool_complete':
-          setActiveTools((prev) => prev.filter((t) => t.tool !== event.tool));
+        case 'tool_complete': {
+          // Remove only the FIRST matching entry so concurrent calls to the same tool
+          // (e.g. multiple file_write) are removed one at a time, not all at once.
+          let removed = false;
+          setActiveTools((prev) => prev.filter((t) => {
+            if (!removed && t.tool === event.tool) { removed = true; return false; }
+            return true;
+          }));
           setPendingDiff(null);
           setMessages((prev) => [...prev, {
             id: generateMessageId(),
@@ -290,6 +299,7 @@ export function useSession(
             elapsed: event.elapsed,
           }]);
           break;
+        }
         case 'diff_preview':
           setPendingDiff({ tool: event.tool, filePath: event.filePath, diff: event.diff });
           break;

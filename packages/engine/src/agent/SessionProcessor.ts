@@ -196,6 +196,18 @@ export class SessionProcessor {
         break;
 
       case 'provider.error':
+        // Same as turn.error — drain stuck tool timers before surfacing the error.
+        for (const [, tool] of this.pendingToolCalls.entries()) {
+          if (tool.status === ToolCallStatus.INPUT_DONE) {
+            this.ctx.eventBus.emit({
+              type: 'tool_complete',
+              tool: tool.name,
+              result: { success: false, output: event.message ?? 'Provider error' },
+              elapsed: 0,
+            });
+          }
+        }
+        this.pendingToolCalls.clear();
         this.ctx.eventBus.emit({
           type: 'error',
           code: event.code,
@@ -216,6 +228,20 @@ export class SessionProcessor {
         break;
 
       case 'turn.error':
+        // Drain any tool calls that were executing when the error occurred.
+        // Without this, tool_executing events would never be paired with a
+        // tool_complete, leaving the UI timers stuck indefinitely.
+        for (const [, tool] of this.pendingToolCalls.entries()) {
+          if (tool.status === ToolCallStatus.INPUT_DONE) {
+            this.ctx.eventBus.emit({
+              type: 'tool_complete',
+              tool: tool.name,
+              result: { success: false, output: event.message ?? 'Turn failed' },
+              elapsed: 0,
+            });
+          }
+        }
+        this.pendingToolCalls.clear();
         this.ctx.eventBus.emit({
           type: 'error',
           code: event.code,
