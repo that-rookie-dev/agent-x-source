@@ -12,7 +12,7 @@
     "prestart": "vitest run --run packages/engine/tests/platform-parity.test.ts",
     "check:platform": "vitest run --run packages/engine/tests/platform-parity.test.ts",
     "test:watch": "vitest",
-    "lint": "eslint packages/cli/src packages/engine/src packages/shared/src packages/tui/src packages/web-api/src",
+    "lint": "eslint packages/cli/src packages/engine/src packages/shared/src packages/tui/src packages/web-api/src packages/vscode/src",
     "typecheck": "pnpm -r run typecheck",
     "dev:web-api": "pnpm --filter @agentx/web-api run dev",
     "build:web-api": "pnpm --filter @agentx/web-api run build",
@@ -33,5 +33,29 @@
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.60.0",
     "vitest": "^2.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild@<=0.24.2": ">=0.25.0",
+      "prismjs@<1.30.0": ">=1.30.0",
+      "electron@<35.7.5": ">=35.7.5",
+      "nodemailer@<7.0.7": ">=7.0.7",
+      "tar@<7.5.7": ">=7.5.7",
+      "semver@>=2.0.0-alpha <5.7.2": ">=5.7.2",
+      "nodemailer@<=7.0.10": ">=7.0.11",
+      "tar@<=7.5.2": ">=7.5.3",
+      "tar@<7.5.8": ">=7.5.8",
+      "tar@<=7.5.9": ">=7.5.10",
+      "tar@<=7.5.10": ">=7.5.11",
+      "tar@<=7.5.3": ">=7.5.4",
+      "nodemailer@<8.0.4": ">=8.0.4",
+      "electron@<38.8.6": ">=38.8.6",
+      "electron@<39.8.1": ">=39.8.1",
+      "electron@>=33.0.0-alpha.1 <39.8.5": ">=39.8.5",
+      "vite@<=6.4.1": ">=6.4.2",
+      "electron@<39.8.5": ">=39.8.5",
+      "nodemailer@<=8.0.4": ">=8.0.5",
+      "vitest@<4.1.0": ">=4.1.0"
+    }
   }
 }

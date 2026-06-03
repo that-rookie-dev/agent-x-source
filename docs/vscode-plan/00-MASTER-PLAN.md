@@ -1,6 +1,7 @@
 # Agent-X Native VS Code Extension — Master Implementation Plan
 
-> **Status**: 🟡 Planning Complete — Ready for Implementation
+> **Status**: 🟢 Implementation in Progress
+> **Latest**: Phases 1-10 ✅, Phase 12 ✅. Phase 11 code/infra ✅ (unit tests, CI/CD, packaging, docs, React.memo, aria-labels, security audit). Marketplace publishing requires external accounts/tokens (see T11.8 in Phase 11 doc). Typecheck/build pass (0 errors). Plan docs updated.
 > **Created**: 2026-06-03
 > **Goal**: Build a fully native VS Code extension that embeds the Agent-X engine with 100% feature parity to the TUI/Web-UI, without modifying any existing TUI/Web-UI code paths.
 
@@ -10,17 +11,18 @@
 
 | Document | Phase | Focus | Status |
 |----------|-------|-------|--------|
-| [01-SCAFFOLDING.md](./01-SCAFFOLDING.md) | Phase 1 | Extension project setup, build config, package.json | ⬜ Not Started |
-| [02-ENGINE-ADAPTER.md](./02-ENGINE-ADAPTER.md) | Phase 2 | Additive engine changes, VSCodeEngine wrapper | ⬜ Not Started |
-| [03-EXTENSION-CORE.md](./03-EXTENSION-CORE.md) | Phase 3 | Activation, commands, status bar, config reading | ⬜ Not Started |
-| [04-CHAT-WEBVIEW.md](./04-CHAT-WEBVIEW.md) | Phase 4 | Sidebar webview, message rendering, streaming UI | ⬜ Not Started |
-| [05-TOOL-ADAPTATION.md](./05-TOOL-ADAPTATION.md) | Phase 5 | VS Code tool adapters for all 165 tools | ⬜ Not Started |
-| [06-PERMISSIONS-AND-SCOPE.md](./06-PERMISSIONS-AND-SCOPE.md) | Phase 6 | Permission modals, scope guard, path validation | ⬜ Not Started |
-| [07-SESSION-MANAGEMENT.md](./07-SESSION-MANAGEMENT.md) | Phase 7 | TreeView, persistence, restore, export, checkpoints | ⬜ Not Started |
-| [08-PROVIDER-MODEL-CREW.md](./08-PROVIDER-MODEL-CREW.md) | Phase 8 | Provider/model/crew switching UI | ⬜ Not Started |
-| [09-SECRET-SAUCE-AND-MEMORY.md](./09-SECRET-SAUCE-AND-MEMORY.md) | Phase 9 | Personality, memory, diary, identity integration | ⬜ Not Started |
-| [10-ADVANCED-FEATURES.md](./10-ADVANCED-FEATURES.md) | Phase 10 | Sub-agents, plans, RAG, steer, background tasks | ⬜ Not Started |
-| [11-INTEGRATION-TESTING-PACKAGING.md](./11-INTEGRATION-TESTING-PACKAGING.md) | Phase 11 | Tests, VSIX packaging, CI/CD, marketplace prep | ⬜ Not Started |
+| [01-SCAFFOLDING.md](./01-SCAFFOLDING.md) | Phase 1 | Extension project setup, build config, package.json | ✅ Complete |
+| [02-ENGINE-ADAPTER.md](./02-ENGINE-ADAPTER.md) | Phase 2 | Additive engine changes, VSCodeEngine wrapper | ✅ Complete |
+| [03-EXTENSION-CORE.md](./03-EXTENSION-CORE.md) | Phase 3 | Activation, commands, status bar, config reading | ✅ Complete |
+| [04-CHAT-WEBVIEW.md](./04-CHAT-WEBVIEW.md) | Phase 4 | Sidebar webview, message rendering, streaming UI | ✅ Complete |
+| [05-TOOL-ADAPTATION.md](./05-TOOL-ADAPTATION.md) | Phase 5 | VS Code tool adapters for all 168 tools | ✅ Complete |
+| [06-PERMISSIONS-AND-SCOPE.md](./06-PERMISSIONS-AND-SCOPE.md) | Phase 6 | Permission modals, scope guard, path validation | ✅ Complete |
+| [07-SESSION-MANAGEMENT.md](./07-SESSION-MANAGEMENT.md) | Phase 7 | TreeView, persistence, restore, export, checkpoints | ✅ Complete |
+| [08-PROVIDER-MODEL-CREW.md](./08-PROVIDER-MODEL-CREW.md) | Phase 8 | Provider/model/crew switching UI | ✅ Complete |
+| [09-SECRET-SAUCE-AND-MEMORY.md](./09-SECRET-SAUCE-AND-MEMORY.md) | Phase 9 | Personality, memory, diary, identity integration | ✅ Complete |
+| [10-ADVANCED-FEATURES.md](./10-ADVANCED-FEATURES.md) | Phase 10 | Sub-agents, plans, RAG, steer, background tasks | ✅ Complete |
+| [11-INTEGRATION-TESTING-PACKAGING.md](./11-INTEGRATION-TESTING-PACKAGING.md) | Phase 11 | Tests, VSIX packaging, CI/CD, marketplace prep | 🟡 Code+infra ✅; external publishing steps |
+| [12-CROSS-CUTTING-CONCERNS.md](./12-CROSS-CUTTING-CONCERNS.md) | Phase 12 | Remediation, SecretStorage, singleton isolation, TestController, FileSystemProvider, type alignments | ✅ Complete |
 
 ---
 
@@ -173,11 +175,13 @@ Phase 3: Extension Core                                │
              │
              ▼
          Phase 11: Testing & Packaging
+
+Phase 12: Cross-Cutting Concerns (runs alongside Phases 3-10)
 ```
 
 **Critical path**: 1 → 2 → 3 → 5 → 6 → 4 → 7 → 8 → 9 → 10 → 11
 
-**Parallelizable**: Phases 4, 7, 8, 9 can be worked on in parallel once Phase 5+6 are complete.
+**Parallelizable**: Phases 4, 7, 8, 9, 12 can be worked on in parallel once Phase 5+6 are complete.
 
 ---
 
@@ -436,7 +440,8 @@ The VS Code extension must handle ALL of these events. Grouped by category:
 | 9: Secret Sauce | 2-3 days | Phase 3 |
 | 10: Advanced Features | 5-7 days | Phases 4-9 |
 | 11: Testing & Packaging | 3-4 days | Phase 10 |
-| **Total** | **~6-8 weeks** | |
+| 12: Cross-Cutting Concerns | 3 days | Phases 3-10 (parallel) |
+| **Total** | **~7-9 weeks** | |
 
 ---
 
@@ -444,9 +449,13 @@ The VS Code extension must handle ALL of these events. Grouped by category:
 
 When implementing tasks from these documents:
 
-1. **Check status markers**: Each task has a `⬜` (not started), `🔲` (in progress), or `✅` (complete) marker. Only work on `⬜` or `🔲` tasks.
-2. **Update markers**: When completing a task, change `⬜` to `✅`. When starting, change to `🔲`.
-3. **Follow file paths exactly**: All file paths in task descriptions are relative to `/source/`. The VS Code extension lives at `packages/vscode/`.
+1. **Master plan is the single source of truth**: Always read `00-MASTER-PLAN.md` first. It tracks which phases are complete, in progress, or not started. All sub-documents are implementation detail.
+
+2. **Check status markers**: Each task in sub-documents has a `⬜` (not started), `🔲` (in progress), or `✅` (complete) marker. Only work on `⬜` or `🔲` tasks.
+
+3. **Update both levels**: When completing a task in a sub-document, change `⬜` to `✅` (or `🔲` when starting). When ALL tasks in a phase document are complete, update the master plan's section 0 table for that phase from `⬜` to `✅`.
+
+4. **Follow file paths exactly**: All file paths in task descriptions are relative to `/source/`. The VS Code extension lives at `packages/vscode/`.
 4. **Run typecheck after every change**: `pnpm --filter @agentx/vscode run typecheck`
 5. **Run lint after every change**: `pnpm --filter @agentx/vscode run lint`
 6. **Test in Extension Development Host**: Use VS Code's "Run Extension" launch config after every functional change.

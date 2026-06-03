@@ -1,6 +1,6 @@
 # Phase 3: Extension Core — Activation, Commands, Status Bar, Configuration
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete
 > **Depends on**: Phase 2 (Engine Adapter)
 > **Estimated Effort**: 3 days
 > **Files Modified/Created**: `packages/vscode/src/extension.ts`, `packages/vscode/src/commands/`, `packages/vscode/src/statusbar/`, `packages/vscode/src/config/`, `packages/vscode/src/context/`, `packages/vscode/src/wizard/`
@@ -15,7 +15,7 @@ Phase 3 implements the VS Code extension's activation entry point, all command p
 
 ## T3.1: Extension Activation (`extension.ts`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/extension.ts`
 **Estimated Effort**: 4 hours
 
@@ -263,7 +263,7 @@ export async function deactivate(): Promise<void> {
 
 ## T3.2: Command Palette Commands
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Files**: `packages/vscode/src/commands/`
 **Estimated Effort**: 8 hours
 
@@ -1835,7 +1835,7 @@ export function showAboutHandler(deps: CommandDeps): () => Promise<void> {
 
 ## T3.3: Status Bar Items
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/statusbar/StatusBarManager.ts`
 **Estimated Effort**: 4 hours
 
@@ -2149,7 +2149,7 @@ function formatTokenCount(n: number): string {
 
 ## T3.4: Configuration Change Handling
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/config/ConfigurationWatcher.ts`
 **Estimated Effort**: 2 hours
 
@@ -2280,7 +2280,7 @@ export class ConfigurationWatcher implements vscode.Disposable {
 
 ## T3.5: Workspace Folder Handling
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/config/WorkspaceWatcher.ts`
 **Estimated Effort**: 1 hour
 
@@ -2378,7 +2378,7 @@ export class WorkspaceWatcher implements vscode.Disposable {
 
 ## T3.6: First-Run Setup Wizard
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/wizard/FirstRunWizard.ts`
 **Estimated Effort**: 3 hours
 
@@ -2704,7 +2704,7 @@ export class FirstRunWizard {
 
 ## T3.7: Context Keys
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/context/ContextKeyManager.ts`
 **Estimated Effort**: 1 hour
 
@@ -2848,7 +2848,7 @@ The `package.json` `contributes` section uses context keys for conditional UI:
 
 ## T3.8: ConfigFileWatcher
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/config/ConfigFileWatcher.ts`
 **Estimated Effort**: 1 hour
 
@@ -2933,7 +2933,7 @@ export class ConfigFileWatcher implements vscode.Disposable {
 
 ## T3.9: Verification
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Estimated Effort**: 2 hours
 
 ### T3.9.1: Command Palette Verification
@@ -3061,3 +3061,16 @@ Both must pass with zero errors.
 | `packages/vscode/src/config/ConfigFileWatcher.ts` | Config file watcher | T3.8 |
 | `packages/vscode/src/wizard/FirstRunWizard.ts` | First-run setup | T3.6 |
 | `packages/vscode/src/context/ContextKeyManager.ts` | Context key management | T3.7 |
+
+---
+
+### T3.Z: Update Master Plan
+
+- **Status**: ✅ Complete
+- **Dependencies**: All above
+- **Action**: Update [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase. Mark each task as complete (✅), in progress (🔄), or blocked (❌). Identify the next action item. Ensure the master plan remains the single source of truth.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.

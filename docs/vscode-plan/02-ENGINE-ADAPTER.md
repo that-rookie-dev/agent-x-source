@@ -1,6 +1,7 @@
 # Phase 2: Engine Adapter Layer
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete (Phase 2 — Engine Adapter Layer)
+> **Completed**: 2026-06-03
 > **Depends on**: Phase 1 (01-SCAFFOLDING.md)
 > **Estimated effort**: 4 days
 > **Goal**: Create the adapter layer that wraps `@agentx/engine` for use inside VS Code's extension host, WITHOUT modifying any existing engine code. Provides workspace-aware initialization, typed event bridging, config synchronization, storage adaptation, and full lifecycle management.
@@ -11,35 +12,36 @@
 
 | Task ID | Title | Status | Dependencies |
 |---------|-------|--------|-------------|
-| T2.1.1 | Create `adapter/` directory | ⬜ | Phase 1 |
-| T2.1.2 | Write `VSCodeEngine.ts` — core wrapper class | ⬜ | T2.1.1, T2.2.1 |
-| T2.1.3 | Implement singleton lifecycle management | ⬜ | T2.1.2 |
-| T2.1.4 | Implement `dispose()` and `restart()` | ⬜ | T2.1.2 |
-| T2.2.1 | Write `VSCodeToolkitFactory.ts` | ⬜ | T2.1.1 |
-| T2.2.2 | Implement `createVSCodeToolkit()` | ⬜ | T2.2.1 |
-| T2.3.1 | Write `EngineLifecycle.ts` | ⬜ | T2.1.2 |
-| T2.3.2 | Implement lazy initialization | ⬜ | T2.3.1 |
-| T2.3.3 | Implement workspace folder change handling | ⬜ | T2.3.1 |
-| T2.3.4 | Implement crash recovery (stuck processing detection) | ⬜ | T2.3.1 |
-| T2.3.5 | Implement config change watching | ⬜ | T2.3.1 |
-| T2.4.1 | Write `EventBridge.ts` | ⬜ | T2.1.1 |
-| T2.4.2 | Map all 55+ EngineEvent types to typed subscriptions | ⬜ | T2.4.1 |
-| T2.4.3 | Implement stream throttling at 16ms (60fps) | ⬜ | T2.4.1 |
-| T2.5.1 | Write `ConfigBridge.ts` | ⬜ | T2.1.1 |
-| T2.5.2 | Implement first-run detection | ⬜ | T2.5.1 |
-| T2.5.3 | Implement VS Code ↔ engine config sync | ⬜ | T2.5.1 |
-| T2.5.4 | Implement provider/model change handling | ⬜ | T2.5.1 |
-| T2.6.1 | Write `VSCodeStorageAdapter.ts` | ⬜ | T2.1.1 |
-| T2.6.2 | Implement all CRUD methods for sessions | ⬜ | T2.6.1 |
-| T2.6.3 | Implement message persistence | ⬜ | T2.6.1 |
-| T2.6.4 | Implement token log and permission persistence | ⬜ | T2.6.1 |
-| T2.7.1 | Write `types.ts` — all adapter type definitions | ⬜ | T2.1.1 |
-| T2.8.1 | Write unit tests for VSCodeEngine | ⬜ | T2.1.2 |
-| T2.8.2 | Write unit tests for EventBridge | ⬜ | T2.4.1 |
-| T2.8.3 | Write unit tests for ConfigBridge | ⬜ | T2.5.1 |
-| T2.8.4 | Write unit tests for VSCodeStorageAdapter | ⬜ | T2.6.1 |
-| T2.8.5 | Write integration test: create engine → send message → receive response | ⬜ | T2.1.2, T2.4.1 |
-| T2.8.6 | Verify zero modifications to existing engine files | ⬜ | All above |
+| T2.1.1 | Create `adapter/` directory | ✅ | Phase 1 |
+| T2.1.2 | Write `VSCodeEngine.ts` — core wrapper class | ✅ | T2.1.1, T2.2.1 |
+| T2.1.3 | Implement singleton lifecycle management | ✅ | T2.1.2 |
+| T2.1.4 | Implement `dispose()` and `restart()` | ✅ | T2.1.2 |
+| T2.2.1 | Write `VSCodeToolkitFactory.ts` | ✅ | T2.1.1 |
+| T2.2.2 | Implement `createVSCodeToolkit()` | ✅ | T2.2.1 |
+| T2.3.1 | Write `EngineLifecycle.ts` | ✅ | T2.1.2 |
+| T2.3.2 | Implement lazy initialization | ✅ | T2.3.1 |
+| T2.3.3 | Implement workspace folder change handling | ✅ | T2.3.1 |
+| T2.3.4 | Implement crash recovery (stuck processing detection) | ✅ | T2.3.1 |
+| T2.3.5 | Implement config change watching | ✅ | T2.3.1 |
+| T2.4.1 | Write `EventBridge.ts` | ✅ | T2.1.1 |
+| T2.4.2 | Map all 55+ EngineEvent types to typed subscriptions | ✅ | T2.4.1 |
+| T2.4.3 | Implement stream throttling at 16ms (60fps) | ✅ | T2.4.1 |
+| T2.5.1 | Write `ConfigBridge.ts` | ✅ | T2.1.1 |
+| T2.5.2 | Implement first-run detection | ✅ | T2.5.1 |
+| T2.5.3 | Implement VS Code ↔ engine config sync | ✅ | T2.5.1 |
+| T2.5.4 | Implement provider/model change handling | ✅ | T2.5.1 |
+| T2.6.1 | Write `VSCodeStorageAdapter.ts` | ✅ | T2.1.1 |
+| T2.6.2 | Implement all CRUD methods for sessions | ✅ | T2.6.1 |
+| T2.6.3 | Implement message persistence | ✅ | T2.6.1 |
+| T2.6.4 | Implement token log and permission persistence | ✅ | T2.6.1 |
+| T2.7.1 | Write `types.ts` — all adapter type definitions | ✅ | T2.1.1 |
+| T2.8.1 | Write unit tests for VSCodeEngine | ✅ | T2.1.2 |
+| T2.8.2 | Write unit tests for EventBridge | ✅ | T2.4.1 |
+| T2.8.3 | Write unit tests for ConfigBridge | ✅ | T2.5.1 |
+| T2.8.4 | Write unit tests for VSCodeStorageAdapter | ✅ | T2.6.1 |
+| T2.8.5 | Write integration test: create engine → send message → receive response | ✅ | T2.1.2, T2.4.1 |
+| T2.8.6 | Verify zero modifications to existing engine files | ✅ | All above |
+| T2.Z | Update master plan status | 🔲 | All above |
 
 ---
 
@@ -363,10 +365,8 @@ export type LifecycleCallback = (event: LifecycleEvent) => void;
 - **Action**: Write the toolkit factory that pre-creates the toolkit with the workspace root as scope, avoiding `process.cwd()` dependency.
 
 ```typescript
-import { createDefaultToolkit } from '@agentx/engine/tools/toolkit';
-import { EnhancedToolExecutor } from '@agentx/engine/tools/EnhancedToolExecutor';
-import type { ToolRegistry } from '@agentx/engine/tools/ToolRegistry';
-import type { ToolExecutor } from '@agentx/engine/tools/ToolExecutor';
+import { createDefaultToolkit, EnhancedToolExecutor } from '@agentx/engine';
+import type { ToolRegistry, ToolExecutor } from '@agentx/engine';
 
 export interface VSCodeToolkit {
   registry: ToolRegistry;
@@ -435,9 +435,8 @@ mkdir -p /source/packages/vscode/src/adapter
 
 ```typescript
 import type * as vscode from 'vscode';
-import { Agent } from '@agentx/engine/agent/Agent';
-import type { AgentOptions } from '@agentx/engine/agent/Agent';
-import { ConfigManager } from '@agentx/engine/config/ConfigManager';
+import { Agent, ConfigManager } from '@agentx/engine';
+import type { AgentOptions } from '@agentx/engine';
 import type { AgentXConfig } from '@agentx/shared';
 import { generateSessionId } from '@agentx/shared';
 import { createVSCodeToolkit } from './VSCodeToolkitFactory';
@@ -953,7 +952,7 @@ export class EngineLifecycle implements vscode.Disposable {
 - **Action**: Write the full event bridge that subscribes to `AgentEventBus` and re-emits typed events.
 
 ```typescript
-import type { AgentEventBus } from '@agentx/engine/EventBus';
+import type { AgentEventBus } from '@agentx/engine';
 import type {
   EngineEvent,
   Message,
@@ -1773,7 +1772,7 @@ export class EventBridge {
 
 ```typescript
 import * as vscode from 'vscode';
-import { ConfigManager } from '@agentx/engine/config/ConfigManager';
+import { ConfigManager } from '@agentx/engine';
 import type { AgentXConfig, ProviderId } from '@agentx/shared';
 import type { ConfigState, Disposable } from './types';
 
@@ -2376,39 +2375,33 @@ export class VSCodeStorageAdapter implements StorageAdapter {
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { VSCodeEngine } from '../../src/adapter/VSCodeEngine';
 
-vi.mock('@agentx/engine/agent/Agent', () => {
-  return {
-    Agent: vi.fn().mockImplementation(() => ({
-      events: { on: vi.fn().mockReturnValue(vi.fn()), emit: vi.fn() },
-      tokens: { tokensUsed: 0, tokensTotal: 128000, percentage: 0, totalCost: 0, inputTokenCount: 0, outputTokenCount: 0 },
-      processing: false,
-      toolCount: 165,
-      watcherCount: 0,
-      schedulerCount: 0,
-      planModeEnabled: false,
-      cancel: vi.fn(),
-      endSession: vi.fn(),
-      sendMessage: vi.fn(),
-      getToolExecutor: vi.fn(),
-    })),
-  };
-});
-
-vi.mock('@agentx/engine/config/ConfigManager', () => {
-  return {
-    ConfigManager: vi.fn().mockImplementation(() => ({
-      load: vi.fn().mockReturnValue({
-        provider: { activeProvider: 'openai', activeModel: 'gpt-4o', providers: {} },
-        ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' },
-        organization: null,
-        telemetry: false,
-        setupComplete: true,
-      }),
-      isConfigured: vi.fn().mockReturnValue(true),
-      isSetupComplete: vi.fn().mockReturnValue(true),
-      reload: vi.fn(),
-    })),
-  };
+vi.mock('@agentx/engine', () => {
+  const MockAgent = vi.fn().mockImplementation(() => ({
+    events: { on: vi.fn().mockReturnValue(vi.fn()), emit: vi.fn() },
+    tokens: { tokensUsed: 0, tokensTotal: 128000, percentage: 0, totalCost: 0, inputTokenCount: 0, outputTokenCount: 0 },
+    processing: false,
+    toolCount: 165,
+    watcherCount: 0,
+    schedulerCount: 0,
+    planModeEnabled: false,
+    cancel: vi.fn(),
+    endSession: vi.fn(),
+    sendMessage: vi.fn(),
+    getToolExecutor: vi.fn(),
+  }));
+  const MockConfigManager = vi.fn().mockImplementation(() => ({
+    load: vi.fn().mockReturnValue({
+      provider: { activeProvider: 'openai', activeModel: 'gpt-4o', providers: {} },
+      ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' },
+      organization: null,
+      telemetry: false,
+      setupComplete: true,
+    }),
+    isConfigured: vi.fn().mockReturnValue(true),
+    isSetupComplete: vi.fn().mockReturnValue(true),
+    reload: vi.fn(),
+  }));
+  return { Agent: MockAgent, ConfigManager: MockConfigManager };
 });
 
 vi.mock('../../src/adapter/VSCodeToolkitFactory', () => {
@@ -2526,7 +2519,7 @@ describe('VSCodeEngine', () => {
 ```typescript
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventBridge } from '../../src/adapter/EventBridge';
-import type { AgentEventBus } from '@agentx/engine/EventBus';
+import type { AgentEventBus } from '@agentx/engine';
 import type { EngineEvent, EventHandler } from '@agentx/shared';
 
 function createMockEventBus(): { bus: AgentEventBus; emit: (event: EngineEvent) => void } {
@@ -3143,93 +3136,87 @@ import { EventBridge } from '../../src/adapter/EventBridge';
 
 let capturedEmit: ((event: any) => void) | null = null;
 
-vi.mock('@agentx/engine/agent/Agent', () => {
-  return {
-    Agent: vi.fn().mockImplementation(() => {
-      const handlers = new Set<(event: any) => void>();
-      const eventBus = {
-        emit: (event: any) => {
-          for (const h of handlers) h(event);
+vi.mock('@agentx/engine', () => {
+  const handlers = new Set<(event: any) => void>();
+  const eventBus = {
+    emit: (event: any) => {
+      for (const h of handlers) h(event);
+    },
+    on: (h: (event: any) => void) => {
+      handlers.add(h);
+      capturedEmit = (event: any) => {
+        for (const handler of handlers) handler(event);
+      };
+      return () => { handlers.delete(h); };
+    },
+    off: (h: (event: any) => void) => { handlers.delete(h); },
+  };
+
+  const MockAgent = vi.fn().mockImplementation(() => ({
+    events: eventBus,
+    tokens: {
+      tokensUsed: 0,
+      tokensTotal: 128000,
+      percentage: 0,
+      totalCost: 0,
+      inputTokenCount: 0,
+      outputTokenCount: 0,
+    },
+    processing: false,
+    toolCount: 165,
+    watcherCount: 0,
+    schedulerCount: 0,
+    planModeEnabled: false,
+    cancel: vi.fn(),
+    endSession: vi.fn(),
+    sendMessage: vi.fn().mockImplementation(async (content: string) => {
+      eventBus.emit({
+        type: 'message_sent',
+        message: {
+          id: 'msg-sent-1',
+          sessionId: 'test-session',
+          role: 'user',
+          content,
+          toolCalls: null,
+          tokenCount: 10,
+          createdAt: new Date().toISOString(),
         },
-        on: (h: (event: any) => void) => {
-          handlers.add(h);
-          capturedEmit = (event: any) => {
-            for (const handler of handlers) handler(event);
-          };
-          return () => { handlers.delete(h); };
-        },
-        off: (h: (event: any) => void) => { handlers.delete(h); },
+      });
+
+      eventBus.emit({ type: 'stream_chunk', content: 'Hel', fullContent: 'Hel' });
+      eventBus.emit({ type: 'stream_chunk', content: 'lo!', fullContent: 'Hello!' });
+
+      const response = {
+        id: 'msg-recv-1',
+        sessionId: 'test-session',
+        role: 'assistant',
+        content: 'Hello!',
+        toolCalls: null,
+        tokenCount: 15,
+        createdAt: new Date().toISOString(),
       };
 
-      return {
-        events: eventBus,
-        tokens: {
-          tokensUsed: 0,
-          tokensTotal: 128000,
-          percentage: 0,
-          totalCost: 0,
-          inputTokenCount: 0,
-          outputTokenCount: 0,
-        },
-        processing: false,
-        toolCount: 165,
-        watcherCount: 0,
-        schedulerCount: 0,
-        planModeEnabled: false,
-        cancel: vi.fn(),
-        endSession: vi.fn(),
-        sendMessage: vi.fn().mockImplementation(async (content: string) => {
-          eventBus.emit({
-            type: 'message_sent',
-            message: {
-              id: 'msg-sent-1',
-              sessionId: 'test-session',
-              role: 'user',
-              content,
-              toolCalls: null,
-              tokenCount: 10,
-              createdAt: new Date().toISOString(),
-            },
-          });
+      eventBus.emit({ type: 'message_received', message: response, elapsed: 250 });
 
-          eventBus.emit({ type: 'stream_chunk', content: 'Hel', fullContent: 'Hel' });
-          eventBus.emit({ type: 'stream_chunk', content: 'lo!', fullContent: 'Hello!' });
-
-          const response = {
-            id: 'msg-recv-1',
-            sessionId: 'test-session',
-            role: 'assistant',
-            content: 'Hello!',
-            toolCalls: null,
-            tokenCount: 15,
-            createdAt: new Date().toISOString(),
-          };
-
-          eventBus.emit({ type: 'message_received', message: response, elapsed: 250 });
-
-          return response;
-        }),
-        getToolExecutor: vi.fn(),
-      };
+      return response;
     }),
-  };
-});
+    getToolExecutor: vi.fn(),
+  }));
 
-vi.mock('@agentx/engine/config/ConfigManager', () => {
-  return {
-    ConfigManager: vi.fn().mockImplementation(() => ({
-      load: vi.fn().mockReturnValue({
-        provider: { activeProvider: 'openai', activeModel: 'gpt-4o', providers: {} },
-        ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' },
-        organization: null,
-        telemetry: false,
-        setupComplete: true,
-      }),
-      isConfigured: vi.fn().mockReturnValue(true),
-      isSetupComplete: vi.fn().mockReturnValue(true),
-      reload: vi.fn(),
-    })),
-  };
+  const MockConfigManager = vi.fn().mockImplementation(() => ({
+    load: vi.fn().mockReturnValue({
+      provider: { activeProvider: 'openai', activeModel: 'gpt-4o', providers: {} },
+      ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' },
+      organization: null,
+      telemetry: false,
+      setupComplete: true,
+    }),
+    isConfigured: vi.fn().mockReturnValue(true),
+    isSetupComplete: vi.fn().mockReturnValue(true),
+    reload: vi.fn(),
+  }));
+
+  return { Agent: MockAgent, ConfigManager: MockConfigManager };
 });
 
 vi.mock('../../src/adapter/VSCodeToolkitFactory', () => {
@@ -3403,3 +3390,16 @@ find source/packages/vscode/src/adapter -type f -name '*.ts' | sort
 | `packages/vscode/test/adapter/integration.test.ts` | End-to-end adapter integration test | ~170 |
 
 **Total**: ~2,505 lines of new code, 0 lines of existing code modified.
+
+---
+
+### T2.Z: Update Master Plan
+
+- **Status**: ⬜
+- **Dependencies**: All above
+- **Action**: Update [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase. Mark each task as complete (✅), in progress (🔄), or blocked (❌). Identify the next action item. Ensure the master plan remains the single source of truth.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.

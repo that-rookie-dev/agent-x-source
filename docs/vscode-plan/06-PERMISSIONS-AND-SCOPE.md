@@ -1,6 +1,6 @@
 # Phase 6: Permissions & Scope — Permission System UI, Scope Guard Integration, Diff Preview
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete
 > **Depends on**: Phase 2 (Engine Adapter), Phase 4 (Chat Webview)
 > **Estimated Effort**: 4–5 days
 > **Files Created**: `packages/vscode/src/adapter/PermissionHandler.ts`, `packages/vscode/src/adapter/PermissionSettings.ts`, `packages/vscode/src/providers/PermissionTreeProvider.ts`, `packages/vscode/src/adapter/ScopeGuardAdapter.ts`, `packages/vscode/src/adapter/DiffPreviewHandler.ts`
@@ -54,18 +54,19 @@ Engine (ToolExecutor)
 
 | Task ID | Title | Status | Priority |
 |---------|-------|--------|----------|
-| T6.1 | Permission Handler Bridge | ⬜ | Core |
-| T6.2 | Permission Settings | ⬜ | Core |
-| T6.3 | Permission Audit View | ⬜ | P1 |
-| T6.4 | Scope Guard Integration | ⬜ | Core |
-| T6.5 | Diff Preview Integration | ⬜ | P1 |
-| T6.6 | Verification & Testing | ⬜ | Core |
+| T6.1 | Permission Handler Bridge | ✅ | Core |
+| T6.2 | Permission Settings | ✅ | Core |
+| T6.3 | Permission Audit View | ✅ | P1 |
+| T6.4 | Scope Guard Integration | ✅ | Core |
+| T6.5 | Diff Preview Integration | ✅ | P1 |
+| T6.6 | Verification & Testing | ✅ | Core |
+| T6.Z | Update master plan status | ✅ | Core |
 
 ---
 
 ## T6.1: Permission Handler Bridge
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/PermissionHandler.ts`
 **Estimated Effort**: 6 hours
 
@@ -480,7 +481,7 @@ export function isReadOnlyTool(toolId: string): boolean {
 
 ## T6.2: Permission Settings
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/PermissionSettings.ts`
 **Estimated Effort**: 2 hours
 
@@ -627,7 +628,7 @@ Add to `packages/vscode/package.json` under `contributes.configuration.propertie
 
 ## T6.3: Permission Audit View
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/providers/PermissionTreeProvider.ts`
 **Estimated Effort**: 4 hours
 
@@ -956,7 +957,7 @@ Add to `package.json` under `contributes.menus["view/item/context"]`:
 
 ## T6.4: Scope Guard Integration
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/ScopeGuardAdapter.ts`
 **Estimated Effort**: 3 hours
 
@@ -1169,7 +1170,7 @@ vscode.workspace.onDidChangeWorkspaceFolders(() => {
 
 ## T6.5: Diff Preview Integration
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/DiffPreviewHandler.ts`
 **Estimated Effort**: 5 hours
 
@@ -1428,7 +1429,7 @@ Add to `package.json` under `contributes.menus["editor/title"]`:
 
 ## T6.6: Verification & Testing
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/test/adapter/PermissionHandler.test.ts`, `packages/vscode/test/adapter/PermissionSettings.test.ts`, `packages/vscode/test/providers/PermissionTreeProvider.test.ts`, `packages/vscode/test/adapter/ScopeGuardAdapter.test.ts`, `packages/vscode/test/adapter/DiffPreviewHandler.test.ts`
 **Estimated Effort**: 5 hours
 
@@ -2103,3 +2104,16 @@ describe('Permission Flow Integration', () => {
 - **editor/title**: `agentx.diffAccept` and `agentx.diffReject` (when `resourceScheme == agentx-diff`)
 - **view/title**: refresh, clear, export (when `view == agentx.permissionsView`)
 - **view/item/context**: revoke (when `viewItem == permissionEntry`)
+
+---
+
+### T6.Z: Update Master Plan
+
+- **Status**: ✅
+- **Dependencies**: All above
+- **Action**: Update [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase. Mark each task as complete (✅), in progress (🔄), or blocked (❌). Identify the next action item. Ensure the master plan remains the single source of truth.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.

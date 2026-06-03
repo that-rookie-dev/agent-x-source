@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Agent-X - AI-powered terminal agent",
-  "author": "Anomalyco <hello@anomaly.co>",
+  "author": "SlashpanOrg <hello@slashpan.com>",
   "main": "./dist/main.js",
   "scripts": {
     "build": "node scripts/generate-icon.mjs && tsup && node scripts/copy-xterm.mjs",
@@ -64,7 +64,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "anomalyco",
+      "owner": "SlashpanOrg",
       "repo": "agent-x"
     }
   },

@@ -1,6 +1,7 @@
 # Phase 1: Extension Scaffolding
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete (Phase 1 — Extension Scaffolding)
+> **Completed**: 2026-06-03
 > **Depends on**: Nothing
 > **Estimated effort**: 2 days
 > **Goal**: Create the `packages/vscode/` package with all configuration files, directory structure, build pipeline, and a minimal extension entry point that activates in VS Code.
@@ -11,30 +12,31 @@
 
 | Task ID | Title | Status | Dependencies |
 |---------|-------|--------|-------------|
-| T1.1.1 | Create `packages/vscode/` directory | ⬜ | None |
-| T1.1.2 | Write `packages/vscode/package.json` | ⬜ | T1.1.1 |
-| T1.1.3 | Write `packages/vscode/tsconfig.json` | ⬜ | T1.1.1 |
-| T1.1.4 | Write `packages/vscode/.vscodeignore` | ⬜ | T1.1.1 |
-| T1.1.5 | Write `packages/vscode/.eslintrc.json` | ⬜ | T1.1.1 |
-| T1.2.1 | Define VS Code extension manifest `contributes` section in `package.json` | ⬜ | T1.1.2 |
-| T1.3.1 | Write `packages/vscode/esbuild.js` (extension host bundle) | ⬜ | T1.1.2 |
-| T1.3.2 | Write `packages/vscode/esbuild.webview.js` (webview bundle) | ⬜ | T1.1.2 |
-| T1.3.3 | Write `packages/vscode/src/vscode.d.ts` (custom type declarations) | ⬜ | T1.1.1 |
-| T1.4.1 | Create all source subdirectories | ⬜ | T1.1.1 |
-| T1.4.2 | Create `media/` directory with placeholder SVGs | ⬜ | T1.1.1 |
-| T1.4.3 | Create `test/` directory structure | ⬜ | T1.1.1 |
-| T1.5.1 | Verify root `pnpm-workspace.yaml` includes `packages/*` | ⬜ | None |
-| T1.5.2 | Update root `package.json` lint script to include vscode | ⬜ | T1.1.2 |
-| T1.5.3 | Write `.vscode/launch.json` for Extension Development Host | ⬜ | T1.1.2 |
-| T1.5.4 | Write `.vscode/tasks.json` for build/watch | ⬜ | T1.3.1 |
-| T1.5.5 | Write `.vscode/settings.json` for workspace settings | ⬜ | T1.1.1 |
-| T1.6.1 | Write `packages/vscode/src/constants.ts` | ⬜ | T1.1.2 |
-| T1.6.2 | Write `packages/vscode/src/extension.ts` (entry point) | ⬜ | T1.6.1 |
-| T1.7.1 | Run `pnpm install` from root | ⬜ | T1.1.2 |
-| T1.7.2 | Run `pnpm --filter @agentx/vscode run build` | ⬜ | T1.7.1, T1.3.1, T1.6.2 |
-| T1.7.3 | Run `pnpm --filter @agentx/vscode run typecheck` | ⬜ | T1.7.1, T1.6.2 |
-| T1.7.4 | Run `pnpm --filter @agentx/vscode run lint` | ⬜ | T1.7.1, T1.6.2 |
+| T1.1.1 | Create `packages/vscode/` directory | ✅ | None |
+| T1.1.2 | Write `packages/vscode/package.json` | ✅ | T1.1.1 |
+| T1.1.3 | Write `packages/vscode/tsconfig.json` | ✅ | T1.1.1 |
+| T1.1.4 | Write `packages/vscode/.vscodeignore` | ✅ | T1.1.1 |
+| T1.1.5 | Write `packages/vscode/eslint.config.js` | ✅ | T1.1.1 |
+| T1.2.1 | Define VS Code extension manifest `contributes` section in `package.json` | ✅ | T1.1.2 |
+| T1.3.1 | Write `packages/vscode/esbuild.js` | ✅ | T1.1.2 |
+| T1.3.2 | Write `packages/vscode/esbuild.webview.js` | ✅ | T1.1.2 |
+| T1.3.3 | Write `packages/vscode/src/vscode.d.ts` | ✅ | T1.1.1 |
+| T1.4.1 | Create all source subdirectories | ✅ | T1.1.1 |
+| T1.4.2 | Create `media/` directory with placeholder SVGs | ✅ | T1.1.1 |
+| T1.4.3 | Create `test/` directory structure | ✅ | T1.1.1 |
+| T1.5.1 | Verify root `pnpm-workspace.yaml` includes `packages/*` | ✅ | None |
+| T1.5.2 | Update root `package.json` lint script to include vscode | ✅ | T1.1.2 |
+| T1.5.3 | Write `.vscode/launch.json` for Extension Development Host | ✅ | T1.1.2 |
+| T1.5.4 | Write `.vscode/tasks.json` for build/watch | ✅ | T1.3.1 |
+| T1.5.5 | Write `.vscode/settings.json` for workspace settings | ✅ | T1.1.1 |
+| T1.6.1 | Write `packages/vscode/src/constants.ts` | ✅ | T1.1.2 |
+| T1.6.2 | Write `packages/vscode/src/extension.ts` (entry point) | ✅ | T1.6.1 |
+| T1.7.1 | Run `pnpm install` from root | ✅ | T1.1.2 |
+| T1.7.2 | Run `pnpm --filter @agentx/vscode run build` | ✅ | T1.7.1, T1.3.1, T1.6.2 |
+| T1.7.3 | Run `pnpm --filter @agentx/vscode run typecheck` | ✅ | T1.7.1, T1.6.2 |
+| T1.7.4 | Run `pnpm --filter @agentx/vscode run lint` | ✅ | T1.7.1, T1.6.2 |
 | T1.7.5 | Launch Extension Development Host and verify activation | ⬜ | T1.7.2 |
+| T1.Z | Update master plan status | 🔲 | All above |
 
 ---
 
@@ -71,7 +73,7 @@ mkdir -p /source/packages/vscode
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "publisher": "anomalyco",
+  "publisher": "slashpan",
   "license": "MIT",
   "icon": "media/icon.png",
   "engines": {
@@ -1163,12 +1165,12 @@ import * as vscode from 'vscode';
 
 suite('Extension Activation', () => {
   test('should be present in extensions', () => {
-    const ext = vscode.extensions.getExtension('anomalyco.agentx');
+    const ext = vscode.extensions.getExtension('slashpan.agentx');
     assert.ok(ext, 'Extension should be found');
   });
 
   test('should activate', async () => {
-    const ext = vscode.extensions.getExtension('anomalyco.agentx');
+    const ext = vscode.extensions.getExtension('slashpan.agentx');
     if (ext && !ext.isActive) {
       await ext.activate();
     }
@@ -1467,7 +1469,7 @@ packages:
 - **Action**: Write the following content exactly.
 
 ```ts
-export const EXTENSION_ID = 'anomalyco.agentx';
+export const EXTENSION_ID = 'slashpan.agentx';
 export const EXTENSION_DISPLAY_NAME = 'Agent-X';
 
 export const COMMANDS = {
@@ -2016,3 +2018,16 @@ The following exports from `@agentx/engine` and `@agentx/shared` will be consume
 - `Crew`, `CrewCreateInput`, `CrewEmotion` — Crew types (Phase 8)
 - `Plan`, `PlanStep` — Plan types (Phase 10)
 - `TodoItem` — TODO types (Phase 10)
+
+---
+
+### T1.Z: Update Master Plan
+
+- **Status**: ⬜
+- **Dependencies**: All above
+- **Action**: Update [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase. Mark each task as complete (✅), in progress (🔄), or blocked (❌). Identify the next action item. Ensure the master plan remains the single source of truth.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.

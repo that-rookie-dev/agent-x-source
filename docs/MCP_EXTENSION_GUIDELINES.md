@@ -129,7 +129,7 @@ Before submitting, verify your extension:
    npm publish
    ```
 2. Submit to the Agent-X Extension Marketplace by opening a PR at:
-   `https://github.com/anomalyco/agent-x-extensions`
+   `https://github.com/SlashpanOrg/agent-x-extensions`
 
    Your PR should include:
    - The npm package name
@@ -144,8 +144,8 @@ Before submitting, verify your extension:
 ## Resources
 
 - [MCP Protocol Spec](https://modelcontextprotocol.io/)
-- [Agent-X MCP Servers](https://github.com/anomalyco/agent-x/tree/main/source/packages/mcp-servers) — reference implementations
-- [`McpServer` base class](https://github.com/anomalyco/agent-x/blob/main/source/packages/mcp-servers/src/base-server.ts)
+- [Agent-X MCP Servers](https://github.com/SlashpanOrg/agent-x/tree/main/source/packages/mcp-servers) — reference implementations
+- [`McpServer` base class](https://github.com/SlashpanOrg/agent-x/blob/main/source/packages/mcp-servers/src/base-server.ts)
 
 ---
 

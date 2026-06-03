@@ -1,6 +1,6 @@
 # Phase 7: Session Management — TreeView, Persistence, Restore, Export, Checkpoints
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete
 > **Depends on**: Phase 3 (Extension Core)
 > **Estimated Effort**: 3–4 days
 > **Files Created**: `packages/vscode/src/providers/SessionTreeProvider.ts`, `packages/vscode/src/adapter/SessionLifecycle.ts`, `packages/vscode/src/adapter/SessionPersistence.ts`, `packages/vscode/src/adapter/SessionExporter.ts`, `packages/vscode/src/adapter/CheckpointManager.ts`, `packages/vscode/src/adapter/SessionCompaction.ts`, `packages/vscode/src/adapter/SessionSearch.ts`, `packages/vscode/src/adapter/CrashRecoveryAdapter.ts`
@@ -26,22 +26,23 @@ Phase 7 implements the complete session management layer for the Agent-X VS Code
 
 | Task ID | Title | Status | Dependencies |
 |---------|-------|--------|-------------|
-| T7.1 | Session Tree View | ⬜ | Phase 3 |
-| T7.2 | Session Lifecycle Manager | ⬜ | Phase 3, T7.1 |
-| T7.3 | Session Persistence | ⬜ | T7.2 |
-| T7.4 | Session Export | ⬜ | T7.2, T7.3 |
-| T7.5 | Checkpoint System | ⬜ | T7.2, T7.3 |
-| T7.6 | Session Compaction | ⬜ | T7.2, T7.3 |
-| T7.7 | Session Search | ⬜ | T7.3 |
-| T7.8 | Crash Recovery | ⬜ | T7.2 |
-| T7.9 | Verification | ⬜ | All above |
+| T7.1 | Session Tree View | ✅ | Phase 3 |
+| T7.2 | Session Lifecycle Manager | ✅ | Phase 3, T7.1 |
+| T7.3 | Session Persistence | ✅ | T7.2 |
+| T7.4 | Session Export | ✅ | T7.2, T7.3 |
+| T7.5 | Checkpoint System | ✅ | T7.2, T7.3 |
+| T7.6 | Session Compaction | ✅ | T7.2, T7.3 |
+| T7.7 | Session Search | ✅ | T7.3 |
+| T7.8 | Crash Recovery | ✅ | T7.2 |
+| T7.9 | Verification | ✅ | All above |
+| T7.Z | Update master plan status | ✅ | All above |
 
 ---
 
 ## T7.1: Session Tree View
 
-**Status**: ⬜ Not Started
-**File**: `packages/vscode/src/providers/SessionTreeProvider.ts`
+**Status**: ✅ Complete
+**File**: `packages/vscode/src/views/SessionTreeProvider.ts`
 **Estimated Effort**: 8 hours
 
 ### T7.1.1: Tree Item Types and Interfaces
@@ -49,7 +50,7 @@ Phase 7 implements the complete session management layer for the Agent-X VS Code
 ```typescript
 import * as vscode from 'vscode';
 import type { Session } from '@agentx/shared';
-import { SessionManager } from '@agentx/engine/session/SessionManager';
+import { SessionManager } from '@agentx/engine';
 
 type DateGroup = 'Today' | 'Yesterday' | 'This Week' | 'Older';
 
@@ -510,7 +511,7 @@ export function registerSessionCommands(
 
 ## T7.2: Session Lifecycle Manager
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/SessionLifecycle.ts`
 **Estimated Effort**: 6 hours
 
@@ -518,7 +519,7 @@ export function registerSessionCommands(
 
 ```typescript
 import * as vscode from 'vscode';
-import { SessionManager } from '@agentx/engine/session/SessionManager';
+import { SessionManager } from '@agentx/engine';
 import type { Session } from '@agentx/shared';
 import { generateSessionId } from '@agentx/shared';
 import type { EngineLifecycle } from './EngineLifecycle';
@@ -787,7 +788,7 @@ export class SessionLifecycle implements vscode.Disposable {
 
 ## T7.3: Session Persistence
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/SessionPersistence.ts`
 **Estimated Effort**: 6 hours
 
@@ -1015,7 +1016,7 @@ export class SessionPersistence {
 
 ## T7.4: Session Export
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/SessionExporter.ts`
 **Estimated Effort**: 4 hours
 
@@ -1027,7 +1028,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ChatMessage } from './types';
 import type { SessionPersistence } from './SessionPersistence';
-import { SessionManager } from '@agentx/engine/session/SessionManager';
+import { SessionManager } from '@agentx/engine';
 
 type ExportFormat = 'json' | 'markdown' | 'jsonl';
 
@@ -1274,7 +1275,7 @@ export class SessionExporter {
 
 ## T7.5: Checkpoint System
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/CheckpointManager.ts`
 **Estimated Effort**: 5 hours
 
@@ -1595,7 +1596,7 @@ export function registerCheckpointCommands(
 
 ## T7.6: Session Compaction
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/SessionCompaction.ts`
 **Estimated Effort**: 4 hours
 
@@ -1605,7 +1606,7 @@ export function registerCheckpointCommands(
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { Agent } from '@agentx/engine/agent/Agent';
+import type { Agent } from '@agentx/engine';
 import type { ChatMessage } from './types';
 import type { SessionPersistence } from './SessionPersistence';
 import type { ChatViewProvider } from '../webview/ChatViewProvider';
@@ -1784,7 +1785,7 @@ Provide a structured summary with sections: Key Decisions, Code Changes, File Pa
 
 ## T7.7: Session Search
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/SessionSearch.ts`
 **Estimated Effort**: 3 hours
 
@@ -1794,7 +1795,7 @@ Provide a structured summary with sections: Key Decisions, Code Changes, File Pa
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { SessionManager } from '@agentx/engine/session/SessionManager';
+import { SessionManager } from '@agentx/engine';
 import type { SessionPersistence } from './SessionPersistence';
 import type { SessionTreeProvider } from '../providers/SessionTreeProvider';
 import type { ChatMessage } from './types';
@@ -1930,7 +1931,7 @@ export class SessionSearch {
 
 ## T7.8: Crash Recovery
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/CrashRecoveryAdapter.ts`
 **Estimated Effort**: 3 hours
 
@@ -1938,7 +1939,7 @@ export class SessionSearch {
 
 ```typescript
 import * as vscode from 'vscode';
-import { CrashRecovery } from '@agentx/engine/session/CrashRecovery';
+import { CrashRecovery } from '@agentx/engine';
 import type { SessionLifecycle } from './SessionLifecycle';
 import type { SessionPersistence } from './SessionPersistence';
 
@@ -2088,7 +2089,7 @@ export async function initializeCrashRecovery(
 
 ## T7.9: Verification
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Estimated Effort**: 4 hours
 
 ### T7.9.1: Session Create/Restore/Delete Tests
@@ -2499,4 +2500,17 @@ All commands that must be registered in `packages/vscode/package.json`:
         ├── {checkpointId1}.json
         ├── {checkpointId2}.json
         └── ...
+
+---
+
+### T7.Z: Update Master Plan
+
+- **Status**: ✅ Complete
+- **Dependencies**: All above
+- **Action**: Updated [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.
 ```

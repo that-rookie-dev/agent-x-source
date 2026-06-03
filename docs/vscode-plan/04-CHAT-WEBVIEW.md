@@ -1,6 +1,6 @@
 # Phase 4: Chat Webview — Sidebar UI, Message Rendering, Streaming, Tool Cards
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete
 > **Depends on**: Phase 3 (Extension Core)
 > **Estimated Effort**: 5–7 days
 > **Files Created**: `packages/vscode/src/webview/ChatViewProvider.ts`, `packages/vscode/src/webview/ui/**`, `packages/vscode/src/webview/protocol.ts`
@@ -19,33 +19,34 @@ The webview is built with React, uses `marked` for Markdown rendering, `highligh
 
 | Task ID | Title | Status | Dependencies |
 |---------|-------|--------|-------------|
-| T4.1 | WebviewViewProvider | ⬜ | Phase 3 |
-| T4.2 | Webview HTML Shell | ⬜ | T4.1 |
-| T4.3 | Webview React App Setup | ⬜ | T4.2 |
-| T4.4.1 | ChatContainer | ⬜ | T4.3 |
-| T4.4.2 | MessageBubble | ⬜ | T4.3 |
-| T4.4.3 | StreamingMessage | ⬜ | T4.3 |
-| T4.4.4 | ToolCard | ⬜ | T4.3 |
-| T4.4.5 | PermissionModal | ⬜ | T4.3 |
-| T4.4.6 | PlanView | ⬜ | T4.3 |
-| T4.4.7 | SubAgentCard | ⬜ | T4.3 |
-| T4.4.8 | ReasoningIndicator | ⬜ | T4.3 |
-| T4.4.9 | TodoPanel | ⬜ | T4.3 |
-| T4.4.10 | DiffPreview | ⬜ | T4.3 |
-| T4.4.11 | InputArea | ⬜ | T4.3 |
-| T4.4.12 | StatusBar | ⬜ | T4.3 |
-| T4.4.13 | ErrorBanner | ⬜ | T4.3 |
-| T4.4.14 | WelcomeScreen | ⬜ | T4.3 |
-| T4.5 | Webview CSS | ⬜ | T4.2 |
-| T4.6 | Message Protocol | ⬜ | T4.1 |
-| T4.7 | Markdown + Code Highlighting | ⬜ | T4.3 |
-| T4.8 | Verification | ⬜ | All above |
+| T4.1 | WebviewViewProvider | ✅ | Phase 3 |
+| T4.2 | Webview HTML Shell | ✅ | T4.1 |
+| T4.3 | Webview React App Setup | ✅ | T4.2 |
+| T4.4.1 | ChatContainer | ✅ | T4.3 |
+| T4.4.2 | MessageBubble | ✅ | T4.3 |
+| T4.4.3 | StreamingMessage | ✅ | T4.3 |
+| T4.4.4 | ToolCard | ✅ | T4.3 |
+| T4.4.5 | PermissionModal | ✅ | T4.3 |
+| T4.4.6 | PlanView | ✅ | T4.3 |
+| T4.4.7 | SubAgentCard | ✅ | T4.3 |
+| T4.4.8 | ReasoningIndicator | ✅ | T4.3 |
+| T4.4.9 | TodoPanel | ✅ | T4.3 |
+| T4.4.10 | DiffPreview | ✅ | T4.3 |
+| T4.4.11 | InputArea | ✅ | T4.3 |
+| T4.4.12 | StatusBar | ✅ | T4.3 |
+| T4.4.13 | ErrorBanner | ✅ | T4.3 |
+| T4.4.14 | WelcomeScreen | ✅ | T4.3 |
+| T4.5 | Webview CSS | ✅ | T4.2 |
+| T4.6 | Message Protocol | ✅ | T4.1 |
+| T4.7 | Markdown + Code Highlighting | ✅ | T4.3 |
+| T4.8 | Verification | ✅ | All above |
+| T4.Z | Update master plan status | ✅ | All above |
 
 ---
 
 ## T4.1: WebviewViewProvider
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/webview/ChatViewProvider.ts`
 **Estimated Effort**: 6 hours
 
@@ -252,105 +253,87 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 ```typescript
   private wireEventBridge(): void {
-    this.eventBridge.onMessageSent((msg) => {
+    this.eventBridge.onMessage((msg) => {
+      const role: "user" | "assistant" = msg.role === "user" ? "user" : "assistant";
       this.postToWebview("appendMessage", {
         id: msg.id,
-        role: "user",
+        role,
         content: msg.content,
-        timestamp: msg.timestamp,
-      });
-    });
-
-    this.eventBridge.onMessageReceived((msg) => {
-      this.postToWebview("appendMessage", {
-        id: msg.id,
-        role: "assistant",
-        content: msg.content,
-        timestamp: msg.timestamp,
+        timestamp: Date.parse(msg.createdAt) || Date.now(),
         tokenCost: msg.tokenCost,
       });
     });
 
-    this.eventBridge.onStreamChunk((chunk) => {
+    this.eventBridge.onStream((chunk) => {
       this.postToWebview("updateStream", {
         content: chunk.content,
         fullContent: chunk.fullContent,
       });
     });
 
-    this.eventBridge.onStreamStart(() => {
-      this.postToWebview("streamStart", {});
+    this.eventBridge.onToolEvent((execution) => {
+      if (execution.status === "executing") {
+        this.postToWebview("toolExecuting", {
+          tool: execution.toolName,
+          description: execution.description,
+          startTime: execution.startTime,
+        });
+      } else {
+        this.postToWebview("toolComplete", {
+          tool: execution.toolName,
+          result: execution.result?.output ?? "",
+          elapsed: execution.elapsed ?? 0,
+        });
+      }
     });
 
-    this.eventBridge.onStreamEnd(() => {
-      this.postToWebview("streamEnd", {});
-    });
-
-    this.eventBridge.onToolExecuting((tool) => {
-      this.postToWebview("toolExecuting", {
-        tool: tool.tool,
-        description: tool.description,
-        startTime: tool.startTime,
-      });
-    });
-
-    this.eventBridge.onToolComplete((tool) => {
-      this.postToWebview("toolComplete", {
-        tool: tool.tool,
-        result: tool.result,
-        elapsed: tool.elapsed,
-      });
-    });
-
-    this.eventBridge.onPermissionRequired((perm) => {
+    this.eventBridge.onPermission((req) => {
       this.postToWebview("permissionRequired", {
-        requestId: perm.requestId,
-        tool: perm.tool,
-        path: perm.path,
-        riskLevel: perm.riskLevel,
-        description: perm.description,
+        requestId: `${req.tool}-${req.timestamp}`,
+        tool: req.tool,
+        path: req.path,
+        riskLevel: req.riskLevel,
+        description: `Allow ${req.tool} to access ${req.path} (${req.riskLevel} risk)`,
       });
     });
 
-    this.eventBridge.onPlanGenerated((plan) => {
-      this.postToWebview("planUpdate", {
-        action: "generated",
-        plan: plan.plan,
-        userRequest: plan.userRequest,
-      });
+    this.eventBridge.onPlanEvent((event) => {
+      if (event.type === "plan_generated" && "plan" in event) {
+        this.postToWebview("planUpdate", {
+          action: "generated",
+          plan: event.plan,
+          userRequest: event.userRequest ?? "",
+        });
+      } else if (event.type.startsWith("plan_step_")) {
+        this.postToWebview("planUpdate", {
+          action: "stepUpdate",
+          stepId: (event as any).stepId ?? "",
+          planId: (event as any).planId ?? "",
+          status: event.type.replace("plan_step_", ""),
+          result: (event as any).result,
+          error: (event as any).error,
+        });
+      }
     });
 
-    this.eventBridge.onPlanStepUpdate((step) => {
-      this.postToWebview("planUpdate", {
-        action: "stepUpdate",
-        stepId: step.stepId,
-        planId: step.planId,
-        status: step.status,
-        result: step.result,
-        error: step.error,
-      });
-    });
-
-    this.eventBridge.onSubAgentUpdate((agent) => {
+    this.eventBridge.onSubAgentEvent((agent) => {
       this.postToWebview("subAgentUpdate", agent);
     });
 
-    this.eventBridge.onReasoningGlimpse((glimpse) => {
-      this.postToWebview("reasoningUpdate", {
-        action: "glimpse",
-        text: glimpse.text,
-      });
+    this.eventBridge.onReasoning((state) => {
+      if (state.isActive && state.glimpses.length === 0) {
+        this.postToWebview("reasoningUpdate", { action: "start" });
+      } else if (state.isActive) {
+        this.postToWebview("reasoningUpdate", {
+          action: "glimpse",
+          text: state.glimpses[state.glimpses.length - 1],
+        });
+      } else {
+        this.postToWebview("reasoningUpdate", { action: "complete" });
+      }
     });
 
-    this.eventBridge.onReasoningStart(() => {
-      this.postToWebview("reasoningUpdate", { action: "start" });
-    });
-
-    this.eventBridge.onReasoningComplete(() => {
-      this.postToWebview("reasoningUpdate", { action: "complete" });
-    });
-
-    this.eventBridge.onTodoUpdate((items) => {
+    this.eventBridge.onTodo((items) => {
       this.postToWebview("todoUpdate", { items });
     });
 
@@ -359,42 +342,90 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
 
     this.eventBridge.onError((error) => {
-      this.postToWebview("error", error);
+      this.postToWebview("error", {
+        code: error.code,
+        message: error.message,
+        recoverable: error.recoverable,
+        actions: error.actions?.map((a) => ({
+          label: a.label,
+          action: a.type,
+        })),
+      });
     });
 
-    this.eventBridge.onTokenUsage((usage) => {
+    this.eventBridge.onTokenUpdate((state) => {
       this.postToWebview("statusUpdate", {
-        tokens: usage,
-        provider: this.configBridge.getActiveProvider(),
-        model: this.configBridge.getActiveModel(),
+        tokens: {
+          used: state.used,
+          total: state.total,
+          percentage: state.percentage,
+          cost: state.totalCost,
+        },
+        provider: this.configBridge?.getActiveProvider(),
+        model: this.configBridge?.getActiveModel(),
       });
     });
 
-    this.eventBridge.onLoadingStart((stage) => {
-      this.postToWebview("loadingStart", { stage });
+    this.eventBridge.onLoading((stage) => {
+      if (stage) {
+        this.postToWebview("loadingStart", { stage });
+      } else {
+        this.postToWebview("loadingEnd", {});
+      }
     });
 
-    this.eventBridge.onLoadingEnd(() => {
-      this.postToWebview("loadingEnd", {});
+    this.eventBridge.onProcessing((info) => {
+      if (info) {
+        this.postToWebview("processingUpdate", {
+          taskDescription: info.taskDescription,
+          stage: info.stage,
+          progress: info.progress,
+        });
+      } else {
+        this.postToWebview("processingUpdate", null);
+      }
     });
 
-    this.eventBridge.onSessionRestored((session) => {
-      this.postToWebview("sessionRestored", {
-        messages: session.messages,
-        title: session.title,
+    this.eventBridge.onClarification((req) => {
+      this.postToWebview("clarification", {
+        questionId: `clarify-${Date.now()}`,
+        question: req.question,
+        options: req.options,
+        allowFreeform: req.allowFreeform,
       });
     });
 
-    this.eventBridge.onSessionCleared(() => {
-      this.postToWebview("clearMessages", {});
+    this.eventBridge.onIndexing((state) => {
+      this.postToWebview("indexingUpdate", state);
+    });
+
+    this.eventBridge.onResearch((state) => {
+      this.postToWebview("researchUpdate", state);
+    });
+
+    this.eventBridge.onCompaction((event) => {
+      this.postToWebview("compactionUpdate", event);
+    });
+
+    this.eventBridge.onWatchEvent((event) => {
+      this.postToWebview("watchEvent", event);
+    });
+
+    this.eventBridge.onBackgroundTask((event) => {
+      this.postToWebview("backgroundTaskUpdate", event);
+    });
+
+    this.eventBridge.onReminder((event) => {
+      this.postToWebview("reminderFired", event);
     });
   }
 ```
 
 **Acceptance Criteria**:
-- All engine events from EventBridge are mapped to webview messages
+- All 22 EventBridge callbacks are wired to webview `postMessage` calls
 - Each event uses the correct message type matching the protocol defined in T4.6
-- Permission, plan, sub-agent, reasoning, TODO, diff, error, token, loading, and session events all forwarded
+- Message, stream, tool, permission, plan, sub-agent, reasoning, TODO, diff, error, token, loading events all forwarded
+- Processing, clarification, indexing, research, compaction, watch events, background tasks, and reminders all forwarded
 - Messages buffered via `postToWebview()` if webview is not yet ready
 
 ---
@@ -474,7 +505,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 ---
 
-### T4.1.8: Workspace Notification Methods
+### T4.1.8: External Notification Methods
 
 ```typescript
   notifyWorkspaceChanged(newRoot: string): void {
@@ -490,6 +521,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       message: "Workspace was closed. Open a folder to continue.",
       recoverable: true,
     });
+  }
+
+  restoreSession(messages: Array<{
+    id: string; role: string; content: string; timestamp: number;
+  }>, title: string): void {
+    this.postToWebview("sessionRestored", { messages, title });
+  }
+
+  clearMessages(): void {
+    this.postToWebview("clearMessages", {});
   }
 ```
 
@@ -526,7 +567,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 ## T4.2: Webview HTML Shell
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/webview/ui/index.html`
 **Estimated Effort**: 30 minutes
 
@@ -572,7 +613,7 @@ This global function is injected by VS Code's webview runtime. It can only be ca
 
 ## T4.3: Webview React App Setup
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Files**: `packages/vscode/src/webview/ui/`
 **Estimated Effort**: 4 hours
 
@@ -1257,7 +1298,7 @@ export function App() {
 
 ## PART 3 — Chat Components (T4.4)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Directory**: `packages/vscode/src/webview/ui/components/`
 **Estimated Effort**: 3 days
 
@@ -2384,7 +2425,7 @@ export function WelcomeScreen({ onStartChat }: WelcomeScreenProps) {
 
 ### T4.5: Webview CSS
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/webview/ui/styles.css`
 **Estimated Effort**: 4 hours
 
@@ -3405,7 +3446,7 @@ html, body {
 
 ### T4.6: Message Protocol
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/webview/protocol.ts`
 **Estimated Effort**: 2 hours
 
@@ -3526,6 +3567,58 @@ export interface ExtensionToWebviewMessages {
     stage: string;
   };
   loadingEnd: Record<string, never>;
+  processingUpdate: {
+    taskDescription: string;
+    stage: string;
+    progress: number;
+  } | null;
+  clarification: {
+    questionId: string;
+    question: string;
+    options: string[];
+    allowFreeform: boolean;
+  };
+  indexingUpdate: {
+    isActive: boolean;
+    indexed: number;
+    total: number;
+    currentFile: string | null;
+    chunks: number | null;
+  };
+  researchUpdate: {
+    isActive: boolean;
+    question: string | null;
+    queries: Array<{
+      queryId: string;
+      question: string;
+      sources: string;
+      completed: boolean;
+      result?: { answer: string; sources: string[]; elapsed: number };
+    }>;
+    synthesisResultCount: number | null;
+    report: string | null;
+  };
+  compactionUpdate: {
+    type: "start" | "complete";
+    currentTokens?: number;
+    threshold?: number;
+    saved?: number;
+  };
+  watchEvent: {
+    event: string;
+    filePath: string;
+    command: string;
+    timestamp: number;
+  };
+  backgroundTaskUpdate: {
+    taskId: string;
+    summary?: string;
+  };
+  reminderFired: {
+    taskId: string;
+    name: string;
+    message: string;
+  };
 }
 
 export interface WebviewToExtensionMessages {
@@ -3590,6 +3683,14 @@ export interface WebviewToExtensionMessages {
 | `statusUpdate` | Ext→Web | `{ tokens?, provider?, model?, workspaceRoot? }` | `token_usage` / config change |
 | `loadingStart` | Ext→Web | `{ stage }` | `loading_start` event |
 | `loadingEnd` | Ext→Web | `{}` | `loading_end` event |
+| `processingUpdate` | Ext→Web | `{ taskDescription, stage, progress } \| null` | `processing_start` / `processing_progress` / `processing_complete` |
+| `clarification` | Ext→Web | `{ questionId, question, options, allowFreeform }` | `clarification_required` event |
+| `indexingUpdate` | Ext→Web | `{ isActive, indexed, total, currentFile, chunks }` | `indexing_start` / `indexing_progress` / `indexing_complete` |
+| `researchUpdate` | Ext→Web | `{ isActive, question, queries, synthesisResultCount, report }` | `research_start` / `research_query` / `research_subagent_complete` / `research_synthesis` / `research_complete` |
+| `compactionUpdate` | Ext→Web | `{ type, currentTokens?, threshold?, saved? }` | `compaction_start` / `compaction_complete` / `context_compacted` |
+| `watchEvent` | Ext→Web | `{ event, filePath, command, timestamp }` | `watch_event` |
+| `backgroundTaskUpdate` | Ext→Web | `{ taskId, summary? }` | `background_task_complete` / `task_backgrounded` |
+| `reminderFired` | Ext→Web | `{ taskId, name, message }` | `reminder_fired` |
 
 #### T4.6.3: Webview to Extension Messages — Summary
 
@@ -3619,7 +3720,7 @@ export interface WebviewToExtensionMessages {
 
 ### T4.7: Markdown + Code Highlighting
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/webview/ui/markdown.ts`
 **Estimated Effort**: 3 hours
 
@@ -3769,7 +3870,7 @@ hljs.registerLanguage("ini", toml);
 
 ### T4.8: Verification
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Estimated Effort**: 4 hours
 
 #### T4.8.1: Message Rendering Tests
@@ -3908,3 +4009,16 @@ npx tsc --noEmit -p packages/vscode/tsconfig.webview.json
 | `packages/vscode/src/webview/ui/components/ErrorBanner.tsx` | Error display | T4.4.13 |
 | `packages/vscode/src/webview/ui/components/WelcomeScreen.tsx` | First interaction screen | T4.4.14 |
 | `packages/vscode/tsconfig.webview.json` | Browser-target TypeScript config | T4.3.6 |
+
+---
+
+### T4.Z: Update Master Plan
+
+- **Status**: ✅
+- **Dependencies**: All above
+- **Action**: Update [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase. Mark each task as complete (✅), in progress (🔄), or blocked (❌). Identify the next action item. Ensure the master plan remains the single source of truth.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.

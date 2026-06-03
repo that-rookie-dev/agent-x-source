@@ -27,10 +27,30 @@ jobs:
 
       - run: pnpm run build
 
-      - name: Type check (known pre-existing issues — non-blocking)
+      - name: Type check (all packages)
         run: pnpm run typecheck
-        continue-on-error: true
 
       - run: pnpm run check:platform
 
       - run: pnpm run test
+
+  vscode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build -w packages/shared
+      - run: pnpm run build -w packages/engine
+
+      - run: pnpm run typecheck -w packages/vscode
+      - run: pnpm run lint -w packages/vscode
+      - run: pnpm test -w packages/vscode -- --run

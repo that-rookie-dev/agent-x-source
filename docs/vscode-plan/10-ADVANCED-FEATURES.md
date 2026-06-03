@@ -1,6 +1,6 @@
 # Phase 10: Advanced Features — Sub-Agents, Plan Mode, RAG, Steer, Background Tasks, ToT, Research & More
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete
 > **Depends on**: Phase 4 (Chat Webview), Phase 5 (Tool Adaptation), Phase 9 (Secret Sauce)
 > **Estimated Effort**: 5–7 days
 > **Files Created**: `packages/vscode/src/webview/ui/components/SubAgentPanel.tsx`, `packages/vscode/src/webview/ui/components/PlanApproval.tsx`, `packages/vscode/src/adapter/SteerHandler.ts`, `packages/vscode/src/webview/ui/components/BackgroundTasks.tsx`, `packages/vscode/src/adapter/RAGAdapter.ts`, `packages/vscode/src/webview/ui/components/TreeOfThoughts.tsx`, `packages/vscode/src/webview/ui/components/ResearchPanel.tsx`, `packages/vscode/src/webview/ui/components/TodoPanel.tsx`, `packages/vscode/src/adapter/SchedulerAdapter.ts`, `packages/vscode/src/commands/MCPManager.ts`, `packages/vscode/src/adapter/SkillsAdapter.ts`, `packages/vscode/src/adapter/ClarificationHandler.ts`, `packages/vscode/src/adapter/SessionModes.ts`
@@ -68,26 +68,27 @@ Phase 10 implements every remaining advanced feature from the Agent-X engine as 
 
 | Task ID | Title | Status | Priority |
 |---------|-------|--------|----------|
-| T10.1 | Sub-Agent UI Panel | ⬜ | Core |
-| T10.2 | Plan Mode Approval UI | ⬜ | Core |
-| T10.3 | Steer Message Handler | ⬜ | Core |
-| T10.4 | Background Task Panel | ⬜ | Core |
-| T10.5 | RAG Integration | ⬜ | Core |
-| T10.6 | Tree of Thoughts UI | ⬜ | Feature |
-| T10.7 | Research Mode UI | ⬜ | Feature |
-| T10.8 | TODO Panel Enhancement | ⬜ | Core |
-| T10.9 | Scheduler Integration | ⬜ | Core |
-| T10.10 | MCP Server Management | ⬜ | Feature |
-| T10.11 | Reflection & Skills Display | ⬜ | Feature |
-| T10.12 | Clarification Dialog | ⬜ | Core |
-| T10.13 | Session Modes | ⬜ | Core |
-| T10.14 | Verification & Testing | ⬜ | Core |
+| T10.1 | Sub-Agent UI Panel | ✅ | Core |
+| T10.2 | Plan Mode Approval UI | ✅ | Core |
+| T10.3 | Steer Message Handler | ✅ | Core |
+| T10.4 | Background Task Panel | ✅ | Core |
+| T10.5 | RAG Integration | ✅ | Core |
+| T10.6 | Tree of Thoughts UI | ✅ | Feature |
+| T10.7 | Research Mode UI | ✅ | Feature |
+| T10.8 | TODO Panel Enhancement | ✅ | Core |
+| T10.9 | Scheduler Integration | ✅ | Core |
+| T10.10 | MCP Server Management | ✅ | Feature |
+| T10.11 | Reflection & Skills Display | ✅ | Feature |
+| T10.12 | Clarification Dialog | ✅ | Core |
+| T10.13 | Session Modes | ✅ | Core |
+| T10.14 | Verification & Testing | ✅ | Core |
+| T10.Z | Update master plan status | ✅ | Core |
 
 ---
 
 ## T10.1: Sub-Agent UI (`packages/vscode/src/webview/ui/components/SubAgentPanel.tsx`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/webview/ui/components/SubAgentPanel.tsx`
 **Estimated Effort**: 5 hours
 
@@ -750,7 +751,7 @@ context.subscriptions.push(
 
 ## T10.3: Steer Message Handler (`packages/vscode/src/adapter/SteerHandler.ts`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/adapter/SteerHandler.ts`
 **Estimated Effort**: 2 hours
 
@@ -925,7 +926,7 @@ const SteerIndicator: React.FC<{ isProcessing: boolean }> = ({ isProcessing }) =
 
 ## T10.4: Background Task Panel (`packages/vscode/src/webview/ui/components/BackgroundTasks.tsx`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/webview/ui/components/BackgroundTasks.tsx`
 **Estimated Effort**: 2 hours
 
@@ -1129,7 +1130,7 @@ handleBackgroundTaskCancel(taskId: string): void {
 
 ## T10.5: RAG Integration (`packages/vscode/src/adapter/RAGAdapter.ts`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/adapter/RAGAdapter.ts`
 **Estimated Effort**: 4 hours
 
@@ -1484,7 +1485,7 @@ context.subscriptions.push(
 
 ## T10.6: Tree of Thoughts UI (`packages/vscode/src/webview/ui/components/TreeOfThoughts.tsx`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/webview/ui/components/TreeOfThoughts.tsx`
 **Estimated Effort**: 3 hours
 
@@ -1720,7 +1721,7 @@ wireToTEvents(): void {
 
 ## T10.7: Research Mode UI (`packages/vscode/src/webview/ui/components/ResearchPanel.tsx`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/webview/ui/components/ResearchPanel.tsx`
 **Estimated Effort**: 3 hours
 
@@ -1954,7 +1955,7 @@ wireResearchEvents(): void {
 
 ## T10.8: TODO Panel Enhancement (`packages/vscode/src/webview/ui/components/TodoPanel.tsx`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/webview/ui/components/TodoPanel.tsx`
 **Estimated Effort**: 3 hours
 
@@ -2097,7 +2098,7 @@ wireTodoEvents(): void {
 
 ## T10.9: Scheduler Integration (`packages/vscode/src/adapter/SchedulerAdapter.ts`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/adapter/SchedulerAdapter.ts`
 **Estimated Effort**: 3 hours
 
@@ -2427,7 +2428,7 @@ context.subscriptions.push(
 
 ## T10.10: MCP Server Management (`packages/vscode/src/commands/MCPManager.ts`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/commands/MCPManager.ts`
 **Estimated Effort**: 3 hours
 
@@ -2781,7 +2782,7 @@ context.subscriptions.push(
 
 ## T10.11: Reflection & Skills Display (`packages/vscode/src/adapter/SkillsAdapter.ts`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/adapter/SkillsAdapter.ts`
 **Estimated Effort**: 2 hours
 
@@ -3077,7 +3078,7 @@ context.subscriptions.push(
 
 ## T10.12: Clarification Dialog (`packages/vscode/src/adapter/ClarificationHandler.ts`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/adapter/ClarificationHandler.ts`
 **Estimated Effort**: 2 hours
 
@@ -3189,7 +3190,7 @@ this.eventBus.on('clarification_required', (event) => {
 
 ## T10.13: Session Modes (`packages/vscode/src/adapter/SessionModes.ts`)
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **File**: `packages/vscode/src/adapter/SessionModes.ts`
 **Estimated Effort**: 2 hours
 
@@ -3414,7 +3415,7 @@ context.subscriptions.push(
 
 ## T10.14: Verification & Testing
 
-**Status**: ⬜ Not Started
+**Status**: ✅
 **Estimated Effort**: 6 hours
 
 ### T10.14.1: Sub-Agent Tests
@@ -3795,3 +3796,16 @@ T10.13: Session Modes ────────────────┤
 12. T10.6 (ToT) — medium, complex visualization
 13. T10.7 (Research) — medium, complex progress UI
 14. T10.14 (Verification) — tests all above
+
+---
+
+### T10.Z: Update Master Plan
+
+- **Status**: ⬜
+- **Dependencies**: All above
+- **Action**: Update [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase. Mark each task as complete (✅), in progress (🔄), or blocked (❌). Identify the next action item. Ensure the master plan remains the single source of truth.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.

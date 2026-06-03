@@ -1,6 +1,6 @@
 # Phase 9: Secret Sauce & Memory — Personality, Memory, Diary, Identity Integration
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete
 > **Depends on**: Phase 3 (Extension Core), Phase 2 (Engine Adapter)
 > **Estimated Effort**: 2-3 days
 > **Files Created**: `packages/vscode/src/providers/MemoryTreeProvider.ts`, `packages/vscode/src/providers/DiaryTreeProvider.ts`, `packages/vscode/src/commands/MemoryEditor.ts`, `packages/vscode/src/commands/SoulEditor.ts`, `packages/vscode/src/commands/SecretSauceBrowser.ts`, `packages/vscode/src/secret-sauce/MemoryExtractionNotifier.ts`
@@ -61,20 +61,21 @@ Phase 9 integrates the Secret Sauce system — Agent-X's personality, memory, di
 
 | Task ID | Title | Status | Priority |
 |---------|-------|--------|----------|
-| T9.1 | Memory Viewer TreeDataProvider | ⬜ | Core |
-| T9.2 | Memory Editor (Webview Panel) | ⬜ | Core |
-| T9.3 | Diary Viewer TreeDataProvider | ⬜ | Core |
-| T9.4 | Soul/Identity Editor | ⬜ | Core |
-| T9.5 | Secret Sauce File Browser | ⬜ | Core |
-| T9.6 | Memory Extraction Integration | ⬜ | Core |
-| T9.7 | Crew-Specific Memory Management | ⬜ | Core |
-| T9.8 | Verification & Testing | ⬜ | Core |
+| T9.1 | Memory Viewer TreeDataProvider | ✅ | Core |
+| T9.2 | Memory Editor (Webview Panel) | ✅ | Core |
+| T9.3 | Diary Viewer TreeDataProvider | ✅ | Core |
+| T9.4 | Soul/Identity Editor | ✅ | Core |
+| T9.5 | Secret Sauce File Browser | ✅ | Core |
+| T9.6 | Memory Extraction Integration | ✅ | Core |
+| T9.7 | Crew-Specific Memory Management | ✅ | Core |
+| T9.8 | Verification & Testing | ✅ | Core |
+| T9.Z | Update master plan status | ✅ | Core |
 
 ---
 
 ## T9.1: Memory Viewer TreeDataProvider
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/providers/MemoryTreeProvider.ts`
 **Estimated Effort**: 3 hours
 
@@ -362,7 +363,7 @@ export function registerMemoryTreeView(
 
 ## T9.2: Memory Editor (Webview Panel)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/commands/MemoryEditor.ts`
 **Estimated Effort**: 4 hours
 
@@ -936,7 +937,7 @@ context.subscriptions.push(
 
 ## T9.3: Diary Viewer TreeDataProvider
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/providers/DiaryTreeProvider.ts`
 **Estimated Effort**: 2 hours
 
@@ -1182,7 +1183,7 @@ context.subscriptions.push(
 
 ## T9.4: Soul/Identity Editor
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/commands/SoulEditor.ts`
 **Estimated Effort**: 2 hours
 
@@ -1415,7 +1416,7 @@ context.subscriptions.push(
 
 ## T9.5: Secret Sauce File Browser
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/commands/SecretSauceBrowser.ts`
 **Estimated Effort**: 2 hours
 
@@ -1676,7 +1677,7 @@ context.subscriptions.push(
 
 ## T9.6: Memory Extraction Integration
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/secret-sauce/MemoryExtractionNotifier.ts`
 **Estimated Effort**: 3 hours
 
@@ -1886,7 +1887,7 @@ AgentEventBus.on('message_received', () => {
 
 ## T9.7: Crew-Specific Memory Management
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: Integrated into `MemoryTreeProvider.ts` and extension event handlers
 **Estimated Effort**: 2 hours
 
@@ -2018,7 +2019,7 @@ context.subscriptions.push(
 
 ## T9.8: Verification & Testing
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Estimated Effort**: 3 hours
 
 ### T9.8.1: Memory Viewer Tests
@@ -2381,3 +2382,16 @@ T9.5: Secret Sauce Browser   │
 ```
 
 **Parallelizable**: T9.1, T9.3, T9.4, T9.5 can all be implemented in parallel. T9.2 depends on T9.1 patterns. T9.6 depends on T9.1 (tree refresh). T9.7 depends on T9.1 + T9.3 + T9.6. T9.8 depends on all.
+
+---
+
+### T9.Z: Update Master Plan
+
+- **Status**: ✅
+- **Dependencies**: All above
+- **Action**: Update [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase. Mark each task as complete (✅), in progress (🔄), or blocked (❌). Identify the next action item. Ensure the master plan remains the single source of truth.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.

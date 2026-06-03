@@ -1,6 +1,6 @@
 # Phase 8: Provider, Model, and Crew Switching UI
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete
 > **Depends on**: Phase 3 (Extension Core), Phase 5 (Tool Adaptation), Phase 6 (Permissions & Scope)
 > **Estimated Effort**: 3 days
 > **Files Created**: `packages/vscode/src/commands/ProviderPicker.ts`, `packages/vscode/src/commands/ModelPicker.ts`, `packages/vscode/src/commands/ProviderConfig.ts`, `packages/vscode/src/commands/CrewPicker.ts`, `packages/vscode/src/commands/CrewCreator.ts`, `packages/vscode/src/commands/CrewEditor.ts`, `packages/vscode/src/statusbar/ProviderModelStatusBar.ts`, `packages/vscode/src/config/ConfigSync.ts`
@@ -19,21 +19,22 @@ All engine interactions use the existing `Agent` methods (`switchProvider`, `swi
 
 | Task ID | Title | Status | Dependencies |
 |---------|-------|--------|-------------|
-| T8.1 | Provider Picker | ⬜ | Phase 3 |
-| T8.2 | Model Picker | ⬜ | Phase 3 |
-| T8.3 | Provider Configuration Panel | ⬜ | T8.1 |
-| T8.4 | Crew Picker | ⬜ | Phase 3 |
-| T8.5 | Crew Creator | ⬜ | Phase 3 |
-| T8.6 | Crew Editor | ⬜ | T8.4 |
-| T8.7 | Provider/Model Status Bar Integration | ⬜ | T8.1, T8.2 |
-| T8.8 | Configuration Sync | ⬜ | Phase 3 |
-| T8.9 | Verification | ⬜ | All above |
+| T8.1 | Provider Picker | ✅ | Phase 3 |
+| T8.2 | Model Picker | ✅ | Phase 3 |
+| T8.3 | Provider Configuration Panel | ✅ | T8.1 |
+| T8.4 | Crew Picker | ✅ | Phase 3 |
+| T8.5 | Crew Creator | ✅ | Phase 3 |
+| T8.6 | Crew Editor | ✅ | T8.4 |
+| T8.7 | Provider/Model Status Bar Integration | ✅ | T8.1, T8.2 |
+| T8.8 | Configuration Sync | ✅ | Phase 3 |
+| T8.9 | Verification | ✅ | All above |
+| T8.Z | Update master plan status | ✅ | All above |
 
 ---
 
 ## T8.1: Provider Picker
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/commands/ProviderPicker.ts`
 **Estimated Effort**: 4 hours
 
@@ -46,7 +47,7 @@ A static registry of all 15 supported providers with display metadata used acros
 
 import * as vscode from "vscode";
 import type { ProviderId } from "@agentx/shared";
-import { ProviderFactory } from "@agentx/engine/providers/index";
+import { ProviderFactory } from "@agentx/engine";
 import type { CommandDeps } from "./registerAllCommands";
 
 export interface ProviderMeta {
@@ -454,7 +455,7 @@ async function configureAndSwitchProvider(
 
 ## T8.2: Model Picker
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/commands/ModelPicker.ts`
 **Estimated Effort**: 3 hours
 
@@ -682,7 +683,7 @@ function formatContextWindow(tokens: number): string {
 
 ## T8.3: Provider Configuration Panel
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/commands/ProviderConfig.ts`
 **Estimated Effort**: 5 hours
 
@@ -693,7 +694,7 @@ function formatContextWindow(tokens: number): string {
 
 import * as vscode from "vscode";
 import type { ProviderId } from "@agentx/shared";
-import { ProviderFactory } from "@agentx/engine/providers/index";
+import { ProviderFactory } from "@agentx/engine";
 import type { CommandDeps } from "./registerAllCommands";
 import { PROVIDER_REGISTRY, getProviderMeta } from "./ProviderPicker";
 
@@ -1077,7 +1078,7 @@ function formatContextWindow(tokens: number): string {
 
 ## T8.4: Crew Picker
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/commands/CrewPicker.ts`
 **Estimated Effort**: 2 hours
 
@@ -1247,7 +1248,7 @@ function truncate(text: string, maxLen: number): string {
 
 ## T8.5: Crew Creator
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/commands/CrewCreator.ts`
 **Estimated Effort**: 3 hours
 
@@ -1645,7 +1646,7 @@ function generateCrewId(name: string): string {
 
 ## T8.6: Crew Editor
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/commands/CrewEditor.ts`
 **Estimated Effort**: 3 hours
 
@@ -2053,7 +2054,7 @@ async function deleteCrew(
 
 ## T8.7: Provider/Model Status Bar Integration
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/statusbar/ProviderModelStatusBar.ts`
 **Estimated Effort**: 2 hours
 
@@ -2323,7 +2324,7 @@ eventBridge.onModelChange((model) => {
 
 ## T8.8: Configuration Sync
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/config/ConfigSync.ts`
 **Estimated Effort**: 3 hours
 
@@ -2335,7 +2336,7 @@ eventBridge.onModelChange((model) => {
 import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
-import { getConfigDir } from "@agentx/engine/config/paths";
+import { getConfigDir } from "@agentx/engine";
 import type { CommandDeps } from "../commands/registerAllCommands";
 
 const DEBOUNCE_MS = 1000;
@@ -2630,7 +2631,7 @@ context.subscriptions.push(configSync);
 
 ## T8.9: Verification
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Estimated Effort**: 3 hours
 
 ### T8.9.1: Provider Switching Verification
@@ -2802,3 +2803,16 @@ Both must pass with zero errors.
 | `Crew` | `packages/shared/src/types/crew.ts` | `id`, `name`, `systemPrompt`, `emotion?`, `isDefault`, `createdAt`, `updatedAt` |
 | `CrewEmotion` | `packages/shared/src/types/crew.ts` | Union of 10 emotion string literals |
 | `ProviderConfig` | `packages/shared/src/types/provider.ts` | `id`, `name`, `type`, `apiKeyRequired`, `baseUrlConfigurable`, `defaultBaseUrl` |
+
+---
+
+### T8.Z: Update Master Plan
+
+- **Status**: ⬜
+- **Dependencies**: All above
+- **Action**: Update [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase. Mark each task as complete (✅), in progress (🔄), or blocked (❌). Identify the next action item. Ensure the master plan remains the single source of truth.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.

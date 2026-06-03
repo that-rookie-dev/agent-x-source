@@ -1,6 +1,6 @@
 # Phase 5: Tool Adaptation — VS Code-Specific Tool Adapters for All 165+ Tools
 
-> **Status**: ⬜ Not Started
+> **Status**: ✅ Complete
 > **Depends on**: Phase 2 (Engine Adapter)
 > **Estimated Effort**: 7-10 days
 > **Files Created**: `packages/vscode/src/adapter/tools/` (entire directory tree)
@@ -32,34 +32,35 @@ Phase 5 creates VS Code-specific tool adapters for every tool registered by `cre
 
 | Task ID | Title | Status | Priority |
 |---------|-------|--------|----------|
-| T5.1 | Tool Adapter Architecture | ⬜ | Core |
-| T5.2 | Filesystem Adapter (16 tools) | ⬜ | P1 |
-| T5.3 | Shell & Process Adapter (5 tools) | ⬜ | P1 |
-| T5.4 | Git & VCS Adapter (13 tools) | ⬜ | P1 |
-| T5.5 | Code Intelligence Adapter (13 tools) | ⬜ | P1 |
-| T5.6 | Web & Network Adapter (7 tools) | ⬜ | P1 |
-| T5.7 | Package Managers Adapter (8 tools) | ⬜ | P1 |
-| T5.8 | Security & Crypto Adapter (4 tools) | ⬜ | P1 |
-| T5.9 | AI Meta-Tools Adapter (7 tools) | ⬜ | P1 |
-| T5.10 | Scheduler Adapter (3 tools) | ⬜ | P1 |
-| T5.11 | Agent Orchestration Adapter (3 tools) | ⬜ | P1 |
-| T5.12 | Data Processing Adapter (8 tools) | ⬜ | P1 |
-| T5.13 | Documents Adapter (15 tools) | ⬜ | P2 |
-| T5.14 | Containers & Infra Adapter (9 tools) | ⬜ | P2 |
-| T5.15 | Database Adapter (5 tools) | ⬜ | P2 |
-| T5.16 | GitHub Adapter (9 tools) | ⬜ | P2 |
-| T5.17 | Testing Adapter (5 tools) | ⬜ | P2 |
-| T5.18 | System & OS Adapter (12 tools) | ⬜ | P2 |
-| T5.19 | Browser Automation Adapter (6 tools) | ⬜ | P3 |
-| T5.20 | Communication Adapter (5 tools) | ⬜ | P3 |
-| T5.21 | Media & Image Adapter (4 tools) | ⬜ | P3 |
-| T5.22 | Verification & Testing | ⬜ | Core |
+| T5.1 | Tool Adapter Architecture | ✅ | Core |
+| T5.2 | Filesystem Adapter (16 tools) | ✅ | P1 |
+| T5.3 | Shell & Process Adapter (5 tools) | ✅ | P1 |
+| T5.4 | Git & VCS Adapter (13 tools) | ✅ | P1 |
+| T5.5 | Code Intelligence Adapter (13 tools) | ✅ | P1 |
+| T5.6 | Web & Network Adapter (7 tools) | ✅ | P1 |
+| T5.7 | Package Managers Adapter (8 tools) | ✅ | P1 |
+| T5.8 | Security & Crypto Adapter (4 tools) | ✅ | P1 |
+| T5.9 | AI Meta-Tools Adapter (7 tools) | ✅ | P1 |
+| T5.10 | Scheduler Adapter (3 tools) | ✅ | P1 |
+| T5.11 | Agent Orchestration Adapter (3 tools) | ✅ | P1 |
+| T5.12 | Data Processing Adapter (8 tools) | ✅ | P1 |
+| T5.13 | Documents Adapter (15 tools) | ✅ | P2 |
+| T5.14 | Containers & Infra Adapter (9 tools) | ✅ | P2 |
+| T5.15 | Database Adapter (5 tools) | ✅ | P2 |
+| T5.16 | GitHub Adapter (9 tools) | ✅ | P2 |
+| T5.17 | Testing Adapter (5 tools) | ✅ | P2 |
+| T5.18 | System & OS Adapter (12 tools) | ✅ | P2 |
+| T5.19 | Browser Automation Adapter (6 tools) | ✅ | P3 |
+| T5.20 | Communication Adapter (5 tools) | ✅ | P3 |
+| T5.21 | Media & Image Adapter (4 tools) | ✅ | P3 |
+| T5.22 | Verification & Testing | ✅ | Core |
+| T5.Z | Update master plan status | ✅ | Core |
 
 ---
 
 ## T5.1: Tool Adapter Architecture
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Files**: `packages/vscode/src/adapter/tools/ToolAdapterManager.ts`, `packages/vscode/src/adapter/tools/types.ts`
 **Estimated Effort**: 3 hours
 
@@ -276,7 +277,7 @@ packages/vscode/src/adapter/tools/
 
 ## T5.2: Filesystem Adapter (16 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/filesystem.ts`
 **Source**: `packages/engine/src/tools/builtin/filesystem.ts`
 **Priority**: P1
@@ -545,7 +546,7 @@ export function adaptFilesystem(
 
 ## T5.3: Shell & Process Adapter (5 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/shell.ts`
 **Source**: `packages/engine/src/tools/builtin/shell.ts`
 **Priority**: P1
@@ -678,7 +679,7 @@ export function adaptShellProcess(
 
 ## T5.4: Git & VCS Adapter (13 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/git.ts`
 **Source**: `packages/engine/src/tools/builtin/git.ts`
 **Priority**: P1
@@ -793,6 +794,30 @@ export function adaptGitVcs(
   refs.executor.registerHandler('git_diff', async (args): Promise<ToolResult> => {
     const ref = args['ref'] as string | undefined;
     const file = (args['path'] ?? args['file']) as string | undefined;
+
+    // Try VS Code Git extension API first for simple cases
+    try {
+      const gitApi = getGitExtension()?.getAPI(1);
+      const repo = gitApi ? getRepoForWorkspace(gitApi, ws) : null;
+      if (repo) {
+        let diff: string;
+        if (file) {
+          const fileUri = vscode.Uri.file(resolve(ws, file));
+          diff = ref
+            ? await repo.diffWithRef(ref, fileUri)
+            : await repo.diffWithHEAD(fileUri);
+        } else {
+          diff = ref
+            ? await repo.diffWithRef(ref)
+            : await repo.diffWithHEAD();
+        }
+        return { success: true, output: diff || '(no diff)' };
+      }
+    } catch {
+      // Fall through to shell
+    }
+
+    // Fallback: shell
     let cmd = 'diff';
     if (ref) cmd += ` ${ref}`;
     if (file) cmd += ` -- ${file}`;
@@ -819,14 +844,14 @@ export function adaptGitVcs(
 
 **Acceptance Criteria**:
 - `git_status` uses VS Code Git extension API when available, falls back to shell
-- `git_diff` uses shell (VS Code Git API doesn't provide diff text)
+- `git_diff` uses VS Code Git extension `repository.diffWithHEAD()`/`diffWithRef()` when available, falls back to shell
 - All other git tools kept as-is (shell works in extension host, cwd is workspace root)
 
 ---
 
 ## T5.5: Code Intelligence Adapter (13 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/code.ts`
 **Source**: `packages/engine/src/tools/builtin/code.ts`
 **Priority**: P1
@@ -1060,42 +1085,51 @@ export function adaptCodeIntelligence(
   // ── code_references ──
   refs.executor.registerHandler('code_references', async (args): Promise<ToolResult> => {
     const symbol = args['symbol'] as string;
-    const searchPath = (args['path'] as string) ?? '.';
-    const cwd = resolve(ws, searchPath);
+    const filePath = (args['path'] ?? args['file']) as string | undefined;
 
     try {
-      const files = await vscode.workspace.findFiles(
-        new vscode.RelativePattern(cwd, '**/*.{ts,tsx,js,jsx}'),
-        '**/node_modules/**',
-        200,
-      );
+      const uris = filePath
+        ? [vscode.Uri.file(resolve(ws, filePath))]
+        : (await vscode.workspace.findFiles(
+            new vscode.RelativePattern(ws, '**/*.{ts,tsx,js,jsx,mjs,cjs}'),
+            '**/node_modules/**',
+            20,
+          ));
 
-      const refs: string[] = [];
-      for (const file of files.slice(0, 50)) {
+      const refs: Array<{ file: string; line: number; column: number }> = [];
+      for (const uri of uris) {
         try {
-          const doc = await vscode.workspace.openTextDocument(file);
+          const doc = await vscode.workspace.openTextDocument(uri);
           const text = doc.getText();
-          const lines = text.split('\n');
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i]!.includes(symbol)) {
-              const relPath = file.fsPath.replace(ws + '/', '');
-              refs.push(`${relPath}:${i + 1}: ${lines[i]!.trim()}`);
+          for (let i = 0; i < doc.lineCount; i++) {
+            const col = doc.lineAt(i).text.indexOf(symbol);
+            if (col === -1) continue;
+            const pos = new vscode.Position(i, col);
+            const locations = await vscode.commands.executeCommand<vscode.Location[]>(
+              'vscode.executeReferenceProvider',
+              uri,
+              pos,
+            );
+            if (!locations) continue;
+            for (const loc of locations) {
+              const rel = loc.uri.fsPath.replace(ws + '/', '');
+              refs.push({ file: rel, line: loc.range.start.line + 1, column: loc.range.start.character + 1 });
               if (refs.length >= 50) break;
             }
+            if (refs.length >= 50) break;
           }
-        } catch {
-          continue;
-        }
+        } catch { continue; }
         if (refs.length >= 50) break;
       }
 
+      const output = refs.map((r) => `${r.file}:${r.line}:${r.column}`).join('\n');
       return {
         success: true,
-        output: refs.length > 0 ? refs.join('\n') : 'No references found',
+        output: output || `No references found for "${symbol}"`,
         metadata: { symbol, count: refs.length },
       };
-    } catch (error) {
-      return { success: true, output: 'No references found' };
+    } catch {
+      return { success: true, output: `No references found for "${symbol}"` };
     }
   });
   result.overridden.push('code_references');
@@ -1146,6 +1180,7 @@ export function adaptCodeIntelligence(
 - `vscode.WorkspaceEdit` — atomic file edits with undo support
 - `vscode.workspace.applyEdit(edit)` — apply workspace edit
 - `vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri)` — get document symbols
+- `vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, position)` — get references via language server
 - `vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', uri)` — get format edits
 - `vscode.workspace.findFiles(pattern, exclude, maxResults)` — find files by glob
 - `vscode.workspace.openTextDocument(uri)` — open document for reading
@@ -1155,7 +1190,7 @@ export function adaptCodeIntelligence(
 **Acceptance Criteria**:
 - `code_replace`, `code_insert`, `file_patch` use `WorkspaceEdit` for undo/redo integration
 - `code_definitions`, `code_symbols` use VS Code's language server providers
-- `code_references` uses `vscode.workspace.findFiles` + text search
+- `code_references` uses `vscode.executeReferenceProvider` for language-server-accurate references
 - `code_format` uses VS Code's format provider
 - 6 tools kept as-is (shell-based, work in extension host)
 
@@ -1163,7 +1198,7 @@ export function adaptCodeIntelligence(
 
 ## T5.6: Web & Network Adapter (7 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/web.ts`
 **Source**: `packages/engine/src/tools/builtin/web.ts`
 **Priority**: P1
@@ -1208,7 +1243,7 @@ export function adaptWebNetwork(
 
 ## T5.7: Package Managers Adapter (8 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/packages.ts`
 **Source**: `packages/engine/src/tools/builtin/packages.ts`
 **Priority**: P1
@@ -1254,7 +1289,7 @@ export function adaptPackageManagers(
 
 ## T5.8: Security & Crypto Adapter (4 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/security.ts`
 **Source**: `packages/engine/src/tools/builtin/security.ts`
 **Priority**: P1
@@ -1292,7 +1327,7 @@ export function adaptSecurityCrypto(
 
 ## T5.9: AI Meta-Tools Adapter (7 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/ai.ts`
 **Source**: `packages/engine/src/tools/builtin/ai.ts`
 **Priority**: P1
@@ -1336,7 +1371,7 @@ export function adaptAiMeta(
 
 ## T5.10: Scheduler Adapter (3 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/scheduler.ts`
 **Source**: `packages/engine/src/tools/builtin/scheduler.ts`
 **Priority**: P1
@@ -1373,7 +1408,7 @@ export function adaptScheduler(
 
 ## T5.11: Agent Orchestration Adapter (3 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/subagent.ts`
 **Source**: `packages/engine/src/tools/builtin/subagent.ts`
 **Priority**: P1
@@ -1410,7 +1445,7 @@ export function adaptAgentOrchestration(
 
 ## T5.12: Data Processing Adapter (8 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/data.ts`
 **Source**: `packages/engine/src/tools/builtin/data.ts`
 **Priority**: P1
@@ -1455,7 +1490,7 @@ export function adaptDataProcessing(
 
 ## T5.13: Documents Adapter (15 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/documents.ts`
 **Source**: `packages/engine/src/tools/builtin/documents.ts`
 **Priority**: P2
@@ -1508,7 +1543,7 @@ export function adaptDocuments(
 
 ## T5.14: Containers & Infra Adapter (9 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/containers.ts`
 **Source**: `packages/engine/src/tools/builtin/containers.ts`
 **Priority**: P2
@@ -1554,7 +1589,7 @@ export function adaptContainersInfra(
 
 ## T5.15: Database Adapter (5 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/database.ts`
 **Source**: `packages/engine/src/tools/builtin/database.ts`
 **Priority**: P2
@@ -1594,7 +1629,7 @@ export function adaptDatabase(
 
 ## T5.16: GitHub Adapter (9 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/github.ts`
 **Source**: `packages/engine/src/tools/builtin/github.ts`
 **Priority**: P2
@@ -1640,7 +1675,7 @@ export function adaptGithub(
 
 ## T5.17: Testing Adapter (5 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/testing.ts`
 **Source**: `packages/engine/src/tools/builtin/testing.ts`
 **Priority**: P2
@@ -1679,7 +1714,7 @@ export function adaptTesting(
 
 ## T5.18: System & OS Adapter (12 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/system.ts`
 **Source**: `packages/engine/src/tools/builtin/system.ts`
 **Priority**: P2
@@ -1756,7 +1791,7 @@ export function adaptSystemOs(
 
 ## T5.19: Browser Automation Adapter (6 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/browser.ts`
 **Source**: `packages/engine/src/tools/builtin/browser.ts`
 **Priority**: P3
@@ -1807,7 +1842,7 @@ export function adaptBrowserAutomation(
 
 ## T5.20: Communication Adapter (5 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/communication.ts`
 **Source**: `packages/engine/src/tools/builtin/notifications.ts`
 **Priority**: P3
@@ -1821,6 +1856,7 @@ export function adaptBrowserAutomation(
 | `notify_slack` | `fetch` Slack webhook | Keep as-is (if env vars configured) | Keep as-is |
 | `clipboard_read` | `execSync pbpaste` | Use `vscode.env.clipboard.readText()` | Override |
 | `clipboard_write` | `execSync pbcopy` | Use `vscode.env.clipboard.writeText()` | Override |
+| `telegram_send_file` | `form-data` + `fetch` | Keep as-is (fetch-based, works in extension host) | Keep as-is |
 
 ### Implementation
 
@@ -1879,7 +1915,7 @@ export function adaptCommunication(
   result.overridden.push('clipboard_write');
 
   // ── Kept as-is ──
-  result.keptAsIs.push('notify_telegram', 'notify_slack');
+  result.keptAsIs.push('notify_telegram', 'notify_slack', 'telegram_send_file');
 
   return result;
 }
@@ -1893,13 +1929,13 @@ export function adaptCommunication(
 **Acceptance Criteria**:
 - `notify_desktop` shows VS Code information message instead of osascript
 - `clipboard_read`/`clipboard_write` use VS Code clipboard API (cross-platform)
-- `notify_telegram`/`notify_slack` kept as-is (fetch-based)
+- `notify_telegram`/`notify_slack`/`telegram_send_file` kept as-is (fetch-based)
 
 ---
 
 ## T5.21: Media & Image Adapter (4 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/media.ts`
 **Source**: `packages/engine/src/tools/builtin/media.ts`, `packages/engine/src/tools/builtin/image.ts`
 **Priority**: P3
@@ -1949,7 +1985,7 @@ export function adaptMediaImage(
 
 ## T5.22: MCP Integration Adapter (4 tools)
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **File**: `packages/vscode/src/adapter/tools/mcp.ts`
 **Source**: `packages/engine/src/tools/builtin/mcp.ts`
 **Priority**: P2
@@ -1987,7 +2023,7 @@ export function adaptMcpIntegration(
 
 ## T5.22: Verification & Testing
 
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Estimated Effort**: 1 day
 
 ### T5.22.1: Unit Tests for Adapter Manager
@@ -2299,6 +2335,19 @@ pnpm --filter @agentx/vscode run build
 | Action | Count | Percentage |
 |--------|-------|-----------|
 | Override | 24 | 14.3% |
-| Keep as-is | 135 | 80.4% |
-| Disable | 9 | 5.3% |
+| Keep as-is | 136 | 80.9% |
+| Disable | 8 | 4.8% |
 | **Total** | **168** | **100%** |
+
+---
+
+### T5.Z: Update Master Plan
+
+- **Status**: ✅
+- **Dependencies**: All above
+- **Action**: Update [00-MASTER-PLAN.md](00-MASTER-PLAN.md) with the current status of all completed tasks in this phase. Mark each task as complete (✅), in progress (🔄), or blocked (❌). Identify the next action item. Ensure the master plan remains the single source of truth.
+
+- **Acceptance criteria**:
+  - `00-MASTER-PLAN.md` is up to date with current phase progress.
+  - Every task in this phase has a status annotation in the master plan.
+  - Next action item is clearly identified.
