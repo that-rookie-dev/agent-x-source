@@ -110,10 +110,10 @@ importers:
         specifier: ^0.8.19
         version: 0.8.19
       mailparser:
-        specifier: ^3.6.0
+        specifier: ^3.9.9
         version: 3.9.9
       nodemailer:
-        specifier: ^6.9.0
+        specifier: ^6.10.1
         version: 6.10.1
       openai:
         specifier: ^4.50.0

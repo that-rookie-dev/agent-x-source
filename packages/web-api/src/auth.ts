@@ -12,7 +12,7 @@ import type { Request, Response, NextFunction, Router } from 'express';
 import express from 'express';
 import { authManager } from '@agentx/shared';
 import type { AuthSession } from '@agentx/shared';
-import { setEngineDEK } from './engine.js';
+import { setEngineDEK, getEngine } from './engine.js';
 
 // Simple in-memory rate limiter for login attempts
 interface RateLimitEntry {
@@ -96,6 +96,9 @@ export function syncDEKMiddleware(req: Request, _res: Response, next: NextFuncti
   if (token) {
     const session = authManager.validateSession(token);
     if (session) {
+      // Ensure engine state exists before setting DEK on it
+      // (getEngine() is lazily created by route handlers — middleware runs first)
+      getEngine();
       setEngineDEK(session.dek);
       (req as any).agentxSession = session as AuthSession;
     }

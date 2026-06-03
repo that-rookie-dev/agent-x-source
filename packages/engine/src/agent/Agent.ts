@@ -150,6 +150,10 @@ export class Agent {
   private reflectionLoop: ReflectionLoop;
   private toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
 
+  // Anti-duplicate: prevents double message_received within a single turn
+  private _turnMessageEmitted = false;
+  private _processingSince = 0;
+
   // ─── UNIFIED PIPELINE MODULES ───
   private inputNormalizer: InputNormalizer = null!;
   private promptComposer: PromptComposer = null!;
@@ -627,6 +631,7 @@ export class Agent {
       this.abortController.abort();
       this.abortController = null;
     }
+    this.isProcessing = false;
     this.subAgents.cancelAll();
   }
 
@@ -856,11 +861,19 @@ Return ONLY valid JSON, no other text.`;
   }
 
   async sendMessage(content: string, options?: { instruction?: string }): Promise<Message> {
+    // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
-      throw new Error('Agent is already processing a message');
+      const stuckDuration = Date.now() - this._processingSince;
+      if (stuckDuration > 60000) {
+        this.isProcessing = false;
+        this.abortController = null;
+      } else {
+        throw new Error('Agent is already processing a message');
+      }
     }
 
     this.isProcessing = true;
+    this._processingSince = Date.now();
     this.abortController = new AbortController();
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
@@ -890,6 +903,9 @@ Return ONLY valid JSON, no other text.`;
 
     // ─── UNIFIED: Start telemetry for this turn ───
     this.telemetry.startTurn(`turn-${startTime}`, this.sessionId, this.config.provider.activeProvider, this.config.provider.activeModel);
+
+    // Reset per-turn anti-duplicate sentinel
+    this._turnMessageEmitted = false;
 
     // ─── UNIFIED: Normalize input ───
     let cleanContent = content;
@@ -946,6 +962,11 @@ Return ONLY valid JSON, no other text.`;
       this.emit({ type: 'loading_start', stage: 'fast_reply' });
       try {
         const fastMessage = await this.runFastReply(content, startTime);
+        // Cleanup before returning (fast_reply path doesn't go through main try-finally)
+        this.isProcessing = false;
+        this.abortController = null;
+        this.runStateMgr.release(this.sessionId);
+        this.commandQueue.release(this.sessionId);
         return fastMessage;
       } catch (e) {
         // If cancelled/aborted, return cancelled message directly
@@ -961,8 +982,11 @@ Return ONLY valid JSON, no other text.`;
             tokenCount: 0,
           };
           this.emit({ type: 'message_received', message: cancelledMessage, elapsed: Date.now() - startTime });
+          // Cleanup before returning (fast_reply path doesn't go through main try-finally)
           this.isProcessing = false;
           this.abortController = null;
+          this.runStateMgr.release(this.sessionId);
+          this.commandQueue.release(this.sessionId);
           return cancelledMessage;
         }
         // Fall through to normal path if fast reply fails for other reasons
@@ -2334,6 +2358,11 @@ Only include specialists that are actually needed for this task.`;
   get reflectionLoopInstance(): ReflectionLoop { return this.reflectionLoop; }
 
   private emit(event: EngineEvent): void {
+    // Guard against duplicate message_received — only first one wins per turn
+    if (event.type === 'message_received') {
+      if (this._turnMessageEmitted) return;
+      this._turnMessageEmitted = true;
+    }
     this.eventBus.emit(event);
   }
 

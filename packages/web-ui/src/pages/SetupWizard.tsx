@@ -8,6 +8,7 @@ import Alert from '@mui/material/Alert';
 import Stepper from '@mui/material/Stepper';
 import Step from '@mui/material/Step';
 import StepLabel from '@mui/material/StepLabel';
+import CircularProgress from '@mui/material/CircularProgress';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
@@ -82,11 +83,21 @@ export function SetupWizard() {
         provApi.models(saved.selectedProvider).then(setAvailableModels).catch(() => {});
       }
     }
+    // Ensure providers are loaded
+    provApi.available().then(setAvailableProviders).catch(() => {
+      setError('Failed to load providers. Check if the server is running.');
+    });
   }, []);
 
-  // Load providers on mount
+  // Load providers on mount (if not loaded by restore)
   useEffect(() => {
-    provApi.available().then(setAvailableProviders).catch(() => {});
+    if (availableProviders.length === 0 && !loading) {
+      setLoading(true);
+      provApi.available().then((p) => { setAvailableProviders(p); setLoading(false); }).catch(() => {
+        setError('Cannot reach the server. Make sure Agent-X daemon is running.');
+        setLoading(false);
+      });
+    }
   }, []);
 
   // Persist progress on step change (only non-sensitive data)
@@ -222,7 +233,22 @@ export function SetupWizard() {
   };
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: '#000' }}>
+      {/* Error banner */}
+      {error ? (
+        <Box sx={{ p: 2, bgcolor: '#1a0000', borderBottom: '1px solid #330000', textAlign: 'center' }}>
+          <Typography color="error" variant="body2">{error}</Typography>
+          <Button size="small" sx={{ mt: 1, color: '#888' }} onClick={() => { setError(''); setLoading(true); provApi.available().then(setAvailableProviders).finally(() => setLoading(false)); }}>
+            Retry
+          </Button>
+        </Box>
+      ) : null}
+      {/* Loading indicator */}
+      {loading && !error ? (
+        <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CircularProgress size={32} sx={{ color: '#fff' }} />
+        </Box>
+      ) : null}
       {/* Fixed Header */}
       <Box sx={{ flexShrink: 0, textAlign: 'center', pt: 4, px: 2, pb: 2 }}>
         <Typography variant="h2" sx={{ mb: 1 }}>SETUP WIZARD</Typography>
