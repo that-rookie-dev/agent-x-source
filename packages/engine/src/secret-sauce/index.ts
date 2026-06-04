@@ -44,7 +44,7 @@ export class SecretSauceManager {
     this.soul = new SoulManager();
     this.crew = new CrewManager();
 
-    const activeId = this.crew.getActiveId();
+    const activeId = this.crew.getActiveId() ?? 'default';
 
     // Migrate legacy flat memories if they exist
     MemoryManager.migrateIfNeeded(activeId);
@@ -69,50 +69,51 @@ export class SecretSauceManager {
   buildSystemContext(tokenBudget = 4000): SecretSauceContext {
     const activeCrew = this.crew.getActive();
 
-    // Strict crew boundary enforcement
-    const enforcement = [
-      `[CREW_BOUNDARY]`,
-      `You are "${activeCrew.name}". Your domain of KNOWLEDGE and CONVERSATIONAL expertise is defined in your crew below.`,
-      ``,
-      `CRITICAL — TOOL ACTIONS ARE ALWAYS ALLOWED (HIGHEST PRIORITY):`,
-      `Before applying any restriction, FIRST check: is the user asking me to DO something (an action)?`,
-      `If YES → EXECUTE IT IMMEDIATELY using your tools. Crew scope DOES NOT APPLY to actions.`,
-      ``,
-      `Actions include but are not limited to:`,
-      `- Sending messages (Telegram, notifications, pings)`,
-      `- Setting reminders, alarms, timers`,
-      `- Scheduling recurring tasks or cronjobs`,
-      `- Reading/writing/creating files`,
-      `- Running commands or scripts`,
-      `- Searching code or the web`,
-      `- ANY request that requires calling a tool`,
-      ``,
-      `"Ping me in telegram" = ACTION (use reminder_set tool). NOT a knowledge question.`,
-      `"Remind me in 5 minutes" = ACTION. "Schedule a daily check" = ACTION. ALWAYS execute these.`,
-      ``,
-      `KNOWLEDGE RESTRICTIONS (only apply to conversational/advisory topics):`,
-      `1. For pure KNOWLEDGE questions (explain X, what is Y, give advice on Z), stay within your crew scope.`,
-      `2. If a user asks about a topic outside your expertise, say something like: "That's outside my expertise as ${activeCrew.name}."`,
-      `3. Do NOT demonstrate knowledge on subjects not covered by your crew.`,
-      `4. If ambiguous whether something is an action or knowledge question, treat it as an action and execute it.`,
-      ``,
-      `Remember: You are a capable agent with tools. Your crew restricts what you TALK about, never what you DO.`,
-      `[/CREW_BOUNDARY]`,
-    ].join('\n');
-
-    const crewCtx = `[CREW]\n${activeCrew.systemPrompt}\n[/CREW]\n\n${enforcement}`;
-
-    // Emotion directive
+    let crewCtx = '';
     let emotionCtx = '';
-    if (activeCrew.emotion) {
-      const directive = EMOTION_DIRECTIVES[activeCrew.emotion];
-      emotionCtx = `[EMOTION]\n${directive}\nApply this tone consistently in ALL responses — greetings, explanations, follow-ups, everything.\n[/EMOTION]`;
+
+    if (activeCrew) {
+      const enforcement = [
+        `[CREW_BOUNDARY]`,
+        `You are "${activeCrew.name}". Your domain of KNOWLEDGE and CONVERSATIONAL expertise is defined in your crew below.`,
+        ``,
+        `CRITICAL — TOOL ACTIONS ARE ALWAYS ALLOWED (HIGHEST PRIORITY):`,
+        `Before applying any restriction, FIRST check: is the user asking me to DO something (an action)?`,
+        `If YES → EXECUTE IT IMMEDIATELY using your tools. Crew scope DOES NOT APPLY to actions.`,
+        ``,
+        `Actions include but are not limited to:`,
+        `- Sending messages (Telegram, notifications, pings)`,
+        `- Setting reminders, alarms, timers`,
+        `- Scheduling recurring tasks or cronjobs`,
+        `- Reading/writing/creating files`,
+        `- Running commands or scripts`,
+        `- Searching code or the web`,
+        `- ANY request that requires calling a tool`,
+        ``,
+        `"Ping me in telegram" = ACTION (use reminder_set tool). NOT a knowledge question.`,
+        `"Remind me in 5 minutes" = ACTION. "Schedule a daily check" = ACTION. ALWAYS execute these.`,
+        ``,
+        `KNOWLEDGE RESTRICTIONS (only apply to conversational/advisory topics):`,
+        `1. For pure KNOWLEDGE questions (explain X, what is Y, give advice on Z), stay within your crew scope.`,
+        `2. If a user asks about a topic outside your expertise, say something like: "That's outside my expertise as ${activeCrew.name}."`,
+        `3. Do NOT demonstrate knowledge on subjects not covered by your crew.`,
+        `4. If ambiguous whether something is an action or knowledge question, treat it as an action and execute it.`,
+        ``,
+        `Remember: You are a capable agent with tools. Your crew restricts what you TALK about, never what you DO.`,
+        `[/CREW_BOUNDARY]`,
+      ].join('\n');
+
+      crewCtx = `[CREW]\n${activeCrew.systemPrompt}\n[/CREW]\n\n${enforcement}`;
+
+      if (activeCrew.emotion) {
+        const directive = EMOTION_DIRECTIVES[activeCrew.emotion];
+        emotionCtx = `[EMOTION]\n${directive}\nApply this tone consistently in ALL responses — greetings, explanations, follow-ups, everything.\n[/EMOTION]`;
+      }
     }
 
     const soulCtx = this.soul.buildContext();
     const identityCtx = this.identity.buildContext();
 
-    // Allocate remaining budget to memories and diary
     const usedTokens = Math.ceil((crewCtx.length + emotionCtx.length + soulCtx.length + identityCtx.length) / 4);
     const remainingBudget = Math.max(500, tokenBudget - usedTokens);
 
@@ -150,7 +151,7 @@ export class SecretSauceManager {
   /**
    * Get the currently active crew member's system prompt.
    */
-  getActiveSystemPrompt(): string {
+  getActiveSystemPrompt(): string | null {
     return this.crew.getSystemPrompt();
   }
 

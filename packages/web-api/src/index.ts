@@ -488,8 +488,7 @@ app.get('/api/agent/state', (_req, res) => {
 // ───── Crews ─────
 app.get('/api/crews', (_req, res) => {
   const eng = getEngine();
-  const allCrews = eng.crewManager.list();
-  const crews = allCrews.filter((c) => !c.isDefault);
+  const crews = eng.crewManager.list();
   const activeId = eng.crewManager.getActiveId();
   res.json({ crews, activeId });
 });
@@ -537,13 +536,14 @@ app.post('/api/crew/toggle', (req, res) => {
 
 app.post('/api/crews', (req, res) => {
   try {
-    const { id, name, systemPrompt, emotion, isDefault } = req.body as {
-      id: string; name: string; systemPrompt: string; emotion?: string; isDefault?: boolean;
+    const { id, name, callsign, systemPrompt, emotion, isDefault } = req.body as {
+      id: string; name: string; callsign?: string; systemPrompt: string; emotion?: string; isDefault?: boolean;
     };
     const eng = getEngine();
     const crew = eng.crewManager.create({
-      id,
+      id: id || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
       name,
+      callsign: callsign || id || name,
       systemPrompt,
       emotion: emotion as 'professional' | 'friendly' | 'witty' | 'kind' | 'funny' | 'arrogant' | 'flirty' | 'happy' | 'sad' | 'sarcastic' | undefined,
       isDefault,
@@ -1401,7 +1401,7 @@ app.post('/api/discord/start', async (req, res) => {
     bridge.setAgentFactory(async () => {
       const userCfg = eng.configManager.load();
       const userProvider = userCfg.provider.activeProvider as ProviderId;
-      const userCrew = eng.crewManager.getActive();
+      const userCrew = eng.crewManager.getActive()!;
       const userSession = eng.sessionManager.createSession(
         userProvider,
         userCfg.provider.activeModel,
@@ -1469,7 +1469,7 @@ app.post('/api/slack/start', async (req, res) => {
     const bridge = new SlackBridge({ botToken, appToken });
     bridge.setAgentFactory((_userId) => {
       const cfg = eng.configManager.load();
-      const activeCrew = eng.crewManager.getActive();
+      const activeCrew = eng.crewManager.getActive()!;
       const session = eng.sessionManager.createSession(
         cfg.provider.activeProvider,
         cfg.provider.activeModel,
@@ -1558,7 +1558,7 @@ app.post('/api/email/start', async (req, res) => {
 
     // Start the real bridge
     const cfg = eng.configManager.load();
-    const activeCrew = eng.crewManager.getActive();
+    const activeCrew = eng.crewManager.getActive()!;
     const bridge = new EmailBridge();
     bridge.setAgentDeps({
       config: cfg,

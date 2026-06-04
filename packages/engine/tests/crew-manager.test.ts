@@ -20,17 +20,16 @@ describe('CrewManager', () => {
     else delete process.env['XDG_DATA_HOME'];
   });
 
-  it('initializes with bootstrap crew when fresh', () => {
+  it('initializes with no crews when fresh', () => {
     const pm = new CrewManager();
     const crews = pm.list();
-    expect(crews.length).toBe(1);
-    expect(crews[0]!.id).toBe('default');
+    expect(crews.length).toBe(0);
   });
 
-  it('has default as active crew member', () => {
+  it('has no active crew when fresh', () => {
     const pm = new CrewManager();
-    expect(pm.getActiveId()).toBe('default');
-    expect(pm.getActive().name).toBe('Default');
+    expect(pm.getActiveId()).toBeNull();
+    expect(pm.getActive()).toBeNull();
   });
 
   it('creates and switches crews', () => {
@@ -38,6 +37,7 @@ describe('CrewManager', () => {
     pm.create({
       id: 'devops',
       name: 'DevOps Engineer',
+      callsign: 'devops',
       systemPrompt: 'You are a DevOps engineer.',
       isDefault: false,
     });
@@ -52,10 +52,9 @@ describe('CrewManager', () => {
     expect(pm.switch('nonexistent')).toBeNull();
   });
 
-  it('gets system prompt for active crew member', () => {
+  it('returns null system prompt when no active crew', () => {
     const pm = new CrewManager();
-    const prompt = pm.getSystemPrompt();
-    expect(prompt).toContain('capable');
+    expect(pm.getSystemPrompt()).toBeNull();
   });
 
   it('creates new crews with name + prompt only', () => {
@@ -63,6 +62,7 @@ describe('CrewManager', () => {
     const crew = pm.create({
       id: 'custom',
       name: 'Custom',
+      callsign: 'custom',
       systemPrompt: 'Be custom.',
       isDefault: false,
     });
@@ -74,19 +74,20 @@ describe('CrewManager', () => {
 
   it('deletes non-active crews', () => {
     const pm = new CrewManager();
-    pm.create({ id: 'temp', name: 'Temp', systemPrompt: 'temp', isDefault: false });
+    pm.create({ id: 'temp', name: 'Temp', callsign: 'temp', systemPrompt: 'temp', isDefault: false });
     expect(pm.delete('temp')).toBe(true);
     expect(pm.get('temp')).toBeUndefined();
   });
 
-  it('cannot delete active crew member', () => {
+  it('cannot delete non-existent crew member', () => {
     const pm = new CrewManager();
-    expect(pm.delete('default')).toBe(false);
+    expect(pm.delete('nonexistent')).toBe(false);
   });
 
   it('cannot delete last remaining crew member', () => {
     const pm = new CrewManager();
-    // Only 1 crew (default) exists
-    expect(pm.delete('default')).toBe(false);
+    const crew = pm.create({ id: 'sole', name: 'Sole', callsign: 'sole', systemPrompt: 'Sole crew', isDefault: false });
+    pm.switch('sole');
+    expect(pm.delete('sole')).toBe(false);
   });
 });

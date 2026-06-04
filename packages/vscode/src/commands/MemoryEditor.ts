@@ -54,7 +54,7 @@ export class MemoryEditor {
 
     const globalMemories = this.secretSauce.memories.getGlobalMemories(100);
     const crewMemories = this.secretSauce.memories.getCrewMemories(100);
-    const activeCrew = this.secretSauce.crew.getActive();
+    const activeCrew = this.secretSauce.crew.getActive()!;
 
     this.panel.webview.postMessage({
       type: 'memories-loaded',
@@ -121,7 +121,7 @@ export class MemoryEditor {
     if (scope === 'global') {
       filePath = join(sauceDir, 'global', 'memories.json');
     } else {
-      const crewId = this.secretSauce!.crew.getActiveId();
+      const crewId = this.secretSauce!.crew.getActiveId()!;
       filePath = join(sauceDir, 'crews', crewId, 'memories.json');
     }
 
@@ -144,7 +144,7 @@ export class MemoryEditor {
 
     const exportData = {
       exportedAt: new Date().toISOString(),
-      crewName: this.secretSauce.crew.getActive().name,
+      crewName: this.secretSauce.crew.getActive()!.name,
       global: globalMemories,
       crew: crewMemories,
       total: globalMemories.length + crewMemories.length,

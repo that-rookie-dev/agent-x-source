@@ -51,7 +51,7 @@ export function SettingsPanel() {
   // Crew CRUD state
   const [showCrewDialog, setShowCrewDialog] = useState(false);
   const [editingCrew, setEditingCrew] = useState<Crew | null>(null);
-  const [crewForm, setCrewForm] = useState<CrewInput>({ name: '', systemPrompt: '', tone: '' });
+  const [crewForm, setCrewForm] = useState<CrewInput>({ name: '', callsign: '', systemPrompt: '', tone: '' });
 
   useEffect(() => {
     config.get().then(setCfg).catch(() => {});
@@ -172,10 +172,10 @@ export function SettingsPanel() {
   const handleOpenCrewDialog = (crew?: Crew) => {
     if (crew) {
       setEditingCrew(crew);
-      setCrewForm({ name: crew.name, systemPrompt: crew.systemPrompt, tone: crew.tone });
+      setCrewForm({ name: crew.name, callsign: crew.callsign, systemPrompt: crew.systemPrompt, tone: crew.tone });
     } else {
       setEditingCrew(null);
-      setCrewForm({ name: '', systemPrompt: '', tone: '' });
+      setCrewForm({ name: '', callsign: '', systemPrompt: '', tone: '' });
     }
     setShowCrewDialog(true);
   };
@@ -380,6 +380,7 @@ export function SettingsPanel() {
         <DialogTitle sx={{ fontSize: '0.85rem' }}>{editingCrew ? 'Edit Crew' : 'Create Crew'}</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '16px !important' }}>
           <TextField size="small" label="Name" value={crewForm.name} onChange={(e) => setCrewForm({ ...crewForm, name: e.target.value })} placeholder="e.g. Code Assistant, Creative Writer" />
+          <TextField size="small" label="Callsign" value={crewForm.callsign} onChange={(e) => setCrewForm({ ...crewForm, callsign: e.target.value.replace(/\s/g, '') })} placeholder="e.g. code-wizard" helperText="Unique handle for @mentions — no spaces" />
           <TextField size="small" label="System Prompt" multiline rows={4} value={crewForm.systemPrompt} onChange={(e) => setCrewForm({ ...crewForm, systemPrompt: e.target.value })} placeholder="Define the crew's behavior and personality..." />
           <TextField size="small" label="Tone (optional)" value={crewForm.tone ?? ''} onChange={(e) => setCrewForm({ ...crewForm, tone: e.target.value })} placeholder="e.g. professional, casual, technical" />
         </DialogContent>

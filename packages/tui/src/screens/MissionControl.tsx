@@ -10,18 +10,15 @@ import {
   SplashScreen,
   LaunchSequence,
 } from '../components/wizard/index.js';
-import { useTypewriter } from '../animations/index.js';
 import {
   PROVIDERS,
   PROVIDER_IDS,
   type ProviderId,
   type ModelInfo,
   type AgentXConfig,
-  type Crew,
-  type CrewEmotion,
   getLogger,
 } from '@agentx/shared';
-import { ConfigManager, ProviderFactory, CrewManager, TelegramStore } from '@agentx/engine';
+import { ConfigManager, ProviderFactory } from '@agentx/engine';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -33,35 +30,13 @@ type MissionStep =
   | 'stage1_models'
   | 'transition_1'
   | 'stage2_callsign'
-  | 'stage2_briefing'
-  | 'stage2_name'
-  | 'stage2_prompt'
-  | 'stage2_tone'
-  | 'transition_2'
-  | 'stage3_telegram'
-  | 'transition_3'
   | 'launch_sequence';
 
 interface MissionControlProps {
-  onComplete: (config: AgentXConfig, crew: Crew) => void;
+  onComplete: (config: AgentXConfig) => void;
   onCancel: () => void;
   dek?: Buffer | null;
 }
-
-// ─── Tone Options ────────────────────────────────────────────────────
-
-const TONE_OPTIONS: Array<{ id: CrewEmotion; label: string; desc: string }> = [
-  { id: 'professional', label: '💼 Professional', desc: 'Precise, formal, business-like' },
-  { id: 'friendly', label: '😊 Friendly', desc: 'Warm, approachable, casual' },
-  { id: 'witty', label: '🧠 Witty', desc: 'Clever, sharp, dry humor' },
-  { id: 'funny', label: '😂 Funny', desc: 'Humorous, entertaining, jokes' },
-  { id: 'kind', label: '💛 Kind', desc: 'Gentle, empathetic, supportive' },
-  { id: 'sarcastic', label: '😏 Sarcastic', desc: 'Dry, ironic, deadpan' },
-  { id: 'flirty', label: '😘 Flirty', desc: 'Playful, charming, teasing' },
-  { id: 'arrogant', label: '👑 Arrogant', desc: 'Supremely confident, show-off' },
-  { id: 'happy', label: '🌟 Happy', desc: 'Enthusiastic, upbeat, energetic' },
-  { id: 'sad', label: '🌧 Melancholic', desc: 'Thoughtful, reflective, poetic' },
-];
 
 // ─── Provider Descriptions ───────────────────────────────────────────
 
@@ -89,12 +64,6 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel, 
 
   // Stage 2 state
   const [callsign, setCallsign] = useState('');
-  const [crewName, setCrewName] = useState('');
-  const [crewPrompt, setCrewPrompt] = useState('');
-
-  // Stage 3 state
-  const [telegramToken, setTelegramToken] = useState('');
-  const [telegramConfigured, setTelegramConfigured] = useState(false);
 
   // ─── Stage 1: Validation Effect ─────────────────────────────────────
 
@@ -193,106 +162,24 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel, 
     setStep('transition_1');
   }, [selectedProvider, apiKey, baseUrl, dek]);
 
+  // No crew creation in setup — crews are optional, created via /crew command or Web-UI
+
   const handleCallsignSubmit = useCallback(() => {
-    if (!callsign.trim()) return;
-    setStep('stage2_briefing');
-  }, [callsign]);
+    setStep('launch_sequence');
+  }, []);
 
-  const handleCrewNameSubmit = useCallback(() => {
-    if (!crewName.trim()) return;
-    setStep('stage2_prompt');
-  }, [crewName]);
-
-  const handleCrewPromptSubmit = useCallback(() => {
-    if (!crewPrompt.trim()) return;
-    setStep('stage2_tone');
-  }, [crewPrompt]);
-
-  const handleToneSelect = useCallback((tone: { id: CrewEmotion }) => {
-    // Create crew and save callsign to config
-    const pm = new CrewManager();
-    if (dek) pm.setDEK(dek);
-    const id = crewName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    pm.create({ id, name: crewName.trim(), systemPrompt: crewPrompt.trim(), emotion: tone.id, isDefault: false });
-    pm.switch(id);
-
-    // Update config with callsign
-    const cm = new ConfigManager();
-    if (dek) {
-      cm.setDEK(dek);
-    }
-    try {
-      const existingConfig = cm.load();
-      existingConfig.user = { callsign: callsign.trim() };
-      cm.save(existingConfig);
-    } catch { /* config will be re-saved at completion anyway */ }
-
-    setStep('transition_2');
-  }, [crewName, crewPrompt, callsign]);
-
-  const handleTelegramSubmit = useCallback(() => {
-    const token = telegramToken.trim();
-    if (!token) {
-      // Skip
-      setTelegramConfigured(false);
-      setStep('transition_3');
-      return;
-    }
-    // Basic format validation
-    if (!token.includes(':')) {
-      setError('Token format: 123456789:ABC-xyz...');
-      return;
-    }
-    setError(null);
-    const store = new TelegramStore();
-    store.save({ botToken: token });
-    setTelegramConfigured(true);
-
-    // Send a welcome message to the user's Telegram chat
-    (async () => {
-      try {
-        const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ limit: 1, offset: -1 }),
-          signal: AbortSignal.timeout(5000),
-        });
-        const data = await res.json() as { ok: boolean; result: Array<{ message?: { chat: { id: number } } }> };
-        if (data.ok && data.result.length > 0) {
-          const chatId = data.result[0]?.message?.chat?.id;
-          if (chatId) {
-            await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text: '🚀 Comms link established. I\'m online and ready for action, Commander.' }),
-              signal: AbortSignal.timeout(5000),
-            });
-          }
-        }
-      } catch { /* non-critical — don't block setup */ }
-    })();
-
-    setStep('transition_3');
-  }, [telegramToken]);
-
-  const handleTelegramSkip = useCallback(() => {
-    setTelegramConfigured(false);
-    setStep('transition_3');
+  const handleCallsignSkip = useCallback(() => {
+    setStep('launch_sequence');
   }, []);
 
   const handleLaunchComplete = useCallback(() => {
-    // Mark setup as complete and load final state
+    // Mark setup as complete
     const cm = new ConfigManager();
-    if (dek) {
-      cm.setDEK(dek);
-    }
-    const pm = new CrewManager();
-    if (dek) pm.setDEK(dek);
+    if (dek) cm.setDEK(dek);
     const config = cm.load();
     config.setupComplete = true;
     cm.save(config);
-    const crew = pm.getActive();
-    onComplete(config, crew);
+    onComplete(config);
   }, [onComplete, dek]);
 
   // ─── Global key handler for Escape (back navigation) ─────────────────
@@ -314,36 +201,23 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel, 
         setStep('stage1_credentials');
         break;
       case 'stage2_callsign':
-        // Can't go back past stage boundary once config saved
-        break;
-      case 'stage2_briefing':
-        setStep('stage2_callsign');
-        break;
-      case 'stage2_name':
-        setStep('stage2_briefing');
-        break;
-      case 'stage2_prompt':
-        setStep('stage2_name');
-        break;
-      case 'stage3_telegram':
-        // Can't go back past stage boundary
         break;
       default:
         break;
     }
   }, {
-    isActive: step !== 'stage1_provider' && step !== 'stage1_models' && step !== 'stage2_tone'
+    isActive: step !== 'stage1_provider' && step !== 'stage1_models'
       && !step.startsWith('transition') && step !== 'launch_sequence' && step !== 'stage1_validating',
   });
 
-  // ─── Tab handler for skipping telegram ────────────────────────────────
+  // ─── Tab handler for skipping callsign ────────────────────────────────
 
   useInput((input) => {
-    if (input === '\t' && step === 'stage3_telegram') {
+    if (input === '\t' && step === 'stage2_callsign') {
       if (TRACE) console.log(`[TRACE] MissionControl TAB pressed at step=${step} ts=${Date.now()}`);
-      handleTelegramSkip();
+      handleCallsignSkip();
     }
-  }, { isActive: step === 'stage3_telegram' });
+  }, { isActive: step === 'stage2_callsign' });
 
   // ─── Render Logic ─────────────────────────────────────────────────────
 
@@ -364,29 +238,12 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel, 
       </StageCard>
     );
   }
-  if (step === 'transition_2') {
-    return (
-      <StageCard stageNumber={2} stageLabel="MISSION CREW" currentStage={2}>
-        <BootTransition label={`CREW MEMBER "${crewName.toUpperCase()}" — REGISTERED`} onComplete={() => setStep('stage3_telegram')} />
-      </StageCard>
-    );
-  }
-  if (step === 'transition_3') {
-    return (
-      <StageCard stageNumber={3} stageLabel="COMMS ARRAY" currentStage={3}>
-        <BootTransition
-          label={telegramConfigured ? 'COMMS ARRAY — LINKED' : 'COMMS ARRAY — SKIPPED'}
-          onComplete={() => setStep('launch_sequence')}
-        />
-      </StageCard>
-    );
-  }
 
   // Launch sequence
   if (step === 'launch_sequence') {
     return (
-      <StageCard showProgress={false} currentStage={4}>
-        <LaunchSequence crewName={crewName} telegramConfigured={telegramConfigured} onComplete={handleLaunchComplete} />
+      <StageCard showProgress={false} currentStage={3}>
+        <LaunchSequence callsign={callsign} onComplete={handleLaunchComplete} />
       </StageCard>
     );
   }
@@ -512,151 +369,26 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel, 
     );
   }
 
-  // ─── Stage 2: Mission Crew ──────────────────────────────────────────
+  // ─── Stage 2: Callsign ────────────────────────────────────────────────
 
   if (step === 'stage2_callsign') {
     return (
-      <StageCard stageNumber={2} stageLabel="MISSION CREW" currentStage={2}>
+      <StageCard stageNumber={2} stageLabel="IDENTITY" currentStage={2}>
         <Box marginBottom={1}>
-          <Text color={COLORS.text}>What should I call you, Commander?</Text>
+          <Text color={COLORS.text}>🪪 Your Callsign</Text>
+        </Box>
+        <Box marginBottom={1}>
+          <Text color={COLORS.textDim}>
+            How should Agent-X address you? Optional — can be set later.
+          </Text>
         </Box>
         <Box>
           <Text color={COLORS.primary}>❯ </Text>
           <TextInput
             value={callsign}
-            onChange={setCallsign}
-            placeholder="e.g. Alex, Captain, Boss"
+            onChange={(v) => { setCallsign(v); setError(null); }}
+            placeholder="e.g. Commander"
             onSubmit={handleCallsignSubmit}
-          />
-        </Box>
-        <Box marginTop={1}>
-          <Text color={COLORS.textDim} italic>This is how Agent-X will address you.</Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text color={COLORS.textDim} dimColor>⏎ Submit</Text>
-        </Box>
-      </StageCard>
-    );
-  }
-
-  if (step === 'stage2_briefing') {
-    return (
-      <Stage2Briefing onContinue={() => setStep('stage2_name')} />
-    );
-  }
-
-  if (step === 'stage2_name') {
-    return (
-      <StageCard stageNumber={2} stageLabel="MISSION CREW" currentStage={2}>
-        <Box marginBottom={1}>
-          <Text color={COLORS.text}>Name your first crew member:</Text>
-        </Box>
-        <Box>
-          <Text color={COLORS.primary}>❯ </Text>
-          <TextInput
-            value={crewName}
-            onChange={setCrewName}
-            placeholder="e.g. Nova, Atlas, Jarvis"
-            onSubmit={handleCrewNameSubmit}
-          />
-        </Box>
-        <Box marginTop={1}>
-          <Text color={COLORS.textDim} italic>
-            This is the agent's callsign. You'll switch between agents by name.
-          </Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text color={COLORS.textDim} dimColor>⏎ Submit  •  Esc Back</Text>
-        </Box>
-      </StageCard>
-    );
-  }
-
-  if (step === 'stage2_prompt') {
-    return (
-      <StageCard stageNumber={2} stageLabel="MISSION CREW" currentStage={2}>
-        <Box marginBottom={1}>
-          <Text color={COLORS.text}>What is </Text>
-          <Text color={COLORS.primary} bold>{crewName}</Text>
-          <Text color={COLORS.text}>'s specialization?</Text>
-        </Box>
-        <Box>
-          <Text color={COLORS.primary}>❯ </Text>
-          <TextInput
-            value={crewPrompt}
-            onChange={setCrewPrompt}
-            placeholder="e.g. A senior full-stack engineer who..."
-            onSubmit={handleCrewPromptSubmit}
-          />
-        </Box>
-        <Box marginTop={1}>
-          <Text color={COLORS.textDim} italic>
-            Describe their role, expertise, and any instructions.
-          </Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text color={COLORS.textDim} dimColor>⏎ Submit  •  Esc Back</Text>
-        </Box>
-      </StageCard>
-    );
-  }
-
-  if (step === 'stage2_tone') {
-    return (
-      <StageCard stageNumber={2} stageLabel="MISSION CREW" currentStage={2}>
-        <Box marginBottom={1}>
-          <Text color={COLORS.text}>Choose </Text>
-          <Text color={COLORS.primary} bold>{crewName}</Text>
-          <Text color={COLORS.text}>'s communication style:</Text>
-        </Box>
-        <ScrollableList
-          items={TONE_OPTIONS}
-          onSelect={handleToneSelect}
-          onCancel={() => setStep('stage2_prompt')}
-          renderItem={(tone, isSelected) => (
-            <Box>
-              <Text color={isSelected ? COLORS.primary : COLORS.text} bold={isSelected}>
-                {tone.label}
-              </Text>
-              <Text color={COLORS.textDim} dimColor> — {tone.desc}</Text>
-            </Box>
-          )}
-        />
-      </StageCard>
-    );
-  }
-
-  // ─── Stage 3: Comms Array ──────────────────────────────────────────────
-
-  if (step === 'stage3_telegram') {
-    return (
-      <StageCard stageNumber={3} stageLabel="COMMS ARRAY" currentStage={3}>
-        <Box marginBottom={1}>
-          <Text color={COLORS.text}>📡 Connect a communication channel</Text>
-        </Box>
-        <Box marginBottom={1}>
-          <Text color={COLORS.textDim}>
-            Telegram lets you talk to Agent-X from your phone — anywhere, anytime.
-          </Text>
-        </Box>
-        <Box flexDirection="column" marginBottom={1} paddingX={1} borderStyle="single" borderColor={COLORS.border}>
-          <Text color={COLORS.text}>1. Open <Text color={COLORS.accent}>@BotFather</Text> on Telegram</Text>
-          <Text color={COLORS.text}>2. Send /newbot and follow prompts</Text>
-          <Text color={COLORS.text}>3. Paste the bot token below</Text>
-        </Box>
-        {error && (
-          <Box marginBottom={1}>
-            <Text color={COLORS.error}>⚠ {error}</Text>
-          </Box>
-        )}
-        <Box>
-          <Text color={COLORS.primary}>❯ </Text>
-          <TextInput
-            value={telegramToken}
-            onChange={(v) => { setTelegramToken(v); setError(null); }}
-            placeholder="123456789:ABC-DEFghIjkl..."
-            mask="*"
-            onSubmit={handleTelegramSubmit}
           />
         </Box>
         <Box marginTop={1}>
@@ -670,69 +402,4 @@ export const MissionControl: FC<MissionControlProps> = ({ onComplete, onCancel, 
   return null;
 };
 
-// ─── Sub-component: Stage 2 Briefing ─────────────────────────────────────
-
-interface Stage2BriefingProps {
-  onContinue: () => void;
-}
-
-const BRIEFING_TEXT = `Crew members are your AI personas.
-
-Each crew is a sub-agent with its own
-personality, expertise, and communication style.
-
-You can create multiple crews later:`;
-
-const Stage2Briefing: FC<Stage2BriefingProps> = ({ onContinue }) => {
-  const revealed = useTypewriter(BRIEFING_TEXT, 25);
-  const [ready, setReady] = useState(false);
-  const [blink, setBlink] = useState(true);
-
-  useEffect(() => {
-    if (revealed.length >= BRIEFING_TEXT.length) {
-      setReady(true);
-    }
-  }, [revealed]);
-
-  useEffect(() => {
-    if (!ready) return;
-    const interval = setInterval(() => setBlink((b) => !b), 800);
-    return () => clearInterval(interval);
-  }, [ready]);
-
-  useInput((_input, key) => {
-    if (key.return && ready) {
-      onContinue();
-    }
-  });
-
-  return (
-    <StageCard stageNumber={2} stageLabel="MISSION CREW" currentStage={2}>
-      <Box flexDirection="column">
-        <Text color={COLORS.text}>{revealed}</Text>
-        {ready && (
-          <>
-            <Box marginTop={1} paddingX={1}>
-              <Text color={COLORS.accent}>"Nova"  </Text>
-              <Text color={COLORS.textDim}>— Your coding specialist</Text>
-            </Box>
-            <Box paddingX={1}>
-              <Text color={COLORS.accent}>"Atlas" </Text>
-              <Text color={COLORS.textDim}>— Research & analysis</Text>
-            </Box>
-            <Box paddingX={1}>
-              <Text color={COLORS.accent}>"Pulse" </Text>
-              <Text color={COLORS.textDim}>— Creative writing</Text>
-            </Box>
-            <Box marginTop={1}>
-              <Text color={COLORS.text}>Let's create your first crew member.</Text>
-            </Box>
-            <Box marginTop={1}>
-              <Text color={blink ? COLORS.textDim : COLORS.border}>Press ENTER to continue</Text>
-            </Box>
-          </>
-        )}
-      </Box>
-    </StageCard>
-  );
-};
+// Crew creation moved to /crew command and Web-UI — setup no longer creates crews

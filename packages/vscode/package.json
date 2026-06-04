@@ -2,7 +2,7 @@
   "name": "@agentx/vscode",
   "displayName": "Agent-X",
   "description": "AI-powered coding assistant — native VS Code extension",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "private": true,
   "publisher": "slashpan",
   "license": "MIT",

@@ -3,7 +3,7 @@ import { CrewManager } from '../../secret-sauce/CrewManager.js';
 
 export const crewCommand: CommandInterface = {
   name: 'crew',
-  description: 'Manage crews: list, enable, disable, show, switch',
+  description: 'Manage crews: list, enable, disable, show, switch, create',
   usage: '/crew [list|enable <id>|disable <id>|show <id>|switch <id>]',
   async execute(args: string[], context: CommandContext): Promise<CommandResult> {
     const subcommand = args[0];
@@ -12,14 +12,15 @@ export const crewCommand: CommandInterface = {
     if (subcommand === 'list') {
       const crews = pm.list();
       if (crews.length === 0) {
-        context.emit('No crews configured.');
+        context.emit('No crews configured. Use /crew create to add one.');
         return { success: true, action: 'none' };
       }
+      const activeId = pm.getActiveId();
       const lines = crews.map((c) => {
         const status = c.enabled ? '✓' : '✗';
-        const active = c.id === pm.getActiveId() ? ' (active)' : '';
+        const active = activeId !== null && c.id === activeId ? ' (active)' : '';
         const expertise = c.expertise?.join(', ') || 'general';
-        return `${status} **${c.name}** (${c.id})${active}\n   Expertise: ${expertise}`;
+        return `${status} **${c.name}** (@${c.callsign})${active}\n   Expertise: ${expertise}`;
       });
       context.emit(`**Available Crews:**\n${lines.join('\n\n')}`);
       return { success: true, action: 'none' };
@@ -50,13 +51,17 @@ export const crewCommand: CommandInterface = {
       if (success) {
         context.emit(`✓ Crew "${id}" disabled.`);
       } else {
-        context.emit(`✗ Failed to disable crew "${id}". Cannot disable default or last crew.`);
+        context.emit(`✗ Failed to disable crew "${id}".`);
       }
       return { success, action: 'none' };
     }
 
     if (subcommand === 'show') {
-      const id = args[1] ?? pm.getActiveId();
+      const id = args[1] ?? pm.getActiveId() ?? undefined;
+      if (!id) {
+        context.emit('No active crew and no crew ID provided.');
+        return { success: false, action: 'none' };
+      }
       const crew = pm.get(id);
       if (!crew) {
         context.emit(`Crew "${id}" not found.`);
@@ -71,6 +76,36 @@ export const crewCommand: CommandInterface = {
       ];
       context.emit(lines.join('\n'));
       return { success: true, action: 'none' };
+    }
+
+    if (subcommand === 'create') {
+      const id = args[1];
+      const name = args[2];
+      const callsign = args[3];
+      if (!id || !name) {
+        context.emit('Usage: /crew create <id> <name> [callsign]');
+        return { success: false, action: 'none' };
+      }
+      const systemPrompt = args.slice(4).join(' ') || `You are ${name}, a capable AI assistant.`;
+      pm.create({ id, name, callsign: callsign || id, systemPrompt });
+      pm.switch(id);
+      context.emit(`✓ Crew "${name}" (@${callsign || id}) created and activated.`);
+      return { success: true, action: 'none' };
+    }
+
+    if (subcommand === 'switch') {
+      const id = args[1];
+      if (!id) {
+        context.emit('Usage: /crew switch <crew_id>');
+        return { success: false, action: 'none' };
+      }
+      const crew = pm.switch(id);
+      if (crew) {
+        context.emit(`✓ Switched to crew "${crew.name}".`);
+        return { success: true, action: 'switch_crew' };
+      }
+      context.emit(`✗ Crew "${id}" not found.`);
+      return { success: false, action: 'none' };
     }
 
     // Default: open crew picker UI (handles switch, create)

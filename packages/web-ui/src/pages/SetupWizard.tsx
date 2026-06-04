@@ -15,13 +15,12 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import BadgeIcon from '@mui/icons-material/Badge';
-import GroupsIcon from '@mui/icons-material/Groups';
-import { providers as provApi, models as modelsApi, crews, config, bridges } from '../api';
+import { providers as provApi, models as modelsApi, config } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import type { ProviderInfo, ModelInfo } from '../api';
 
-const STEPS = ['Provider', 'API Key', 'Model', 'Callsign', 'Crew', 'Bridges', 'Complete'];
+const STEPS = ['Provider', 'API Key', 'Model', 'Callsign', 'Complete'];
 const STORAGE_KEY = 'agentx_wizard_progress';
 
 interface WizardProgress {
@@ -29,8 +28,6 @@ interface WizardProgress {
   selectedProvider: string;
   selectedModel: string;
   callsign: string;
-  crewName: string;
-  crewPrompt: string;
 }
 
 function saveProgress(data: WizardProgress) {
@@ -64,9 +61,6 @@ export function SetupWizard() {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
   const [callsign, setCallsign] = useState('');
-  const [crewName, setCrewName] = useState('Default Crew');
-  const [crewPrompt, setCrewPrompt] = useState('You are a helpful AI assistant.');
-  const [telegramToken, setTelegramToken] = useState('');
 
   // Restore progress on mount
   useEffect(() => {
@@ -76,8 +70,6 @@ export function SetupWizard() {
       setSelectedProvider(saved.selectedProvider);
       setSelectedModel(saved.selectedModel);
       setCallsign(saved.callsign || '');
-      setCrewName(saved.crewName || 'Default Crew');
-      setCrewPrompt(saved.crewPrompt || 'You are a helpful AI assistant.');
       // Re-fetch models for restored provider
       if (saved.selectedProvider) {
         provApi.models(saved.selectedProvider).then(setAvailableModels).catch(() => {});
@@ -103,9 +95,9 @@ export function SetupWizard() {
   // Persist progress on step change (only non-sensitive data)
   const persistProgress = useCallback(() => {
     if (step >= 2) {
-      saveProgress({ step, selectedProvider, selectedModel, callsign, crewName, crewPrompt });
+      saveProgress({ step, selectedProvider, selectedModel, callsign });
     }
-  }, [step, selectedProvider, selectedModel, callsign, crewName, crewPrompt]);
+  }, [step, selectedProvider, selectedModel, callsign]);
 
   useEffect(() => { persistProgress(); }, [persistProgress]);
 
@@ -181,35 +173,7 @@ export function SetupWizard() {
   };
 
   const handleCallsignNext = () => {
-    if (!callsign.trim()) { setError('Enter a callsign'); return; }
     next();
-  };
-
-  const handleCrewNext = async () => {
-    if (!crewName.trim()) { setError('Enter a crew name'); return; }
-    setLoading(true);
-    try {
-      await crews.create({ name: crewName, systemPrompt: crewPrompt });
-      next();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Crew creation failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleBridgesNext = async () => {
-    setLoading(true);
-    try {
-      if (telegramToken.trim()) {
-        await bridges.telegram.start(telegramToken);
-      }
-      next();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Bridge setup failed');
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleComplete = async () => {
@@ -434,47 +398,8 @@ export function SetupWizard() {
             </Box>
           )}
 
-          {/* Step 4: Crew */}
+          {/* Step 4: Complete */}
           {step === 4 && (
-            <Box>
-              <Typography variant="h6" sx={{ mb: 1 }}>Create Default Crew</Typography>
-              <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>
-                A crew defines the agent's personality and system prompt.
-              </Typography>
-              <TextField label="Crew Name" value={crewName} onChange={(e) => setCrewName(e.target.value)} fullWidth sx={{ mb: 2 }} />
-              <TextField label="System Prompt" value={crewPrompt} onChange={(e) => setCrewPrompt(e.target.value)} fullWidth multiline rows={4} />
-
-              <Box sx={{ mt: 4, p: 2.5, border: `1px solid ${colors.border.default}`, borderRadius: 1, bgcolor: colors.bg.secondary }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5 }}>
-                  <GroupsIcon sx={{ fontSize: 20, color: colors.accent.purple }} />
-                  <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px', fontSize: '0.75rem' }}>
-                    WHAT IS A CREW?
-                  </Typography>
-                </Box>
-                <Typography variant="body2" sx={{ color: colors.text.secondary, fontSize: '0.8rem', lineHeight: 1.6 }}>
-                  A crew shapes how the agent thinks and responds. The system prompt defines
-                  its expertise, tone, and boundaries. You can create multiple crews later.
-                </Typography>
-                <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.65rem' }}>
-                  Think of it as a role: DevOps Engineer, Creative Writer, Research Analyst
-                </Typography>
-              </Box>
-            </Box>
-          )}
-
-          {/* Step 5: Bridges (optional) */}
-          {step === 5 && (
-            <Box>
-              <Typography variant="h6" sx={{ mb: 1 }}>Telegram Bridge (Optional)</Typography>
-              <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>
-                Connect a Telegram bot to chat with Agent-X on the go. Skip to finish setup without.
-              </Typography>
-              <TextField label="Bot Token" placeholder="e.g. 123456789:ABCdefGhIJKlmNOPqrs" value={telegramToken} onChange={(e) => setTelegramToken(e.target.value)} fullWidth />
-            </Box>
-          )}
-
-          {/* Step 6: Complete */}
-          {step === 6 && (
             <Box sx={{ textAlign: 'center' }}>
               <CheckCircleIcon sx={{ fontSize: 64, color: colors.accent.green, mb: 2 }} />
               <Typography variant="h5" sx={{ mb: 1 }}>Setup Complete!</Typography>
@@ -484,9 +409,7 @@ export function SetupWizard() {
               <Box sx={{ textAlign: 'left', p: 2, border: `1px solid ${colors.border.default}`, borderRadius: 1, mb: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem' }}>
                 <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Provider: {selectedProvider}</Typography>
                 <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Model: {selectedModel}</Typography>
-                <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Callsign: {callsign}</Typography>
-                <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Crew: {crewName}</Typography>
-                {telegramToken && <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Telegram: Connected</Typography>}
+                <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Callsign: {callsign || '(not set)'}</Typography>
               </Box>
             </Box>
           )}
@@ -495,14 +418,14 @@ export function SetupWizard() {
 
       {/* Fixed Bottom Navigation */}
       <Box sx={{ flexShrink: 0, borderTop: `1px solid ${colors.border.default}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
-        <Box sx={{ width: '100%', maxWidth: (step === 0 || step === 2) ? 720 : 480, display: 'flex', justifyContent: step === 0 ? 'flex-end' : step === 6 ? 'center' : 'space-between' }}>
+        <Box sx={{ width: '100%', maxWidth: (step === 0 || step === 2) ? 720 : 480, display: 'flex', justifyContent: step === 0 ? 'flex-end' : step === 5 ? 'center' : 'space-between' }}>
           {step === 1 && (
             <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>
           )}
           {step === 2 && (
             <Button onClick={handleBackToCredentials} sx={{ color: colors.text.secondary }}>Back</Button>
           )}
-          {step > 2 && step < 6 && (
+          {step === 3 && (
             <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>
           )}
           {step === 0 && (
@@ -521,19 +444,11 @@ export function SetupWizard() {
             </Button>
           )}
           {step === 3 && (
-            <Button variant="contained" onClick={handleCallsignNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>
+            <Button variant="contained" onClick={handleCallsignNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>
+              {callsign.trim() ? 'Next' : 'Skip & Next'}
+            </Button>
           )}
           {step === 4 && (
-            <Button variant="contained" onClick={handleCrewNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>
-              {loading ? 'Creating...' : 'Next'}
-            </Button>
-          )}
-          {step === 5 && (
-            <Button variant="contained" onClick={handleBridgesNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>
-              {loading ? 'Connecting...' : telegramToken ? 'Connect & Next' : 'Skip & Next'}
-            </Button>
-          )}
-          {step === 6 && (
             <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>
               {loading ? 'Finalizing...' : 'Launch Console'}
             </Button>

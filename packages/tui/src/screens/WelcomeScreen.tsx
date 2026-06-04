@@ -25,7 +25,7 @@ import type { PluginRegistry, PostgresStorageAdapter, TelegramBridge, MCPBridge,
 
 interface WelcomeScreenProps {
   config: AgentXConfig;
-  crew: Crew;
+  crew?: Crew;
   crewList?: Crew[];
   restoreSessionId?: string;
   recovered?: boolean;
@@ -169,7 +169,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList =
           provider={config.provider.activeProvider}
           model={currentModel}
           organization={config.organization}
-          crewName={crew.name}
+          crewName={crew?.name ?? 'Agent-X'}
           profileLabel={profileLabel}
         />
         <Box marginTop={1}>
@@ -205,7 +205,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList =
           provider={config.provider.activeProvider}
           model={currentModel}
           organization={config.organization}
-          crewName={crew.name}
+          crewName={crew?.name ?? 'Agent-X'}
         />
         <Box marginTop={1}>
           <ProviderPicker
@@ -227,9 +227,9 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList =
           provider={config.provider.activeProvider}
           model={currentModel}
           organization={config.organization}
-          crewName={crew.name}
+          crewName={crew?.name ?? 'Agent-X'}
           scopePath={process.cwd()}
-          sessionName={sessionId ? sessionId.slice(0, 8) : crew.name}
+          sessionName={sessionId ? sessionId.slice(0, 8) : crew?.name ?? 'Agent-X'}
           toolCount={toolCount}
           planMode={planMode}
           totalCost={totalCost}
@@ -358,7 +358,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList =
           sessionId={sessionId}
           provider={config.provider.activeProvider}
           model={currentModel}
-          crewName={crew.name}
+          crewName={crew?.name ?? 'Agent-X'}
           scopePath={process.cwd()}
           tokensUsed={tokensUsed}
           tokensTotal={tokensTotal}

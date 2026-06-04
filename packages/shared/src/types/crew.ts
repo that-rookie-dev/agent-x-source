@@ -22,6 +22,7 @@ export interface CrewResourceQuota {
 export interface Crew {
   id: string;
   name: string;
+  callsign: string;
   systemPrompt: string;
   emotion?: CrewEmotion;
   isDefault: boolean;
@@ -41,6 +42,7 @@ export interface Crew {
 export interface CrewCreateInput {
   id: string;
   name: string;
+  callsign: string;
   systemPrompt: string;
   emotion?: CrewEmotion;
   isDefault?: boolean;

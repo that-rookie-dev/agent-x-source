@@ -40,7 +40,30 @@ export function isDaemonRunning(): boolean {
   }
 }
 
-export function getDaemonStatus(): { running: boolean; pid?: number; crew?: string; telegram?: boolean; botUsername?: string; discord?: boolean; discordUsername?: string; startedAt?: string; version?: string; setupMode?: boolean; locked?: boolean } {
+export interface DaemonStatus {
+  running: boolean;
+  pid?: number;
+  crew?: string;
+  crewId?: string;
+  telegram?: boolean;
+  botUsername?: string;
+  messageCount?: number;
+  discord?: boolean;
+  discordUsername?: string;
+  discordMessageCount?: number;
+  slack?: boolean;
+  slackTeam?: string;
+  email?: boolean;
+  emailConfigured?: boolean;
+  focusChannel?: string;
+  channels?: Array<{ id: string; enabled: boolean; focusState?: string }>;
+  startedAt?: string;
+  version?: string;
+  setupMode?: boolean;
+  locked?: boolean;
+}
+
+export function getDaemonStatus(): DaemonStatus {
   const statusPath = getStatusPath();
   if (!isDaemonRunning()) {
     return { running: false };
@@ -255,7 +278,6 @@ export async function startDaemon(): Promise<void> {
 
       writeStatus({
         pid: process.pid,
-        crew: 'Default',
         telegram: false,
         startedAt: new Date().toISOString(),
         version: VERSION,
@@ -276,7 +298,6 @@ export async function startDaemon(): Promise<void> {
       if (hasAuth) {
         writeStatus({
           pid: process.pid,
-          crew: 'Default',
           telegram: false,
           startedAt: new Date().toISOString(),
           version: VERSION,
@@ -286,7 +307,6 @@ export async function startDaemon(): Promise<void> {
       } else {
         writeStatus({
           pid: process.pid,
-          crew: 'Default',
           telegram: false,
           startedAt: new Date().toISOString(),
           version: VERSION,
@@ -316,16 +336,14 @@ export async function startDaemon(): Promise<void> {
   if (!telegramConfig?.botToken && !discordConfig?.botToken && !slackConfig?.botToken && !emailConfig?.['smtpHost']) {
     console.log('✦ Agent-X daemon started.');
     console.log('');
-    console.log('  Telegram not connected.');
-    console.log('  Discord not connected.');
-    console.log('  Slack not connected.');
-    console.log('  To connect, run: agentx start --token <your-bot-token>');
+    console.log('  No bridges configured.');
     console.log('');
-  console.log(`  Web-UI: http://localhost:${DAEMON_PORT}`);
+    console.log(`  Web-UI: http://localhost:${DAEMON_PORT}`);
+    console.log('  Configure bridges later via Web-UI (Channels) or TUI (/telegram start)');
   } else {
     if (!telegramConfig?.botToken) {
       console.log('  Telegram not connected.');
-      console.log('  To connect, run: agentx start --token <your-bot-token>');
+      console.log('  Configure later via Web-UI (Channels) or TUI (/telegram start)');
     }
     if (!discordConfig?.botToken) {
       console.log('  Discord not connected.');
@@ -338,7 +356,7 @@ export async function startDaemon(): Promise<void> {
   const pm = new CrewManager();
   const activeCrew = pm.getActive();
 
-  logger.info('DAEMON', `Crew: ${activeCrew.name}`);
+  logger.info('DAEMON', activeCrew ? `Crew: ${activeCrew.name}` : 'No crew configured');
 
   const sessionStore = new SessionStore();
   const sessionId = generateSessionId();
@@ -366,7 +384,7 @@ export async function startDaemon(): Promise<void> {
   const gateway = new Gateway();
   gateway.attachAgent(agent);
 
-  // Register and start Telegram channel plugin
+  // Register and start Telegram channel plugin (optional — skip gracefully if token absent or connection fails)
   if (telegramConfig?.botToken) {
     const tgPlugin = gateway.registerTelegram(telegramConfig.botToken);
     tgPlugin.setAgent(agent);
@@ -421,9 +439,9 @@ export async function startDaemon(): Promise<void> {
         });
       }
     } catch (err) {
-      console.error(`Failed to start Telegram bridge: ${err instanceof Error ? err.message : String(err)}`);
-      try { unlinkSync(pidPath); } catch { /* ignore */ }
-      process.exit(1);
+      console.error(`⚠ Failed to start Telegram bridge: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn('DAEMON', 'Telegram bridge failed to start — continuing without Telegram. '
+        + 'Configure it later via TUI (/telegram start) or Web-UI (Channels panel).');
     }
   }
 
@@ -457,7 +475,7 @@ export async function startDaemon(): Promise<void> {
     slackBridge = new SlackBridge(slackConfig);
     slackBridge.setAgentFactory((userId) => {
       const userSessionId = `${sessionId}-slack-${userId}`;
-      const userAgent = new Agent({ config, sessionId: userSessionId, systemPrompt: activeCrew.systemPrompt });
+      const userAgent = new Agent({ config, sessionId: userSessionId, systemPrompt: activeCrew?.systemPrompt });
       try {
         sessionStore.createSession({
           id: userSessionId,
@@ -480,7 +498,7 @@ export async function startDaemon(): Promise<void> {
   if (emailConfig?.['smtpHost']) {
     try {
       emailBridge = new EmailBridge();
-      emailBridge.setAgentDeps({ config, systemPrompt: activeCrew.systemPrompt });
+      emailBridge.setAgentDeps({ config, systemPrompt: activeCrew?.systemPrompt });
       await emailBridge.start({
         smtpHost: String(emailConfig['smtpHost']),
         smtpPort: Number(emailConfig['smtpPort'] ?? 587),
@@ -556,8 +574,7 @@ export async function startDaemon(): Promise<void> {
   const emStatus = emailBridge?.getStatus();
   writeStatus({
     pid: process.pid,
-    crew: activeCrew.name,
-    crewId: activeCrew.id,
+    ...(activeCrew ? { crew: activeCrew.name, crewId: activeCrew.id } : {}),
     telegram: tgStatus?.connected ?? false,
     botUsername: tgStatus?.botUsername,
     discord: dcStatus?.connected ?? false,
@@ -573,7 +590,7 @@ export async function startDaemon(): Promise<void> {
   });
 
   console.log(`✦ Agent-X daemon started (PID: ${process.pid})`);
-  console.log(`  Crew: ${activeCrew.name}`);
+  console.log(activeCrew ? `  Crew: ${activeCrew.name}` : '  No crew configured');
   console.log(`  Telegram: ${tgStatus?.connected ? `@${tgStatus.botUsername}` : 'not connected'}`);
   console.log(`  Discord: ${dcStatus?.connected ? dcStatus.botUsername : 'not connected'}`);
   console.log(`  Slack: ${slStatus?.connected ? slStatus.team : 'not connected'}`);
@@ -689,8 +706,7 @@ export async function startDaemon(): Promise<void> {
 
     writeStatus({
       pid: process.pid,
-      crew: pm.getActive().name,
-      crewId: pm.getActive().id,
+      ...(() => { const c = pm.getActive(); return c ? { crew: c.name, crewId: c.id } : {}; })(),
       telegram: tgConnected,
       botUsername: tgBotUsername,
       messageCount: tgMessageCount,

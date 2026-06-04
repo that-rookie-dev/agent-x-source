@@ -411,8 +411,8 @@ async function main(): Promise<void> {
     if (isDaemonRunning()) {
       const status = getDaemonStatus();
       console.log(`✦ Agent-X daemon started (PID: ${status.pid})`);
+      if (status.version) console.log(`  Version: ${status.version}`);
       if (status.crew) console.log(`  Crew: ${status.crew}`);
-      if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
 
       // Poll web-api health for up to 4 seconds (it may need time to boot)
       let webOk = false;
@@ -459,11 +459,72 @@ async function main(): Promise<void> {
       } else {
         console.log('✦ Agent-X daemon: running');
       }
-      console.log(`  PID: ${status.pid}`);
-      console.log(`  Crew: ${status.crew ?? 'unknown'}`);
-      if (status.telegram) console.log(`  Telegram: @${status.botUsername ?? 'connected'}`);
-      if (status.discord) console.log(`  Discord: ${status.discordUsername ?? 'connected'}`);
+      console.log(`  PID: ${status.pid ?? 'unknown'}`);
+      if (status.version) console.log(`  Version: ${status.version}`);
+      if (status.crew) console.log(`  Crew: ${status.crew}`);
+      if (status.focusChannel) console.log(`  Focus: ${status.focusChannel}`);
+
+      // Show per-channel status
+      const channels = status.channels ?? [];
+      const channelRows: Array<{ id: string; status: string; detail: string }> = [];
+
+      // Chat is always available
+      const chatFocus = channels.find((c) => c.id === 'chat');
+      if (!chatFocus) channels.push({ id: 'chat', enabled: true });
+
+      for (const ch of channels) {
+        let indicator = '○';
+        let detail = '';
+        if (ch.id === 'telegram') {
+          if (status.telegram) {
+            indicator = '●';
+            detail = `@${status.botUsername ?? 'connected'}`;
+            if (status.messageCount) detail += ` (${status.messageCount} msgs)`;
+          } else {
+            detail = 'not connected';
+          }
+        } else if (ch.id === 'discord') {
+          if (status.discord) {
+            indicator = '●';
+            detail = `${status.discordUsername ?? 'connected'}`;
+            if (status.discordMessageCount) detail += ` (${status.discordMessageCount} msgs)`;
+          } else {
+            detail = 'not connected';
+          }
+        } else if (ch.id === 'slack') {
+          if (status.slack) {
+            indicator = '●';
+            detail = status.slackTeam ? `team: ${status.slackTeam}` : 'connected';
+          } else if (status.slackTeam) {
+            detail = 'not connected';
+          } else {
+            detail = 'not configured';
+          }
+        } else if (ch.id === 'email') {
+          if (status.email) {
+            indicator = '●';
+            detail = 'connected';
+          } else if (status.emailConfigured) {
+            detail = 'not connected';
+          } else {
+            detail = 'not configured';
+          }
+        } else {
+          indicator = ch.enabled ? '●' : '○';
+          detail = ch.focusState ?? (ch.enabled ? 'active' : 'disabled');
+        }
+        channelRows.push({ id: ch.id, status: `${indicator} ${detail}`, detail: '' });
+      }
+
+      console.log('');
+      console.log('  Channels:');
+      const pad = Math.max(...channelRows.map((r) => r.id.length)) + 1;
+      for (const row of channelRows) {
+        console.log(`    ${row.id.padEnd(pad)} ${row.status}`);
+      }
+
       if (status.startedAt) {
+        console.log('');
         console.log(`  Started: ${status.startedAt}`);
         const elapsed = Date.now() - new Date(status.startedAt).getTime();
         const hrs = Math.floor(elapsed / 3600000);
@@ -805,8 +866,11 @@ async function main(): Promise<void> {
   // Always connect to daemon via WebSocket
   render(React.createElement(App, { sessionId, recovered, planMode, fallbackModel, maxBudget, gitAutoCommit, gitAware, daemonMode: true } as React.ComponentProps<typeof App>));
 
-  // Clean up TUI marker on exit
-  process.on('exit', () => { try { unlinkSync(TUI_ACTIVE_PATH); } catch { /* ignore */ } });
+  // Clean up terminal and TUI marker on exit
+  process.on('exit', () => {
+    process.stderr.write('\x1b[?25h\x1b[?1049l\x1b[2J\x1b[H');
+    try { unlinkSync(TUI_ACTIVE_PATH); } catch { /* ignore */ }
+  });
 }
 
 main().catch((err) => {

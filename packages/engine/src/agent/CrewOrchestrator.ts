@@ -1,5 +1,5 @@
 import type { Crew, EngineEvent, CollaborationProtocol } from '@agentx/shared';
-import { generateMessageId } from '@agentx/shared';
+import { generateMessageId, CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import type { AgentEventBus } from '../EventBus.js';
 
@@ -475,24 +475,8 @@ export class CrewOrchestrator {
   }
 
   private extractExpertise(systemPrompt: string): string[] {
-    const keywords: string[] = [];
     const lower = systemPrompt.toLowerCase();
-
-    const domains = [
-      'frontend', 'backend', 'database', 'devops', 'security', 'testing',
-      'design', 'ux', 'ui', 'api', 'architecture', 'mobile', 'cloud',
-      'performance', 'infrastructure', 'data', 'ml', 'ai', 'analytics',
-      'documentation', 'planning', 'management', 'research', 'review',
-      'react', 'vue', 'angular', 'node', 'python', 'rust', 'go',
-      'typescript', 'javascript', 'css', 'html', 'sql', 'graphql',
-      'docker', 'kubernetes', 'aws', 'gcp', 'azure',
-    ];
-
-    for (const domain of domains) {
-      if (lower.includes(domain)) keywords.push(domain);
-    }
-
-    return keywords;
+    return CREW_DOMAIN_KEYWORDS.filter((domain) => lower.includes(domain));
   }
 
   private emit(event: Partial<EngineEvent> & { type: string }): void {

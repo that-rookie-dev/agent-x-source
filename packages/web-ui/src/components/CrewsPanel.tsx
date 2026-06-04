@@ -23,11 +23,12 @@ import { colors } from '../theme';
 interface FormState {
   id?: string;
   name: string;
+  callsign: string;
   systemPrompt: string;
   tone: string;
 }
 
-const EMPTY_FORM: FormState = { name: '', systemPrompt: '', tone: 'professional' };
+const EMPTY_FORM: FormState = { name: '', callsign: '', systemPrompt: '', tone: 'professional' };
 
 const TONE_OPTIONS = ['professional', 'friendly', 'witty', 'kind', 'funny', 'sarcastic', 'flirty', 'happy', 'sad', 'arrogant'];
 
@@ -67,9 +68,9 @@ export function CrewsPanel() {
     setError('');
     try {
       if (form.id) {
-        await crewsApi.update(form.id, { name: form.name, systemPrompt: form.systemPrompt, tone: form.tone });
+        await crewsApi.update(form.id, { name: form.name, callsign: form.callsign, systemPrompt: form.systemPrompt, tone: form.tone });
       } else {
-        await crewsApi.create({ name: form.name, systemPrompt: form.systemPrompt, tone: form.tone });
+        await crewsApi.create({ name: form.name, callsign: form.callsign, systemPrompt: form.systemPrompt, tone: form.tone });
       }
       setDialogOpen(false);
       setForm(EMPTY_FORM);
@@ -97,7 +98,7 @@ export function CrewsPanel() {
   };
 
   const openEdit = (c: Crew) => {
-    setForm({ id: c.id, name: c.name, systemPrompt: c.systemPrompt, tone: c.tone ?? 'professional' });
+    setForm({ id: c.id, name: c.name, callsign: c.callsign, systemPrompt: c.systemPrompt, tone: c.tone ?? 'professional' });
     setDialogOpen(true);
   };
 
@@ -174,13 +175,11 @@ export function CrewsPanel() {
                     <EditIcon sx={{ fontSize: 14 }} />
                   </IconButton>
                 </Tooltip>
-                {!c.isDefault && (
-                  <Tooltip title="Delete">
-                    <IconButton size="small" onClick={() => handleDelete(c.id)} sx={{ color: colors.accent.red }}>
-                      <DeleteIcon sx={{ fontSize: 14 }} />
-                    </IconButton>
-                  </Tooltip>
-                )}
+                <Tooltip title="Delete">
+                  <IconButton size="small" onClick={() => handleDelete(c.id)} sx={{ color: colors.accent.red }}>
+                    <DeleteIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                </Tooltip>
               </Box>
             </Box>
           );
@@ -196,7 +195,8 @@ export function CrewsPanel() {
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} PaperProps={{ sx: { bgcolor: colors.bg.secondary, minWidth: 480 } }}>
         <DialogTitle sx={{ fontSize: '0.9rem' }}>{form.id ? 'Edit Crew' : 'New Crew'}</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '12px !important' }}>
-          <TextField size="small" label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} fullWidth />
+          <TextField size="small" label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} fullWidth helperText="Display name" />
+          <TextField size="small" label="Callsign" value={form.callsign} onChange={(e) => setForm({ ...form, callsign: e.target.value.replace(/\s/g, '') })} fullWidth helperText="Unique handle for @mentions — no spaces" />
           <Box>
             <Typography sx={{ fontSize: '0.65rem', color: colors.text.dim, mb: 0.75 }}>TONE</Typography>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>

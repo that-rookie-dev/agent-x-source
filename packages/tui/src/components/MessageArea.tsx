@@ -162,6 +162,26 @@ export const MessageArea: FC<MessageAreaProps> = ({
   );
 };
 
+const CREW_COLORS = [
+  '#5B9BD5', // blue
+  '#70AD47', // green
+  '#ED7D31', // orange
+  '#9B59B6', // purple
+  '#E74C3C', // red
+  '#1ABC9C', // teal
+  '#F39C12', // amber
+  '#3498DB', // sky
+];
+
+function getCrewColor(callsign: string): string {
+  let hash = 0;
+  for (let i = 0; i < callsign.length; i++) {
+    hash = ((hash << 5) - hash) + callsign.charCodeAt(i);
+    hash |= 0;
+  }
+  return CREW_COLORS[Math.abs(hash) % CREW_COLORS.length]!;
+}
+
 function renderMessageContent(message: Message) {
   const content = message.content;
 
@@ -185,8 +205,59 @@ function renderMessageContent(message: Message) {
     return <Text color={COLORS.text} wrap="wrap">{trimmed}</Text>;
   }
 
-  const trimmed = content.length > 50000 ? content.slice(0, 50000) + '\n… [truncated]' : content;
-  return <Text color={COLORS.text} wrap="wrap">{trimmed}</Text>;
+  // Parse crew sections: **Name** (@callsign): content
+  const segmentPattern = /\n\n---\n\n(\*\*([^*]+)\*\*\s*\(@(\w+)\):\s*)/;
+  const segments: Array<{ type: 'normal' | 'crew'; text: string; name?: string; callsign?: string }> = [];
+  let cursor = 0;
+  let match;
+
+  while ((match = segmentPattern.exec(content.slice(cursor))) !== null) {
+    const matchStart = cursor + match.index;
+    // Add text before the match
+    if (matchStart > cursor) {
+      segments.push({ type: 'normal', text: content.slice(cursor, matchStart) });
+    }
+    // Determine the content after the header — find the next separator or end
+    const headerEnd = matchStart + match[0].length;
+    const nextSep = content.indexOf('\n\n---\n\n', headerEnd);
+    const crewContent = nextSep >= 0 ? content.slice(headerEnd, nextSep) : content.slice(headerEnd);
+    segments.push({
+      type: 'crew',
+      text: crewContent,
+      name: match[2],
+      callsign: match[3],
+    });
+    cursor = nextSep >= 0 ? nextSep : headerEnd + crewContent.length;
+  }
+
+  // If no crew segments detected, render as normal text
+  if (segments.length === 0) {
+    const trimmed = content.length > 50000 ? content.slice(0, 50000) + '\n… [truncated]' : content;
+    return <Text color={COLORS.text} wrap="wrap">{trimmed}</Text>;
+  }
+
+  // Add trailing normal text
+  if (cursor < content.length) {
+    segments.push({ type: 'normal', text: content.slice(cursor) });
+  }
+
+  return (
+    <Box flexDirection="column">
+      {segments.map((seg, i) => {
+        if (seg.type === 'crew' && seg.name && seg.callsign) {
+          const color = getCrewColor(seg.callsign);
+          return (
+            <Box key={i} flexDirection="column">
+              <Text color={color} bold>◆ {seg.name} (@{seg.callsign})</Text>
+              <Text color={color} wrap="wrap">{seg.text}</Text>
+            </Box>
+          );
+        }
+        const trimmed = seg.text.length > 50000 ? seg.text.slice(0, 50000) + '\n… [truncated]' : seg.text;
+        return <Text key={i} color={COLORS.text} wrap="wrap">{trimmed}</Text>;
+      })}
+    </Box>
+  );
 }
 
 const MessageHeader: FC<{ role: MessageRole; timestamp?: string; elapsed?: number; tokenCost?: number }> = ({ role, timestamp, elapsed, tokenCost }) => {

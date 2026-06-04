@@ -3,13 +3,12 @@ import { Box, Text } from 'ink';
 import { COLORS } from '../../theme/colors.js';
 
 interface ProgressRailProps {
-  currentStage: number; // 0=splash, 1=stage1, 2=stage2, 3=stage3, 4=launch
+  currentStage: number; // 0=splash, 1=stage1, 2=stage2, 3=launch
 }
 
 const STAGES = [
   { key: 'core', label: 'CORE' },
   { key: 'crew', label: 'CREW' },
-  { key: 'comms', label: 'COMMS' },
   { key: 'launch', label: 'LAUNCH' },
 ];
 
