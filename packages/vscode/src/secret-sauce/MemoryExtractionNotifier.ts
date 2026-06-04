@@ -121,7 +121,7 @@ export class MemoryExtractionNotifier {
     if (isGlobal) {
       filePath = join(sauceDir, 'global', 'memories.json');
     } else {
-      const crewId = this.secretSauce!.crew.getActiveId();
+      const crewId = this.secretSauce!.crew.getActiveId()!;
       filePath = join(sauceDir, 'crews', crewId, 'memories.json');
     }
 

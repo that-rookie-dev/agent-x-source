@@ -101,7 +101,7 @@ export class MemoryTreeProvider implements vscode.TreeDataProvider<MemoryTreeIte
       children: globalMemories.map((m) => this.toTreeItem(m, 'global')),
     });
 
-    const activeCrew = this.secretSauce.crew.getActive();
+    const activeCrew = this.secretSauce.crew.getActive()!;
     groups.push({
       kind: 'group-header',
       label: `${activeCrew.name} Memories (${crewMemories.length})`,

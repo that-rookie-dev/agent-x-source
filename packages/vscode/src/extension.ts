@@ -425,7 +425,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const crewMemories = agent.sauce.memories.getCrewMemories(100);
       const exportData = {
         exportedAt: new Date().toISOString(),
-        crewName: agent.sauce.crew.getActive().name,
+        crewName: agent.sauce.crew.getActive()!.name,
         global: globalMemories,
         crew: crewMemories,
         total: globalMemories.length + crewMemories.length,

@@ -171,7 +171,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     }
   }
 
-  const activeCrew = eng.crewManager.getActive();
+  const activeCrew = eng.crewManager.getActive()!;
 
   let session;
   if (sessionId) {
@@ -246,7 +246,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       bridge.setAgentFactory(async () => {
         const userCfg = eng.configManager.load();
         const userProvider = userCfg.provider.activeProvider as ProviderId;
-        const userCrew = eng.crewManager.getActive();
+        const userCrew = eng.crewManager.getActive()!;
         const userSession = eng.sessionManager.createSession(
           userProvider,
           userCfg.provider.activeModel,
@@ -282,7 +282,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       });
       bridge.setAgentFactory((_userId: string) => {
         const userCfg = eng.configManager.load();
-        const userCrew = eng.crewManager.getActive();
+        const userCrew = eng.crewManager.getActive()!;
         const userSession = eng.sessionManager.createSession(
           userCfg.provider.activeProvider,
           userCfg.provider.activeModel,

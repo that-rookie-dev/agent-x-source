@@ -1401,7 +1401,7 @@ app.post('/api/discord/start', async (req, res) => {
     bridge.setAgentFactory(async () => {
       const userCfg = eng.configManager.load();
       const userProvider = userCfg.provider.activeProvider as ProviderId;
-      const userCrew = eng.crewManager.getActive();
+      const userCrew = eng.crewManager.getActive()!;
       const userSession = eng.sessionManager.createSession(
         userProvider,
         userCfg.provider.activeModel,
@@ -1469,7 +1469,7 @@ app.post('/api/slack/start', async (req, res) => {
     const bridge = new SlackBridge({ botToken, appToken });
     bridge.setAgentFactory((_userId) => {
       const cfg = eng.configManager.load();
-      const activeCrew = eng.crewManager.getActive();
+      const activeCrew = eng.crewManager.getActive()!;
       const session = eng.sessionManager.createSession(
         cfg.provider.activeProvider,
         cfg.provider.activeModel,
@@ -1558,7 +1558,7 @@ app.post('/api/email/start', async (req, res) => {
 
     // Start the real bridge
     const cfg = eng.configManager.load();
-    const activeCrew = eng.crewManager.getActive();
+    const activeCrew = eng.crewManager.getActive()!;
     const bridge = new EmailBridge();
     bridge.setAgentDeps({
       config: cfg,
