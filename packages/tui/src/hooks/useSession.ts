@@ -217,7 +217,15 @@ export function useSession(
         const msgCost = currentCost - prevCostRef.current;
         prevCostRef.current = currentCost;
         setMessages((prev) => {
-          if (prev.some((m) => m.id === event.message.id)) return prev;
+          const msgId = event.message?.id;
+          if (msgId) {
+            const idx = prev.findIndex((m) => m.id === msgId);
+            if (idx >= 0) {
+              const updated = [...prev];
+              updated[idx] = { ...updated[idx], ...event.message, elapsed: event.elapsed, tokenCost: msgCost };
+              return updated;
+            }
+          }
           return [...prev, { ...event.message, elapsed: event.elapsed, tokenCost: msgCost }];
         });
         latestContentRef.current = '';
@@ -406,7 +414,7 @@ export function useSession(
           try {
             const data = JSON.parse(event.data) as Record<string, unknown>;
             if (data.type === 'engine_event') {
-              handleEngineEvent(data as unknown as EngineEvent);
+              handleEngineEvent(data.data as unknown as EngineEvent);
             }
           } catch { /* ignore */ }
         };
@@ -593,6 +601,7 @@ export function useSession(
           } else if (result.action === 'reset_provider') {
             const configManager = new ConfigManager();
             configManager.reset();
+            process.stderr.write('\x1b[?25h\x1b[?1049l\x1b[2J\x1b[H');
             process.exit(0);
           } else if (result.action === 'switch_crew') {
             if (onCrewSwitch) {
@@ -728,8 +737,8 @@ export function useSession(
               }]);
             }
           } else if (result.action === 'exit') {
-            // Clear terminal and reset cursor before exiting
-            process.stdout.write('\x1b[2J\x1b[H');
+            // Restore terminal: show cursor, exit alt screen, clear to main, cursor home
+            process.stderr.write('\x1b[?25h\x1b[?1049l\x1b[2J\x1b[H');
             process.exit(0);
           } else if (result.action === 'telegram_start') {
             void (async () => {
@@ -878,7 +887,10 @@ export function useSession(
       }
     }
 
-    if (!isDaemon && agentRef.current?.processing) return;
+    if (!isDaemon && agentRef.current?.processing) {
+      setError('Agent is still processing previous message. Please wait.');
+      return;
+    }
     setError(null);
     setErrorActions([]);
     lastUserMessageRef.current = content;
@@ -886,7 +898,9 @@ export function useSession(
     if (isDaemon) {
       sendWsRef.current({ type: 'chat_message', text: content });
     } else {
-      void agentRef.current?.sendMessage(content).catch(() => {});
+      void agentRef.current?.sendMessage(content).catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err));
+      });
     }
   }, [sessionId, daemonMode]);
 

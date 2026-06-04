@@ -368,6 +368,7 @@ export interface ModelInfo {
 export interface Crew {
   id: string;
   name: string;
+  callsign: string;
   systemPrompt: string;
   tone?: string;
   isDefault?: boolean;
@@ -377,6 +378,7 @@ export interface Crew {
 
 export interface CrewInput {
   name: string;
+  callsign: string;
   systemPrompt: string;
   tone?: string;
 }

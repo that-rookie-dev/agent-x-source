@@ -12,7 +12,7 @@ import type {
   PlanStep,
   ToolResult,
 } from '@agentx/shared';
-import { generateMessageId, getLogger, resolveSpaceError } from '@agentx/shared';
+import { generateMessageId, getLogger, resolveSpaceError, CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
@@ -182,6 +182,7 @@ export class Agent {
   private crewOrchestrator: CrewOrchestrator | null = null;
   private maxSubAgents = 5;
   private enabledCrewSessionIds: Set<string> = new Set();
+  private crewAutoAllowSessions: Set<string> = new Set();
 
   setTelegramConnected(connected: boolean, chatId?: number | null): void {
     this._telegramConnected = connected;
@@ -962,7 +963,8 @@ Return ONLY valid JSON, no other text.`;
       if (mentionedMember) {
         this.emit({ type: 'loading_start', stage: 'crew_routing' });
         try {
-          const result = await this.crewOrchestrator.processMessage(cleanContent, this.secretSauce.crew.getSystemPrompt());
+          const crewPrompt = this.secretSauce.crew.getSystemPrompt() ?? 'You are a capable AI assistant.';
+          const result = await this.crewOrchestrator.processMessage(cleanContent, crewPrompt);
           const responseContent = result.synthesized ?? result.responses.map((r) => `**${r.member}:** ${r.content}`).join('\n\n');
           const assistantMessage: Message = {
             id: generateMessageId(),
@@ -1182,7 +1184,10 @@ Return ONLY valid JSON, no other text.`;
       if (!(await this.checkConnectivity())) {
         throw new Error('Cannot reach LLM provider. Check your internet connection.');
       }
-      const assistantMessage = await this.runCompletionLoop(startTime);
+      let assistantMessage = await this.runCompletionLoop(startTime);
+
+      // Auto-delegate to crew members if relevant (Agent-X orchestration)
+      assistantMessage = await this.considerCrewDelegation(cleanContent, assistantMessage, startTime);
 
       // Extract and persist memories (non-blocking)
       this.extractMemories(content, assistantMessage.content);
@@ -1573,7 +1578,7 @@ Return ONLY valid JSON, no other text.`;
         if (enabledMembers.length === 0) return 'No additional crew members enabled in this session.';
         const desc = enabledMembers.map((m) => {
           const exp = m.expertise.length > 0 ? m.expertise.join(', ') : 'general';
-          return `- **${m.crew.name}** (${m.crew.id}): ${exp}`;
+          return `- **${m.crew.name}** (@${m.crew.callsign}): ${exp}`;
         }).join('\n');
         return `You are Agent-X, the master orchestrator. The following crew members are available in this session:\n\n${desc}\n\n**Group Chat Rules:**\n- Users can @mention a specific crew member to get their expertise\n- If no crew is mentioned, you (Agent-X) respond as the primary assistant\n- You can delegate to crew members when their expertise is relevant\n- Crew members respond with their unique personalities and knowledge\n- Maintain context across the conversation - all participants see the full history`;
       })(),
@@ -2033,9 +2038,10 @@ Only include specialists that are actually needed for this task.`;
   get skillGeneratorInstance(): SkillGenerator { return this.skillGenerator; }
   get reflectionLoopInstance(): ReflectionLoop { return this.reflectionLoop; }
 
-  private emit(event: EngineEvent): void {
+  private emit(event: EngineEvent, isUpdate?: boolean): void {
     // Guard against duplicate message_received — only first one wins per turn
-    if (event.type === 'message_received') {
+    // Pass isUpdate=true to allow re-emitting an updated message (e.g. crew delegation)
+    if (event.type === 'message_received' && !isUpdate) {
       if (this._turnMessageEmitted) return;
       this._turnMessageEmitted = true;
     }
@@ -2345,6 +2351,115 @@ Only include specialists that are actually needed for this task.`;
     this.rebuildSystemPrompt();
   }
 
+  /**
+   * Auto-delegation: after Agent-X responds, check if any enabled crew member's
+   * expertise matches the user's message. If relevant members found, ask the
+   * user for permission (unless auto-allow is on for this session), then
+   * route via crew orchestrator and append responses with attribution.
+   */
+  private async considerCrewDelegation(userContent: string, assistantMessage: Message, startTime: number): Promise<Message> {
+    if (!this.crewOrchestrator) return assistantMessage;
+    const members = this.crewOrchestrator.getMembers();
+    const enabledMembers = members.filter((m) => this.enabledCrewSessionIds.has(m.crew.id));
+    if (enabledMembers.length === 0) return assistantMessage;
+
+    const lowerContent = userContent.toLowerCase();
+    const relevant = enabledMembers.filter((m) => {
+      const kw = m.expertise.length > 0 ? m.expertise : this.fallbackKeywords(m.crew.systemPrompt);
+      return kw.some((k) => lowerContent.includes(k.toLowerCase()));
+    });
+    if (relevant.length === 0) return assistantMessage;
+
+    // Skip delegation for short casual messages with few keyword matches
+    const totalMatches = relevant.reduce((sum, m) => {
+      const kw = m.expertise.length > 0 ? m.expertise : this.fallbackKeywords(m.crew.systemPrompt);
+      return sum + kw.filter((k) => lowerContent.includes(k.toLowerCase())).length;
+    }, 0);
+    if (totalMatches < 2 && userContent.length < 60) return assistantMessage;
+
+    // ─── Permission gate ───
+    // Check if this session has auto-allow enabled
+    if (!this.crewAutoAllowSessions.has(this.sessionId)) {
+      // Build suggestion message
+      const suggestionLines = relevant.map(
+        (m) => `  - **${m.crew.name}** (@${m.crew.callsign}): ${m.expertise.join(', ') || 'general'}`,
+      );
+      const question = `**[CREW DELEGATION]**\n\nAgent-X can involve these crew members for this task:\n${suggestionLines.join('\n')}\n\nReply with: names to involve (comma-separated), \`all\`, \`none\`, or \`auto\` (don't ask again this session)`;
+
+      this.emit({ type: 'clarification_required', question, options: ['all', 'none', 'auto'], allowFreeform: true });
+      let response = '';
+      try {
+        response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
+      } finally {
+        this.clarificationResolve = null;
+      }
+
+      const trimmed = response.trim().toLowerCase();
+
+      if (!trimmed || trimmed === 'none') {
+        getLogger().info('CREW_AUTO', 'User declined crew delegation');
+        return assistantMessage;
+      }
+
+      if (trimmed === 'auto') {
+        this.crewAutoAllowSessions.add(this.sessionId);
+        getLogger().info('CREW_AUTO', 'Auto-allow enabled for this session');
+        // Fall through to delegate all suggested
+      } else if (trimmed !== 'all') {
+        // Parse comma-separated names/callsigns
+        const requested = trimmed.split(',').map((s) => s.trim().toLowerCase().replace(/^@/, ''));
+        const filtered = relevant.filter((m) =>
+          requested.some(
+            (r) => m.crew.callsign.toLowerCase() === r || m.crew.name.toLowerCase() === r || m.crew.id.toLowerCase() === r,
+          ),
+        );
+        if (filtered.length === 0) {
+          getLogger().info('CREW_AUTO', 'User declined crew delegation (no matching names)');
+          return assistantMessage;
+        }
+        // Replace relevant with filtered set
+        relevant.length = 0;
+        relevant.push(...filtered);
+      }
+    } else {
+      getLogger().info('CREW_AUTO', 'Auto-allow active for this session, delegating automatically');
+    }
+
+    // ─── Execute delegation ───
+    getLogger().info('CREW_AUTO', `Delegating to ${relevant.length} crew member(s): ${relevant.map((r) => r.crew.name).join(', ')}`);
+
+    try {
+      const crewPrompt = this.secretSauce.crew.getSystemPrompt() ?? 'You are a capable AI assistant.';
+      const result = await this.crewOrchestrator.processMessage(userContent, crewPrompt);
+      if (result.responses.length > 0) {
+        const crewSections = result.responses.map((r) => {
+          const member = members.find((m) => m.crew.name === r.member);
+          const callsign = member?.crew.callsign ?? r.member.toLowerCase().replace(/\s+/g, '');
+          return `\n\n---\n\n**${r.member}** (@${callsign}): ${r.content}`;
+        }).join('');
+
+        const newContent = assistantMessage.content + crewSections;
+        const updatedMessage: Message = { ...assistantMessage, content: newContent };
+
+        // Update conversation history
+        const msgIdx = this.messages.findLastIndex((m) => m.role === 'assistant');
+        if (msgIdx >= 0) this.messages[msgIdx] = { role: 'assistant', content: newContent };
+
+        this.emit({ type: 'loading_end' });
+
+        // Re-emit with updated content (bypass duplicate guard with isUpdate=true)
+        this.emit({ type: 'message_received', message: updatedMessage, elapsed: Date.now() - startTime }, true);
+
+        return updatedMessage;
+      }
+      this.emit({ type: 'loading_end' });
+    } catch (err) {
+      this.emit({ type: 'loading_end' });
+      getLogger().warn('CREW_AUTO', `Delegation failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return assistantMessage;
+  }
+
   getMaxSubAgents(): number {
     return this.maxSubAgents;
   }
@@ -2353,12 +2468,22 @@ Only include specialists that are actually needed for this task.`;
     this.maxSubAgents = Math.max(1, Math.min(20, limit));
   }
 
+  /**
+   * Fallback keyword extraction for crew members with empty expertise arrays.
+   */
+  private fallbackKeywords(systemPrompt: string): string[] {
+    const lower = systemPrompt.toLowerCase();
+    return CREW_DOMAIN_KEYWORDS.filter((kw) => lower.includes(kw));
+  }
+
   private detectAtMention(content: string): string | null {
     const match = content.match(/@(\w+)/);
     if (!match) return null;
     const mentioned = match[1]!.toLowerCase();
     const members = this.getCrewMembers();
-    const found = members.find((m) => m.crew.name.toLowerCase() === mentioned || m.crew.id.toLowerCase() === mentioned);
+    const found = members.find(
+      (m) => m.crew.callsign.toLowerCase() === mentioned || m.crew.name.toLowerCase() === mentioned || m.crew.id.toLowerCase() === mentioned
+    );
     return found?.crew.id ?? null;
   }
 

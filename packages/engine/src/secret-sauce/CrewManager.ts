@@ -5,20 +5,9 @@ import { encrypt, decrypt, getLogger } from '@agentx/shared';
 import type { EncryptedData } from '@agentx/shared';
 import { getSecretSauceDir } from '../config/paths.js';
 
-const BOOTSTRAP_CREW: Crew = {
-  id: 'default',
-  name: 'Default',
-  systemPrompt: 'You are a highly capable AI assistant. Be direct, concise, and helpful.',
-  isDefault: true,
-  enabled: true,
-  expertise: ['general'],
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-};
-
 export class CrewManager {
   private crews: Crew[] = [];
-  private activeCrewId: string = 'default';
+  private activeCrewId: string | null = null;
   private secretSauceDir: string;
   private dek: Buffer | null = null;
 
@@ -46,9 +35,9 @@ export class CrewManager {
         const rawParsed = JSON.parse(raw);
         if (rawParsed.__enc === true) {
           if (!this.dek) {
-            getLogger().warn('CREW_MGR', 'Encrypted crews.json found but no DEK set. Showing bootstrap crew only. Call setDEK() to unlock.');
-            this.crews = [BOOTSTRAP_CREW];
-            this.activeCrewId = 'default';
+            getLogger().warn('CREW_MGR', 'Encrypted crews.json found but no DEK set. Call setDEK() to unlock.');
+            this.crews = [];
+            this.activeCrewId = null;
             return;
           }
           data = decrypt(rawParsed as EncryptedData, this.dek);
@@ -56,10 +45,11 @@ export class CrewManager {
           data = raw;
         }
 
-        const parsed = (typeof data === 'string' ? JSON.parse(data) : data) as { crews: Array<Record<string, unknown>>; activeId: string };
+        const parsed = (typeof data === 'string' ? JSON.parse(data) : data) as { crews: Array<Record<string, unknown>>; activeId: string | null };
         this.crews = parsed.crews.map((p) => ({
           id: p['id'] as string,
           name: p['name'] as string,
+          callsign: (p['callsign'] as string) ?? (p['id'] as string),
           systemPrompt: (p['systemPrompt'] as string) ?? '',
           emotion: (p['emotion'] as CrewEmotion | undefined),
           isDefault: (p['isDefault'] as boolean) ?? false,
@@ -70,18 +60,15 @@ export class CrewManager {
           createdAt: (p['createdAt'] as string) ?? new Date().toISOString(),
           updatedAt: (p['updatedAt'] as string) ?? new Date().toISOString(),
         }));
-        this.activeCrewId = parsed.activeId;
-        if (this.crews.length === 0) {
-          this.crews = [BOOTSTRAP_CREW];
-          this.activeCrewId = 'default';
-        }
+        this.activeCrewId = parsed.activeId ?? null;
       } catch {
-        this.crews = [BOOTSTRAP_CREW];
+        this.crews = [];
+        this.activeCrewId = null;
         this.save();
       }
     } else {
-      this.crews = [BOOTSTRAP_CREW];
-      this.save();
+      this.crews = [];
+      this.activeCrewId = null;
     }
   }
 
@@ -98,11 +85,12 @@ export class CrewManager {
     }
   }
 
-  getActive(): Crew {
-    return this.crews.find((p) => p.id === this.activeCrewId) ?? this.crews[0]!;
+  getActive(): Crew | null {
+    if (!this.activeCrewId || this.crews.length === 0) return null;
+    return this.crews.find((p) => p.id === this.activeCrewId) ?? null;
   }
 
-  getActiveId(): string {
+  getActiveId(): string | null {
     return this.activeCrewId;
   }
 
@@ -138,21 +126,28 @@ export class CrewManager {
   disable(id: string): boolean {
     const crew = this.crews.find((p) => p.id === id);
     if (!crew) return false;
-    if (crew.isDefault) return false;
     crew.enabled = false;
     crew.updatedAt = new Date().toISOString();
     if (this.activeCrewId === id) {
       const fallback = this.crews.find((c) => c.enabled && c.id !== id);
-      if (fallback) this.activeCrewId = fallback.id;
+      this.activeCrewId = fallback?.id ?? null;
     }
     this.save();
     return true;
   }
 
   create(input: CrewCreateInput): Crew {
+    const callsign = (input.callsign || input.name).replace(/\s+/g, '').toLowerCase();
+    if (!/^\S+$/.test(callsign)) {
+      throw new Error('Callsign must not contain spaces');
+    }
+    if (this.crews.some((c) => c.callsign === callsign)) {
+      throw new Error(`Callsign "${callsign}" is already taken`);
+    }
     const crew: Crew = {
       id: input.id,
       name: input.name,
+      callsign,
       systemPrompt: input.systemPrompt,
       emotion: input.emotion,
       isDefault: input.isDefault ?? false,
@@ -172,7 +167,6 @@ export class CrewManager {
 
   delete(id: string): boolean {
     if (id === this.activeCrewId) return false;
-    if (this.crews.length <= 1) return false;
     const idx = this.crews.findIndex((p) => p.id === id);
     if (idx < 0) return false;
     this.crews.splice(idx, 1);
@@ -180,11 +174,17 @@ export class CrewManager {
     return true;
   }
 
-  update(id: string, updates: { name?: string; systemPrompt?: string; emotion?: CrewEmotion; expertise?: string[]; traits?: string[]; toolPreferences?: { enabled?: string[]; disabled?: string[] }; protocol?: CollaborationProtocol; quotas?: CrewResourceQuota }): Crew | null {
+  update(id: string, updates: { name?: string; callsign?: string; systemPrompt?: string; emotion?: CrewEmotion; expertise?: string[]; traits?: string[]; toolPreferences?: { enabled?: string[]; disabled?: string[] }; protocol?: CollaborationProtocol; quotas?: CrewResourceQuota }): Crew | null {
     const idx = this.crews.findIndex((p) => p.id === id);
     if (idx < 0) return null;
     const crew = this.crews[idx]!;
     if (updates.name !== undefined) crew.name = updates.name;
+    if (updates.callsign !== undefined) {
+      const cs = updates.callsign.replace(/\s+/g, '').toLowerCase();
+      if (!/^\S+$/.test(cs)) throw new Error('Callsign must not contain spaces');
+      if (this.crews.some((c) => c.callsign === cs && c.id !== id)) throw new Error(`Callsign "${cs}" is already taken`);
+      crew.callsign = cs;
+    }
     if (updates.systemPrompt !== undefined) crew.systemPrompt = updates.systemPrompt;
     if (updates.emotion !== undefined) crew.emotion = updates.emotion;
     if (updates.expertise !== undefined) crew.expertise = updates.expertise;
@@ -198,18 +198,18 @@ export class CrewManager {
     return crew;
   }
 
-  getSystemPrompt(): string {
+  getSystemPrompt(): string | null {
     const crew = this.getActive();
-    return crew.systemPrompt;
+    return crew?.systemPrompt ?? null;
   }
 
   getMultiCrewSystemPrompt(): string {
     const enabledCrews = this.listEnabled();
     if (enabledCrews.length === 0) return '';
-    
+
     const crewDescriptions = enabledCrews.map((c) => {
       const expertise = c.expertise?.join(', ') || 'general';
-      return `- **${c.name}** (${c.id}): ${expertise}`;
+      return `- **${c.name}** (@${c.callsign}): ${expertise}`;
     }).join('\n');
 
     return `You are Agent-X, the master orchestrator. The following crew members are available in this session:

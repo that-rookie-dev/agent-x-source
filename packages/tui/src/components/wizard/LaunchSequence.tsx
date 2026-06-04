@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import { COLORS } from '../../theme/colors.js';
 
 interface LaunchSequenceProps {
-  crewName: string;
+  crewName?: string;
   telegramConfigured: boolean;
   onComplete: () => void;
 }

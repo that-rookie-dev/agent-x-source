@@ -11,9 +11,9 @@ import {
   PluginRegistry,
   MCPBridge,
   ACPBridge,
-  CrewManager,
   PostgresStorageAdapter,
   TelegramBridge,
+  CrewManager,
 } from '@agentx/engine';
 import type { AgentXConfig, Crew } from '@agentx/shared';
 import { authManager, getLogger } from '@agentx/shared';
@@ -164,7 +164,6 @@ export const App: FC<AppProps> = ({
     const isSetupDone = configManager.isSetupComplete();
 
     if (restoreSessionId) {
-      // Restore crew from session
       try {
         const store = new SessionStore();
         const sess = store.getSession(restoreSessionId);
@@ -172,10 +171,9 @@ export const App: FC<AppProps> = ({
           const pm = new CrewManager();
           pm.setDEK(session.dek);
           const crewId = sess['crew_id'] as string | null;
-          const crew = crewId ? pm.get(crewId) ?? pm.getActive() : pm.getActive();
-          setActiveCrew(crew);
+          if (crewId) setActiveCrew(pm.get(crewId) ?? null);
         }
-      } catch { /* fallback */ }
+      } catch { /* ignore */ }
     }
 
     if (!isSetupDone) {
@@ -184,13 +182,11 @@ export const App: FC<AppProps> = ({
       try {
         const cfg = configManager.load();
         setConfig(cfg);
-        if (!activeCrew) {
-          const pm = new CrewManager();
-          pm.setDEK(session.dek);
-          setActiveCrew(pm.getActive());
-          setCrewList(pm.list().filter((c) => !c.isDefault));
-        }
-        setState('crew');
+        const pm = new CrewManager();
+        pm.setDEK(session.dek);
+        setActiveCrew(pm.getActive());
+        setCrewList(pm.list());
+        setState('main');
       } catch (e) {
         setAuthError(e instanceof Error ? e.message : 'Failed to load config');
         setState('setup');
@@ -200,19 +196,11 @@ export const App: FC<AppProps> = ({
 
   // ─── Setup / Main Flow ──────────────────────────────────────────────
 
-  const handleMissionComplete = useCallback((newConfig: AgentXConfig, crew: Crew) => {
+  const handleMissionComplete = useCallback((newConfig: AgentXConfig) => {
     process.stdout.write('\x1Bc');
     setConfig(newConfig);
-    setActiveCrew(crew);
-    // Refresh crew list
-    try {
-      const pm = new CrewManager();
-      const session = authToken ? authManager.validateSession(authToken) : null;
-      if (session?.dek) pm.setDEK(session.dek);
-      setCrewList(pm.list().filter((c) => !c.isDefault));
-    } catch { /* ignore */ }
     setState('main');
-  }, [authToken]);
+  }, []);
 
   const handleSetupCancel = useCallback(() => {
     process.exit(0);
@@ -220,15 +208,9 @@ export const App: FC<AppProps> = ({
 
   const handleCrewSelect = useCallback((crew: Crew) => {
     setActiveCrew(crew);
-    // Refresh crew list
-    try {
-      const pm = new CrewManager();
-      const session = authToken ? authManager.validateSession(authToken) : null;
-      if (session?.dek) pm.setDEK(session.dek);
-      setCrewList(pm.list().filter((c) => !c.isDefault));
-    } catch { /* ignore */ }
+    setCrewList([]);
     setState('main');
-  }, [authToken]);
+  }, []);
 
   const handleCrewSwitch = useCallback(() => {
     setState('crew');
@@ -281,11 +263,11 @@ export const App: FC<AppProps> = ({
     );
   }
 
-  if (state === 'main' && config && activeCrew) {
+  if (state === 'main' && config) {
     return (
       <WelcomeScreen
         config={config}
-        crew={activeCrew}
+        crew={activeCrew ?? undefined}
         crewList={crewList}
         restoreSessionId={restoreSessionId}
         recovered={recovered}

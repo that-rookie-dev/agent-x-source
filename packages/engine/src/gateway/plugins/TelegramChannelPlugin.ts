@@ -239,9 +239,10 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         const sub = args[0];
         const pm = new CrewManager();
         if (!sub || sub === 'list') {
-          const crews = pm.list().filter((p) => !p.isDefault);
+          const crews = pm.list();
+          if (crews.length === 0) return '📋 No crews configured. Use /crew create';
           const activeId = pm.getActiveId();
-          const lines = crews.map((p) => `${p.id === activeId ? '● ' : '○ '}${p.name}`);
+          const lines = crews.map((p) => `${activeId !== null && p.id === activeId ? '● ' : '○ '}${p.name}`);
           return `📋 *Crew Members:*\n${lines.join('\n')}\n\nUse /crew switch <name> to change`;
         }
         if (sub === 'switch') {
@@ -256,7 +257,8 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           return `✅ Switched to crew: ${target.name}\nConversation reset with new persona.`;
         }
         if (sub === 'current') {
-          return `📌 Current crew: ${pm.getActive().name}`;
+          const active = pm.getActive();
+          return active ? `📌 Current crew: ${active.name}` : '📌 No active crew.';
         }
         return '📋 *Crew commands:*\n/crew list\n/crew switch <name>\n/crew current';
       }

@@ -1652,6 +1652,112 @@ function ThinkingIndicator() {
 
 // ─── Message Bubble ───
 
+// ─── Crew section rendering helpers ───
+const CREW_PALETTE_WEB = [
+  '#5B9BD5', '#70AD47', '#ED7D31', '#9B59B6',
+  '#E74C3C', '#1ABC9C', '#F39C12', '#3498DB',
+];
+
+function getWebCrewColor(callsign: string): string {
+  let hash = 0;
+  for (let i = 0; i < callsign.length; i++) {
+    hash = ((hash << 5) - hash) + callsign.charCodeAt(i);
+    hash |= 0;
+  }
+  return CREW_PALETTE_WEB[Math.abs(hash) % CREW_PALETTE_WEB.length];
+}
+
+interface ContentSegment {
+  type: 'normal' | 'crew';
+  text: string;
+  name?: string;
+  callsign?: string;
+}
+
+function parseWebContentSegments(content: string): ContentSegment[] {
+  const segments: ContentSegment[] = [];
+  const headerRegex = /\n\n---\n\n(\*\*([^*]+)\*\*\s*\(@(\w+)\):\s*)/g;
+  let lastEnd = 0;
+  let match;
+
+  while ((match = headerRegex.exec(content)) !== null) {
+    if (match.index > lastEnd) {
+      segments.push({ type: 'normal', text: content.slice(lastEnd, match.index) });
+    }
+    const headerEnd = match.index + match[0].length;
+    const nextSep = content.indexOf('\n\n---\n\n', headerEnd);
+    const crewText = nextSep >= 0 ? content.slice(headerEnd, nextSep) : content.slice(headerEnd);
+    segments.push({ type: 'crew', text: crewText, name: match[2], callsign: match[3] });
+    lastEnd = nextSep >= 0 ? nextSep : headerEnd + crewText.length;
+  }
+
+  if (lastEnd < content.length) {
+    segments.push({ type: 'normal', text: content.slice(lastEnd) });
+  }
+
+  return segments;
+}
+
+const MARKDOWN_BASE_SX = {
+  '& p': { m: 0, mb: 0.5, fontSize: '0.8rem', lineHeight: 1.6 },
+  '& p:last-child': { mb: 0 },
+  '& pre': { m: 0 },
+  '& code': { fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem' },
+  '& ul, & ol': { pl: 2.5, my: 0.5, fontSize: '0.8rem' },
+  '& li': { mb: 0.25 },
+  '& blockquote': { borderLeft: `3px solid ${colors.border.strong}`, pl: 1.5, ml: 0, my: 0.5, color: colors.text.secondary },
+  '& a': { color: colors.accent.blue, textDecoration: 'none', '&:hover': { textDecoration: 'underline' } },
+};
+
+const MARKDOWN_COMPONENTS = {
+  code({ className, children, ...props }: any) {
+    const match = /language-(\w+)/.exec(className ?? '');
+    const code = String(children).replace(/\n$/, '');
+    if (match) {
+      return (<SyntaxHighlighter style={oneDark} language={match[1]} PreTag="div" customStyle={{ borderRadius: 6, fontSize: '0.7rem', margin: '6px 0', padding: '10px 12px' }}>{code}</SyntaxHighlighter>);
+    }
+    return <code className={className} style={{ background: colors.bg.tertiary, padding: '1px 5px', borderRadius: 3, fontSize: '0.72rem' }} {...props}>{children}</code>;
+  },
+};
+
+function CrewAwareMarkdown({ content }: { content: string }) {
+  const segments = parseWebContentSegments(content);
+  const hasCrew = segments.some(s => s.type === 'crew');
+
+  if (!hasCrew) {
+    return (
+      <Box sx={{ ...MARKDOWN_BASE_SX, '& p': { ...MARKDOWN_BASE_SX['& p'], color: colors.text.primary } }}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{content}</ReactMarkdown>
+      </Box>
+    );
+  }
+
+  return (
+    <Box>
+      {segments.map((seg, i) => {
+        if (seg.type === 'crew' && seg.name && seg.callsign) {
+          const cc = getWebCrewColor(seg.callsign);
+          return (
+            <Box key={i} sx={{ mt: 1.5 }}>
+              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: cc, mb: 0.25, letterSpacing: 0.3 }}>
+                ◆ {seg.name} (@{seg.callsign})
+              </Typography>
+              <Box sx={{ ...MARKDOWN_BASE_SX, '& p': { ...MARKDOWN_BASE_SX['& p'], color: cc } }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{seg.text}</ReactMarkdown>
+              </Box>
+            </Box>
+          );
+        }
+        return (
+          <Box key={i} sx={{ ...MARKDOWN_BASE_SX, '& p': { ...MARKDOWN_BASE_SX['& p'], color: colors.text.primary } }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{seg.text}</ReactMarkdown>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
 function MessageBubble({ message }: { message: UIMessage }) {
   const isUser = message.role === 'user';
 
@@ -1736,30 +1842,8 @@ function MessageBubble({ message }: { message: UIMessage }) {
           </Box>
         )}
 
-        {/* Message text */}
-        {message.content && (
-          <Box sx={{
-            '& p': { m: 0, mb: 0.5, fontSize: '0.8rem', lineHeight: 1.6, color: colors.text.primary },
-            '& p:last-child': { mb: 0 },
-            '& pre': { m: 0 },
-            '& code': { fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem' },
-            '& ul, & ol': { pl: 2.5, my: 0.5, fontSize: '0.8rem' },
-            '& li': { mb: 0.25 },
-            '& blockquote': { borderLeft: `3px solid ${colors.border.strong}`, pl: 1.5, ml: 0, my: 0.5, color: colors.text.secondary },
-            '& a': { color: colors.accent.blue, textDecoration: 'none', '&:hover': { textDecoration: 'underline' } },
-          }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-              code({ className, children, ...props }) {
-                const match = /language-(\w+)/.exec(className ?? '');
-                const code = String(children).replace(/\n$/, '');
-                if (match) {
-                  return (<SyntaxHighlighter style={oneDark} language={match[1]} PreTag="div" customStyle={{ borderRadius: 6, fontSize: '0.7rem', margin: '6px 0', padding: '10px 12px' }}>{code}</SyntaxHighlighter>);
-                }
-                return <code className={className} style={{ background: colors.bg.tertiary, padding: '1px 5px', borderRadius: 3, fontSize: '0.72rem' }} {...props}>{children}</code>;
-              },
-            }}>{message.content}</ReactMarkdown>
-          </Box>
-        )}
+        {/* Message text (crew-aware) */}
+        {message.content && <CrewAwareMarkdown content={message.content} />}
 
         {/* Streaming dots (empty content) */}
         {message.streaming && !message.content && (
