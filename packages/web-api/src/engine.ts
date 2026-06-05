@@ -171,7 +171,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     }
   }
 
-  const activeCrew = eng.crewManager.getActive()!;
+  const activeCrew = eng.crewManager.getActive();
 
   let session;
   if (sessionId) {
@@ -180,7 +180,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       session = eng.sessionManager.createSession(
         activeProvider,
         cfg.provider.activeModel,
-        activeCrew.id,
+        activeCrew?.id,
         process.cwd(),
       );
     }
@@ -188,7 +188,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     session = eng.sessionManager.createSession(
       activeProvider,
       cfg.provider.activeModel,
-      activeCrew.id,
+      activeCrew?.id,
       process.cwd(),
     );
   }
@@ -196,7 +196,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
   const agent = new Agent({
     config: cfg,
     sessionId: session.id,
-    systemPrompt: activeCrew.systemPrompt,
+    systemPrompt: activeCrew?.systemPrompt ?? '',
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
   });
@@ -246,17 +246,17 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       bridge.setAgentFactory(async () => {
         const userCfg = eng.configManager.load();
         const userProvider = userCfg.provider.activeProvider as ProviderId;
-        const userCrew = eng.crewManager.getActive()!;
+        const userCrew = eng.crewManager.getActive();
         const userSession = eng.sessionManager.createSession(
           userProvider,
           userCfg.provider.activeModel,
-          userCrew.id,
+          userCrew?.id,
           process.cwd(),
         );
         return new Agent({
           config: userCfg,
           sessionId: userSession.id,
-          systemPrompt: userCrew.systemPrompt,
+          systemPrompt: userCrew?.systemPrompt ?? '',
           toolExecutor: eng.toolkit.executor,
           toolRegistry: eng.toolkit.registry,
         });
@@ -282,17 +282,17 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       });
       bridge.setAgentFactory((_userId: string) => {
         const userCfg = eng.configManager.load();
-        const userCrew = eng.crewManager.getActive()!;
+        const userCrew = eng.crewManager.getActive();
         const userSession = eng.sessionManager.createSession(
           userCfg.provider.activeProvider,
           userCfg.provider.activeModel,
-          userCrew.id,
+          userCrew?.id,
           process.cwd(),
         );
         return new Agent({
           config: userCfg,
           sessionId: userSession.id,
-          systemPrompt: userCrew.systemPrompt,
+          systemPrompt: userCrew?.systemPrompt ?? '',
           toolExecutor: eng.toolkit.executor,
           toolRegistry: eng.toolkit.registry,
         });
@@ -315,7 +315,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       const bridge = new EmailBridge();
       bridge.setAgentDeps({
         config: cfg,
-        systemPrompt: activeCrew.systemPrompt,
+        systemPrompt: activeCrew?.systemPrompt ?? '',
         toolExecutor: eng.toolkit.executor,
         toolRegistry: eng.toolkit.registry,
       });
