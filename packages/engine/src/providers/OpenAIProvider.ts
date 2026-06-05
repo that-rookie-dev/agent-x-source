@@ -68,13 +68,6 @@ export class OpenAIProvider implements ProviderInterface {
         capabilities: this.getCapabilities(String(m['id'] ?? '')),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
-        id: m.id,
-        name: m.id,
-        providerId: 'openai',
-        contextWindow: this.getContextWindow(m.id),
-        capabilities: this.getCapabilities(m.id),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async *complete(request: CompletionRequest): AsyncIterable<CompletionChunk> {
