@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useApp } from './store/AppContext';
@@ -11,6 +11,7 @@ import { Console } from './pages/Console';
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { authState } = useApp();
+  const loc = useLocation();
   if (authState === 'loading') {
     return (
       <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -20,7 +21,10 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   }
   if (authState === 'no-root-user') return <Navigate to="/setup" replace />;
   if (authState === 'unauthenticated') return <Navigate to="/login" replace />;
-  if (authState === 'needs-setup') return <Navigate to="/setup/wizard" replace />;
+  if (authState === 'needs-setup') {
+    if (loc.pathname !== '/setup/wizard') return <Navigate to="/setup/wizard" replace />;
+    return <>{children}</>;
+  }
   return <>{children}</>;
 }
 

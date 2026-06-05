@@ -464,13 +464,9 @@ async function main(): Promise<void> {
       if (status.crew) console.log(`  Crew: ${status.crew}`);
       if (status.focusChannel) console.log(`  Focus: ${status.focusChannel}`);
 
-      // Show per-channel status
+      // Show per-channel status (only configured bridges)
       const channels = status.channels ?? [];
       const channelRows: Array<{ id: string; status: string; detail: string }> = [];
-
-      // Chat is always available
-      const chatFocus = channels.find((c) => c.id === 'chat');
-      if (!chatFocus) channels.push({ id: 'chat', enabled: true });
 
       for (const ch of channels) {
         let indicator = '○';
@@ -516,11 +512,13 @@ async function main(): Promise<void> {
         channelRows.push({ id: ch.id, status: `${indicator} ${detail}`, detail: '' });
       }
 
-      console.log('');
-      console.log('  Channels:');
-      const pad = Math.max(...channelRows.map((r) => r.id.length)) + 1;
-      for (const row of channelRows) {
-        console.log(`    ${row.id.padEnd(pad)} ${row.status}`);
+      if (channelRows.length > 0) {
+        console.log('');
+        console.log('  Channels:');
+        const pad = Math.max(...channelRows.map((r) => r.id.length)) + 1;
+        for (const row of channelRows) {
+          console.log(`    ${row.id.padEnd(pad)} ${row.status}`);
+        }
       }
 
       if (status.startedAt) {
