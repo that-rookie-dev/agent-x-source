@@ -57,9 +57,11 @@ export function Sidebar({ active, onNavigate }: Props) {
       bgcolor: colors.bg.secondary,
     }}>
       {/* Brand mark */}
-      <Typography sx={{ fontSize: '0.6rem', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: colors.accent.blue, mb: 2, letterSpacing: '1px' }}>
-        AX
-      </Typography>
+      <Tooltip title="@agentx" placement="right">
+        <Typography sx={{ fontSize: '0.6rem', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: colors.accent.blue, mb: 2, letterSpacing: '1px', cursor: 'default' }}>
+          @ax
+        </Typography>
+      </Tooltip>
 
       {/* Nav items */}
       {NAV_ITEMS.map((item) => (

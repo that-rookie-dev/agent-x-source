@@ -22,6 +22,10 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   }
   if (authState === 'no-root-user') return <Navigate to="/setup" replace />;
   if (authState === 'unauthenticated') return <Navigate to="/login" replace />;
+  if (authState === 'authenticated') {
+    if (loc.pathname.startsWith('/setup')) return <Navigate to="/" replace />;
+    return <>{children}</>;
+  }
   if (authState === 'needs-setup') {
     if (loc.pathname !== '/setup/wizard') return <Navigate to="/setup/wizard" replace />;
     return <>{children}</>;

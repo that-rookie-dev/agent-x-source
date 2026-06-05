@@ -217,7 +217,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [activeCrew, setActiveCrew] = useState('');
 
   // Agent mode & approval
-  const [agentMode, setAgentMode] = useState<AgentMode>('agent');
+  const [agentMode, setAgentMode] = useState<AgentMode>('ask');
   const [approvalType, setApprovalType] = useState<ApprovalType>('default');
 
   // CWD
@@ -806,7 +806,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     { id: 'compact', label: 'Compact session', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/compact') },
     { id: 'undo', label: 'Undo (restore latest checkpoint)', hint: '⌘Z', icon: <ArrowBackIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/undo') },
     { id: 'retry', label: 'Retry last message', icon: <SendIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/retry') },
-    { id: 'yolo', label: `Toggle YOLO mode (now ${approvalType})`, icon: <ShieldAutoIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/yolo') },
     { id: 'export', label: 'Export trajectory (JSON)', icon: <DownloadIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/export') },
     { id: 'goal', label: 'Set Goal Mode objective', icon: <FlagIcon sx={{ fontSize: 14 }} />, run: () => { setInput('/goal '); } },
     { id: 'mode-agent', label: 'Switch mode → Agent', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('agent'); sessionSettings.setMode('agent').catch(() => {}); } },
@@ -1041,27 +1040,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             {currentSessionTitle ?? 'New Session'}
           </Typography>
           <ConnectionHealthDot state={connState} lastEventAt={lastEventAt} />
-          <Tooltip title={approvalType === 'auto' ? 'YOLO mode ON · click to disable' : 'YOLO mode OFF · click to enable full-auto'} arrow>
-            <IconButton
-              size="small"
-              onClick={() => {
-                const next = approvalType === 'auto' ? 'default' : 'auto';
-                setApprovalType(next);
-                sessionSettings.setApproval(next).catch(() => {});
-              }}
-              sx={{
-                color: approvalType === 'auto' ? colors.accent.orange : colors.text.dim,
-                p: 0.5,
-                '&:hover': { color: colors.accent.orange },
-                ...(approvalType === 'auto' ? {
-                  background: 'rgba(255,165,0,0.1)',
-                  border: `1px solid ${colors.accent.orange}`,
-                } : {}),
-              }}
-            >
-              <BoltIcon sx={{ fontSize: 14 }} />
-            </IconButton>
-          </Tooltip>
           <Tooltip title="Search all sessions (⌘F)" arrow>
             <IconButton size="small" onClick={() => setSearchOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.blue } }}>
               <SearchIcon sx={{ fontSize: 14 }} />
@@ -1239,7 +1217,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 value={input}
                 onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Message Agent-X..."
+                placeholder="@agentx — message your AI wingman..."
                 sx={{
                   flex: 1, border: 'none', outline: 'none', resize: 'none',
                   bgcolor: 'transparent', color: colors.text.primary,

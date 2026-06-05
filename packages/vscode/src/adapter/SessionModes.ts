@@ -17,7 +17,7 @@ const MODES: ModeDefinition[] = [
 ];
 
 export class SessionModes implements vscode.Disposable {
-  private mode: SessionMode = 'agent';
+  private mode: SessionMode = 'ask';
   private engine: Agent | null = null;
   private statusBarItem: vscode.StatusBarItem;
   private _onModeChanged = new vscode.EventEmitter<SessionMode>();

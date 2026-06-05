@@ -412,7 +412,7 @@ export function SetupWizard() {
 
       {/* Fixed Bottom Navigation */}
       <Box sx={{ flexShrink: 0, borderTop: `1px solid ${colors.border.default}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
-        <Box sx={{ width: '100%', maxWidth: (step === 0 || step === 2) ? 720 : 480, display: 'flex', justifyContent: step === 0 ? 'flex-end' : step === 5 ? 'center' : 'space-between' }}>
+        <Box sx={{ width: '100%', maxWidth: (step === 0 || step === 2) ? 720 : 480, display: 'flex', justifyContent: step === 0 ? 'flex-end' : step === 4 ? 'center' : 'space-between' }}>
           {step === 1 && (
             <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>
           )}

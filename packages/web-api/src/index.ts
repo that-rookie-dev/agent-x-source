@@ -432,7 +432,7 @@ app.get('/api/cwd', (_req, res) => {
 // Agent mode: 'agent' (full), 'ask' (answer only), 'plan' (plan only)
 // Approval: 'default' (deny-first), 'moderate' (tools allowed), 'auto' (full access)
 const sessionSettings: { mode: 'agent' | 'ask' | 'plan'; approval: 'default' | 'moderate' | 'auto' } = {
-  mode: 'agent',
+  mode: 'ask',
   approval: 'default',
 };
 
@@ -1264,7 +1264,7 @@ app.get('/api/telegram/status', (_req, res) => {
   const eng = getEngine();
   const plugin = eng.pluginRegistry.getPlugin('telegram');
   const configured = !!plugin?.enabled && !!plugin?.config?.['botToken'];
-  res.json({ configured, botToken: configured ? '***configured***' : null });
+  res.json({ configured, connected: configured, botToken: configured ? '***configured***' : null });
 });
 
 // ───── TUI Active Check ─────
