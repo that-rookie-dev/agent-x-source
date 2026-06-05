@@ -1,0 +1,177 @@
+import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
+import Tooltip from '@mui/material/Tooltip';
+
+const BASE = '/api';
+
+async function writeDebugLog(entry: Record<string, unknown>): Promise<void> {
+  try {
+    await fetch(`${BASE}/debug/log`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timestamp: new Date().toISOString(), source: 'web-ui', ...entry }),
+    });
+  } catch { /* best effort */ }
+}
+
+export { writeDebugLog };
+
+interface ErrorBandContextValue {
+  showError: (message: string) => void;
+  clearError: () => void;
+  logDebug: (entry: Record<string, unknown>) => Promise<void>;
+}
+
+const ErrorBandContext = createContext<ErrorBandContextValue | null>(null);
+
+export function useGlobalError(): ErrorBandContextValue {
+  const ctx = useContext(ErrorBandContext);
+  if (!ctx) throw new Error('useGlobalError must be inside ErrorBandProvider');
+  return ctx;
+}
+
+export function ErrorBandProvider({ children }: { children: ReactNode }) {
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  useEffect(() => {
+    const el = textRef.current;
+    if (el) {
+      setIsOverflowing(el.scrollWidth > el.clientWidth);
+    }
+  }, [error]);
+
+  const showError = useCallback((message: string) => {
+    setError(message);
+    setExpanded(false);
+  }, []);
+
+  const clearError = useCallback(() => {
+    setError(null);
+    setExpanded(false);
+  }, []);
+
+  const logDebug = useCallback(async (entry: Record<string, unknown>) => {
+    await writeDebugLog(entry);
+  }, []);
+
+  return (
+    <ErrorBandContext.Provider value={{ showError, clearError, logDebug }}>
+      {children}
+      {error && (
+        <Box
+          onClick={() => setExpanded((e) => !e)}
+          sx={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            bgcolor: '#1a0000',
+            borderBottom: '1px solid #440000',
+            cursor: isOverflowing ? 'pointer' : 'default',
+          }}
+        >
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              px: 2,
+              py: 0.5,
+              minHeight: 28,
+            }}
+          >
+            <Box
+              sx={{
+                flex: 1,
+                overflow: 'hidden',
+              }}
+            >
+              <Typography
+                ref={textRef}
+                sx={{
+                  color: '#ff4444',
+                  fontSize: '0.72rem',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  textAlign: 'left',
+                  whiteSpace: expanded ? 'pre-wrap' : 'nowrap',
+                  overflow: expanded ? 'visible' : 'hidden',
+                  textOverflow: expanded ? 'clip' : 'ellipsis',
+                  lineHeight: expanded ? 1.5 : 1,
+                }}
+              >
+                {error}
+              </Typography>
+            </Box>
+            {isOverflowing && (
+              <Typography
+                sx={{
+                  color: '#ff6666',
+                  fontSize: '0.6rem',
+                  ml: 1,
+                  flexShrink: 0,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  lineHeight: 1,
+                }}
+              >
+                {expanded ? '▲' : '▼'}
+              </Typography>
+            )}
+            <Tooltip title="Copy error + log location" arrow placement="top">
+              <Button
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const logDir = '~/.local/share/agentx/debug-logs/';
+                  const ts = new Date().toISOString();
+                  const text = `[Agent-X Error @ ${ts}]\n${error}\n\nDebug logs: ${logDir}`;
+                  navigator.clipboard.writeText(text).catch(() => {});
+                }}
+                sx={{
+                  minWidth: 20,
+                  height: 20,
+                  p: 0,
+                  ml: 0.5,
+                  color: '#883333',
+                  fontSize: '0.55rem',
+                  flexShrink: 0,
+                  lineHeight: 1,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  opacity: 0.5,
+                  '&:hover': { opacity: 1, color: '#aa5555', bgcolor: 'transparent' },
+                }}
+              >
+                ⎘
+              </Button>
+            </Tooltip>
+            <Button
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                clearError();
+              }}
+              sx={{
+                minWidth: 20,
+                height: 20,
+                p: 0,
+                ml: 0.5,
+                color: '#ff6666',
+                fontSize: '0.65rem',
+                flexShrink: 0,
+                lineHeight: 1,
+                '&:hover': { color: '#ff8888', bgcolor: 'transparent' },
+              }}
+            >
+              ✕
+            </Button>
+          </Box>
+        </Box>
+      )}
+    </ErrorBandContext.Provider>
+  );
+}

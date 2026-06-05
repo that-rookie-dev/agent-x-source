@@ -5,6 +5,7 @@ import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import { auth } from '../api';
 import { useApp } from '../store/AppContext';
+import { useGlobalError } from '../components/ErrorBand';
 import { colors } from '../theme';
 
 export function Login() {
@@ -12,7 +13,7 @@ export function Login() {
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const { showError, clearError } = useGlobalError();
   const [loading, setLoading] = useState(false);
   const [typedText, setTypedText] = useState('');
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -73,7 +74,7 @@ export function Login() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    clearError();
     setLoading(true);
     try {
       const res = await auth.login(username, password);
@@ -81,7 +82,7 @@ export function Login() {
       await initialize();
       navigate('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed');
+      showError(err instanceof Error ? err.message : 'Authentication failed');
     } finally {
       setLoading(false);
     }
@@ -161,20 +162,6 @@ export function Login() {
               auth@agent-x
             </Typography>
           </Box>
-
-          {/* Error */}
-          {error && (
-            <Box sx={{
-              mb: 2, px: 1.5, py: 0.8,
-              border: `1px solid ${colors.accent.red}40`,
-              borderRadius: '3px',
-              bgcolor: colors.accent.red + '10',
-            }}>
-              <Typography sx={{ fontSize: '0.6rem', color: colors.accent.red, fontFamily: "'JetBrains Mono', monospace" }}>
-                ✕ {error}
-              </Typography>
-            </Box>
-          )}
 
           {/* Username field */}
           <Box sx={{ mb: 2 }}>

@@ -2,6 +2,19 @@
 
 const BASE = '/api';
 
+// Debug logger — writes parse errors to ~/.local/share/agentx/debug-logs/
+// so developers can see raw API responses without guessing the data format.
+async function writeDebugLog(entry: Record<string, unknown>): Promise<void> {
+  try {
+    await fetch(`${BASE}/debug/log`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+  } catch { /* best effort */ }
+}
+
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
@@ -14,10 +27,41 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     throw new Error('Unauthorized');
   }
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error((body as { error?: string; message?: string }).message ?? (body as { error?: string }).error ?? `HTTP ${res.status}`);
+    const rawBody = await res.text().catch(() => '');
+    let parsed: Record<string, unknown> = { error: res.statusText };
+    try { parsed = JSON.parse(rawBody) as Record<string, unknown>; } catch { /* not JSON */ }
+    writeDebugLog({
+      type: 'api-error',
+      path,
+      method: opts.method ?? 'GET',
+      status: res.status,
+      body: rawBody.slice(0, 5000),
+    });
+    throw new Error((parsed as { error?: string; message?: string }).message ?? (parsed as { error?: string }).error ?? `HTTP ${res.status}`);
   }
-  return res.json() as Promise<T>;
+  // For model-list endpoints, log raw response format to help debug parse errors
+  if (path.startsWith('/provider/models')) {
+    const cloned = res.clone();
+    const raw = await cloned.text().catch(() => '');
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        const keys = Object.keys(parsed as Record<string, unknown>);
+        const hasArray = keys.some((k) => Array.isArray((parsed as Record<string, unknown>)[k]));
+        if (!hasArray) {
+          writeDebugLog({
+            type: 'models-unexpected-format',
+            provider: path.split('=')[1] ?? 'unknown',
+            keys,
+            sample: JSON.stringify(parsed).slice(0, 3000),
+          });
+        }
+      }
+    } catch { /* not JSON — log it */
+      writeDebugLog({ type: 'models-non-json', provider: path.split('=')[1] ?? 'unknown', body: raw.slice(0, 3000) });
+    }
+  }
+  return JSON.parse(await res.text()) as T;
 }
 
 // ─── Auth ───

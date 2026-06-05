@@ -3,6 +3,7 @@ import type {
   ProviderId,
 } from '@agentx/shared';
 import { OpenAIProvider } from './OpenAIProvider.js';
+import { captureResponse } from '../utils/DebugLogger.js';
 
 /**
  * Generic OpenAI-compatible provider.
@@ -42,6 +43,7 @@ export class OpenAICompatibleProvider extends OpenAIProvider {
       if (response.status === 401 || response.status === 403) {
         throw new Error(`Invalid API key for ${this.name}. Check your credentials.`);
       }
+      await captureResponse(this.id, `${this.baseUrl}/models`, `listModels-error-${response.status}`, response);
       throw new Error(`${this.name} API error: ${response.status} ${response.statusText}`);
     }
 
@@ -49,7 +51,9 @@ export class OpenAICompatibleProvider extends OpenAIProvider {
     try {
       json = (await response.json()) as Record<string, unknown>;
     } catch {
-      throw new Error(`Unexpected response from ${this.name}. Expected JSON but got: ${await response.text().catch(() => 'unreadable')}`);
+      const raw = await response.text().catch(() => 'unreadable');
+      await captureResponse(this.id, `${this.baseUrl}/models`, 'listModels-non-json', response);
+      throw new Error(`Unexpected response from ${this.name}. Expected JSON but got: ${raw}`);
     }
 
     // Try standard OpenAI { data: [...] } format
@@ -69,6 +73,9 @@ export class OpenAICompatibleProvider extends OpenAIProvider {
       const items = json['results'] as Array<Record<string, unknown>>;
       return this.parseModels(items);
     }
+
+    // Unrecognised format — log raw response for debugging
+    await captureResponse(this.id, `${this.baseUrl}/models`, 'listModels-unrecognised-format', response);
 
     // Known models fallback — provider API returned OK but format is unrecognised
     const knownModels = KNOWN_MODELS[this.id];

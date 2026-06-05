@@ -16,6 +16,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import BadgeIcon from '@mui/icons-material/Badge';
 import { providers as provApi, models as modelsApi, config } from '../api';
 import { useApp } from '../store/AppContext';
+import { useGlobalError } from '../components/ErrorBand';
 import { colors } from '../theme';
 import type { ProviderInfo, ModelInfo } from '../api';
 
@@ -48,7 +49,7 @@ export function SetupWizard() {
   const { setConfig, setAuthState } = useApp();
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
-  const [error, setError] = useState('');
+  const { showError, clearError } = useGlobalError();
   const [loading, setLoading] = useState(false);
   const [showBackWarning, setShowBackWarning] = useState(false);
 
@@ -76,7 +77,7 @@ export function SetupWizard() {
     }
     // Ensure providers are loaded
     provApi.available().then(setAvailableProviders).catch(() => {
-      setError('Failed to load providers. Check if the server is running.');
+      showError('Failed to load providers. Check if the server is running.');
     });
   }, []);
 
@@ -85,7 +86,7 @@ export function SetupWizard() {
     if (availableProviders.length === 0 && !loading) {
       setLoading(true);
       provApi.available().then((p) => { setAvailableProviders(p); setLoading(false); }).catch(() => {
-        setError('Cannot reach the server. Make sure Agent-X daemon is running.');
+        showError('Cannot reach the server. Make sure Agent-X daemon is running.');
         setLoading(false);
       });
     }
@@ -100,10 +101,9 @@ export function SetupWizard() {
 
   useEffect(() => { persistProgress(); }, [persistProgress]);
 
-  const next = () => { setError(''); setStep((s) => s + 1); };
-
+  const next = () => { clearError(); setStep((s) => s + 1); };
   const back = () => {
-    setError('');
+    clearError();
     // If going back to step 0 or 1 from step 2+, warn about losing credentials
     if (step >= 2 && step <= 1) {
       // This won't trigger since step >= 2 means back goes to 1 at minimum
@@ -131,7 +131,7 @@ export function SetupWizard() {
   const isAzure = selectedProvider === 'azure';
 
   const handleProviderNext = () => {
-    if (!selectedProvider) { setError('Select a provider'); return; }
+    if (!selectedProvider) { showError('Select a provider'); return; }
     // Pre-fill base URL for local providers
     if (selectedProviderInfo?.type === 'local' && !baseUrl) {
       setBaseUrl(selectedProviderInfo.defaultBaseUrl ?? '');
@@ -140,32 +140,32 @@ export function SetupWizard() {
   };
 
   const handleApiKeyNext = async () => {
-    if (!isLocal && !apiKey) { setError('Enter your API key'); return; }
-    if (isAzure && !baseUrl) { setError('Azure requires a resource endpoint URL'); return; }
+    if (!isLocal && !apiKey) { showError('Enter your API key'); return; }
+    if (isAzure && !baseUrl) { showError('Azure requires a resource endpoint URL'); return; }
     setLoading(true);
     try {
       const result = await provApi.validate(selectedProvider, apiKey || undefined, baseUrl || undefined);
-      if (!result.valid) { setError(result.error ?? 'Invalid API key'); setLoading(false); return; }
+      if (!result.valid) { showError(result.error ?? 'Invalid API key'); setLoading(false); return; }
       await provApi.configure(selectedProvider, apiKey || undefined, baseUrl || undefined);
       // Load models
       const modelList = await provApi.models(selectedProvider);
       setAvailableModels(modelList);
       next();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Validation failed');
+      showError(err instanceof Error ? err.message : 'Validation failed');
     } finally {
       setLoading(false);
     }
   };
 
   const handleModelNext = async () => {
-    if (!selectedModel) { setError('Select a model'); return; }
+    if (!selectedModel) { showError('Select a model'); return; }
     setLoading(true);
     try {
       await modelsApi.switch(selectedModel);
       next();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Model switch failed');
+      showError(err instanceof Error ? err.message : 'Model switch failed');
     } finally {
       setLoading(false);
     }
@@ -180,7 +180,7 @@ export function SetupWizard() {
     try {
       const result = await config.update({ setupComplete: true, user: { callsign } });
       if (!result.ok) {
-        setError('Failed to save setup. Config may be read-only. Ensure Docker volume mount is writable: remove :ro from config mount in docker-compose.yml.');
+        showError('Failed to save setup. Config may be read-only. Ensure Docker volume mount is writable: remove :ro from config mount in docker-compose.yml.');
         setLoading(false);
         return;
       }
@@ -190,7 +190,7 @@ export function SetupWizard() {
       clearProgress();
       navigate('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Setup could not be saved. Please check your configuration.');
+      showError(err instanceof Error ? err.message : 'Setup could not be saved. Please check your configuration.');
     } finally {
       setLoading(false);
     }
@@ -218,21 +218,8 @@ export function SetupWizard() {
 
       {/* Scrollable Content */}
       <Box sx={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', px: 2 }}>
-        <Box sx={{ position: 'relative', width: '100%', maxWidth: (step === 0 || step === 2) ? 720 : 480 }}>
-          {/* Error banner — absolute position within content, doesn't push header/stepper */}
-          {error && (
-            <Box sx={{
-              position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
-              p: 2, bgcolor: '#1a0000', borderBottom: '1px solid #330000', textAlign: 'center',
-              borderRadius: '4px',
-            }}>
-              <Typography color="error" variant="body2" sx={{ fontSize: '0.8rem', mb: 0.5 }}>{error}</Typography>
-              <Button size="small" sx={{ color: colors.text.tertiary, fontSize: '0.7rem' }} onClick={() => setError('')}>
-                Dismiss
-              </Button>
-            </Box>
-          )}
-          <Box sx={{ pt: error ? 12 : 0 }}>
+        <Box sx={{ width: '100%', maxWidth: (step === 0 || step === 2) ? 720 : 480 }}>
+          <Box sx={{ pt: 0, pb: 2 }}>
 
           {/* Step 0: Choose Provider */}
           {step === 0 && (
@@ -242,7 +229,7 @@ export function SetupWizard() {
                 CLOUD
               </Typography>
               <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 1.5, mb: 2 }}>
-                {availableProviders.filter(p => p.type === 'cloud').map((p) => (
+                {availableProviders.filter(Boolean).filter(p => p.type === 'cloud').map((p) => (
                   <Box
                     key={p.id}
                     onClick={() => setSelectedProvider(p.id)}
@@ -266,7 +253,7 @@ export function SetupWizard() {
                 LOCAL
               </Typography>
               <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 1.5 }}>
-                {availableProviders.filter(p => p.type === 'local').map((p) => (
+                {availableProviders.filter(Boolean).filter(p => p.type === 'local').map((p) => (
                   <Box
                     key={p.id}
                     onClick={() => setSelectedProvider(p.id)}
@@ -332,7 +319,7 @@ export function SetupWizard() {
                 {availableModels.length} model{availableModels.length !== 1 ? 's' : ''} available from {selectedProviderInfo?.name ?? selectedProvider}
               </Typography>
               <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 1.5 }}>
-                {availableModels.map((m) => (
+                {availableModels.filter(Boolean).map((m) => (
                   <Box
                     key={m.id}
                     onClick={() => setSelectedModel(m.id)}

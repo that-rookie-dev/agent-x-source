@@ -1386,7 +1386,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
               <Menu anchorEl={providerMenuAnchor} open={Boolean(providerMenuAnchor)} onClose={() => setProviderMenuAnchor(null)}
                 PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 150 } }}>
-                {providerList.map((p) => (
+                {providerList.filter(Boolean).map((p) => (
                   <MenuItem key={p.id} onClick={() => {
                     setCurrentProvider(p.id);
                     setCurrentModel(''); // Clear model on provider change
@@ -1426,7 +1426,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                     {currentProvider ? 'No models found' : 'Select a provider first'}
                   </MenuItem>
                 )}
-                {modelList.map((m) => (
+                {modelList.filter(Boolean).map((m) => (
                   <MenuItem key={m.id} onClick={() => {
                     setCurrentModel(m.id);
                     models.switch(m.id).catch(() => {});

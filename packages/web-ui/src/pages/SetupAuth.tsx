@@ -6,6 +6,7 @@ import Button from '@mui/material/Button';
 import LinearProgress from '@mui/material/LinearProgress';
 import { auth } from '../api';
 import { useApp } from '../store/AppContext';
+import { useGlobalError } from '../components/ErrorBand';
 import { colors } from '../theme';
 
 function getPasswordStrength(pw: string): { score: number; label: string; color: string } {
@@ -31,7 +32,7 @@ export function SetupAuth() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
+  const { showError, clearError } = useGlobalError();
   const [loading, setLoading] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -80,18 +81,18 @@ export function SetupAuth() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    clearError();
 
-    if (username.length < 3) { setError('Username must be at least 3 characters'); return; }
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
-    if (password !== confirmPassword) { setError('Passwords do not match'); return; }
+    if (username.length < 3) { showError('Username must be at least 3 characters'); return; }
+    if (password.length < 8) { showError('Password must be at least 8 characters'); return; }
+    if (password !== confirmPassword) { showError('Passwords do not match'); return; }
 
     const hasUpper = /[A-Z]/.test(password);
     const hasLower = /[a-z]/.test(password);
     const hasNumber = /[0-9]/.test(password);
     const hasSpecial = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password);
     if (!hasUpper || !hasLower || !hasNumber || !hasSpecial) {
-      setError('Password must contain uppercase, lowercase, number, and special character');
+      showError('Password must contain uppercase, lowercase, number, and special character');
       return;
     }
 
@@ -101,7 +102,7 @@ export function SetupAuth() {
       setAuthState('needs-setup');
       navigate('/setup/wizard');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Setup failed');
+      showError(err instanceof Error ? err.message : 'Setup failed');
     } finally {
       setLoading(false);
     }
@@ -175,20 +176,6 @@ export function SetupAuth() {
               setup@agent-x
             </Typography>
           </Box>
-
-          {/* Error */}
-          {error && (
-            <Box sx={{
-              mb: 2, px: 1.5, py: 0.8,
-              border: `1px solid ${colors.accent.red}40`,
-              borderRadius: '3px',
-              bgcolor: colors.accent.red + '10',
-            }}>
-              <Typography sx={{ fontSize: '0.6rem', color: colors.accent.red, fontFamily: "'JetBrains Mono', monospace" }}>
-                ✕ {error}
-              </Typography>
-            </Box>
-          )}
 
           {/* Username field */}
           <Box sx={{ mb: 2 }}>

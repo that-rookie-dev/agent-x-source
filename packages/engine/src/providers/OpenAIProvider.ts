@@ -5,6 +5,7 @@ import type {
   ProviderId,
 } from '@agentx/shared';
 import type { ProviderInterface } from './ProviderInterface.js';
+import { captureResponse } from '../utils/DebugLogger.js';
 
 export class OpenAIProvider implements ProviderInterface {
   readonly id: ProviderId = 'openai';
@@ -36,18 +37,35 @@ export class OpenAIProvider implements ProviderInterface {
     });
 
     if (!response.ok) {
+      await captureResponse(this.id, `${this.baseUrl}/models`, `listModels-error-${response.status}`, response);
       throw new Error(`Failed to fetch models: ${response.status} ${response.statusText}`);
     }
 
-    const data = (await response.json()) as { data: Array<{ id: string }> };
-    return data.data
-      .filter((m) => m.id.includes('gpt') || m.id.includes('o1') || m.id.includes('o3'))
-      .map((m): ModelInfo => ({
-        id: m.id,
-        name: m.id,
+    let json: { data?: Array<Record<string, unknown>> };
+    try {
+      json = (await response.json()) as { data?: Array<Record<string, unknown>> };
+    } catch {
+      const raw = await response.text().catch(() => 'unreadable');
+      await captureResponse(this.id, `${this.baseUrl}/models`, 'listModels-non-json', response);
+      throw new Error(`Unexpected response from OpenAI. Expected JSON but got: ${raw}`);
+    }
+
+    if (!Array.isArray(json.data)) {
+      await captureResponse(this.id, `${this.baseUrl}/models`, 'listModels-no-data-array', response);
+      throw new Error(`OpenAI API returned unexpected format: 'data' field is not an array`);
+    }
+
+    return json.data
+      .filter((m: Record<string, unknown>) => {
+        const id = String(m['id'] ?? '');
+        return id.includes('gpt') || id.includes('o1') || id.includes('o3');
+      })
+      .map((m: Record<string, unknown>): ModelInfo => ({
+        id: String(m['id'] ?? ''),
+        name: String(m['id'] ?? ''),
         providerId: 'openai',
-        contextWindow: this.getContextWindow(m.id),
-        capabilities: this.getCapabilities(m.id),
+        contextWindow: this.getContextWindow(String(m['id'] ?? '')),
+        capabilities: this.getCapabilities(String(m['id'] ?? '')),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }

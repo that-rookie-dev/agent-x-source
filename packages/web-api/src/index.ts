@@ -2439,6 +2439,26 @@ app.get('*', async (req, res, next) => {
     return;
   }
 
+  // ─── Debug Log Endpoint ────────────────────────────────────────────
+  // Accept frontend-side parse errors so developers can see raw API output
+  if (req.path === '/api/debug/log' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (chunk: string) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const DEBUG_DIR = join(DATA_DIR, 'debug-logs');
+        if (!existsSync(DEBUG_DIR)) mkdirSync(DEBUG_DIR, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const entry = JSON.parse(body);
+        writeFileSync(join(DEBUG_DIR, `frontend_${ts}.json`), JSON.stringify(entry, null, 2));
+        res.json({ ok: true });
+      } catch {
+        res.status(400).json({ error: 'invalid-log-entry' });
+      }
+    });
+    return;
+  }
+
   // Production: serve static files from web-ui/dist
   const filePath = req.path === '/' ? 'index.html' : req.path.slice(1);
   const fullPath = join(UI_DIST, filePath);

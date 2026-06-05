@@ -271,7 +271,7 @@ export function SettingsPanel() {
                     sx={{ fontSize: '0.65rem', height: 30, bgcolor: colors.bg.primary }}
                   >
                     <MenuItem value="" disabled><em>Select model</em></MenuItem>
-                    {provModels.map((m) => <MenuItem key={m.id} value={m.id} sx={{ fontSize: '0.7rem' }}>{m.name || m.id}</MenuItem>)}
+                    {provModels.filter(Boolean).map((m) => <MenuItem key={m.id} value={m.id} sx={{ fontSize: '0.7rem' }}>{m.name || m.id}</MenuItem>)}
                   </Select>
                 </FormControl>
               </Box>
