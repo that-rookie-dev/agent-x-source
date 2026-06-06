@@ -250,9 +250,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // @-mention detection
   const [showCrewMention, setShowCrewMention] = useState(false);
-  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const insertMentionRef = useRef<((callsign: string) => void) | null>(null);
-  useEffect(() => { setShowCrewMention(mentionQuery !== ''); }, [mentionQuery]);
+  useEffect(() => { setShowCrewMention(mentionQuery !== null); }, [mentionQuery]);
 
   const handleMentionSelect = useCallback((crew: Crew) => {
     insertMentionRef.current?.(crew.callsign);
@@ -1153,6 +1153,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 onSelectAgent={handleMentionSelectAgent}
               />
             )}
+            {/* No provider/model warning */}
+            {sendBlocked && (
+              <Box sx={{ px: 1.5, py: 0.4, bgcolor: colors.accent.orange + '12', borderTop: `1px solid ${colors.accent.orange}30`, borderBottom: `1px solid ${colors.accent.orange}30` }}>
+                <Typography sx={{ fontSize: '0.6rem', color: colors.accent.orange, fontFamily: "'JetBrains Mono', monospace", textAlign: 'center' }}>
+                  ⚠ {sendBlockedReason}
+                </Typography>
+              </Box>
+            )}
             {/* Input row */}
             <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 0.5, px: 1.25, py: 0.5 }}>
               <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
@@ -1161,7 +1169,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 value={input}
                 onChange={setInput}
                 onKeyDown={handleKeyDown}
-                onMentionQuery={setMentionQuery}
+                onMentionQuery={(q: string | null) => setMentionQuery(q)}
                 onInsertReady={(fn) => { insertMentionRef.current = fn; }}
                 placeholder="@agentx — message your AI wingman..."
                 crewList={crewList}

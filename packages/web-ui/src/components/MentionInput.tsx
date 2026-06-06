@@ -7,7 +7,7 @@ interface MentionInputProps {
   value: string;
   onChange: (value: string) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
-  onMentionQuery: (query: string) => void;
+  onMentionQuery: (query: string | null) => void;
   placeholder: string;
   crewList: Crew[];
   disabled?: boolean;
@@ -114,7 +114,7 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
         }
       }
     }
-    onMentionQuery('');
+    onMentionQuery(null);
   }, [extractText, onChange, onMentionQuery]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
