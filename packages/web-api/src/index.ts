@@ -380,18 +380,28 @@ app.post('/api/provider/switch', (req, res) => {
 // ───── Models ─────
 app.post('/api/model/switch', (req, res) => {
   try {
-    const { modelId, contextWindow } = req.body as { modelId: string; contextWindow?: number };
+    const { modelId, providerId, contextWindow } = req.body as { modelId: string; providerId?: string; contextWindow?: number };
     const eng = getEngine();
-    const agent = eng.agent ?? getOrCreateAgent();
-    agent.switchModel(modelId, contextWindow);
-    try {
-      const config = eng.configManager.load();
-      config.provider.activeModel = modelId;
-      eng.configManager.save(config);
-    } catch {
-      // config not yet saved, that's fine
+    const config = eng.configManager.load();
+
+    // If a providerId was sent, switch both provider and model atomically
+    if (providerId && providerId !== config.provider.activeProvider) {
+      config.provider.activeProvider = providerId as ProviderId;
+      destroyAgent();
     }
-    res.json({ ok: true, model: modelId });
+
+    config.provider.activeModel = modelId;
+    eng.configManager.save(config);
+
+    if (providerId) {
+      // Recreate agent with new provider/model if provider changed
+      getOrCreateAgent();
+    } else {
+      const agent = eng.agent ?? getOrCreateAgent();
+      agent.switchModel(modelId, contextWindow);
+    }
+
+    res.json({ ok: true, model: modelId, provider: providerId ?? config.provider.activeProvider });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
   }

@@ -187,7 +187,17 @@ export function ProvidersPanel() {
             </Button>
           </Box>
         ) : (
-          <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 2, mt: 1.5 }}>
+          <Box sx={{
+            display: 'grid',
+            gap: 2,
+            mt: 1.5,
+            gridTemplateColumns: {
+              xs: '1fr',
+              sm: 'repeat(2, 1fr)',
+              md: 'repeat(3, 1fr)',
+              lg: 'repeat(4, 1fr)',
+            },
+          }}>
             {profiles.map((profile) => {
               const isActive = profile.id === activeProfileId;
               const provModels = profileModels[profile.providerId] ?? [];

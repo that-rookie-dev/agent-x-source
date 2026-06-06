@@ -1341,7 +1341,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 {modelList.filter(Boolean).map((m) => (
                   <MenuItem key={m.id} onClick={() => {
                     setCurrentModel(m.id);
-                    models.switch(m.id).catch(() => {});
+                    // If model belongs to a different provider, switch provider too
+                    if (m.providerId && m.providerId !== currentProvider) {
+                      setCurrentProvider(m.providerId);
+                      providers.switch(m.providerId).then(() => {
+                        models.switch(m.id).catch(() => {});
+                      }).catch(() => {});
+                    } else {
+                      models.switch(m.id).catch(() => {});
+                    }
                     setModelMenuAnchor(null);
                   }} selected={m.id === currentModel} sx={{ fontSize: '0.65rem' }}>
                     <Box>
