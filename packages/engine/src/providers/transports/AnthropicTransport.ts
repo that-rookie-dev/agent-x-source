@@ -60,7 +60,17 @@ export class AnthropicTransport extends BaseTransport {
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          // Emit turn.end on natural stream termination if not already emitted
+          yield {
+            type: 'turn.end',
+            turnId: plan.requestId,
+            stopReason: 'stream_end',
+            usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+            ts: Date.now(),
+          };
+          break;
+        }
 
         buffer += decoder.decode(value, { stream: true });
 

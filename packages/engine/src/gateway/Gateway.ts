@@ -94,7 +94,7 @@ export class Gateway {
    * Handle an incoming message from any channel.
    * Routes to the agent and sends response to the appropriate channel(s).
    */
-  async handleIncomingMessage(channelId: string, text: string): Promise<void> {
+  async handleIncomingMessage(channelId: string, payload: Record<string, unknown>): Promise<void> {
     if (!this.agentRef) {
       getLogger().error('GATEWAY', 'No agent attached to gateway');
       return;
@@ -112,7 +112,16 @@ export class Gateway {
     entry.stats.lastActivity = Date.now();
 
     try {
-      await this.agentRef.sendMessage(text);
+      // Use the plugin's handleIncoming to parse the message
+      const parsed = await entry.plugin.handleIncoming(payload);
+      const { text, userId, channelId: parsedChannelId } = parsed;
+
+      // Pass the parsed message with metadata to the agent
+      await this.agentRef.sendMessage(text, {
+        userId,
+        channelId: parsedChannelId,
+        sourceChannel: channelId,
+      });
     } catch (err) {
       entry.stats.errors++;
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -134,11 +143,22 @@ export class Gateway {
   async sendResponse(text: string, sourceChannelId?: string): Promise<void> {
     let targetChannels: string[];
 
-    if (this.focus.hasActiveFocus()) {
+    // Coherent routing: source channel takes priority (where the message came from)
+    if (sourceChannelId) {
+      const sourceEntry = this.registry.getChannel(sourceChannelId);
+      if (sourceEntry?.enabled) {
+        targetChannels = [sourceChannelId];
+      } else if (this.focus.hasActiveFocus()) {
+        // Fallback to focused channel if source is disabled
+        const focusedId = this.focus.getFocus()!;
+        targetChannels = [focusedId];
+      } else {
+        // Last resort: broadcast to all active channels
+        targetChannels = this.focus.getActiveChannels();
+      }
+    } else if (this.focus.hasActiveFocus()) {
       const focusedId = this.focus.getFocus()!;
       targetChannels = [focusedId];
-    } else if (sourceChannelId) {
-      targetChannels = [sourceChannelId];
     } else {
       targetChannels = this.focus.getActiveChannels();
     }

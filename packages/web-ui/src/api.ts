@@ -39,12 +39,13 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     });
     throw new Error((parsed as { error?: string; message?: string }).message ?? (parsed as { error?: string }).error ?? `HTTP ${res.status}`);
   }
+  // Read the response body once
+  const rawBody = await res.text();
+  
   // For model-list endpoints, log raw response format to help debug parse errors
   if (path.startsWith('/provider/models')) {
-    const cloned = res.clone();
-    const raw = await cloned.text().catch(() => '');
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(rawBody);
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
         const keys = Object.keys(parsed as Record<string, unknown>);
         const hasArray = keys.some((k) => Array.isArray((parsed as Record<string, unknown>)[k]));
@@ -58,10 +59,10 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
         }
       }
     } catch { /* not JSON — log it */
-      writeDebugLog({ type: 'models-non-json', provider: path.split('=')[1] ?? 'unknown', body: raw.slice(0, 3000) });
+      writeDebugLog({ type: 'models-non-json', provider: path.split('=')[1] ?? 'unknown', body: rawBody.slice(0, 3000) });
     }
   }
-  return JSON.parse(await res.text()) as T;
+  return JSON.parse(rawBody) as T;
 }
 
 // ─── Auth ───
@@ -107,8 +108,6 @@ export const models = {
 // ─── Crews ───
 export const crews = {
   list: () => request<{ crews: Crew[]; activeId?: string }>('/crews').then(r => r.crews ?? []),
-  current: () => request<Crew>('/crew/current'),
-  switch: (id: string) => request<{ ok: boolean }>('/crew/switch', { method: 'POST', body: JSON.stringify({ id }) }),
   create: (data: CrewInput) => request<{ ok: boolean; crew: Crew }>('/crews', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: Partial<CrewInput>) => request<{ ok: boolean }>(`/crews/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) => request<{ ok: boolean }>(`/crews/${id}`, { method: 'DELETE' }),
@@ -566,7 +565,6 @@ export interface HealthStatus {
   uptime: number;
   sessionCount: number;
   crewCount: number;
-  activeCrew: string | null;
   agentActive: boolean;
   telegramConnected: boolean;
   memory: { rss: number; heapUsed: number };

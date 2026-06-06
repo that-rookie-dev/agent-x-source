@@ -1,3 +1,5 @@
+export { AgentLifecycle } from './agent/AgentLifecycle.js';
+export type { AgentState, LifecycleListener } from './agent/AgentLifecycle.js';
 export { ConfigManager } from './config/index.js';
 export * from './tools/platform.js';
 export { SessionStore } from './session/SessionStore.js';

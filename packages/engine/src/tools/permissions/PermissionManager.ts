@@ -72,6 +72,8 @@ export class PermissionManager {
       decision: 'allow_always',
       createdAt: new Date().toISOString(),
     });
+    // Persist to disk so it survives restarts
+    this.saveToDisk();
   }
 
   isAllAllowed(): boolean {
@@ -100,18 +102,37 @@ export class PermissionManager {
           const toolName = cols[0] ?? '';
           const rawPath = cols[1] ?? '*';
           const targetPath = rawPath === '*' ? undefined : rawPath;
-          const decision = (cols[2] ?? '') as PermissionDecision;
-          if (decision === 'allow_always' || decision === 'deny') {
-            const key = this.makeKey(toolName, targetPath);
-            this.permissions.set(key, {
-              id: key,
+          const decisionRaw = (cols[2] ?? '').trim();
+          
+          // Validate decision is a known value
+          if (decisionRaw !== 'allow_always' && decisionRaw !== 'deny') {
+            continue;
+          }
+          
+          const decision = decisionRaw as PermissionDecision;
+          
+          // Handle the __all__ sentinel (loaded as tool '*' with path '*')
+          if (toolName === '*' && !targetPath) {
+            this.permissions.set('__all__', {
+              id: '__all__',
               sessionId: 'persisted',
-              toolName,
-              targetPath: targetPath ?? null,
+              toolName: '*',
+              targetPath: null,
               decision,
               createdAt: cols[3] ?? new Date().toISOString(),
             });
+            continue;
           }
+          
+          const key = this.makeKey(toolName, targetPath);
+          this.permissions.set(key, {
+            id: key,
+            sessionId: 'persisted',
+            toolName,
+            targetPath: targetPath ?? null,
+            decision,
+            createdAt: cols[3] ?? new Date().toISOString(),
+          });
         }
       }
     } catch {
@@ -139,7 +160,9 @@ export class PermissionManager {
       ];
 
       for (const p of persistent) {
-        lines.push(`| ${p.toolName} | ${p.targetPath ?? '*'} | ${p.decision} | ${p.createdAt} |`);
+        // Save the __all__ sentinel as '*' with path '*'
+        const toolName = p.id === '__all__' ? '*' : p.toolName;
+        lines.push(`| ${toolName} | ${p.targetPath ?? '*'} | ${p.decision} | ${p.createdAt} |`);
       }
 
       lines.push('');

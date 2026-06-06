@@ -24,9 +24,13 @@ export class WebSocketChannelPlugin implements ChannelPlugin {
   }
 
   async onStop(): Promise<void> {
-    for (const [id, client] of this.clients) {
-      client.send(JSON.stringify({ type: 'gateway_stop' }));
-      this.clients.delete(id);
+    const ids = [...this.clients.keys()];
+    for (const id of ids) {
+      const client = this.clients.get(id);
+      if (client) {
+        try { client.send(JSON.stringify({ type: 'gateway_stop' })); } catch { /* ignore */ }
+        this.clients.delete(id);
+      }
     }
     this.active = false;
   }
@@ -44,8 +48,12 @@ export class WebSocketChannelPlugin implements ChannelPlugin {
   /** Broadcast a message to all connected clients */
   broadcast(data: Record<string, unknown>): void {
     const payload = JSON.stringify({ ...data, channel: 'websocket' });
+    const failedClients: string[] = [];
     for (const [id, client] of this.clients) {
-      try { client.send(payload); } catch { this.clients.delete(id); }
+      try { client.send(payload); } catch { failedClients.push(id); }
+    }
+    for (const id of failedClients) {
+      this.clients.delete(id);
     }
   }
 
@@ -67,12 +75,16 @@ export class WebSocketChannelPlugin implements ChannelPlugin {
 
   async handleVisualUpdate(update: VisualUpdate): Promise<Record<string, unknown> | null> {
     const payload = JSON.stringify({ type: 'visual_update', update, channel: 'websocket' });
-    for (const [, client] of this.clients) {
+    const failedClients: string[] = [];
+    for (const [id, client] of this.clients) {
       try {
         client.send(payload);
       } catch {
-        // Client disconnected
+        failedClients.push(id);
       }
+    }
+    for (const id of failedClients) {
+      this.clients.delete(id);
     }
     return { broadcast: true, type: update.type };
   }

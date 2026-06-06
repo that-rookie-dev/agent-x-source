@@ -12,11 +12,12 @@ import type {
   PlanStep,
   ToolResult,
 } from '@agentx/shared';
-import { generateMessageId, getLogger, resolveSpaceError, CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
+import { generateMessageId, getLogger, resolveSpaceError, CREW_DOMAIN_KEYWORDS, type ChannelKind } from '@agentx/shared';
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { ProviderFactory } from '../providers/index.js';
+import { AgentLifecycle } from './AgentLifecycle.js';
 import { AgentEventBus } from '../EventBus.js';
 import { TokenTracker } from '../session/TokenTracker.js';
 import { SubAgentManager } from './SubAgentManager.js';
@@ -110,6 +111,7 @@ export class Agent {
   private config: AgentXConfig;
   private sessionId: string;
   private isProcessing = false;
+  readonly lifecycle = new AgentLifecycle();
   private abortController: AbortController | null = null;
   private pendingInstruction: string | null = null;
   private _turnStartTokens = 0;
@@ -153,8 +155,6 @@ export class Agent {
 
   // Anti-duplicate: prevents double message_received within a single turn
   private _turnMessageEmitted = false;
-  private _processingSince = 0;
-
   // ─── UNIFIED PIPELINE MODULES ───
   private inputNormalizer: InputNormalizer = null!;
   private promptComposer: PromptComposer = null!;
@@ -640,7 +640,7 @@ export class Agent {
       this.abortController.abort();
       this.abortController = null;
     }
-    this.isProcessing = false;
+    this.lifecycle.transition('idle');
     this.subAgents.cancelAll();
   }
 
@@ -869,35 +869,33 @@ Return ONLY valid JSON, no other text.`;
     }
   }
 
-  async sendMessage(content: string, options?: { instruction?: string }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
-      const stuckDuration = Date.now() - this._processingSince;
-      if (stuckDuration > 60000) {
-        this.isProcessing = false;
+      const reset = this.lifecycle.resetIfStuck(60000);
+      if (reset) {
         this.abortController = null;
       } else {
         throw new Error('Agent is already processing a message');
       }
     }
 
-    this.isProcessing = true;
-    this._processingSince = Date.now();
+    this.lifecycle.transition('receiving');
     this.abortController = new AbortController();
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
     try {
       this.runStateMgr.ensureRunning(this.sessionId);
     } catch (e) {
-      this.isProcessing = false;
+      this.lifecycle.forceTransition('idle');
       this.abortController = null;
       throw e;
     }
     void this.commandQueue.enqueue(this.sessionId, {
       turnId: `turn-${Date.now()}`,
       sessionId: this.sessionId,
-      channel: 'api',
-      userId: 'user',
+      channel: (options?.sourceChannel ?? 'api') as ChannelKind,
+      userId: options?.userId ?? 'user',
       receivedAt: Date.now(),
       text: content,
       attachments: [],
@@ -963,7 +961,7 @@ Return ONLY valid JSON, no other text.`;
       if (mentionedMember) {
         this.emit({ type: 'loading_start', stage: 'crew_routing' });
         try {
-          const crewPrompt = this.secretSauce.crew.getSystemPrompt() ?? 'You are a capable AI assistant.';
+          const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'You are a capable AI assistant.';
           const result = await this.crewOrchestrator.processMessage(cleanContent, crewPrompt);
           const responseContent = result.synthesized ?? result.responses.map((r) => `**${r.member}:** ${r.content}`).join('\n\n');
           const assistantMessage: Message = {
@@ -978,7 +976,7 @@ Return ONLY valid JSON, no other text.`;
           this.messages.push({ role: 'assistant', content: responseContent });
           this.emit({ type: 'message_received', message: assistantMessage, elapsed: Date.now() - startTime });
           this.emit({ type: 'loading_end' });
-          this.isProcessing = false;
+          this.lifecycle.forceTransition('idle');
           this.abortController = null;
           this.runStateMgr.release(this.sessionId);
           this.commandQueue.release(this.sessionId);
@@ -1007,7 +1005,7 @@ Return ONLY valid JSON, no other text.`;
       try {
         const fastMessage = await this.runFastReply(content, startTime);
         // Cleanup before returning (fast_reply path doesn't go through main try-finally)
-        this.isProcessing = false;
+        this.lifecycle.forceTransition('idle');
         this.abortController = null;
         this.runStateMgr.release(this.sessionId);
         this.commandQueue.release(this.sessionId);
@@ -1027,7 +1025,7 @@ Return ONLY valid JSON, no other text.`;
           };
           this.emit({ type: 'message_received', message: cancelledMessage, elapsed: Date.now() - startTime });
           // Cleanup before returning (fast_reply path doesn't go through main try-finally)
-          this.isProcessing = false;
+          this.lifecycle.forceTransition('idle');
           this.abortController = null;
           this.runStateMgr.release(this.sessionId);
           this.commandQueue.release(this.sessionId);
@@ -1239,7 +1237,7 @@ Return ONLY valid JSON, no other text.`;
       });
       throw error;
     } finally {
-      this.isProcessing = false;
+      this.lifecycle.forceTransition('idle');
       this.abortController = null;
       this.runStateMgr.release(this.sessionId);
       this.commandQueue.release(this.sessionId);
@@ -1252,7 +1250,7 @@ Return ONLY valid JSON, no other text.`;
    */
   private async runFastReply(content: string, startTime: number): Promise<Message> {
     // Build minimal prompt — just identity + user message
-    const sauceCtx = this.secretSauce.buildSystemContext(1000);
+    const sauceCtx = this.secretSauce.buildSystemContext();
     const identity = sauceCtx.soul || sauceCtx.crew || '';
     const fastPrompt = this.decisionEngine.buildFastReplyPrompt(identity);
 
@@ -1277,6 +1275,7 @@ Return ONLY valid JSON, no other text.`;
     let fullContent = '';
     const streamHandle = await this.retryWithBackoff(async () => {
       const iter = this._unifiedStream(request);
+    this.lifecycle.transition('processing');
       const it = iter[Symbol.asyncIterator]();
       const first = await it.next();
       return { it, first };
@@ -1828,7 +1827,7 @@ Return ONLY valid JSON, no other text.`;
       this.emit({ type: 'message_received', message: fallback, elapsed: Date.now() - startTime });
       return fallback;
     } finally {
-      this.isProcessing = false;
+      this.lifecycle.forceTransition('idle');
       this.abortController = null;
     }
   }
@@ -2429,7 +2428,7 @@ Only include specialists that are actually needed for this task.`;
     getLogger().info('CREW_AUTO', `Delegating to ${relevant.length} crew member(s): ${relevant.map((r) => r.crew.name).join(', ')}`);
 
     try {
-      const crewPrompt = this.secretSauce.crew.getSystemPrompt() ?? 'You are a capable AI assistant.';
+      const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() ?? 'You are a capable AI assistant.';
       const result = await this.crewOrchestrator.processMessage(userContent, crewPrompt);
       if (result.responses.length > 0) {
         const crewSections = result.responses.map((r) => {
@@ -2487,6 +2486,26 @@ Only include specialists that are actually needed for this task.`;
     return found?.crew.id ?? null;
   }
 
+  /**
+   * Dispose the agent and cleanup all resources.
+   * This is the proper shutdown sequence: cancel running tasks → stop sub-agents → 
+   * flush operations → mark lifecycle as disposed.
+   */
+  dispose(): void {
+    // Cancel any in-progress processing
+    this.cancel();
+
+    // Mark lifecycle as disposed to prevent new operations
+    this.lifecycle.forceTransition('disposed');
+
+    // Stop all sub-agents
+    this.subAgents.cancelAll();
+
+    // Close file watcher
+    if (this.fileWatcher) {
+      this.fileWatcher.close();
+    }
+  }
 }
 
 function generateDiff(oldText: string, newText: string): string {

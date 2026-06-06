@@ -98,11 +98,18 @@ export class SessionProcessor {
       case 'tool.input.delta': {
         const tool = this.pendingToolCalls.get(event.toolCallId);
         if (tool) {
+          // Accumulate raw JSON string across multiple deltas
+          if (!tool.rawArguments) {
+            tool.rawArguments = '';
+          }
+          tool.rawArguments += event.delta;
+
+          // Try to parse accumulated JSON
           try {
-            const partial = JSON.parse(event.delta);
-            tool.arguments = { ...tool.arguments, ...partial };
+            const parsed = JSON.parse(tool.rawArguments);
+            tool.arguments = parsed;
           } catch {
-            // Partial JSON — accumulate as string
+            // Still partial JSON, continue accumulating
           }
         }
         break;

@@ -38,6 +38,16 @@ export class StreamNormalizer {
 
     if (toolPattern) {
       const { name, args, isComplete } = toolPattern;
+
+      // Only emit events when the tool pattern is complete
+      // Partial matches should be buffered until complete
+      if (!isComplete) {
+        // Mark that we're in a tool pattern to suppress regular text events
+        this.isInToolPattern = true;
+        return null;
+      }
+
+      // Complete pattern - emit the full event sequence
       this.isInToolPattern = true;
 
       const events: AgentXStreamEvent[] = [];
@@ -65,9 +75,7 @@ export class StreamNormalizer {
         ts: Date.now(),
       });
 
-      if (isComplete) {
-        this.reset();
-      }
+      this.reset();
 
       return events;
     }

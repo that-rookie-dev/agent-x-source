@@ -31,7 +31,30 @@ export class ScopeGuard {
   }
 
   validatePath(targetPath: string): { valid: boolean; resolved: string; error?: string } {
-    const resolved = normalize(resolve(targetPath));
+    // Reject null bytes — common bypass technique
+    if (targetPath.includes('\x00')) {
+      return { valid: false, resolved: targetPath, error: 'Path contains null bytes' };
+    }
+
+    let resolved = normalize(resolve(targetPath));
+
+    // Strip trailing separator to prevent comparison bypass
+    while (resolved.endsWith(sep) && resolved.length > 1) {
+      resolved = resolved.slice(0, -1);
+    }
+
+    // Reject path traversal beyond scope via canonical check before realpath
+    // This catches '../' patterns that normalize would collapse
+    if (!resolved.startsWith(this.scopePath) && !resolved.startsWith(this.scopePathReal)) {
+      // Check if the raw target path contains traversal patterns
+      if (targetPath.includes('..')) {
+        return {
+          valid: false,
+          resolved,
+          error: `Path traversal detected: ${targetPath}`,
+        };
+      }
+    }
 
     // Git-aware scope: reject paths outside repo root
     if (this.gitAware && this.gitManager?.isInsideRepo()) {

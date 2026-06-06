@@ -216,11 +216,12 @@ export class SlackBridge extends EventEmitter {
     }
 
     try {
-      await client.chat.postMessage({
+      const thinkingMsg = await client.chat.postMessage({
         channel: event.channel,
         text: '🤔 Thinking...',
         thread_ts: event.threadTs ?? event.messageTs,
       });
+      const thinkingTs = thinkingMsg.ts as string | undefined;
 
       // Download and attach files if present
       if (event.files && event.files.length > 0) {
@@ -232,6 +233,25 @@ export class SlackBridge extends EventEmitter {
 
       const response = await agent.sendMessage(cleanText);
       const content = response.content || '(No response)';
+
+      // Delete the "Thinking..." message now that we have the response
+      if (thinkingTs) {
+        try {
+          await client.chat.delete({
+            channel: event.channel,
+            ts: thinkingTs,
+          });
+        } catch {
+          // If we can't delete, try to update it to something minimal
+          try {
+            await client.chat.update({
+              channel: event.channel,
+              ts: thinkingTs,
+              text: '✅ Done',
+            });
+          } catch { /* best effort */ }
+        }
+      }
 
       const blocks = this.buildResponseBlocks(content);
       const messageArgs: Record<string, unknown> = {

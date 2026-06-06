@@ -48,6 +48,10 @@ export class DiscordBridge {
   private messageCount = 0;
   private guilds = 0;
   private userAgents = new Map<string, Agent>();
+  private userAgentActivity = new Map<string, number>();
+  private cleanupInterval: NodeJS.Timeout | null = null;
+  private readonly INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+  private readonly CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private filesDir: string;
 
   constructor() {
@@ -64,6 +68,48 @@ export class DiscordBridge {
 
   setAgentFactory(factory: (userId: string) => Promise<Agent> | Agent): void {
     this.agentFactory = factory;
+  }
+
+  private startActivityCleanup(): void {
+    if (this.cleanupInterval) return;
+    
+    this.cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      const toEvict: string[] = [];
+      
+      // Find inactive users
+      for (const [userId, lastActivity] of this.userAgentActivity.entries()) {
+        if (now - lastActivity > this.INACTIVITY_THRESHOLD_MS) {
+          toEvict.push(userId);
+        }
+      }
+      
+      // Evict inactive agents
+      for (const userId of toEvict) {
+        const agent = this.userAgents.get(userId);
+        if (agent) {
+          // Properly dispose of the agent
+          if (typeof agent.dispose === 'function') {
+            agent.dispose();
+          }
+          this.userAgents.delete(userId);
+          this.userAgentActivity.delete(userId);
+          this.eventBus.emit({
+            type: 'discord_agent_evicted' as any,
+            code: 'DISCORD_AGENT_EVICTED',
+            message: `Evicted inactive agent for user ${userId}`,
+            recoverable: false,
+          });
+        }
+      }
+    }, this.CLEANUP_INTERVAL_MS);
+  }
+
+  private stopActivityCleanup(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
   }
 
   /**
@@ -150,17 +196,22 @@ export class DiscordBridge {
 
     await this.client.login(token);
 
+    // Start cleanup timer for inactive user agents
+    this.startActivityCleanup();
+
     // Register slash commands
     await this.registerSlashCommands();
   }
 
   stop(): void {
+    this.stopActivityCleanup();
     this.connected = false;
     if (this.client) {
       this.client.destroy();
       this.client = null;
     }
     this.userAgents.clear();
+    this.userAgentActivity.clear();
   }
 
   async sendMessage(channelId: string, content: string): Promise<void> {
@@ -373,6 +424,9 @@ export class DiscordBridge {
   }
 
   private async getAgentForUser(userId: string): Promise<Agent> {
+    // Update activity timestamp
+    this.userAgentActivity.set(userId, Date.now());
+    
     const existing = this.userAgents.get(userId);
     if (existing) return existing;
 

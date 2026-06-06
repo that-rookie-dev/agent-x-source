@@ -1,7 +1,6 @@
 import { type FC, useState, useCallback, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { MissionControl } from './screens/MissionControl.js';
-import { CrewSelect } from './screens/CrewSelect.js';
 import { WelcomeScreen } from './screens/WelcomeScreen.js';
 import { SetupAuth } from './screens/SetupAuth.js';
 import { Login } from './screens/Login.js';
@@ -19,7 +18,7 @@ import type { AgentXConfig, Crew } from '@agentx/shared';
 import { authManager, getLogger } from '@agentx/shared';
 import { COLORS } from './theme/colors.js';
 
-type AppState = 'checking' | 'setup-auth' | 'login' | 'setup' | 'crew' | 'main';
+type AppState = 'checking' | 'setup-auth' | 'login' | 'setup' | 'main';
 
 interface AppProps {
   sessionId?: string;
@@ -44,11 +43,9 @@ export const App: FC<AppProps> = ({
 }) => {
   const [state, setState] = useState<AppState>('checking');
   const [config, setConfig] = useState<AgentXConfig | null>(null);
-  const [activeCrew, setActiveCrew] = useState<Crew | null>(null);
   const [crewList, setCrewList] = useState<Crew[]>([]);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [sessionDEK, setSessionDEK] = useState<Buffer | null>(null);
 
   // Shared plugin registry
   const [pluginRegistry] = useState(() => new PluginRegistry());
@@ -62,31 +59,54 @@ export const App: FC<AppProps> = ({
   const [mcpBridge] = useState(() => new MCPBridge());
   useEffect(() => {
     const logger = getLogger();
+    let disposed = false;
+    const startedServers: string[] = [];
+    
     void (async () => {
       try {
         const manifests = await mcpBridge.discover();
+        if (disposed) return;
+        
         let loaded = 0;
         for (const m of manifests) {
+          if (disposed) break;
           try {
             await mcpBridge.start(m);
-            loaded++;
+            if (!disposed) {
+              startedServers.push(m.name);
+              loaded++;
+            }
           } catch (e) {
             logger.warn('MCP_START_FAILED', `Failed to start MCP ${m.name}: ${e}`);
           }
         }
-        if (loaded > 0) logger.info('MCP_SERVERS_STARTED', `Auto-started ${loaded} MCP server(s)`);
+        if (loaded > 0 && !disposed) logger.info('MCP_SERVERS_STARTED', `Auto-started ${loaded} MCP server(s)`);
       } catch (e) {
         logger.warn('MCP_DISCOVER', `MCP discovery failed: ${e}`);
       }
     })();
-    return () => { void mcpBridge.dispose(); };
+    
+    return () => {
+      disposed = true;
+      // Dispose stops any already-started servers
+      void mcpBridge.dispose();
+    };
   }, []);
 
   // Auto-start ACP servers
   const [acpBridge] = useState(() => new ACPBridge(pluginRegistry));
   useEffect(() => {
-    void acpBridge.startAll();
-    return () => { void acpBridge.dispose(); };
+    let disposed = false;
+    
+    void (async () => {
+      if (disposed) return;
+      await acpBridge.startAll();
+    })();
+    
+    return () => {
+      disposed = true;
+      void acpBridge.dispose();
+    };
   }, []);
 
   // Plugin lifecycle effect
@@ -159,7 +179,6 @@ export const App: FC<AppProps> = ({
     // Set DEK on ConfigManager so encrypted config can be read
     const configManager = new ConfigManager();
     configManager.setDEK(session.dek);
-    setSessionDEK(session.dek);
 
     const isSetupDone = configManager.isSetupComplete();
 
@@ -170,8 +189,6 @@ export const App: FC<AppProps> = ({
         if (sess) {
           const pm = new CrewManager();
           pm.setDEK(session.dek);
-          const crewId = sess['crew_id'] as string | null;
-          if (crewId) setActiveCrew(pm.get(crewId) ?? null);
         }
       } catch { /* ignore */ }
     }
@@ -184,7 +201,6 @@ export const App: FC<AppProps> = ({
         setConfig(cfg);
         const pm = new CrewManager();
         pm.setDEK(session.dek);
-        setActiveCrew(pm.getActive());
         setCrewList(pm.list());
         setState('main');
       } catch (e) {
@@ -192,7 +208,7 @@ export const App: FC<AppProps> = ({
         setState('setup');
       }
     }
-  }, [restoreSessionId, activeCrew]);
+  }, [restoreSessionId]);
 
   // ─── Setup / Main Flow ──────────────────────────────────────────────
 
@@ -206,15 +222,7 @@ export const App: FC<AppProps> = ({
     process.exit(0);
   }, []);
 
-  const handleCrewSelect = useCallback((crew: Crew) => {
-    setActiveCrew(crew);
-    setCrewList([]);
-    setState('main');
-  }, []);
 
-  const handleCrewSwitch = useCallback(() => {
-    setState('crew');
-  }, []);
 
   const handlePluginChanged = useCallback(() => {
     setLifecycleVersion((v) => v + 1);
@@ -252,26 +260,13 @@ export const App: FC<AppProps> = ({
     return <MissionControl onComplete={handleMissionComplete} onCancel={handleSetupCancel} dek={session?.dek ?? null} />;
   }
 
-  if (state === 'crew' && config) {
-    return (
-      <CrewSelect
-        onSelect={handleCrewSelect}
-        currentProvider={config.provider.activeProvider}
-        currentModel={config.provider.activeModel}
-        dek={sessionDEK}
-      />
-    );
-  }
-
   if (state === 'main' && config) {
     return (
       <WelcomeScreen
         config={config}
-        crew={activeCrew ?? undefined}
         crewList={crewList}
         restoreSessionId={restoreSessionId}
         recovered={recovered}
-        onCrewSwitch={handleCrewSwitch}
         pluginRegistry={pluginRegistry}
         onPluginChanged={handlePluginChanged}
         storageAdapter={pgAdapter}

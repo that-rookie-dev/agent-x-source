@@ -240,27 +240,11 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         const pm = new CrewManager();
         if (!sub || sub === 'list') {
           const crews = pm.list();
-          if (crews.length === 0) return '📋 No crews configured. Use /crew create';
-          const activeId = pm.getActiveId();
-          const lines = crews.map((p) => `${activeId !== null && p.id === activeId ? '● ' : '○ '}${p.name}`);
-          return `📋 *Crew Members:*\n${lines.join('\n')}\n\nUse /crew switch <name> to change`;
+          if (crews.length === 0) return '📋 No crews configured.';
+          const lines = crews.map((p) => `${p.enabled !== false ? '●' : '○'} ${p.name}`);
+          return `📋 *Crew Members:*\n${lines.join('\n')}`;
         }
-        if (sub === 'switch') {
-          const name = args.slice(1).join(' ');
-          if (!name) return '❌ Usage: /crew switch <name>';
-          const crews = pm.list();
-          const target = crews.find((p) => p.name.toLowerCase() === name.toLowerCase() || p.id === name);
-          if (!target) return `❌ Crew "${name}" not found. Use /crew list`;
-          pm.switch(target.id);
-          this.agent.rebuildSystemPrompt();
-          this.agent.clearHistory();
-          return `✅ Switched to crew: ${target.name}\nConversation reset with new persona.`;
-        }
-        if (sub === 'current') {
-          const active = pm.getActive();
-          return active ? `📌 Current crew: ${active.name}` : '📌 No active crew.';
-        }
-        return '📋 *Crew commands:*\n/crew list\n/crew switch <name>\n/crew current';
+        return '📋 *Crew commands:*\n/crew list';
       }
 
       case 'model': {

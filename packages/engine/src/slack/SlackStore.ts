@@ -1,6 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { getConfigDir } from '../config/paths.js';
+import { SecureStore } from '../utils/SecureStore.js';
 
 export interface SlackStoredConfig {
   botToken: string;
@@ -10,38 +9,33 @@ export interface SlackStoredConfig {
 const CONFIG_FILE = 'slack.json';
 
 /**
- * Persists Slack bot configuration to disk.
- * Stored in ~/.config/agentx/slack.json
+ * Persists Slack bot configuration to disk with encryption.
+ * Stored in ~/.config/agentx/slack.json (encrypted)
  */
 export class SlackStore {
-  private configPath: string;
+  private secureStore: SecureStore<SlackStoredConfig>;
 
   constructor() {
     const dir = getConfigDir();
-    mkdirSync(dir, { recursive: true });
-    this.configPath = join(dir, CONFIG_FILE);
+    this.secureStore = new SecureStore<SlackStoredConfig>(dir, CONFIG_FILE);
+    
+    // Migrate legacy plaintext configs to encrypted format
+    this.secureStore.migrateLegacy();
   }
 
   save(config: SlackStoredConfig): void {
-    writeFileSync(this.configPath, JSON.stringify(config, null, 2));
+    this.secureStore.save(config);
   }
 
   load(): SlackStoredConfig | null {
-    if (!existsSync(this.configPath)) return null;
-    try {
-      return JSON.parse(readFileSync(this.configPath, 'utf-8')) as SlackStoredConfig;
-    } catch {
-      return null;
-    }
+    return this.secureStore.load();
   }
 
   isConfigured(): boolean {
-    return this.load() !== null;
+    return this.secureStore.isConfigured();
   }
 
   clear(): void {
-    if (existsSync(this.configPath)) {
-      writeFileSync(this.configPath, '{}');
-    }
+    this.secureStore.clear();
   }
 }

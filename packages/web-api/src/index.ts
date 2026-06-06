@@ -98,7 +98,6 @@ app.get('/api/health', (_req, res) => {
   let crewCount = 0;
   let agentActive = false;
   let configInfo: Record<string, unknown> = {};
-  let activeCrew: string | null = null;
   let telegramConnected = false;
   if (eng) {
     try {
@@ -108,8 +107,6 @@ app.get('/api/health', (_req, res) => {
     try {
       const crews = eng.crewManager.list();
       crewCount = crews.length;
-      const active = eng.crewManager.getActive();
-      activeCrew = active?.name || null;
     } catch { /* ignore */ }
     try {
       const cfg = eng.configManager.load();
@@ -132,7 +129,7 @@ app.get('/api/health', (_req, res) => {
     config: configInfo,
     sessions: sessionCount,
     crews: crewCount,
-    activeCrew,
+    
     agentActive,
     telegramConnected,
     gateway: eng?.gateway ? {
@@ -478,7 +475,7 @@ app.get('/api/agent/state', (_req, res) => {
   res.json({
     active: true,
     session: session ? { id: session.id, title: session.title, status: session.status } : null,
-    crew: { activeId: eng.crewManager.getActiveId(), crewStates },
+    crew: { crewStates },
     model: { provider: session?.providerId, model: session?.modelId },
     processing: (agent as unknown as { isProcessing?: boolean }).isProcessing ?? false,
     planMode: (agent as unknown as { planMode?: boolean }).planMode ?? false,
@@ -494,25 +491,7 @@ app.get('/api/crews', (_req, res) => {
   res.json({ crews, activeId });
 });
 
-app.get('/api/crew/current', (_req, res) => {
-  const eng = getEngine();
-  res.json(eng.crewManager.getActive());
-});
 
-app.post('/api/crew/switch', (req, res) => {
-  try {
-    const { id } = req.body as { id: string };
-    const eng = getEngine();
-    const switched = eng.crewManager.switch(id);
-    if (!switched) { res.status(404).json({ error: 'crew-not-found' }); return; }
-    if (eng.agent) {
-      eng.agent.rebuildSystemPrompt();
-    }
-    res.json({ ok: true, crew: switched });
-  } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
-  }
-});
 
 app.post('/api/crew/toggle', (req, res) => {
   try {
@@ -1463,17 +1442,16 @@ app.post('/api/discord/start', async (req, res) => {
     bridge.setAgentFactory(async () => {
       const userCfg = eng.configManager.load();
       const userProvider = userCfg.provider.activeProvider as ProviderId;
-      const userCrew = eng.crewManager.getActive()!;
       const userSession = eng.sessionManager.createSession(
         userProvider,
         userCfg.provider.activeModel,
-        userCrew.id,
+        undefined,
         process.cwd(),
       );
       return new Agent({
         config: userCfg,
         sessionId: userSession.id,
-        systemPrompt: userCrew.systemPrompt,
+        systemPrompt: '',
         toolExecutor: eng.toolkit.executor,
         toolRegistry: eng.toolkit.registry,
       });
@@ -1531,17 +1509,16 @@ app.post('/api/slack/start', async (req, res) => {
     const bridge = new SlackBridge({ botToken, appToken });
     bridge.setAgentFactory((_userId) => {
       const cfg = eng.configManager.load();
-      const activeCrew = eng.crewManager.getActive()!;
       const session = eng.sessionManager.createSession(
         cfg.provider.activeProvider,
         cfg.provider.activeModel,
-        activeCrew.id,
+        undefined,
         process.cwd(),
       );
       return new Agent({
         config: cfg,
         sessionId: session.id,
-        systemPrompt: activeCrew.systemPrompt,
+        systemPrompt: '',
         toolExecutor: eng.toolkit.executor,
         toolRegistry: eng.toolkit.registry,
       });
@@ -1620,11 +1597,10 @@ app.post('/api/email/start', async (req, res) => {
 
     // Start the real bridge
     const cfg = eng.configManager.load();
-    const activeCrew = eng.crewManager.getActive()!;
     const bridge = new EmailBridge();
     bridge.setAgentDeps({
       config: cfg,
-      systemPrompt: activeCrew.systemPrompt,
+      systemPrompt: '',
       toolExecutor: eng.toolkit.executor,
       toolRegistry: eng.toolkit.registry,
     });

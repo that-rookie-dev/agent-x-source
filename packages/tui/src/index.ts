@@ -19,7 +19,6 @@ export { ReasoningGlimpse } from './components/ReasoningGlimpse.js';
 export { GimmickDisplay } from './components/GimmickDisplay.js';
 export { MissionControl } from './screens/MissionControl.js';
 export { WelcomeScreen } from './screens/WelcomeScreen.js';
-export { CrewSelect } from './screens/CrewSelect.js';
 export { SetupAuth } from './screens/SetupAuth.js';
 export { Login } from './screens/Login.js';
 export { useSession } from './hooks/useSession.js';

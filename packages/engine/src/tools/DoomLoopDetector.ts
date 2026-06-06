@@ -3,8 +3,10 @@ export interface DoomLoopState {
     name: string;
     args: string;
     timestamp: number;
+    result?: { success: boolean; output?: string; error?: string };
   }>;
   consecutiveIdentical: number;
+  consecutiveSameResult: number;
 }
 
 export interface DoomLoopResult {
@@ -70,8 +72,39 @@ export class DoomLoopDetector {
       this.states.set(sessionId, {
         lastToolCalls: [],
         consecutiveIdentical: 0,
+        consecutiveSameResult: 0,
       });
     }
     return this.states.get(sessionId)!;
+  }
+
+  recordResult(sessionId: string, toolName: string, result: { success: boolean; output?: string; error?: string }): void {
+    const state = this.getOrCreateState(sessionId);
+    const resultStr = JSON.stringify(result);
+
+    // Find the most recent call matching this tool name
+    const last = state.lastToolCalls.findLast(c => c.name === toolName);
+    if (last) {
+      last.result = result;
+    }
+
+    // Check if the result is the same as the previous call
+    const previousResult = state.lastToolCalls.at(-2)?.result;
+    if (previousResult && JSON.stringify(previousResult) === resultStr) {
+      state.consecutiveSameResult++;
+    } else {
+      state.consecutiveSameResult = 1;
+    }
+  }
+
+  checkPostExecution(sessionId: string): DoomLoopResult {
+    const state = this.getOrCreateState(sessionId);
+    const isDoomLoop = state.consecutiveSameResult >= this.MAX_CONSECUTIVE_IDENTICAL;
+
+    return {
+      isDoomLoop,
+      consecutiveCount: state.consecutiveSameResult,
+      shouldBreak: isDoomLoop,
+    };
   }
 }

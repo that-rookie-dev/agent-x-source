@@ -1,11 +1,13 @@
 import type { EngineEvent } from '@agentx/shared';
 import type { Agent } from '../agent/Agent.js';
 import { AgentEventBus } from '../EventBus.js';
+import { TelegramStore } from './TelegramStore.js';
 
 export interface TelegramConfig {
   botToken: string;
   allowedUserIds?: number[];
   webhookUrl?: string;
+  webhookSecret?: string;
 }
 
 export interface TelegramBridgeStatus {
@@ -25,6 +27,7 @@ export class TelegramBridge {
   private eventBus: AgentEventBus;
   private polling = false;
   private pollTimeout: ReturnType<typeof setTimeout> | null = null;
+  private isPolling = false;
   private lastUpdateId = 0;
   private messageCount = 0;
   private botUsername?: string;
@@ -33,6 +36,11 @@ export class TelegramBridge {
   private callbackHandlers: Map<string, (data: string, chatId: number) => void> = new Map();
   private messageHandler: ((text: string, chatId: number) => void) | null = null;
   private fileHandler: ((fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => void) | null = null;
+  private webhookSecret: string | null = null;
+  
+  // Message queue to prevent TOCTOU races
+  private messageQueue: Array<{ text: string; chatId: number; resolve: (response: string) => void; reject: (error: Error) => void }> = [];
+  private processingQueue = false;
 
   // ─── Flood protection (3-strike breaker) ───
   private floodStrikes = 0;
@@ -92,6 +100,9 @@ export class TelegramBridge {
     // Register as the globally active bridge for tool access from TUI/daemon
     _setActiveTelegramBridge(this);
 
+    // Restore lastUpdateId from disk to prevent message replay on restart
+    this.restoreLastUpdateId();
+
     // Use webhook mode if configured, otherwise long-polling
     if (this.config.webhookUrl) {
       await this.setupWebhook(this.config.webhookUrl);
@@ -104,12 +115,31 @@ export class TelegramBridge {
   }
 
   /**
+   * Get the webhook secret for validating incoming requests.
+   * If no secret was configured, generates a secure random secret.
+   */
+  getWebhookSecret(): string {
+    if (!this.webhookSecret) {
+      if (this.config.webhookSecret) {
+        this.webhookSecret = this.config.webhookSecret;
+      } else {
+        // Generate a secure random secret if none provided
+        const crypto = require('crypto');
+        this.webhookSecret = crypto.randomBytes(32).toString('hex');
+      }
+    }
+    return this.webhookSecret ?? '';
+  }
+
+  /**
    * Set up webhook mode — registers the URL with Telegram.
    * The caller must handle incoming POST requests and pass them to handleWebhookUpdate().
    */
   private async setupWebhook(url: string): Promise<void> {
+    const secretToken = this.getWebhookSecret();
     const result = await this.apiCall('setWebhook', {
       url,
+      secret_token: secretToken,
       allowed_updates: ['message'],
       drop_pending_updates: true,
     });
@@ -121,9 +151,17 @@ export class TelegramBridge {
   /**
    * Handle an incoming webhook update (POST body from Telegram).
    * Call this from your HTTP server handler when receiving webhook requests.
+   * @param update - The webhook payload from Telegram
+   * @param secretToken - The X-Telegram-Bot-Api-Secret-Token header value (for validation)
    */
-  async handleWebhookUpdate(update: Record<string, unknown>): Promise<void> {
+  async handleWebhookUpdate(update: Record<string, unknown>, secretToken?: string): Promise<void> {
     if (!this.connected) return;
+
+    // Validate webhook secret token to ensure request came from Telegram
+    if (this.webhookSecret && secretToken !== this.webhookSecret) {
+      throw new Error('Invalid webhook secret token - request rejected');
+    }
+
     const updateId = update['update_id'] as number;
     if (updateId) this.lastUpdateId = updateId;
 
@@ -171,9 +209,36 @@ export class TelegramBridge {
     return this.eventBus;
   }
 
-  private async poll(): Promise<void> {
-    if (!this.polling) return;
+  private persistLastUpdateId(): void {
+    try {
+      const store = new TelegramStore();
+      const config = store.load();
+      if (config) {
+        config.lastUpdateId = this.lastUpdateId;
+        store.save(config);
+      }
+    } catch {
+      // Best effort — non-critical
+    }
+  }
 
+  private restoreLastUpdateId(): void {
+    try {
+      const store = new TelegramStore();
+      const config = store.load();
+      if (config?.lastUpdateId) {
+        this.lastUpdateId = config.lastUpdateId;
+      }
+    } catch {
+      // Best effort — fresh start
+    }
+  }
+
+  private async poll(): Promise<void> {
+    if (!this.polling || this.isPolling) return;
+    
+    this.isPolling = true;
+    
     try {
       const updates = await this.apiCall('getUpdates', {
         offset: this.lastUpdateId + 1,
@@ -190,6 +255,8 @@ export class TelegramBridge {
             await this.handleMessage(update.message);
           }
         }
+        // Persist lastUpdateId to prevent message replay on restart
+        this.persistLastUpdateId();
       }
     } catch (error) {
       // Emit error but continue polling
@@ -199,11 +266,13 @@ export class TelegramBridge {
         message: error instanceof Error ? error.message : 'Polling error',
         recoverable: true,
       } as EngineEvent);
-    }
-
-    // Schedule next poll
-    if (this.polling) {
-      this.pollTimeout = setTimeout(() => this.poll(), 100);
+    } finally {
+      this.isPolling = false;
+      
+      // Schedule next poll
+      if (this.polling) {
+        this.pollTimeout = setTimeout(() => this.poll(), 100);
+      }
     }
   }
 
@@ -300,22 +369,11 @@ export class TelegramBridge {
       // Send "typing" indicator
       await this.apiCall('sendChatAction', { chat_id: chatId, action: 'typing' });
 
-      // Wait if agent is busy processing another message
-      let waitAttempts = 0;
-      while (this.agent.processing && waitAttempts < 60) {
-        await new Promise((r) => setTimeout(r, 1000));
-        await this.apiCall('sendChatAction', { chat_id: chatId, action: 'typing' });
-        waitAttempts++;
-      }
-
-      if (this.agent.processing) {
-        await this.sendMessage(chatId, '⏳ Agent is busy. Please try again in a moment.');
-        return;
-      }
-
-      const response = await this.agent.sendMessage(text);
-      if (response.content) {
-        await this.sendMessage(chatId, response.content);
+      // Queue the message instead of busy-waiting
+      const response = await this.queueMessage(text, chatId);
+      
+      if (response) {
+        await this.sendMessage(chatId, response);
       } else {
         await this.sendMessage(chatId, '(No response generated)');
       }
@@ -323,6 +381,44 @@ export class TelegramBridge {
       const errMsg = error instanceof Error ? error.message : 'Processing failed';
       await this.sendMessage(chatId, `❌ Error: ${errMsg}`);
     }
+  }
+
+  /**
+   * Queue a message for processing to prevent TOCTOU races.
+   * Returns a promise that resolves with the agent's response.
+   */
+  private queueMessage(text: string, chatId: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+      this.messageQueue.push({ text, chatId, resolve, reject });
+      this.processMessageQueue();
+    });
+  }
+
+  /**
+   * Process queued messages sequentially to prevent concurrent processing.
+   */
+  private async processMessageQueue(): Promise<void> {
+    if (this.processingQueue) return;
+    this.processingQueue = true;
+
+    while (this.messageQueue.length > 0) {
+      const { text, chatId, resolve, reject } = this.messageQueue.shift()!;
+      
+      if (!this.agent) {
+        reject(new Error('Agent not attached'));
+        continue;
+      }
+
+      try {
+        await this.apiCall('sendChatAction', { chat_id: chatId, action: 'typing' });
+        const response = await this.agent.sendMessage(text);
+        resolve(response.content || '');
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+
+    this.processingQueue = false;
   }
 
   /**

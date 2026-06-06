@@ -15,6 +15,8 @@ export class FocusManager {
   private channelStates = new Map<ChannelId, FocusState>();
   private activityTimestamps = new Map<ChannelId, number>();
   private listeners = new Set<FocusListener>();
+  private focusQueue: Array<{ channelId: ChannelId; resolve: () => void }> = [];
+  private processingQueue = false;
 
   static readonly ACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -31,24 +33,67 @@ export class FocusManager {
   }
 
   setFocus(channelId: ChannelId): void {
-    const previous = this.currentFocus;
-    if (previous === channelId) return;
+    if (!this.channelStates.has(channelId)) return;
+    
+    // Queue focus change to prevent oscillation
+    new Promise<void>((resolve) => {
+      this.focusQueue.push({ channelId, resolve });
+      this.processFocusQueue();
+    });
+  }
 
-    if (this.channelStates.has(channelId)) {
+  private async processFocusQueue(): Promise<void> {
+    if (this.processingQueue) return;
+    this.processingQueue = true;
+
+    while (this.focusQueue.length > 0) {
+      const { channelId, resolve } = this.focusQueue.shift()!;
+      const previous = this.currentFocus;
+      if (previous === channelId) {
+        resolve();
+        continue;
+      }
+
       this.currentFocus = channelId;
       this.channelStates.set(channelId, 'focused');
       this.activityTimestamps.set(channelId, Date.now());
       this.notifyListeners({ channelId, previousChannelId: previous, timestamp: Date.now() });
+      resolve();
     }
+
+    this.processingQueue = false;
   }
 
   onActivity(channelId: ChannelId): void {
     this.activityTimestamps.set(channelId, Date.now());
-    if (this.channelStates.get(channelId) === 'focused') return;
-    this.channelStates.set(channelId, 'focused');
-    const previous = this.currentFocus;
-    this.currentFocus = channelId;
-    this.notifyListeners({ channelId, previousChannelId: previous, timestamp: Date.now() });
+    
+    // Queue activity to prevent oscillation
+    new Promise<void>((resolve) => {
+      this.focusQueue.push({ channelId, resolve });
+      this.processActivityQueue();
+    });
+  }
+
+  private async processActivityQueue(): Promise<void> {
+    if (this.processingQueue) return;
+    this.processingQueue = true;
+
+    while (this.focusQueue.length > 0) {
+      const { channelId, resolve } = this.focusQueue.shift()!;
+      
+      if (this.channelStates.get(channelId) === 'focused') {
+        resolve();
+        continue;
+      }
+
+      const previous = this.currentFocus;
+      this.currentFocus = channelId;
+      this.channelStates.set(channelId, 'focused');
+      this.notifyListeners({ channelId, previousChannelId: previous, timestamp: Date.now() });
+      resolve();
+    }
+
+    this.processingQueue = false;
   }
 
   getFocus(): ChannelId | null {

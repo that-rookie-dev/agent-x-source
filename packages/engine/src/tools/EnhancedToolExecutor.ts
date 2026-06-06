@@ -119,6 +119,23 @@ export class EnhancedToolExecutor extends ToolExecutor {
 
     try {
       const result = await this.execute(toolName, args, sessionId);
+      
+      // Record the result and check for post-execution doom loops
+      this.doomLoopDetector.recordResult(sessionId, toolName, result);
+      const postDoom = this.doomLoopDetector.checkPostExecution(sessionId);
+      if (postDoom.shouldBreak) {
+        return { 
+          toolCallId, 
+          toolName, 
+          result: { 
+            success: false, 
+            output: `Doom loop detected: ${toolName} returned same result ${postDoom.consecutiveCount} times`, 
+            error: 'DOOM_LOOP' 
+          }, 
+          elapsed: Date.now() - start 
+        };
+      }
+      
       return { toolCallId, toolName, result, elapsed: Date.now() - start };
     } catch (err) {
       return { toolCallId, toolName, result: { success: false, output: String(err), error: 'EXECUTION_ERROR' }, elapsed: 0 };

@@ -104,7 +104,8 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList =
     indexingProgress,
   } = useSession(config, crew, restoreSessionId, onCrewSwitch, storageAdapter, telegramBridge, initialPlanMode, fallbackModel, maxBudget, gitAutoCommit, gitAware, daemonMode);
 
-  // Placeholders for planned features not yet in UseSessionReturn
+  // Features available from the engine when providing these capabilities
+  // Currently hardcoded as engine doesn't expose these through useSession yet
   const watcherCount = 0;
   const schedulerCount = 0;
   const ragIndexStats: { indexedCount: number; indexedAt: number | null } | undefined = undefined;

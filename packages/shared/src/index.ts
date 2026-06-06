@@ -6,3 +6,4 @@ export { Logger, getLogger } from './logger.js';
 export type { LogEntry } from './logger.js';
 export * from './crypto.js';
 export * from './auth/index.js';
+export type { AgentClient, MessageContext, ToolDetail, PlanEvent, SubAgentEvent, TodoItem } from './AgentClient.js';

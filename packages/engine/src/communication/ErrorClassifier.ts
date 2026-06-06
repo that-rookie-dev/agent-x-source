@@ -73,6 +73,39 @@ export class ErrorClassifier {
           providerMessage: message,
         };
 
+      case 413:
+        return {
+          reason: FailoverReason.FORMAT,
+          retryable: false,
+          shouldCompress: true,
+          shouldRotateCredential: false,
+          shouldFallback: false,
+          providerStatus: status,
+          providerMessage: message,
+        };
+
+      case 415:
+        return {
+          reason: FailoverReason.FORMAT,
+          retryable: false,
+          shouldCompress: false,
+          shouldRotateCredential: false,
+          shouldFallback: false,
+          providerStatus: status,
+          providerMessage: message,
+        };
+
+      case 422:
+        return {
+          reason: FailoverReason.FORMAT,
+          retryable: false,
+          shouldCompress: false,
+          shouldRotateCredential: false,
+          shouldFallback: false,
+          providerStatus: status,
+          providerMessage: message,
+        };
+
       case 429:
         return {
           reason: FailoverReason.RATE_LIMIT,

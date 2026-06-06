@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createRequire } from 'module';
 import { getDbPath } from '../config/paths.js';
-import { encrypt, decrypt } from '@agentx/shared';
+import { encrypt, decrypt, getLogger } from '@agentx/shared';
 import type { EncryptedData } from '@agentx/shared';
 
 // Try to load better-sqlite3, but don't crash if native bindings are missing.
@@ -157,6 +157,7 @@ export class SessionStore {
   private memTokenLogs: Map<string, Array<Record<string, unknown>>> = new Map();
   private memPermissions: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCrewStates: Map<string, Record<string, unknown>> = new Map();
+  private memToolExecutions: Map<string, Array<Record<string, unknown>>> = new Map();
   private dek: Buffer | null = null;
 
   constructor(dbPath?: string) {
@@ -187,9 +188,14 @@ export class SessionStore {
   /**
    * Encrypt a string value if DEK is available.
    * Returns a JSON-serialized EncryptedData envelope, or the plaintext if no DEK.
+   * Throws an error if DEK is unavailable (fail-loud instead of silent plaintext).
    */
   private encryptField(value: string): string {
-    if (!this.dek || !value) return value;
+    if (!value) return value;
+    if (!this.dek) {
+      getLogger().warn('ENCRYPTION', 'DEK unavailable, storing field in plaintext');
+      return value;
+    }
     const encrypted = encrypt(value, this.dek);
     return JSON.stringify({ __enc: true, ...encrypted });
   }
@@ -197,25 +203,39 @@ export class SessionStore {
   /**
    * Decrypt a field value. Detects encrypted envelope vs plaintext automatically.
    * This allows transparent migration: old plaintext data reads fine, new data is encrypted.
+   * Throws an error if encrypted data cannot be decrypted (instead of returning sentinel strings).
+   * @param value - The value to decrypt
+   * @param context - Optional context for AAD verification (must match encryption context)
    */
-  private decryptField(value: string | null): string | null {
+  private decryptField(value: string | null, context?: { sessionId?: string; messageId?: string; fieldName?: string }): string | null {
     if (!value) return value;
     // Check if it's an encrypted envelope
     if (value.startsWith('{"__enc":true,')) {
       if (!this.dek) {
-        // DEK not available — data is irrecoverable (self-destruct property)
-        return '[ENCRYPTED - DEK UNAVAILABLE]';
+        throw new Error('Decryption failed: DEK unavailable for encrypted data');
       }
       try {
         const envelope = JSON.parse(value) as { __enc: boolean } & EncryptedData;
-        return decrypt(envelope, this.dek);
-      } catch {
-        // Tampered or wrong DEK — data is destroyed
-        return '[ENCRYPTED - INTEGRITY FAILURE]';
+        const aad = context ? this.buildAAD(context) : undefined;
+        return decrypt(envelope, this.dek, aad);
+      } catch (err) {
+        throw new Error(`Decryption failed: ${err instanceof Error ? err.message : 'integrity check failed'}`);
       }
     }
     // Plaintext (legacy data before encryption was enabled)
     return value;
+  }
+
+  /**
+   * Build AAD (Additional Authenticated Data) buffer from context.
+   * This binds ciphertext to specific context to prevent swapping attacks.
+   */
+  private buildAAD(context: { sessionId?: string; messageId?: string; fieldName?: string }): Buffer {
+    const parts: string[] = [];
+    if (context.sessionId) parts.push(`session:${context.sessionId}`);
+    if (context.messageId) parts.push(`message:${context.messageId}`);
+    if (context.fieldName) parts.push(`field:${context.fieldName}`);
+    return Buffer.from(parts.join('|'), 'utf-8');
   }
 
   private initialize(): void {
@@ -377,7 +397,7 @@ export class SessionStore {
     createdAt: string;
   }): void {
     const encContent = this.encryptField(message.content);
-    const encToolCalls = message.toolCalls ? this.encryptField(message.toolCalls) : null;
+    const encToolCalls = message.toolCalls ? this.encryptField(message.toolCalls ?? '') : null;
 
     if (this.memMode) {
       const arr = this.memMessages.get(message.sessionId) ?? [];
@@ -414,8 +434,16 @@ export class SessionStore {
       const msgs = (this.memMessages.get(sessionId) ?? []) as Array<Record<string, unknown>>;
       return msgs.map((m) => ({
         ...m,
-        content: this.decryptField(m.content as string | null),
-        tool_calls: this.decryptField(m.tool_calls as string | null),
+        content: this.decryptField(m.content as string | null, {
+          sessionId: sessionId,
+          messageId: m.id as string,
+          fieldName: 'content',
+        }),
+        tool_calls: this.decryptField(m.tool_calls as string | null, {
+          sessionId: sessionId,
+          messageId: m.id as string,
+          fieldName: 'toolCalls',
+        }),
       }));
     }
 
@@ -423,8 +451,16 @@ export class SessionStore {
     const rows = stmt.all(sessionId) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       ...row,
-      content: this.decryptField(row['content'] as string | null),
-      tool_calls: this.decryptField(row['tool_calls'] as string | null),
+      content: this.decryptField(row['content'] as string | null, {
+        sessionId: sessionId,
+        messageId: row['id'] as string,
+        fieldName: 'content',
+      }),
+      tool_calls: this.decryptField(row['tool_calls'] as string | null, {
+        sessionId: sessionId,
+        messageId: row['id'] as string,
+        fieldName: 'toolCalls',
+      }),
     }));
   }
 
@@ -513,13 +549,24 @@ export class SessionStore {
     elapsedMs?: number;
   }): void {
     if (this.memMode) {
-      // Tool executions not needed for basic TUI flows; store minimally.
-      // No-op or store in permissions map for debug.
+      // Store tool executions in memory for audit/debug even in memory mode
+      const arr = (this.memToolExecutions.get(exec.sessionId) ?? []) as Array<Record<string, unknown>>;
+      arr.push({
+        id: exec.id,
+        sessionId: exec.sessionId,
+        agentTaskId: exec.agentTaskId ?? null,
+        toolName: exec.toolName,
+        input: exec.input,
+        output: exec.output ?? null,
+        success: exec.success ?? null,
+        elapsedMs: exec.elapsedMs ?? null,
+      });
+      this.memToolExecutions.set(exec.sessionId, arr);
       return;
     }
 
     const encInput = this.encryptField(exec.input);
-    const encOutput = exec.output ? this.encryptField(exec.output) : null;
+    const encOutput = exec.output ? this.encryptField(exec.output ?? '') : null;
 
     const stmt = this.db.prepare(`
       INSERT INTO tool_executions (id, session_id, agent_task_id, tool_name, input, output, success, elapsed_ms)
@@ -665,6 +712,15 @@ export class SessionStore {
 
   close(): void {
     if (this.memMode) return;
-    if (this.db) this.db.close();
+    if (!this.db) return;
+    
+    // Checkpoint WAL to prevent data loss on close
+    try {
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+    } catch {
+      // Non-critical, best effort
+    }
+    
+    this.db.close();
   }
 }

@@ -74,7 +74,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${webview.cspSource}; img-src ${webview.cspSource} data: https:; connect-src https:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${webview.cspSource}; img-src ${webview.cspSource} data: https:; connect-src ${webview.cspSource} https://api.openai.com https://api.anthropic.com; form-action 'none';">
   <link href="${styleUri}" rel="stylesheet">
   <title>Agent-X Chat</title>
 </head>
@@ -132,213 +132,195 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private wireEventBridge(): void {
-    this.eventBridge.onMessage((msg) => {
-      const role: 'user' | 'assistant' = msg.role === 'user' ? 'user' : 'assistant';
-      this.postToWebview('appendMessage', {
-        id: msg.id,
-        role,
-        content: msg.content,
-        timestamp: Date.parse(msg.createdAt) || Date.now(),
-        tokenCost: msg.tokenCost,
-      });
-    });
-
-    this.eventBridge.onStream((chunk) => {
-      if (!this.streamActive) {
-        this.streamActive = true;
-        this.postToWebview('streamStart', {});
-      }
-      this.postToWebview('updateStream', {
-        content: chunk.content,
-        fullContent: chunk.fullContent,
-      });
-    });
-
-    this.eventBridge.onToolEvent((execution) => {
-      if (execution.status === 'executing') {
-        this.postToWebview('toolExecuting', {
-          tool: execution.toolName,
-          description: execution.description,
-          startTime: execution.startTime,
+    this.disposables.push(
+      this.eventBridge.onMessage((msg) => {
+        const role: 'user' | 'assistant' = msg.role === 'user' ? 'user' : 'assistant';
+        this.postToWebview('appendMessage', {
+          id: msg.id,
+          role,
+          content: msg.content,
+          timestamp: Date.parse(msg.createdAt) || Date.now(),
+          tokenCost: msg.tokenCost,
         });
-      } else {
-        this.postToWebview('toolComplete', {
-          tool: execution.toolName,
-          result: execution.result?.output ?? '',
-          elapsed: execution.elapsed ?? 0,
-        });
-      }
-    });
-
-    this.eventBridge.onPermission((req) => {
-      this.postToWebview('permissionRequired', {
-        requestId: `${req.tool}-${req.timestamp}`,
-        tool: req.tool,
-        path: req.path,
-        riskLevel: req.riskLevel,
-        description: `Allow ${req.tool} to access ${req.path} (${req.riskLevel} risk)`,
-      });
-    });
-
-    this.eventBridge.onPlanEvent((event) => {
-      if (event.type === 'plan_generated' && 'plan' in event) {
-        const enginePlan = event.plan as unknown as Record<string, unknown>;
-        this.postToWebview('planUpdate', {
-          action: 'generated',
-          plan: {
-            planId: (enginePlan.id ?? enginePlan.planId) as string,
-            title: enginePlan.title as string,
-            status: enginePlan.status as string,
-            steps: enginePlan.steps as Array<Record<string, unknown>>,
-          },
-          userRequest: event.userRequest ?? '',
-        });
-      } else if (event.type.startsWith('plan_step_')) {
-        this.postToWebview('planUpdate', {
-          action: 'stepUpdate',
-          stepId: (event as any).stepId ?? '',
-          planId: (event as any).planId ?? '',
-          status: event.type.replace('plan_step_', ''),
-          result: (event as any).result,
-          error: (event as any).error,
-        });
-      }
-    });
-
-    this.eventBridge.onSubAgentEvent((agent) => {
-      this.postToWebview('subAgentUpdate', agent);
-    });
-
-    this.eventBridge.onReasoning((state) => {
-      if (state.isActive && state.glimpses.length === 0) {
-        this.postToWebview('reasoningUpdate', { action: 'start' });
-      } else if (state.isActive) {
-        this.postToWebview('reasoningUpdate', {
-          action: 'glimpse',
-          text: state.glimpses[state.glimpses.length - 1],
-        });
-      } else {
-        this.postToWebview('reasoningUpdate', { action: 'complete' });
-      }
-    });
-
-    this.eventBridge.onTodo((items) => {
-      this.postToWebview('todoUpdate', { items });
-    });
-
-    this.eventBridge.onDiffPreview((diff) => {
-      this.postToWebview('diffPreview', diff);
-    });
-
-    this.eventBridge.onError((error) => {
-      this.postToWebview('error', {
-        code: error.code,
-        message: error.message,
-        recoverable: error.recoverable,
-        actions: error.actions?.map((a) => ({
-          label: a.label,
-          action: a.type,
-        })),
-      });
-    });
-
-    this.eventBridge.onTokenUpdate((state) => {
-      this.postToWebview('statusUpdate', {
-        tokens: {
-          used: state.used,
-          total: state.total,
-          percentage: state.percentage,
-          cost: state.totalCost,
-        },
-        provider: this.configBridge?.getActiveProvider(),
-        model: this.configBridge?.getActiveModel(),
-      });
-    });
-
-    this.eventBridge.onLoading((stage) => {
-      if (stage) {
-        this.postToWebview('loadingStart', { stage });
-      } else {
-        this.postToWebview('loadingEnd', {});
-        if (this.streamActive) {
-          this.streamActive = false;
-          this.postToWebview('streamEnd', {});
+      }),
+      this.eventBridge.onStream((chunk) => {
+        if (!this.streamActive) {
+          this.streamActive = true;
+          this.postToWebview('streamStart', {});
         }
-      }
-    });
-
-    this.eventBridge.onProcessing((info) => {
-      if (info) {
-        this.postToWebview('processingUpdate', {
-          taskDescription: info.taskDescription,
-          stage: info.stage,
-          progress: info.progress,
+        this.postToWebview('updateStream', {
+          content: chunk.content,
+          fullContent: chunk.fullContent,
         });
-      } else {
-        this.postToWebview('processingUpdate', null);
-      }
-    });
-
-    this.eventBridge.onClarification((req) => {
-      this.postToWebview('clarification', {
-        questionId: `clarify-${Date.now()}`,
-        question: req.question,
-        options: req.options,
-        allowFreeform: req.allowFreeform,
-      });
-    });
-
-    this.eventBridge.onIndexing((state) => {
-      this.postToWebview('indexingUpdate', state);
-    });
-
-    this.eventBridge.onResearch((state) => {
-      this.postToWebview('researchUpdate', state);
-    });
-
-    this.eventBridge.onCompaction((event) => {
-      this.postToWebview('compactionUpdate', event);
-    });
-
-    this.eventBridge.onWatchEvent((event) => {
-      this.postToWebview('watchEvent', event);
-    });
-
-    this.eventBridge.onBackgroundTask((event) => {
-      this.postToWebview('backgroundTaskUpdate', event);
-    });
-
-    this.eventBridge.onReminder((event) => {
-      this.postToWebview('reminderFired', event);
-    });
-
-    this.eventBridge.onMeta((event) => {
-      const e = event as { type: string; [key: string]: unknown };
-      if (e.type === 'tot_start') {
-        this.postToWebview('totUpdate', {
-          state: { thoughts: [], scores: {}, bestThoughtId: undefined, isComplete: false, problem: '' },
+      }),
+      this.eventBridge.onToolEvent((execution) => {
+        if (execution.status === 'executing') {
+          this.postToWebview('toolExecuting', {
+            tool: execution.toolName,
+            description: execution.description,
+            startTime: execution.startTime,
+          });
+        } else {
+          this.postToWebview('toolComplete', {
+            tool: execution.toolName,
+            result: execution.result?.output ?? '',
+            elapsed: execution.elapsed ?? 0,
+          });
+        }
+      }),
+      this.eventBridge.onPermission((req) => {
+        this.postToWebview('permissionRequired', {
+          requestId: `${req.tool}-${req.timestamp}`,
+          tool: req.tool,
+          path: req.path,
+          riskLevel: req.riskLevel,
+          description: `Allow ${req.tool} to access ${req.path} (${req.riskLevel} risk)`,
         });
-      } else if (e.type === 'tot_thought_generated') {
-        this.postToWebview('totUpdate', {
-          state: {
-            thoughts: [{ id: e.thoughtId, content: e.content, score: 0, parentId: e.parentId, depth: e.depth }],
-            scores: {},
-            isComplete: false,
-            problem: '',
+      }),
+      this.eventBridge.onPlanEvent((event) => {
+        if (event.type === 'plan_generated' && 'plan' in event) {
+          const enginePlan = event.plan as unknown as Record<string, unknown>;
+          this.postToWebview('planUpdate', {
+            action: 'generated',
+            plan: {
+              planId: (enginePlan.id ?? enginePlan.planId) as string,
+              title: enginePlan.title as string,
+              status: enginePlan.status as string,
+              steps: enginePlan.steps as Array<Record<string, unknown>>,
+            },
+            userRequest: event.userRequest ?? '',
+          });
+        } else if (event.type.startsWith('plan_step_')) {
+          this.postToWebview('planUpdate', {
+            action: 'stepUpdate',
+            stepId: (event as any).stepId ?? '',
+            planId: (event as any).planId ?? '',
+            status: event.type.replace('plan_step_', ''),
+            result: (event as any).result,
+            error: (event as any).error,
+          });
+        }
+      }),
+      this.eventBridge.onSubAgentEvent((agent) => {
+        this.postToWebview('subAgentUpdate', agent);
+      }),
+      this.eventBridge.onReasoning((state) => {
+        if (state.isActive && state.glimpses.length === 0) {
+          this.postToWebview('reasoningUpdate', { action: 'start' });
+        } else if (state.isActive) {
+          this.postToWebview('reasoningUpdate', {
+            action: 'glimpse',
+            text: state.glimpses[state.glimpses.length - 1],
+          });
+        } else {
+          this.postToWebview('reasoningUpdate', { action: 'complete' });
+        }
+      }),
+      this.eventBridge.onTodo((items) => {
+        this.postToWebview('todoUpdate', { items });
+      }),
+      this.eventBridge.onDiffPreview((diff) => {
+        this.postToWebview('diffPreview', diff);
+      }),
+      this.eventBridge.onError((error) => {
+        this.postToWebview('error', {
+          code: error.code,
+          message: error.message,
+          recoverable: error.recoverable,
+          actions: error.actions?.map((a) => ({
+            label: a.label,
+            action: a.type,
+          })),
+        });
+      }),
+      this.eventBridge.onTokenUpdate((state) => {
+        this.postToWebview('statusUpdate', {
+          tokens: {
+            used: state.used,
+            total: state.total,
+            percentage: state.percentage,
+            cost: state.totalCost,
           },
+          provider: this.configBridge?.getActiveProvider(),
+          model: this.configBridge?.getActiveModel(),
         });
-      } else if (e.type === 'tot_complete') {
-        this.postToWebview('totUpdate', {
-          state: {
-            thoughts: [{ id: e.bestThoughtId, content: e.content, score: e.score, parentId: undefined, depth: 0 }],
-            scores: { [e.bestThoughtId as string]: e.score as number },
-            bestThoughtId: e.bestThoughtId,
-            isComplete: true,
-            problem: '',
-          },
+      }),
+      this.eventBridge.onLoading((stage) => {
+        if (stage) {
+          this.postToWebview('loadingStart', { stage });
+        } else {
+          this.postToWebview('loadingEnd', {});
+          if (this.streamActive) {
+            this.streamActive = false;
+            this.postToWebview('streamEnd', {});
+          }
+        }
+      }),
+      this.eventBridge.onProcessing((info) => {
+        if (info) {
+          this.postToWebview('processingUpdate', {
+            taskDescription: info.taskDescription,
+            stage: info.stage,
+            progress: info.progress,
+          });
+        } else {
+          this.postToWebview('processingUpdate', null);
+        }
+      }),
+      this.eventBridge.onClarification((req) => {
+        this.postToWebview('clarification', {
+          questionId: `clarify-${Date.now()}`,
+          question: req.question,
+          options: req.options,
+          allowFreeform: req.allowFreeform,
         });
-      }
-    });
+      }),
+      this.eventBridge.onIndexing((state) => {
+        this.postToWebview('indexingUpdate', state);
+      }),
+      this.eventBridge.onResearch((state) => {
+        this.postToWebview('researchUpdate', state);
+      }),
+      this.eventBridge.onCompaction((event) => {
+        this.postToWebview('compactionUpdate', event);
+      }),
+      this.eventBridge.onWatchEvent((event) => {
+        this.postToWebview('watchEvent', event);
+      }),
+      this.eventBridge.onBackgroundTask((event) => {
+        this.postToWebview('backgroundTaskUpdate', event);
+      }),
+      this.eventBridge.onReminder((event) => {
+        this.postToWebview('reminderFired', event);
+      }),
+      this.eventBridge.onMeta((event) => {
+        const e = event as { type: string; [key: string]: unknown };
+        if (e.type === 'tot_start') {
+          this.postToWebview('totUpdate', {
+            state: { thoughts: [], scores: {}, bestThoughtId: undefined, isComplete: false, problem: '' },
+          });
+        } else if (e.type === 'tot_thought_generated') {
+          this.postToWebview('totUpdate', {
+            state: {
+              thoughts: [{ id: e.thoughtId, content: e.content, score: 0, parentId: e.parentId, depth: e.depth }],
+              scores: {},
+              isComplete: false,
+              problem: '',
+            },
+          });
+        } else if (e.type === 'tot_complete') {
+          this.postToWebview('totUpdate', {
+            state: {
+              thoughts: [{ id: e.bestThoughtId, content: e.content, score: e.score, parentId: undefined, depth: 0 }],
+              scores: { [e.bestThoughtId as string]: e.score as number },
+              bestThoughtId: e.bestThoughtId,
+              isComplete: true,
+              problem: '',
+            },
+          });
+        }
+      }),
+    );
   }
 
   private wireExtensionHostHandlers(): void {

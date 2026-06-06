@@ -144,21 +144,36 @@ export class ToolExecutor {
       this.beforeToolHook(toolId, args, path);
     }
 
-    // Execute
+    // Execute with timeout enforcement
     const handler = this.handlers.get(toolId);
     if (!handler) {
       return { success: false, output: `No handler for tool: ${toolId}`, error: 'NO_HANDLER' };
     }
 
+    const abortController = new AbortController();
     const context: ToolExecutionContext = {
       sessionId,
       scopePath: this.scopeGuard.getScopePath(),
       timeout: 30_000,
+
     };
 
     try {
       const startTime = Date.now();
-      const result = await handler(args, context);
+      
+      // Race between handler execution and timeout
+      const timeoutPromise = new Promise<ToolResult>((_, reject) => {
+        setTimeout(() => {
+          abortController.abort();
+          reject(new Error(`Tool execution timeout after ${context.timeout}ms`));
+        }, context.timeout);
+      });
+
+      const result = await Promise.race([
+        handler(args, context),
+        timeoutPromise,
+      ]);
+      
       const elapsed = Date.now() - startTime;
       this.executionHistory.push({ toolId, args, result, timestamp: startTime, elapsed, sessionId });
       if (this.executionHistory.length > MAX_HISTORY) this.executionHistory.shift();
@@ -169,16 +184,20 @@ export class ToolExecutor {
       return result;
     } catch (error) {
       const now = Date.now();
+      const isTimeout = error instanceof Error && error.message.includes('timeout');
       const result: ToolResult = {
         success: false,
-        output: error instanceof Error ? error.message : 'Tool execution failed',
-        error: 'EXECUTION_ERROR',
+        output: isTimeout 
+          ? `Tool execution timed out after ${context.timeout}ms`
+          : (error instanceof Error ? error.message : 'Tool execution failed'),
+        error: isTimeout ? 'TIMEOUT' : 'EXECUTION_ERROR',
       };
-      this.executionHistory.push({ toolId, args, result, timestamp: now, elapsed: 0, sessionId });
+      const elapsed = now - (this.executionHistory[this.executionHistory.length - 1]?.timestamp ?? now);
+      this.executionHistory.push({ toolId, args, result, timestamp: now, elapsed, sessionId });
       if (this.executionHistory.length > MAX_HISTORY) this.executionHistory.shift();
 
       // Enterprise audit log
-      this.policyEngine?.logAudit({ action: 'execute', toolId, args, result, sessionId, duration: 0 });
+      this.policyEngine?.logAudit({ action: 'execute', toolId, args, result, sessionId, duration: elapsed });
 
       return result;
     }

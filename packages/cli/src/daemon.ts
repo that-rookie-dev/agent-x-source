@@ -1,6 +1,6 @@
-import { Agent, ConfigManager, Gateway, TelegramStore, TelegramChannelPlugin, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, PluginRegistry, CrewManager, SessionStore } from '@agentx/engine';
 import { getLogger, generateSessionId, VERSION, authManager } from '@agentx/shared';
 import type { AgentXConfig, EngineEvent } from '@agentx/shared';
+import { ConfigManager, PluginRegistry, Agent, Gateway, SessionStore, DiscordBridge, SlackBridge, EmailBridge, TelegramChannelPlugin, TelegramStore, DiscordStore, SlackStore } from '@agentx/engine';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
@@ -352,11 +352,7 @@ export async function startDaemon(): Promise<void> {
       console.log('  Slack not connected.');
     }
   }
-
-  const pm = new CrewManager();
-  const activeCrew = pm.getActive();
-
-  logger.info('DAEMON', activeCrew ? `Crew: ${activeCrew.name}` : 'No crew configured');
+  logger.info('DAEMON', 'Crew system initialized');
 
   const sessionStore = new SessionStore();
   const sessionId = generateSessionId();
@@ -475,7 +471,7 @@ export async function startDaemon(): Promise<void> {
     slackBridge = new SlackBridge(slackConfig);
     slackBridge.setAgentFactory((userId) => {
       const userSessionId = `${sessionId}-slack-${userId}`;
-      const userAgent = new Agent({ config, sessionId: userSessionId, systemPrompt: activeCrew?.systemPrompt });
+      const userAgent = new Agent({ config, sessionId: userSessionId, systemPrompt: undefined });
       try {
         sessionStore.createSession({
           id: userSessionId,
@@ -498,7 +494,7 @@ export async function startDaemon(): Promise<void> {
   if (emailConfig?.['smtpHost']) {
     try {
       emailBridge = new EmailBridge();
-      emailBridge.setAgentDeps({ config, systemPrompt: activeCrew?.systemPrompt });
+      emailBridge.setAgentDeps({ config, systemPrompt: undefined });
       await emailBridge.start({
         smtpHost: String(emailConfig['smtpHost']),
         smtpPort: Number(emailConfig['smtpPort'] ?? 587),
@@ -574,7 +570,6 @@ export async function startDaemon(): Promise<void> {
   const emStatus = emailBridge?.getStatus();
   writeStatus({
     pid: process.pid,
-    ...(activeCrew ? { crew: activeCrew.name, crewId: activeCrew.id } : {}),
     telegram: tgStatus?.connected ?? false,
     botUsername: tgStatus?.botUsername,
     discord: dcStatus?.connected ?? false,
@@ -590,7 +585,6 @@ export async function startDaemon(): Promise<void> {
   });
 
   console.log(`✦ Agent-X daemon started (PID: ${process.pid})`);
-  console.log(activeCrew ? `  Crew: ${activeCrew.name}` : '  No crew configured');
   console.log(`  Telegram: ${tgStatus?.connected ? `@${tgStatus.botUsername}` : 'not connected'}`);
   console.log(`  Discord: ${dcStatus?.connected ? dcStatus.botUsername : 'not connected'}`);
   console.log(`  Slack: ${slStatus?.connected ? slStatus.team : 'not connected'}`);
@@ -706,7 +700,6 @@ export async function startDaemon(): Promise<void> {
 
     writeStatus({
       pid: process.pid,
-      ...(() => { const c = pm.getActive(); return c ? { crew: c.name, crewId: c.id } : {}; })(),
       telegram: tgConnected,
       botUsername: tgBotUsername,
       messageCount: tgMessageCount,

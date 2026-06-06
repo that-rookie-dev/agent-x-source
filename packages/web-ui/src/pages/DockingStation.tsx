@@ -22,7 +22,7 @@ function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'b
   const provider = h?.config?.provider || '—';
   const model = h?.config?.model || '—';
   const user = h?.config?.user || 'Operator';
-  const crew = h?.activeCrew || 'Default';
+
   const sessions = h?.sessionCount ?? 0;
   const telegram = h?.telegramConnected ? 'Connected' : 'Not configured';
   const mem = h ? `${Math.round((h.memory?.heapUsed ?? 0) / 1024 / 1024)} MB` : '—';
@@ -42,7 +42,6 @@ function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'b
     { type: 'heading', text: '  SYSTEM' },
     { type: 'success', text: `  \u2713 Provider     ${provider}` },
     { type: 'success', text: `  \u2713 Model        ${model}` },
-    { type: 'success', text: `  \u2713 Active Crew  ${crew}` },
     { type: 'success', text: `  \u2713 Sessions     ${sessions}` },
     { type: 'success', text: `  \u2713 Memory       ${mem}` },
     { type: 'success', text: `  \u2713 Uptime       ${uptime}` },
@@ -227,7 +226,7 @@ export function DockingStation() {
             <>
               <StatusRow label="Provider" value={healthData.config?.provider || '—'} color={colors.text.primary} />
               <StatusRow label="Model" value={shortModel(healthData.config?.model)} color={colors.text.primary} />
-              <StatusRow label="Crew" value={healthData.activeCrew || 'Default'} color={colors.text.primary} />
+    
               <StatusRow label="Telegram" value={healthData.telegramConnected ? 'Connected' : '—'} color={healthData.telegramConnected ? colors.accent.green : colors.text.dim} />
               <StatusRow label="Sessions" value={String(healthData.sessionCount ?? 0)} color={colors.text.primary} />
               <StatusRow label="Memory" value={`${Math.round((healthData.memory?.heapUsed ?? 0) / 1024 / 1024)} MB`} color={colors.text.primary} />

@@ -7,7 +7,6 @@ import { getSecretSauceDir } from '../config/paths.js';
 
 export class CrewManager {
   private crews: Crew[] = [];
-  private activeCrewId: string | null = null;
   private secretSauceDir: string;
   private dek: Buffer | null = null;
 
@@ -37,7 +36,6 @@ export class CrewManager {
           if (!this.dek) {
             getLogger().warn('CREW_MGR', 'Encrypted crews.json found but no DEK set. Call setDEK() to unlock.');
             this.crews = [];
-            this.activeCrewId = null;
             return;
           }
           data = decrypt(rawParsed as EncryptedData, this.dek);
@@ -45,7 +43,7 @@ export class CrewManager {
           data = raw;
         }
 
-        const parsed = (typeof data === 'string' ? JSON.parse(data) : data) as { crews: Array<Record<string, unknown>>; activeId: string | null };
+        const parsed = (typeof data === 'string' ? JSON.parse(data) : data) as { crews: Array<Record<string, unknown>>; activeId?: string | null };
         this.crews = parsed.crews.map((p) => ({
           id: p['id'] as string,
           name: p['name'] as string,
@@ -61,22 +59,19 @@ export class CrewManager {
           createdAt: (p['createdAt'] as string) ?? new Date().toISOString(),
           updatedAt: (p['updatedAt'] as string) ?? new Date().toISOString(),
         }));
-        this.activeCrewId = parsed.activeId ?? null;
       } catch {
         this.crews = [];
-        this.activeCrewId = null;
         this.save();
       }
     } else {
       this.crews = [];
-      this.activeCrewId = null;
     }
   }
 
   private save(): void {
     mkdirSync(this.secretSauceDir, { recursive: true });
     const crewPath = join(this.secretSauceDir, 'crews.json');
-    const payload = JSON.stringify({ crews: this.crews, activeId: this.activeCrewId }, null, 2);
+    const payload = JSON.stringify({ crews: this.crews }, null, 2);
 
     if (this.dek) {
       const encrypted = encrypt(payload, this.dek);
@@ -84,15 +79,6 @@ export class CrewManager {
     } else {
       writeFileSync(crewPath, payload);
     }
-  }
-
-  getActive(): Crew | null {
-    if (!this.activeCrewId || this.crews.length === 0) return null;
-    return this.crews.find((p) => p.id === this.activeCrewId) ?? null;
-  }
-
-  getActiveId(): string | null {
-    return this.activeCrewId;
   }
 
   list(): Crew[] {
@@ -105,14 +91,6 @@ export class CrewManager {
 
   get(id: string): Crew | undefined {
     return this.crews.find((p) => p.id === id);
-  }
-
-  switch(id: string): Crew | null {
-    const crew = this.crews.find((p) => p.id === id);
-    if (!crew) return null;
-    this.activeCrewId = id;
-    this.save();
-    return crew;
   }
 
   enable(id: string): boolean {
@@ -129,10 +107,6 @@ export class CrewManager {
     if (!crew) return false;
     crew.enabled = false;
     crew.updatedAt = new Date().toISOString();
-    if (this.activeCrewId === id) {
-      const fallback = this.crews.find((c) => c.enabled && c.id !== id);
-      this.activeCrewId = fallback?.id ?? null;
-    }
     this.save();
     return true;
   }
@@ -171,10 +145,6 @@ export class CrewManager {
     const idx = this.crews.findIndex((p) => p.id === id);
     if (idx < 0) return false;
     this.crews.splice(idx, 1);
-    if (this.activeCrewId === id) {
-      const fallback = this.crews.find((c) => c.enabled);
-      this.activeCrewId = fallback?.id ?? null;
-    }
     this.save();
     return true;
   }
@@ -204,11 +174,6 @@ export class CrewManager {
     return crew;
   }
 
-  getSystemPrompt(): string | null {
-    const crew = this.getActive();
-    return crew?.systemPrompt ?? null;
-  }
-
   getMultiCrewSystemPrompt(): string {
     const enabledCrews = this.listEnabled();
     if (enabledCrews.length === 0) return '';
@@ -219,15 +184,6 @@ export class CrewManager {
       return `- **${description}** (@${c.callsign}): ${expertise}`;
     }).join('\n');
 
-    return `You are Agent-X, the master orchestrator. The following crew members are available in this session:
-
-${crewDescriptions}
-
-**Group Chat Rules:**
-- Users can @mention a specific crew member to get their expertise
-- If no crew is mentioned, you (Agent-X) respond as the primary assistant
-- You can delegate to crew members when their expertise is relevant
-- Crew members respond with their unique personalities and knowledge
-- Maintain context across the conversation - all participants see the full history`;
+    return `You are Agent-X, the master orchestrator. The following crew members are available in this session:\n\n${crewDescriptions}\n\n**Group Chat Rules:**\n- Users can @mention a specific crew member to get their expertise\n- If no crew is mentioned, you (Agent-X) respond as the primary assistant\n- You can delegate to crew members when their expertise is relevant\n- Crew members respond with their unique personalities and knowledge\n- Maintain context across the conversation - all participants see the full history`;
   }
 }

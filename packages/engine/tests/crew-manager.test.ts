@@ -26,38 +26,7 @@ describe('CrewManager', () => {
     expect(crews.length).toBe(0);
   });
 
-  it('has no active crew when fresh', () => {
-    const pm = new CrewManager();
-    expect(pm.getActiveId()).toBeNull();
-    expect(pm.getActive()).toBeNull();
-  });
-
-  it('creates and switches crews', () => {
-    const pm = new CrewManager();
-    pm.create({
-      id: 'devops',
-      name: 'DevOps Engineer',
-      callsign: 'devops',
-      systemPrompt: 'You are a DevOps engineer.',
-      isDefault: false,
-    });
-    const result = pm.switch('devops');
-    expect(result).not.toBeNull();
-    expect(result!.name).toBe('DevOps Engineer');
-    expect(pm.getActiveId()).toBe('devops');
-  });
-
-  it('returns null when switching to nonexistent crew member', () => {
-    const pm = new CrewManager();
-    expect(pm.switch('nonexistent')).toBeNull();
-  });
-
-  it('returns null system prompt when no active crew', () => {
-    const pm = new CrewManager();
-    expect(pm.getSystemPrompt()).toBeNull();
-  });
-
-  it('creates new crews with name + prompt only', () => {
+  it('creates new crews', () => {
     const pm = new CrewManager();
     const crew = pm.create({
       id: 'custom',
@@ -69,25 +38,71 @@ describe('CrewManager', () => {
     expect(crew.id).toBe('custom');
     expect(crew.name).toBe('Custom');
     expect(crew.systemPrompt).toBe('Be custom.');
+    expect(crew.enabled).toBe(true);
     expect(pm.get('custom')).toBeDefined();
   });
 
-  it('deletes non-active crews', () => {
+  it('creates crew with title and expertise', () => {
+    const pm = new CrewManager();
+    const crew = pm.create({
+      id: 'expert',
+      name: 'Dr. Expert',
+      title: 'AI Researcher',
+      callsign: 'expert',
+      systemPrompt: 'You are an expert.',
+      expertise: ['AI', 'ML'],
+      traits: ['analytical'],
+      isDefault: false,
+    });
+    expect(crew.title).toBe('AI Researcher');
+    expect(crew.expertise).toEqual(['AI', 'ML']);
+    expect(crew.traits).toEqual(['analytical']);
+  });
+
+  it('enables and disables crews', () => {
+    const pm = new CrewManager();
+    pm.create({ id: 'toggle', name: 'Toggle', callsign: 'toggle', systemPrompt: 'test', isDefault: false });
+    expect(pm.disable('toggle')).toBe(true);
+    expect(pm.get('toggle')!.enabled).toBe(false);
+    expect(pm.enable('toggle')).toBe(true);
+    expect(pm.get('toggle')!.enabled).toBe(true);
+  });
+
+  it('lists only enabled crews', () => {
+    const pm = new CrewManager();
+    pm.create({ id: 'a', name: 'A', callsign: 'a', systemPrompt: 'a', isDefault: false });
+    pm.create({ id: 'b', name: 'B', callsign: 'b', systemPrompt: 'b', isDefault: false, enabled: false });
+    expect(pm.listEnabled().length).toBe(1);
+    expect(pm.listEnabled()[0]!.id).toBe('a');
+  });
+
+  it('deletes crews', () => {
     const pm = new CrewManager();
     pm.create({ id: 'temp', name: 'Temp', callsign: 'temp', systemPrompt: 'temp', isDefault: false });
     expect(pm.delete('temp')).toBe(true);
     expect(pm.get('temp')).toBeUndefined();
   });
 
-  it('cannot delete non-existent crew member', () => {
+  it('cannot delete non-existent crew', () => {
     const pm = new CrewManager();
     expect(pm.delete('nonexistent')).toBe(false);
   });
 
-  it('cannot delete last remaining crew member', () => {
+  it('generates multi-crew system prompt', () => {
     const pm = new CrewManager();
-    const crew = pm.create({ id: 'sole', name: 'Sole', callsign: 'sole', systemPrompt: 'Sole crew', isDefault: false });
-    pm.switch('sole');
-    expect(pm.delete('sole')).toBe(false);
+    pm.create({ id: 'dev', name: 'Dev', callsign: 'dev', title: 'Developer', systemPrompt: 'You write code.', expertise: ['coding'], isDefault: false });
+    const prompt = pm.getMultiCrewSystemPrompt();
+    expect(prompt).toContain('Dev — Developer');
+    expect(prompt).toContain('@dev');
+    expect(prompt).toContain('coding');
+  });
+
+  it('updates crew properties', () => {
+    const pm = new CrewManager();
+    pm.create({ id: 'upd', name: 'Old', callsign: 'old', systemPrompt: 'old', isDefault: false });
+    const updated = pm.update('upd', { name: 'New', title: 'Renamed', expertise: ['new-skill'] });
+    expect(updated!.name).toBe('New');
+    expect(updated!.title).toBe('Renamed');
+    expect(updated!.expertise).toEqual(['new-skill']);
   });
 });

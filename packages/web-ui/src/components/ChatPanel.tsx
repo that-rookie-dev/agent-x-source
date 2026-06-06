@@ -223,7 +223,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // Crew state (fixed per session)
   const [crewList, setCrewList] = useState<Crew[]>([]);
-  const [activeCrew, setActiveCrew] = useState('');
 
   // Agent mode & approval
   const [agentMode, setAgentMode] = useState<AgentMode>('ask');
@@ -347,7 +346,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           .catch(() => {});
       });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
-    crews.current().then((c) => { setActiveCrew(c?.name || c?.id || ''); }).catch(() => {});
     system.cwd().then((r) => { setCwd(r.cwd || ''); }).catch(() => {});
     sessionSettings.get().then((s) => { setAgentMode(s.mode); setApprovalType(s.approval); }).catch(() => {});
     // Load configured providers (also gets active provider as fallback)
@@ -1504,7 +1502,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             CREW
           </Typography>
           <Typography sx={{ fontSize: '0.6rem', color: colors.accent.purple, fontWeight: 500 }}>
-            {activeCrew || 'Default'}
+            Agent-X
           </Typography>
           {crewList.length > 1 && (
             <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, mt: 0.25 }}>

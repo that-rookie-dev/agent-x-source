@@ -588,18 +588,8 @@ export class EmailBridge extends EventEmitter {
 
     const agent = await this.getOrCreateSenderAgent(senderEmail);
 
-    // Wait if agent is busy
-    let waitAttempts = 0;
-    while (agent.processing && waitAttempts < 60) {
-      await new Promise((r) => setTimeout(r, 1000));
-      waitAttempts++;
-    }
-
-    if (agent.processing) {
-      this.emitTyped('email_error', new Error(`Agent busy, could not process email from ${senderEmail}`));
-      return;
-    }
-
+    // No busy-wait needed - the queue already prevents concurrent processing
+    // If agent is busy from an external source, sendMessage() will handle it
     const response: Message = await agent.sendMessage(messageText);
 
     // Send reply

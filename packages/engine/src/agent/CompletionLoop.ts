@@ -294,16 +294,10 @@ export class CompletionLoop {
           } else if (currentToolCall) {
             // Continuation of existing tool call
             if (chunk.toolCall.function?.name) {
-              currentToolCall.function = {
-                name: (currentToolCall.function?.name ?? '') + chunk.toolCall.function.name,
-                arguments: currentToolCall.function?.arguments ?? '',
-              };
+              currentToolCall.function.name = (currentToolCall.function.name ?? '') + chunk.toolCall.function.name;
             }
             if (chunk.toolCall.function?.arguments) {
-              currentToolCall.function = {
-                name: currentToolCall.function?.name ?? '',
-                arguments: (currentToolCall.function?.arguments ?? '') + chunk.toolCall.function.arguments,
-              };
+              currentToolCall.function.arguments = (currentToolCall.function.arguments ?? '') + chunk.toolCall.function.arguments;
             }
           }
         } else if (chunk.type === 'done' && chunk.usage) {

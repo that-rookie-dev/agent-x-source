@@ -8,10 +8,17 @@ export interface RepairResult {
 }
 
 export class ToolCallRepairer {
+  private readonly MAX_INPUT_LENGTH = 100_000;
+
   repair(
     rawText: string,
     knownToolNames: string[],
   ): RepairResult | null {
+    // Protect against ReDoS by limiting input size
+    if (rawText.length > this.MAX_INPUT_LENGTH) {
+      return null;
+    }
+
     const bracketResult = this.parseBracketFormat(rawText, knownToolNames);
     if (bracketResult) return bracketResult;
 

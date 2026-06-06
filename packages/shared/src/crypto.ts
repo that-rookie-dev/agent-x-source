@@ -96,14 +96,20 @@ export function generateIV(): Buffer {
  * 
  * The auth tag ensures tampering is detected during decryption.
  * If even a single bit is flipped in the ciphertext, decryption will fail.
+ * 
+ * @param aad - Optional Additional Authenticated Data to bind ciphertext to context
  */
-export function encrypt(plaintext: string, key: Buffer): EncryptedData {
+export function encrypt(plaintext: string, key: Buffer, aad?: Buffer): EncryptedData {
   if (key.length !== KEY_LENGTH) {
     throw new Error(`Invalid key length: expected ${KEY_LENGTH}, got ${key.length}`);
   }
 
   const iv = generateIV();
   const cipher = createCipheriv('aes-256-gcm', key, iv);
+  
+  if (aad) {
+    cipher.setAAD(aad);
+  }
   
   let ciphertext = cipher.update(plaintext, 'utf-8', 'base64');
   ciphertext += cipher.final('base64');
@@ -123,8 +129,10 @@ export function encrypt(plaintext: string, key: Buffer): EncryptedData {
  * CRITICAL: If the auth tag verification fails (tampering detected),
  * this throws an error and the data is effectively destroyed.
  * This is the "self-destruct" property — tampered data becomes useless.
+ * 
+ * @param aad - Optional Additional Authenticated Data (must match what was used during encryption)
  */
-export function decrypt(encrypted: EncryptedData, key: Buffer): string {
+export function decrypt(encrypted: EncryptedData, key: Buffer, aad?: Buffer): string {
   if (key.length !== KEY_LENGTH) {
     throw new Error(`Invalid key length: expected ${KEY_LENGTH}, got ${key.length}`);
   }
@@ -141,6 +149,10 @@ export function decrypt(encrypted: EncryptedData, key: Buffer): string {
 
   const decipher = createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(tag);
+  
+  if (aad) {
+    decipher.setAAD(aad);
+  }
 
   let plaintext = decipher.update(encrypted.ciphertext, 'base64', 'utf-8');
   plaintext += decipher.final('utf-8');

@@ -295,6 +295,8 @@ export class SubAgentManager {
         summary: result.slice(0, 200),
         elapsed,
       } as EngineEvent);
+      // Remove from active agents to prevent memory growth
+      this.agents.delete(agentId);
     }
   }
 
@@ -311,6 +313,8 @@ export class SubAgentManager {
         summary: `Failed: ${error}`,
         elapsed: Date.now() - (task.startTime ?? Date.now()),
       } as EngineEvent);
+      // Remove from active agents to prevent memory growth
+      this.agents.delete(agentId);
     }
   }
 

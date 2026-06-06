@@ -3,8 +3,8 @@ import { CrewManager } from '../../secret-sauce/CrewManager.js';
 
 export const crewCommand: CommandInterface = {
   name: 'crew',
-  description: 'Manage crews: list, enable, disable, show, switch, create',
-  usage: '/crew [list|enable <id>|disable <id>|show <id>|switch <id>]',
+  description: 'Manage crews: list, enable, disable, show, create',
+  usage: '/crew [list|enable <id>|disable <id>|show <id>]',
   async execute(args: string[], context: CommandContext): Promise<CommandResult> {
     const subcommand = args[0];
     const pm = new CrewManager();
@@ -15,12 +15,10 @@ export const crewCommand: CommandInterface = {
         context.emit('No crews configured. Use /crew create to add one.');
         return { success: true, action: 'none' };
       }
-      const activeId = pm.getActiveId();
       const lines = crews.map((c) => {
         const status = c.enabled ? '✓' : '✗';
-        const active = activeId !== null && c.id === activeId ? ' (active)' : '';
         const expertise = c.expertise?.join(', ') || 'general';
-        return `${status} **${c.name}** (@${c.callsign})${active}\n   Expertise: ${expertise}`;
+        return `${status} **${c.name}** (@${c.callsign})\n   Expertise: ${expertise}`;
       });
       context.emit(`**Available Crews:**\n${lines.join('\n\n')}`);
       return { success: true, action: 'none' };
@@ -33,11 +31,7 @@ export const crewCommand: CommandInterface = {
         return { success: false, action: 'none' };
       }
       const success = pm.enable(id);
-      if (success) {
-        context.emit(`✓ Crew "${id}" enabled.`);
-      } else {
-        context.emit(`✗ Failed to enable crew "${id}".`);
-      }
+      context.emit(success ? `✓ Crew "${id}" enabled.` : `✗ Failed to enable crew "${id}".`);
       return { success, action: 'none' };
     }
 
@@ -48,18 +42,14 @@ export const crewCommand: CommandInterface = {
         return { success: false, action: 'none' };
       }
       const success = pm.disable(id);
-      if (success) {
-        context.emit(`✓ Crew "${id}" disabled.`);
-      } else {
-        context.emit(`✗ Failed to disable crew "${id}".`);
-      }
+      context.emit(success ? `✓ Crew "${id}" disabled.` : `✗ Failed to disable crew "${id}".`);
       return { success, action: 'none' };
     }
 
     if (subcommand === 'show') {
-      const id = args[1] ?? pm.getActiveId() ?? undefined;
+      const id = args[1];
       if (!id) {
-        context.emit('No active crew and no crew ID provided.');
+        context.emit('Usage: /crew show <crew_id>');
         return { success: false, action: 'none' };
       }
       const crew = pm.get(id);
@@ -88,27 +78,21 @@ export const crewCommand: CommandInterface = {
       }
       const systemPrompt = args.slice(4).join(' ') || `You are ${name}, a capable AI assistant.`;
       pm.create({ id, name, callsign: callsign || id, systemPrompt });
-      pm.switch(id);
-      context.emit(`✓ Crew "${name}" (@${callsign || id}) created and activated.`);
+      context.emit(`✓ Crew "${name}" (@${callsign || id}) created.`);
       return { success: true, action: 'none' };
     }
 
-    if (subcommand === 'switch') {
-      const id = args[1];
-      if (!id) {
-        context.emit('Usage: /crew switch <crew_id>');
-        return { success: false, action: 'none' };
-      }
-      const crew = pm.switch(id);
-      if (crew) {
-        context.emit(`✓ Switched to crew "${crew.name}".`);
-        return { success: true, action: 'switch_crew' };
-      }
-      context.emit(`✗ Crew "${id}" not found.`);
-      return { success: false, action: 'none' };
+    // Default: list crews
+    const crews = pm.list();
+    if (crews.length === 0) {
+      context.emit('No crews configured. Use /crew create to add one.');
+    } else {
+      const lines = crews.map((c) => {
+        const status = c.enabled ? '✓' : '✗';
+        return `${status} **${c.name}** (@${c.callsign})`;
+      });
+      context.emit(`**Available Crews:**\n${lines.join('\n')}\n\nUse /crew [list|enable|disable|show|create]`);
     }
-
-    // Default: open crew picker UI (handles switch, create)
-    return { success: true, action: 'switch_crew' };
+    return { success: true, action: 'none' };
   },
 };

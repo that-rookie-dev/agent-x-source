@@ -326,4 +326,5 @@ export interface NormalizedToolCall {
   status: ToolCallStatus;
   durationMs?: number;
   error?: string;
+  rawArguments?: string;
 }
