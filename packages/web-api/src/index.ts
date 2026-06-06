@@ -360,6 +360,19 @@ app.post('/api/provider/profile/switch', (req, res) => {
   }
 });
 
+// ───── Rename Provider Profile ─────
+app.post('/api/provider/profile/rename', (req, res) => {
+  try {
+    const { provider, profileId, label } = req.body as { provider: string; profileId: string; label: string };
+    if (!label) { res.status(400).json({ error: 'label required' }); return; }
+    const eng = getEngine();
+    eng.configManager.renameProviderProfile(provider, profileId, label);
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'rename-failed' });
+  }
+});
+
 // ───── Provider Switch (clears active model) ─────
 app.post('/api/provider/switch', (req, res) => {
   try {

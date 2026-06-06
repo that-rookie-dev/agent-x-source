@@ -368,6 +368,15 @@ export class ConfigManager {
     this.save(cfg);
   }
 
+  renameProviderProfile(providerId: string, profileId: string, newLabel: string): void {
+    const cfg = this.load();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const p = (cfg.provider.providers as any)[providerId];
+    if (!p?.profiles?.[profileId]) return;
+    p.profiles[profileId].label = newLabel;
+    this.save(cfg);
+  }
+
   getPath(): string {
     return this.configPath;
   }

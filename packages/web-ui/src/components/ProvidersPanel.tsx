@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -15,8 +15,14 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import Alert from '@mui/material/Alert';
 import CircularProgress from '@mui/material/CircularProgress';
+import Radio from '@mui/material/Radio';
+import RadioGroup from '@mui/material/RadioGroup';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import EditIcon from '@mui/icons-material/Edit';
+import CheckIcon from '@mui/icons-material/Check';
+import CloseIcon from '@mui/icons-material/Close';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { config, providers as provApi, models as modelsApi, type AgentXConfig, type ProviderInfo, type ModelInfo } from '../api';
 import { colors } from '../theme';
@@ -35,14 +41,25 @@ export function ProvidersPanel() {
   const [availableProviders, setAvailableProviders] = useState<ProviderInfo[]>([]);
   const [profiles, setProfiles] = useState<ProfileEntry[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
-  const [profileModels, setProfileModels] = useState<Record<string, ModelInfo[]>>({});
   const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
-  const [loadingModels, setLoadingModels] = useState<Set<string>>(new Set());
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [newProfile, setNewProfile] = useState({ label: '', providerId: '', apiKey: '', baseUrl: '' });
   const [saving, setSaving] = useState(false);
+
+  // Edit profile name state
+  const [editingLabel, setEditingLabel] = useState<string | null>(null);
+  const [editLabelValue, setEditLabelValue] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  // Model picker dialog state
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [pickingProfile, setPickingProfile] = useState<ProfileEntry | null>(null);
+  const [pickerModels, setPickerModels] = useState<ModelInfo[]>([]);
+  const [pickerSelectedModel, setPickerSelectedModel] = useState('');
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerError, setPickerError] = useState('');
 
   const providerName = useCallback((id: string) => {
     return availableProviders.find(p => p.id === id)?.name ?? id;
@@ -81,20 +98,6 @@ export function ProvidersPanel() {
     setSelectedModels(models);
   }, [cfg, providerName]);
 
-  const loadModels = useCallback(async (providerId: string) => {
-    if (profileModels[providerId] || loadingModels.has(providerId)) return;
-    setLoadingModels((prev) => new Set(prev).add(providerId));
-    try {
-      const m = await provApi.models(providerId);
-      setProfileModels((prev) => ({ ...prev, [providerId]: m }));
-    } catch { /* ignore */ }
-    setLoadingModels((prev) => { const next = new Set(prev); next.delete(providerId); return next; });
-  }, [profileModels, loadingModels]);
-
-  useEffect(() => {
-    profiles.forEach((p) => loadModels(p.providerId));
-  }, [profiles, loadModels]);
-
   const handleAddProfile = async () => {
     if (!newProfile.providerId || !newProfile.label || !newProfile.apiKey) return;
     setSaving(true);
@@ -108,30 +111,6 @@ export function ProvidersPanel() {
       setError(e instanceof Error ? e.message : 'Failed to add profile');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleSwitchProfile = async (profile: ProfileEntry) => {
-    setSwitching(profile.id);
-    setError('');
-    try {
-      await provApi.switchProfile(profile.providerId, profile.id);
-      const model = selectedModels[profile.id];
-      if (model) await modelsApi.switch(model);
-      const updated = await config.get();
-      setCfg(updated);
-      setActiveProfileId(profile.id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Switch failed');
-    } finally {
-      setSwitching(null);
-    }
-  };
-
-  const handleModelChange = async (profileId: string, modelId: string) => {
-    setSelectedModels((prev) => ({ ...prev, [profileId]: modelId }));
-    if (profileId === activeProfileId) {
-      try { await modelsApi.switch(modelId); } catch { /* ignore */ }
     }
   };
 
@@ -150,6 +129,70 @@ export function ProvidersPanel() {
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Delete failed');
       }
+    }
+  };
+
+  const startLabelEdit = (profile: ProfileEntry) => {
+    setEditingLabel(profile.id);
+    setEditLabelValue(profile.label);
+    setTimeout(() => editInputRef.current?.focus(), 50);
+  };
+
+  const saveLabelEdit = async (profileId: string) => {
+    const profile = profiles.find(p => p.id === profileId);
+    if (!profile || !editLabelValue.trim()) return;
+    const newLabel = editLabelValue.trim();
+    if (newLabel === profile.label) { setEditingLabel(null); return; }
+    try {
+      const res = await fetch('/api/provider/profile/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ provider: profile.providerId, profileId, label: newLabel }) });
+      if (!res.ok) throw new Error('Rename failed');
+      const updated = await config.get();
+      setCfg(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Rename failed');
+    }
+    setEditingLabel(null);
+  };
+
+  const cancelLabelEdit = () => { setEditingLabel(null); };
+
+  // Load models on demand when opening the picker
+  const openModelPicker = async (profile: ProfileEntry) => {
+    setPickingProfile(profile);
+    setPickerModels([]);
+    setPickerSelectedModel(selectedModels[profile.id] || '');
+    setPickerError('');
+    setPickerLoading(true);
+    setModelPickerOpen(true);
+
+    try {
+      const models = await provApi.models(profile.providerId);
+      setPickerModels(models);
+    } catch (e) {
+      setPickerError(e instanceof Error ? e.message : 'Failed to load models');
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  const confirmModelPicker = async () => {
+    if (!pickingProfile || !pickerSelectedModel) return;
+
+    setSwitching(pickingProfile.id);
+    setError('');
+    try {
+      // First switch profile, then set the model
+      await provApi.switchProfile(pickingProfile.providerId, pickingProfile.id);
+      await modelsApi.switch(pickerSelectedModel);
+      const updated = await config.get();
+      setCfg(updated);
+      setActiveProfileId(pickingProfile.id);
+      setSelectedModels(prev => ({ ...prev, [pickingProfile.id]: pickerSelectedModel }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Switch failed');
+    } finally {
+      setSwitching(null);
+      setModelPickerOpen(false);
     }
   };
 
@@ -200,9 +243,7 @@ export function ProvidersPanel() {
           }}>
             {profiles.map((profile) => {
               const isActive = profile.id === activeProfileId;
-              const provModels = profileModels[profile.providerId] ?? [];
-              const loading = loadingModels.has(profile.providerId);
-              const isSwitching = switching === profile.id;
+              const isEditing = editingLabel === profile.id;
 
               return (
                 <Box
@@ -219,12 +260,37 @@ export function ProvidersPanel() {
                     <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 1.5 }}>
                       <Box sx={{ flex: 1, minWidth: 0 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Typography sx={{ fontWeight: 600, fontSize: '0.85rem', color: colors.text.primary }}>
-                            {profile.label}
-                          </Typography>
-                          {isActive && (
-                            <Chip size="small" icon={<CheckCircleIcon sx={{ fontSize: '12px !important', color: `${colors.accent.green} !important` }} />}
-                              label="Active" sx={{ height: 22, fontSize: '0.55rem', color: colors.accent.green, borderColor: colors.accent.green + '40' }} variant="outlined" />
+                          {isEditing ? (
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flex: 1 }}>
+                              <TextField
+                                inputRef={editInputRef}
+                                size="small"
+                                value={editLabelValue}
+                                onChange={(e) => setEditLabelValue(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') saveLabelEdit(profile.id); if (e.key === 'Escape') cancelLabelEdit(); }}
+                                sx={{ flex: 1 }}
+                              />
+                              <IconButton size="small" onClick={() => saveLabelEdit(profile.id)} sx={{ p: 0.25, color: colors.accent.green }}>
+                                <CheckIcon sx={{ fontSize: 14 }} />
+                              </IconButton>
+                              <IconButton size="small" onClick={cancelLabelEdit} sx={{ p: 0.25, color: colors.accent.red }}>
+                                <CloseIcon sx={{ fontSize: 14 }} />
+                              </IconButton>
+                            </Box>
+                          ) : (
+                            <>
+                              <Typography sx={{ fontWeight: 600, fontSize: '0.85rem', color: colors.text.primary }}>
+                                {profile.label}
+                              </Typography>
+                              {isActive && (
+                                <Chip size="small" icon={<CheckCircleIcon sx={{ fontSize: '12px !important', color: `${colors.accent.green} !important` }} />}
+                                  label="Active" sx={{ height: 22, fontSize: '0.55rem', color: colors.accent.green, borderColor: colors.accent.green + '40' }} variant="outlined" />
+                              )}
+                              <IconButton size="small" onClick={() => startLabelEdit(profile)}
+                                sx={{ color: colors.text.dim, p: 0.25, opacity: 0, transition: 'opacity 0.15s', '.MuiBox-root:hover &': { opacity: 1 } }}>
+                                <EditIcon sx={{ fontSize: 13 }} />
+                              </IconButton>
+                            </>
                           )}
                         </Box>
                         <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", mt: 0.5 }}>
@@ -237,61 +303,36 @@ export function ProvidersPanel() {
                       </IconButton>
                     </Box>
 
-                    <Box sx={{ mb: 1 }}>
-                      <FormControl size="small" fullWidth>
-                        {loading && provModels.length === 0 ? (
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, height: 34, px: 1 }}>
-                            <CircularProgress size={12} />
-                            <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim }}>Loading models...</Typography>
-                          </Box>
-                        ) : (
-                          <Select
-                            displayEmpty
-                            value={selectedModels[profile.id] ?? ''}
-                            onChange={(e) => handleModelChange(profile.id, e.target.value)}
-                            sx={{ fontSize: '0.7rem', height: 34, bgcolor: colors.bg.tertiary }}
-                          >
-                            <MenuItem value="" disabled><em style={{ fontSize: '0.65rem' }}>Select model</em></MenuItem>
-                            {provModels.map((m) => (
-                              <MenuItem key={m.id} value={m.id} sx={{ fontSize: '0.7rem' }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, width: '100%', overflow: 'hidden' }}>
-                                  <Typography sx={{ fontSize: '0.7rem', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {m.name || m.id}
-                                  </Typography>
-                                  {m.contextWindow != null && m.contextWindow > 0 && (
-                                    <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
-                                      {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(1)}M` : `${Math.round(m.contextWindow / 1000)}K`}
-                                    </Typography>
-                                  )}
-                                </Box>
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        )}
-                      </FormControl>
-                    </Box>
-
                     {isActive ? (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: colors.accent.green }} />
-                        <Typography sx={{ fontSize: '0.6rem', color: colors.accent.green, fontFamily: "'JetBrains Mono', monospace" }}>
-                          Currently active
-                        </Typography>
+                      <Box sx={{ mt: 1 }}>
+                        <Button
+                          fullWidth size="small" variant="outlined"
+                          onClick={() => openModelPicker(profile)}
+                          sx={{
+                            fontSize: '0.65rem', textTransform: 'none',
+                            borderColor: colors.accent.blue + '50', color: colors.accent.blue,
+                            '&:hover': { borderColor: colors.accent.blue, bgcolor: colors.accent.blue + '10' },
+                          }}
+                        >
+                          Switch Model
+                        </Button>
                       </Box>
                     ) : (
-                      <Button
-                        fullWidth size="small" variant="outlined"
-                        onClick={() => handleSwitchProfile(profile)}
-                        disabled={isSwitching}
-                        sx={{
-                          fontSize: '0.65rem', textTransform: 'none',
-                          borderColor: colors.accent.blue + '50', color: colors.accent.blue,
-                          '&:hover': { borderColor: colors.accent.blue, bgcolor: colors.accent.blue + '10' },
-                        }}
-                      >
-                        {isSwitching ? <CircularProgress size={12} sx={{ mr: 1 }} /> : null}
-                        Switch to this profile
-                      </Button>
+                      <Box sx={{ mt: 1 }}>
+                        <Button
+                          fullWidth size="small" variant="outlined"
+                          onClick={() => openModelPicker(profile)}
+                          disabled={switching === profile.id}
+                          sx={{
+                            fontSize: '0.65rem', textTransform: 'none',
+                            borderColor: colors.accent.blue + '50', color: colors.accent.blue,
+                            '&:hover': { borderColor: colors.accent.blue, bgcolor: colors.accent.blue + '10' },
+                          }}
+                        >
+                          {switching === profile.id ? <CircularProgress size={12} sx={{ mr: 1 }} /> : null}
+                          Switch to this profile
+                        </Button>
+                      </Box>
                     )}
                   </Box>
                 </Box>
@@ -301,6 +342,7 @@ export function ProvidersPanel() {
         )}
       </Box>
 
+      {/* Add Profile Dialog */}
       <Dialog open={showAddDialog} onClose={() => setShowAddDialog(false)}
         PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 2, maxWidth: 440, width: '100%' } }}>
         <DialogTitle sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 700, letterSpacing: '1px', pb: 1 }}>
@@ -334,6 +376,78 @@ export function ProvidersPanel() {
             sx={{ bgcolor: colors.accent.blue, textTransform: 'none', fontSize: '0.75rem', px: 2.5, '&:hover': { bgcolor: '#3b8ad9' } }}>
             {saving ? <CircularProgress size={14} sx={{ mr: 1 }} /> : null}
             Add
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Model Picker Dialog */}
+      <Dialog open={modelPickerOpen} onClose={() => setModelPickerOpen(false)}
+        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 2, maxWidth: 480, width: '100%' } }}>
+        <DialogTitle sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 700, letterSpacing: '1px', pb: 1 }}>
+          {pickingProfile?.id === activeProfileId ? 'Switch Model' : `Switch to ${pickingProfile?.label ?? ''}`}
+        </DialogTitle>
+        <DialogContent sx={{ pt: '12px !important', minHeight: 200 }}>
+          <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, mb: 2 }}>
+            {pickingProfile?.providerName} — select a model
+          </Typography>
+
+          {pickerLoading ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: 4 }}>
+              <CircularProgress size={24} />
+              <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, ml: 1.5 }}>Loading models...</Typography>
+            </Box>
+          ) : pickerError ? (
+            <Alert severity="error" sx={{ bgcolor: '#1a0000', fontSize: '0.7rem' }}>{pickerError}</Alert>
+          ) : pickerModels.length === 0 ? (
+            <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, py: 2 }}>No models available for this provider.</Typography>
+          ) : (
+            <RadioGroup
+              value={pickerSelectedModel}
+              onChange={(e) => setPickerSelectedModel(e.target.value)}
+            >
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, maxHeight: 320, overflow: 'auto' }}>
+                {pickerModels.map((m) => (
+                  <Box
+                    key={m.id}
+                    onClick={() => setPickerSelectedModel(m.id)}
+                    sx={{
+                      display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1,
+                      borderRadius: 1.5, cursor: 'pointer',
+                      border: `1px solid ${pickerSelectedModel === m.id ? colors.accent.blue + '40' : 'transparent'}`,
+                      bgcolor: pickerSelectedModel === m.id ? colors.accent.blue + '10' : 'transparent',
+                      '&:hover': { bgcolor: colors.accent.blue + '08' },
+                    }}
+                  >
+                    <Radio
+                      value={m.id}
+                      size="small"
+                      checked={pickerSelectedModel === m.id}
+                      sx={{ p: 0.5 }}
+                    />
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography sx={{ fontSize: '0.75rem' }}>{m.name || m.id}</Typography>
+                      {m.contextWindow != null && m.contextWindow > 0 && (
+                        <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
+                          {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(1)}M` : `${Math.round(m.contextWindow / 1000)}K`} context
+                        </Typography>
+                      )}
+                    </Box>
+                  </Box>
+                ))}
+              </Box>
+            </RadioGroup>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setModelPickerOpen(false)} sx={{ color: colors.text.dim, textTransform: 'none', fontSize: '0.75rem' }}>Cancel</Button>
+          <Button
+            onClick={confirmModelPicker}
+            variant="contained"
+            disabled={!pickerSelectedModel || pickerLoading || switching !== null}
+            sx={{ bgcolor: colors.accent.blue, textTransform: 'none', fontSize: '0.75rem', px: 2.5, '&:hover': { bgcolor: '#3b8ad9' } }}
+          >
+            {switching ? <CircularProgress size={14} sx={{ mr: 1 }} /> : null}
+            Confirm
           </Button>
         </DialogActions>
       </Dialog>
