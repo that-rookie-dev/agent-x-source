@@ -211,6 +211,7 @@ const AVAILABLE_PROVIDERS = [
   { id: 'perplexity', name: 'Perplexity', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.perplexity.ai' },
   { id: 'azure', name: 'Azure OpenAI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: '' },
   { id: 'cohere', name: 'Cohere', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.cohere.com/compatibility/v1' },
+  { id: 'commandcode', name: 'CommandCode', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.commandcode.ai/provider/v1' },
   { id: 'ollama', name: 'Ollama', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:11434' },
   { id: 'lmstudio', name: 'LM Studio', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:1234/v1' },
 ];

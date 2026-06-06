@@ -15,6 +15,7 @@ import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import GroupsIcon from '@mui/icons-material/Groups';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LogoutIcon from '@mui/icons-material/Logout';
+import DnsIcon from '@mui/icons-material/Dns';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../api';
 import { useApp } from '../store/AppContext';
@@ -28,6 +29,7 @@ interface Props {
 
 const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
   { id: 'chat', icon: ChatIcon, label: 'Chat' },
+  { id: 'providers', icon: DnsIcon, label: 'Providers' },
   { id: 'crews', icon: GroupsIcon, label: 'Crews' },
   { id: 'soul', icon: AutoAwesomeIcon, label: 'Soul' },
   { id: 'orchestrator', icon: AccountTreeIcon, label: 'Orchestrator' },

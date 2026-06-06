@@ -18,6 +18,7 @@ function getDefaultBaseUrl(providerId: ProviderId): string {
     case 'fireworks': return 'https://api.fireworks.ai/inference/v1';
     case 'perplexity': return 'https://api.perplexity.ai';
     case 'cohere': return 'https://api.cohere.com/compatibility/v1';
+    case 'commandcode': return 'https://api.commandcode.ai/provider/v1';
     default: return 'https://api.openai.com/v1';
   }
 }
@@ -51,6 +52,7 @@ export class ProviderFactory {
       case 'fireworks':
       case 'perplexity':
       case 'cohere':
+      case 'commandcode':
         if (!apiKey) throw new Error(`${providerId} requires an API key`);
         return new OpenAICompatibleProvider(providerId, providerId, apiKey, baseUrl ?? getDefaultBaseUrl(providerId));
       case 'azure':

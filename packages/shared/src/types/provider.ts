@@ -22,7 +22,8 @@ export type ProviderId =
   | 'fireworks'
   | 'perplexity'
   | 'azure'
-  | 'cohere';
+  | 'cohere'
+  | 'commandcode';
 
 export interface ModelInfo {
   id: string;

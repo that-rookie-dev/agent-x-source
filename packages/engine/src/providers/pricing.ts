@@ -94,6 +94,25 @@ const PRICING: Record<string, ModelPricing> = {
 
   // Ollama (local — free)
   'ollama': { inputPerMillion: 0, outputPerMillion: 0 },
+
+  // CommandCode (Provider API — per-token pricing from commandcode.ai/docs/resources/pricing-limits)
+  'gpt-5.5': { inputPerMillion: 5.00, outputPerMillion: 30.00 },
+  'gpt-5.4': { inputPerMillion: 2.50, outputPerMillion: 15.00 },
+  'gpt-5.4-mini': { inputPerMillion: 0.75, outputPerMillion: 4.50 },
+  'kimi-k2.6': { inputPerMillion: 0.95, outputPerMillion: 4.00 },
+  'kimi-k2.5': { inputPerMillion: 0.60, outputPerMillion: 3.00 },
+  'glm-5.1': { inputPerMillion: 1.40, outputPerMillion: 4.40 },
+  'glm-5': { inputPerMillion: 1.00, outputPerMillion: 3.20 },
+  'minimax-m3': { inputPerMillion: 0.60, outputPerMillion: 2.40 },
+  'minimax-m2.7': { inputPerMillion: 0.30, outputPerMillion: 1.20 },
+  'minimax-m2.5': { inputPerMillion: 0.30, outputPerMillion: 1.20 },
+  'deepseek-v4-pro': { inputPerMillion: 1.74, outputPerMillion: 3.48 },
+  'deepseek-v4-flash': { inputPerMillion: 0.14, outputPerMillion: 0.28 },
+  'qwen-3.7-max': { inputPerMillion: 2.50, outputPerMillion: 7.50 },
+  'qwen-3.7-plus': { inputPerMillion: 0.40, outputPerMillion: 1.60 },
+  'mimo-v2.5-pro': { inputPerMillion: 2.00, outputPerMillion: 6.00 },
+  'mimo-v2.5': { inputPerMillion: 0.80, outputPerMillion: 4.00 },
+  'nemotron-3-ultra': { inputPerMillion: 0.50, outputPerMillion: 2.50 },
 };
 
 export function getModelPricing(modelId: string): ModelPricing {

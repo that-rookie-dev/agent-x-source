@@ -120,6 +120,14 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     baseUrlConfigurable: true,
     defaultBaseUrl: 'https://api.cohere.com/compatibility/v1',
   },
+  commandcode: {
+    id: 'commandcode',
+    name: 'CommandCode',
+    type: 'cloud',
+    apiKeyRequired: true,
+    baseUrlConfigurable: true,
+    defaultBaseUrl: 'https://api.commandcode.ai/provider/v1',
+  },
 } as const;
 
 export const PROVIDER_IDS = Object.keys(PROVIDERS) as string[];

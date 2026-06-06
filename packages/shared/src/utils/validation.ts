@@ -16,6 +16,7 @@ export const providerIdSchema = z.enum([
   'perplexity',
   'azure',
   'cohere',
+  'commandcode',
 ]);
 
 export const permissionDecisionSchema = z.enum([
