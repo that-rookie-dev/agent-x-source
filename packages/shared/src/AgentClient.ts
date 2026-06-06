@@ -78,8 +78,4 @@ export interface SubAgentEvent {
   output?: string;
 }
 
-export interface TodoItem {
-  id: string;
-  title: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
-}
+export { type TodoItem } from '../types/events.js';
