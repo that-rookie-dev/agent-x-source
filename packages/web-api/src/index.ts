@@ -537,17 +537,20 @@ app.post('/api/crew/toggle', (req, res) => {
 
 app.post('/api/crews', (req, res) => {
   try {
-    const { id, name, callsign, systemPrompt, emotion, isDefault } = req.body as {
-      id: string; name: string; callsign?: string; systemPrompt: string; emotion?: string; isDefault?: boolean;
+    const { id, name, title, callsign, systemPrompt, emotion, isDefault, expertise, traits } = req.body as {
+      id: string; name: string; title?: string; callsign?: string; systemPrompt: string; emotion?: string; isDefault?: boolean; expertise?: string[]; traits?: string[];
     };
     const eng = getEngine();
     const crew = eng.crewManager.create({
       id: id || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
       name,
+      title,
       callsign: callsign || id || name,
       systemPrompt,
       emotion: emotion as 'professional' | 'friendly' | 'witty' | 'kind' | 'funny' | 'arrogant' | 'flirty' | 'happy' | 'sad' | 'sarcastic' | undefined,
       isDefault,
+      expertise,
+      traits,
     });
     res.json(crew);
   } catch (e: unknown) {
@@ -574,6 +577,57 @@ app.delete('/api/crews/:id', (req, res) => {
     res.json({ ok: true });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'delete-failed' });
+  }
+});
+
+app.post('/api/crew/generate-metadata', async (req, res) => {
+  try {
+    const { systemPrompt } = req.body as { systemPrompt: string };
+    if (!systemPrompt) { res.status(400).json({ error: 'systemPrompt required' }); return; }
+
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+    const providerId = cfg.provider.activeProvider;
+    const providerCfg = cfg.provider.providers[providerId];
+    const apiKey = providerCfg?.apiKey || providerCfg?.profiles?.[providerCfg?.activeProfile ?? '']?.apiKey;
+
+    if (!apiKey) { res.json({ expertise: [], traits: [] }); return; }
+
+    const { ProviderFactory } = await import('@agentx/engine');
+    const provider = ProviderFactory.create(providerId as any, apiKey, providerCfg?.baseUrl);
+
+    const genPrompt = `Analyze this AI agent's system prompt and extract:
+1. expertise: 3-6 specific technical/domain skills (e.g. "React", "API Design", "Security Auditing")
+2. traits: 3-5 personality/behavioral traits (e.g. "concise", "practical", "pragmatic")
+
+System prompt:
+"${systemPrompt}"
+
+Return ONLY valid JSON: {"expertise":["skill1","skill2"],"traits":["trait1","trait2"]}`;
+
+    const chunks: string[] = [];
+    const modelId = cfg.provider.activeModel || 'gpt-4o-mini';
+    for await (const chunk of provider.complete({
+      messages: [{ role: 'user', content: genPrompt }],
+      model: modelId,
+      stream: true,
+      maxTokens: 200,
+      temperature: 0.3,
+    })) {
+      if (chunk.type === 'text_delta' && chunk.content) chunks.push(chunk.content);
+    }
+
+    const text = chunks.join('');
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) { res.json({ expertise: [], traits: [] }); return; }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    res.json({
+      expertise: Array.isArray(parsed.expertise) ? parsed.expertise.slice(0, 8) : [],
+      traits: Array.isArray(parsed.traits) ? parsed.traits.slice(0, 8) : [],
+    });
+  } catch (e: unknown) {
+    res.json({ expertise: [], traits: [] });
   }
 });
 

@@ -964,7 +964,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 sx={{ borderRadius: 1, mb: 0.75, border: `1px solid ${colors.border.default}`, px: 2, py: 1.5, '&:hover': { bgcolor: colors.bg.tertiary, borderColor: colors.accent.purple + '40' } }}
               >
                 <ListItemText
-                  primary={c.name}
+                  primary={c.title ? `${c.name} — ${c.title}` : c.name}
                   secondary={c.systemPrompt?.slice(0, 60) + (c.systemPrompt?.length > 60 ? '...' : '')}
                   primaryTypographyProps={{ fontSize: '0.8rem', fontWeight: 500, color: colors.accent.purple }}
                   secondaryTypographyProps={{ fontSize: '0.55rem', color: colors.text.dim, mt: 0.25 }}

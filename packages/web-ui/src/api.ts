@@ -113,6 +113,7 @@ export const crews = {
   update: (id: string, data: Partial<CrewInput>) => request<{ ok: boolean }>(`/crews/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) => request<{ ok: boolean }>(`/crews/${id}`, { method: 'DELETE' }),
   toggle: (id: string, enabled: boolean) => request<{ ok: boolean }>('/crew/toggle', { method: 'POST', body: JSON.stringify({ crewId: id, enabled }) }),
+  generateMetadata: (systemPrompt: string) => request<{ expertise: string[]; traits: string[] }>('/crew/generate-metadata', { method: 'POST', body: JSON.stringify({ systemPrompt }) }),
 };
 
 // ─── Chat ───
@@ -412,19 +413,24 @@ export interface ModelInfo {
 export interface Crew {
   id: string;
   name: string;
+  title?: string;
   callsign: string;
   systemPrompt: string;
   tone?: string;
   isDefault?: boolean;
   enabled?: boolean;
   expertise?: string[];
+  traits?: string[];
 }
 
 export interface CrewInput {
   name: string;
+  title?: string;
   callsign: string;
   systemPrompt: string;
   tone?: string;
+  expertise?: string[];
+  traits?: string[];
 }
 
 export interface ChatMessage {

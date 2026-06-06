@@ -341,7 +341,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList =
               disabled={isLoading || (!!error && errorActions.length > 0)}
               placeholder="Type a message... (/ for commands)"
               completions={commandNames}
-              crewCompletions={crewList.map((c) => ({ name: c.name, id: c.id, expertise: c.expertise }))}
+              crewCompletions={crewList.map((c) => ({ name: c.name, title: c.title, id: c.id, expertise: c.expertise }))}
               onSlashDetected={(v) => setSlashFilter(v)}
               onSlashCleared={() => setSlashFilter(null)}
             />

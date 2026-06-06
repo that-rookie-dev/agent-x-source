@@ -5,6 +5,7 @@ import { COLORS } from '../theme/colors.js';
 
 interface CrewCompletion {
   name: string;
+  title?: string;
   id: string;
   expertise?: string[];
 }

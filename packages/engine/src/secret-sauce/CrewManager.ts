@@ -49,6 +49,7 @@ export class CrewManager {
         this.crews = parsed.crews.map((p) => ({
           id: p['id'] as string,
           name: p['name'] as string,
+          title: (p['title'] as string | undefined),
           callsign: (p['callsign'] as string) ?? (p['id'] as string),
           systemPrompt: (p['systemPrompt'] as string) ?? '',
           emotion: (p['emotion'] as CrewEmotion | undefined),
@@ -147,6 +148,7 @@ export class CrewManager {
     const crew: Crew = {
       id: input.id,
       name: input.name,
+      title: input.title,
       callsign,
       systemPrompt: input.systemPrompt,
       emotion: input.emotion,
@@ -174,11 +176,12 @@ export class CrewManager {
     return true;
   }
 
-  update(id: string, updates: { name?: string; callsign?: string; systemPrompt?: string; emotion?: CrewEmotion; expertise?: string[]; traits?: string[]; toolPreferences?: { enabled?: string[]; disabled?: string[] }; protocol?: CollaborationProtocol; quotas?: CrewResourceQuota }): Crew | null {
+  update(id: string, updates: { name?: string; title?: string; callsign?: string; systemPrompt?: string; emotion?: CrewEmotion; expertise?: string[]; traits?: string[]; toolPreferences?: { enabled?: string[]; disabled?: string[] }; protocol?: CollaborationProtocol; quotas?: CrewResourceQuota }): Crew | null {
     const idx = this.crews.findIndex((p) => p.id === id);
     if (idx < 0) return null;
     const crew = this.crews[idx]!;
     if (updates.name !== undefined) crew.name = updates.name;
+    if (updates.title !== undefined) crew.title = updates.title;
     if (updates.callsign !== undefined) {
       const cs = updates.callsign.replace(/\s+/g, '').toLowerCase();
       if (!/^\S+$/.test(cs)) throw new Error('Callsign must not contain spaces');
@@ -209,7 +212,8 @@ export class CrewManager {
 
     const crewDescriptions = enabledCrews.map((c) => {
       const expertise = c.expertise?.join(', ') || 'general';
-      return `- **${c.name}** (@${c.callsign}): ${expertise}`;
+      const description = c.title ? `${c.name} — ${c.title}` : c.name;
+      return `- **${description}** (@${c.callsign}): ${expertise}`;
     }).join('\n');
 
     return `You are Agent-X, the master orchestrator. The following crew members are available in this session:
