@@ -2,6 +2,7 @@ import type { EngineEvent } from '@agentx/shared';
 import type { Agent } from '../agent/Agent.js';
 import { AgentEventBus } from '../EventBus.js';
 import { TelegramStore } from './TelegramStore.js';
+import { randomBytes } from 'node:crypto';
 
 export interface TelegramConfig {
   botToken: string;
@@ -124,8 +125,7 @@ export class TelegramBridge {
         this.webhookSecret = this.config.webhookSecret;
       } else {
         // Generate a secure random secret if none provided
-        const crypto = require('crypto');
-        this.webhookSecret = crypto.randomBytes(32).toString('hex');
+        this.webhookSecret = randomBytes(32).toString('hex');
       }
     }
     return this.webhookSecret ?? '';
