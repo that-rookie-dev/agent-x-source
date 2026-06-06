@@ -14,25 +14,27 @@ interface MentionInputProps {
   onInsertReady?: (fn: (callsign: string) => void) => void;
 }
 
-function getCrewColor(callsign: string, crewList: Crew[]): string {
+const CREW_PALETTE = ['#4FC3F7', '#FF8A65', '#81C784', '#BA68C8', '#F06292', '#AED581', '#7986CB', '#4DD0E1', '#FFD54F', '#A1887F'];
+
+function getCrewColor(callsign: string): string {
   if (callsign === 'agentx') return colors.accent.blue;
-  const crew = crewList.find(c => c.callsign === callsign);
-  if (crew) {
-    let hash = 0;
-    for (let i = 0; i < callsign.length; i++) {
-      hash = ((hash << 5) - hash) + callsign.charCodeAt(i);
-      hash |= 0;
-    }
-    const palette = ['#4FC3F7', '#FF8A65', '#81C784', '#BA68C8', '#F06292', '#AED581', '#7986CB', '#4DD0E1', '#FFD54F', '#A1887F'];
-    return palette[Math.abs(hash) % palette.length];
+  let hash = 0;
+  for (let i = 0; i < callsign.length; i++) {
+    hash = ((hash << 5) - hash) + callsign.charCodeAt(i);
+    hash |= 0;
   }
-  return colors.accent.blue;
+  return CREW_PALETTE[Math.abs(hash) % CREW_PALETTE.length];
 }
 
-export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, placeholder, crewList, disabled, onInsertReady }: MentionInputProps) {
+function buildChipHtml(callsign: string): string {
+  const color = getCrewColor(callsign);
+  return `<span data-mention="${callsign}" contenteditable="false" style="display:inline-block;padding:1px 6px;margin:0 2px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;font-weight:600;color:${color};background:${color}18;border:1px solid ${color}30;cursor:default;user-select:all;">@${callsign}</span>`;
+}
+
+export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, placeholder, crewList: _crewList, disabled, onInsertReady }: MentionInputProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const isComposing = useRef(false);
-  const lastHtmlRef = useRef('');
+  const externalUpdate = useRef(false);
 
   const extractText = useCallback((): string => {
     const el = editorRef.current;
@@ -56,50 +58,58 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
     return parts.join('');
   }, []);
 
-  const renderContent = useCallback((text: string) => {
+  const textToHtml = useCallback((text: string): string => {
     const parts = text.split(/(@\w+)/g);
     return parts.map((part) => {
       if (part.startsWith('@') && part.length > 1) {
-        const callsign = part.slice(1);
-        const color = getCrewColor(callsign, crewList);
-        return `<span data-mention="${callsign}" contenteditable="false" style="display:inline-block;padding:1px 6px;margin:0 2px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;font-weight:600;color:${color};background:${color}18;border:1px solid ${color}30;cursor:default;user-select:all;">@${callsign}</span>`;
+        return buildChipHtml(part.slice(1));
       }
-      return part.replace(/\n/g, '<br>');
+      return part.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
     }).join('');
-  }, [crewList]);
+  }, []);
 
-  const syncContent = useCallback(() => {
+  // Initial mount and external value changes only
+  useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
-    const html = renderContent(value);
-    if (html !== lastHtmlRef.current) {
-      lastHtmlRef.current = html;
-      el.innerHTML = html || `<span style="color:${colors.text.dim};font-family:Inter,sans-serif;font-size:0.8rem;">${placeholder}</span>`;
+    if (externalUpdate.current) {
+      externalUpdate.current = false;
+      return;
     }
-  }, [value, renderContent, placeholder]);
+    el.innerHTML = textToHtml(value) || `<span style="color:${colors.text.dim};font-family:Inter,sans-serif;font-size:0.8rem;">${placeholder}</span>`;
+  }, [value, textToHtml, placeholder]);
 
-  useEffect(() => { syncContent(); }, [syncContent]);
+  // After insertMention, mark as external update so next sync applies
+  useEffect(() => {
+    if (value === '' && editorRef.current) {
+      externalUpdate.current = true;
+      editorRef.current.innerHTML = '';
+    }
+  }, [value]);
 
   const handleInput = useCallback(() => {
     const el = editorRef.current;
     if (!el || isComposing.current) return;
     const text = extractText();
-    lastHtmlRef.current = '';
+    externalUpdate.current = true;
     onChange(text);
 
     // Detect @mention query
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
-      const before = range.startContainer.textContent?.slice(0, range.startOffset) || '';
-      const atIdx = before.lastIndexOf('@');
-      if (atIdx >= 0) {
-        const preChar = atIdx === 0 ? ' ' : before[atIdx - 1];
-        if (preChar === ' ' || preChar === '\n' || atIdx === 0) {
-          const query = before.slice(atIdx + 1);
-          if (!query.includes(' ')) {
-            onMentionQuery(query);
-            return;
+      const node = range.startContainer;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const before = node.textContent?.slice(0, range.startOffset) || '';
+        const atIdx = before.lastIndexOf('@');
+        if (atIdx >= 0) {
+          const preChar = atIdx === 0 ? ' ' : before[atIdx - 1];
+          if (preChar === ' ' || preChar === '\n' || atIdx === 0) {
+            const query = before.slice(atIdx + 1);
+            if (!query.includes(' ')) {
+              onMentionQuery(query);
+              return;
+            }
           }
         }
       }
@@ -119,41 +129,49 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
-      const before = range.startContainer.textContent?.slice(0, range.startOffset) || '';
-      const atIdx = before.lastIndexOf('@');
-      if (atIdx >= 0) {
-        const preChar = atIdx === 0 ? ' ' : before[atIdx - 1];
-        if (preChar === ' ' || preChar === '\n' || atIdx === 0) {
-          // Set cursor to @ position, delete @query, insert mention span
-          range.setStart(range.startContainer, atIdx);
-          range.deleteContents();
-          const span = document.createElement('span');
-          span.setAttribute('data-mention', callsign);
-          span.setAttribute('contenteditable', 'false');
-          const color = getCrewColor(callsign, crewList);
-          span.style.cssText = `display:inline-block;padding:1px 6px;margin:0 2px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;font-weight:600;color:${color};background:${color}18;border:1px solid ${color}30;cursor:default;user-select:all;`;
-          span.textContent = '@' + callsign;
-          range.insertNode(span);
-          // Move cursor after the span
-          const afterRange = document.createRange();
-          afterRange.setStartAfter(span);
-          afterRange.collapse(true);
-          sel.removeAllRanges();
-          sel.addRange(afterRange);
-          // Insert a space
-          const space = document.createTextNode('\u00A0');
-          afterRange.insertNode(space);
-          afterRange.setStartAfter(space);
-          afterRange.collapse(true);
-          sel.removeAllRanges();
-          sel.addRange(afterRange);
-          onChange(extractText());
+      const node = range.startContainer;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const before = node.textContent?.slice(0, range.startOffset) || '';
+        const atIdx = before.lastIndexOf('@');
+        if (atIdx >= 0) {
+          const preChar = atIdx === 0 ? ' ' : before[atIdx - 1];
+          if (preChar === ' ' || preChar === '\n' || atIdx === 0) {
+            // Delete @query text
+            range.setStart(node, atIdx);
+            range.setEnd(node, range.startOffset + (before.length - atIdx) > before.length ? before.length : range.startOffset);
+            // Actually just delete from @ to cursor
+            const deleteRange = document.createRange();
+            deleteRange.setStart(node, atIdx);
+            deleteRange.setEnd(node, before.length);
+            deleteRange.deleteContents();
+
+            // Insert mention chip
+            const span = document.createElement('span');
+            span.setAttribute('data-mention', callsign);
+            span.setAttribute('contenteditable', 'false');
+            const color = getCrewColor(callsign);
+            span.style.cssText = `display:inline-block;padding:1px 6px;margin:0 2px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;font-weight:600;color:${color};background:${color}18;border:1px solid ${color}30;cursor:default;user-select:all;`;
+            span.textContent = '@' + callsign;
+            deleteRange.insertNode(span);
+
+            // Add space after chip
+            const space = document.createTextNode('\u00A0');
+            deleteRange.setStartAfter(span);
+            deleteRange.collapse(true);
+            deleteRange.insertNode(space);
+            deleteRange.setStartAfter(space);
+            deleteRange.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(deleteRange);
+
+            externalUpdate.current = true;
+            onChange(extractText());
+          }
         }
       }
     }
-  }, [crewList, extractText, onChange]);
+  }, [extractText, onChange]);
 
-  // Expose insertMention to parent
   useEffect(() => {
     onInsertReady?.(insertMention);
   }, [onInsertReady, insertMention]);
@@ -167,7 +185,7 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
       onKeyDown={handleKeyDown}
       onCompositionStart={() => { isComposing.current = true; }}
       onCompositionEnd={() => { isComposing.current = false; handleInput(); }}
-      onBlur={() => { onChange(extractText()); }}
+      onBlur={() => { externalUpdate.current = true; onChange(extractText()); }}
       sx={{
         flex: 1, border: 'none', outline: 'none',
         fontFamily: "'Inter', sans-serif", fontSize: '0.8rem',
