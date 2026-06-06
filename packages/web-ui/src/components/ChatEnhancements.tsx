@@ -365,7 +365,6 @@ export function CrewMentionMenu({
             borderLeft: active === 0 ? `2px solid ${colors.accent.blue}` : '2px solid transparent',
           }}
         >
-          <SmartToyIcon sx={{ fontSize: 14, color: colors.accent.blue }} />
           <Box>
             <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: colors.accent.blue, fontFamily: "'JetBrains Mono', monospace" }}>
               @agentx

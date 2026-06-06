@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -142,15 +142,6 @@ interface ChatPanelProps {
   sessionId?: string;
 }
 
-interface MentionToken {
-  id: string;
-  type: 'crew' | 'agent';
-  name: string;
-  title?: string;
-  callsign: string;
-  color: string;
-}
-
 export function ChatPanel({ sessionId }: ChatPanelProps) {
   const navigate = useNavigate();
   const [view, setView] = useState<ChatView>(sessionId ? 'chat' : 'sessions');
@@ -258,7 +249,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // @-mention detection
   const [showCrewMention, setShowCrewMention] = useState(false);
-  const [mentionTokens, setMentionTokens] = useState<MentionToken[]>([]);
   const mentionQuery = useMemo(() => {
     const lastAt = input.lastIndexOf('@');
     if (lastAt === -1) return null;
@@ -273,23 +263,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const handleMentionSelect = useCallback((crew: Crew) => {
     const lastAt = input.lastIndexOf('@');
     if (lastAt === -1) return;
-    const color = getWebCrewColor(crew.callsign);
-    setMentionTokens(prev => [...prev, { id: crypto.randomUUID(), type: 'crew', name: crew.name, title: crew.title, callsign: crew.callsign, color }]);
-    setInput(input.slice(0, lastAt));
+    setInput(input.slice(0, lastAt) + `@${crew.callsign} `);
     setShowCrewMention(false);
   }, [input]);
 
   const handleMentionSelectAgent = useCallback(() => {
     const lastAt = input.lastIndexOf('@');
     if (lastAt === -1) return;
-    setMentionTokens(prev => [...prev, { id: crypto.randomUUID(), type: 'agent', name: 'Agent-X', title: 'Your AI Wingman', callsign: 'agentx', color: colors.accent.blue }]);
-    setInput(input.slice(0, lastAt));
+    setInput(input.slice(0, lastAt) + '@agentx ');
     setShowCrewMention(false);
   }, [input]);
-
-  const handleRemoveMention = useCallback((id: string) => {
-    setMentionTokens(prev => prev.filter(t => t.id !== id));
-  }, []);
 
   // Smart auto-scroll state
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -597,30 +580,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if ((!text && mentionTokens.length === 0 && attachments.length === 0) || streaming) return;
-    // Build full message with mentions
-    const mentionsText = mentionTokens.length > 0 
-      ? mentionTokens.map(t => `@${t.callsign}`).join(' ') + ' '
-      : '';
-    const fullText = mentionsText + text;
-    // Intercept slash commands first
-    if (fullText.startsWith('/')) {
-      const handled = await runSlashCommand(fullText);
+    if ((!text && attachments.length === 0) || streaming) return;
+    if (text.startsWith('/')) {
+      const handled = await runSlashCommand(text);
       if (handled) {
         setInput('');
-        setMentionTokens([]);
         return;
       }
     }
     if (!currentProvider || !currentModel) return;
     setInput('');
-    setMentionTokens([]);
     setStreaming(true);
 
     const userMsg: UIMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: fullText,
+      content: text,
       streaming: false,
       attachments: attachments.map((a) => ({ name: a.name })),
     };
@@ -635,7 +610,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setAttachments([]);
 
     try {
-      const result = await chat.send(fullText, fileRefs);
+      const result = await chat.send(text, fileRefs);
       // Fallback: if SSE didn't deliver the response (e.g., first message before agent existed),
       // display the response from the API call directly.
       // The API only resolves after agent.sendMessage() completes, so SSE should have
@@ -897,13 +872,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
-      if (showCrewMention) return;
+      if (showCrewMention) { e.preventDefault(); return; }
       e.preventDefault();
       handleSend();
-    }
-    if (e.key === 'Backspace' && !input && mentionTokens.length > 0 && !showCrewMention) {
-      e.preventDefault();
-      setMentionTokens(prev => prev.slice(0, -1));
     }
   };
 
@@ -1191,26 +1162,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 onClose={() => setShowCrewMention(false)}
                 onSelectAgent={handleMentionSelectAgent}
               />
-            )}
-            {/* Mention tokens as colored chips */}
-            {mentionTokens.length > 0 && (
-              <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', px: 1.25, pt: 0.5, pb: 0 }}>
-                {mentionTokens.map((token) => (
-                  <Chip
-                    key={token.id}
-                    size="small"
-                    label={`@${token.callsign}`}
-                    onDelete={() => handleRemoveMention(token.id)}
-                    icon={token.type === 'agent' ? <SmartToyIcon sx={{ fontSize: '10px !important', color: `${token.color} !important` }} /> : undefined}
-                    sx={{
-                      height: 22, fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace",
-                      bgcolor: token.color + '20', color: token.color,
-                      border: `1px solid ${token.color}40`,
-                      '& .MuiChip-deleteIcon': { color: token.color, fontSize: 14, '&:hover': { color: colors.accent.red } },
-                    }}
-                  />
-                ))}
-              </Box>
             )}
             {/* Input row */}
             <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 0.5, px: 1.25, py: 0.5 }}>
@@ -1702,6 +1653,22 @@ const MARKDOWN_COMPONENTS = {
   },
 };
 
+function UserMentionText({ content }: { content: string }) {
+  const parts = content.split(/(@\w+)/g);
+  return (
+    <Typography sx={{ fontSize: '0.8rem', color: colors.text.primary, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      {parts.map((part, i) => {
+        if (part.startsWith('@') && part.length > 1) {
+          const callsign = part.slice(1);
+          const color = callsign === 'agentx' ? colors.accent.blue : getWebCrewColor(callsign);
+          return <Box key={i} component="span" sx={{ color, fontWeight: 600 }}>{part}</Box>;
+        }
+        return <Fragment key={i}>{part}</Fragment>;
+      })}
+    </Typography>
+  );
+}
+
 function CrewAwareMarkdown({ content }: { content: string }) {
   const segments = parseWebContentSegments(content);
   const hasCrew = segments.some(s => s.type === 'crew');
@@ -1825,7 +1792,8 @@ function MessageBubble({ message }: { message: UIMessage }) {
         )}
 
         {/* Message text (crew-aware) */}
-        {message.content && <CrewAwareMarkdown content={message.content} />}
+        {message.content && !isUser && <CrewAwareMarkdown content={message.content} />}
+        {message.content && isUser && <UserMentionText content={message.content} />}
 
         {/* Streaming dots (empty content) */}
         {message.streaming && !message.content && (
