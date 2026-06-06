@@ -1,4 +1,4 @@
-import type { EngineEvent } from './types/events.js';
+import type { EngineEvent, TodoItem } from './types/events.js';
 
 /**
  * Unified AgentClient interface used by all UI surfaces (TUI, Web, VS Code).
@@ -78,4 +78,4 @@ export interface SubAgentEvent {
   output?: string;
 }
 
-export { type TodoItem } from '../types/events.js';
+export { type TodoItem } from './types/events.js';

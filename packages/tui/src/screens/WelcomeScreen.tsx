@@ -29,7 +29,6 @@ interface WelcomeScreenProps {
   crewList?: Crew[];
   restoreSessionId?: string;
   recovered?: boolean;
-  onCrewSwitch?: () => void;
   pluginRegistry: PluginRegistry;
   onPluginChanged: () => void;
   storageAdapter: PostgresStorageAdapter | null;
@@ -44,7 +43,7 @@ interface WelcomeScreenProps {
   daemonMode?: boolean;
 }
 
-export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList = [], restoreSessionId, recovered, onCrewSwitch, pluginRegistry, onPluginChanged, storageAdapter, telegramBridge, initialPlanMode, fallbackModel, mcpBridge, acpBridge, maxBudget, gitAutoCommit, gitAware, daemonMode }) => {
+export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList = [], restoreSessionId, recovered, pluginRegistry, onPluginChanged, storageAdapter, telegramBridge, initialPlanMode, fallbackModel, mcpBridge, acpBridge, maxBudget, gitAutoCommit, gitAware, daemonMode }) => {
   const [showPluginHub, setShowPluginHub] = useState(false);
   const [slashFilter, setSlashFilter] = useState<string | null>(null);
 
@@ -102,7 +101,7 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList =
     totalCost,
     isIndexing,
     indexingProgress,
-  } = useSession(config, crew, restoreSessionId, onCrewSwitch, storageAdapter, telegramBridge, initialPlanMode, fallbackModel, maxBudget, gitAutoCommit, gitAware, daemonMode);
+  } = useSession(config, crew, restoreSessionId, storageAdapter, telegramBridge, initialPlanMode, fallbackModel, maxBudget, gitAutoCommit, gitAware, daemonMode);
 
   // Features available from the engine when providing these capabilities
   // Currently hardcoded as engine doesn't expose these through useSession yet

@@ -79,7 +79,6 @@ export function useSession(
   config: AgentXConfig,
   _crew?: Crew,
   restoreSessionId?: string,
-  onCrewSwitch?: () => void,
   storageAdapter?: StorageAdapter | null,
   externalTelegramBridge?: TelegramBridge | null,
   initialPlanMode?: boolean,
@@ -603,10 +602,6 @@ export function useSession(
             configManager.reset();
             process.stderr.write('\x1b[?25h\x1b[?1049l\x1b[2J\x1b[H');
             process.exit(0);
-          } else if (result.action === 'switch_crew') {
-            if (onCrewSwitch) {
-              onCrewSwitch();
-            }
           } else if (result.action === 'clear') {
             setMessages([]);
             agentRef.current?.clearHistory();
