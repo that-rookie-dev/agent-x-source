@@ -349,12 +349,25 @@ app.post('/api/provider/profile', (req, res) => {
 
 app.post('/api/provider/profile/switch', (req, res) => {
   try {
-    const { provider, profileId } = req.body as { provider: string; profileId: string };
+    const { providerId, profileId } = req.body as { providerId?: string; profileId: string };
     const eng = getEngine();
-    eng.configManager.setActiveProviderProfile(provider, profileId);
+    // The provider to switch to is determined by which provider owns this profile
+    const cfg = eng.configManager.load();
+    let targetProvider = providerId;
+    if (!targetProvider) {
+      // Find which provider config contains this profile
+      for (const [pid, pcfg] of Object.entries(cfg.provider.providers)) {
+        if (pcfg.profiles && pcfg.profiles[profileId]) {
+          targetProvider = pid;
+          break;
+        }
+      }
+    }
+    if (!targetProvider) { res.status(400).json({ error: 'Unable to determine provider for profile' }); return; }
+    eng.configManager.setActiveProviderProfile(targetProvider, profileId);
     destroyAgent();
     createAgent();
-    res.json({ ok: true, provider, profileId });
+    res.json({ ok: true, provider: targetProvider, profileId });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
   }

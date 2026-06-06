@@ -357,9 +357,9 @@ export class ConfigManager {
 
   setActiveProviderProfile(providerId: string, profileId: string): void {
     const cfg = this.load();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const p = (cfg.provider.providers as any)[providerId];
     if (!p || !p.profiles || !p.profiles[profileId]) return;
+    cfg.provider.activeProvider = providerId as any;
     p.activeProfile = profileId;
     const active = p.profiles[profileId];
     p.apiKey = active.apiKey;

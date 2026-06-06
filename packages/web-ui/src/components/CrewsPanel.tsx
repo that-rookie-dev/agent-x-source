@@ -577,17 +577,17 @@ export function CrewsPanel() {
                       </Box>
                     </Box>
 
-                    <Typography sx={{ fontSize: '0.7rem', color: colors.text.tertiary, lineHeight: 1.5, mb: 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                    <Typography sx={{ fontSize: '0.7rem', color: colors.text.tertiary, lineHeight: 1.5, mb: 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {c.systemPrompt}
                     </Typography>
 
                     {(c.expertise && c.expertise.length > 0) && (
-                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1 }}>
+                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'nowrap', overflow: 'hidden', mb: 1, alignItems: 'center' }}>
                         {c.expertise.slice(0, 3).map((exp) => (
-                          <Chip key={exp} size="small" label={exp} sx={{ height: 18, fontSize: '0.5rem', bgcolor: colors.bg.tertiary, color: colors.text.tertiary }} />
+                          <Chip key={exp} size="small" label={exp} sx={{ height: 18, fontSize: '0.5rem', bgcolor: colors.bg.tertiary, color: colors.text.tertiary, flexShrink: 0 }} />
                         ))}
                         {c.expertise.length > 3 && (
-                          <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, alignSelf: 'center' }}>+{c.expertise.length - 3}</Typography>
+                          <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, flexShrink: 0 }}>+{c.expertise.length - 3} more</Typography>
                         )}
                       </Box>
                     )}
