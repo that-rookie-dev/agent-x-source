@@ -606,7 +606,7 @@ export class Agent {
   }
 
   get processing(): boolean {
-    return this.isProcessing;
+    return this.lifecycle.isProcessing();
   }
 
   /** Public accessor for the visual event bridge (TUI/Web UI can subscribe) */
@@ -1778,7 +1778,6 @@ Return ONLY valid JSON, no other text.`;
    */
   async research(question: string): Promise<Message> {
     const startTime = Date.now();
-    this.isProcessing = true;
     this.abortController = new AbortController();
 
     const userMessage: Message = {

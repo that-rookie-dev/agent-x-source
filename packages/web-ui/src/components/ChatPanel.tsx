@@ -61,6 +61,7 @@ import {
   type SlashCommand,
   type PaletteAction,
 } from './ChatEnhancements';
+import { MentionInput } from './MentionInput';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -249,30 +250,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // @-mention detection
   const [showCrewMention, setShowCrewMention] = useState(false);
-  const mentionQuery = useMemo(() => {
-    const lastAt = input.lastIndexOf('@');
-    if (lastAt === -1) return null;
-    const pre = lastAt === 0 ? ' ' : input[lastAt - 1];
-    if (pre !== ' ' && pre !== '\n') return '';
-    const after = input.slice(lastAt + 1);
-    if (after.includes(' ')) return '';
-    return after;
-  }, [input]);
-  useEffect(() => { setShowCrewMention(mentionQuery !== null); }, [mentionQuery]);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const insertMentionRef = useRef<((callsign: string) => void) | null>(null);
+  useEffect(() => { setShowCrewMention(mentionQuery !== ''); }, [mentionQuery]);
 
   const handleMentionSelect = useCallback((crew: Crew) => {
-    const lastAt = input.lastIndexOf('@');
-    if (lastAt === -1) return;
-    setInput(input.slice(0, lastAt) + `@${crew.callsign} `);
+    insertMentionRef.current?.(crew.callsign);
     setShowCrewMention(false);
-  }, [input]);
+  }, []);
 
   const handleMentionSelectAgent = useCallback(() => {
-    const lastAt = input.lastIndexOf('@');
-    if (lastAt === -1) return;
-    setInput(input.slice(0, lastAt) + '@agentx ');
+    insertMentionRef.current?.('agentx');
     setShowCrewMention(false);
-  }, [input]);
+  }, []);
 
   // Smart auto-scroll state
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -1167,26 +1157,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 0.5, px: 1.25, py: 0.5 }}>
               <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
 
-              <Box
-                component="textarea"
+              <MentionInput
                 value={input}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInput(e.target.value)}
+                onChange={setInput}
                 onKeyDown={handleKeyDown}
+                onMentionQuery={setMentionQuery}
+                onInsertReady={(fn) => { insertMentionRef.current = fn; }}
                 placeholder="@agentx — message your AI wingman..."
-                sx={{
-                  flex: 1, border: 'none', outline: 'none', resize: 'none',
-                  bgcolor: 'transparent', color: colors.text.primary,
-                  fontFamily: "'Inter', sans-serif", fontSize: '0.8rem',
-                  lineHeight: 1.5, py: 0.75, px: 0.5,
-                  minHeight: 24, maxHeight: 120, overflow: 'auto',
-                  '&::placeholder': { color: colors.text.dim },
-                }}
-                rows={1}
-                onInput={(e: React.FormEvent<HTMLTextAreaElement>) => {
-                  const el = e.currentTarget;
-                  el.style.height = 'auto';
-                  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-                }}
+                crewList={crewList}
+                disabled={streaming}
               />
 
               {streaming ? (
@@ -1362,7 +1341,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 {modelList.filter(Boolean).map((m) => (
                   <MenuItem key={m.id} onClick={() => {
                     setCurrentModel(m.id);
-                    models.switch(m.id).catch(() => {});
+                    // If model belongs to a different provider, switch provider too
+                    if (m.providerId && m.providerId !== currentProvider) {
+                      setCurrentProvider(m.providerId);
+                      providers.switch(m.providerId).then(() => {
+                        models.switch(m.id).catch(() => {});
+                      }).catch(() => {});
+                    } else {
+                      models.switch(m.id).catch(() => {});
+                    }
                     setModelMenuAnchor(null);
                   }} selected={m.id === currentModel} sx={{ fontSize: '0.65rem' }}>
                     <Box>
@@ -1669,6 +1656,8 @@ function UserMentionText({ content }: { content: string }) {
   );
 }
 
+
+
 function CrewAwareMarkdown({ content }: { content: string }) {
   const segments = parseWebContentSegments(content);
   const hasCrew = segments.some(s => s.type === 'crew');
@@ -1707,8 +1696,15 @@ function CrewAwareMarkdown({ content }: { content: string }) {
   );
 }
 
+function getResponderName(content: string): { name: string; callsign: string } | null {
+  const match = content.match(/^\*\*([^*]+)\*\*\s*\(@(\w+)\):/);
+  if (match) return { name: match[1].trim(), callsign: match[2] };
+  return null;
+}
+
 function MessageBubble({ message }: { message: UIMessage }) {
   const isUser = message.role === 'user';
+  const responderName = !isUser && message.content ? getResponderName(message.content) : null;
 
   if (message.role === 'system') return null;
 
@@ -1730,15 +1726,26 @@ function MessageBubble({ message }: { message: UIMessage }) {
       )}
 
       {/* Bubble content */}
-      <Box sx={{
-        maxWidth: isUser ? '72%' : '85%', minWidth: 0,
-        ...(isUser ? {
-          bgcolor: colors.accent.blue + '10',
-          border: `1px solid ${colors.accent.blue}20`,
-          borderRadius: '14px 14px 4px 14px',
-          px: 1.75, py: 1,
-        } : {}),
-      }}>
+      <Box sx={{ minWidth: 0, maxWidth: isUser ? '72%' : '85%' }}>
+        {/* Responder name label */}
+        {!isUser && (
+          <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: responderName ? getWebCrewColor(responderName.callsign) : colors.accent.blue, fontFamily: "'JetBrains Mono', monospace", mb: 0.5, letterSpacing: '0.5px' }}>
+            {responderName ? responderName.name : 'Agent-X'}
+          </Typography>
+        )}
+        <Box sx={{
+          ...(isUser ? {
+            bgcolor: colors.accent.blue + '10',
+            border: `1px solid ${colors.accent.blue}20`,
+            borderRadius: '14px 14px 4px 14px',
+            px: 1.75, py: 1,
+          } : {
+            bgcolor: (responderName ? getWebCrewColor(responderName.callsign) : colors.accent.blue) + '08',
+            border: `1px solid ${(responderName ? getWebCrewColor(responderName.callsign) : colors.accent.blue)}15`,
+            borderRadius: '14px 14px 14px 4px',
+            px: 1.75, py: 1,
+          }),
+        }}>
         {/* Reasoning (first-class) */}
         {message.thinking && !isUser && (
           <ReasoningBlock
@@ -1821,6 +1828,7 @@ function MessageBubble({ message }: { message: UIMessage }) {
         {!isUser && !message.streaming && (message.turnTokens != null || message.turnCostUsd != null) && (
           <TurnTokenBadge tokens={message.turnTokens} costUsd={message.turnCostUsd} />
         )}
+      </Box>
       </Box>
     </Box>
   );
