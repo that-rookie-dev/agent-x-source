@@ -1,9 +1,5 @@
 name: Release
 
-# Runs when code is merged to the launch branch.
-# STRICT RULE: Will only create a release if the version in source code
-# is NEWER than the latest tag on the public repo. No version bump = no release.
-
 on:
   push:
     branches: [launch]
@@ -19,7 +15,6 @@ env:
   PUBLIC_REPO: SlashpanOrg/agent-x
 
 jobs:
-  # Gate: check if version was bumped before doing any work
   check-version:
     runs-on: ubuntu-latest
     outputs:
@@ -47,7 +42,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
 
-  # Build web-ui once, cache by version hash to skip when unchanged
   build-webui:
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
@@ -59,15 +53,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Restore web-ui dist cache
-        uses: actions/cache@v4
-        id: webui-cache
-        with:
-          path: packages/web-ui/dist
-          key: webui-dist-${{ hashFiles('packages/web-ui/VERSION', 'packages/web-ui/src/**', 'packages/web-ui/package.json', 'packages/web-ui/vite.config.ts', 'packages/web-ui/index.html') }}
-
       - name: Build web-ui
-        if: steps.webui-cache.outputs.cache-hit != 'true'
         run: |
           cd packages/web-ui
           npm install
@@ -79,7 +65,7 @@ jobs:
           path: packages/web-ui/dist
           retention-days: 1
 
-  build:
+  build-cli:
     needs: [check-version, build-webui]
     if: needs.check-version.outputs.should_release == 'true'
     strategy:
@@ -113,70 +99,47 @@ jobs:
           name: webui-dist
           path: packages/web-ui/dist
 
-      - name: Package (Unix)
+      - name: Package CLI (Unix)
         if: runner.os != 'Windows'
-        shell: bash
         run: |
-          # --- Full package (TUI + Web-UI) ---
           mkdir -p release-pkg
           cp packages/cli/dist/index.js release-pkg/
           cp packages/cli/dist/daemon.js release-pkg/
           mkdir -p release-pkg/web-api/dist
           cp -r packages/web-api/dist/* release-pkg/web-api/dist/ 2>/dev/null || true
-          cp packages/web-api/server.js release-pkg/web-api/ 2>/dev/null || true
-          cp packages/web-api/package.json release-pkg/web-api/ 2>/dev/null || true
           mkdir -p release-pkg/web-ui/dist
           cp -r packages/web-ui/dist/* release-pkg/web-ui/dist/ 2>/dev/null || true
-          cp packages/web-ui/package.json release-pkg/web-ui/ 2>/dev/null || true
           cat > release-pkg/package.json << 'EOF'
           {
             "type": "module",
-            "dependencies": {
-              "better-sqlite3": "^11.0.0"
-            },
-            "scripts": {
-              "postinstall": "echo 'Native modules ready'"
-            }
+            "dependencies": { "better-sqlite3": "^11.0.0" }
           }
           EOF
           printf '#!/usr/bin/env bash\nexec node "$(dirname "$0")/index.js" "$@"\n' > release-pkg/agentx
           chmod +x release-pkg/agentx
-          cd release-pkg
-          tar -czf ../agentx-${{ matrix.platform }}.tar.gz .
-          cd ..
-
-          # --- TUI-only package ---
+          cd release-pkg && tar -czf ../agentx-${{ matrix.platform }}.tar.gz . && cd ..
           rm -rf release-pkg/web-ui
-          cd release-pkg
-          tar -czf ../agentx-${{ matrix.platform }}-tui.tar.gz .
+          cd release-pkg && tar -czf ../agentx-${{ matrix.platform }}-tui.tar.gz .
 
-      - name: Package (Windows)
+      - name: Package CLI (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Full package
           New-Item -ItemType Directory -Force -Path release-pkg
           Copy-Item packages/cli/dist/index.js release-pkg/
           Copy-Item packages/cli/dist/daemon.js release-pkg/
           New-Item -ItemType Directory -Force -Path release-pkg/web-api/dist
           Copy-Item -Path packages/web-api/dist/* -Destination release-pkg/web-api/dist/ -Recurse -ErrorAction SilentlyContinue
-          Copy-Item packages/web-api/server.js release-pkg/web-api/ -ErrorAction SilentlyContinue
-          Copy-Item packages/web-api/package.json release-pkg/web-api/ -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path release-pkg/web-ui/dist
           Copy-Item -Path packages/web-ui/dist/* -Destination release-pkg/web-ui/dist/ -Recurse -ErrorAction SilentlyContinue
-          Copy-Item packages/web-ui/package.json release-pkg/web-ui/ -ErrorAction SilentlyContinue
           @'
           {
             "type": "module",
-            "dependencies": {
-              "better-sqlite3": "^11.0.0"
-            }
+            "dependencies": { "better-sqlite3": "^11.0.0" }
           }
           '@ | Out-File -Encoding utf8 release-pkg/package.json
           '@echo off`r`nnode "%~dp0index.js" %*' | Out-File -Encoding ascii release-pkg/agentx.cmd
           Compress-Archive -Path release-pkg/* -DestinationPath agentx-${{ matrix.platform }}.zip
-
-          # TUI-only package
           Remove-Item -Recurse -Force release-pkg/web-ui -ErrorAction SilentlyContinue
           Compress-Archive -Path release-pkg/* -DestinationPath agentx-${{ matrix.platform }}-tui.zip
 
@@ -189,10 +152,108 @@ jobs:
             agentx-${{ matrix.platform }}.zip
             agentx-${{ matrix.platform }}-tui.zip
 
-  publish:
-    needs: [check-version, build]
+  build-desktop-mac:
+    needs: [check-version, build-webui]
     if: needs.check-version.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install Pillow
+
+      - run: pnpm install --frozen-lockfile || pnpm install
+
+      - run: pnpm run build --filter @agentx/web-api --filter @agentx/cli --filter @agentx/shared --filter @agentx/engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: packages/web-ui/dist
+
+      - name: Build desktop
+        run: |
+          cd packages/desktop
+          npm install
+          npm run dist:mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-desktop-mac-arm64
+          path: |
+            packages/desktop/release/*.dmg
+            packages/desktop/release/*.zip
+            packages/desktop/release/*.blockmap
+            packages/desktop/release/latest-mac.yml
+
+  build-desktop-linux:
+    needs: [check-version, build-webui]
+    if: needs.check-version.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            suffix: linux-x64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            suffix: linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libnotify-dev libgconf-2-4 libnss3 libxss1 libasound2
+
+      - run: pnpm install --frozen-lockfile || pnpm install
+
+      - run: pnpm run build --filter @agentx/web-api --filter @agentx/cli --filter @agentx/shared --filter @agentx/engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: packages/web-ui/dist
+
+      - name: Build desktop
+        run: |
+          cd packages/desktop
+          npm install
+          npm run dist:linux
+        env:
+          ARCH: ${{ matrix.arch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-desktop-${{ matrix.suffix }}
+          path: |
+            packages/desktop/release/*.AppImage
+            packages/desktop/release/*.deb
+            packages/desktop/release/*.blockmap
+            packages/desktop/release/latest-linux.yml
+
+  build-desktop-win:
+    needs: [check-version, build-webui]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -205,7 +266,35 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install
 
-      - run: pnpm run build
+      - run: pnpm run build --filter @agentx/web-api --filter @agentx/cli --filter @agentx/shared --filter @agentx/engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: packages/web-ui/dist
+
+      - name: Build desktop
+        run: |
+          cd packages/desktop
+          npm install
+          npm run dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-desktop-win-x64
+          path: |
+            packages/desktop/release/*.exe
+            packages/desktop/release/*.blockmap
+            packages/desktop/release/latest.yml
+
+  publish:
+    needs: [check-version, build-cli, build-desktop-mac, build-desktop-linux, build-desktop-win]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
@@ -215,9 +304,9 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum agentx-*.tar.gz agentx-*.zip 2>/dev/null > checksums.sha256 || true
+          sha256sum agentx-*.tar.gz agentx-*.zip *.dmg *.AppImage *.deb *.exe 2>/dev/null > checksums.sha256 || true
 
-      - name: Publish release to public repo
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.PUBLIC_REPO }}
@@ -227,60 +316,26 @@ jobs:
           body: |
             ## Agent-X ${{ needs.check-version.outputs.tag }}
 
-            ### Install
+            ### Desktop App
+            | Platform | Download |
+            |---|---|
+            | macOS (Apple Silicon) | [Agent-X-${{ needs.check-version.outputs.version }}-arm64.dmg](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-arm64.dmg) |
+            | macOS (Apple Silicon) | [Agent-X-${{ needs.check-version.outputs.version }}-arm64-mac.zip](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-arm64-mac.zip) |
+            | Linux (x64) | [Agent-X-${{ needs.check-version.outputs.version }}.AppImage](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}.AppImage) |
+            | Linux (x64) | [Agent-X-${{ needs.check-version.outputs.version }}.deb](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}.deb) |
+            | Linux (ARM64) | [Agent-X-${{ needs.check-version.outputs.version }}-arm64.AppImage](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-arm64.AppImage) |
+            | Windows (x64) | [Agent-X-${{ needs.check-version.outputs.version }}-Setup.exe](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-Setup.exe) |
 
-            **macOS / Linux:**
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/${{ env.PUBLIC_REPO }}/main/install.sh | bash
-            ```
-
-            **Windows (PowerShell):**
-            ```powershell
-            irm https://raw.githubusercontent.com/${{ env.PUBLIC_REPO }}/main/install.ps1 | iex
-            ```
-
-            ### npm
-            ```bash
-            npm install -g @slashpan-org/agentx
-            ```
-
-            ### Docker
-            ```bash
-            docker pull slashpanorg/agentx:${{ needs.check-version.outputs.tag }}
-            ```
+            ### CLI / TUI
+            | Platform | Download |
+            |---|---|
+            | macOS (ARM) | [agentx-darwin-arm64.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-darwin-arm64.tar.gz) |
+            | Linux (x64) | [agentx-linux-x64.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-linux-x64.tar.gz) |
+            | Linux (ARM64) | [agentx-linux-arm64.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-linux-arm64.tar.gz) |
+            | Windows (x64) | [agentx-win-x64.zip](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-win-x64.zip) |
 
             ### Checksums
             See `checksums.sha256` in assets.
           files: |
-            artifacts/agentx-*.tar.gz
-            artifacts/agentx-*.zip
-            artifacts/checksums.sha256
-
-      # - name: Publish to npm
-      #   run: |
-      #     echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
-      #     cd packages/cli
-      #     jq '.version = "${{ needs.check-version.outputs.version }}"' package.json > package.json.tmp && mv package.json.tmp package.json
-      #     pnpm publish --no-git-checks --access public
-      #   env:
-      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      # - name: Set up Docker Buildx
-      #   uses: docker/setup-buildx-action@v3
-
-      # - name: Log in to Docker Hub
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ secrets.DOCKER_USERNAME }}
-      #     password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # - name: Build and push Docker image
-      #   uses: docker/build-push-action@v6
-      #   with:
-      #     context: .
-      #     push: true
-      #     tags: |
-      #       slashpanorg/agentx:${{ needs.check-version.outputs.version }}
-      #       slashpanorg/agentx:latest
-      #     cache-from: type=gha
-      #     cache-to: type=gha,mode=max
+            artifacts/*
+            !artifacts/*.blockmap
