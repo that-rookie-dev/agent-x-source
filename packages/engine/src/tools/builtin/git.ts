@@ -115,3 +115,75 @@ function gitCommand(cmd: string, context: ToolExecutionContext): ToolResult {
     return { success: false, output, error: 'GIT_ERROR' };
   }
 }
+
+export async function gitInit(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const bare = args['bare'] as boolean;
+  let cmd = 'init';
+  if (bare) cmd += ' --bare';
+  return gitCommand(cmd, context);
+}
+
+export async function gitClone(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const url = args['url'] as string;
+  const dir = args['directory'] as string | undefined;
+  let cmd = `clone ${url}`;
+  if (dir) cmd += ` ${dir}`;
+  return gitCommand(cmd, context);
+}
+
+export async function gitRemote(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const action = (args['action'] as string) ?? 'list';
+  const name = args['name'] as string | undefined;
+  const url = args['url'] as string | undefined;
+  if (action === 'add' && name && url) return gitCommand(`remote add ${name} ${url}`, context);
+  if (action === 'remove' && name) return gitCommand(`remote remove ${name}`, context);
+  if (action === 'set-url' && name && url) return gitCommand(`remote set-url ${name} ${url}`, context);
+  if (action === 'get-url' && name) return gitCommand(`remote get-url ${name}`, context);
+  return gitCommand('remote -v', context);
+}
+
+export async function gitTag(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const name = args['name'] as string | undefined;
+  const message = args['message'] as string | undefined;
+  const del = args['delete'] as boolean;
+  if (del && name) return gitCommand(`tag -d ${name}`, context);
+  if (name && message) return gitCommand(`tag -a ${name} -m "${message.replace(/"/g, '\\"')}"`, context);
+  if (name) return gitCommand(`tag ${name}`, context);
+  return gitCommand('tag -l', context);
+}
+
+export async function gitReset(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const target = (args['target'] as string) ?? 'HEAD';
+  const mode = (args['mode'] as string) ?? 'mixed';
+  const file = args['file'] as string | undefined;
+  const validModes = ['soft', 'mixed', 'hard'];
+  if (!validModes.includes(mode)) {
+    return { success: false, output: `Invalid mode: ${mode}. Use soft, mixed, or hard.`, error: 'INVALID_MODE' };
+  }
+  let cmd = `reset --${mode} ${target}`;
+  if (file) cmd += ` -- ${file}`;
+  return gitCommand(cmd, context);
+}
+
+export async function gitCherryPick(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const commits = args['commits'] as string[] | string;
+  const ids = Array.isArray(commits) ? commits.join(' ') : commits;
+  return gitCommand(`cherry-pick ${ids}`, context);
+}
+
+export async function gitRebase(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const branch = args['branch'] as string;
+  const interactive = args['interactive'] as boolean;
+  const cmd = interactive ? `rebase -i ${branch}` : `rebase ${branch}`;
+  return gitCommand(cmd, context);
+}
+
+export async function gitConfig(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const key = args['key'] as string | undefined;
+  const value = args['value'] as string | undefined;
+  const global = args['global'] as boolean;
+  const scope = global ? '--global' : '';
+  if (key && value !== undefined) return gitCommand(`config ${scope} ${key} "${value.replace(/"/g, '\\"')}"`, context);
+  if (key) return gitCommand(`config ${scope} ${key}`, context);
+  return gitCommand(`config ${scope} --list`, context);
+}

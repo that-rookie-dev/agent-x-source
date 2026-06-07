@@ -440,6 +440,13 @@ export interface ChatMessage {
   tokenCount?: number;
   crew?: { crewId: string; name: string; callsign: string };
   thinking?: string;
+  thinkingStartedAt?: number;
+  thinkingDoneAt?: number;
+  toolCalls?: Array<{ id: string; name: string; args?: string; result?: string; status: 'running' | 'done' | 'error'; elapsed?: number }>;
+  subAgents?: Array<{ id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }>;
+  plan?: string[];
+  turnTokens?: number;
+  turnCostUsd?: number;
 }
 
 export interface SessionInfo {

@@ -413,7 +413,13 @@ export class CompletionLoop {
                 }
               }
 
-              this.deps.messages.push({ role: 'tool', content: r.output, toolCallId: r.id });
+              // Truncate large tool results before injecting into context to avoid context overflow
+              const raw = String(r.output ?? '');
+              const MAX_TOOL_OUTPUT = 10000;
+              const truncated = raw.length > MAX_TOOL_OUTPUT
+                ? raw.slice(0, MAX_TOOL_OUTPUT) + `\n\n[Result truncated — ${raw.length - MAX_TOOL_OUTPUT} chars omitted]`
+                : raw;
+              this.deps.messages.push({ role: 'tool', content: truncated, toolCallId: r.id });
             }
           }
         }
