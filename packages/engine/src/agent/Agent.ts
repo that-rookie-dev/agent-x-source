@@ -1196,7 +1196,7 @@ Return ONLY valid JSON, no other text.`;
       if (!(await this.checkConnectivity())) {
         throw new Error('Cannot reach LLM provider. Check your internet connection.');
       }
-      let assistantMessage = await this.runCompletionLoop(startTime);
+      const assistantMessage = await this.runCompletionLoop(startTime);
 
       // Record assistant response in context tracker
       this.contextTracker.record(this.sessionId, 'assistant', assistantMessage.content);
@@ -2680,7 +2680,7 @@ User request: "${userContent.slice(0, 500)}"`;
     if (conversational.test(content)) return;
 
     const lines = content.split('\n');
-    let taskLines: string[] = [];
+    const taskLines: string[] = [];
 
     // Match: bullet points (-, *, •), numbered lists
     for (const line of lines) {
