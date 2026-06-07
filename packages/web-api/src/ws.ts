@@ -56,26 +56,7 @@ export function setupWebSocket(server: Server): void {
       try {
         const msg = JSON.parse(data.toString());
         handleWsMessage(msg);
-      // Persist token usage to DB for analytics (survives session deletion)
-      if (evType === 'token_usage') {
-        const ev = event as any;
-        const inputTokens = (ev.inputTokens as number) ?? 0;
-        const outputTokens = (ev.outputTokens as number) ?? 0;
-        const costUsd = (ev.costUsd as number) ?? 0;
-        if (sessionId && (inputTokens > 0 || outputTokens > 0)) {
-          try {
-            eng.sessionManager.addTokenLog({
-              sessionId,
-              inputTokens,
-              outputTokens,
-              model: eng.configManager.load().provider.activeModel,
-              costUsd,
-              providerId: eng.configManager.load().provider.activeProvider,
-            });
-          } catch { /* best effort */ }
-        }
-      }
-    } catch {
+      } catch {
         // ignore malformed
       }
     });
