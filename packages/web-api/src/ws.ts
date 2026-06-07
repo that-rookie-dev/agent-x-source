@@ -16,7 +16,7 @@ function atomicWriteFileSync(filePath: string, content: string): void {
   renameSync(tmpPath, filePath);
 }
 
-function appendContextFile(sessionId: string, role: string, content: string): void {
+function appendContextFile(sessionId: string, role: string, content: string, crew?: { crewId: string; name: string; callsign: string }, thinking?: string): void {
   if (!sessionId || !content) return;
   const dir = join(SESSIONS_DIR, sessionId);
   if (!existsSync(dir)) {
@@ -31,8 +31,13 @@ function appendContextFile(sessionId: string, role: string, content: string): vo
     atomicWriteFileSync(contextPath, existing + entry);
     // Update conversation.json
     let conv: unknown[] = [];
-    try { conv = JSON.parse(existsSync(convPath) ? readFileSync(convPath, 'utf-8') : '[]') as unknown[]; } catch { conv = []; }
-    conv.push({ timestamp, role, content: content.slice(0, 2000) });
+    if (existsSync(convPath)) {
+      try { conv = JSON.parse(readFileSync(convPath, 'utf-8')) as unknown[]; } catch { conv = []; }
+    }
+    const record: Record<string, unknown> = { timestamp, role, content: content.slice(0, 2000) };
+    if (crew) record['crew'] = crew;
+    if (thinking) record['thinking'] = thinking;
+    conv.push(record);
     atomicWriteFileSync(convPath, JSON.stringify(conv, null, 2));
   } catch { /* best-effort */ }
 }
@@ -130,6 +135,9 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
   if (subscribedAgent === agent) return;
   subscribedAgent = agent;
 
+  // Accumulate thinking/reasoning text per session turn for persistence
+  let accumulatedThinking = '';
+
   unsubscribeFromAgent = agent.events.on((event: Record<string, unknown>) => {
     const evType = (event as { type?: string }).type ?? 'unknown';
     broadcast({
@@ -137,6 +145,15 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
       event: evType,
       data: event,
     });
+
+    // Accumulate thinking deltas for persistence with the next message_received
+    if (evType === 'thinking_delta' || evType === 'reasoning_delta') {
+      const delta = ((event as any).content as string) ?? ((event as any).text as string) ?? '';
+      accumulatedThinking += delta;
+    }
+    if (evType === 'reasoning_end' || evType === 'thinking_end') {
+      // Keep accumulated, reset on next message_sent
+    }
 
     // Persist conversation to session context files
     try {
@@ -159,9 +176,12 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
         const msg: any = (event as any).message;
         const role = evType === 'message_sent' ? 'user' : 'assistant';
         const text = (msg?.content as string) || (event as any).content as string || '';
+        const crew = msg?.crew as { crewId: string; name: string; callsign: string } | undefined;
         if (sessionId && text) {
-          appendContextFile(sessionId, role, text);
+          appendContextFile(sessionId, role, text, crew, accumulatedThinking || undefined);
         }
+        // Clear accumulated thinking after persisting with the message
+        if (evType === 'message_received') accumulatedThinking = '';
       }
 
       // Write tool execution results to context.txt

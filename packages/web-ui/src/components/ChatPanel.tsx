@@ -9,7 +9,6 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
-import ListItemText from '@mui/material/ListItemText';
 import LinearProgress from '@mui/material/LinearProgress';
 import MenuItem from '@mui/material/MenuItem';
 import Menu from '@mui/material/Menu';
@@ -114,6 +113,7 @@ interface UIMessage extends ChatMessage {
   turnTokens?: number;
   turnCostUsd?: number;
   doomLoop?: { toolName: string; count: number } | null;
+  crew?: { crewId: string; name: string; callsign: string };
 }
 
 interface ToolCall {
@@ -191,11 +191,20 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return msg.length > 500 ? msg.slice(0, 500) + '...' : msg;
   }, []);
 
-  // Sync view with sessionId prop from URL
+  // Sync view with sessionId prop from URL — also restore session history on mount/refresh
   useEffect(() => {
     if (sessionId) {
       setView('chat');
       setCurrentSessionId(sessionId);
+      sessions.restore(sessionId).then(({ messages: historyMsgs, session }) => {
+        const visible = historyMsgs.filter((m) => m.role !== 'system');
+        setMessages(visible.map((m) => ({ ...m, streaming: false })));
+        setCurrentSessionTitle(session.title ?? `Session ${sessionId.slice(0, 8)}`);
+        setTokenUsed((session as any).tokenUsed ?? session.tokensUsed ?? 0);
+        loadTodos();
+      }).catch((err) => {
+        console.error('Failed to restore session on mount:', err);
+      });
     } else {
       setView('sessions');
     }
@@ -204,7 +213,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Right sidebar state
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
   const [tokenUsed, setTokenUsed] = useState(0);
+  const [tokenInput, setTokenInput] = useState(0);
+  const [tokenOutput, setTokenOutput] = useState(0);
+  const [tokenInputPrice, setTokenInputPrice] = useState(0);
+  const [tokenOutputPrice, setTokenOutputPrice] = useState(0);
   const [tokenTotal] = useState(128000);
+  const [compactionCount, setCompactionCount] = useState(0);
 
   // Model/Provider state
   const [currentModel, setCurrentModel] = useState('');
@@ -212,6 +226,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [providerList, setProviderList] = useState<Array<{ id: string; configured: boolean }>>([]);
   const [modelList, setModelList] = useState<ModelInfo[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
 
   // Crew state (fixed per session)
   const [crewList, setCrewList] = useState<Crew[]>([]);
@@ -252,16 +267,25 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [showCrewMention, setShowCrewMention] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const insertMentionRef = useRef<((callsign: string) => void) | null>(null);
-  useEffect(() => { setShowCrewMention(mentionQuery !== null); }, [mentionQuery]);
+  const mentionActiveRef = useRef(false);
+  useEffect(() => {
+    const active = mentionQuery !== null;
+    mentionActiveRef.current = active;
+    setShowCrewMention(active);
+  }, [mentionQuery]);
 
   const handleMentionSelect = useCallback((crew: Crew) => {
+    mentionActiveRef.current = false;
     insertMentionRef.current?.(crew.callsign);
     setShowCrewMention(false);
+    setMentionQuery(null);
   }, []);
 
   const handleMentionSelectAgent = useCallback(() => {
+    mentionActiveRef.current = false;
     insertMentionRef.current?.('agentx');
     setShowCrewMention(false);
+    setMentionQuery(null);
   }, []);
 
   // Smart auto-scroll state
@@ -301,6 +325,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     sessions.list().then(setSessionList).catch(() => {});
   }, []);
 
+  // Load sessions on mount and when view becomes 'sessions'
+  useEffect(() => {
+    if (view === 'sessions') loadSessions();
+  }, [view, loadSessions]);
+
   // Load todos
   const loadTodos = useCallback(() => {
     todos.list().then(setTodoItems).catch(() => {});
@@ -317,7 +346,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           .then(r => r.json())
           .then((data: { active?: string }) => { if (data.active) setCurrentProvider(data.active); })
           .catch(() => {});
-      });
+      })
+      .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
     system.cwd().then((r) => { setCwd(r.cwd || ''); }).catch(() => {});
     sessionSettings.get().then((s) => { setAgentMode(s.mode); setApprovalType(s.approval); }).catch(() => {});
@@ -388,13 +418,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return updateLastMessage(prev, { streaming: false });
 
           case 'message_received': {
-            const msg = ev.message as { id?: string; content?: string; role?: string } | undefined;
+            const msg = ev.message as { id?: string; content?: string; role?: string; crew?: { crewId: string; name: string; callsign: string } } | undefined;
+            const crew = msg?.crew;
             setStreaming(false);
             if (last?.role === 'assistant') {
-              return updateLastMessage(prev, { content: msg?.content ?? last.content, streaming: false });
+              return updateLastMessage(prev, { content: msg?.content ?? last.content, streaming: false, ...(crew ? { crew } : {}) });
             } else if (msg?.content && msg.role === 'assistant') {
-              // Edge case: no streaming placeholder existed — add the message directly
-              return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant', content: msg.content, streaming: false }];
+              return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant', content: msg.content, streaming: false, ...(crew ? { crew } : {}) }];
             }
             return prev;
           }
@@ -467,7 +497,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'token_usage': {
             const used = ev.totalTokens as number | undefined;
             if (used) setTokenUsed(used);
-            // Per-turn delta on the current assistant message
+            const inp = ev.inputTokens as number | undefined;
+            if (inp) setTokenInput(inp);
+            const out = ev.outputTokens as number | undefined;
+            if (out) setTokenOutput(out);
+            const ip = ev.inputPrice as number | undefined;
+            if (ip !== undefined) setTokenInputPrice(ip);
+            const op = ev.outputPrice as number | undefined;
+            if (op !== undefined) setTokenOutputPrice(op);
             if (last?.role !== 'assistant') return prev;
             const turn = ev.turnTokens as number | undefined;
             const cost = ev.costUsd as number | undefined;
@@ -476,6 +513,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             if (cost != null) updates.turnCostUsd = cost;
             return Object.keys(updates).length > 0 ? updateLastMessage(prev, updates) : prev;
           }
+
+          case 'compaction_complete':
+            setCompactionCount(c => c + 1);
+            return prev;
 
           case 'reasoning_delta':
           case 'thinking_delta': {
@@ -533,15 +574,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return () => { disconnectRef.current?.(); };
   }, []);
 
-  // Load history on mount — filter system messages
+  // Load history on mount — only if no sessionId (session restore handles it instead)
   useEffect(() => {
+    if (sessionId) return;
     chat.history().then((h) => {
       const visible = h.filter((m) => m.role !== 'system');
       setMessages(visible.map((m) => ({ ...m, streaming: false })));
       const totalTokens = h.reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
       setTokenUsed(totalTokens);
     }).catch(() => {});
-  }, []);
+  }, [sessionId]);
 
   // Streaming timeout — if no content or events arrive within 120s, fail gracefully
   // Uses a ref to reset the timer on each new event (activity-based timeout)
@@ -568,6 +610,21 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const sendBlocked = !currentProvider || !currentModel;
   const sendBlockedReason = !currentProvider ? 'Select a provider before sending' : !currentModel ? 'Select a model before sending' : '';
 
+  // Lazy session creation: create session only when first message is sent
+  const ensureSession = async (): Promise<string | null> => {
+    if (currentSessionId) return currentSessionId;
+    try {
+      const result = await sessions.create();
+      const newId = result?.sessionId;
+      if (newId) {
+        setCurrentSessionId(newId);
+        navigate(`/console/chat/${newId}`, { replace: true });
+        return newId;
+      }
+    } catch { /* ignore */ }
+    return null;
+  };
+
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
@@ -579,6 +636,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       }
     }
     if (!currentProvider || !currentModel) return;
+
+    // Create session lazily on first message
+    if (!(await ensureSession())) return;
+
     setInput('');
     setStreaming(true);
 
@@ -808,6 +869,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const handleStopAndSend = async () => {
     const text = input.trim();
     if (!text && attachments.length === 0) return;
+    if (!(await ensureSession())) return;
     setInput('');
     setSendMenuAnchor(null);
     setStreaming(true);
@@ -841,6 +903,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const handleSteer = async () => {
     const text = input.trim();
     if (!text && attachments.length === 0) return;
+    if (!(await ensureSession())) return;
     setInput('');
     setSendMenuAnchor(null);
     const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: `↑ ${text}`, streaming: false };
@@ -862,7 +925,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
-      if (showCrewMention) { e.preventDefault(); return; }
+      if (mentionActiveRef.current) { e.preventDefault(); return; }
       e.preventDefault();
       handleSend();
     }
@@ -892,9 +955,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const handleSelectSession = async (s: SessionInfo) => {
     try {
-      await sessions.restore(s.id);
-      const h = await chat.history();
-      const visible = h.filter((m) => m.role !== 'system');
+      const { messages: historyMsgs } = await sessions.restore(s.id);
+      const visible = historyMsgs.filter((m) => m.role !== 'system');
       setMessages(visible.map((m) => ({ ...m, streaming: false })));
       setCurrentSessionTitle(s.title ?? `Session ${s.id.slice(0, 8)}`);
       setCurrentSessionId(s.id);
@@ -905,17 +967,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   };
 
   const handleNewSession = async () => {
-    try {
-      const result = await sessions.create();
-      setMessages([]);
-      setCurrentSessionTitle(null);
-      const newId = result?.sessionId ?? null;
-      setCurrentSessionId(newId);
-      setTokenUsed(0);
-      setTodoItems([]);
-      if (newId) navigate(`/console/chat/${newId}`);
-      else setView('chat');
-    } catch { /* ignore */ }
+    // Don't create a session yet — navigate to empty chat, session created on first message
+    setMessages([]);
+    setCurrentSessionTitle(null);
+    setCurrentSessionId(null);
+    setTokenUsed(0);
+    setTodoItems([]);
+    setView('chat');
+    navigate('/console/chat');
   };
 
   const handleDeleteSession = async (id: string) => {
@@ -928,40 +987,160 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // ─── Sessions list view (NO chat input here) ───
   if (view === 'sessions') {
     return (
-      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: colors.bg.primary }}>
-        <Box sx={{ px: 2, py: 1.5, borderBottom: `1px solid ${colors.border.default}`, display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, flex: 1 }}>Sessions</Typography>
-          <Button size="small" startIcon={<AddIcon sx={{ fontSize: 14 }} />} onClick={() => handleNewSession()} sx={{ color: colors.accent.blue, fontSize: '0.65rem', textTransform: 'none' }}>
-            New Session
+      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: colors.bg.primary, position: 'relative', overflow: 'hidden' }}>
+        {/* Subtle background grid effect */}
+        <Box sx={{
+          position: 'absolute', inset: 0, opacity: 0.03, pointerEvents: 'none',
+          backgroundImage: `linear-gradient(${colors.border.subtle} 1px, transparent 1px), linear-gradient(90deg, ${colors.border.subtle} 1px, transparent 1px)`,
+          backgroundSize: '40px 40px',
+        }} />
+
+        {/* Header — HUD style */}
+        <Box sx={{
+          px: 3, py: 2, borderBottom: `1px solid ${colors.accent.blue}20`,
+          display: 'flex', alignItems: 'center', gap: 1.5, position: 'relative', zIndex: 1,
+          background: `linear-gradient(180deg, ${colors.accent.blue}05 0%, transparent 100%)`,
+        }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.accent.green, boxShadow: `0 0 8px ${colors.accent.green}80` }} />
+            <Typography sx={{
+              fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', fontWeight: 700,
+              color: colors.accent.green, letterSpacing: '3px',
+            }}>
+              SESSION LOGS
+            </Typography>
+          </Box>
+          <Box sx={{ flex: 1 }} />
+          <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim }}>
+            {sessionList.length} RECORD{sessionList.length !== 1 ? 'S' : ''}
+          </Typography>
+          <Button
+            size="small"
+            startIcon={<AddIcon sx={{ fontSize: 12 }} />}
+            onClick={() => handleNewSession()}
+            sx={{
+              color: colors.accent.blue, fontSize: '0.6rem', textTransform: 'none', fontFamily: "'JetBrains Mono', monospace",
+              border: `1px solid ${colors.accent.blue}30`, px: 1.5, py: 0.4, borderRadius: '4px',
+              '&:hover': { bgcolor: colors.accent.blue + '15', borderColor: colors.accent.blue + '60' },
+            }}
+          >
+            NEW LOG
           </Button>
         </Box>
 
-        <Box sx={{ flex: 1, overflow: 'auto', p: 1.5 }}>
-          <List disablePadding>
-            {sessionList.map((s) => (
-              <ListItemButton
-                key={s.id}
-                onClick={() => handleSelectSession(s)}
-                sx={{ borderRadius: 1, mb: 0.5, border: `1px solid ${colors.border.default}`, px: 2, py: 1, '&:hover': { bgcolor: colors.bg.tertiary } }}
+        {/* Session list */}
+        <Box sx={{ flex: 1, overflow: 'auto', p: 2, position: 'relative', zIndex: 1 }}>
+          {sessionList.length === 0 ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 2 }}>
+              <Box sx={{
+                width: 64, height: 64, borderRadius: '50%',
+                border: `1px solid ${colors.border.strong}30`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                bgcolor: colors.bg.tertiary,
+              }}>
+                <SmartToyIcon sx={{ fontSize: 28, color: colors.text.dim, opacity: 0.5 }} />
+              </Box>
+              <Box sx={{ textAlign: 'center' }}>
+                <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.dim, letterSpacing: '2px', mb: 0.5 }}>
+                  NO LOGS RECORDED
+                </Typography>
+                <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, opacity: 0.6 }}>
+                  Send a message to start your first session
+                </Typography>
+              </Box>
+              <Button
+                size="small"
+                onClick={() => handleNewSession()}
+                sx={{
+                  mt: 1, color: colors.accent.blue, textTransform: 'none', fontSize: '0.65rem',
+                  fontFamily: "'JetBrains Mono', monospace",
+                }}
               >
-                <ListItemText
-                  primary={s.title ?? `Session ${s.id.slice(0, 8)}`}
-                  secondary={`${s.messageCount} messages · ${(s.tokensUsed ?? 0).toLocaleString()} tokens`}
-                  primaryTypographyProps={{ fontSize: '0.8rem', fontWeight: 500 }}
-                  secondaryTypographyProps={{ fontSize: '0.6rem', color: colors.text.dim }}
-                />
-                <Chip size="small" label={new Date(s.createdAt).toLocaleDateString()} sx={{ mr: 1, fontSize: '0.5rem', height: 18 }} />
-                <IconButton size="small" onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }} sx={{ color: colors.text.dim, '&:hover': { color: colors.accent.red } }}>
-                  <DeleteIcon sx={{ fontSize: 14 }} />
-                </IconButton>
-              </ListItemButton>
-            ))}
-          </List>
-          {sessionList.length === 0 && (
-            <Box sx={{ textAlign: 'center', mt: 6 }}>
-              <Typography sx={{ color: colors.text.dim, fontSize: '0.8rem' }}>No sessions yet</Typography>
-              <Button size="small" onClick={() => handleNewSession()} sx={{ mt: 1, color: colors.accent.blue, textTransform: 'none', fontSize: '0.7rem' }}>Create your first session</Button>
+                INITIALIZE LOG
+              </Button>
             </Box>
+          ) : (
+            <List disablePadding>
+              {sessionList.map((s, idx) => {
+                const date = new Date(s.createdAt);
+                const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                const dateStr = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' });
+                return (
+                  <ListItemButton
+                    key={s.id}
+                    onClick={() => handleSelectSession(s)}
+                    sx={{
+                      borderRadius: '6px', mb: 1,
+                      border: `1px solid ${colors.border.subtle}`,
+                      borderLeft: `3px solid ${colors.accent.blue}40`,
+                      px: 2, py: 1.5,
+                      bgcolor: colors.bg.secondary,
+                      transition: 'all 0.2s ease',
+                      '&:hover': {
+                        bgcolor: colors.bg.tertiary,
+                        borderLeftColor: colors.accent.blue,
+                        transform: 'translateX(2px)',
+                        boxShadow: `0 2px 12px ${colors.accent.blue}10`,
+                      },
+                    }}
+                  >
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      {/* Log header row */}
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                        <Typography sx={{
+                          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
+                          color: colors.text.dim, letterSpacing: '1px',
+                        }}>
+                          LOG #{idx + 1}
+                        </Typography>
+                        <Box sx={{ width: 4, height: 4, borderRadius: '50%', bgcolor: colors.accent.blue, opacity: 0.6 }} />
+                        <Typography sx={{
+                          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.accent.blue + '80',
+                        }}>
+                          {dateStr} · {timeStr}
+                        </Typography>
+                      </Box>
+                      {/* Title */}
+                      <Typography sx={{
+                        fontSize: '0.78rem', fontWeight: 600, color: colors.text.primary,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', mb: 0.35,
+                      }}>
+                        {s.title ?? `Session ${s.id.slice(0, 8)}`}
+                      </Typography>
+                      {/* Stats row */}
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim }}>
+                          {s.messageCount ?? 0} MSGS
+                        </Typography>
+                        <Box sx={{ width: 3, height: 3, borderRadius: '50%', bgcolor: colors.border.strong, opacity: 0.5 }} />
+                        <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim }}>
+                          {(s.tokensUsed ?? 0).toLocaleString()} TOK
+                        </Typography>
+                        <Box sx={{ width: 3, height: 3, borderRadius: '50%', bgcolor: colors.border.strong, opacity: 0.5 }} />
+                        <Typography sx={{
+                          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.45rem', color: colors.text.dim,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120,
+                        }}>
+                          {s.id.slice(0, 12)}
+                        </Typography>
+                      </Box>
+                    </Box>
+                    <Tooltip title="Delete log">
+                      <IconButton
+                        size="small"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
+                        sx={{
+                          color: colors.text.dim, ml: 1,
+                          '&:hover': { color: colors.accent.red, bgcolor: colors.accent.red + '10' },
+                        }}
+                      >
+                        <DeleteIcon sx={{ fontSize: 14 }} />
+                      </IconButton>
+                    </Tooltip>
+                  </ListItemButton>
+                );
+              })}
+            </List>
           )}
         </Box>
       </Box>
@@ -1154,7 +1333,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               />
             )}
             {/* No provider/model warning */}
-            {sendBlocked && (
+            {sendBlocked && configLoaded && (
               <Box sx={{ px: 1.5, py: 0.4, bgcolor: colors.accent.orange + '12', borderTop: `1px solid ${colors.accent.orange}30`, borderBottom: `1px solid ${colors.accent.orange}30` }}>
                 <Typography sx={{ fontSize: '0.6rem', color: colors.accent.orange, fontFamily: "'JetBrains Mono', monospace", textAlign: 'center' }}>
                   ⚠ {sendBlockedReason}
@@ -1481,11 +1660,25 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             }}
           />
           <Box sx={{ mt: 0.75, display: 'flex', justifyContent: 'space-between' }}>
-            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Est. cost</Typography>
+            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>In / Out</Typography>
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary }}>
-              ~${((tokenUsed / 1000000) * 3).toFixed(4)}
+              {tokenInput.toLocaleString()} / {tokenOutput.toLocaleString()}
             </Typography>
           </Box>
+          <Box sx={{ mt: 0.25, display: 'flex', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Compactions</Typography>
+            <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: compactionCount > 0 ? colors.accent.orange : colors.text.secondary }}>
+              {compactionCount}
+            </Typography>
+          </Box>
+          {(tokenInputPrice > 0 || tokenOutputPrice > 0) && (
+          <Box sx={{ mt: 0.25, display: 'flex', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Cost</Typography>
+            <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary }}>
+              ~${((tokenInput * tokenInputPrice + tokenOutput * tokenOutputPrice) / 1000000).toFixed(4)}
+            </Typography>
+          </Box>
+          )}
 
           {currentSessionId && (
             <Box sx={{ mt: 1, pt: 0.75, borderTop: `1px solid ${colors.border.subtle}` }}>
@@ -1712,7 +1905,12 @@ function getResponderName(content: string): { name: string; callsign: string } |
 
 function MessageBubble({ message }: { message: UIMessage }) {
   const isUser = message.role === 'user';
-  const responderName = !isUser && message.content ? getResponderName(message.content) : null;
+  const crewInfo = message.crew;
+  const responderName = !isUser && !crewInfo && message.content ? getResponderName(message.content) : null;
+
+  const displayName = crewInfo ? crewInfo.name : (responderName ? responderName.name : 'Agent-X');
+  const displayColor = crewInfo ? getWebCrewColor(crewInfo.callsign) : (responderName ? getWebCrewColor(responderName.callsign) : colors.accent.blue);
+  const displayInitial = crewInfo ? crewInfo.name.charAt(0).toUpperCase() : null;
 
   if (message.role === 'system') return null;
 
@@ -1727,9 +1925,16 @@ function MessageBubble({ message }: { message: UIMessage }) {
       {!isUser && (
         <Box sx={{
           width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          bgcolor: colors.accent.purple + '15', mt: 0.5, flexShrink: 0,
+          bgcolor: displayColor + '18', mt: 0.5, flexShrink: 0,
+          border: crewInfo ? `1px solid ${displayColor}40` : 'none',
         }}>
-          <SmartToyIcon sx={{ fontSize: 15, color: colors.accent.purple }} />
+          {displayInitial ? (
+            <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: displayColor, fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>
+              {displayInitial}
+            </Typography>
+          ) : (
+            <SmartToyIcon sx={{ fontSize: 15, color: colors.accent.purple }} />
+          )}
         </Box>
       )}
 
@@ -1737,8 +1942,14 @@ function MessageBubble({ message }: { message: UIMessage }) {
       <Box sx={{ minWidth: 0, maxWidth: isUser ? '72%' : '85%' }}>
         {/* Responder name label */}
         {!isUser && (
-          <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: responderName ? getWebCrewColor(responderName.callsign) : colors.accent.blue, fontFamily: "'JetBrains Mono', monospace", mb: 0.5, letterSpacing: '0.5px' }}>
-            {responderName ? responderName.name : 'Agent-X'}
+          <Typography sx={{
+            fontSize: '0.6rem', fontWeight: 600,
+            color: displayColor,
+            fontFamily: "'JetBrains Mono', monospace",
+            mb: 0.5,
+            letterSpacing: '0.5px',
+          }}>
+            {displayName}
           </Typography>
         )}
         <Box sx={{
@@ -1748,8 +1959,8 @@ function MessageBubble({ message }: { message: UIMessage }) {
             borderRadius: '14px 14px 4px 14px',
             px: 1.75, py: 1,
           } : {
-            bgcolor: (responderName ? getWebCrewColor(responderName.callsign) : colors.accent.blue) + '08',
-            border: `1px solid ${(responderName ? getWebCrewColor(responderName.callsign) : colors.accent.blue)}15`,
+            bgcolor: displayColor + '08',
+            border: `1px solid ${displayColor}15`,
             borderRadius: '14px 14px 14px 4px',
             px: 1.75, py: 1,
           }),
@@ -1834,7 +2045,7 @@ function MessageBubble({ message }: { message: UIMessage }) {
 
         {/* Per-turn token economics badge */}
         {!isUser && !message.streaming && (message.turnTokens != null || message.turnCostUsd != null) && (
-          <TurnTokenBadge tokens={message.turnTokens} costUsd={message.turnCostUsd} />
+          <TurnTokenBadge tokens={message.turnTokens} />
         )}
       </Box>
       </Box>

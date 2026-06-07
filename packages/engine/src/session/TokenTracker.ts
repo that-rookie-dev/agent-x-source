@@ -57,6 +57,9 @@ export class TokenTracker {
     return (this.outputTokens / 1_000_000) * this.outputPricePerMillion;
   }
 
+  get inputPrice(): number { return this.inputPricePerMillion; }
+  get outputPrice(): number { return this.outputPricePerMillion; }
+
   setPricing(inputPerMillion: number, outputPerMillion: number): void {
     this.inputPricePerMillion = inputPerMillion;
     this.outputPricePerMillion = outputPerMillion;

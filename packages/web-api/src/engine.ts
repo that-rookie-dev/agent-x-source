@@ -23,6 +23,8 @@ import {
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus } from '@agentx/shared';
 import { unsubscribeAgent } from './ws.js';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 export interface EngineState {
   configManager: ConfigManager;
@@ -90,7 +92,7 @@ export function getEngine(): EngineState {
 
   const crewManager = new CrewManager();
 
-  const telemetry = new DefaultTelemetryBus({ enabled: configured });
+  const telemetry = new DefaultTelemetryBus({ enabled: true });
   telemetry.start();
 
   let rag: RAGEngine | null = null;
@@ -201,11 +203,64 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     toolRegistry: eng.toolkit.registry,
   });
 
+  // Replace the Agent's internal CrewManager with the shared instance
+  // so crew changes via the API are immediately visible to the orchestrator
+  (agent.sauce as { crew: CrewManager }).crew = eng.crewManager;
+  agent.sauce.crew.refresh();
+
+  // Sync enabled crew members into the Agent's CrewOrchestrator
+  const enabledCrews = eng.crewManager.listEnabled();
+  for (const crew of enabledCrews) {
+    agent.addCrewMember(crew);
+    agent.setCrewEnabled(crew.id, true);
+  }
+
   eng.agent = agent;
 
-  // Bridge agent events to telemetry bus
+  // Set context persistence directory for session restore
+  const dataDir = process.env['XDG_DATA_HOME'] || join(homedir(), '.local', 'share', 'agentx');
+  const sessDir = join(dataDir, 'sessions', session.id);
+  agent.setContextPersistDir(sessDir);
+
+  // Wire token logging to persistent DB
+  agent.onTokenLog = (opts) => {
+    eng.sessionManager.addTokenLog({
+      sessionId: session.id,
+      inputTokens: opts.inputTokens,
+      outputTokens: opts.outputTokens,
+      model: cfg.provider.activeModel,
+      costUsd: opts.costUsd,
+      providerId: cfg.provider.activeProvider,
+    });
+  };
+
+  // Bridge agent events to telemetry bus + persist token logs
   agent.events.on((event) => {
     eng.telemetry.emit(event as any);
+    // Persist token usage to DB for every token_usage event (catches all paths)
+    const ev = event as Record<string, unknown>;
+    if (ev['type'] === 'token_usage') {
+      const totalTokens = (ev['totalTokens'] as number) ?? 0;
+      const inputTokens = (ev['inputTokens'] as number) ?? 0;
+      const outputTokens = (ev['outputTokens'] as number) ?? 0;
+      const costUsd = (ev['costUsd'] as number) ?? 0;
+      // Sync to session table and SessionManager's tracker (prevents auto-save overwrite)
+      (eng.sessionManager as any).store.updateSession(session.id, { tokensUsed: totalTokens });
+      const smTracker = (eng.sessionManager as any).tokenTracker;
+      if (smTracker?.setUsed) smTracker.setUsed(totalTokens);
+      if (inputTokens > 0 || outputTokens > 0) {
+        try {
+          eng.sessionManager.addTokenLog({
+            sessionId: session.id,
+            inputTokens,
+            outputTokens,
+            model: cfg.provider.activeModel,
+            costUsd,
+            providerId: cfg.provider.activeProvider,
+          });
+        } catch { /* best effort */ }
+      }
+    }
   });
 
   // ─── Create Gateway for channel management ───

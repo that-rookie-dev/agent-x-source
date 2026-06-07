@@ -184,6 +184,22 @@ export class SessionManager {
     return this.listSessionRecords(limit);
   }
 
+  addTokenLog(opts: { sessionId: string; inputTokens: number; outputTokens: number; model: string; costUsd: number; providerId: string }): void {
+    const log = {
+      sessionId: opts.sessionId,
+      model: opts.model,
+      inputTokens: opts.inputTokens,
+      outputTokens: opts.outputTokens,
+      costUsd: opts.costUsd,
+      providerId: opts.providerId,
+    };
+    if (this.usingStorageAdapter) {
+      (this.store as StorageAdapter).addTokenLog(opts.sessionId, log);
+    } else {
+      this.getSessionStore().addTokenLog({ id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, sessionId: opts.sessionId, providerId: opts.providerId, modelId: opts.model, inputTokens: opts.inputTokens, outputTokens: opts.outputTokens, costUsd: opts.costUsd });
+    }
+  }
+
   private startAutoSave(): void {
     this.stopAutoSave();
     this.autoSaveInterval = setInterval(() => {

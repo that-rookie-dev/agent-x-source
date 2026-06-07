@@ -572,6 +572,10 @@ app.post('/api/crews', (req, res) => {
       expertise,
       traits,
     });
+    if (eng.agent && crew.enabled) {
+      eng.agent.addCrewMember(crew);
+      eng.agent.setCrewEnabled(crew.id, true);
+    }
     res.json(crew);
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'create-failed' });
@@ -583,6 +587,15 @@ app.put('/api/crews/:id', (req, res) => {
     const eng = getEngine();
     const crew = eng.crewManager.update(req.params['id']!, req.body);
     if (!crew) { res.status(404).json({ error: 'crew-not-found' }); return; }
+    if (eng.agent) {
+      eng.agent.removeCrewMember(crew.id);
+      if (crew.enabled) {
+        eng.agent.addCrewMember(crew);
+        eng.agent.setCrewEnabled(crew.id, true);
+      } else {
+        eng.agent.setCrewEnabled(crew.id, false);
+      }
+    }
     res.json(crew);
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'update-failed' });
@@ -594,6 +607,10 @@ app.delete('/api/crews/:id', (req, res) => {
     const eng = getEngine();
     const ok = eng.crewManager.delete(req.params['id']!);
     if (!ok) { res.status(400).json({ error: 'cannot-delete' }); return; }
+    if (eng.agent) {
+      eng.agent.removeCrewMember(req.params['id']!);
+      eng.agent.setCrewEnabled(req.params['id']!, false);
+    }
     res.json({ ok: true });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'delete-failed' });
@@ -935,7 +952,18 @@ app.post('/api/permission/respond', (req, res) => {
 // ───── Sessions ─────
 app.get('/api/sessions', (_req, res) => {
   const eng = getEngine();
-  const sessions = eng.sessionManager.listSessions(50);
+  const sessions = eng.sessionManager.listSessions(50) as unknown as Array<Record<string, unknown>>;
+  for (const s of sessions) {
+    try {
+      const convPath = join(getSessionDir(s.id as string), 'conversation.json');
+      if (existsSync(convPath)) {
+        const data = JSON.parse(readFileSync(convPath, 'utf-8'));
+        s['messageCount'] = Array.isArray(data) ? data.length : 0;
+      } else {
+        s['messageCount'] = 0;
+      }
+    } catch { s['messageCount'] = 0; }
+  }
   res.json(sessions);
 });
 
@@ -1049,6 +1077,7 @@ app.post('/api/sessions', (_req, res) => {
   try {
     destroyAgent();
     const agent = createAgent();
+    ensureSubscribed();
     const sessionId = (agent as unknown as { sessionId: string }).sessionId;
     ensureSessionDir(sessionId);
     res.json({ sessionId });
@@ -1087,6 +1116,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     const session = eng.sessionManager.restoreSession(req.params['id']!);
     if (!session) { res.status(404).json({ error: 'not-found' }); return; }
     createAgent(undefined, req.params['id']!);
+    ensureSubscribed();
     // Restore crew states from session store
     const crewStates = eng.sessionManager.getCrewStates();
     for (const state of crewStates) {

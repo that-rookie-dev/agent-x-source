@@ -438,6 +438,8 @@ export interface ChatMessage {
   content: string;
   timestamp?: string;
   tokenCount?: number;
+  crew?: { crewId: string; name: string; callsign: string };
+  thinking?: string;
 }
 
 export interface SessionInfo {

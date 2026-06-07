@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import { colors } from '../theme';
 import type { Crew } from '../api';
@@ -26,178 +26,401 @@ function getCrewColor(callsign: string): string {
   return CREW_PALETTE[Math.abs(hash) % CREW_PALETTE.length];
 }
 
-function buildChipHtml(callsign: string): string {
-  const color = getCrewColor(callsign);
-  return `<span data-mention="${callsign}" contenteditable="false" style="display:inline-block;padding:1px 6px;margin:0 2px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;font-weight:600;color:${color};background:${color}18;border:1px solid ${color}30;cursor:default;user-select:all;">@${callsign}</span>`;
+interface TextSegment { type: 'text'; id: string; value: string; }
+interface MentionSegment { type: 'mention'; id: string; callsign: string; }
+type Segment = TextSegment | MentionSegment;
+
+function buildPlaintext(segs: Segment[]): string {
+  return segs.map(s => s.type === 'mention' ? `@${s.callsign}` : s.value).join('');
+}
+
+function parseInitialSegments(value: string): Segment[] {
+  if (!value) return [{ type: 'text', id: crypto.randomUUID(), value: '' }];
+  const segs: Segment[] = [];
+  const parts = value.split(/(@\w+)/g);
+  for (const part of parts) {
+    if (part.startsWith('@') && part.length > 1) {
+      segs.push({ type: 'mention', id: crypto.randomUUID(), callsign: part.slice(1) });
+    } else if (part.length > 0) {
+      segs.push({ type: 'text', id: crypto.randomUUID(), value: part });
+    }
+  }
+  if (segs.length === 0 || segs[segs.length - 1]?.type !== 'text') {
+    segs.push({ type: 'text', id: crypto.randomUUID(), value: '' });
+  }
+  return segs;
 }
 
 export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, placeholder, crewList: _crewList, disabled, onInsertReady }: MentionInputProps) {
-  const editorRef = useRef<HTMLDivElement>(null);
+  const [segments, setSegments] = useState<Segment[]>(() => parseInitialSegments(value));
+  const textInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const containerRef = useRef<HTMLDivElement>(null);
   const isComposing = useRef(false);
-  const externalUpdate = useRef(false);
+  const prevValueRef = useRef(value);
 
-  const extractText = useCallback((): string => {
-    const el = editorRef.current;
-    if (!el) return '';
-    const parts: string[] = [];
-    const walk = (node: Node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        parts.push(node.textContent || '');
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const span = node as HTMLElement;
-        if (span.getAttribute('data-mention')) {
-          parts.push('@' + span.getAttribute('data-mention'));
-        } else if (span.tagName === 'BR') {
-          parts.push('\n');
-        } else {
-          node.childNodes.forEach(walk);
-        }
-      }
-    };
-    el.childNodes.forEach(walk);
-    return parts.join('');
-  }, []);
+  const [mentionQuery, setMentionQueryLocal] = useState<string | null>(null);
+  const mentionOriginRef = useRef<{ segmentIdx: number; atIdx: number } | null>(null);
+  const mentionActiveRef = useRef(false);
 
-  const textToHtml = useCallback((text: string): string => {
-    const parts = text.split(/(@\w+)/g);
-    return parts.map((part) => {
-      if (part.startsWith('@') && part.length > 1) {
-        return buildChipHtml(part.slice(1));
-      }
-      return part.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
-    }).join('');
-  }, []);
-
-  // Initial mount and external value changes only
   useEffect(() => {
-    const el = editorRef.current;
-    if (!el) return;
-    if (externalUpdate.current) {
-      externalUpdate.current = false;
-      return;
-    }
-    el.innerHTML = textToHtml(value) || `<span style="color:${colors.text.dim};font-family:Inter,sans-serif;font-size:0.8rem;">${placeholder}</span>`;
-  }, [value, textToHtml, placeholder]);
+    mentionActiveRef.current = mentionQuery !== null;
+  }, [mentionQuery]);
 
-  // After insertMention, mark as external update so next sync applies
   useEffect(() => {
-    if (value === '' && editorRef.current) {
-      externalUpdate.current = true;
-      editorRef.current.innerHTML = '';
+    if (value === '' && prevValueRef.current !== '') {
+      setSegments([{ type: 'text', id: crypto.randomUUID(), value: '' }]);
+      setMentionQueryLocal(null);
+      mentionOriginRef.current = null;
     }
+    prevValueRef.current = value;
   }, [value]);
 
-  const handleInput = useCallback(() => {
-    const el = editorRef.current;
-    if (!el || isComposing.current) return;
-    const text = extractText();
-    externalUpdate.current = true;
-    onChange(text);
+  const notifyChange = useCallback((segs: Segment[]) => {
+    onChange(buildPlaintext(segs));
+  }, [onChange]);
 
-    // Detect @mention query
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      const node = range.startContainer;
-      if (node.nodeType === Node.TEXT_NODE) {
-        const before = node.textContent?.slice(0, range.startOffset) || '';
-        const atIdx = before.lastIndexOf('@');
-        if (atIdx >= 0) {
-          const preChar = atIdx === 0 ? ' ' : before[atIdx - 1];
-          if (preChar === ' ' || preChar === '\n' || atIdx === 0) {
-            const query = before.slice(atIdx + 1);
-            if (!query.includes(' ')) {
-              onMentionQuery(query);
-              return;
-            }
-          }
-        }
+  const focusTextInput = useCallback((segId: string, position: 'start' | 'end') => {
+    requestAnimationFrame(() => {
+      const el = textInputRefs.current.get(segId);
+      if (el) {
+        el.focus();
+        const pos = position === 'end' ? el.value.length : 0;
+        el.setSelectionRange(pos, pos);
+      }
+    });
+  }, []);
+
+  const ensureEndsWithText = useCallback((segs: Segment[]): Segment[] => {
+    if (segs.length === 0 || segs[segs.length - 1]?.type !== 'text') {
+      return [...segs, { type: 'text', id: crypto.randomUUID(), value: '' }];
+    }
+    return segs;
+  }, []);
+
+  const mergeAdjacentText = useCallback((segs: Segment[]): Segment[] => {
+    if (segs.length < 2) return segs;
+    const result: Segment[] = [segs[0]];
+    for (let i = 1; i < segs.length; i++) {
+      const prev = result[result.length - 1];
+      const curr = segs[i];
+      if (prev.type === 'text' && curr.type === 'text') {
+        result[result.length - 1] = { ...prev, value: prev.value + (curr as TextSegment).value };
+      } else {
+        result.push(curr);
       }
     }
-    onMentionQuery(null);
-  }, [extractText, onChange, onMentionQuery]);
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (isComposing.current) return;
-    onKeyDown(e);
-  }, [onKeyDown]);
+    return result;
+  }, []);
 
   const insertMention = useCallback((callsign: string) => {
-    const el = editorRef.current;
-    if (!el) return;
-    el.focus();
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      const node = range.startContainer;
-      if (node.nodeType === Node.TEXT_NODE) {
-        const before = node.textContent?.slice(0, range.startOffset) || '';
-        const atIdx = before.lastIndexOf('@');
-        if (atIdx >= 0) {
-          const preChar = atIdx === 0 ? ' ' : before[atIdx - 1];
-          if (preChar === ' ' || preChar === '\n' || atIdx === 0) {
-            // Delete @query text
-            range.setStart(node, atIdx);
-            range.setEnd(node, range.startOffset + (before.length - atIdx) > before.length ? before.length : range.startOffset);
-            // Actually just delete from @ to cursor
-            const deleteRange = document.createRange();
-            deleteRange.setStart(node, atIdx);
-            deleteRange.setEnd(node, before.length);
-            deleteRange.deleteContents();
+    const origin = mentionOriginRef.current;
+    mentionOriginRef.current = null;
+    setMentionQueryLocal(null);
+    onMentionQuery(null);
 
-            // Insert mention chip
-            const span = document.createElement('span');
-            span.setAttribute('data-mention', callsign);
-            span.setAttribute('contenteditable', 'false');
-            const color = getCrewColor(callsign);
-            span.style.cssText = `display:inline-block;padding:1px 6px;margin:0 2px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;font-weight:600;color:${color};background:${color}18;border:1px solid ${color}30;cursor:default;user-select:all;`;
-            span.textContent = '@' + callsign;
-            deleteRange.insertNode(span);
+    setSegments(prev => {
+      if (!origin) return prev;
+      const seg = prev[origin.segmentIdx];
+      if (!seg || seg.type !== 'text') return prev;
 
-            // Add space after chip
-            const space = document.createTextNode('\u00A0');
-            deleteRange.setStartAfter(span);
-            deleteRange.collapse(true);
-            deleteRange.insertNode(space);
-            deleteRange.setStartAfter(space);
-            deleteRange.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(deleteRange);
+      const val = seg.value;
+      const atIdx = val.lastIndexOf('@');
+      if (atIdx < 0) return prev;
 
-            externalUpdate.current = true;
-            onChange(extractText());
-          }
-        }
+      const before = val.slice(0, atIdx);
+
+      const newSegs: Segment[] = [];
+      if (before) newSegs.push({ type: 'text', id: crypto.randomUUID(), value: before });
+      newSegs.push({ type: 'mention', id: crypto.randomUUID(), callsign });
+      newSegs.push({ type: 'text', id: crypto.randomUUID(), value: '' });
+
+      const result = [...prev];
+      result.splice(origin.segmentIdx, 1, ...newSegs);
+
+      const cleaned = ensureEndsWithText(mergeAdjacentText(result));
+      notifyChange(cleaned);
+
+      const newTextSeg = cleaned.filter(s => s.type === 'text').pop() as TextSegment | undefined;
+      if (newTextSeg) {
+        focusTextInput(newTextSeg.id, 'end');
       }
-    }
-  }, [extractText, onChange]);
+
+      return cleaned;
+    });
+  }, [notifyChange, onMentionQuery, ensureEndsWithText, mergeAdjacentText, focusTextInput]);
 
   useEffect(() => {
     onInsertReady?.(insertMention);
   }, [onInsertReady, insertMention]);
 
+  const handleTextChange = useCallback((_segId: string, newValue: string, idx: number) => {
+    if (isComposing.current) return;
+
+    const atIdx = newValue.lastIndexOf('@');
+    if (atIdx >= 0) {
+      const preChar = atIdx === 0 ? ' ' : newValue[atIdx - 1];
+      if (preChar === ' ' || preChar === '\n' || atIdx === 0) {
+        const q = newValue.slice(atIdx + 1);
+        if (!q.includes(' ')) {
+          setMentionQueryLocal(q);
+          mentionOriginRef.current = { segmentIdx: idx, atIdx };
+          onMentionQuery(q);
+
+          setSegments(prev => {
+            const updated = [...prev];
+            updated[idx] = { ...updated[idx], value: newValue } as TextSegment;
+            notifyChange(updated);
+            return updated;
+          });
+          return;
+        }
+      }
+    }
+
+    setMentionQueryLocal(null);
+    mentionOriginRef.current = null;
+    onMentionQuery(null);
+
+    setSegments(prev => {
+      const updated = [...prev];
+      updated[idx] = { ...updated[idx], value: newValue } as TextSegment;
+      notifyChange(updated);
+      return updated;
+    });
+  }, [notifyChange, onMentionQuery]);
+
+  const handleInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>, seg: Segment, idx: number) => {
+    if (isComposing.current) return;
+
+    if (mentionActiveRef.current) {
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionQueryLocal(null);
+        mentionOriginRef.current = null;
+        onMentionQuery(null);
+        return;
+      }
+    }
+
+    if (e.key === 'Backspace' && (seg as TextSegment).value === '') {
+      if (idx > 0) {
+        const prevSeg = segments[idx - 1];
+        if (prevSeg?.type === 'mention') {
+          e.preventDefault();
+          setSegments(prev => {
+            const updated = [...prev];
+            updated.splice(idx - 1, 2);
+            const cleaned = mergeAdjacentText(ensureEndsWithText(updated));
+            notifyChange(cleaned);
+            if (cleaned.length > 0 && cleaned[idx - 1]?.type === 'text') {
+              focusTextInput((cleaned[idx - 1] as TextSegment).id, 'end');
+            }
+            return cleaned;
+          });
+          return;
+        }
+      }
+    }
+
+    if (e.key === 'ArrowLeft') {
+      const input = e.currentTarget;
+      if (input.selectionStart === 0) {
+        for (let i = idx - 1; i >= 0; i--) {
+          const s = segments[i];
+          if (s?.type === 'text' && (s as TextSegment).value.length > 0) {
+            e.preventDefault();
+            focusTextInput(s.id, 'end');
+            return;
+          }
+        }
+        for (let i = segments.length - 1; i >= 0; i--) {
+          const s = segments[i];
+          if (s?.type === 'text') {
+            e.preventDefault();
+            focusTextInput(s.id, 'end');
+            return;
+          }
+        }
+      }
+    }
+
+    if (e.key === 'ArrowRight') {
+      const input = e.currentTarget;
+      if (input.selectionStart === input.value.length) {
+        for (let i = idx + 1; i < segments.length; i++) {
+          const s = segments[i];
+          if (s?.type === 'text' && (s as TextSegment).value.length > 0) {
+            e.preventDefault();
+            focusTextInput(s.id, 'start');
+            return;
+          }
+        }
+        for (let i = segments.length - 1; i >= 0; i--) {
+          const s = segments[i];
+          if (s?.type === 'text') {
+            e.preventDefault();
+            focusTextInput(s.id, 'end');
+            return;
+          }
+        }
+      }
+    }
+
+    if (mentionActiveRef.current) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        return;
+      }
+    }
+
+    onKeyDown(e);
+  }, [segments, onKeyDown, notifyChange, mergeAdjacentText, ensureEndsWithText, focusTextInput, onMentionQuery]);
+
+  const handleContainerClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT') return;
+    if (target.closest('[data-mention-chip]')) return;
+    setSegments(prev => {
+      const lastSeg = prev[prev.length - 1];
+      if (lastSeg?.type === 'text') {
+        focusTextInput(lastSeg.id, 'end');
+      }
+      return prev;
+    });
+  }, [focusTextInput]);
+
+  const hasContent = segments.some(s => (s.type === 'text' && s.value !== '') || s.type === 'mention');
+
   return (
     <Box
-      ref={editorRef}
-      contentEditable={!disabled}
-      suppressContentEditableWarning
-      onInput={handleInput}
-      onKeyDown={handleKeyDown}
-      onCompositionStart={() => { isComposing.current = true; }}
-      onCompositionEnd={() => { isComposing.current = false; handleInput(); }}
-      onBlur={() => { externalUpdate.current = true; onChange(extractText()); }}
+      ref={containerRef}
+      onClick={handleContainerClick}
       sx={{
-        flex: 1, border: 'none', outline: 'none',
-        fontFamily: "'Inter', sans-serif", fontSize: '0.8rem',
-        lineHeight: 1.5, py: 0.75, px: 0.5,
-        minHeight: 24, maxHeight: 120, overflow: 'auto',
-        color: colors.text.primary,
-        '&:empty:before': {
-          content: `"${placeholder}"`,
-          color: colors.text.dim,
-          fontFamily: "'Inter', sans-serif",
-        },
+        flex: 1,
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: '2px',
+        minHeight: 24,
+        maxHeight: 120,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        py: 0.75,
+        px: 0.5,
+        border: 'none',
+        outline: 'none',
+        cursor: 'text',
+        position: 'relative',
       }}
-    />
+    >
+      {segments.map((seg, idx) => {
+        if (seg.type === 'mention') {
+          const color = getCrewColor(seg.callsign);
+          return (
+            <Box
+              key={seg.id}
+              data-mention-chip
+              component="span"
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                px: '6px',
+                py: '1px',
+                borderRadius: '4px',
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                color,
+                bgcolor: color + '18',
+                border: `1px solid ${color}30`,
+                cursor: 'default',
+                userSelect: 'none',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                lineHeight: 1.5,
+              }}
+            >
+              @{seg.callsign}
+            </Box>
+          );
+        }
+
+        const isLast = idx === segments.length - 1;
+        const textLen = (seg as TextSegment).value.length || 0;
+        const isEmpty = textLen === 0;
+        return (
+          <Box
+            key={seg.id}
+            component="span"
+            sx={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              flex: isLast ? '1 1 auto' : '0 0 auto',
+              minWidth: isLast ? '2ch' : 0,
+              width: isLast ? undefined : (isEmpty ? 0 : 'auto'),
+              overflow: 'hidden',
+            }}
+          >
+            <Box
+              component="input"
+              ref={(el: HTMLInputElement | null) => {
+                if (el) textInputRefs.current.set(seg.id, el);
+                else textInputRefs.current.delete(seg.id);
+              }}
+              type="text"
+              value={(seg as TextSegment).value}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleTextChange(seg.id, e.target.value, idx)}
+              onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => handleInputKeyDown(e, seg, idx)}
+              onCompositionStart={() => { isComposing.current = true; }}
+              onCompositionEnd={() => { isComposing.current = false; }}
+              disabled={disabled}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              size={isLast ? undefined : (isEmpty ? 0 : Math.max(1, textLen))}
+              style={{
+                border: 'none',
+                outline: 'none',
+                background: 'transparent',
+                color: colors.text.primary,
+                fontFamily: "'Inter', sans-serif",
+                fontSize: '0.8rem',
+                lineHeight: 1.5,
+                width: isLast ? '100%' : (isEmpty ? '0' : `${Math.max(1, textLen)}ch`),
+                minWidth: isLast ? '2ch' : 0,
+                padding: 0,
+                margin: 0,
+                flex: isLast ? '1 1 auto' : '0 0 auto',
+              }}
+            />
+          </Box>
+        );
+      })}
+      {!hasContent && (
+        <Box
+          component="span"
+          sx={{
+            position: 'absolute',
+            left: '6px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            color: colors.text.dim,
+            fontFamily: "'Inter', sans-serif",
+            fontSize: '0.8rem',
+            lineHeight: 1.5,
+            pointerEvents: 'none',
+            userSelect: 'none',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {placeholder}
+        </Box>
+      )}
+    </Box>
   );
 }

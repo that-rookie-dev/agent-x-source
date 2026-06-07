@@ -2,6 +2,10 @@ import type { Crew, EngineEvent, CollaborationProtocol } from '@agentx/shared';
 import { generateMessageId, CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import type { AgentEventBus } from '../EventBus.js';
+import { countInputTokens, estimateOutputTokens } from '../session/tokenCount.js';
+import type { TokenTracker } from '../session/TokenTracker.js';
+
+const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
 
 export interface CrewMember {
   crew: Crew;
@@ -34,17 +38,23 @@ export class CrewOrchestrator {
   private primaryMember: CrewMember | null = null;
   private activeModel: string = '';
 
-  constructor(provider: ProviderInterface, eventBus: AgentEventBus) {
+  constructor(provider: ProviderInterface, eventBus: AgentEventBus, tokenTracker?: TokenTracker) {
     this.provider = provider;
     this.eventBus = eventBus;
+    this.tokenTracker = tokenTracker ?? null;
   }
+
+  private tokenTracker: TokenTracker | null = null;
 
   setActiveModel(model: string): void {
     this.activeModel = model;
   }
 
   addMember(crew: Crew): void {
-    const expertise = this.extractExpertise(crew.systemPrompt);
+    if (this.members.some(m => m.crew.id === crew.id)) return;
+    const expertise = crew.expertise && crew.expertise.length > 0
+      ? crew.expertise
+      : this.extractExpertise(crew.systemPrompt);
     this.members.push({
       crew,
       expertise,
@@ -123,7 +133,7 @@ export class CrewOrchestrator {
     mainSystemPrompt: string
   ): Promise<{ content: string; elapsed: number }> {
     const crewContext = this.buildCrewContext(member, userMessage);
-    const systemPrompt = `${mainSystemPrompt}\n\n[CREW MEMBER: ${member.crew.name}]\n${member.crew.systemPrompt}\n\n[CONVERSATION CONTEXT]\n${crewContext}`;
+    const systemPrompt = `${mainSystemPrompt}\n\n[CREW MEMBER: ${member.crew.name}]\n${member.crew.systemPrompt}\n\n[CONVERSATION CONTEXT]\n${crewContext}\n\n[CRITICAL RULES]\n- Do NOT delegate tasks to yourself (@${member.crew.callsign}). You ARE ${member.crew.name}. Respond directly.\n- Do NOT @mention other crew members to assign work. You do not have that authority.\n- Do NOT ask rhetorical questions or suggest asking other crew members. Answer the question yourself.\n- Keep responses to 1-2 sentences unless providing code or config output.`;
 
     const startTime = Date.now();
     const completion = this.provider.complete({
@@ -133,7 +143,7 @@ export class CrewOrchestrator {
         { role: 'user', content: userMessage },
       ],
       temperature: 0.7,
-      maxTokens: member.crew.quotas?.maxTokensPerTurn ?? 4096,
+      maxTokens: member.crew.quotas?.maxTokensPerTurn ?? 300,
     });
 
     let content = '';
@@ -143,12 +153,45 @@ export class CrewOrchestrator {
 
     const elapsed = Date.now() - startTime;
     member.cpuTimeMs += elapsed;
-    member.tokensUsedThisSession += Math.ceil(content.length / 4);
+    const outputTokens = estimateOutputTokens(content);
+    const inputTokens = countInputTokens(systemPrompt + userMessage);
+    member.tokensUsedThisSession += outputTokens;
+    if (this.tokenTracker) {
+      this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
+      const costUsd = (inputTokens * this.tokenTracker.inputPrice + outputTokens * this.tokenTracker.outputPrice) / 1_000_000;
+      this.eventBus.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.tokenTracker.tokensTotal, turnTokens: inputTokens + outputTokens, costUsd, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, inputPrice: this.tokenTracker.inputPrice, outputPrice: this.tokenTracker.outputPrice } as unknown as EngineEvent);
+    }
 
     return { content, elapsed };
   }
 
-  async processMessage(userMessage: string, mainSystemPrompt: string): Promise<{ responses: Array<{ member: string; content: string }>; synthesized?: string }> {
+  hasExpertiseFor(member: CrewMember, userMessage: string, contextText?: string): boolean {
+    const searchText = (userMessage + ' ' + (contextText ?? '')).toLowerCase();
+
+    // Check expertise tags
+    if (member.expertise && member.expertise.length > 0) {
+      return member.expertise.some((kw) => this.keywordOverlap(kw.toLowerCase(), searchText));
+    }
+
+    // Fallback: check system prompt for keyword overlap with message
+    const promptLower = member.crew.systemPrompt.toLowerCase();
+    const msgWords = searchText.split(/[\s,;/]+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+    return msgWords.some((w) => promptLower.includes(w));
+  }
+
+  /**
+   * Check if significant words from a multi-word expertise keyword
+   * appear in the search text. Avoids requiring exact phrase matches.
+   */
+  private keywordOverlap(expertise: string, searchText: string): boolean {
+    const words = expertise.split(/[\s,;/]+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+    if (words.length === 0) return searchText.includes(expertise);
+    const matched = words.filter((w) => searchText.includes(w));
+    // Require at least 1 match for short phrases, 2 for longer ones
+    return words.length <= 2 ? matched.length >= 1 : matched.length >= 2;
+  }
+
+  async processMessage(userMessage: string, mainSystemPrompt: string, explicitResponders?: CrewMember[], contextText?: string): Promise<{ responses: Array<{ member: string; content: string }>; synthesized?: string }> {
     this.conversation.push({
       id: generateMessageId(),
       from: 'user',
@@ -156,8 +199,20 @@ export class CrewOrchestrator {
       timestamp: new Date().toISOString(),
     });
 
-    const responders = this.routeMessage(userMessage);
+    const responders = explicitResponders ?? this.routeMessage(userMessage);
     const responses: Array<{ member: string; content: string }> = [];
+
+    // Expertise gate: if a specific member was requested but lacks expertise, decline
+    if (explicitResponders && explicitResponders.length === 1) {
+      const member = explicitResponders[0]!;
+      if (!this.hasExpertiseFor(member, userMessage, contextText)) {
+        responses.push({
+          member: member.crew.name,
+          content: `I'm ${member.crew.name} — not an expert in the domain you're asking about. My expertise covers: ${member.expertise.length > 0 ? member.expertise.join(', ') : 'general tasks'}.`,
+        });
+        return { responses };
+      }
+    }
 
     this.emit({ type: 'loading_start', stage: 'crew_routing' });
 
@@ -477,6 +532,65 @@ export class CrewOrchestrator {
   private extractExpertise(systemPrompt: string): string[] {
     const lower = systemPrompt.toLowerCase();
     return CREW_DOMAIN_KEYWORDS.filter((domain) => lower.includes(domain));
+  }
+
+  /**
+   * LLM-powered crew matching: uses a minimal prompt to semantically match
+   * the user's message to the best crew member. Infinitely scalable.
+   * Falls back to keyword matching on error.
+   */
+  async matchCrew(userMessage: string, enabledMembers: CrewMember[]): Promise<CrewMember | null> {
+    if (enabledMembers.length === 0) return null;
+    if (enabledMembers.length === 1) return enabledMembers[0]!;
+
+    const crewList = enabledMembers.map((m) => {
+      const exp = (m.expertise && m.expertise.length > 0) ? m.expertise.join(', ') : 'general';
+      const traits = (m.crew.traits && m.crew.traits.length > 0) ? m.crew.traits.join(', ') : '';
+      return `- ${m.crew.name} (@${m.crew.callsign}): ${exp}${traits ? ` | traits: ${traits}` : ''}`;
+    }).join('\n');
+
+    const prompt = `Match this user request to the best crew member. Only match if the request CLEARLY fits their expertise.
+If the match is weak or the query is vague (like "how can I..." or "what do you think about..."), respond with "none".
+Respond with TWO lines: callsign (or "none"), then confidence (high/medium/low).
+
+User: "${userMessage.slice(0, 300)}"
+
+Crews:
+${crewList}
+
+Example output:
+sam_wilson
+high`;
+
+    try {
+      const completion = this.provider.complete({
+        model: this.activeModel,
+        messages: [
+          { role: 'system', content: 'Routing classifier. Respond with callsign then confidence on separate lines.' },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0,
+        maxTokens: 30,
+      });
+
+      let content = '';
+      for await (const chunk of completion) {
+        if (chunk.content) content += chunk.content;
+      }
+
+      const lines = content.trim().split('\n').map((l) => l.trim().toLowerCase());
+      const callsign = lines[0]?.replace(/[^a-z0-9_]/g, '') ?? '';
+      const confidence = lines[1]?.replace(/[^a-z]/g, '') ?? '';
+
+      if (!callsign || callsign === 'none' || confidence === 'low') return null;
+
+      const matched = enabledMembers.find(
+        (m) => m.crew.callsign.toLowerCase() === callsign || m.crew.name.toLowerCase() === callsign,
+      );
+      return matched ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private emit(event: Partial<EngineEvent> & { type: string }): void {

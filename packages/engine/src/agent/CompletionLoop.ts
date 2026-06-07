@@ -31,6 +31,7 @@ import type { CompactionManager } from '../communication/CompactionManager.js';
 import type { TelemetryEmitter } from '../communication/telemetry/TelemetryEmitter.js';
 import type { DoomLoopDetector } from '../tools/DoomLoopDetector.js';
 import type { TokenTracker } from '../session/TokenTracker.js';
+import { estimateOutputTokens } from '../session/tokenCount.js';
 import type { GitManager } from '../session/GitManager.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,6 +60,7 @@ export interface CompletionLoopDeps {
   readonly telemetry: TelemetryEmitter;
   readonly doomLoopDetector: DoomLoopDetector;
   readonly tokenTracker: TokenTracker;
+  onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number }) => void) | null;
 
   // Mutable scalar accessors
   getIntent(): IntentResult | null;
@@ -184,7 +186,7 @@ export class CompletionLoop {
               toolCalls: (m.toolCalls ?? []).map((tc) => ({
                 id: tc.id, name: tc.function.name, arguments: tc.function.arguments, result: '',
               })),
-              tokenCount: Math.ceil((typeof m.content === 'string' ? m.content.length : 0) / 4),
+              tokenCount: estimateOutputTokens(typeof m.content === 'string' ? m.content : ''),
               createdAt: new Date().toISOString(),
             })),
             this.deps.sessionId,
@@ -458,7 +460,8 @@ export class CompletionLoop {
       if (lastUsage) {
         this.deps.tokenTracker.addTokenUsage(lastUsage.inputTokens, lastUsage.outputTokens);
       } else {
-        this.deps.tokenTracker.addTokenUsage(Math.ceil(tokenCount * 0.5), Math.ceil(tokenCount * 0.5));
+        const estOutput = estimateOutputTokens(accumulatedContent);
+        this.deps.tokenTracker.addTokenUsage(Math.ceil(estOutput * 0.8), estOutput);
       }
 
       const assistantMessage: Message = {
@@ -474,7 +477,8 @@ export class CompletionLoop {
       const elapsed = Date.now() - startTime;
       const turnTokens = this.deps.tokenTracker.tokensUsed - (this.deps.turnStartTokens ?? 0);
       const costUsd = this.deps.tokenTracker.totalCost - (this.deps.turnStartCost ?? 0);
-      this.deps.emit({ type: 'token_usage', totalTokens: this.deps.tokenTracker.tokensUsed, contextWindow: this.deps.getContextWindow(), turnTokens, costUsd } as unknown as EngineEvent);
+      this.deps.emit({ type: 'token_usage', totalTokens: this.deps.tokenTracker.tokensUsed, contextWindow: this.deps.getContextWindow(), turnTokens, costUsd, inputTokens: this.deps.tokenTracker.inputTokenCount, outputTokens: this.deps.tokenTracker.outputTokenCount, inputPrice: this.deps.tokenTracker.inputPrice, outputPrice: this.deps.tokenTracker.outputPrice } as unknown as EngineEvent);
+      this.deps.onTokenLog?.({ inputTokens: this.deps.tokenTracker.inputTokenCount, outputTokens: this.deps.tokenTracker.outputTokenCount, costUsd });
       this.deps.emit({
         type: 'message_received',
         message: assistantMessage,
@@ -523,7 +527,7 @@ export class CompletionLoop {
             content: accumulatedContent,
             toolCalls: null,
             createdAt: new Date().toISOString(),
-            tokenCount: Math.ceil(accumulatedContent.length / 4),
+             tokenCount: estimateOutputTokens(accumulatedContent),
           };
 
           this.deps.emit({ type: 'message_received', message: graceMessage, elapsed: Date.now() - startTime });

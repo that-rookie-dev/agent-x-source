@@ -14,6 +14,7 @@ export interface Message {
   reasoning?: string;
   metadata?: MessageMetadata;
   compactionMarker?: CompactionMarker;
+  crew?: { crewId: string; name: string; callsign: string };
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';

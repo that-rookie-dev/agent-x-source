@@ -24,6 +24,10 @@ export class CrewManager {
     }
   }
 
+  refresh(): void {
+    this.loadCrews();
+  }
+
   private loadCrews(): void {
     const crewPath = join(this.secretSauceDir, 'crews.json');
     if (existsSync(crewPath)) {

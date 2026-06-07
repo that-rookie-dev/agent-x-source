@@ -361,6 +361,8 @@ export function CrewsPanel() {
   const [importCategory, setImportCategory] = useState(0);
   const [importLoading, setImportLoading] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [expertiseInput, setExpertiseInput] = useState('');
+  const [traitInput, setTraitInput] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -374,7 +376,7 @@ export function CrewsPanel() {
   useEffect(() => { load(); }, [load]);
 
   const handleToggle = async (id: string, enabled: boolean) => {
-    try { await crewsApi.toggle(id, enabled); await load(); }
+    try { await crewsApi.toggle(id, enabled); await load(); setDetailCrew(prev => prev?.id === id ? { ...prev, enabled } : prev); }
     catch (e) { setError(e instanceof Error ? e.message : 'Toggle failed'); }
   };
 
@@ -389,12 +391,16 @@ export function CrewsPanel() {
     setForm(EMPTY_FORM);
     setIsEditing(false);
     setDialogOpen(true);
+    setExpertiseInput('');
+    setTraitInput('');
   };
 
   const openEdit = (c: Crew) => {
     setForm({ name: c.name, title: c.title ?? '', callsign: c.callsign, systemPrompt: c.systemPrompt, tone: c.tone ?? 'professional', expertise: c.expertise ?? [], traits: c.traits ?? [] });
     setIsEditing(true);
     setDialogOpen(true);
+    setExpertiseInput('');
+    setTraitInput('');
   };
 
   const handleGenerateMetadata = async () => {
@@ -776,32 +782,61 @@ export function CrewsPanel() {
             </Box>
           </Box>
 
-          {(form.expertise.length > 0 || form.traits.length > 0) && (
-            <Box sx={{ p: 1.5, borderRadius: 1, border: `1px solid ${colors.border.default}`, bgcolor: colors.bg.tertiary }}>
-              {form.expertise.length > 0 && (
-                <Box sx={{ mb: form.traits.length > 0 ? 1 : 0 }}>
-                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, mb: 0.5 }}>Expertise</Typography>
-                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                    {form.expertise.map((exp) => (
-                      <Chip key={exp} size="small" label={exp} onDelete={() => setForm({ ...form, expertise: form.expertise.filter((e) => e !== exp) })}
-                        sx={{ height: 20, fontSize: '0.55rem', bgcolor: colors.accent.blue + '15', color: colors.accent.blue }} />
-                    ))}
-                  </Box>
-                </Box>
-              )}
-              {form.traits.length > 0 && (
-                <Box>
-                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, mb: 0.5 }}>Traits</Typography>
-                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                    {form.traits.map((t: string) => (
-                      <Chip key={t} size="small" label={t} onDelete={() => setForm({ ...form, traits: form.traits.filter((tr) => tr !== t) })}
-                        sx={{ height: 20, fontSize: '0.55rem', bgcolor: colors.accent.purple + '10', color: colors.accent.purple }} />
-                    ))}
-                  </Box>
-                </Box>
-              )}
+          {/* Expertise chips — always editable */}
+          <Box>
+            <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: colors.text.dim, mb: 0.75, textTransform: 'uppercase', letterSpacing: '1px' }}>Skills & Expertise</Typography>
+            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1 }}>
+              {form.expertise.map((exp) => (
+                <Chip key={exp} size="small" label={exp} onDelete={() => setForm({ ...form, expertise: form.expertise.filter((e) => e !== exp) })}
+                  sx={{ height: 20, fontSize: '0.55rem', bgcolor: colors.accent.blue + '15', color: colors.accent.blue }} />
+              ))}
             </Box>
-          )}
+            <Box sx={{ display: 'flex', gap: 0.5 }}>
+              <TextField size="small" placeholder="Add skill..." value={expertiseInput}
+                onChange={(e) => setExpertiseInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && expertiseInput.trim()) {
+                    e.preventDefault();
+                    setForm({ ...form, expertise: [...form.expertise, expertiseInput.trim()] });
+                    setExpertiseInput('');
+                  }
+                }}
+                sx={{ flex: 1, '& .MuiInputBase-root': { height: 28, fontSize: '0.65rem' } }} />
+              <Button size="small" variant="outlined" disabled={!expertiseInput.trim()}
+                onClick={() => { setForm({ ...form, expertise: [...form.expertise, expertiseInput.trim()] }); setExpertiseInput(''); }}
+                sx={{ minWidth: 'auto', px: 1, fontSize: '0.6rem', textTransform: 'none', borderColor: colors.accent.blue + '50', color: colors.accent.blue, height: 28 }}>
+                Add
+              </Button>
+            </Box>
+          </Box>
+
+          {/* Traits chips — always editable */}
+          <Box>
+            <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: colors.text.dim, mb: 0.75, textTransform: 'uppercase', letterSpacing: '1px' }}>Traits</Typography>
+            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1 }}>
+              {form.traits.map((t) => (
+                <Chip key={t} size="small" label={t} onDelete={() => setForm({ ...form, traits: form.traits.filter((tr) => tr !== t) })}
+                  sx={{ height: 20, fontSize: '0.55rem', bgcolor: colors.accent.purple + '10', color: colors.accent.purple }} />
+              ))}
+            </Box>
+            <Box sx={{ display: 'flex', gap: 0.5 }}>
+              <TextField size="small" placeholder="Add trait..." value={traitInput}
+                onChange={(e) => setTraitInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && traitInput.trim()) {
+                    e.preventDefault();
+                    setForm({ ...form, traits: [...form.traits, traitInput.trim()] });
+                    setTraitInput('');
+                  }
+                }}
+                sx={{ flex: 1, '& .MuiInputBase-root': { height: 28, fontSize: '0.65rem' } }} />
+              <Button size="small" variant="outlined" disabled={!traitInput.trim()}
+                onClick={() => { setForm({ ...form, traits: [...form.traits, traitInput.trim()] }); setTraitInput(''); }}
+                sx={{ minWidth: 'auto', px: 1, fontSize: '0.6rem', textTransform: 'none', borderColor: colors.accent.purple + '50', color: colors.accent.purple, height: 28 }}>
+                Add
+              </Button>
+            </Box>
+          </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setDialogOpen(false)} sx={{ color: colors.text.dim, textTransform: 'none', fontSize: '0.75rem' }}>Cancel</Button>

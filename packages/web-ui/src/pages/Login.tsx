@@ -174,6 +174,7 @@ export function Login() {
             <Box
               component="input"
               type="text"
+              name="username"
               value={username}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUsername(e.target.value)}
               autoFocus
@@ -205,6 +206,7 @@ export function Login() {
             <Box
               component="input"
               type="password"
+              name="password"
               value={password}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
               autoComplete="current-password"
