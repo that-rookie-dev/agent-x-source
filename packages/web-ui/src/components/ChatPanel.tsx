@@ -149,6 +149,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [sessionList, setSessionList] = useState<SessionInfo[]>([]);
   const [currentSessionTitle, setCurrentSessionTitle] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const currentSessionIdRef = useRef<string | null>(null);
 
   // Chat state
   const [messages, setMessages] = useState<UIMessage[]>([]);
@@ -160,6 +161,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const disconnectRef = useRef<(() => void) | null>(null);
+  const skipRestoreRef = useRef(false);
 
   // Provider error band state
   const [providerError, setProviderError] = useState<string | null>(null);
@@ -194,13 +196,25 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Sync view with sessionId prop from URL — also restore session history on mount/refresh
   useEffect(() => {
     if (sessionId) {
+      if (skipRestoreRef.current) {
+        skipRestoreRef.current = false;
+        setView('chat');
+        return;
+      }
       setView('chat');
       setCurrentSessionId(sessionId);
+      setShowJumpPill(false);
+      setUnreadCount(0);
       sessions.restore(sessionId).then(({ messages: historyMsgs, session }) => {
         const visible = historyMsgs.filter((m) => m.role !== 'system');
         setMessages(visible.map((m) => ({ ...m, streaming: false })));
         setCurrentSessionTitle(session.title ?? `Session ${sessionId.slice(0, 8)}`);
-        setTokenUsed((session as any).tokenUsed ?? session.tokensUsed ?? 0);
+        const totalUsed = (session as any).tokenUsed ?? session.tokensUsed ?? 0;
+        setTokenUsed(totalUsed);
+        const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+        const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+        setTokenInput(inputEst);
+        setTokenOutput(outputEst);
         loadTodos();
       }).catch((err) => {
         console.error('Failed to restore session on mount:', err);
@@ -496,11 +510,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
           case 'token_usage': {
             const used = ev.totalTokens as number | undefined;
-            if (used) setTokenUsed(used);
+            if (used != null) setTokenUsed(prev => Math.max(prev, used));
             const inp = ev.inputTokens as number | undefined;
-            if (inp) setTokenInput(inp);
+            if (inp != null) setTokenInput(prev => Math.max(prev, inp));
             const out = ev.outputTokens as number | undefined;
-            if (out) setTokenOutput(out);
+            if (out != null) setTokenOutput(prev => Math.max(prev, out));
             const ip = ev.inputPrice as number | undefined;
             if (ip !== undefined) setTokenInputPrice(ip);
             const op = ev.outputPrice as number | undefined;
@@ -582,6 +596,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setMessages(visible.map((m) => ({ ...m, streaming: false })));
       const totalTokens = h.reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
       setTokenUsed(totalTokens);
+      const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+      const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+      setTokenInput(inputEst);
+      setTokenOutput(outputEst);
     }).catch(() => {});
   }, [sessionId]);
 
@@ -610,14 +628,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const sendBlocked = !currentProvider || !currentModel;
   const sendBlockedReason = !currentProvider ? 'Select a provider before sending' : !currentModel ? 'Select a model before sending' : '';
 
+  // Keep a ref in sync so callbacks (handleSend, ensureSession) never
+  // capture a stale currentSessionId from a useCallback closure.
+  useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
+
   // Lazy session creation: create session only when first message is sent
   const ensureSession = async (): Promise<string | null> => {
-    if (currentSessionId) return currentSessionId;
+    if (currentSessionIdRef.current) return currentSessionIdRef.current;
     try {
       const result = await sessions.create();
       const newId = result?.sessionId;
       if (newId) {
         setCurrentSessionId(newId);
+        skipRestoreRef.current = true;
         navigate(`/console/chat/${newId}`, { replace: true });
         return newId;
       }
@@ -729,6 +752,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         try { await chat.clear(); } catch { /* ignore */ }
         setMessages([]);
         setTokenUsed(0);
+        setTokenInput(0);
+        setTokenOutput(0);
+        setCompactionCount(0);
         return true;
       }
       case 'compact': {
@@ -765,7 +791,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
           await sessions.restoreCheckpoint(sid, list[0]!.id);
           const h = await chat.history();
-          setMessages(h.filter(m => m.role !== 'system').map(m => ({ ...m, streaming: false })));
+          const visible = h.filter(m => m.role !== 'system');
+          setMessages(visible.map(m => ({ ...m, streaming: false })));
+          const totalUsed = visible.reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+          setTokenUsed(totalUsed);
+          const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+          const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+          setTokenInput(inputEst);
+          setTokenOutput(outputEst);
         } catch { /* ignore */ }
         return true;
       }
@@ -960,7 +993,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setMessages(visible.map((m) => ({ ...m, streaming: false })));
       setCurrentSessionTitle(s.title ?? `Session ${s.id.slice(0, 8)}`);
       setCurrentSessionId(s.id);
+      setShowJumpPill(false);
+      setUnreadCount(0);
       setTokenUsed(s.tokensUsed ?? 0);
+      const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+      const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+      setTokenInput(inputEst);
+      setTokenOutput(outputEst);
       navigate(`/console/chat/${s.id}`);
       loadTodos();
     } catch { /* ignore */ }
@@ -972,7 +1011,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setCurrentSessionTitle(null);
     setCurrentSessionId(null);
     setTokenUsed(0);
+    setTokenInput(0);
+    setTokenOutput(0);
+    setCompactionCount(0);
     setTodoItems([]);
+    setShowJumpPill(false);
+    setUnreadCount(0);
     setView('chat');
     navigate('/console/chat');
   };
@@ -1007,12 +1051,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', fontWeight: 700,
               color: colors.accent.green, letterSpacing: '3px',
             }}>
-              SESSION LOGS
+              SESSIONS
             </Typography>
           </Box>
           <Box sx={{ flex: 1 }} />
           <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim }}>
-            {sessionList.length} RECORD{sessionList.length !== 1 ? 'S' : ''}
+            {sessionList.length} SESSION{sessionList.length !== 1 ? 'S' : ''}
           </Typography>
           <Button
             size="small"
@@ -1024,7 +1068,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               '&:hover': { bgcolor: colors.accent.blue + '15', borderColor: colors.accent.blue + '60' },
             }}
           >
-            NEW LOG
+            NEW SESSION
           </Button>
         </Box>
 
@@ -1042,7 +1086,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </Box>
               <Box sx={{ textAlign: 'center' }}>
                 <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.dim, letterSpacing: '2px', mb: 0.5 }}>
-                  NO LOGS RECORDED
+                  NO SESSIONS
                 </Typography>
                 <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, opacity: 0.6 }}>
                   Send a message to start your first session
@@ -1056,7 +1100,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   fontFamily: "'JetBrains Mono', monospace",
                 }}
               >
-                INITIALIZE LOG
+                NEW SESSION
               </Button>
             </Box>
           ) : (
@@ -1085,13 +1129,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                     }}
                   >
                     <Box sx={{ flex: 1, minWidth: 0 }}>
-                      {/* Log header row */}
+                      {/* Session header row */}
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                         <Typography sx={{
                           fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
                           color: colors.text.dim, letterSpacing: '1px',
                         }}>
-                          LOG #{idx + 1}
+                          SESSION #{idx + 1}
                         </Typography>
                         <Box sx={{ width: 4, height: 4, borderRadius: '50%', bgcolor: colors.accent.blue, opacity: 0.6 }} />
                         <Typography sx={{
@@ -1125,7 +1169,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                         </Typography>
                       </Box>
                     </Box>
-                    <Tooltip title="Delete log">
+                    <Tooltip title="Delete session">
                       <IconButton
                         size="small"
                         onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
@@ -1618,7 +1662,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
       {/* ─── Right sidebar ─── */}
       <Box sx={{
-        width: 210, flexShrink: 0, borderLeft: `1px solid ${colors.border.default}`,
+        width: '15%', minWidth: 220, flexShrink: 0, borderLeft: `1px solid ${colors.border.default}`,
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}>
         {/* Crew (fixed for session) */}
@@ -1740,7 +1784,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         onRestored={async () => {
           try {
             const h = await chat.history();
-            setMessages(h.filter(m => m.role !== 'system').map(m => ({ ...m, streaming: false })));
+            const visible = h.filter(m => m.role !== 'system');
+            setMessages(visible.map(m => ({ ...m, streaming: false })));
+            const totalUsed = visible.reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+            setTokenUsed(totalUsed);
+            const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+            const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+            setTokenInput(inputEst);
+            setTokenOutput(outputEst);
           } catch { /* ignore */ }
         }}
       />

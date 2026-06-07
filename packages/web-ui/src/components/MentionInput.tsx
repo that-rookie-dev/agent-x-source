@@ -68,9 +68,14 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
 
   useEffect(() => {
     if (value === '' && prevValueRef.current !== '') {
-      setSegments([{ type: 'text', id: crypto.randomUUID(), value: '' }]);
+      const newSeg = { type: 'text' as const, id: crypto.randomUUID(), value: '' };
+      setSegments([newSeg]);
       setMentionQueryLocal(null);
       mentionOriginRef.current = null;
+      requestAnimationFrame(() => {
+        const el = textInputRefs.current.get(newSeg.id);
+        if (el) el.focus();
+      });
     }
     prevValueRef.current = value;
   }, [value]);

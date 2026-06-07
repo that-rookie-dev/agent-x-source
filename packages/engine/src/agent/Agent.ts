@@ -2287,8 +2287,10 @@ Only include specialists that are actually needed for this task.`;
             yield { type: 'done', usage: { inputTokens: event.usage.promptTokens, outputTokens: event.usage.completionTokens } };
             return;
           case 'provider.error': {
+            const rawBody = (event as any).rawBody as string || '';
+            const details = rawBody ? ` [${rawBody.slice(0, 500)}]` : '';
             const classified = this.errorClassifier.classify(
-              new Error(`Provider error: ${event.code} - ${event.message}`),
+              new Error(`Provider error: ${event.code} - ${event.message}${details}`),
             );
             const action = this.failoverPolicy.decide(
               classified,
@@ -2296,7 +2298,7 @@ Only include specialists that are actually needed for this task.`;
               this.config.provider.activeProvider,
             );
             throw new Error(
-              `${classified.reason}: ${event.message} [action: ${action.type}]`,
+              `${classified.reason}: ${event.message}${details} [action: ${action.type}]`,
             );
           }
           default:

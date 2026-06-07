@@ -9,6 +9,10 @@ export async function fileRead(args: Record<string, unknown>, context: ToolExecu
   const filePath = resolve(context.scopePath, args['path'] as string);
   try {
     const content = readFileSync(filePath, 'utf-8');
+    const MAX_CHARS = 50000;
+    if (content.length > MAX_CHARS) {
+      return { success: true, output: content.slice(0, MAX_CHARS) + `\n\n[File truncated — ${content.length - MAX_CHARS} chars omitted. Use offset/limit to read specific sections.]` };
+    }
     const offset = (args['offset'] as number) ?? 0;
     const limit = args['limit'] as number | undefined;
 
@@ -32,10 +36,16 @@ export async function fileRead(args: Record<string, unknown>, context: ToolExecu
 export async function fileWrite(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const filePath = resolve(context.scopePath, args['path'] as string);
   const content = args['content'] as string;
+  const mode = (args['mode'] as string) || 'overwrite';
   try {
     mkdirSync(dirname(filePath), { recursive: true });
     const ext = extname(filePath);
     const marker = getAICommentMarker(ext);
+    if (mode === 'append') {
+      const contentWithMarker = `\n${content}\n${marker}\n`;
+      writeFileSync(filePath, contentWithMarker, { flag: 'a', encoding: 'utf-8' });
+      return { success: true, output: `Appended to ${filePath}` };
+    }
     const contentWithMarker = content.endsWith('\n') ? `${content}${marker}\n` : `${content}\n${marker}\n`;
     writeFileSync(filePath, contentWithMarker, 'utf-8');
     return { success: true, output: `Written to ${filePath}` };
@@ -95,6 +105,10 @@ export async function folderList(args: Record<string, unknown>, context: ToolExe
         return `? ${entry}`;
       }
     });
+    const MAX_LINES = 500;
+    if (details.length > MAX_LINES) {
+      return { success: true, output: details.slice(0, MAX_LINES).join('\n') + `\n\n[Truncated — ${details.length - MAX_LINES} entries omitted. Use a more specific path.]` };
+    }
     return { success: true, output: details.join('\n') };
   } catch (error) {
     return { success: false, output: `Failed to list directory: ${(error as Error).message}`, error: 'LIST_ERROR' };

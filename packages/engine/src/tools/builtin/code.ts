@@ -200,6 +200,35 @@ export async function filePatch(args: Record<string, unknown>, context: ToolExec
   return { success: true, output: results.join('\n'), metadata: { applied: results.filter(r => r.includes('OK')).length, total: edits.length } };
 }
 
+export async function codeRange(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
+  const filePath = resolve(context.scopePath, args['path'] as string);
+  const startLine = args['startLine'] as number;
+  const endLine = (args['endLine'] as number) ?? startLine;
+  const replacement = (args['replacement'] as string) ?? '';
+
+  if (!existsSync(filePath)) {
+    return { success: false, output: 'File not found', error: 'NOT_FOUND' };
+  }
+
+  const lines = readFileSync(filePath, 'utf-8').split('\n');
+  if (startLine < 0 || startLine >= lines.length) {
+    return { success: false, output: `startLine ${startLine} out of range (0-${lines.length - 1})`, error: 'RANGE_ERROR' };
+  }
+  if (endLine < startLine || endLine >= lines.length) {
+    return { success: false, output: `endLine ${endLine} out of range (${startLine}-${lines.length - 1})`, error: 'RANGE_ERROR' };
+  }
+
+  const newLines = replacement === '' ? [] : replacement.split('\n');
+  lines.splice(startLine, endLine - startLine + 1, ...newLines);
+
+  const ext = extname(filePath);
+  const marker = getAICommentMarker(ext, 'range edit');
+  const content = lines.join('\n');
+  const finalContent = content.endsWith('\n') ? `${content}${marker}\n` : `${content}\n${marker}\n`;
+  writeFileSync(filePath, finalContent, 'utf-8');
+  return { success: true, output: `Replaced lines ${startLine}-${endLine} in ${filePath}` };
+}
+
 export async function codeGrep(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const pattern = args['pattern'] as string;
   const searchPath = (args['path'] as string) ?? '.';

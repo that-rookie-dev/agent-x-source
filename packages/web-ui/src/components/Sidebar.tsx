@@ -4,14 +4,11 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import Divider from '@mui/material/Divider';
 import ChatIcon from '@mui/icons-material/Chat';
-import BuildIcon from '@mui/icons-material/Build';
 import ExtensionIcon from '@mui/icons-material/Extension';
 import HubIcon from '@mui/icons-material/Hub';
 import CellTowerIcon from '@mui/icons-material/CellTower';
 import SettingsIcon from '@mui/icons-material/Settings';
-import ScheduleIcon from '@mui/icons-material/Schedule';
 import StorageIcon from '@mui/icons-material/Storage';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import GroupsIcon from '@mui/icons-material/Groups';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -32,13 +29,10 @@ const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
   { id: 'providers', icon: DnsIcon, label: 'Providers' },
   { id: 'crews', icon: GroupsIcon, label: 'Crews' },
   { id: 'soul', icon: AutoAwesomeIcon, label: 'Soul' },
-  { id: 'orchestrator', icon: AccountTreeIcon, label: 'Orchestrator' },
-  { id: 'tools', icon: BuildIcon, label: 'Tools' },
   { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
   { id: 'mcp', icon: HubIcon, label: 'MCP Servers' },
   { id: 'knowledge', icon: StorageIcon, label: 'Knowledge' },
   { id: 'channels', icon: CellTowerIcon, label: 'Channels' },
-  { id: 'scheduler', icon: ScheduleIcon, label: 'Scheduler' },
   { id: 'settings', icon: SettingsIcon, label: 'Settings' },
 ];
 
