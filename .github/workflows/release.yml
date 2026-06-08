@@ -124,10 +124,19 @@ jobs:
             agentx-darwin-arm64-tui.tar.gz
 
       # --- Desktop ---
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('packages/desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Build desktop
         run: |
           retry() {
-            local n=0 max=3 delay=15
+            local n=0 max=3 delay=30
             until [ "$n" -ge "$max" ]; do
               if "$@"; then return 0; fi
               n=$((n+1))
@@ -219,10 +228,19 @@ jobs:
             agentx-${{ matrix.suffix }}-tui.tar.gz
 
       # --- Desktop ---
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('packages/desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Build desktop
         run: |
           retry() {
-            local n=0 max=3 delay=15
+            local n=0 max=3 delay=30
             until [ "$n" -ge "$max" ]; do
               if "$@"; then return 0; fi
               n=$((n+1))
@@ -302,11 +320,20 @@ jobs:
             agentx-win-x64-tui.zip
 
       # --- Desktop ---
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron
+            ~/AppData/Local/electron-builder
+          key: ${{ runner.os }}-electron-${{ hashFiles('packages/desktop/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Build desktop
         shell: bash
         run: |
           retry() {
-            local n=0 max=3 delay=15
+            local n=0 max=3 delay=30
             until [ "$n" -ge "$max" ]; do
               if "$@"; then return 0; fi
               n=$((n+1))
