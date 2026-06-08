@@ -236,7 +236,12 @@ jobs:
         run: |
           cd packages/desktop
           npm install
-          npm run dist:linux
+          npm run build
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            npx electron-builder --linux AppImage
+          else
+            npx electron-builder --linux deb AppImage
+          fi
         env:
           ARCH: ${{ matrix.arch }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

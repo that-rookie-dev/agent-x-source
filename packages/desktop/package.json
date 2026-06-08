@@ -84,8 +84,7 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "installerIcon": "build/icon.png"
+      "allowToChangeInstallationDirectory": true
     },
     "publish": {
       "provider": "github",
