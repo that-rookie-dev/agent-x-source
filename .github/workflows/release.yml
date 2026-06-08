@@ -126,9 +126,20 @@ jobs:
       # --- Desktop ---
       - name: Build desktop
         run: |
+          retry() {
+            local n=0 max=3 delay=15
+            until [ "$n" -ge "$max" ]; do
+              if "$@"; then return 0; fi
+              n=$((n+1))
+              echo "retry $n/$max after ${delay}s..." >&2
+              sleep $delay
+            done
+            echo "failed after $max attempts" >&2
+            return 1
+          }
           cd packages/desktop
-          npm install
-          npm run dist:mac
+          retry npm install
+          retry npm run dist:mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -210,10 +221,21 @@ jobs:
       # --- Desktop ---
       - name: Build desktop
         run: |
+          retry() {
+            local n=0 max=3 delay=15
+            until [ "$n" -ge "$max" ]; do
+              if "$@"; then return 0; fi
+              n=$((n+1))
+              echo "retry $n/$max after ${delay}s..." >&2
+              sleep $delay
+            done
+            echo "failed after $max attempts" >&2
+            return 1
+          }
           cd packages/desktop
-          npm install
-          npm run build
-          npx electron-builder --linux ${{ matrix.desktop_targets }}
+          retry npm install
+          retry npm run build
+          retry npx electron-builder --linux ${{ matrix.desktop_targets }}
         env:
           ARCH: ${{ matrix.arch }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -281,10 +303,22 @@ jobs:
 
       # --- Desktop ---
       - name: Build desktop
+        shell: bash
         run: |
+          retry() {
+            local n=0 max=3 delay=15
+            until [ "$n" -ge "$max" ]; do
+              if "$@"; then return 0; fi
+              n=$((n+1))
+              echo "retry $n/$max after ${delay}s..." >&2
+              sleep $delay
+            done
+            echo "failed after $max attempts" >&2
+            return 1
+          }
           cd packages/desktop
-          npm install
-          npm run dist:win
+          retry npm install
+          retry npm run dist:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
