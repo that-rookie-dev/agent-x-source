@@ -3,10 +3,11 @@
   "version": "0.6.8",
   "private": true,
   "description": "Agent-X — Your AI Wingman (Desktop)",
+  "homepage": "https://github.com/SlashpanOrg/agent-x",
   "author": "SlashpanOrg <hello@slashpan.com>",
   "main": "./dist/main.js",
   "scripts": {
-    "prebuild": "node ../../scripts/sync-version.mjs",
+    "prebuild": "node ../../scripts/sync-version.mjs && node scripts/generate-icon.mjs",
     "build": "tsup",
     "build:deps": "pnpm --filter @agentx/web-api run build && pnpm --filter @agentx/web-ui run build",
     "dev": "tsup && electron dist/main.js",
