@@ -327,7 +327,7 @@ jobs:
             | macOS (Apple Silicon) | [Agent-X-${{ needs.check-version.outputs.version }}-arm64.dmg](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-arm64.dmg) |
             | macOS (Apple Silicon) | [Agent-X-${{ needs.check-version.outputs.version }}-arm64-mac.zip](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-arm64-mac.zip) |
             | Linux (x64) | [Agent-X-${{ needs.check-version.outputs.version }}.AppImage](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}.AppImage) |
-            | Linux (x64) | [Agent-X-${{ needs.check-version.outputs.version }}.deb](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}.deb) |
+            | Linux (x64) | [agentx_${{ needs.check-version.outputs.version }}_amd64.deb](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx_${{ needs.check-version.outputs.version }}_amd64.deb) |
             | Linux (ARM64) | [Agent-X-${{ needs.check-version.outputs.version }}-arm64.AppImage](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-arm64.AppImage) |
             | Windows (x64) | [Agent-X-${{ needs.check-version.outputs.version }}-Setup.exe](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-Setup.exe) |
 
