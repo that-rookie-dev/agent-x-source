@@ -310,18 +310,24 @@ function createWindow(): void {
 
 function createTray(): void {
   let icon: Electron.NativeImage;
-  const candidates = [
-    join(__dirname, '..', 'build', process.platform === 'darwin' ? 'Tray.png' : 'TrayWin.png'),
-    join(__dirname, '..', 'build', 'icon.png'),
-    join(process.resourcesPath, 'build', 'icon.png'),
-  ];
-  const found = candidates.find(p => existsSync(p));
+  const trayPath = join(process.resourcesPath, 'build', 'tray.png');
+  const fallbackPath = join(process.resourcesPath, 'build', 'icon.png');
+  const trayDev = join(__dirname, '..', 'build', 'tray.png');
+  const iconDev = join(__dirname, '..', 'build', 'icon.png');
+  const found = existsSync(trayPath) ? trayPath : existsSync(trayDev) ? trayDev : existsSync(fallbackPath) ? fallbackPath : existsSync(iconDev) ? iconDev : null;
   if (found) {
-    icon = nativeImage.createFromPath(found).resize({ width: 16, height: 16 });
+    icon = nativeImage.createFromPath(found);
+    if (process.platform === 'darwin') {
+      icon = icon.resize({ width: 20, height: 20 });
+      icon.setTemplateImage(true);
+    } else {
+      icon = icon.resize({ width: 16, height: 16 });
+    }
+    tray = new Tray(icon);
   } else {
     icon = nativeImage.createEmpty();
+    tray = new Tray(icon);
   }
-  tray = new Tray(icon);
   tray.setToolTip('Agent-X — Starting...');
 
   const updateMenu = {
