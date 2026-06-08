@@ -12,16 +12,14 @@ const trayPaths = [join(buildDir, 'Tray.png'), join(buildDir, 'TrayWin.png')];
 
 const assetsDir = join(root, '..', '..', '..', 'release', 'assets');
 
-// App icon: use agent_x_logo.png with black background composited
+// App icon: use agent_x_logo.png with black background composited (prefer assets, build dir is output)
 const iconSources = [
-  join(buildDir, 'icon.png'),
   join(assetsDir, 'agent_x_logo_bg.png'),
   join(assetsDir, 'agent_x_logo.png'),
 ];
 
-// Tray icons: use agent_x_tray_logo.png (transparent for menu bar)
+// Tray icons: use agent_x_tray_logo.png (transparent for menu bar) — prefer assets
 const traySources = [
-  join(buildDir, 'Tray.png'),
   join(assetsDir, 'agent_x_tray_logo.png'),
   join(assetsDir, 'agent_x_logo.png'),
 ];
