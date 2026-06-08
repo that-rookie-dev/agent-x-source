@@ -1,6 +1,6 @@
 {
   "name": "@agentx/desktop",
-  "version": "0.6.8",
+  "version": "0.6.9",
   "private": true,
   "description": "Agent-X — Your AI Wingman (Desktop)",
   "homepage": "https://github.com/SlashpanOrg/agent-x",
@@ -59,7 +59,10 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon.icns",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
