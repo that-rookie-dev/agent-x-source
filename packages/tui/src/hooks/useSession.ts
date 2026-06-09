@@ -19,6 +19,7 @@ interface UseSessionReturn {
   messages: Message[];
   streamingContent: string;
   isLoading: boolean;
+  loadingSteps: Array<{ id: string; label: string; status: string }> | null;
   tokensUsed: number;
   tokensTotal: number;
   error: string | null;

@@ -8,17 +8,22 @@ export default async function afterPack(context) {
   const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   if (!existsSync(appPath)) return;
 
-  // Fully re-sign the bundle ad-hoc with proper resource sealing.
-  // Passing --preserve-metadata=none forces codesign to re-seal all resources,
-  // fixing the "code has no resources but signature indicates they must be present"
-  // warning that macOS interprets as a broken bundle when quarantined.
+  // If developer credentials are available (CSC_LINK is set), electron-builder
+  // handles signing automatically with the Developer ID certificate.
+  // Only fall back to ad-hoc signing when no credentials are present (CI/local dev).
+  if (process.env.CSC_LINK || process.env.APPLE_ID) {
+    console.log('afterPack: Developer signing credentials detected — skipping ad-hoc override');
+    return;
+  }
+
+  // Ad-hoc signing for unsigned builds (CI without credentials, local dev)
   try {
     execSync(
       `codesign --force --deep --sign - "${appPath}"`,
       { stdio: 'inherit' }
     );
-    console.log('afterPack: clean ad-hoc signature applied');
+    console.log('afterPack: ad-hoc signature applied (unsigned build)');
   } catch (err) {
-    console.error('afterPack: codesign failed —', err.message);
+    console.error('afterPack: ad-hoc codesign failed —', err.message);
   }
 }
