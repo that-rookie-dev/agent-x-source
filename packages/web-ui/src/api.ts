@@ -206,12 +206,10 @@ export const system = {
 
 // ─── Session Settings ───
 export type AgentMode = 'agent' | 'ask' | 'plan';
-export type ApprovalType = 'default' | 'moderate' | 'auto';
 
 export const sessionSettings = {
-  get: () => request<{ mode: AgentMode; approval: ApprovalType }>('/session/settings'),
+  get: () => request<{ mode: AgentMode }>('/session/settings'),
   setMode: (mode: AgentMode) => request<{ ok: boolean; mode: AgentMode }>('/session/mode', { method: 'POST', body: JSON.stringify({ mode }) }),
-  setApproval: (approval: ApprovalType) => request<{ ok: boolean; approval: ApprovalType }>('/session/approval', { method: 'POST', body: JSON.stringify({ approval }) }),
 };
 
 // ─── Tools ───
@@ -457,6 +455,7 @@ export interface SessionInfo {
   model: string;
   crewId?: string;
   messageCount: number;
+  status?: string;
   tokensUsed: number;
   createdAt: string;
   title?: string;

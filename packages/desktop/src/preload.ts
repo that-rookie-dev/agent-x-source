@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('agentx', {
   platform: process.platform,
-  isPackaged: require('electron').app.isPackaged,
+  isPackaged: ipcRenderer.sendSync('app:isPackaged'),
   isDesktop: true,
   minimize: () => ipcRenderer.send('window:minimize'),
   maximize: () => ipcRenderer.send('window:maximize'),

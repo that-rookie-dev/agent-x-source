@@ -13,7 +13,7 @@ export class ToolResultReinjector {
         {
           type: 'tool_result',
           tool_use_id: tc.id,
-          content: String(resultContent),
+          content: typeof resultContent === 'string' ? resultContent : JSON.stringify(resultContent),
           is_error: tc.status === 'error',
         },
       ];
@@ -32,7 +32,7 @@ export class ToolResultReinjector {
   ): ProviderMessage {
     return {
       role: 'tool',
-      content: String(toolResult.result ?? ''),
+      content: typeof toolResult.result === 'string' ? toolResult.result : (toolResult.result != null ? JSON.stringify(toolResult.result) : ''),
       toolCallId: toolResult.id,
       name: toolResult.name,
     };
@@ -42,7 +42,7 @@ export class ToolResultReinjector {
     toolResult: NormalizedToolCall,
     maxChars: number = 10000,
   ): ProviderMessage {
-    const raw = String(toolResult.result ?? '');
+    const raw = typeof toolResult.result === 'string' ? toolResult.result : (toolResult.result != null ? JSON.stringify(toolResult.result) : '');
     const truncated =
       raw.length > maxChars
         ? raw.slice(0, maxChars) +

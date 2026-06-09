@@ -369,10 +369,14 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Copy install scripts to release
+        run: |
+          cp install-desktop.sh artifacts/ || true
+
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum agentx-*.tar.gz agentx-*.zip *.dmg *.AppImage *.deb *.exe 2>/dev/null > checksums.sha256 || true
+          sha256sum agentx-*.tar.gz agentx-*.zip *.dmg *.AppImage *.deb *.exe install-desktop.sh 2>/dev/null > checksums.sha256 || true
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -404,6 +408,16 @@ jobs:
 
             ### Checksums
             See `checksums.sha256` in assets.
+
+            ### macOS Beta Install
+            If Gatekeeper blocks the app, use the install script:
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ env.PUBLIC_REPO }}/main/install-desktop.sh | bash
+            ```
+            Or manually after copying to Applications:
+            ```bash
+            xattr -cr /Applications/Agent-X.app
+            ```
           files: |
             artifacts/*
             !artifacts/*.blockmap

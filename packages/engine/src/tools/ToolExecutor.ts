@@ -118,24 +118,18 @@ export class ToolExecutor {
       }
     }
 
-    // Check permissions
+    // Check permissions — previously denied tools still get a chance to be re-allowed
     const decision = this.permissionManager.check(toolId, path);
-    if (decision === 'deny') {
-      return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
-    }
+    const needsPermission = decision !== 'allow_always';
 
-    if (decision === null && tool.riskLevel !== 'low') {
-      // Need to ask user
-      if (this.permissionRequestHandler) {
-        const response = await this.permissionRequestHandler(toolId, path ?? '*', tool.riskLevel);
-        if (response === 'deny') {
-          this.permissionManager.deny(toolId, path);
-          return { success: false, output: 'Permission denied by user', error: 'PERMISSION_DENIED' };
-        }
-        if (response === 'allow_always') {
-          this.permissionManager.grant(toolId, 'allow_always', path);
-        }
-        // allow_once — proceed without storing
+    if (needsPermission && this.permissionRequestHandler && tool.riskLevel !== 'low') {
+      const response = await this.permissionRequestHandler(toolId, path ?? '*', tool.riskLevel);
+      if (response === 'deny') {
+        this.permissionManager.deny(toolId, path);
+        return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
+      }
+      if (response === 'allow_always') {
+        this.permissionManager.grant(toolId, 'allow_always', path);
       }
     }
 
