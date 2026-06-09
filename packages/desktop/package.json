@@ -27,6 +27,7 @@
       "buildResources": "build"
     },
     "npmRebuild": false,
+    "afterPack": "scripts/afterpack.mjs",
     "buildDependenciesFromSource": false,
     "nodeGypRebuild": false,
     "files": [
@@ -64,11 +65,24 @@
         "zip"
       ],
       "icon": "build/icon.icns",
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
-      "hardenedRuntime": true,
+      "hardenedRuntime": false,
+      "identity": null,
       "gatekeeperAssess": false,
-      "notarize": false
+      "notarize": false,
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "icon": "build/icon.icns",
+      "iconSize": 128,
+      "title": "Agent-X ${version}",
+      "contents": [
+        { "x": 130, "y": 220, "type": "file" },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
     "win": {
       "target": [
