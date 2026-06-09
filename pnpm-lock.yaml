@@ -26,6 +26,11 @@ overrides:
   nodemailer@<=8.0.4: '>=8.0.5'
   vitest@<4.1.0: '>=4.1.0'
 
+patchedDependencies:
+  better-sqlite3@12.10.0:
+    hash: ajrictmyutxuempoci3fxs2vlu
+    path: patches/better-sqlite3@12.10.0.patch
+
 importers:
 
   .:
@@ -89,6 +94,9 @@ importers:
         specifier: ^6.0.0
         version: 6.8.3
     devDependencies:
+      '@electron/rebuild':
+        specifier: ^4.0.4
+        version: 4.0.4
       electron:
         specifier: '>=39.8.5'
         version: 42.3.3
@@ -111,8 +119,8 @@ importers:
         specifier: ^4.7.3
         version: 4.7.3(@types/express@4.17.25)
       better-sqlite3:
-        specifier: ^11.0.0
-        version: 11.10.0
+        specifier: ^12.10.0
+        version: 12.10.0(patch_hash=ajrictmyutxuempoci3fxs2vlu)
       discord.js:
         specifier: ^14.26.4
         version: 14.26.4
@@ -139,7 +147,7 @@ importers:
         version: 3.25.76
     devDependencies:
       '@types/better-sqlite3':
-        specifier: ^7.6.0
+        specifier: ^7.6.12
         version: 7.6.13
       '@types/imap':
         specifier: ^0.8.42
@@ -304,6 +312,9 @@ importers:
       '@agentx/shared':
         specifier: workspace:*
         version: link:../shared
+      better-sqlite3:
+        specifier: ^12.10.0
+        version: 12.10.0(patch_hash=ajrictmyutxuempoci3fxs2vlu)
       express:
         specifier: ^4.21.0
         version: 4.22.2
@@ -587,6 +598,11 @@ packages:
   '@electron/rebuild@3.6.1':
     resolution: {integrity: sha512-f6596ZHpEq/YskUd8emYvOUne89ij8mQgjYFA5ru25QwbrRO+t1SImofdDv7kKOuWCmVOuU5tvfkbgGxIl3E/w==}
     engines: {node: '>=12.13.0'}
+    hasBin: true
+
+  '@electron/rebuild@4.0.4':
+    resolution: {integrity: sha512-Rzc39XPdk/+/wBG8MfwAHohXflep0ITUfulb6Rgz3R0NeSB1noE+E9/M/cb8ftCAiyDD9PPhLuuWgE1GaInbKg==}
+    engines: {node: '>=22.12.0'}
     hasBin: true
 
   '@electron/universal@2.0.1':
@@ -1899,6 +1915,10 @@ packages:
   abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
 
+  abbrev@4.0.0:
+    resolution: {integrity: sha512-a1wflyaL0tHtJSmLSOVybYhy22vRih4eduhhrkcjgrWGnRfrZtovJ2FRjxuTtkkj47O/baf0R86QU5OuYpz8fA==}
+    engines: {node: ^20.17.0 || >=22.9.0}
+
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
     engines: {node: '>=6.5'}
@@ -2070,6 +2090,10 @@ packages:
 
   better-sqlite3@11.10.0:
     resolution: {integrity: sha512-EwhOpyXiOEL/lKzHz9AW1msWFNzGc/z+LzeB3/jnFJpxu+th2yqvzsSWas1v9jgs9+xiXJcD5A8CJxAG2TaghQ==}
+
+  better-sqlite3@12.10.0:
+    resolution: {integrity: sha512-CyzaZRQKyHkB2ZInfTTl2nvT33EbDpjkLEbE8/Zck3Ll6O0qqvuGdrJ45HgtH+HykRg88ITY3AdreBGN70aBSQ==}
+    engines: {node: 20.x || 22.x || 23.x || 24.x || 25.x || 26.x}
 
   binaryextensions@6.11.0:
     resolution: {integrity: sha512-sXnYK/Ij80TO3lcqZVV2YgfKN5QjUWIRk/XSm2J/4bd/lPko3lvk0O4ZppH6m+6hB2/GTu+ptNwVFe1xh+QLQw==}
@@ -3373,6 +3397,10 @@ packages:
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
 
+  isexe@4.0.0:
+    resolution: {integrity: sha512-FFUtZMpoZ8RqHS3XeXEmHWLA4thH+ZxCv2lOiPIn1Xc7CxrqhWzNSDzD+/chS/zbYezmiwWLdQC09JdQKmthOw==}
+    engines: {node: '>=20'}
+
   istextorbinary@9.5.0:
     resolution: {integrity: sha512-5mbUj3SiZXCuRf9fT3ibzbSSEWiy63gFfksmGfdOzujPjW3k+z8WvIBxcJHBoQNlaZaiyB25deviif2+osLmLw==}
     engines: {node: '>=4'}
@@ -3999,6 +4027,10 @@ packages:
     resolution: {integrity: sha512-KdHvFWZjEKDf0cakgFjebl371GPsISX2oZHcuyKqM7DtogIsHrqKeLTo8wBHxaXRAQlY2PsPlZmfo+9ZCxEREQ==}
     engines: {node: '>=10'}
 
+  node-abi@4.31.0:
+    resolution: {integrity: sha512-Erq5w/t3syw3s4sDsUaX4QttIdBPsGKTT1DTRsCkTonGggczhlDKm/wDX3o+HPJpQ41EjXCbcmXf0tgr5YZJXw==}
+    engines: {node: '>=22.12.0'}
+
   node-addon-api@1.7.2:
     resolution: {integrity: sha512-ibPK3iA+vaY1eEjESkQkM0BbCqFOaZMiXRTtdB0u7b4djtY6JnsjvPdUHVMg6xQt3B8fpTTWHI9A+ADjM9frzg==}
 
@@ -4022,6 +4054,11 @@ packages:
       encoding:
         optional: true
 
+  node-gyp@12.4.0:
+    resolution: {integrity: sha512-OMcPNvqTCFUnNaBlmdgq+lfNqY7gTiSmNRDjY3uAXRyudeKZEZxu3CLtjMQrx4zZxCX2b/mpNqTtwuCJgXhHkw==}
+    engines: {node: ^20.17.0 || >=22.9.0}
+    hasBin: true
+
   node-gyp@9.4.1:
     resolution: {integrity: sha512-OQkWKbjQKbGkMf/xqI1jjy3oCTgMKJac58G2+bjZb3fza6gW2YrCSdMQYaoTb70crvE//Gngr4f0AgVHmqHvBQ==}
     engines: {node: ^12.13 || ^14.13 || >=16}
@@ -4042,6 +4079,11 @@ packages:
   nopt@6.0.0:
     resolution: {integrity: sha512-ZwLpbTgdhuZUnZzjd7nb1ZV+4DoiC6/sfiVKok72ym/4Tlf+DFdlHYmT2JPmcNNWV6Pi3SDf1kT+A4r9RTuT9g==}
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
+    hasBin: true
+
+  nopt@9.0.0:
+    resolution: {integrity: sha512-Zhq3a+yFKrYwSBluL4H9XP3m3y5uvQkB/09CwDruCiRmR/UJYnn9W4R48ry0uGC70aeTPKLynBtscP9efFFcPw==}
+    engines: {node: ^20.17.0 || >=22.9.0}
     hasBin: true
 
   normalize-package-data@6.0.2:
@@ -4370,6 +4412,10 @@ packages:
   prismjs@1.30.0:
     resolution: {integrity: sha512-DEvV2ZF2r2/63V+tK8hQvrR2ZGn10srHbXviTlcv7Kpzw8jWiNTqbVgjO3IY8RxrrOUF8VPMQQFysYYYv0YZxw==}
     engines: {node: '>=6'}
+
+  proc-log@6.1.0:
+    resolution: {integrity: sha512-iG+GYldRf2BQ0UDUAd6JQ/RwzaQy6mXmsk/IzlYyal4A4SNFw54MeH4/tLkF4I5WoWG9SQwuqWzS99jaFQHBuQ==}
+    engines: {node: ^20.17.0 || >=22.9.0}
 
   process-nextick-args@2.0.1:
     resolution: {integrity: sha512-3ouUOpQhtgrbOa17J7+uxOTpITYWaGP7/AhoR3+A+/1e9skrzelGi/dXzEYyvbxubEF6Wn2ypscTKiKJFFn1ag==}
@@ -5123,6 +5169,10 @@ packages:
     resolution: {integrity: sha512-sC+b0tB1whOCzbtlx20fx3WgCXwkW627p4EA9uM+/tNNPkSS+eSEld6pAs9nDv7WbY1UUljBMYPtu9BCOrCWKA==}
     engines: {node: '>=18.17'}
 
+  undici@6.26.0:
+    resolution: {integrity: sha512-4yqz8a3n5HmGTlsbADNtr/dJlhkh/55Rq798G6ibiULcXbDtaLpTl1pvdqcbFfeoj3iSi52lePFM7h9H21cw/A==}
+    engines: {node: '>=18.17'}
+
   undici@7.27.0:
     resolution: {integrity: sha512-+t2Z/GwkZQDtu00813aP66ygViGtPHKhhoFZpQKpKrE+9jIgES+Zw+mFNaDWOVRKiuJjuqKHzD3B1sfGg8+ZOQ==}
     engines: {node: '>=20.18.1'}
@@ -5324,6 +5374,11 @@ packages:
   which@2.0.2:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
     engines: {node: '>= 8'}
+    hasBin: true
+
+  which@6.0.1:
+    resolution: {integrity: sha512-oGLe46MIrCRqX7ytPUf66EAYvdeMIZYn3WaocqqKZAxrBpkqHfL/qvTyJ/bTk5+AqHCjXmrv3CEWgy368zhRUg==}
+    engines: {node: ^20.17.0 || >=22.9.0}
     hasBin: true
 
   why-is-node-running@2.3.0:
@@ -5763,6 +5818,17 @@ snapshots:
       yargs: 17.7.2
     transitivePeerDependencies:
       - bluebird
+      - supports-color
+
+  '@electron/rebuild@4.0.4':
+    dependencies:
+      '@malept/cross-spawn-promise': 2.0.0
+      debug: 4.4.3
+      node-abi: 4.31.0
+      node-api-version: 0.2.1
+      node-gyp: 12.4.0
+      read-binary-file-arch: 1.0.6
+    transitivePeerDependencies:
       - supports-color
 
   '@electron/universal@2.0.1':
@@ -7078,6 +7144,8 @@ snapshots:
 
   abbrev@1.1.1: {}
 
+  abbrev@4.0.0: {}
+
   abort-controller@3.0.0:
     dependencies:
       event-target-shim: 5.0.1
@@ -7289,6 +7357,11 @@ snapshots:
   baseline-browser-mapping@2.10.33: {}
 
   better-sqlite3@11.10.0:
+    dependencies:
+      bindings: 1.5.0
+      prebuild-install: 7.1.3
+
+  better-sqlite3@12.10.0(patch_hash=ajrictmyutxuempoci3fxs2vlu):
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3
@@ -8827,6 +8900,8 @@ snapshots:
 
   isexe@2.0.0: {}
 
+  isexe@4.0.0: {}
+
   istextorbinary@9.5.0:
     dependencies:
       binaryextensions: 6.11.0
@@ -9630,6 +9705,10 @@ snapshots:
     dependencies:
       semver: 7.8.1
 
+  node-abi@4.31.0:
+    dependencies:
+      semver: 7.8.1
+
   node-addon-api@1.7.2:
     optional: true
 
@@ -9647,6 +9726,19 @@ snapshots:
       whatwg-url: 5.0.0
     optionalDependencies:
       encoding: 0.1.13
+
+  node-gyp@12.4.0:
+    dependencies:
+      env-paths: 2.2.1
+      exponential-backoff: 3.1.3
+      graceful-fs: 4.2.11
+      nopt: 9.0.0
+      proc-log: 6.1.0
+      semver: 7.8.1
+      tar: 7.5.16
+      tinyglobby: 0.2.17
+      undici: 6.26.0
+      which: 6.0.1
 
   node-gyp@9.4.1:
     dependencies:
@@ -9677,6 +9769,10 @@ snapshots:
   nopt@6.0.0:
     dependencies:
       abbrev: 1.1.1
+
+  nopt@9.0.0:
+    dependencies:
+      abbrev: 4.0.0
 
   normalize-package-data@6.0.2:
     dependencies:
@@ -10010,6 +10106,8 @@ snapshots:
   prettier@3.8.3: {}
 
   prismjs@1.30.0: {}
+
+  proc-log@6.1.0: {}
 
   process-nextick-args@2.0.1: {}
 
@@ -10902,6 +11000,8 @@ snapshots:
 
   undici@6.24.1: {}
 
+  undici@6.26.0: {}
+
   undici@7.27.0: {}
 
   unicorn-magic@0.1.0: {}
@@ -11063,6 +11163,10 @@ snapshots:
   which@2.0.2:
     dependencies:
       isexe: 2.0.0
+
+  which@6.0.1:
+    dependencies:
+      isexe: 4.0.0
 
   why-is-node-running@2.3.0:
     dependencies:

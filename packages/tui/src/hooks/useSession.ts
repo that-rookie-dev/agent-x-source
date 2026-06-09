@@ -91,6 +91,7 @@ export function useSession(
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingContent, setStreamingContent] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingSteps, setLoadingSteps] = useState<Array<{ id: string; label: string; status: string }> | null>(null);
   const [tokensUsed, setTokensUsed] = useState(0);
   const [tokensTotal, setTokensTotal] = useState(128_000);
   const [error, setError] = useState<string | null>(null);
@@ -186,12 +187,25 @@ export function useSession(
     }
 
     switch (event.type) {
-      case 'loading_start':
+      case 'loading_start': {
         setIsLoading(true);
         setStreamingContent('');
+        if (event.steps && event.steps.length > 0) {
+          setLoadingSteps(event.steps.map((s: { id: string; label: string; status: string }) => ({ ...s, status: 'pending' })));
+        }
+        break;
+      }
+      case 'loading_step_update':
+        setLoadingSteps((prev: Array<{ id: string; label: string; status: string }> | null) => {
+          if (!prev) return prev;
+          return prev.map((s: { id: string; label: string; status: string }) =>
+            s.id === event.stepId ? { ...s, status: event.status } : s,
+          );
+        });
         break;
       case 'loading_end':
         setIsLoading(false);
+        setLoadingSteps(null);
         break;
       case 'stream_chunk':
         latestContentRef.current = event.fullContent;
@@ -256,6 +270,7 @@ export function useSession(
         }
         break;
       case 'error':
+      case 'provider_error':
         setError(event.message);
         setErrorActions(event.actions ?? []);
         setActiveTools([]);
@@ -1132,6 +1147,7 @@ export function useSession(
     messages,
     streamingContent,
     isLoading,
+    loadingSteps,
     tokensUsed,
     tokensTotal,
     error,

@@ -304,6 +304,9 @@ export function ProvidersPanel() {
 
                     {isActive ? (
                       <Box sx={{ mt: 1 }}>
+                        <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", mb: 1 }}>
+                          Model: {selectedModels[profile.id] || '—'}
+                        </Typography>
                         <Button
                           fullWidth size="small" variant="outlined"
                           onClick={() => openModelPicker(profile)}

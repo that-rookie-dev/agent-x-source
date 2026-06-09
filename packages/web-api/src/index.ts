@@ -501,11 +501,9 @@ app.get('/api/filesystem/dirs', (req, res) => {
 });
 
 // ───── Session Mode & Approval ─────
-// Agent mode: 'agent' (full), 'ask' (answer only), 'plan' (plan only)
-// Approval: 'default' (deny-first), 'moderate' (tools allowed), 'auto' (full access)
-const sessionSettings: { mode: 'agent' | 'ask' | 'plan'; approval: 'default' | 'moderate' | 'auto' } = {
+// Agent mode: 'ask' (chat only), 'plan' (generate plans, tools need permission), 'agent' (full autonomy, auto-approve tools)
+const sessionSettings: { mode: 'agent' | 'ask' | 'plan' } = {
   mode: 'ask',
-  approval: 'default',
 };
 
 app.get('/api/session/settings', (_req, res) => {
@@ -516,24 +514,12 @@ app.post('/api/session/mode', (req, res) => {
   const { mode } = req.body as { mode: 'agent' | 'ask' | 'plan' };
   if (!['agent', 'ask', 'plan'].includes(mode)) { res.status(400).json({ error: 'invalid-mode' }); return; }
   sessionSettings.mode = mode;
-  // Apply mode to agent if exists
   const eng = getEngine();
   if (eng.agent) {
     eng.agent.setPlanMode(mode === 'plan');
+    eng.agent.autoApproveTools = (mode === 'agent');
   }
   res.json({ ok: true, mode });
-});
-
-app.post('/api/session/approval', (req, res) => {
-  const { approval } = req.body as { approval: 'default' | 'moderate' | 'auto' };
-  if (!['default', 'moderate', 'auto'].includes(approval)) { res.status(400).json({ error: 'invalid-approval' }); return; }
-  sessionSettings.approval = approval;
-  // Apply to agent if exists — auto means auto-approve all tool calls
-  const eng = getEngine();
-  if (eng.agent) {
-    (eng.agent as unknown as { autoApproveTools: boolean }).autoApproveTools = (approval === 'auto' || approval === 'moderate');
-  }
-  res.json({ ok: true, approval });
 });
 
 // ───── Agent State Sync (for Web-UI reconnect) ─────
@@ -740,7 +726,7 @@ app.post('/api/chat/message', async (req, res) => {
 
     // Apply session mode to agent
     agent.setPlanMode(sessionSettings.mode === 'plan');
-    (agent as unknown as { autoApproveTools: boolean }).autoApproveTools = (sessionSettings.approval === 'auto' || sessionSettings.approval === 'moderate');
+    agent.autoApproveTools = (sessionSettings.mode === 'agent');
 
     // Build the full message content with attachments if provided
     let fullText = text;
@@ -782,6 +768,10 @@ app.post('/api/chat/message', async (req, res) => {
     } catch { /* checkpoint failure shouldn't block the message */ }
 
     const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
+    if (!message || (message as Record<string, unknown>).id === '__clarify__') {
+      res.json({ ok: true, clarification: true });
+      return;
+    }
     res.json({ ok: true, message });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'chat-failed' });
@@ -853,6 +843,10 @@ app.post('/api/chat/steer', async (req, res) => {
       ? 'Only provide an answer/explanation. Do NOT execute any tools, make changes, or take actions. Just reply with knowledge.'
       : undefined;
     const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
+    if (!message || (message as Record<string, unknown>).id === '__clarify__') {
+      res.json({ ok: true, clarification: true });
+      return;
+    }
     res.json({ ok: true, message });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'steer-failed' });
@@ -872,7 +866,7 @@ app.post('/api/chat/stop-and-send', async (req, res) => {
     await waitForIdle(agent);
     ensureSubscribed();
     agent.setPlanMode(sessionSettings.mode === 'plan');
-    (agent as unknown as { autoApproveTools: boolean }).autoApproveTools = (sessionSettings.approval === 'auto' || sessionSettings.approval === 'moderate');
+    agent.autoApproveTools = (sessionSettings.mode === 'agent');
     let fullText = text;
     if (attachments && attachments.length > 0) {
       const attachmentSection = attachments.map(a => `\n\n--- File: ${a.name} ---\n${a.content}`).join('');
@@ -884,6 +878,10 @@ app.post('/api/chat/stop-and-send', async (req, res) => {
         ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
         : undefined;
     const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
+    if (!message || (message as Record<string, unknown>).id === '__clarify__') {
+      res.json({ ok: true, clarification: true });
+      return;
+    }
     res.json({ ok: true, message });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'stop-and-send-failed' });

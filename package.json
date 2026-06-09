@@ -1,6 +1,6 @@
 {
   "name": "agent-x",
-  "version": "0.7.1",
+  "version": "0.7.3",
   "private": true,
   "type": "module",
   "description": "Agent-X — Your AI Wingman",
@@ -56,6 +56,9 @@
       "electron@<39.8.5": ">=39.8.5",
       "nodemailer@<=8.0.4": ">=8.0.5",
       "vitest@<4.1.0": ">=4.1.0"
+    },
+    "patchedDependencies": {
+      "better-sqlite3@12.10.0": "patches/better-sqlite3@12.10.0.patch"
     }
   }
 }

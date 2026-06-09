@@ -12,7 +12,7 @@ import type {
   PlanStep,
   ToolResult,
 } from '@agentx/shared';
-import { generateMessageId, getLogger, resolveSpaceError, type ChannelKind } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, type ChannelKind } from '@agentx/shared';
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
@@ -27,6 +27,7 @@ import { Scheduler } from '../scheduler/Scheduler.js';
 import { setSchedulerInstance } from '../commands/builtin/schedule.js';
 import { setTaskManagerInstance } from '../commands/builtin/tasks.js';
 import { setSubAgentManagerInstance } from '../tools/builtin/subagent.js';
+import { setCrewDelegator } from '../tools/builtin/delegate-to-crew.js';
 import { setToolRegistryInstance } from '../commands/builtin/tools.js';
 import { SecretSauceManager } from '../secret-sauce/index.js';
 import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
@@ -65,7 +66,7 @@ import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
 import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 import { CrewOrchestrator, type CrewMember } from './CrewOrchestrator.js';
 import { ContextTracker } from './ContextTracker.js';
-import { OrchestrationPlanner } from './OrchestrationPlanner.js';
+
 import { TodoManager } from './TodoManager.js';
 
 // ─── UNIFIED PIPELINE IMPORTS (Phase 1-11 integration) ───
@@ -92,6 +93,7 @@ import { IdleTimeoutBreaker } from '../communication/IdleTimeoutBreaker.js';
 import { PluginSystem } from '../plugin/PluginSystem.js';
 import { StaleWatchdog } from '../communication/StaleWatchdog.js';
 import { CompletionLoop } from './CompletionLoop.js';
+import { IntentClassifier, getLoadingSteps } from './IntentClassifier.js';
 import { makeRoute, openAIProtocol } from '../providers/routes/Route.js';
 import { GenericTransport } from '../providers/transports/GenericTransport.js';
 
@@ -129,7 +131,9 @@ export class Agent {
   private toolExecutor?: EnhancedToolExecutor;
   private toolRegistry?: ToolRegistry;
   private permissionResolve: ((choice: 'allow_once' | 'allow_always' | 'deny') => void) | null = null;
+  autoApproveTools = false; // set by session mode: true in agent mode, false in ask/plan
   private cachedModels: Map<string, number> = new Map(); // modelId -> contextWindow
+  private cachedModelCapabilities: Map<string, string[]> = new Map(); // modelId -> capabilities
   private groundedModels: Set<string> = new Set(); // models that failed trial this session
   private planMode = false;
   private currentPlan: Plan | null = null;
@@ -145,6 +149,7 @@ export class Agent {
   private recipeEngine: RecipeEngine | null = null;
   private promptEngine: PromptEngine;
   private decisionEngine: DecisionEngine;
+  private intentClassifier: IntentClassifier;
   private currentIntent: IntentResult | null = null;
   private currentDecision: DecisionResult | null = null;
   private treeOfThoughts: TreeOfThoughts | null = null;
@@ -159,6 +164,8 @@ export class Agent {
 
   // Anti-duplicate: prevents double message_received within a single turn
   private _turnMessageEmitted = false;
+  // Anti-duplicate: prevents repeated model capability warnings per session
+  private _capabilityWarningEmitted = false;
   // ─── UNIFIED PIPELINE MODULES ───
   private inputNormalizer: InputNormalizer = null!;
   private promptComposer: PromptComposer = null!;
@@ -185,7 +192,6 @@ export class Agent {
   private _telegramChatId: number | null = null;
   private crewOrchestrator: CrewOrchestrator | null = null;
   private contextTracker = new ContextTracker();
-  private orchestrationPlanner: OrchestrationPlanner | null = null;
   onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number }) => void) | null = null;
 
   setContextPersistDir(dir: string): void {
@@ -217,6 +223,20 @@ export class Agent {
     this.subAgents = new SubAgentManager(this.eventBus);
     this.subAgents.setParentAgent(this);
     setSubAgentManagerInstance(this.subAgents);
+
+    // Crew delegation: allow Agent-X to delegate sub-tasks to crew members via tool calls
+    setCrewDelegator(async (crewName: string, taskDescription: string) => {
+      if (!this.crewOrchestrator) return 'No crews available.';
+      const members = this.crewOrchestrator.getMembers();
+      const member = members.find((m) =>
+        m.crew.name.toLowerCase() === crewName.toLowerCase() ||
+        m.crew.callsign.toLowerCase() === crewName.toLowerCase()
+      );
+      if (!member) return `Crew "${crewName}" not found. Available: ${members.map(m => `${m.crew.name} (@${m.crew.callsign})`).join(', ')}`;
+      const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'You are a capable AI assistant.';
+      const result = await this.crewOrchestrator!.processMessage(taskDescription, crewPrompt, [member]);
+      return result.responses[0]?.content ?? `${member.crew.name} completed the task.`;
+    });
     this.taskManager = new TaskManager(this.eventBus);
     setTaskManagerInstance(this.taskManager);
     this.todoManager = new TodoManager(this.eventBus);
@@ -284,9 +304,15 @@ export class Agent {
     }
     setToolRegistryInstance(this.toolRegistry ?? null);
 
+    // Reset permissions for each new session — no persistent deny across sessions
+    if (this.toolExecutor) {
+      this.toolExecutor.getPermissionManager().resetForNewSession(this.sessionId);
+    }
+
     // Wire permission requests to event bus
     if (this.toolExecutor) {
       this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel) => {
+        if (this.autoApproveTools) return 'allow_once';
         return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
           this.permissionResolve = resolve;
           this.emit({ type: 'permission_required', tool: toolId, path, riskLevel });
@@ -383,6 +409,9 @@ export class Agent {
 
     // Initialize decision engine for message classification and routing
     this.decisionEngine = new DecisionEngine();
+
+    // Initialize intent classifier (LLM-based) for understanding user intent
+    this.intentClassifier = new IntentClassifier(this.provider, options.config.provider.activeModel);
 
     // Initialize agent mesh components
     this.agentBus = getAgentBus();
@@ -754,7 +783,11 @@ export class Agent {
         // Treat certain client/auth errors as non-retryable (tests depend on immediate failure
         // for things like 401 Unauthorized). If we detect these, rethrow immediately.
         const msg = error instanceof Error ? error.message : String(error);
-        if (/401|Unauthorized|403|Forbidden|404|not found|402|429|quota|billing|Invalid API|suspended/i.test(msg)) {
+        if (/401|Unauthorized|403|Forbidden|404|not found|402|429|quota|billing|Invalid API|suspended|thought_signature|function.?call/i.test(msg)) {
+          // Log model-specific issues so the user knows to switch models
+          if (/thought_signature|function.?call/i.test(msg)) {
+            getLogger().error('MODEL_INCOMPAT', 'Model does not support function calling — switch to a capable model (e.g. gemini-2.0-flash, claude-3-haiku)');
+          }
           throw lastError;
         }
 
@@ -967,65 +1000,100 @@ Return ONLY valid JSON, no other text.`;
 
     this.emit({ type: 'message_sent', message: userMessage });
 
-    // ─── @MENTION ROUTING: Check if user is addressing a specific crew member ───
+    // ─── INTENT CLASSIFIER (ALWAYS first): LLM-powered message understanding ───
+    // Runs before @mention, auto-delegation, or any routing — provides context for all paths
+    const recentCtx = this.messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .slice(-10)
+      .map(m => ({ role: m.role, content: m.content }));
+    const intentResult = await this.intentClassifier.classify({
+      message: cleanContent,
+      recentMessages: recentCtx.slice(0, -1),
+    });
+    const isSocial = intentResult.intent === 'greeting' || intentResult.intent === 'farewell' || intentResult.intent === 'conversational';
+
+    // ─── MODEL CAPABILITY CHECK: warn if model lacks function calling for task intents ───
+    const isTaskIntent = intentResult.intent === 'simple_task' || intentResult.intent === 'complex_task';
+    if (isTaskIntent && !this._capabilityWarningEmitted) {
+      const caps = this.cachedModelCapabilities.get(this.config.provider.activeModel) ?? [];
+      if (!caps.includes('function_calling')) {
+        this._capabilityWarningEmitted = true;
+        this.emit({
+          type: 'model_capability_warning',
+          model: this.config.provider.activeModel,
+          missing: ['function_calling'],
+          message: `This model (${this.config.provider.activeModel}) does not support function calling. It cannot execute tools or take actions. Switch to a model with function calling for autonomous execution.`,
+        } as unknown as EngineEvent);
+      }
+    }
+
+    // Build a natural-language context summary for crew routing (passed to crew LLM calls)
+    const classificationContext = `[Classified as "${intentResult.intent}" (confidence: ${intentResult.confidence}) — ${intentResult.reasoning}]`;
+
+    getLogger().info('CLASSIFY', `intent=${intentResult.intent} confidence=${intentResult.confidence} needsClar=${intentResult.needsClarification} msg="${cleanContent.slice(0, 60)}"`);
+
+    // Emit as the general decision event for UI consumption
+    this.emit({
+      type: 'decision_made',
+      messageClass: intentResult.intent,
+      executionPath: isSocial ? 'fast_reply' : 'standard',
+      confidence: intentResult.confidence,
+      reasoning: intentResult.reasoning,
+    } as unknown as EngineEvent);
+
+    // ─── CLARIFICATION: If classifier is confused, ask the user ───
+    if (intentResult.needsClarification && intentResult.clarificationQuestion) {
+      this.emit({
+        type: 'clarification_required',
+        question: intentResult.clarificationQuestion,
+        options: intentResult.clarificationOptions ?? [],
+        allowFreeform: true,
+      } as unknown as EngineEvent);
+      this.emit({ type: 'loading_end' });
+      this.lifecycle.forceTransition('idle');
+      this.abortController = null;
+      this.runStateMgr.release(this.sessionId);
+      this.commandQueue.release(this.sessionId);
+      // Return null signal — UI shows chips via clarification_required event
+      return null as unknown as Message;
+    }
+
+    // ─── @MENTION ROUTING (with classifier context) ───
     const mentionedCrewId = this.detectAtMention(cleanContent);
     if (mentionedCrewId && this.crewOrchestrator) {
       const members = this.crewOrchestrator.getMembers();
       const mentionedMember = members.find((m) => m.crew.id === mentionedCrewId);
       if (mentionedMember) {
-        return await this.routeToCrew(mentionedMember, cleanContent, startTime);
+        return await this.routeToCrew(mentionedMember, cleanContent, startTime, classificationContext);
       }
     }
 
-    // ─── AUTO-DELEGATION: Check if any crew's expertise matches the message ───
-    // Skip if message should go through orchestration (multi-crew decomposition)
-    if (!this.shouldOrchestrate(cleanContent)) {
-      const autoDelegated = await this.tryAutoDelegate(cleanContent, startTime);
-      if (autoDelegated) return autoDelegated;
-    }
+    // ─── FAST REPLY PATH (social messages) ───
+    if (isSocial) {
+      const steps = getLoadingSteps(intentResult.intent);
+      this.emit({
+        type: 'loading_start',
+        stage: intentResult.intent,
+        steps: steps.map(s => ({ ...s, status: 'pending' as const })),
+      });
+      // Advance through loading steps as visual feedback
+      steps.forEach((step, idx) => {
+        this.emit({
+          type: 'loading_step_update',
+          stepId: step.id,
+          label: step.label,
+          status: idx === steps.length - 1 ? 'completed' : 'active',
+        });
+      });
 
-    // ─── EXPLICIT TASK CONVERSION: user asks to convert/make into task list ───
-    if (/\b(make|convert|turn|break|organize|create)\b.*\b(into|as a|task list|tasks|todo|to-do|checklist)\b/i.test(cleanContent)) {
-      const taskResult = await this.tryExplicitTaskConversion(cleanContent, startTime);
-      if (taskResult) return taskResult;
-    }
-
-    // ─── ORCHESTRATION: Complex multi-step tasks → decompose + assign to crews ───
-    if (this.shouldOrchestrate(cleanContent)) {
-      const orchestrated = await this.tryOrchestrate(cleanContent, startTime);
-      if (orchestrated) return orchestrated;
-    }
-
-    // ─── TASK DECOMPOSITION + PARALLEL EXECUTION ───
-    if (this.shouldDecompose(cleanContent)) {
-      const taskResult = await this.tryTaskExecution(cleanContent, startTime);
-      if (taskResult) return taskResult;
-    }
-
-    // ─── DECISION ENGINE: Classify message & determine execution path ───
-    const conversationLen = this.messages.filter(m => m.role === 'user').length;
-    this.currentDecision = this.decisionEngine.classify(content, conversationLen);
-    this.emit({
-      type: 'decision_made',
-      messageClass: this.currentDecision.messageClass,
-      executionPath: this.currentDecision.executionPath,
-      confidence: this.currentDecision.confidence,
-      reasoning: this.currentDecision.reasoning,
-    } as unknown as EngineEvent);
-
-    // ─── FAST REPLY PATH: Greetings, farewells, conversational ───
-    if (this.currentDecision.executionPath === 'fast_reply' && this.currentDecision.confidence >= 0.85) {
-      this.emit({ type: 'loading_start', stage: 'fast_reply' });
       try {
         const fastMessage = await this.runFastReply(content, startTime);
-        // Cleanup before returning (fast_reply path doesn't go through main try-finally)
         this.lifecycle.forceTransition('idle');
         this.abortController = null;
         this.runStateMgr.release(this.sessionId);
         this.commandQueue.release(this.sessionId);
         return fastMessage;
       } catch (e) {
-        // If cancelled/aborted, return cancelled message directly
         if ((e instanceof Error && e.name === 'AbortError') || !this.abortController) {
           this.emit({ type: 'loading_end' });
           const cancelledMessage: Message = {
@@ -1038,20 +1106,46 @@ Return ONLY valid JSON, no other text.`;
             tokenCount: 0,
           };
           this.emit({ type: 'message_received', message: cancelledMessage, elapsed: Date.now() - startTime });
-          // Cleanup before returning (fast_reply path doesn't go through main try-finally)
           this.lifecycle.forceTransition('idle');
           this.abortController = null;
           this.runStateMgr.release(this.sessionId);
           this.commandQueue.release(this.sessionId);
           return cancelledMessage;
         }
-        // Fall through to normal path if fast reply fails for other reasons
         getLogger().warn('FAST_REPLY', 'Fast reply failed, falling through to standard path');
-        // ─── Cleanup: close the fast-reply streaming state so the UI
-        //     doesn't show duplicate responses when the standard path runs ───
         this.emit({ type: 'loading_end' });
       }
     }
+
+    // ─── STANDARD LLM PATH: Agent-X handles ALL task messages directly ───
+    // Crews are NOT the default handler — they are optional sub-agents for specific
+    // parallel sub-tasks. Agent-X is the boss with full capabilities: research,
+    // planning, tool execution, project creation, everything. Crews are ONLY invoked
+    // via explicit @mention or when Agent-X decides to delegate a sub-task during execution.
+    // ─── EMIT LOADING STEPS (standard / non-social path) ───
+    const loadSteps = getLoadingSteps(intentResult.intent);
+    this.emit({
+      type: 'loading_start',
+      stage: intentResult.intent,
+      steps: loadSteps.map(s => ({ ...s, status: 'pending' as const })),
+    });
+    // Step 1: classify → already done
+    const step0 = loadSteps[0];
+    if (step0) {
+      this.emit({ type: 'loading_step_update', stepId: step0.id, label: step0.label, status: 'completed' });
+    }
+
+    // ─── DECISION ENGINE: Heuristic refinement for non-social messages ───
+    const conversationLen = this.messages.filter(m => m.role === 'user').length;
+    this.currentDecision = this.decisionEngine.classify(content, conversationLen);
+    this.currentDecision.reasoning = `${intentResult.reasoning} | ${this.currentDecision.reasoning}`;
+    this.emit({
+      type: 'decision_made',
+      messageClass: this.currentDecision.messageClass,
+      executionPath: this.currentDecision.executionPath,
+      confidence: this.currentDecision.confidence,
+      reasoning: this.currentDecision.reasoning,
+    } as unknown as EngineEvent);
 
     // ─── SMART PROMPTING & RAG ───
     // Detect intent for dynamic tool selection and reasoning mode
@@ -1074,7 +1168,19 @@ Return ONLY valid JSON, no other text.`;
       }
     }
 
+    // Advance loading step: planning / thinking phase complete
+    const step1 = loadSteps[1];
+    if (step1) {
+      this.emit({ type: 'loading_step_update', stepId: step1.id, label: step1.label, status: 'completed' });
+    }
+
     try {
+      // Advance loading step: execution phase
+      const step2 = loadSteps[2];
+      if (step2) {
+        this.emit({ type: 'loading_step_update', stepId: step2.id, label: step2.label, status: 'active' });
+      }
+
       // ─── UNIFIED: Complexity-based Tree of Thoughts trigger ───
       const wordCount = content.split(/\s+/).length;
       const hasListItems = (content.match(/\d+\.\s/g)?.length ?? 0) >= 2;
@@ -1198,6 +1304,16 @@ Return ONLY valid JSON, no other text.`;
       }
       const assistantMessage = await this.runCompletionLoop(startTime);
 
+      // Advance loading step: execution complete
+      const stepExec = loadSteps[2];
+      if (stepExec) {
+        this.emit({ type: 'loading_step_update', stepId: stepExec.id, label: stepExec.label, status: 'completed' });
+      }
+      const stepVerify = loadSteps[3];
+      if (stepVerify) {
+        this.emit({ type: 'loading_step_update', stepId: stepVerify.id, label: stepVerify.label, status: 'completed' });
+      }
+
       // Record assistant response in context tracker
       this.contextTracker.record(this.sessionId, 'assistant', assistantMessage.content);
 
@@ -1219,6 +1335,7 @@ Return ONLY valid JSON, no other text.`;
       }
 
       this.toolCallLogForReflection = [];
+      this.emit({ type: 'loading_end' });
       return assistantMessage;
     } catch (error) {
       this.emit({ type: 'loading_end' });
@@ -1244,7 +1361,40 @@ Return ONLY valid JSON, no other text.`;
       }
 
       this.errorShield.logError(error);
+      const rawProviderMessage = error instanceof Error ? error.message : String(error);
       const { message: friendlyMessage, actions } = this.toFriendlyError(error);
+      const PROVIDER_ERROR_REASONS = new Set([
+        FailoverReason.AUTH,
+        FailoverReason.BILLING,
+        FailoverReason.RATE_LIMIT,
+        FailoverReason.OVERLOADED,
+        FailoverReason.SERVER_ERROR,
+        FailoverReason.TIMEOUT,
+        FailoverReason.FORMAT,
+        FailoverReason.MODEL_NOT_FOUND,
+        FailoverReason.POLICY_BLOCK,
+      ]);
+      if (PROVIDER_ERROR_REASONS.has(classified.reason)) {
+        this.emit({
+          type: 'provider_error',
+          provider: this.config.provider.activeProvider,
+          model: this.config.provider.activeModel,
+          statusCode: classified.providerStatus,
+          message: rawProviderMessage,
+          recoverable: true,
+          actions,
+        });
+        const fallbackMessage: Message = {
+          id: generateMessageId(),
+          sessionId: this.sessionId,
+          role: 'assistant',
+          content: '',
+          toolCalls: null,
+          createdAt: new Date().toISOString(),
+          tokenCount: 0,
+        };
+        return fallbackMessage;
+      }
       this.emit({
         type: 'error',
         code: 'AGENT_ERROR',
@@ -1635,6 +1785,7 @@ Return ONLY valid JSON, no other text.`;
 
   switchModel(modelId: string, contextWindow?: number): void {
     this.config.provider.activeModel = modelId;
+    this._capabilityWarningEmitted = false;
 
     const ctx = contextWindow ?? this.cachedModels.get(modelId);
     if (ctx) {
@@ -1714,14 +1865,20 @@ Return ONLY valid JSON, no other text.`;
     } catch (err) {
       logger.error('MODEL_TRIAL_FAILED', err, { modelId });
       this.groundedModels.add(modelId);
-      const spaceErr = resolveSpaceError(err);
+      const rawTrialMessage = err instanceof Error ? err.message : String(err);
+      const statusCode = typeof err === 'object' && err !== null && 'status' in err
+        ? (err as { status: number }).status
+        : undefined;
       this.emit({
-        type: 'error',
-        code: 'MODEL_TRIAL_FAILED',
-        message: `${spaceErr.icon} ${spaceErr.title} — Model "${modelId}" failed pre-flight check. ${spaceErr.message}`,
+        type: 'provider_error',
+        provider: this.config.provider.activeProvider,
+        model: modelId,
+        statusCode,
+        message: rawTrialMessage,
         recoverable: true,
         actions: [
           { type: 'switch_model', label: 'Pick a different model' },
+          { type: 'reconfigure_key', label: 'Update API key' },
           { type: 'dismiss', label: 'Dismiss' },
         ],
       });
@@ -1760,6 +1917,7 @@ Return ONLY valid JSON, no other text.`;
       // Cache context windows for token tracking
       for (const m of models) {
         this.cachedModels.set(m.id, m.contextWindow);
+        this.cachedModelCapabilities.set(m.id, m.capabilities);
       }
       this.emit({
         type: 'command_action',
@@ -2394,11 +2552,88 @@ Only include specialists that are actually needed for this task.`;
    * Route a message to a specific crew member and return their response directly.
    * Used for both explicit @mentions and auto-delegation.
    */
-  private async routeToCrew(member: CrewMember, cleanContent: string, startTime: number): Promise<Message> {
+  private async routeToCrew(member: CrewMember, cleanContent: string, startTime: number, classificationContext?: string): Promise<Message> {
     this.emit({ type: 'loading_start', stage: 'crew_routing' });
     const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'You are a capable AI assistant.';
     const sessionContext = this.contextTracker.getTextForExpertiseCheck(this.sessionId);
-    const result = await this.crewOrchestrator!.processMessage(cleanContent, crewPrompt, [member], sessionContext);
+    const augmentedContext = classificationContext
+      ? `${classificationContext}\n\n${sessionContext}`
+      : sessionContext;
+    const result = await this.crewOrchestrator!.processMessage(cleanContent, crewPrompt, [member], augmentedContext);
+
+    // Intercept "not an expert" → convert to clarification with crew's expertise as options
+    const firstResponse = result.responses[0]?.content ?? '';
+    const isNotExpert = /not an expert/i.test(firstResponse);
+    if (isNotExpert && member.expertise && member.expertise.length > 0) {
+        const opts = member.expertise.slice(0, 5);
+        this.emit({
+          type: 'clarification_required',
+          question: `What area are you working on? (${member.crew.name})`,
+          options: opts,
+          allowFreeform: true,
+          recommended: opts[0],
+          allowChooseAll: false,
+        } as unknown as EngineEvent);
+        this.emit({ type: 'loading_end' });
+        this.lifecycle.forceTransition('idle');
+        this.abortController = null;
+        this.runStateMgr.release(this.sessionId);
+        this.commandQueue.release(this.sessionId);
+        const clarifyMsg: Message = {
+          id: '__clarify__',
+          sessionId: this.sessionId,
+          role: 'assistant',
+          content: '',
+          toolCalls: null,
+          createdAt: new Date().toISOString(),
+          tokenCount: 0,
+        };
+        return clarifyMsg;
+    }
+
+    // Intercept CLARIFY responses: crew is confused → show clarifying chips instead of message
+    getLogger().info('CREW_RESP', `firstResp=${JSON.stringify(firstResponse.slice(0, 60))}`);
+    if (/CLARIFY/i.test(firstResponse)) {
+      getLogger().info('CREW_CLARIFY', `matched CLARIFY for ${member.crew.name}`);
+      const lines = firstResponse.split('\n').map(l => l.trim()).filter(Boolean);
+      const clarifyIdx = lines.findIndex(l => /^CLARIFY/i.test(l));
+      // Format: "CLARIFY:" on its own line, question on the NEXT line, options after
+      const question = clarifyIdx >= 0 && lines[clarifyIdx + 1] ? lines[clarifyIdx + 1]! : '';
+      const allowChooseAll = /\[ALLOW_ALL\]/i.test(firstResponse);
+      const rawOptions = lines
+        .filter(l => l.startsWith('- ') || l.startsWith('• '))
+        .slice(0, 5);
+      // Detect which option has [RECOMMENDED] prefix
+      const recommendedIdx = rawOptions.findIndex(l => /\[RECOMMENDED\]/i.test(l));
+      const options = rawOptions.map(l => l.replace(/^[-•]\s*/, '').replace(/^\[RECOMMENDED\]\s*/, ''));
+      const recommended = recommendedIdx >= 0 ? options[recommendedIdx] : options[0];
+      if (question && options.length >= 1) {
+        this.emit({
+          type: 'clarification_required',
+          question,
+          options,
+          allowFreeform: true,
+          recommended,
+          allowChooseAll,
+        } as unknown as EngineEvent);
+        this.emit({ type: 'loading_end' });
+        this.lifecycle.forceTransition('idle');
+        this.abortController = null;
+        this.runStateMgr.release(this.sessionId);
+        this.commandQueue.release(this.sessionId);
+        // Return a sentinel message so auto-delegation doesn't fall through
+        const clarifyMsg: Message = {
+          id: '__clarify__',
+          sessionId: this.sessionId,
+          role: 'assistant',
+          content: '',
+          toolCalls: null,
+          createdAt: new Date().toISOString(),
+          tokenCount: 0,
+        };
+        return clarifyMsg;
+      }
+    }
 
     // Emit each crew response as a separate message bubble
     let lastMessage: Message | null = null;
@@ -2442,249 +2677,13 @@ Only include specialists that are actually needed for this task.`;
    * member's expertise matches the user message.
    * Uses LLM-powered semantic matching (scalable to any domain).
    */
-  private async tryAutoDelegate(userContent: string, startTime: number): Promise<Message | null> {
-    if (!this.crewOrchestrator) return null;
-
-    // Filter meta-questions about the platform itself
-    if (/why (is|are|isn't|aren't) (this|the|my|these) .*(not|showing|appearing|working|loading|displaying|visible)/i.test(userContent)
-        || /\b(why .*(task|panel|UI|interface|sidebar|button|page) .*not)/i.test(userContent)) {
-      return null;
-    }
-
-    const members = this.crewOrchestrator.getMembers();
-    const enabledMembers = members.filter((m) => this.enabledCrewSessionIds.has(m.crew.id));
-    if (enabledMembers.length === 0) return null;
-
-    const matched = await this.crewOrchestrator.matchCrew(userContent, enabledMembers);
-    if (!matched) return null;
-
-    getLogger().info('CREW_AUTO', `LLM matched crew: ${matched.crew.name} for message: ${userContent.slice(0, 80)}`);
-    return await this.routeToCrew(matched, userContent, startTime);
-  }
-
-  /**
-   * Handle explicit user request to convert a plan into tasks.
-   * Uses LLM to extract tasks from the current conversation context.
-   */
-  private async tryExplicitTaskConversion(userContent: string, startTime: number): Promise<Message | null> {
-    const tasks = await this.decomposeToTasks(userContent);
-    if (tasks.length < 2) return null;
-
-    this.todoManager.clear();
-    this.todoManager.addItems(tasks);
-
-    const assistantMessage: Message = {
-      id: generateMessageId(), sessionId: this.sessionId, role: 'assistant',
-      content: `I've broken this down into ${tasks.length} tasks. Check the right panel for the full list.`,
-      toolCalls: null, createdAt: new Date().toISOString(), tokenCount: 0,
-    };
-
-    this.messages.push({ role: 'assistant', content: assistantMessage.content });
-    this.contextTracker.record(this.sessionId, 'assistant', assistantMessage.content);
-    this.emit({ type: 'message_received', message: assistantMessage, elapsed: Date.now() - startTime });
-    this.emit({ type: 'loading_end' });
-    this.lifecycle.forceTransition('idle');
-    this.abortController = null;
-    this.runStateMgr.release(this.sessionId);
-    this.commandQueue.release(this.sessionId);
-    return assistantMessage;
-  }
-
-  /**
-   * Determine if the user message is complex enough to warrant
-   * full task decomposition and orchestration.
-   */
-  private shouldOrchestrate(content: string): boolean {
-    if (!this.crewOrchestrator) return false;
-    const members = this.crewOrchestrator.getMembers();
-    const enabledCount = members.filter((m) => this.enabledCrewSessionIds.has(m.crew.id)).length;
-    if (enabledCount < 2) return false;
-
-    const actionVerbs = /\b(build|create|clone|develop|design|plan|implement|setup|migrate|launch|redesign|audit)\b/i;
-    return actionVerbs.test(content) && content.length > 40;
-  }
-
-  private shouldDecompose(content: string): boolean {
-    const taskIndicators = /\b(build|create|develop|implement|setup|migrate|generate|write|fix|organize|prepare|compile|orchestrate|plan|convert|break|decompose)\b.*\b(and|also|additionally|then|first|next|after|into|tasks|steps|list|checklist|breakdown)\b|\b(multiple|several|many|various|different|bunch|clone)\b|\b(plan this|break this down|convert into tasks|make a plan|task list|todo list)\b/i;
-    return taskIndicators.test(content) && content.length > 25;
-  }
-
-  private async tryTaskExecution(userContent: string, startTime: number): Promise<Message | null> {
-    const tasks = await this.decomposeToTasks(userContent);
-    if (tasks.length < 2) return null;
-
-    getLogger().info('TASK_DECOMPOSE', `Decomposed into ${tasks.length} tasks`);
-
-    this.emit({ type: 'loading_start', stage: 'task_decomposition' });
-
-    const aggregated = await this.executeTasksInParallel(tasks);
-
-    const assistantMessage: Message = {
-      id: generateMessageId(),
-      sessionId: this.sessionId,
-      role: 'assistant',
-      content: aggregated,
-      toolCalls: null,
-      createdAt: new Date().toISOString(),
-      tokenCount: 0,
-    };
-
-    this.messages.push({ role: 'assistant', content: aggregated });
-    this.contextTracker.record(this.sessionId, 'assistant', aggregated);
-    this.emit({ type: 'message_received', message: assistantMessage, elapsed: Date.now() - startTime });
-    this.emit({ type: 'loading_end' });
-    this.lifecycle.forceTransition('idle');
-    this.abortController = null;
-    this.runStateMgr.release(this.sessionId);
-    this.commandQueue.release(this.sessionId);
-    return assistantMessage;
-  }
-
-  /**
-   * Decompose a complex user request into tasks, assign to crews,
-   * and execute the plan. Returns aggregated result.
-   */
-  private async tryOrchestrate(userContent: string, startTime: number): Promise<Message | null> {
-    if (!this.crewOrchestrator) return null;
-    const members = this.crewOrchestrator.getMembers();
-    const enabledMembers = members.filter((m) => this.enabledCrewSessionIds.has(m.crew.id));
-    if (enabledMembers.length < 2) return null;
-
-    if (!this.orchestrationPlanner) {
-      this.orchestrationPlanner = new OrchestrationPlanner(this.provider, this.crewOrchestrator);
-    }
-
-    this.emit({ type: 'loading_start', stage: 'orchestration_planning' });
-
-    const plan = await this.orchestrationPlanner.plan(userContent, enabledMembers);
-
-    const crewAssignedTasks = plan.phases.flatMap((p) => p.tasks.filter((t) => t.assignedCrew));
-    if (crewAssignedTasks.length < 2) {
-      this.emit({ type: 'loading_end' });
-      return null;
-    }
-
-    getLogger().info('ORCHESTRATE', `Plan: ${plan.phases.length} phases, ${crewAssignedTasks.length} crew-assigned tasks`);
-
-    const planPreview = this.orchestrationPlanner.formatPlan(plan);
-    const steps = plan.phases.flatMap((p) =>
-      p.tasks.map((t) => ({ id: generateMessageId(), description: `${t.description} → ${t.assignedCrew?.name ?? 'unassigned'}`, status: 'pending' as const }))
-    );
-    this.emit({ type: 'plan_generated', plan: { id: generateMessageId(), title: plan.summary, createdAt: new Date().toISOString(), steps }, userRequest: userContent });
-
-    const routeToCrew = async (member: CrewMember, msg: string): Promise<string> => {
-      this.emit({ type: 'tool_executing', tool: 'orchestrator_task', description: `${member.crew.name}: ${msg.slice(0, 80)}`, startTime: Date.now() });
-      try {
-        const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'You are a capable AI assistant.';
-        const result = await this.crewOrchestrator!.processMessage(msg, crewPrompt, [member], '');
-        const resp = result.responses[0]?.content ?? `${member.crew.name} completed the task.`;
-        // Emit each crew task result as a separate bubble
-        const taskMsg: Message = {
-          id: generateMessageId(), sessionId: this.sessionId, role: 'assistant', content: resp,
-          toolCalls: null, createdAt: new Date().toISOString(), tokenCount: 0,
-          crew: { crewId: member.crew.id, name: member.crew.name, callsign: member.crew.callsign },
-        };
-        this.messages.push({ role: 'assistant', content: resp });
-        this.contextTracker.record(this.sessionId, 'crew', resp, member.crew.name);
-        this.emit({ type: 'message_received', message: taskMsg, elapsed: Date.now() - startTime });
-        this.emit({ type: 'tool_complete', tool: 'orchestrator_task', result: { success: true, output: `${member.crew.name}: ${resp.slice(0, 100)}` }, elapsed: Date.now() - startTime });
-        return resp;
-      } catch (e) {
-        return `[Error: ${e instanceof Error ? e.message : 'failed'}]`;
-      }
-    };
-
-    const aggregated = await this.orchestrationPlanner.execute(plan, routeToCrew);
-
-    const assistantMessage: Message = {
-      id: generateMessageId(),
-      sessionId: this.sessionId,
-      role: 'assistant',
-      content: `${planPreview}\n\n---\n\n${aggregated}`,
-      toolCalls: null,
-      createdAt: new Date().toISOString(),
-      tokenCount: 0,
-    };
-
-    this.messages.push({ role: 'assistant', content: assistantMessage.content });
-    this.contextTracker.record(this.sessionId, 'assistant', assistantMessage.content);
-    this.emit({ type: 'message_received', message: assistantMessage, elapsed: Date.now() - startTime });
-    this.emit({ type: 'loading_end' });
-    this.lifecycle.forceTransition('idle');
-    this.abortController = null;
-    this.runStateMgr.release(this.sessionId);
-    this.commandQueue.release(this.sessionId);
-    return assistantMessage;
-  }
-
-  /**
-   * Decompose a user message into actionable tasks via LLM
-   * and populate the TodoManager for frontend visibility.
-   */
-  private trackTokensFromText(promptText: string, responseText: string): void {
-    const inputTokens = countInputTokens(promptText, this.config.provider.activeModel);
-    const outputTokens = estimateOutputTokens(responseText);
-    this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
-    this.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.getContextWindow(), turnTokens: inputTokens + outputTokens, costUsd: this.tokenTracker.totalCost, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, inputPrice: this.tokenTracker.inputPrice, outputPrice: this.tokenTracker.outputPrice } as unknown as EngineEvent);
-    this.onTokenLog?.({ inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, costUsd: this.tokenTracker.totalCost });
-  }
-
-  /**
-   * Decompose a user message into actionable tasks via LLM
-   * and populate the TodoManager for frontend visibility.
-   */
-  private async decomposeToTasks(userContent: string): Promise<string[]> {
-    const prompt = `Break down the following user request into specific, actionable tasks. Each task should be a single sentence describing a concrete deliverable. Order them logically.
-
-Return ONLY a JSON array of task title strings. No other text.
-
-User request: "${userContent.slice(0, 500)}"`;
-
-    try {
-      const completion = this.provider.complete({
-        model: '',
-        messages: [
-          { role: 'system', content: 'You are a task planner. Output JSON array only.' },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.3,
-        maxTokens: 400,
-      });
-
-      let raw = '';
-      for await (const chunk of completion) {
-        if (chunk.content) raw += chunk.content;
-      }
-
-      const json = raw.replace(/```json\s*|\s*```/g, '').trim();
-      const parsed = JSON.parse(json);
-      const tasks = Array.isArray(parsed) ? parsed.map((t: unknown) => {
-        const title = typeof t === 'string' ? t : String((t as Record<string, unknown>)['task'] ?? (t as Record<string, unknown>)['title'] ?? t);
-        // Strip markdown from task titles
-        return title.replace(/\*\*(.+?)\*\*/g, '$1').replace(/__(.+?)__/g, '$1').replace(/`(.+?)`/g, '$1');
-      }) : [userContent];
-      // Track tokens consumed by this LLM call
-      this.trackTokensFromText(prompt, raw);
-      if (!Array.isArray(parsed)) return [userContent];
-      return tasks;
-    } catch {
-      return [userContent];
-    }
-  }
-
-  /**
-   * Extract bulleted/numbered tasks from assistant responses
-   * and push them to the TodoManager for the right panel.
-   */
   private extractTasksFromResponse(content: string): void {
-    // Skip conversational bulleted lists (game options, suggestions, examples)
     const conversational = /\b(game|option|choice|suggestion|recommendation|example|sample|or you could|why not try|how about|feel free|pick one|choose from)\b/i;
     if (conversational.test(content)) return;
 
     const lines = content.split('\n');
     const taskLines: string[] = [];
 
-    // Match: bullet points (-, *, •), numbered lists
     for (const line of lines) {
       const stripped = line.trim();
       if (/^\s*[-*•]\s+/.test(stripped) || /^\s*\d+[.)]\s+/.test(stripped)) {
@@ -2696,7 +2695,6 @@ User request: "${userContent.slice(0, 500)}"`;
 
     const tasks = taskLines
       .map((l) => l.replace(/^[\s]*[-*•]\s+/, '').replace(/^[\s]*\d+[.)]\s+/, '').trim())
-      // Strip markdown formatting from task titles
       .map((t) => t.replace(/\*\*(.+?)\*\*/g, '$1').replace(/__(.+?)__/g, '$1').replace(/`(.+?)`/g, '$1'))
       .filter((t) => t.length > 5 && t.length < 200);
 
@@ -2705,61 +2703,6 @@ User request: "${userContent.slice(0, 500)}"`;
       this.todoManager.addItems(tasks);
       getLogger().info('TODO_EXTRACT', `Extracted ${tasks.length} tasks from response`);
     }
-  }
-
-  /**
-   * Execute tasks in parallel using sub-agents. Each task spawns a
-   * sub-agent, updates todo status, and emits progress to frontend.
-   */
-  private async executeTasksInParallel(tasks: string[]): Promise<string> {
-    this.todoManager.clear();
-    const items = this.todoManager.addItems(tasks);
-
-    const subTasks = items.map((item) => ({
-      instruction: item.title,
-      tools: this.toolRegistry?.list().map((t) => t.id) ?? [],
-    }));
-
-    // Use SubAgentManager's parallel spawn
-    const results = this.subAgents.spawnParallel(
-      subTasks,
-      Math.min(5, tasks.length),
-    );
-
-    // Track progress
-    const taskMap = new Map<number, number>();
-    results.forEach((_r, i) => { if (items[i]) taskMap.set(i, items[i]!.id); });
-
-    const intervalId = setInterval(() => {
-      for (const [idx, todoId] of taskMap.entries()) {
-        const sa = results[idx];
-        if (sa && sa.status === 'running') {
-          const item = items[idx];
-          if (item && item.status === 'not-started') {
-            this.todoManager.startItem(todoId);
-          }
-        }
-      }
-    }, 500);
-
-    const allResults = await this.subAgents.awaitAll();
-
-    clearInterval(intervalId);
-
-    const outputs: string[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const task = allResults[i];
-      if (task) {
-        if (task.status === 'completed') {
-          this.todoManager.completeItem(items[i]!.id);
-          outputs.push(`✅ ${items[i]!.title}\n${task.result ?? 'Done'}`);
-        } else {
-          outputs.push(`❌ ${items[i]!.title}\n${task.result ?? 'Failed'}`);
-        }
-      }
-    }
-
-    return outputs.join('\n\n');
   }
 
   getMaxSubAgents(): number {

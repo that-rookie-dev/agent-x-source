@@ -9,14 +9,19 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
 import LinearProgress from '@mui/material/LinearProgress';
 import MenuItem from '@mui/material/MenuItem';
 import Menu from '@mui/material/Menu';
 import Tooltip from '@mui/material/Tooltip';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
 import SendIcon from '@mui/icons-material/Send';
 import StopIcon from '@mui/icons-material/Stop';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
-import BuildIcon from '@mui/icons-material/Build';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChecklistIcon from '@mui/icons-material/Checklist';
@@ -30,7 +35,6 @@ import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import QueueIcon from '@mui/icons-material/PlaylistAdd';
 import BoltIcon from '@mui/icons-material/Bolt';
-import SvgIcon from '@mui/material/SvgIcon';
 
 import QuestionAnswerIcon from '@mui/icons-material/QuestionAnswer';
 import RouteIcon from '@mui/icons-material/Route';
@@ -42,7 +46,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ApprovalType, type ModelInfo, type ConnectionState } from '../api';
+import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState } from '../api';
 import { colors } from '../theme';
 import {
   ConnectionHealthDot,
@@ -74,31 +78,6 @@ if (!document.getElementById(styleId)) {
     @keyframes agentx-fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
   `;
   document.head.appendChild(style);
-}
-
-// ─── Approval SVG Icons ───
-function ShieldDefaultIcon(props: React.ComponentProps<typeof SvgIcon>) {
-  return (
-    <SvgIcon {...props} viewBox="0 0 24 24">
-      <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm0 2.18l6 2.25v4.66c0 4.15-2.8 8.02-6 9.01-3.2-.99-6-4.86-6-9.01V6.43l6-2.25z"/>
-    </SvgIcon>
-  );
-}
-
-function ShieldModerateIcon(props: React.ComponentProps<typeof SvgIcon>) {
-  return (
-    <SvgIcon {...props} viewBox="0 0 24 24">
-      <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm0 2.18l6 2.25v4.66c0 4.15-2.8 8.02-6 9.01-3.2-.99-6-4.86-6-9.01V6.43l6-2.25zm-1 5.82v4l3-2-3-2z"/>
-    </SvgIcon>
-  );
-}
-
-function ShieldAutoIcon(props: React.ComponentProps<typeof SvgIcon>) {
-  return (
-    <SvgIcon {...props} viewBox="0 0 24 24">
-      <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm-1.06 13.54L7.4 12l1.41-1.41 2.12 2.12 4.24-4.24 1.41 1.41-5.64 5.66z"/>
-    </SvgIcon>
-  );
 }
 
 interface UIMessage extends ChatMessage {
@@ -164,8 +143,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const disconnectRef = useRef<(() => void) | null>(null);
   const skipRestoreRef = useRef(false);
 
+  // Loading step indicator state
+  const [loadingSteps, setLoadingSteps] = useState<Array<{ id: string; label: string; status: string }> | null>(null);
+
   // Provider error band state
   const [providerError, setProviderError] = useState<string | null>(null);
+
+  // Clarification suggestions state
+  const [clarification, setClarification] = useState<{ question: string; options: string[]; recommended?: string; allowChooseAll?: boolean } | null>(null);
+  const [clarifySelectedIdx, setClarifySelectedIdx] = useState(0);
+  const [clarifyCustomText, setClarifyCustomText] = useState('');
+  const clarifyCustomRef = useRef<HTMLInputElement>(null);
   const providerErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Extract a clean, human-readable message from raw provider errors
@@ -246,16 +234,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Crew state (fixed per session)
   const [crewList, setCrewList] = useState<Crew[]>([]);
 
-  // Agent mode & approval
+  // Agent mode
   const [agentMode, setAgentMode] = useState<AgentMode>('ask');
-  const [approvalType, setApprovalType] = useState<ApprovalType>('default');
 
   // CWD
   const [cwd, setCwd] = useState('');
 
   // Dropdown anchors
   const [modeMenuAnchor, setModeMenuAnchor] = useState<null | HTMLElement>(null);
-  const [approvalMenuAnchor, setApprovalMenuAnchor] = useState<null | HTMLElement>(null);
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<null | HTMLElement>(null);
   const [modelMenuAnchor, setModelMenuAnchor] = useState<null | HTMLElement>(null);
 
@@ -271,6 +257,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [checkpointsOpen, setCheckpointsOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [folderPickerCallback, setFolderPickerCallback] = useState<((path: string) => void) | null>(null);
+  const [folderConsentOpen, setFolderConsentOpen] = useState(false);
+  const [folderPickerLoading, setFolderPickerLoading] = useState(false);
+  const pendingFolderActionRef = useRef<'newSession' | 'changeCwd' | null>(null);
   const [showSlash, setShowSlash] = useState(false);
   const slashQuery = useMemo(() => {
     if (!input.startsWith('/')) return '';
@@ -367,7 +356,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
     system.cwd().then((r) => { setCwd(r.cwd || ''); }).catch(() => {});
-    sessionSettings.get().then((s) => { setAgentMode(s.mode); setApprovalType(s.approval); }).catch(() => {});
+    sessionSettings.get().then((s) => { setAgentMode(s.mode); }).catch(() => {});
     // Load configured providers (also gets active provider as fallback)
     fetch('/api/providers', { credentials: 'include' })
       .then(r => r.json())
@@ -406,7 +395,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         const last = prev[prev.length - 1];
 
         switch (ev.type) {
-          case 'loading_start':
+          case 'loading_start': {
+            // Set up loading steps if provided
+            const loadingStepsEvent = ev as { type: 'loading_start'; stage: string; steps?: Array<{ id: string; label: string; status: string }> };
+            if (loadingStepsEvent.steps && loadingStepsEvent.steps.length > 0) {
+              setLoadingSteps(loadingStepsEvent.steps);
+            }
             // If the last assistant message is no longer streaming (closed by
             // a prior loading_end from a fast-reply failure), reuse it instead
             // of creating a duplicate placeholder.
@@ -418,6 +412,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
             }
             setStreaming(true);
+            return prev;
+          }
+
+          case 'loading_step_update':
+            setLoadingSteps((prevSteps) => {
+              if (!prevSteps) return prevSteps;
+              return prevSteps.map((s) =>
+                s.id === ev.stepId ? { ...s, status: ev.status as string } : s,
+              );
+            });
             return prev;
 
           case 'stream_chunk':
@@ -431,6 +435,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             }
 
           case 'loading_end':
+            setLoadingSteps(null);
             setStreaming(false);
             return updateLastMessage(prev, { streaming: false });
 
@@ -565,21 +570,34 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             });
             return prev;
 
-          case 'error': {
-            const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
-            // Detect provider/quota/auth errors and show in the error band (not in chat)
-            const isProviderError = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired/i.test(errorText);
-            if (isProviderError) {
-              setProviderError(extractProviderError(errorText));
-              if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
-            }
+          case 'provider_error': {
+            const providerMsg = (ev.message as string) ?? 'Provider error';
+            setProviderError(extractProviderError(providerMsg));
+            if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
             setStreaming(false);
             if (last?.role !== 'assistant') return prev;
-            if (!isProviderError) {
-              const newContent = last.content ? `${last.content}\n\n⚠️ ${errorText}` : `⚠️ ${errorText}`;
-              return updateLastMessage(prev, { content: newContent, streaming: false });
-            }
             return updateLastMessage(prev, { streaming: false });
+          }
+
+          case 'clarification_required': {
+            setClarification({
+              question: (ev.question as string) ?? 'Could you clarify?',
+              options: (ev.options as string[]) ?? [],
+              recommended: (ev.recommended as string) ?? undefined,
+              allowChooseAll: (ev.allowChooseAll as boolean) ?? false,
+            });
+            setClarifySelectedIdx(0);
+            return prev;
+          }
+
+          case 'error': {
+            const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
+            // Provider errors now arrive as 'provider_error' events — this case handles
+            // only non-provider errors (internal bugs, context overflow, etc.)
+            setStreaming(false);
+            if (last?.role !== 'assistant') return prev;
+            const newContent = last.content ? `${last.content}\n\n⚠️ ${errorText}` : `⚠️ ${errorText}`;
+            return updateLastMessage(prev, { content: newContent, streaming: false });
           }
 
           default:
@@ -655,8 +673,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return null;
   };
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  const handleSend = useCallback(async (overrideText?: string) => {
+    const text = typeof overrideText === 'string' ? overrideText.trim() : input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
     if (text.startsWith('/')) {
       const handled = await runSlashCommand(text);
@@ -704,6 +722,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           if (content) {
             return [...prev.slice(0, -1), { ...result.message, streaming: false }];
           }
+          // Clarification response: remove the empty placeholder, chips already showing
+          if ((result as Record<string, unknown>)?.clarification) {
+            return prev.slice(0, -1);
+          }
         }
         // If SSE already delivered content, just finalize the streaming state
         if (last?.role === 'assistant' && last.streaming) {
@@ -736,6 +758,80 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setStreaming(false);
     }
   }, [input, streaming, attachments, currentProvider, currentModel]);
+
+  // --- Clarification keyboard navigation & submission ---
+  const clearClarification = useCallback(() => {
+    setClarification(null);
+    setClarifySelectedIdx(0);
+    setClarifyCustomText('');
+  }, []);
+
+  const clarifySelectCount = useMemo(() => {
+    if (!clarification) return 0;
+    let count = clarification.options.length;
+    if (clarification.allowChooseAll) count += 1;  // "Choose all"
+    count += 1; // "Skip"
+    return count;
+  }, [clarification]);
+
+  const handleClarifySubmit = useCallback(async (overrideText?: string) => {
+    if (!clarification) return;
+    const text = overrideText?.trim();
+    clearClarification();
+    setInput('');
+    if (text) {
+      await handleSend(text);
+    }
+  }, [clarification, clearClarification, handleSend]);
+
+  const handleClarifyKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!clarification) return;
+    const maxIdx = clarifySelectCount - 1;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setClarifySelectedIdx((prev) => Math.min(prev + 1, maxIdx));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setClarifySelectedIdx((prev) => Math.max(prev - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const isChooseAll = clarification.allowChooseAll && clarifySelectedIdx === clarification.options.length;
+      const isSkip = clarifySelectedIdx === maxIdx;
+      if (isSkip) {
+        clearClarification();
+      } else if (isChooseAll) {
+        handleClarifySubmit(`All: ${clarification.options.join(', ')}`);
+      } else if (clarifySelectedIdx < clarification.options.length) {
+        handleClarifySubmit(clarification.options[clarifySelectedIdx]);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      clearClarification();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      if (clarifyCustomRef.current) {
+        clarifyCustomRef.current.focus();
+        clarifyCustomRef.current.select();
+      }
+    }
+  }, [clarification, clarifySelectedIdx, clarifySelectCount, clearClarification, handleClarifySubmit]);
+
+  const handleClarifyCustomKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (clarifyCustomText.trim()) {
+        handleClarifySubmit(clarifyCustomText);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      clearClarification();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      setClarifySelectedIdx(0);
+      // Focus back to the list container
+      (e.currentTarget.closest('[data-clarify-list]') as HTMLElement | null)?.focus();
+    }
+  }, [clarifyCustomText, handleClarifySubmit, clearClarification]);
 
   const handleCancel = async () => {
     try { await chat.cancel(); } catch { /* ignore */ }
@@ -825,13 +921,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         setSearchOpen(true);
         return true;
       }
-      case 'yolo': {
-        const next = approvalType === 'auto' ? 'default' : 'auto';
-        setApprovalType(next);
-        sessionSettings.setApproval(next).catch(() => {});
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `⚡ YOLO mode **${next === 'auto' ? 'enabled' : 'disabled'}**`, streaming: false }]);
-        return true;
-      }
       case 'think': {
         // Force plan mode for this turn
         setAgentMode('plan');
@@ -863,7 +952,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       default:
         return false;
     }
-  }, [currentSessionId, messages, approvalType]);
+  }, [currentSessionId, messages]);
 
   // ─── Global keyboard shortcuts (declared after runSlashCommand to avoid TDZ) ───
   useEffect(() => {
@@ -904,7 +993,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     { id: 'mode-agent', label: 'Switch mode → Agent', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('agent'); sessionSettings.setMode('agent').catch(() => {}); } },
     { id: 'mode-plan', label: 'Switch mode → Plan', icon: <RouteIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('plan'); sessionSettings.setMode('plan').catch(() => {}); } },
     { id: 'mode-ask', label: 'Switch mode → Ask', icon: <QuestionAnswerIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('ask'); sessionSettings.setMode('ask').catch(() => {}); } },
-  ], [approvalType, runSlashCommand]);
+  ], [runSlashCommand]);
 
   const handleStopAndSend = async () => {
     const text = input.trim();
@@ -1015,9 +1104,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const handleNewSession = async () => {
     const desktopApi = (window as any).agentx;
     if (desktopApi?.openFolder) {
-      const folder = await desktopApi.openFolder();
-      if (!folder) return;
-      startNewSession(folder);
+      pendingFolderActionRef.current = 'newSession';
+      setFolderConsentOpen(true);
     } else {
       setFolderPickerCallback(() => (path: string) => startNewSession(path));
       setFolderPickerOpen(true);
@@ -1045,178 +1133,165 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     try { await sessions.delete(id); loadSessions(); } catch { /* ignore */ }
   };
 
+  const handleFolderConsentConfirm = async () => {
+    const action = pendingFolderActionRef.current;
+    pendingFolderActionRef.current = null;
+    setFolderConsentOpen(false);
+    if (!action) return;
+
+    setFolderPickerLoading(true);
+    const desktopApi = (window as any).agentx;
+    const folder = await desktopApi.openFolder();
+    setFolderPickerLoading(false);
+    if (!folder) return;
+
+    if (action === 'newSession') {
+      startNewSession(folder);
+    } else {
+      system.setCwd(folder).then(r => setCwd(r.cwd)).catch(() => {});
+    }
+  };
+
   // Token percentage
   const tokenPercent = tokenTotal > 0 ? Math.min((tokenUsed / tokenTotal) * 100, 100) : 0;
-
-  // ─── Sessions list view (NO chat input here) ───
-  if (view === 'sessions') {
-    return (
-      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: colors.bg.primary, position: 'relative', overflow: 'hidden' }}>
-        {/* Subtle background grid effect */}
-        <Box sx={{
-          position: 'absolute', inset: 0, opacity: 0.03, pointerEvents: 'none',
-          backgroundImage: `linear-gradient(${colors.border.subtle} 1px, transparent 1px), linear-gradient(90deg, ${colors.border.subtle} 1px, transparent 1px)`,
-          backgroundSize: '40px 40px',
-        }} />
-
-        {/* Header — HUD style */}
-        <Box sx={{
-          px: 3, py: 2, borderBottom: `1px solid ${colors.accent.blue}20`,
-          display: 'flex', alignItems: 'center', gap: 1.5, position: 'relative', zIndex: 1,
-          background: `linear-gradient(180deg, ${colors.accent.blue}05 0%, transparent 100%)`,
-        }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.accent.green, boxShadow: `0 0 8px ${colors.accent.green}80` }} />
-            <Typography sx={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', fontWeight: 700,
-              color: colors.accent.green, letterSpacing: '3px',
-            }}>
-              SESSIONS
-            </Typography>
-          </Box>
-          <Box sx={{ flex: 1 }} />
-          <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim }}>
-            {sessionList.length} SESSION{sessionList.length !== 1 ? 'S' : ''}
-          </Typography>
-          <Button
-            size="small"
-            startIcon={<AddIcon sx={{ fontSize: 12 }} />}
-            onClick={() => handleNewSession()}
-            sx={{
-              color: colors.accent.blue, fontSize: '0.6rem', textTransform: 'none', fontFamily: "'JetBrains Mono', monospace",
-              border: `1px solid ${colors.accent.blue}30`, px: 1.5, py: 0.4, borderRadius: '4px',
-              '&:hover': { bgcolor: colors.accent.blue + '15', borderColor: colors.accent.blue + '60' },
-            }}
-          >
-            NEW SESSION
-          </Button>
-        </Box>
-
-        {/* Session list */}
-        <Box sx={{ flex: 1, overflow: 'auto', p: 2, position: 'relative', zIndex: 1 }}>
-          {sessionList.length === 0 ? (
-            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 2 }}>
-              <Box sx={{
-                width: 64, height: 64, borderRadius: '50%',
-                border: `1px solid ${colors.border.strong}30`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                bgcolor: colors.bg.tertiary,
-              }}>
-                <SmartToyIcon sx={{ fontSize: 28, color: colors.text.dim, opacity: 0.5 }} />
-              </Box>
-              <Box sx={{ textAlign: 'center' }}>
-                <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.dim, letterSpacing: '2px', mb: 0.5 }}>
-                  NO SESSIONS
-                </Typography>
-                <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, opacity: 0.6 }}>
-                  Send a message to start your first session
-                </Typography>
-              </Box>
-              <Button
-                size="small"
-                onClick={() => handleNewSession()}
-                sx={{
-                  mt: 1, color: colors.accent.blue, textTransform: 'none', fontSize: '0.65rem',
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                NEW SESSION
-              </Button>
-            </Box>
-          ) : (
-            <List disablePadding>
-              {sessionList.map((s, idx) => {
-                const date = new Date(s.createdAt);
-                const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-                const dateStr = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' });
-                return (
-                  <ListItemButton
-                    key={s.id}
-                    onClick={() => handleSelectSession(s)}
-                    sx={{
-                      borderRadius: '6px', mb: 1,
-                      border: `1px solid ${colors.border.subtle}`,
-                      borderLeft: `3px solid ${colors.accent.blue}40`,
-                      px: 2, py: 1.5,
-                      bgcolor: colors.bg.secondary,
-                      transition: 'all 0.2s ease',
-                      '&:hover': {
-                        bgcolor: colors.bg.tertiary,
-                        borderLeftColor: colors.accent.blue,
-                        transform: 'translateX(2px)',
-                        boxShadow: `0 2px 12px ${colors.accent.blue}10`,
-                      },
-                    }}
-                  >
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      {/* Session header row */}
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                        <Typography sx={{
-                          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
-                          color: colors.text.dim, letterSpacing: '1px',
-                        }}>
-                          SESSION #{idx + 1}
-                        </Typography>
-                        <Box sx={{ width: 4, height: 4, borderRadius: '50%', bgcolor: colors.accent.blue, opacity: 0.6 }} />
-                        <Typography sx={{
-                          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.accent.blue + '80',
-                        }}>
-                          {dateStr} · {timeStr}
-                        </Typography>
-                      </Box>
-                      {/* Title */}
-                      <Typography sx={{
-                        fontSize: '0.78rem', fontWeight: 600, color: colors.text.primary,
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', mb: 0.35,
-                      }}>
-                        {s.title ?? `Session ${s.id.slice(0, 8)}`}
-                      </Typography>
-                      {/* Stats row */}
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim }}>
-                          {s.messageCount ?? 0} MSGS
-                        </Typography>
-                        <Box sx={{ width: 3, height: 3, borderRadius: '50%', bgcolor: colors.border.strong, opacity: 0.5 }} />
-                        <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim }}>
-                          {(s.tokensUsed ?? 0).toLocaleString()} TOK
-                        </Typography>
-                        <Box sx={{ width: 3, height: 3, borderRadius: '50%', bgcolor: colors.border.strong, opacity: 0.5 }} />
-                        <Typography sx={{
-                          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.45rem', color: colors.text.dim,
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120,
-                        }}>
-                          {s.id.slice(0, 12)}
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <Tooltip title="Delete session">
-                      <IconButton
-                        size="small"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
-                        sx={{
-                          color: colors.text.dim, ml: 1,
-                          '&:hover': { color: colors.accent.red, bgcolor: colors.accent.red + '10' },
-                        }}
-                      >
-                        <DeleteIcon sx={{ fontSize: 14 }} />
-                      </IconButton>
-                    </Tooltip>
-                  </ListItemButton>
-                );
-              })}
-            </List>
-          )}
-        </Box>
-      </Box>
-    );
-  }
 
   // ─── Chat view ───
   const visibleMessages = messages.filter((m) => m.role !== 'system');
 
   return (
     <Box sx={{ height: '100%', display: 'flex' }}>
-      {/* Main chat area */}
+      {view === 'sessions' ? (
+        <Box sx={{ height: '100%', flex: 1, display: 'flex', flexDirection: 'column', bgcolor: colors.bg.primary, position: 'relative', overflow: 'hidden' }}>
+          {/* Subtle background grid effect */}
+          <Box sx={{
+            position: 'absolute', inset: 0, opacity: 0.03, pointerEvents: 'none',
+            backgroundImage: `linear-gradient(${colors.border.subtle} 1px, transparent 1px), linear-gradient(90deg, ${colors.border.subtle} 1px, transparent 1px)`,
+            backgroundSize: '40px 40px',
+          }} />
+
+          {/* Header — HUD style */}
+          <Box sx={{
+            px: 3, py: 2, borderBottom: `1px solid ${colors.accent.blue}20`,
+            display: 'flex', alignItems: 'center', gap: 1.5, position: 'relative', zIndex: 1,
+            background: `linear-gradient(180deg, ${colors.accent.blue}05 0%, transparent 100%)`,
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.accent.green, boxShadow: `0 0 8px ${colors.accent.green}80` }} />
+              <Typography sx={{
+                fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', fontWeight: 700,
+                color: colors.accent.green, letterSpacing: '3px',
+              }}>
+                SESSIONS
+              </Typography>
+            </Box>
+            <Box sx={{ flex: 1 }} />
+            <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim }}>
+              {sessionList.length} SESSION{sessionList.length !== 1 ? 'S' : ''}
+            </Typography>
+            <Button
+              size="small"
+              startIcon={<AddIcon sx={{ fontSize: 12 }} />}
+              onClick={() => handleNewSession()}
+              sx={{
+                color: colors.accent.blue, fontSize: '0.6rem', textTransform: 'none', fontFamily: "'JetBrains Mono', monospace",
+                border: `1px solid ${colors.accent.blue}30`, px: 1.5, py: 0.4, borderRadius: '4px',
+                '&:hover': { bgcolor: colors.accent.blue + '15', borderColor: colors.accent.blue + '60' },
+              }}
+            >
+              NEW SESSION
+            </Button>
+          </Box>
+
+          {/* Session list */}
+          <Box sx={{ flex: 1, overflow: 'auto', p: 2, position: 'relative', zIndex: 1 }}>
+            {sessionList.length === 0 ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 2 }}>
+                <Box sx={{
+                  width: 64, height: 64, borderRadius: '50%',
+                  border: `1px solid ${colors.border.strong}30`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  bgcolor: colors.bg.tertiary,
+                }}>
+                  <SmartToyIcon sx={{ fontSize: 28, color: colors.text.dim, opacity: 0.5 }} />
+                </Box>
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.dim, letterSpacing: '2px', mb: 0.5 }}>
+                    NO SESSIONS
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, opacity: 0.6 }}>
+                    Send a message to start your first session
+                  </Typography>
+                </Box>
+                <Button
+                  size="small"
+                  onClick={() => handleNewSession()}
+                  sx={{
+                    mt: 1, color: colors.accent.blue, textTransform: 'none', fontSize: '0.65rem',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                >
+                  NEW SESSION
+                </Button>
+              </Box>
+            ) : (
+              <List disablePadding>
+                {sessionList.map((s) => {
+                  const date = new Date(s.createdAt);
+                  const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                  const dateStr = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' });
+                  return (
+                    <ListItemButton
+                      key={s.id}
+                      onClick={() => handleSelectSession(s)}
+                      sx={{
+                        borderRadius: '6px', mb: 1,
+                        border: `1px solid ${colors.border.subtle}`,
+                        borderLeft: `3px solid ${colors.accent.blue}40`,
+                        px: 2, py: 1.5,
+                        bgcolor: colors.bg.secondary,
+                        transition: 'all 0.2s ease',
+                        '&:hover': {
+                          bgcolor: colors.bg.tertiary,
+                          borderLeftColor: colors.accent.blue,
+                          transform: 'translateX(2px)',
+                          boxShadow: `0 2px 12px ${colors.accent.blue}10`,
+                        },
+                      }}
+                    >
+                      <ListItemIcon sx={{ minWidth: 28 }}>
+                        <SmartToyIcon sx={{ fontSize: 16, color: s.status === 'active' ? colors.accent.green : colors.text.dim }} />
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={s.title}
+                        secondary={<span style={{ fontSize: '0.6rem', color: colors.text.dim }}>{dateStr} {timeStr}</span>}
+                        primaryTypographyProps={{ sx: { fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }}
+                        secondaryTypographyProps={{ sx: { fontSize: '0.6rem', mt: 0.25 } }}
+                      />
+                      {s.status === 'active' && (
+                        <Box sx={{
+                          ml: 1, px: 0.6, py: 0.15, borderRadius: '4px', fontSize: '0.45rem',
+                          fontFamily: "'JetBrains Mono', monospace", fontWeight: 700,
+                          bgcolor: colors.accent.green + '15', color: colors.accent.green,
+                          border: `1px solid ${colors.accent.green}30`,
+                        }}>
+                          ACTIVE
+                        </Box>
+                      )}
+                      <IconButton
+                        size="small"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
+                        sx={{ ml: 0.5, color: colors.text.dim, opacity: 0.4, '&:hover': { color: colors.accent.red, opacity: 1 } }}
+                      >
+                        <DeleteIcon sx={{ fontSize: 14 }} />
+                      </IconButton>
+                    </ListItemButton>
+                  );
+                })}
+              </List>
+            )}
+          </Box>
+        </Box>
+      ) : (<>
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Header */}
         <Box sx={{ px: 1.5, py: 0.5, borderBottom: `1px solid ${colors.border.default}`, display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 36 }}>
@@ -1272,12 +1347,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             </Box>
           )}
 
-          {visibleMessages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
+          {visibleMessages.map((msg, idx) => (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              loadingSteps={idx === visibleMessages.length - 1 && msg.streaming && !msg.content ? loadingSteps : null}
+            />
           ))}
-
-          {/* Thinking indicator — shows when streaming starts but no assistant message yet */}
-          {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
+          {streaming && !loadingSteps && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
             <ThinkingIndicator />
           )}
 
@@ -1404,6 +1481,172 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 </Typography>
               </Box>
             )}
+            {/* Clarification panel: vertical list with keyboard navigation */}
+            {clarification && (
+              <Box
+                data-clarify-list
+                tabIndex={0}
+                onKeyDown={handleClarifyKeyDown}
+                sx={{
+                  mx: 1.25, my: 0.5, py: 1, px: 1.5,
+                  border: `1px solid ${colors.border.default}`,
+                  borderRadius: 2,
+                  bgcolor: colors.bg.secondary,
+                  outline: 'none',
+                  cursor: 'default',
+                }}
+              >
+                {/* Question */}
+                <Typography sx={{ fontSize: '0.75rem', color: colors.text.dim, mb: 1 }}>
+                  {clarification.question}
+                </Typography>
+
+                {/* Option items */}
+                {clarification.options.map((opt, idx) => {
+                  const isSelected = clarifySelectedIdx === idx;
+                  const isRecommended = clarification.recommended === opt;
+                  return (
+                    <Box
+                      key={idx}
+                      onClick={() => { setClarifySelectedIdx(idx); handleClarifySubmit(opt); }}
+                      onMouseEnter={() => setClarifySelectedIdx(idx)}
+                      sx={{
+                        display: 'flex', alignItems: 'center', gap: 1,
+                        py: 0.75, px: 1, borderRadius: 1.5,
+                        bgcolor: isSelected ? colors.bg.hover : 'transparent',
+                        border: isSelected ? `1px solid ${colors.accent.blue}` : '1px solid transparent',
+                        cursor: 'pointer',
+                        transition: 'background 0.1s',
+                        mb: 0.25,
+                      }}
+                    >
+                      <Box sx={{
+                        width: 18, height: 18, borderRadius: '50%',
+                        border: `2px solid ${isSelected ? colors.accent.blue : colors.border.default}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0,
+                      }}>
+                        {isSelected && <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.accent.blue }} />}
+                      </Box>
+                      <Typography sx={{
+                        fontSize: '0.725rem',
+                        color: isSelected ? colors.text.primary : colors.text.dim,
+                        fontWeight: isSelected ? 600 : 400,
+                        flex: 1,
+                      }}>
+                        {opt}
+                      </Typography>
+                      {isRecommended && (
+                        <Typography sx={{
+                          fontSize: '0.55rem',
+                          color: colors.accent.blue,
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          bgcolor: '#58a6ff18',
+                          px: 0.75, py: 0.15,
+                          borderRadius: 0.75,
+                          flexShrink: 0,
+                        }}>
+                          Recommended
+                        </Typography>
+                      )}
+                    </Box>
+                  );
+                })}
+
+                {/* Choose All (if allowed) */}
+                {clarification.allowChooseAll && (
+                  <Box
+                    onClick={() => {
+                      handleClarifySubmit(`All: ${clarification.options.join(', ')}`);
+                    }}
+                    onMouseEnter={() => setClarifySelectedIdx(clarification.options.length)}
+                    sx={{
+                      display: 'flex', alignItems: 'center', gap: 1,
+                      py: 0.75, px: 1, borderRadius: 1.5,
+                      bgcolor: clarifySelectedIdx === clarification.options.length ? colors.bg.hover : 'transparent',
+                      border: clarifySelectedIdx === clarification.options.length ? `1px solid ${colors.accent.blue}` : '1px solid transparent',
+                      cursor: 'pointer',
+                      transition: 'background 0.1s',
+                      mb: 0.25, mt: 0.25,
+                      borderTop: `1px solid ${colors.border.default}`,
+                    }}
+                  >
+                    <Typography sx={{
+                      fontSize: '0.725rem',
+                      color: clarifySelectedIdx === clarification.options.length ? colors.text.primary : colors.text.dim,
+                      fontWeight: clarifySelectedIdx === clarification.options.length ? 600 : 400,
+                    }}>
+                      Choose all
+                    </Typography>
+                  </Box>
+                )}
+
+                {/* Custom answer input */}
+                <Box sx={{
+                  display: 'flex', gap: 1, mt: 0.5, mb: 0.5,
+                  borderTop: `1px solid ${colors.border.default}`,
+                  pt: 0.75,
+                }}>
+                  <input
+                    ref={clarifyCustomRef}
+                    type="text"
+                    value={clarifyCustomText}
+                    onChange={(e) => setClarifyCustomText(e.target.value)}
+                    onKeyDown={handleClarifyCustomKeyDown}
+                    placeholder="Type a custom answer..."
+                    style={{
+                      flex: 1,
+                      background: 'transparent',
+                      border: `1px solid ${colors.border.default}`,
+                      borderRadius: 6,
+                      padding: '6px 10px',
+                      fontSize: '0.7rem',
+                      color: colors.text.primary,
+                      outline: 'none',
+                    }}
+                  />
+                  <Button
+                    size="small"
+                    disabled={!clarifyCustomText.trim()}
+                    onClick={() => handleClarifySubmit(clarifyCustomText)}
+                    sx={{
+                      minWidth: 0, px: 1.5,
+                      fontSize: '0.6rem', textTransform: 'none',
+                      bgcolor: clarifyCustomText.trim() ? colors.accent.blue : colors.bg.tertiary,
+                      color: clarifyCustomText.trim() ? colors.bg.primary : colors.text.dim,
+                      '&:hover': { bgcolor: clarifyCustomText.trim() ? '#58a6ffcc' : colors.bg.hover },
+                    }}
+                  >
+                    Send
+                  </Button>
+                </Box>
+
+                {/* Skip / footer */}
+                <Box sx={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  borderTop: `1px solid ${colors.border.default}`,
+                  pt: 0.5, mt: 0.25,
+                }}>
+                  <Button
+                    size="small"
+                    onClick={clearClarification}
+                    onMouseEnter={() => setClarifySelectedIdx(clarifySelectCount - 1)}
+                    sx={{
+                      fontSize: '0.6rem', textTransform: 'none',
+                      color: colors.text.dim, minWidth: 0, px: 1,
+                      '&:hover': { color: colors.text.primary, bgcolor: 'transparent' },
+                    }}
+                  >
+                    Skip / Cancel
+                  </Button>
+                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim }}>
+                    ↑↓ Navigate · Enter to select · Esc to cancel
+                  </Typography>
+                </Box>
+              </Box>
+            )}
             {/* Input row */}
             <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 0.5, px: 1.25, py: 0.5 }}>
               <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
@@ -1435,7 +1678,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   <span>
                     <IconButton
                       size="small"
-                      onClick={handleSend}
+                      onClick={() => handleSend()}
                       disabled={sendBlocked || (!input.trim() && attachments.length === 0)}
                       sx={{ color: sendBlocked ? colors.accent.red : colors.accent.blue, p: 0.5, '&.Mui-disabled': { color: sendBlocked ? colors.accent.red + '80' : colors.text.dim } }}
                     >
@@ -1489,7 +1732,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </Tooltip>
 
               {/* Agent Mode */}
-              <Tooltip title={agentMode === 'agent' ? 'Agent — answers, plans & executes' : agentMode === 'plan' ? 'Plan — generates plans only' : 'Ask — answers only'} arrow>
+              <Tooltip title={agentMode === 'agent' ? 'Agent — full autonomy, auto-approves tools' : agentMode === 'plan' ? 'Plan — generates plans, tools need approval' : 'Ask — chat & planning only, no tools'} arrow>
                 <Chip
                   size="small"
                   icon={agentMode === 'agent' ? <SmartToyIcon sx={{ fontSize: '12px !important' }} /> : agentMode === 'plan' ? <RouteIcon sx={{ fontSize: '12px !important' }} /> : <QuestionAnswerIcon sx={{ fontSize: '12px !important' }} />}
@@ -1505,13 +1748,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </Tooltip>
 
               <Menu anchorEl={modeMenuAnchor} open={Boolean(modeMenuAnchor)} onClose={() => setModeMenuAnchor(null)}
-                PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 180 } }}>
+                PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 200 } }}>
                 <MenuItem onClick={() => { setAgentMode('agent'); sessionSettings.setMode('agent').catch(() => {}); setModeMenuAnchor(null); }}
                   selected={agentMode === 'agent'} sx={{ fontSize: '0.7rem', py: 0.75 }}>
                   <SmartToyIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.orange }} />
                   <Box>
                     <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Agent</Typography>
-                    <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Answers, plans & executes</Typography>
+                    <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Full autonomy — answers, plans & executes freely</Typography>
                   </Box>
                 </MenuItem>
                 <MenuItem onClick={() => { setAgentMode('plan'); sessionSettings.setMode('plan').catch(() => {}); setModeMenuAnchor(null); }}
@@ -1519,7 +1762,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   <RouteIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.purple }} />
                   <Box>
                     <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Plan</Typography>
-                    <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Plans tasks before executing</Typography>
+                    <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Generates plans — tools require permission</Typography>
                   </Box>
                 </MenuItem>
                 <MenuItem onClick={() => { setAgentMode('ask'); sessionSettings.setMode('ask').catch(() => {}); setModeMenuAnchor(null); }}
@@ -1527,7 +1770,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   <QuestionAnswerIcon sx={{ fontSize: 14, mr: 1, color: colors.text.secondary }} />
                   <Box>
                     <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Ask</Typography>
-                    <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Replies with answers only</Typography>
+                    <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Chat & planning only — no code execution</Typography>
                   </Box>
                 </MenuItem>
               </Menu>
@@ -1589,71 +1832,38 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                     {currentProvider ? 'No models found' : 'Select a provider first'}
                   </MenuItem>
                 )}
-                {modelList.filter(Boolean).map((m) => (
-                  <MenuItem key={m.id} onClick={() => {
-                    setCurrentModel(m.id);
-                    // If model belongs to a different provider, switch provider too
-                    if (m.providerId && m.providerId !== currentProvider) {
-                      setCurrentProvider(m.providerId);
-                      providers.switch(m.providerId).then(() => {
+                {modelList.filter(Boolean).map((m) => {
+                    const caps = m.capabilities ?? [];
+                    const hasFC = caps.includes('function_calling');
+                    const hasVision = caps.includes('vision');
+                    const hasReasoning = caps.includes('reasoning');
+                    const hasJson = caps.includes('json_mode');
+                    return (
+                    <MenuItem key={m.id} onClick={() => {
+                      setCurrentModel(m.id);
+                      if (m.providerId && m.providerId !== currentProvider) {
+                        setCurrentProvider(m.providerId);
+                        providers.switch(m.providerId).then(() => {
+                          models.switch(m.id).catch(() => {});
+                        }).catch(() => {});
+                      } else {
                         models.switch(m.id).catch(() => {});
-                      }).catch(() => {});
-                    } else {
-                      models.switch(m.id).catch(() => {});
-                    }
-                    setModelMenuAnchor(null);
-                  }} selected={m.id === currentModel} sx={{ fontSize: '0.65rem' }}>
-                    <Box>
-                      <Typography sx={{ fontSize: '0.65rem' }}>{m.name || m.id}</Typography>
-                      {m.contextWindow && <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>{(m.contextWindow / 1000).toFixed(0)}k context</Typography>}
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Menu>
-
-              {/* Approval Type — tinted chip */}
-              <Tooltip title={approvalType === 'default' ? 'Default — tools need approval' : approvalType === 'moderate' ? 'Moderate — tools pre-approved' : 'Auto — full autonomy'} arrow>
-                <Chip
-                  size="small"
-                  icon={approvalType === 'default' ? <ShieldDefaultIcon sx={{ fontSize: '11px !important' }} /> : approvalType === 'moderate' ? <ShieldModerateIcon sx={{ fontSize: '11px !important' }} /> : <ShieldAutoIcon sx={{ fontSize: '11px !important' }} />}
-                  label={approvalType.charAt(0).toUpperCase() + approvalType.slice(1)}
-                  onClick={(e) => setApprovalMenuAnchor(e.currentTarget)}
-                  sx={{
-                    fontSize: '0.55rem', height: 20, cursor: 'pointer',
-                    bgcolor: approvalType === 'auto' ? colors.accent.orange + '18' : approvalType === 'moderate' ? colors.accent.blue + '18' : 'transparent',
-                    border: approvalType === 'auto' ? `1px solid ${colors.accent.orange}40` : approvalType === 'moderate' ? `1px solid ${colors.accent.blue}40` : 'none',
-                    color: approvalType === 'auto' ? colors.accent.orange : approvalType === 'moderate' ? colors.accent.blue : colors.text.secondary,
-                    '&:hover': { bgcolor: approvalType === 'auto' ? colors.accent.orange + '28' : approvalType === 'moderate' ? colors.accent.blue + '28' : colors.bg.primary },
-                  }}
-                />
-              </Tooltip>
-
-              <Menu anchorEl={approvalMenuAnchor} open={Boolean(approvalMenuAnchor)} onClose={() => setApprovalMenuAnchor(null)}
-                PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 200 } }}>
-                <MenuItem onClick={() => { setApprovalType('default'); sessionSettings.setApproval('default').catch(() => {}); setApprovalMenuAnchor(null); }}
-                  selected={approvalType === 'default'} sx={{ fontSize: '0.7rem', py: 0.75 }}>
-                  <ShieldDefaultIcon sx={{ fontSize: 14, mr: 1, color: colors.text.secondary }} />
-                  <Box>
-                    <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Default</Typography>
-                    <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Tools need approval per-use</Typography>
-                  </Box>
-                </MenuItem>
-                <MenuItem onClick={() => { setApprovalType('moderate'); sessionSettings.setApproval('moderate').catch(() => {}); setApprovalMenuAnchor(null); }}
-                  selected={approvalType === 'moderate'} sx={{ fontSize: '0.7rem', py: 0.75 }}>
-                  <ShieldModerateIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.blue }} />
-                  <Box>
-                    <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Moderate</Typography>
-                    <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Tools pre-approved by default</Typography>
-                  </Box>
-                </MenuItem>
-                <MenuItem onClick={() => { setApprovalType('auto'); sessionSettings.setApproval('auto').catch(() => {}); setApprovalMenuAnchor(null); }}
-                  selected={approvalType === 'auto'} sx={{ fontSize: '0.7rem', py: 0.75 }}>
-                  <ShieldAutoIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.orange }} />
-                  <Box>
-                    <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Auto</Typography>
-                    <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Full autonomy, asks only for decisions</Typography>
-                  </Box>
-                </MenuItem>
+                      }
+                      setModelMenuAnchor(null);
+                    }} selected={m.id === currentModel} sx={{ fontSize: '0.65rem' }}>
+                      <Box sx={{ width: '100%' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <Typography sx={{ fontSize: '0.65rem', fontWeight: m.id === currentModel ? 600 : 400 }}>{m.name || m.id}</Typography>
+                          {hasFC && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.blue, bgcolor: '#58a6ff18', px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>FC</Typography>}
+                          {hasVision && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.green, bgcolor: '#3fb95018', px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>V</Typography>}
+                          {hasReasoning && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.purple, bgcolor: '#bc8cff18', px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>R</Typography>}
+                          {hasJson && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.cyan, bgcolor: '#39d35318', px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>JSON</Typography>}
+                        </Box>
+                        {m.contextWindow && <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>{(m.contextWindow / 1000).toFixed(0)}k context</Typography>}
+                      </Box>
+                    </MenuItem>
+                    );
+                  })}
               </Menu>
 
               {/* Spacer */}
@@ -1751,8 +1961,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 onClick={async () => {
                   const desktopApi = (window as any).agentx;
                   if (desktopApi?.openFolder) {
-                    const folder = await desktopApi.openFolder();
-                    if (folder) system.setCwd(folder).then(r => setCwd(r.cwd)).catch(() => {});
+                    pendingFolderActionRef.current = 'changeCwd';
+                    setFolderConsentOpen(true);
                   } else {
                     setFolderPickerCallback(() => (path: string) => {
                       system.setCwd(path).then(r => setCwd(r.cwd)).catch(() => {});
@@ -1809,6 +2019,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           )}
         </Box>
       </Box>
+      </>)}
 
       {/* ─── Global enhancement modals ─── */}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
@@ -1844,11 +2055,83 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }}
         onCancel={() => { setFolderPickerOpen(false); setFolderPickerCallback(null); }}
       />
+      <Dialog
+        open={folderConsentOpen}
+        onClose={() => setFolderConsentOpen(false)}
+        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxWidth: 480, width: '90%' } }}
+      >
+        <DialogTitle sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 700, letterSpacing: '1px', pb: 1 }}>
+          BEFORE YOU START
+        </DialogTitle>
+        <DialogContent>
+          <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
+            Agent-X will access the folder you select to read, create, and modify files as needed to complete your tasks.
+          </Typography>
+          <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
+            • Your files remain local — nothing is uploaded unless you explicitly use a tool that sends data to a provider.
+          </Typography>
+          <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
+            • Agent-X can run terminal commands and modify files within the selected directory. Review what tasks you delegate.
+          </Typography>
+          <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
+            • You can change the working directory at any time from the sidebar.
+          </Typography>
+          <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7 }}>
+            • Use the approval mode ("Ask" / "Moderate" / "Auto") to control how much autonomy Agent-X has.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setFolderConsentOpen(false)} sx={{ color: colors.text.dim, fontSize: '0.75rem' }}>
+            Cancel
+          </Button>
+          <Button onClick={handleFolderConsentConfirm} variant="contained" sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, fontSize: '0.75rem' }}>
+            I Understand
+          </Button>
+        </DialogActions>
+      </Dialog>
+      {folderPickerLoading && (
+        <Box sx={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}>
+          <CircularProgress size={40} sx={{ color: '#fff' }} />
+        </Box>
+      )}
     </Box>
   );
 }
 
 // ─── Thinking Indicator ───
+
+function LoadingStepsIndicator({ steps }: { steps: Array<{ id: string; label: string; status: string }> }) {
+  const label = steps[0]?.label ?? 'Working...';
+  return (
+    <Box sx={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      border: '1px dashed', borderColor: colors.border.subtle,
+      borderRadius: 2, py: 1.5, px: 2, mb: 2,
+      animation: 'agentx-fadeIn 0.3s ease-out',
+    }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <Box sx={{
+          width: 18, height: 18, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          bgcolor: colors.accent.purple + '15', flexShrink: 0,
+        }}>
+          <SmartToyIcon sx={{ fontSize: 11, color: colors.accent.purple }} />
+        </Box>
+        <Typography sx={{
+          fontSize: '0.75rem',
+          fontWeight: 500,
+          background: `linear-gradient(90deg, ${colors.text.dim} 0%, ${colors.text.primary} 50%, ${colors.text.dim} 100%)`,
+          backgroundSize: '200% 100%',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          animation: 'agentx-shimmer 2s infinite linear',
+        }}>
+          {label}
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
 
 function ThinkingIndicator() {
   return (
@@ -2003,7 +2286,7 @@ function getResponderName(content: string): { name: string; callsign: string } |
   return null;
 }
 
-function MessageBubble({ message }: { message: UIMessage }) {
+function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null }) {
   const isUser = message.role === 'user';
   const crewInfo = message.crew;
   const responderName = !isUser && !crewInfo && message.content ? getResponderName(message.content) : null;
@@ -2121,8 +2404,12 @@ function MessageBubble({ message }: { message: UIMessage }) {
         {message.content && !isUser && <CrewAwareMarkdown content={message.content} />}
         {message.content && isUser && <UserMentionText content={message.content} />}
 
-        {/* Streaming dots (empty content) */}
-        {message.streaming && !message.content && (
+        {/* Loading steps (instead of streaming dots when steps are available) */}
+        {message.streaming && !message.content && loadingSteps && (
+          <LoadingStepsIndicator steps={loadingSteps} />
+        )}
+        {/* Streaming dots (empty content, no steps) */}
+        {message.streaming && !message.content && !loadingSteps && (
           <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>
             <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite' }} />
             <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out 0.2s infinite' }} />
@@ -2160,7 +2447,6 @@ function ToolCallChip({ tool }: { tool: ToolCall }) {
   return (
     <Box sx={{ mb: 0.5 }}>
       <Chip size="small"
-        icon={tool.status === 'running' ? <CircularProgress size={10} sx={{ color: 'inherit' }} /> : <BuildIcon sx={{ fontSize: 11 }} />}
         label={tool.name}
         onClick={() => setExpanded(!expanded)}
         sx={{

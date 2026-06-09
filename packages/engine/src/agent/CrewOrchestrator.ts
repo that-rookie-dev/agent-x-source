@@ -130,10 +130,14 @@ export class CrewOrchestrator {
   private async callCrew(
     member: CrewMember,
     userMessage: string,
-    mainSystemPrompt: string
+    mainSystemPrompt: string,
+    contextText?: string
   ): Promise<{ content: string; elapsed: number }> {
     const crewContext = this.buildCrewContext(member, userMessage);
-    const systemPrompt = `${mainSystemPrompt}\n\n[CREW MEMBER: ${member.crew.name}]\n${member.crew.systemPrompt}\n\n[CONVERSATION CONTEXT]\n${crewContext}\n\n[CRITICAL RULES]\n- Do NOT delegate tasks to yourself (@${member.crew.callsign}). You ARE ${member.crew.name}. Respond directly.\n- Do NOT @mention other crew members to assign work. You do not have that authority.\n- Do NOT ask rhetorical questions or suggest asking other crew members. Answer the question yourself.\n- Keep responses to 1-2 sentences unless providing code or config output.`;
+    const classificationNote = contextText && /\[Classified as/.test(contextText)
+      ? `\n\n[CLASSIFICATION CONTEXT]\n${contextText}`
+      : '';
+    const systemPrompt = `${mainSystemPrompt}\n\n[CREW MEMBER: ${member.crew.name}]\n${member.crew.systemPrompt}\n\n[CONVERSATION CONTEXT]\n${crewContext}${classificationNote}\n\n[RESPONSE FORMAT — ABSOLUTELY REQUIRED]\nYou MUST respond in EXACTLY ONE of these two formats. No exceptions.\n\nFORMAT 1 — Task is clear (you have enough info):\nProvide the result directly. Code, config, or action taken. Zero questions. Zero requests for info.\n\nFORMAT 2 — Task is unclear (need more info):\nStart with \"CLARIFY:\" on its own line, then your question on the NEXT line, then 2-5 options prefixed with \"- \".\nThe FIRST option will be shown as RECOMMENDED. Optionally prefix any option with \"[RECOMMENDED] \" to override.\nTo let the user select ALL options at once, add \"[ALLOW_ALL]\" on its own line at the end.\nDo NOT write anything else. No greetings, no explanations.\n\nExample of FORMAT 2:\nCLARIFY:\nWhich part of the infrastructure needs fixing?\n- [RECOMMENDED] Deployment pipeline is failing\n- Server performance is degraded\n- Security compliance issue\n\nExample with choose-all:\nCLARIFY:\nWhich features should I implement?\n- User authentication\n- Dashboard UI\n- Payment integration\n[ALLOW_ALL]\n\n[CRITICAL RULES]\n- Do NOT delegate tasks to yourself (@${member.crew.callsign}). You ARE ${member.crew.name}. Respond directly.\n- Do NOT @mention other crew members to assign work. You do not have that authority.\n- Do NOT write questions, requests, or ask for clarification in free text. Only use FORMAT 2 above.\n- Do NOT make assumptions or guess. If unsure, use FORMAT 2.\n- Maximum 5 options in FORMAT 2.\n- Keep responses to 1-2 sentences unless providing code or config output (FORMAT 1).`;
 
     const startTime = Date.now();
     const completion = this.provider.complete({
@@ -241,7 +245,7 @@ export class CrewOrchestrator {
           this.emit({ type: 'tool_executing', tool: 'crew_member', description: `${responder.crew.name} is thinking...` });
 
           try {
-            const { content } = await this.callCrew(responder, userMessage, mainSystemPrompt);
+            const { content } = await this.callCrew(responder, userMessage, mainSystemPrompt, contextText);
 
             this.conversation.push({
               id: generateMessageId(),

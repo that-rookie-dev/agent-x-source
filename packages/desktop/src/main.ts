@@ -358,6 +358,7 @@ function registerHotkey(): void {
 
 // ==================== IPC ====================
 
+ipcMain.on('app:isPackaged', (event) => { event.returnValue = app.isPackaged; });
 ipcMain.on('window:minimize', () => mainWindow?.minimize());
 ipcMain.on('window:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
@@ -369,7 +370,8 @@ ipcMain.handle('dialog:openFolder', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
-    title: 'Choose a project folder',
+    title: 'Select a project folder',
+    buttonLabel: 'Choose folder',
   });
   return result.canceled ? null : result.filePaths[0] ?? null;
 });

@@ -28,14 +28,16 @@ export type EngineEvent =
   | { type: 'message_sent'; message: Message }
   | { type: 'message_received'; message: Message; elapsed: number }
   | { type: 'stream_chunk'; content: string; fullContent: string }
-  | { type: 'loading_start'; stage: string }
+  | { type: 'loading_start'; stage: string; steps?: Array<{ id: string; label: string; status: 'pending' | 'active' | 'completed' }> }
   | { type: 'loading_end' }
+  | { type: 'loading_step_update'; stepId: string; label: string; status: 'pending' | 'active' | 'completed' }
   | { type: 'processing_start'; taskDescription: string }
   | { type: 'processing_progress'; stage: string; progress: number }
   | { type: 'processing_complete'; result: FormattedResponse }
   | { type: 'permission_required'; tool: string; path: string; riskLevel: string }
   | { type: 'token_update'; used: number; available: number }
   | { type: 'error'; code: string; message: string; recoverable: boolean; actions?: RemediationAction[] }
+  | { type: 'provider_error'; provider: string; model: string; statusCode?: number; message: string; recoverable: boolean; actions?: RemediationAction[] }
   | { type: 'tool_executing'; tool: string; description: string; startTime: number }
   | { type: 'tool_complete'; tool: string; result: ToolResult; elapsed: number }
   | { type: 'agent_spawned'; agentId: string; task: string; startTime: number }
@@ -75,7 +77,8 @@ export type EngineEvent =
   | { type: 'watch_event'; event: string; filePath: string; command: string; timestamp: number }
   | { type: 'diff_preview'; tool: string; filePath: string; diff: string; oldContent?: string; newContent?: string }
   | { type: 'command_action'; action: 'show_watch_status'; entries: Array<{ pattern: string; command: string }> }
-  | { type: 'clarification_required'; question: string; options: string[]; allowFreeform: boolean }
+  | { type: 'clarification_required'; question: string; options: string[]; allowFreeform: boolean; recommended?: string; allowChooseAll?: boolean }
+  | { type: 'model_capability_warning'; model: string; missing: string[]; message: string }
   | { type: 'intent_detected'; intent: string; confidence: number }
   | { type: 'rag_queried'; resultCount: number; elapsed: number }
   | { type: 'subagent_event'; subagentId: string; parentEvent: EngineEvent }

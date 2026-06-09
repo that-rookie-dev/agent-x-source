@@ -414,7 +414,7 @@ export class CompletionLoop {
               }
 
               // Truncate large tool results before injecting into context to avoid context overflow
-              const raw = String(r.output ?? '');
+              const raw = typeof r.output === 'string' ? r.output : (r.output != null ? JSON.stringify(r.output) : '');
               const MAX_TOOL_OUTPUT = 10000;
               const truncated = raw.length > MAX_TOOL_OUTPUT
                 ? raw.slice(0, MAX_TOOL_OUTPUT) + `\n\n[Result truncated — ${raw.length - MAX_TOOL_OUTPUT} chars omitted]`
@@ -605,7 +605,7 @@ export class CompletionLoop {
           : { success: false, output: 'No executor', error: 'NO_EXECUTOR' };
         results.push({ id: tc.id, name: effectiveName, success: result.success, output: result.output, error: result.error, elapsed: Date.now() - start });
       } catch (err) {
-        results.push({ id: tc.id, name: effectiveName, success: false, output: String(err), error: 'EXEC_ERROR', elapsed: Date.now() - start });
+        results.push({ id: tc.id, name: effectiveName, success: false, output: err instanceof Error ? err.message : (typeof err === 'object' ? JSON.stringify(err) : String(err)), error: 'EXEC_ERROR', elapsed: Date.now() - start });
       }
     };
 

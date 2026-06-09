@@ -138,7 +138,7 @@ export class EnhancedToolExecutor extends ToolExecutor {
       
       return { toolCallId, toolName, result, elapsed: Date.now() - start };
     } catch (err) {
-      return { toolCallId, toolName, result: { success: false, output: String(err), error: 'EXECUTION_ERROR' }, elapsed: 0 };
+      return { toolCallId, toolName, result: { success: false, output: err instanceof Error ? err.message : (typeof err === 'object' ? JSON.stringify(err) : String(err)), error: 'EXECUTION_ERROR' }, elapsed: 0 };
     }
   }
 
