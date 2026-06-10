@@ -6,7 +6,7 @@ import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent } from './engine.js';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, setPendingCwd } from './engine.js';
 import { setupWebSocket, ensureSubscribed } from './ws.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent } from '@agentx/engine';
@@ -125,7 +125,8 @@ app.get('/api/health', (_req, res) => {
     config: configInfo,
     sessions: sessionCount,
     crews: crewCount,
-    
+    sessionCount,
+    crewCount,
     agentActive,
     telegramConnected,
     gateway: eng?.gateway ? {
@@ -302,13 +303,15 @@ app.get('/api/providers', (_req, res) => {
   const eng = getEngine();
   try {
     const config = eng.configManager.load();
-    const configured: Array<{ id: string; configured: boolean; apiKey?: string; baseUrl?: string; profiles?: string[]; activeProfile?: string }> = [];
+    const configured: Array<{ id: string; configured: boolean; apiKey?: string; baseUrl?: string; profiles?: Array<{ id: string; label: string }>; activeProfile?: string }> = [];
     for (const [id, creds] of Object.entries(config.provider.providers)) {
       if (creds.configured) {
-        const entry: { id: string; configured: boolean; apiKey?: string; baseUrl?: string; profiles?: string[]; activeProfile?: string } = {
+        const entry: { id: string; configured: boolean; apiKey?: string; baseUrl?: string; profiles?: Array<{ id: string; label: string }>; activeProfile?: string } = {
           id, configured: true, apiKey: creds.apiKey, baseUrl: creds.baseUrl,
         };
-        if (creds.profiles) entry.profiles = Object.keys(creds.profiles);
+        if (creds.profiles) {
+          entry.profiles = Object.entries(creds.profiles).map(([pid, prof]) => ({ id: pid, label: prof.label }));
+        }
         if (creds.activeProfile) entry.activeProfile = creds.activeProfile;
         configured.push(entry);
       }
@@ -448,7 +451,8 @@ app.get('/api/models', async (_req, res) => {
     if (eng.agent) {
       try { await eng.agent.listModels(); } catch { /* ignore */ }
     }
-    res.json({ model: config.provider.activeModel, provider: config.provider.activeProvider, currentModel: config.provider.activeModel });
+    const activeProfile = config.provider.providers[config.provider.activeProvider]?.activeProfile;
+    res.json({ model: config.provider.activeModel, provider: config.provider.activeProvider, activeProfile, currentModel: config.provider.activeModel });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'failed' });
   }
@@ -464,14 +468,17 @@ app.post('/api/cwd', (req, res) => {
   try {
     const { path } = req.body as { path: string };
     if (!path || typeof path !== 'string') { res.status(400).json({ error: 'path-required' }); return; }
+    const resolved = resolve(path);
     const eng = getEngine();
     const sess = eng.sessionManager.getActiveSession();
-    if (!sess) { res.status(400).json({ error: 'no-session' }); return; }
-    const resolved = resolve(path);
-    eng.sessionManager.updateSession({ scopePath: resolved });
-    // Also update the tool executor scope if the engine exposes it
-    const executor = (eng as any).toolExecutor;
-    if (executor?.setScopePath) executor.setScopePath(resolved);
+    if (sess) {
+      eng.sessionManager.updateSession({ scopePath: resolved });
+      const executor = (eng as any).toolExecutor;
+      if (executor?.setScopePath) executor.setScopePath(resolved);
+    } else {
+      // No active session yet — store pending CWD for the next createAgent() call
+      setPendingCwd(resolved);
+    }
     res.json({ cwd: resolved });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'scope-update-failed' });
@@ -763,7 +770,10 @@ app.post('/api/chat/message', async (req, res) => {
       }
     } catch { /* checkpoint failure shouldn't block the message */ }
 
-    const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
+    const message = await Promise.race([
+      agent.sendMessage(fullText, instruction ? { instruction } : undefined),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('The operation was aborted due to timeout')), 180000)),
+    ]);
     if (!message || (message as Record<string, unknown>).id === '__clarify__') {
       res.json({ ok: true, clarification: true });
       return;
@@ -2617,6 +2627,13 @@ setupWebSocket(server);
 export { app, server };
 
 export function startServer(port = PORT): ReturnType<typeof server.listen> {
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${port} is already in use. Is another Agent-X instance running?`);
+    } else {
+      console.error('Server error:', err.message);
+    }
+  });
   return server.listen(port, () => {
     console.log(`Agent-X web API listening on http://localhost:${port}`);
   });

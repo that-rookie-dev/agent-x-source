@@ -146,8 +146,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Loading step indicator state
   const [loadingSteps, setLoadingSteps] = useState<Array<{ id: string; label: string; status: string }> | null>(null);
 
-  // Provider error band state
-  const [providerError, setProviderError] = useState<string | null>(null);
+  // Provider error band state — array of messages for unified warning band
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   // Clarification suggestions state
   const [clarification, setClarification] = useState<{ question: string; options: string[]; recommended?: string; allowChooseAll?: boolean } | null>(null);
@@ -177,9 +177,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .replace(/[\x00-\x1F\x7F]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
-    // Strip URLs for cleaner display
-    msg = msg.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
-    return msg.length > 500 ? msg.slice(0, 500) + '...' : msg;
+    // Strip variable retry time suffix so dedup works across retries
+    msg = msg.replace(/\s*Please retry in [\d.]+s\.?\s*$/, '');
+    return msg;
   }, []);
 
   // Sync view with sessionId prop from URL — also restore session history on mount/refresh
@@ -226,7 +226,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Model/Provider state
   const [currentModel, setCurrentModel] = useState('');
   const [currentProvider, setCurrentProvider] = useState('');
-  const [providerList, setProviderList] = useState<Array<{ id: string; configured: boolean }>>([]);
+  const [providerList, setProviderList] = useState<Array<{ id: string; label: string; providerId: string }>>([]);
   const [modelList, setModelList] = useState<ModelInfo[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -345,7 +345,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   useEffect(() => {
     // Get current model/provider - fallback to providers endpoint if models fails
     models.current()
-      .then((r) => { setCurrentModel(r.model || ''); setCurrentProvider(r.provider || ''); })
+      .then((r) => { setCurrentModel(r.model || ''); setCurrentProvider(r.activeProfile || r.provider || ''); })
       .catch(() => {
         // Fallback: get active provider from /providers endpoint
         fetch('/api/providers', { credentials: 'include' })
@@ -357,12 +357,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
     system.cwd().then((r) => { setCwd(r.cwd || ''); }).catch(() => {});
     sessionSettings.get().then((s) => { setAgentMode(s.mode); }).catch(() => {});
-    // Load configured providers (also gets active provider as fallback)
+    // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
       .then(r => r.json())
-      .then((data: { active?: string; providers?: Array<{ id: string; configured: boolean }> }) => {
-        if (data.providers) setProviderList(data.providers.filter(Boolean).map(p => ({ id: p.id, configured: true })));
-        if (data.active && !currentProvider) setCurrentProvider(data.active);
+      .then((data: { active?: string; providers?: Array<{ id: string; activeProfile?: string; profiles?: Array<{ id: string; label: string }> }> }) => {
+        if (data.providers) {
+          const allProfiles: Array<{ id: string; label: string; providerId: string }> = [];
+          data.providers.forEach(p => {
+            if (p.profiles && p.profiles.length > 0) {
+              p.profiles.forEach(prof => allProfiles.push({ id: prof.id, label: prof.label, providerId: p.id }));
+            } else {
+              // Fallback: single default profile
+              allProfiles.push({ id: p.id + '-default', label: p.id, providerId: p.id });
+            }
+          });
+          setProviderList(allProfiles);
+        }
       })
       .catch(() => {});
   }, []);
@@ -370,9 +380,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Load models when provider changes
   useEffect(() => {
     if (!currentProvider) { setModelList([]); return; }
+    const profile = providerList.find(p => p.id === currentProvider);
+    const providerId = profile?.providerId || currentProvider;
     setLoadingModels(true);
-    providers.models(currentProvider).then((m) => { setModelList(m); }).catch(() => { setModelList([]); }).finally(() => setLoadingModels(false));
-  }, [currentProvider]);
+    providers.models(providerId).then((m) => { setModelList(m); }).catch(() => { setModelList([]); }).finally(() => setLoadingModels(false));
+  }, [currentProvider, providerList]);
 
   useEffect(() => { loadTodos(); }, [loadTodos]);
 
@@ -572,7 +584,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
           case 'provider_error': {
             const providerMsg = (ev.message as string) ?? 'Provider error';
-            setProviderError(extractProviderError(providerMsg));
+            const msg = extractProviderError(providerMsg);
+            setWarnings(prev => prev.includes(msg) ? prev : [...prev, msg]);
             if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
             setStreaming(false);
             if (last?.role !== 'assistant') return prev;
@@ -592,12 +605,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
           case 'error': {
             const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
-            // Provider errors now arrive as 'provider_error' events — this case handles
-            // only non-provider errors (internal bugs, context overflow, etc.)
+            // Route to warning band — errors should not pollute the chat bubble
+            setWarnings(prev => prev.includes(errorText) ? prev : [...prev, errorText]);
             setStreaming(false);
             if (last?.role !== 'assistant') return prev;
-            const newContent = last.content ? `${last.content}\n\n⚠️ ${errorText}` : `⚠️ ${errorText}`;
-            return updateLastMessage(prev, { content: newContent, streaming: false });
+            return updateLastMessage(prev, { streaming: false });
           }
 
           default:
@@ -739,19 +751,23 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
       // Show provider error band for quota/auth errors (not in chat)
-      const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired/i.test(errorMsg);
+      const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired|insufficient|credits|balance|dunning|deny/i.test(errorMsg);
       if (isProviderErr) {
-        setProviderError(extractProviderError(errorMsg));
+        const msg = extractProviderError(errorMsg);
+        setWarnings(prev => prev.includes(msg) ? prev : [...prev, msg]);
         if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
+        // Clear server-side agent processing state so next message isn't blocked
+        chat.cancel().catch(() => {});
+      } else {
+        // Non-provider errors (e.g., "Agent is busy") — also show in warning band
+        setWarnings(prev => prev.includes(displayError) ? prev : [...prev, displayError]);
+        chat.cancel().catch(() => {});
       }
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === 'assistant' && last.streaming) {
-          if (isProviderErr) {
-            // Remove the empty streaming placeholder — don't show error in chat
-            return prev.slice(0, -1);
-          }
-          return [...prev.slice(0, -1), { ...last, content: last.content || `⚠️ ${displayError}`, streaming: false }];
+          // Remove the empty streaming placeholder — errors go to warning band, not chat
+          return prev.slice(0, -1);
         }
         return prev;
       });
@@ -1078,11 +1094,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   };
 
   const handleShowSessions = () => {
+    setStreaming(false);
     loadSessions();
     navigate('/console/chat');
   };
 
   const handleSelectSession = async (s: SessionInfo) => {
+    setWarnings([]);
+    setStreaming(false);
     try {
       const { messages: historyMsgs } = await sessions.restore(s.id);
       const visible = historyMsgs.filter((m) => m.role !== 'system');
@@ -1107,6 +1126,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   };
 
   const startNewSession = async (folder: string) => {
+    setWarnings([]);
+    setStreaming(false);
     setMessages([]);
     setCurrentSessionTitle(null);
     setCurrentSessionId(null);
@@ -1353,8 +1374,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               loadingSteps={idx === visibleMessages.length - 1 && msg.streaming && !msg.content ? loadingSteps : null}
             />
           ))}
-          {streaming && !loadingSteps && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
-            <ThinkingIndicator />
+          {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
+            <ThinkingIndicator label={loadingSteps?.[0]?.label} />
           )}
 
           {permissionPrompt && (
@@ -1375,15 +1396,23 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
         {/* ─── Unified Input Module ─── */}
         <Box sx={{ px: 2, pb: 1.5, pt: 1, position: 'relative' }}>
-          {/* Provider error band — slides from behind the input card */}
+          {/* Unified warning band — combines provider errors and send-blocked notifications */}
+          {(() => {
+            const allWarnings: string[] = [...warnings];
+            if (sendBlocked && configLoaded && sendBlockedReason) {
+              allWarnings.unshift(sendBlockedReason);
+            }
+            const hasWarnings = allWarnings.length > 0;
+
+            return (
           <Box sx={{
             position: 'relative',
             zIndex: 0,
             overflow: 'hidden',
-            maxHeight: providerError ? 140 : 0,
-            opacity: providerError ? 1 : 0,
+            maxHeight: hasWarnings ? 260 : 0,
+            opacity: hasWarnings ? 1 : 0,
             transition: 'max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease',
-            mb: providerError ? '-20px' : 0,
+            mb: hasWarnings ? '-20px' : 0,
           }}>
             <Box sx={{
               bgcolor: colors.accent.orange + '18',
@@ -1396,32 +1425,34 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               display: 'flex',
               alignItems: 'flex-start',
               gap: 0.75,
+              maxHeight: 250,
             }}>
-              <Typography sx={{
-                fontSize: '0.58rem',
-                color: colors.accent.orange,
-                fontFamily: "'Inter', sans-serif",
-                fontWeight: 500,
-                whiteSpace: 'normal',
-                overflow: 'hidden',
-                display: '-webkit-box',
-                WebkitLineClamp: 5,
-                WebkitBoxOrient: 'vertical',
-                flex: 1,
-                letterSpacing: '0.2px',
-                lineHeight: 1.5,
-              }}>
-                ⚠ {providerError}
-              </Typography>
+              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0.3, overflowY: 'auto', maxHeight: 240, pb: 2 }}>
+                {allWarnings.map((msg, i) => (
+                  <Typography key={i} sx={{
+                    fontSize: '0.58rem',
+                    color: colors.accent.orange,
+                    fontFamily: "'Inter', sans-serif",
+                    fontWeight: 500,
+                    letterSpacing: '0.2px',
+                    lineHeight: 1.5,
+                    flexShrink: 0,
+                  }}>
+                    ⚠ {msg}
+                  </Typography>
+                ))}
+              </Box>
               <IconButton
                 size="small"
-                onClick={() => setProviderError(null)}
+                onClick={() => setWarnings([])}
                 sx={{ color: colors.accent.orange + 'cc', p: 0, minWidth: 0, '&:hover': { bgcolor: colors.accent.orange + '20' } }}
               >
                 <CloseIcon sx={{ fontSize: 11 }} />
               </IconButton>
             </Box>
           </Box>
+            );
+          })()}
 
           {/* Attachment chips */}
           {attachments.length > 0 && (
@@ -1472,14 +1503,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 onSelectAgent={handleMentionSelectAgent}
               />
             )}
-            {/* No provider/model warning */}
-            {sendBlocked && configLoaded && (
-              <Box sx={{ px: 1.5, py: 0.4, bgcolor: colors.accent.orange + '12', borderTop: `1px solid ${colors.accent.orange}30`, borderBottom: `1px solid ${colors.accent.orange}30` }}>
-                <Typography sx={{ fontSize: '0.6rem', color: colors.accent.orange, fontFamily: "'JetBrains Mono', monospace", textAlign: 'center' }}>
-                  ⚠ {sendBlockedReason}
-                </Typography>
-              </Box>
-            )}
+            {/* No provider/model warning — merged into unified warning band below */}
             {/* Clarification panel: vertical list with keyboard navigation */}
             {clarification && (
               <Box
@@ -1774,11 +1798,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 </MenuItem>
               </Menu>
 
-              {/* Provider */}
-              <Tooltip title="Provider" arrow>
+              {/* Provider Profile */}
+              <Tooltip title="Provider Profile" arrow>
                 <Chip
                   size="small"
-                  label={currentProvider || 'Provider'}
+                  label={(() => { const p = providerList.find(pr => pr.id === currentProvider); return p?.label || currentProvider || 'Provider'; })()}
                   onClick={(e) => setProviderMenuAnchor(e.currentTarget)}
                   sx={{
                     fontSize: '0.55rem', height: 20, cursor: 'pointer',
@@ -1790,16 +1814,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </Tooltip>
 
               <Menu anchorEl={providerMenuAnchor} open={Boolean(providerMenuAnchor)} onClose={() => setProviderMenuAnchor(null)}
-                PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 150 } }}>
-                {providerList.filter(Boolean).map((p) => (
-                  <MenuItem key={p.id} onClick={() => {
-                    setCurrentProvider(p.id);
-                    setCurrentModel(''); // Clear model on provider change
+                PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 200 } }}>
+                {providerList.filter(Boolean).map((profile) => (
+                  <MenuItem key={profile.id} onClick={() => {
+                    setCurrentProvider(profile.id);
+                    setCurrentModel('');
                     setModelList([]);
-                    providers.switch(p.id).catch(() => {});
+                    providers.switchProfile(profile.providerId, profile.id).catch(() => {});
                     setProviderMenuAnchor(null);
-                  }} selected={p.id === currentProvider} sx={{ fontSize: '0.7rem' }}>
-                    {p.id}
+                  }} selected={profile.id === currentProvider} sx={{ fontSize: '0.7rem' }}>
+                    <Box>
+                      <Typography sx={{ fontSize: '0.7rem' }}>{profile.label}</Typography>
+                      <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{profile.providerId}</Typography>
+                    </Box>
                   </MenuItem>
                 ))}
                 {providerList.length === 0 && (
@@ -1813,12 +1840,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   size="small"
                   label={currentModel || 'Model'}
                   onClick={(e) => setModelMenuAnchor(e.currentTarget)}
-                  sx={{
-                    fontSize: '0.55rem', height: 20, cursor: 'pointer', maxWidth: 140,
-                    bgcolor: 'transparent', border: 'none',
-                    color: currentModel ? colors.accent.blue : colors.text.dim,
-                    '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' },
-                    '&:hover': { bgcolor: colors.bg.primary },
+                    sx={{
+                      fontSize: '0.55rem', height: 20, cursor: 'pointer',
+                      bgcolor: 'transparent', border: 'none',
+                      color: currentModel ? colors.accent.blue : colors.text.dim,
+                      '&:hover': { bgcolor: colors.bg.primary },
                   }}
                 />
               </Tooltip>
@@ -1840,7 +1866,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                     return (
                     <MenuItem key={m.id} onClick={() => {
                       setCurrentModel(m.id);
-                      if (m.providerId && m.providerId !== currentProvider) {
+                      const profile = providerList.find(p => p.id === currentProvider);
+                      const providerId = profile?.providerId || currentProvider;
+                      if (m.providerId && m.providerId !== providerId) {
                         setCurrentProvider(m.providerId);
                         providers.switch(m.providerId).then(() => {
                           models.switch(m.id).catch(() => {});
@@ -2094,37 +2122,21 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 function LoadingStepsIndicator({ steps }: { steps: Array<{ id: string; label: string; status: string }> }) {
   const label = steps[0]?.label ?? 'Working...';
   return (
-    <Box sx={{
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      border: '1px dashed', borderColor: colors.border.subtle,
-      borderRadius: 2, py: 1.5, px: 2, mb: 2,
-      animation: 'agentx-fadeIn 0.3s ease-out',
+    <Typography sx={{
+      fontSize: '0.75rem',
+      fontWeight: 500,
+      background: `linear-gradient(90deg, ${colors.text.dim} 0%, ${colors.text.primary} 50%, ${colors.text.dim} 100%)`,
+      backgroundSize: '200% 100%',
+      WebkitBackgroundClip: 'text',
+      WebkitTextFillColor: 'transparent',
+      animation: 'agentx-shimmer 2s infinite linear',
     }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-        <Box sx={{
-          width: 18, height: 18, borderRadius: '50%',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          bgcolor: colors.accent.purple + '15', flexShrink: 0,
-        }}>
-          <SmartToyIcon sx={{ fontSize: 11, color: colors.accent.purple }} />
-        </Box>
-        <Typography sx={{
-          fontSize: '0.75rem',
-          fontWeight: 500,
-          background: `linear-gradient(90deg, ${colors.text.dim} 0%, ${colors.text.primary} 50%, ${colors.text.dim} 100%)`,
-          backgroundSize: '200% 100%',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          animation: 'agentx-shimmer 2s infinite linear',
-        }}>
-          {label}
-        </Typography>
-      </Box>
-    </Box>
+      {label}
+    </Typography>
   );
 }
 
-function ThinkingIndicator() {
+function ThinkingIndicator({ label }: { label?: string }) {
   return (
     <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', mb: 2, animation: 'agentx-fadeIn 0.3s ease-out' }}>
       <Box sx={{
@@ -2134,12 +2146,18 @@ function ThinkingIndicator() {
         <SmartToyIcon sx={{ fontSize: 15, color: colors.accent.purple }} />
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 1.5 }}>
-        <Box sx={{ display: 'flex', gap: 0.4 }}>
-          <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite' }} />
-          <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out 0.2s infinite' }} />
-          <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out 0.4s infinite' }} />
-        </Box>
-        <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontStyle: 'italic' }}>Thinking...</Typography>
+        {label ? (
+          <LoadingStepsIndicator steps={[{ id: '', label, status: 'running' }]} />
+        ) : (
+          <>
+            <Box sx={{ display: 'flex', gap: 0.4 }}>
+              <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite' }} />
+              <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out 0.2s infinite' }} />
+              <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out 0.4s infinite' }} />
+            </Box>
+            <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontStyle: 'italic' }}>Thinking...</Typography>
+          </>
+        )}
       </Box>
     </Box>
   );
@@ -2395,10 +2413,6 @@ function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingS
         {message.content && !isUser && <CrewAwareMarkdown content={message.content} />}
         {message.content && isUser && <UserMentionText content={message.content} />}
 
-        {/* Loading steps (instead of streaming dots when steps are available) */}
-        {message.streaming && !message.content && loadingSteps && (
-          <LoadingStepsIndicator steps={loadingSteps} />
-        )}
         {/* Streaming dots (empty content, no steps) */}
         {message.streaming && !message.content && !loadingSteps && (
           <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>

@@ -102,7 +102,7 @@ export const providers = {
 // ─── Models ───
 export const models = {
   switch: (modelId: string) => request<{ ok: boolean }>('/model/switch', { method: 'POST', body: JSON.stringify({ modelId }) }),
-  current: () => request<{ model: string; provider: string }>('/models'),
+  current: () => request<{ model: string; provider: string; activeProfile?: string }>('/models'),
 };
 
 // ─── Crews ───

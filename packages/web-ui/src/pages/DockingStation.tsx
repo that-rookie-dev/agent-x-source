@@ -18,7 +18,7 @@ import { tuiActive, webuiActive } from '../api';
 import type { HealthStatus } from '../api';
 
 function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'blank' | 'info' | 'success' | 'dim' | 'heading'; text: string }> {
-  const v = h?.version || '0.1.0';
+  const v = h?.version || '';
   const provider = h?.config?.provider || '—';
   const model = h?.config?.model || '—';
   const user = h?.config?.user || 'Operator';
@@ -35,7 +35,7 @@ function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'b
     { type: 'banner', text: `██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║  ╚════╝██╔██╗ ` },
     { type: 'banner', text: `██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║       ██╔╝ ██╗` },
     { type: 'banner', text: `╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝       ╚═╝  ╚═╝` },
-    { type: 'banner', text: `                                              v${v}` },
+    ...(v ? [{ type: 'banner' as const, text: `                                              v${v}` }] : []),
     { type: 'blank', text: '' },
     { type: 'info', text: `  Welcome back, ${user}.` },
     { type: 'blank', text: '' },
@@ -131,7 +131,7 @@ export function DockingStation() {
     const timeout = setTimeout(() => setVisibleLines((v) => v + 1), delay);
     return () => clearTimeout(timeout);
   }, [visibleLines, lines]);
-  const version = healthData?.version || '0.1.0';
+  const version = healthData?.version || '';
 
   return (
     <Box sx={{
@@ -144,12 +144,15 @@ export function DockingStation() {
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 3, overflow: 'hidden' }}>
           {/* Header with version */}
           <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <img src="/logo.png" alt="Agent-X" style={{ width: 28, height: 28, objectFit: 'contain' }} />
             <Typography sx={{ fontSize: '1.3rem', fontWeight: 700, fontFamily: "'Inter', sans-serif", color: colors.text.primary }}>
               AGENT-X
             </Typography>
+            {version && (
             <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.primary, fontWeight: 600 }}>
               v{version}
             </Typography>
+            )}
             <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim, letterSpacing: '3px', ml: 1 }}>
               MISSION CONTROL
             </Typography>

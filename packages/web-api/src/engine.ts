@@ -49,6 +49,10 @@ export interface EngineState {
 }
 
 let state: EngineState | null = null;
+let pendingCwd: string | null = null;
+
+export function setPendingCwd(cwd: string | null): void { pendingCwd = cwd; }
+export function getPendingCwd(): string | null { return pendingCwd; }
 
 function safeLoadConfig(configManager: ConfigManager): void {
   try {
@@ -89,6 +93,12 @@ export function getEngine(): EngineState {
   } else {
     sessionManager = new SessionManager();
   }
+
+  // Recover any sessions that exist on disk but not in the DB (e.g. after DB migration)
+  try {
+    const sessionsDir = join(getDataDir(), 'sessions');
+    (sessionManager as any).store.recoverOrphanedSessions?.(sessionsDir);
+  } catch { /* non-critical */ }
 
   const crewManager = new CrewManager();
 
@@ -183,7 +193,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
         activeProvider,
         cfg.provider.activeModel,
         undefined,
-        process.cwd(),
+        pendingCwd || process.cwd(),
       );
     }
   } else {
@@ -191,9 +201,14 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       activeProvider,
       cfg.provider.activeModel,
       undefined,
-      process.cwd(),
+      pendingCwd || process.cwd(),
     );
   }
+  // Consume the pending CWD so it doesn't leak to the next session
+  if (pendingCwd) {
+    eng.toolkit.executor.setScopePath(pendingCwd);
+  }
+  pendingCwd = null;
 
   const agent = new Agent({
     config: cfg,

@@ -1,5 +1,5 @@
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { mkdirSync, readdirSync, existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createRequire } from 'module';
 import { getDbPath } from '../config/paths.js';
 import { encrypt, decrypt, getLogger } from '@agentx/shared';
@@ -241,6 +241,65 @@ export class SessionStore {
   private initialize(): void {
     if (this.memMode || !this.db) return;
     this.db.exec(SCHEMA_SQL);
+  }
+
+  /**
+   * Scan the filesystem sessions directory and import any sessions that exist on disk
+   * but have no DB record (e.g. after DB migration, Docker→native switch, or crash).
+   */
+  recoverOrphanedSessions(sessionsDir: string): number {
+    if (this.memMode || !this.db) return 0;
+    if (!existsSync(sessionsDir)) return 0;
+
+    let recovered = 0;
+    try {
+      const entries = readdirSync(sessionsDir, { withFileTypes: true });
+
+      const existingIds = new Set(
+        (this.db.prepare('SELECT id FROM sessions').all() as Array<{ id: string }>).map(r => r.id)
+      );
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (existingIds.has(entry.name)) continue;
+
+        const sessionDir = join(sessionsDir, entry.name);
+        const convPath = join(sessionDir, 'conversation.json');
+
+        if (!existsSync(convPath)) continue;
+
+        try {
+          const convRaw = readFileSync(convPath, 'utf-8');
+          const messages = JSON.parse(convRaw) as Array<{ role: string; content: string }>;
+          const firstUserMsg = messages.find(m => m.role === 'user');
+          const title = firstUserMsg?.content?.slice(0, 80) ?? 'Recovered session';
+
+          // Try to read scope from context.json
+          let scopePath = '/';
+          const ctxPath = join(sessionDir, 'context.json');
+          if (existsSync(ctxPath)) {
+            try {
+              const ctx = JSON.parse(readFileSync(ctxPath, 'utf-8'));
+              if (ctx.scopePath) scopePath = ctx.scopePath;
+            } catch { /* ignore */ }
+          }
+
+          const now = new Date().toISOString();
+
+          this.db.prepare(`
+            INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, created_at, updated_at)
+            VALUES (?, ?, 'active', '', '', NULL, 0, 128000, ?, ?, ?)
+          `).run(entry.name, title, scopePath, now, now);
+
+          recovered++;
+        } catch {
+          // Skip sessions that can't be read
+        }
+      }
+    } catch {
+      // Best-effort recovery
+    }
+    return recovered;
   }
 
   getDb(): unknown {

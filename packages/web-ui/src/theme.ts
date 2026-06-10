@@ -39,6 +39,8 @@ const themeOptions: ThemeOptions = {
         '::-webkit-scrollbar-track': { background: 'transparent' },
         '::-webkit-scrollbar-thumb': { background: '#3a3a3a', borderRadius: '3px' },
         '::-webkit-scrollbar-thumb:hover': { background: '#656565' },
+        '.MuiDialogContent-root::-webkit-scrollbar': { display: 'none' },
+        '.MuiModal-root *::-webkit-scrollbar': { display: 'none' },
       },
     },
     MuiButton: {

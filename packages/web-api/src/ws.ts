@@ -76,6 +76,16 @@ let unsubscribeFromAgent: (() => void) | null = null;
 export function setupWebSocket(server: Server): void {
   wss = new WebSocketServer({ server, path: '/ws' });
 
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') return;
+    console.error('WebSocket server error:', err.message);
+  });
+
+  wss.on('error', (err) => {
+    if ((err as any).code === 'EADDRINUSE') return;
+    console.error('WebSocket error:', (err as Error).message);
+  });
+
   wss.on('connection', (ws: WebSocket) => {
     ws.send(JSON.stringify({ type: 'connected' }));
 
