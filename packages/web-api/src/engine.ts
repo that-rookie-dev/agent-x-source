@@ -145,6 +145,29 @@ export function getEngine(): EngineState {
     dek: null,
   };
 
+  // Boot-time Telegram auto-start — bridge starts independently of agent
+  const tgPlugin = state!.pluginRegistry.getPlugin('telegram');
+  const tgConfig = tgPlugin?.config ?? {};
+  if (tgPlugin?.enabled && tgConfig['botToken'] && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
+    try {
+      const gw = new Gateway();
+      state!.gateway = gw;
+      gw.registerTelegram(tgConfig['botToken'] as string);
+      gw.startChannel('telegram').then(() => {
+        const bridge = gw.getTelegramBridge();
+        if (bridge) state!.telegramBridge = bridge;
+      }).catch((e: unknown) => {
+        console.error('Failed to start Telegram channel on boot:', (e as Error).message);
+        // Clean up dead gateway state so restart endpoint can create fresh
+        state!.gateway = null;
+        state!.telegramBridge = null;
+      });
+    } catch (e) {
+      console.error('Failed to register Telegram on boot:', (e as Error).message);
+      state!.gateway = null;
+    }
+  }
+
   return state!;
 }
 
@@ -281,9 +304,9 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
   // ─── Create Gateway for channel management ───
   if (!eng.gateway) {
     const gateway = new Gateway();
-    gateway.attachAgent(agent);
     eng.gateway = gateway;
   }
+  eng.gateway!.attachAgent(agent);
 
   // Start Telegram bridge via Gateway (skip if daemon handles it)
   const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
@@ -305,6 +328,14 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     } catch (e) {
       console.error('Failed to start Telegram bridge', e);
     }
+  } else if (eng.gateway && tgPlugin?.enabled && tgConfig['botToken']) {
+    // Bridge already running — re-attach agent for web session changes
+    try {
+      const entry = (eng.gateway as any).registry.getChannel('telegram');
+      if (entry?.plugin && 'setAgent' in entry.plugin) {
+        entry.plugin.setAgent(agent);
+      }
+    } catch { /* best-effort */ }
   }
 
   // Start Discord bridge if plugin is configured (direct bridge until Gateway migration)
@@ -489,37 +520,7 @@ export function destroyAgent(): void {
     eng.agent.endSession();
     eng.agent = null;
   }
-  if (eng.gateway) {
-    void eng.gateway.stopAll();
-    eng.gateway = null;
-  }
-  if (eng.telegramBridge) {
-    eng.telegramBridge.stop();
-    eng.telegramBridge = null;
-  }
-  if (eng.discordBridge) {
-    eng.discordBridge.stop();
-    eng.discordBridge = null;
-  }
-  if (eng.slackBridge) {
-    eng.slackBridge.stop();
-    eng.slackBridge = null;
-  }
-  if (eng.emailBridge) {
-    eng.emailBridge.stop();
-    eng.emailBridge = null;
-  }
-  if (eng.redisRuntime) {
-    void eng.redisRuntime.disconnect();
-    eng.redisRuntime = null;
-  }
-  if (eng.webhookRuntime) {
-    eng.webhookRuntime.setEnabled(false);
-    eng.webhookRuntime = null;
-  }
-  if (eng.sqliteBrowser) {
-    eng.sqliteBrowser = null;
-  }
+  // Keep gateway and telegram bridge alive — they serve Telegram independently
 }
 
 export function clearEngine(): void {

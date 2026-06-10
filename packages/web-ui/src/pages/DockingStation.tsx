@@ -24,7 +24,7 @@ function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'b
   const user = h?.config?.user || 'Operator';
 
   const sessions = h?.sessionCount ?? 0;
-  const telegram = h?.telegramConnected ? 'Connected' : 'Not configured';
+  const telegram = h?.telegramConnected ? `Connected${h.telegramBot ? ` (@${h.telegramBot})` : ''}` : 'Not configured';
   const mem = h ? `${Math.round((h.memory?.heapUsed ?? 0) / 1024 / 1024)} MB` : '—';
   const uptime = h ? formatUptime(h.uptime) : '—';
 
@@ -230,7 +230,7 @@ export function DockingStation() {
               <StatusRow label="Provider" value={healthData.config?.provider || '—'} color={colors.text.primary} />
               <StatusRow label="Model" value={shortModel(healthData.config?.model)} color={colors.text.primary} />
     
-              <StatusRow label="Telegram" value={healthData.telegramConnected ? 'Connected' : '—'} color={healthData.telegramConnected ? colors.accent.green : colors.text.dim} />
+              <StatusRow label="Telegram" value={healthData.telegramConnected ? `Connected${healthData.telegramBot ? ` (@${healthData.telegramBot})` : ''}` : '—'} color={healthData.telegramConnected ? colors.accent.green : colors.text.dim} />
               <StatusRow label="Sessions" value={String(healthData.sessionCount ?? 0)} color={colors.text.primary} />
               <StatusRow label="Memory" value={`${Math.round((healthData.memory?.heapUsed ?? 0) / 1024 / 1024)} MB`} color={colors.text.primary} />
               <StatusRow label="Uptime" value={formatUptime(healthData.uptime)} color={colors.text.primary} />

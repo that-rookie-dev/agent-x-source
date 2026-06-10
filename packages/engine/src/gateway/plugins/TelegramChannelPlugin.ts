@@ -126,7 +126,10 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
   private setupFileHandling(): void {
     this.bridge.setFileHandler((fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => {
-      if (!this.agent) return;
+      if (!this.agent) {
+        void this.bridge.sendToChat(chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+        return;
+      }
       this.activeChatId = chatId;
 
       void (async () => {
@@ -145,8 +148,10 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
           this.enqueueMessage(fileMsg, chatId);
         } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          this.bridge.sendToChat(chatId, `❌ Failed to receive file: ${errMsg}`);
+          let errMsg = err instanceof Error ? err.message : String(err);
+          const jsonMatch = errMsg.match(/"message"\s*:\s*"([^"]+)"/);
+          if (jsonMatch?.[1]) errMsg = jsonMatch[1];
+          this.bridge.sendToChat(chatId, `❌ ${errMsg}`);
         }
       })();
     });
@@ -174,7 +179,15 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   }
 
   private async processQueue(): Promise<void> {
-    if (this.processingQueue || !this.agent) return;
+    if (this.processingQueue) return;
+    if (!this.agent) {
+      // Drain queue with error responses — agent not initialized yet
+      while (this.messageQueue.length > 0) {
+        const item = this.messageQueue.shift()!;
+        await this.bridge.sendToChat(item.chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+      }
+      return;
+    }
     this.processingQueue = true;
 
     while (this.messageQueue.length > 0) {
@@ -185,8 +198,13 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           await this.bridge.sendToChat(item.chatId, response.content);
         }
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        await this.bridge.sendToChat(item.chatId, `⚠️ Error: ${errMsg}`);
+        let errMsg = err instanceof Error ? err.message : String(err);
+        // Strip verbose JSON from provider errors
+        const jsonMatch = errMsg.match(/"message"\s*:\s*"([^"]+)"/);
+        if (jsonMatch?.[1]) errMsg = jsonMatch[1];
+        // Trim to reasonable length for Telegram
+        if (errMsg.length > 400) errMsg = errMsg.slice(0, 400) + '...';
+        await this.bridge.sendToChat(item.chatId, `⚠️ ${errMsg}`);
       }
     }
 

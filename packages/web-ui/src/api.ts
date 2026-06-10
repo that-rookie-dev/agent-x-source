@@ -577,6 +577,7 @@ export interface HealthStatus {
   crewCount: number;
   agentActive: boolean;
   telegramConnected: boolean;
+  telegramBot?: string | null;
   memory: { rss: number; heapUsed: number };
   config?: { provider?: string; model?: string; user?: string };
 }

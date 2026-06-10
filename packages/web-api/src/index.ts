@@ -95,6 +95,7 @@ app.get('/api/health', (_req, res) => {
   let agentActive = false;
   let configInfo: Record<string, unknown> = {};
   let telegramConnected = false;
+  let telegramBot: string | null = null;
   if (eng) {
     try {
       const sessions = eng.sessionManager.listSessions(9999);
@@ -113,6 +114,7 @@ app.get('/api/health', (_req, res) => {
       const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
       telegramConnected = !!tgPlugin?.enabled && !!tgPlugin?.config?.['botToken'];
     } catch { /* ignore */ }
+    telegramBot = eng.telegramBridge?.isRunning() ? eng.telegramBridge.getStatus().botUsername ?? null : null;
   }
   res.json({
     status: 'ok',
@@ -129,6 +131,7 @@ app.get('/api/health', (_req, res) => {
     crewCount,
     agentActive,
     telegramConnected,
+    telegramBot,
     gateway: eng?.gateway ? {
       focus: eng.gateway.focus.getFocus(),
       channels: eng.gateway.registry.listChannels(),
@@ -1397,6 +1400,28 @@ app.post('/api/telegram/start', async (req, res) => {
     }
     // Auto-enable the plugin
     eng.pluginRegistry.enable('telegram');
+    // Start Telegram bridge immediately if not already running
+    if (!eng.telegramBridge && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
+      // If gateway exists but bridge is dead, clean up stale state
+      if (eng.gateway) {
+        try { eng.gateway.stopChannel('telegram'); } catch { /* ignore */ }
+        eng.gateway = null;
+      }
+      const { Gateway } = await import('@agentx/engine');
+      eng.gateway = new Gateway();
+      try {
+        const tgPlugin = eng.gateway.registerTelegram(token);
+        const agent = getOrCreateAgent();
+        if (agent) tgPlugin.setAgent(agent);
+        await eng.gateway.startChannel('telegram');
+        eng.telegramBridge = eng.gateway.getTelegramBridge();
+        res.json({ ok: true, message: 'Telegram bot started and listening.' });
+        return;
+      } catch (e) {
+        res.json({ ok: true, message: 'Token saved but bridge start failed. Will retry on next session.' });
+        return;
+      }
+    }
     res.json({ ok: true, message: 'Token saved. Telegram plugin configured and enabled.' });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
@@ -1406,10 +1431,19 @@ app.post('/api/telegram/start', async (req, res) => {
 app.post('/api/telegram/stop', (_req, res) => {
   try {
     const eng = getEngine();
-    if (eng.pluginRegistry.isInstalled('telegram')) {
-      eng.pluginRegistry.uninstall('telegram');
+    // Stop running bridge
+    if (eng.telegramBridge) {
+      try { eng.telegramBridge.stop(); } catch { /* ignore */ }
+      eng.telegramBridge = null;
     }
-    res.json({ ok: true });
+    if (eng.gateway) {
+      try { eng.gateway.stopChannel('telegram'); } catch { /* ignore */ }
+    }
+    // Disable plugin but keep config so it auto-starts on next launch
+    if (eng.pluginRegistry.isInstalled('telegram')) {
+      eng.pluginRegistry.disable('telegram');
+    }
+    res.json({ ok: true, message: 'Telegram bot stopped. Config preserved for next launch.' });
   } catch {
     res.status(500).json({ error: 'clear-failed' });
   }
