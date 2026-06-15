@@ -8,6 +8,7 @@ import { BaseTransport } from './BaseTransport.js';
 export class GenericTransport extends BaseTransport {
   readonly id: string;
   readonly route: ProviderRoute;
+  readonly state: Record<string, unknown> = {};
 
   constructor(route: ProviderRoute) {
     super();
@@ -84,7 +85,7 @@ export class GenericTransport extends BaseTransport {
 
             try {
               const chunk = JSON.parse(trimmed);
-              const event = this.route.protocol.normalizeEvent(chunk, {});
+              const event = this.route.protocol.normalizeEvent(chunk, this.state);
               if (event) yield event;
             } catch {
               // Skip unparseable chunks
@@ -103,7 +104,7 @@ export class GenericTransport extends BaseTransport {
 
             try {
               const chunk = JSON.parse(data);
-              const event = this.route.protocol.normalizeEvent(chunk, {});
+              const event = this.route.protocol.normalizeEvent(chunk, this.state);
               if (event) yield event;
             } catch {
               // Skip unparseable chunks

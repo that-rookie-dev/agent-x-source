@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -41,18 +41,16 @@ import RouteIcon from '@mui/icons-material/Route';
 import SearchIcon from '@mui/icons-material/Search';
 import HistoryIcon from '@mui/icons-material/History';
 import DownloadIcon from '@mui/icons-material/Download';
-import FlagIcon from '@mui/icons-material/Flag';
+
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState } from '../api';
 import { colors } from '../theme';
-import ModeSuggestionModal, { shouldSuggestMode, DISMISS_KEY } from './ModeSuggestionModal';
 import {
   ConnectionHealthDot,
   ScrollToBottomPill,
-  SlashCommandMenu,
   CommandPalette,
   SessionSearchModal,
   DoomLoopWarning,
@@ -60,9 +58,7 @@ import {
   CheckpointDrawer,
   TurnTokenBadge,
   StreamingCursor,
-  SLASH_COMMANDS,
   CrewMentionMenu,
-  type SlashCommand,
   type PaletteAction,
 } from './ChatEnhancements';
 import { MentionInput } from './MentionInput';
@@ -183,6 +179,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return msg;
   }, []);
 
+  // Replace a warning if one with the same tool name (doom loop) exists, else append
+  const replaceWarning = useCallback((prev: string[], newMsg: string): string[] => {
+    // Detect doom-loop style: "toolName called Nx consecutively" or "[DOOM LOOP DETECTED] toolName"
+    const doomMatch = newMsg.match(/(\[DOOM LOOP DETECTED\])?\s*(\S+?)\s*(?:called|repeated)/i);
+    if (doomMatch) {
+      const toolName = doomMatch[2];
+      const idx = prev.findIndex(w => w.includes(toolName) && /(called|repeated)\s+\d+\s*x?/i.test(w));
+      if (idx !== -1) {
+        const copy = [...prev];
+        copy[idx] = newMsg;
+        return copy;
+      }
+    }
+    return prev.includes(newMsg) ? prev : [...prev, newMsg];
+  }, []);
+
   // Sync view with sessionId prop from URL — also restore session history on mount/refresh
   useEffect(() => {
     if (sessionId) {
@@ -224,7 +236,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [tokenOutputPrice, setTokenOutputPrice] = useState(0);
   const [tokenTotal, setTokenTotal] = useState(128000);
   const [compactionCount, setCompactionCount] = useState(0);
-  const skipSuggestionRef = useRef(false);
+  
 
   // Model/Provider state
   const [currentModel, setCurrentModel] = useState('');
@@ -238,9 +250,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [crewList, setCrewList] = useState<Crew[]>([]);
 
   // Agent mode
-  const [agentMode, setAgentMode] = useState<AgentMode>('plan');
-  const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
-  const [pendingSendText, setPendingSendText] = useState<string | null>(null);
+  const [agentMode, setAgentMode] = useState<AgentMode>('agent');
+  
 
   // CWD
   const [cwd, setCwd] = useState('');
@@ -265,15 +276,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [folderConsentOpen, setFolderConsentOpen] = useState(false);
   const [folderPickerLoading, setFolderPickerLoading] = useState(false);
   const pendingFolderActionRef = useRef<'newSession' | 'changeCwd' | null>(null);
-  const [showSlash, setShowSlash] = useState(false);
-  const slashQuery = useMemo(() => {
-    if (!input.startsWith('/')) return '';
-    const line = input.split('\n')[0] ?? '';
-    if (line.includes(' ')) return '';
-    return line;
-  }, [input]);
-  useEffect(() => { setShowSlash(slashQuery.length > 0); }, [slashQuery]);
-
   // @-mention detection
   const [showCrewMention, setShowCrewMention] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -361,7 +363,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
     system.cwd().then((r) => { setCwd(r.cwd || ''); }).catch(() => {});
-    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); else setAgentMode('plan'); }).catch(() => {});
+    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); else setAgentMode('agent'); }).catch(() => {});
     // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
       .then(r => r.json())
@@ -400,15 +402,18 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     if (match?.contextWindow) setTokenTotal(match.contextWindow);
   }, [currentModel, modelList]);
 
+  // Helper to immutably update the last assistant message (avoids React mutation anti-pattern).
+  // Defined at component level so other effects (streaming timeout, SSE handler) can share it.
+  const updateLastMessage = (msgs: UIMessage[], updates: Partial<UIMessage>): UIMessage[] => {
+    if (msgs.length === 0) return msgs;
+    const last = msgs[msgs.length - 1];
+    if (last?.role !== 'assistant') return msgs;
+    return [...msgs.slice(0, -1), { ...last, ...updates }];
+  };
+
   // Connect SSE for streaming events
   useEffect(() => {
-    // Helper to immutably update the last message (avoids React mutation anti-pattern)
-    const updateLastMessage = (msgs: UIMessage[], updates: Partial<UIMessage>): UIMessage[] => {
-      if (msgs.length === 0) return msgs;
-      const last = msgs[msgs.length - 1];
-      if (last?.role !== 'assistant') return msgs;
-      return [...msgs.slice(0, -1), { ...last, ...updates }];
-    };
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const handleEvent = (ev: TelemetryEvent) => {
       // Reset activity timer on every event from the agent
@@ -420,18 +425,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
         switch (ev.type) {
           case 'loading_start': {
-            // Set up loading steps if provided
-            const loadingStepsEvent = ev as { type: 'loading_start'; stage: string; steps?: Array<{ id: string; label: string; status: string }> };
-            if (loadingStepsEvent.steps && loadingStepsEvent.steps.length > 0) {
-              setLoadingSteps(loadingStepsEvent.steps);
-            }
-            // If the last assistant message is no longer streaming (closed by
-            // a prior loading_end from a fast-reply failure), reuse it instead
-            // of creating a duplicate placeholder.
-            if (last?.role === 'assistant' && !last.streaming && last.content) {
+            setLoadingSteps(null);
+            // Only create a placeholder when a user message just arrived (new turn).
+            // If the last message is a completed assistant (race with handleSend),
+            // let stream_chunk or message_received handle the placeholder instead.
+            if (last?.role === 'user') {
               setStreaming(true);
-              return updateLastMessage(prev, { streaming: true });
-            } else if (!last || last.role !== 'assistant' || !last.streaming) {
+              return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
+            }
+            if (!last) {
               setStreaming(true);
               return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
             }
@@ -461,10 +463,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'loading_end':
             setLoadingSteps(null);
             setStreaming(false);
-            return updateLastMessage(prev, { streaming: false });
+            return prev;
 
           case 'message_received': {
-            const msg = ev.message as { id?: string; content?: string; role?: string; crew?: { crewId: string; name: string; callsign: string } } | undefined;
+            const msg = ev.message as { id?: string; content?: string; role?: string; crew?: { crewId: string; name: string; callsign: string }; tokenCount?: number } | undefined;
             const crew = msg?.crew;
             setStreaming(false);
             if (!msg || msg.role === 'system') return prev;
@@ -472,21 +474,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             if (last?.role === 'assistant') {
               if (last.streaming) {
                 if (last.content) {
-                  // Streaming with content — this is an independent message (e.g. reminder).
-                  // Finalize the streaming message and append the new one.
-                  const finalized = { ...last, streaming: false };
-                  return msg.role === 'assistant'
-                    ? [...prev.slice(0, -1), finalized, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, ...(crew ? { crew } : {}) } as UIMessage]
-                    : [...prev.slice(0, -1), finalized];
+                  // Content already streamed via stream_chunk — just finalize.
+                  return updateLastMessage(prev, { streaming: false, ...(crew ? { crew } : {}) });
                 }
                 // Streaming placeholder with no content yet — this is the final content
                 return updateLastMessage(prev, { content: text || last.content, streaming: false, ...(crew ? { crew } : {}) });
               }
-              // Not streaming — independent message, append
-              if (msg.role === 'assistant' && text) {
-                return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, ...(crew ? { crew } : {}) } as UIMessage];
-              }
-              return prev;
+              // Not streaming — it's the final confirmation for the same message, update in place
+              return updateLastMessage(prev, { streaming: false, ...(crew ? { crew } : {}) });
             }
             if (msg.role === 'assistant' && text) {
               return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, ...(crew ? { crew } : {}) } as UIMessage];
@@ -618,9 +613,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'provider_error': {
             const providerMsg = (ev.message as string) ?? 'Provider error';
             const msg = extractProviderError(providerMsg);
-            setWarnings(prev => prev.includes(msg) ? prev : [...prev, msg]);
+            setWarnings(prev => replaceWarning(prev, msg));
             if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
             setStreaming(false);
+            if (last?.role === 'assistant' && last.streaming && !last.content && !last.toolCalls?.length) {
+              return prev.slice(0, -1);
+            }
             if (last?.role !== 'assistant') return prev;
             return updateLastMessage(prev, { streaming: false });
           }
@@ -639,8 +637,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'error': {
             const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
             // Route to warning band — errors should not pollute the chat bubble
-            setWarnings(prev => prev.includes(errorText) ? prev : [...prev, errorText]);
+            setWarnings(prev => replaceWarning(prev, errorText));
             setStreaming(false);
+            if (last?.role === 'assistant' && last.streaming && !last.content && !last.toolCalls?.length) {
+              return prev.slice(0, -1);
+            }
             if (last?.role !== 'assistant') return prev;
             return updateLastMessage(prev, { streaming: false });
           }
@@ -653,9 +654,36 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
     disconnectRef.current = connectSSE({
       onEvent: handleEvent,
-      onState: (state) => { setConnState(state); if (state === 'open') setLastEventAt(Date.now()); },
+      onState: (state) => {
+        setConnState(state);
+        if (state === 'open') {
+          setLastEventAt(Date.now());
+        } else if (state === 'reconnecting') {
+          // Safety: if streaming and SSE drops, force-close after a grace period
+          // so the UI doesn't stay stuck in loading state forever.
+          // Cleared if the connection restores before the timeout.
+          reconnectTimeout = setTimeout(() => {
+            setMessages(prev => {
+              const last = prev[prev.length - 1];
+              if (last?.role === 'assistant' && last.streaming) {
+                return updateLastMessage(prev, { streaming: false });
+              }
+              return prev;
+            });
+            setStreaming(false);
+          }, 30000);
+        }
+        // Separate check: clear reconnect timeout when SSE restores
+        if (state === 'open' && reconnectTimeout) {
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = null;
+        }
+      },
     });
-    return () => { disconnectRef.current?.(); };
+    return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      disconnectRef.current?.();
+    };
   }, []);
 
   // Load history on mount — only if no sessionId (session restore handles it instead)
@@ -673,18 +701,31 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }).catch(() => {});
   }, [sessionId]);
 
-  // Streaming timeout — if no content or events arrive within 120s, fail gracefully
-  // Uses a ref to reset the timer on each new event (activity-based timeout)
+  // Streaming timeout — if no content or events arrive, fail gracefully.
+  // Uses a ref to reset the timer on each new event (activity-based timeout).
+  // - If no content starts within 60s, time out with error.
+  // - If content is flowing but stalls for 60s, force-close streaming.
   const lastActivityRef = useRef<number>(Date.now());
   useEffect(() => {
     if (!streaming) return;
     lastActivityRef.current = Date.now();
     const timer = setInterval(() => {
-      if (Date.now() - lastActivityRef.current > 120000) {
+      const elapsed = Date.now() - lastActivityRef.current;
+      if (elapsed > 120000) {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (last?.role === 'assistant' && last.streaming && !last.content) {
-            return [...prev.slice(0, -1), { ...last, content: '⚠️ Request timed out. The agent took too long to respond. Please try again.', streaming: false }];
+          if (last?.role === 'assistant') {
+            return updateLastMessage(prev, { content: '⚠️ Request timed out. The agent took too long to respond. Please try again.', streaming: false });
+          }
+          return prev;
+        });
+        setStreaming(false);
+      } else if (elapsed > 60000) {
+        // Force-close streaming if stuck for over 60s with no activity
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'assistant' && last.streaming) {
+            return updateLastMessage(prev, { streaming: false });
           }
           return prev;
         });
@@ -721,21 +762,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const handleSend = useCallback(async (overrideText?: string) => {
     const text = typeof overrideText === 'string' ? overrideText.trim() : input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
-
-    // Mode suggestion: if in Plan mode and text implies action, suggest switching to Agent
-    if (agentMode === 'plan' && shouldSuggestMode(text) && !localStorage.getItem(DISMISS_KEY) && !skipSuggestionRef.current) {
-      setPendingSendText(text);
-      setModeSuggestOpen(true);
-      return;
-    }
-
-    if (text.startsWith('/')) {
-      const handled = await runSlashCommand(text);
-      if (handled) {
-        setInput('');
-        return;
-      }
-    }
     if (!currentProvider || !currentModel) return;
 
     // Create session lazily on first message
@@ -751,12 +777,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       streaming: false,
       attachments: attachments.map((a) => ({ name: a.name })),
     };
-    // Add user message + a placeholder assistant message to show thinking immediately
-    setMessages((prev) => [
-      ...prev,
-      userMsg,
-      { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true },
-    ]);
+    // Add user message — SSE (loading_start) will create the assistant placeholder
+    setMessages((prev) => [...prev, userMsg]);
 
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
@@ -795,13 +817,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired|insufficient|credits|balance|dunning|deny/i.test(errorMsg);
       if (isProviderErr) {
         const msg = extractProviderError(errorMsg);
-        setWarnings(prev => prev.includes(msg) ? prev : [...prev, msg]);
+        setWarnings(prev => replaceWarning(prev, msg));
         if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
         // Clear server-side agent processing state so next message isn't blocked
         chat.cancel().catch(() => {});
       } else {
         // Non-provider errors (e.g., "Agent is busy") — also show in warning band
-        setWarnings(prev => prev.includes(displayError) ? prev : [...prev, displayError]);
+        setWarnings(prev => replaceWarning(prev, displayError));
         chat.cancel().catch(() => {});
       }
       setMessages((prev) => {
@@ -815,6 +837,56 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setStreaming(false);
     }
   }, [input, streaming, attachments, currentProvider, currentModel, agentMode]);
+
+  // Retry last user message — re-sends without duplicating the user message,
+  // replaces the existing assistant response on success.
+  const handleResend = useCallback(async (text: string) => {
+    if (!text || streaming || !currentProvider || !currentModel) return;
+    if (!(await ensureSession())) return;
+
+    setStreaming(true);
+
+    // Remove the old assistant response — SSE (loading_start) will create the placeholder
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      return last?.role === 'assistant' ? prev.slice(0, -1) : prev;
+    });
+
+    try {
+      const result = await chat.send(text, undefined, true);
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'assistant' && last.streaming) {
+          if (!last.content && result?.message?.content) {
+            return [...prev.slice(0, -1), { ...result.message, streaming: false }];
+          }
+          return [...prev.slice(0, -1), { ...last, streaming: false }];
+        }
+        return prev;
+      });
+      setStreaming(false);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
+      const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired|insufficient|credits|balance|dunning|deny/i.test(errorMsg);
+      if (isProviderErr) {
+        const msg = extractProviderError(errorMsg);
+        setWarnings(prev => replaceWarning(prev, msg));
+        chat.cancel().catch(() => {});
+      } else {
+        setWarnings(prev => replaceWarning(prev, displayError));
+        chat.cancel().catch(() => {});
+      }
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'assistant' && last.streaming) {
+          return prev.slice(0, -1);
+        }
+        return prev;
+      });
+      setStreaming(false);
+    }
+  }, [streaming, currentProvider, currentModel]);
 
   // --- Clarification keyboard navigation & submission ---
   const clearClarification = useCallback(() => {
@@ -896,122 +968,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   };
 
   // ─── Slash command handler ───
-  const runSlashCommand = useCallback(async (raw: string): Promise<boolean> => {
-    const line = raw.trim();
-    if (!line.startsWith('/')) return false;
-    const [cmd, ...rest] = line.slice(1).split(/\s+/);
-    const argStr = rest.join(' ');
-    const sid = currentSessionId;
-    switch (cmd) {
-      case 'help': {
-        const helpText = 'Available slash commands:\n\n' + SLASH_COMMANDS.map(c => `**${c.name}** — ${c.description}`).join('\n');
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: helpText, streaming: false }]);
-        return true;
-      }
-      case 'clear': {
-        try { await chat.clear(); } catch { /* ignore */ }
-        setMessages([]);
-        setTokenUsed(0);
-        setTokenInput(0);
-        setTokenOutput(0);
-        setCompactionCount(0);
-        return true;
-      }
-      case 'compact': {
-        if (!sid) return true;
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '✨ Compacting session…', streaming: true }]);
-        try {
-          const r = await sessions.compact(sid);
-          setMessages(prev => {
-            const m = [...prev];
-            const last = m[m.length - 1];
-            if (last?.streaming) { last.streaming = false; last.content = `✨ Session compacted.\n\n${r.summary || ''}`; }
-            return m;
-          });
-        } catch (e) {
-          setMessages(prev => [...prev.slice(0, -1), { id: crypto.randomUUID(), role: 'assistant', content: `⚠️ Compaction failed: ${e instanceof Error ? e.message : 'unknown'}`, streaming: false }]);
-        }
-        return true;
-      }
-      case 'retry': {
-        const lastUser = [...messages].reverse().find(m => m.role === 'user');
-        if (lastUser?.content) {
-          setInput(lastUser.content);
-          setTimeout(() => handleSend(), 50);
-        }
-        return true;
-      }
-      case 'undo': {
-        if (!sid) return true;
-        try {
-          const list = await sessions.checkpoints(sid);
-          if (list.length === 0) {
-            setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '⚠️ No checkpoints available. Use `/checkpoint` to save one first.', streaming: false }]);
-            return true;
-          }
-          await sessions.restoreCheckpoint(sid, list[0]!.id);
-          const h = await chat.history();
-          const visible = h.filter(m => m.role !== 'system');
-          setMessages(visible.map(m => ({ ...m, streaming: false })));
-          const totalUsed = visible.reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
-          setTokenUsed(totalUsed);
-          const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
-          const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
-          setTokenInput(inputEst);
-          setTokenOutput(outputEst);
-        } catch { /* ignore */ }
-        return true;
-      }
-      case 'checkpoint': {
-        if (!sid) return true;
-        try {
-          const r = await sessions.checkpoint(sid, argStr || undefined);
-          setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `📝 Checkpoint saved: **${r.label}**`, streaming: false }]);
-        } catch { /* ignore */ }
-        return true;
-      }
-      case 'checkpoints': {
-        setCheckpointsOpen(true);
-        return true;
-      }
-      case 'search': {
-        setSearchOpen(true);
-        return true;
-      }
-      case 'think': {
-        // Force plan mode for this turn
-        setAgentMode('plan');
-        sessionSettings.setMode('plan').catch(() => {});
-        if (argStr) {
-          setInput(argStr);
-          setTimeout(() => handleSend(), 30);
-        }
-        return true;
-      }
-      case 'export': {
-        if (!sid) return true;
-        sessions.exportTrajectory(sid);
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `📦 Exporting trajectory for session **${sid.slice(0, 8)}**…`, streaming: false }]);
-        return true;
-      }
-      case 'goal': {
-        if (!argStr) {
-          setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '⚠️ Usage: `/goal <multi-step objective>`', streaming: false }]);
-          return true;
-        }
-        // Goal mode: force plan mode + prepend a goal-framing instruction
-        setAgentMode('plan');
-        sessionSettings.setMode('plan').catch(() => {});
-        setInput(`🎯 GOAL: ${argStr}\n\nBreak this down into concrete steps, then execute them. Use the task tracker. Stop and report after each major milestone.`);
-        setTimeout(() => handleSend(), 30);
-        return true;
-      }
-      default:
-        return false;
-    }
-  }, [currentSessionId, messages]);
-
-  // ─── Global keyboard shortcuts (declared after runSlashCommand to avoid TDZ) ───
+  // ─── Global keyboard shortcuts ───
   // Tab key cycles mode when not typing in input
   const handleToggleMode = useCallback(() => {
     setAgentMode(prev => {
@@ -1034,10 +991,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         e.preventDefault();
         setSearchOpen(true);
       } else if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
-        if (currentSessionId) {
-          e.preventDefault();
-          runSlashCommand('/undo');
-        }
+        e.preventDefault();
+        handleResend(messages.filter(m => m.role === 'user').pop()?.content ?? '');
       } else if (e.key === 'Escape' && streaming) {
         e.preventDefault();
         handleCancel();
@@ -1045,23 +1000,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentSessionId, streaming, runSlashCommand, view, handleToggleMode]);
+  }, [currentSessionId, streaming, messages, handleResend, view, handleToggleMode]);
 
-  // ─── Command palette actions (declared after runSlashCommand to avoid TDZ) ───
+  // ─── Command palette actions ───
   const paletteActions: PaletteAction[] = useMemo(() => [
     { id: 'new-session', label: 'New session', hint: 'N', icon: <AddIcon sx={{ fontSize: 14 }} />, run: () => handleNewSession() },
     { id: 'sessions', label: 'Show all sessions', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => handleShowSessions() },
     { id: 'search', label: 'Search sessions', hint: '⌘F', icon: <SearchIcon sx={{ fontSize: 14 }} />, run: () => setSearchOpen(true) },
     { id: 'checkpoints', label: 'Open checkpoints', icon: <HistoryIcon sx={{ fontSize: 14 }} />, run: () => setCheckpointsOpen(true) },
-    { id: 'clear', label: 'Clear chat', icon: <DeleteIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/clear') },
-    { id: 'compact', label: 'Compact session', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/compact') },
-    { id: 'undo', label: 'Undo (restore latest checkpoint)', hint: '⌘Z', icon: <ArrowBackIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/undo') },
-    { id: 'retry', label: 'Retry last message', icon: <SendIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/retry') },
-    { id: 'export', label: 'Export trajectory (JSON)', icon: <DownloadIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/export') },
-    { id: 'goal', label: 'Set Goal Mode objective', icon: <FlagIcon sx={{ fontSize: 14 }} />, run: () => { setInput('/goal '); } },
     { id: 'mode-agent', label: 'Switch mode → Agent', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('agent'); sessionSettings.setMode('agent').catch(() => {}); } },
     { id: 'mode-plan', label: 'Switch mode → Plan', icon: <RouteIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('plan'); sessionSettings.setMode('plan').catch(() => {}); } },
-  ], [runSlashCommand]);
+  ], []);
 
   const handleStopAndSend = async () => {
     const text = input.trim();
@@ -1126,6 +1075,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       e.preventDefault();
       handleSend();
     }
+    // Shift+Enter → let the textarea insert the newline (don't prevent default)
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1422,18 +1372,25 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
           {visibleMessages.map((msg, idx) => {
             const isLastUser = msg.role === 'user' && visibleMessages.slice(idx + 1).every(m => m.role !== 'user');
-            return (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              isLastUser={isLastUser}
-              onResend={isLastUser ? handleSend : undefined}
-              onDismissDoomLoop={() => setMessages(prev => { const last = prev[prev.length - 1]; if (!last?.doomLoop) return prev; return [...prev.slice(0, -1), { ...last, doomLoop: null }]; })}
-              loadingSteps={idx === visibleMessages.length - 1 && msg.streaming && !msg.content ? loadingSteps : null}
-            />
+             return (
+               <Box key={msg.id}>
+                 <MessageBubble
+                   message={msg}
+                   onDismissDoomLoop={() => setMessages(prev => { const last = prev[prev.length - 1]; if (!last?.doomLoop) return prev; return [...prev.slice(0, -1), { ...last, doomLoop: null }]; })}
+                   loadingSteps={idx === visibleMessages.length - 1 && msg.streaming && !msg.content ? loadingSteps : null}
+                 />
+                  {isLastUser && msg.content && (
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: -1, mb: 0.5, mr: 5 }}>
+                     <IconButton size="small" onClick={() => handleResend(msg.content)}
+                       sx={{ p: 0.3, opacity: 0.4, '&:hover': { opacity: 1, bgcolor: 'transparent' } }}>
+                       <ReplayIcon sx={{ fontSize: 13 }} />
+                     </IconButton>
+                   </Box>
+                 )}
+               </Box>
             );
           })}
-          {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
+           {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
             <ThinkingIndicator label={loadingSteps?.[0]?.label} />
           )}
 
@@ -1473,20 +1430,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             transition: 'max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease',
             mb: hasWarnings ? '-20px' : 0,
           }}>
-            <Box sx={{
-              bgcolor: colors.accent.orange + '18',
-              border: `1px solid ${colors.accent.orange}30`,
-              borderBottom: 'none',
-              borderRadius: '14px 14px 0 0',
-              px: 1.5,
-              pt: 1,
-              pb: 3,
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 0.75,
-              maxHeight: 250,
-            }}>
-              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0.3, overflowY: 'auto', maxHeight: 240, pb: 2 }}>
+    <Box sx={{
+      bgcolor: colors.accent.orange + '18',
+      border: `1px solid ${colors.accent.orange}30`,
+      borderBottom: 'none',
+      borderRadius: '14px 14px 0 0',
+      px: 1.5, pt: 1, pb: 1.5,
+      display: 'flex', alignItems: 'flex-start', gap: 0.75,
+      maxHeight: 250,
+    }}>
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0.3, overflowY: 'auto', maxHeight: 240, pb: 1 }}>
                 {allWarnings.map((msg, i) => (
                   <Typography key={i} sx={{
                     fontSize: '0.58rem',
@@ -1541,17 +1494,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             transition: 'border-color 0.2s, background-color 0.2s',
             '&:focus-within': { borderColor: agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
           }}>
-            {/* Slash command autocomplete */}
-            {showSlash && (
-              <SlashCommandMenu
-                query={slashQuery}
-                onSelect={(cmd: SlashCommand) => {
-                  setInput(cmd.example ? cmd.name + ' ' : cmd.name);
-                  setShowSlash(false);
-                }}
-                onClose={() => setShowSlash(false)}
-              />
-            )}
             {/* @-mention crew autocomplete */}
             {showCrewMention && (
               <CrewMentionMenu
@@ -2147,7 +2089,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             • You can change the working directory at any time from the sidebar.
           </Typography>
           <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7 }}>
-            • Use the approval mode ("Ask" / "Moderate" / "Auto") to control how much autonomy Agent-X has.
+            • Switch between Agent (full autonomy with tool execution) and Plan (structured plan with step approval) modes in the toolbar.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
@@ -2165,29 +2107,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         </Box>
       )}
 
-      <ModeSuggestionModal
-        open={modeSuggestOpen}
-        onSwitch={() => {
-          setModeSuggestOpen(false);
-          setAgentMode('agent');
-          sessionSettings.setMode('agent').catch(() => {});
-          // Re-send with Agent mode
-          const txt = pendingSendText;
-          setPendingSendText(null);
-          if (txt) setTimeout(() => handleSend(txt), 50);
-        }}
-        onStay={() => {
-          setModeSuggestOpen(false);
-          skipSuggestionRef.current = true;
-          const txt = pendingSendText;
-          setPendingSendText(null);
-          if (txt) setTimeout(() => handleSend(txt), 50);
-        }}
-        onClose={() => {
-          setModeSuggestOpen(false);
-          setPendingSendText(null);
-        }}
-      />
     </Box>
   );
 }
@@ -2299,9 +2218,104 @@ const MARKDOWN_BASE_SX = {
 
 const MAX_CODE_LINES = 30;
 
+// Box-drawing and tree characters used in ASCII structural art (folder trees, diagrams)
+const STRUCTURAL_CHARS = new Set([
+  '├', '─', '│', '└', '┌', '┐', '┘', '┃', '┏', '┓', '┗', '┛',
+  '╋', '╂', '┊', '┆', '═', '║', '╟', '╠', '╢', '╣', '╩', '╦',
+  '╬', '▌', '▐', '▀', '▄', '█', '░', '▒', '▓',
+]);
+
+function isStructuralArt(text: string): boolean {
+  const lines = text.split('\n');
+  if (lines.length < 2) return false;
+  const treeLineRe = /^[\s│├└┌┐┘┃┏┓┗┛╋╂╟╠╢╣╩╦╬+|\-`].*[─│└├┌┐┘║]/;
+  let structuralCount = 0;
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    if (!trimmed) continue;
+    // Check if line contains box-drawing chars
+    let hasStructural = false;
+    for (const ch of trimmed) {
+      if (STRUCTURAL_CHARS.has(ch)) { hasStructural = true; break; }
+    }
+    // Also check common ASCII tree/diagram patterns
+    if (!hasStructural && treeLineRe.test(trimmed)) hasStructural = true;
+    // Check for indentation-heavy content (code-like)
+    if (!hasStructural && /^[ \t]{2,}[\w\/\-.]/.test(trimmed)) hasStructural = true;
+    if (hasStructural) structuralCount++;
+  }
+  // At least half the non-empty lines should look structural
+  const nonEmpty = lines.filter(l => l.trim().length > 0).length;
+  return nonEmpty >= 2 && structuralCount >= Math.ceil(nonEmpty / 2);
+}
+
+const CONTENT_TYPE: Record<string, { type: string; label: string }> = {
+  ts: { type: 'Code', label: 'TypeScript' },
+  tsx: { type: 'Code', label: 'TSX' },
+  js: { type: 'Code', label: 'JavaScript' },
+  jsx: { type: 'Code', label: 'JSX' },
+  py: { type: 'Code', label: 'Python' },
+  rs: { type: 'Code', label: 'Rust' },
+  go: { type: 'Code', label: 'Go' },
+  java: { type: 'Code', label: 'Java' },
+  rb: { type: 'Code', label: 'Ruby' },
+  php: { type: 'Code', label: 'PHP' },
+  scala: { type: 'Code', label: 'Scala' },
+  kt: { type: 'Code', label: 'Kotlin' },
+  swift: { type: 'Code', label: 'Swift' },
+  c: { type: 'Code', label: 'C' },
+  cpp: { type: 'Code', label: 'C++' },
+  cs: { type: 'Code', label: 'C#' },
+  html: { type: 'Code', label: 'HTML' },
+  css: { type: 'Code', label: 'CSS' },
+  scss: { type: 'Code', label: 'SCSS' },
+  less: { type: 'Code', label: 'Less' },
+  json: { type: 'Config', label: 'JSON' },
+  yaml: { type: 'Config', label: 'YAML' },
+  yml: { type: 'Config', label: 'YAML' },
+  toml: { type: 'Config', label: 'TOML' },
+  xml: { type: 'Config', label: 'XML' },
+  csv: { type: 'Config', label: 'CSV' },
+  ini: { type: 'Config', label: 'INI' },
+  env: { type: 'Config', label: '.env' },
+  sh: { type: 'Shell', label: 'Shell' },
+  bash: { type: 'Shell', label: 'Shell' },
+  zsh: { type: 'Shell', label: 'Shell' },
+  shell: { type: 'Shell', label: 'Shell' },
+  powershell: { type: 'Shell', label: 'PowerShell' },
+  ps1: { type: 'Shell', label: 'PowerShell' },
+  sql: { type: 'SQL', label: 'SQL' },
+  prompt: { type: 'Prompt', label: 'Prompt' },
+  md: { type: 'Markdown', label: 'Markdown' },
+  markdown: { type: 'Markdown', label: 'Markdown' },
+  mdx: { type: 'Markdown', label: 'MDX' },
+  diff: { type: 'Diff', label: 'Diff' },
+  patch: { type: 'Diff', label: 'Patch' },
+  graphql: { type: 'Code', label: 'GraphQL' },
+  gql: { type: 'Code', label: 'GraphQL' },
+  dockerfile: { type: 'Code', label: 'Dockerfile' },
+  docker: { type: 'Code', label: 'Dockerfile' },
+  makefile: { type: 'Code', label: 'Makefile' },
+  cmake: { type: 'Code', label: 'CMake' },
+  r: { type: 'Code', label: 'R' },
+  dart: { type: 'Code', label: 'Dart' },
+  lua: { type: 'Code', label: 'Lua' },
+  elixir: { type: 'Code', label: 'Elixir' },
+  erlang: { type: 'Code', label: 'Erlang' },
+  haskell: { type: 'Code', label: 'Haskell' },
+  clojure: { type: 'Code', label: 'Clojure' },
+  solidity: { type: 'Code', label: 'Solidity' },
+  nix: { type: 'Config', label: 'Nix' },
+  terraform: { type: 'Config', label: 'Terraform' },
+  tf: { type: 'Config', label: 'Terraform' },
+  hcl: { type: 'Config', label: 'HCL' },
+  text: { type: 'Text', label: 'Text' },
+  plain: { type: 'Text', label: 'Text' },
+};
+
 function CodeBlockWithCopy({ code, language }: { code: string; language?: string }) {
   const [copied, setCopied] = useState(false);
-  const displayCode = code;
+  const meta = (language ? CONTENT_TYPE[language.toLowerCase()] : null) || { type: 'Code', label: language || 'Text' };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code).catch(() => {});
@@ -2310,33 +2324,47 @@ function CodeBlockWithCopy({ code, language }: { code: string; language?: string
   };
 
   return (
-    <Box sx={{ position: 'relative', my: 0.75 }}>
+    <Box sx={{ my: 1, border: `1px solid ${colors.border.default}`, borderRadius: 1, overflow: 'hidden' }}>
       <Box sx={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        px: 1.5, py: 0.4,
-        bgcolor: '#2d2d2d', borderTopLeftRadius: 6, borderTopRightRadius: 6,
-        borderBottom: '1px solid #3a3a3a',
+        px: 1.25, py: 0.45,
+        bgcolor: colors.bg.secondary,
+        borderBottom: `1px solid ${colors.border.default}`,
       }}>
-        <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, textTransform: 'lowercase' }}>
-          {language || 'code'}
+        <Typography sx={{
+          fontSize: '0.55rem', fontWeight: 700,
+          color: colors.accent.blue,
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: '0.4px',
+        }}>
+          {meta.type}{meta.label !== meta.type.toLowerCase() ? ` · ${meta.label}` : ''}
         </Typography>
         <Box component="button" onClick={handleCopy}
           sx={{
             display: 'flex', alignItems: 'center', gap: 0.4,
-            bgcolor: 'transparent', border: 'none', cursor: 'pointer', p: 0.25,
+            bgcolor: 'transparent', border: `1px solid ${colors.border.subtle}`, borderRadius: '4px',
+            cursor: 'pointer', px: 0.75, py: 0.15,
             color: copied ? colors.accent.green : colors.text.dim,
-            fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace",
-            '&:hover': { color: copied ? colors.accent.green : colors.text.secondary },
+            fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace",
+            transition: 'all 0.15s',
+            '&:hover': {
+              color: copied ? colors.accent.green : colors.text.secondary,
+              borderColor: colors.text.dim,
+            },
           }}>
-          {copied ? 'Copied' : 'Copy'}
+          {copied ? '✓ Copied' : 'Copy'}
         </Box>
       </Box>
       <SyntaxHighlighter style={oneDark} language={language || 'text'} PreTag="div"
-        customStyle={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, borderBottomLeftRadius: 6, borderBottomRightRadius: 6, fontSize: '0.7rem', margin: 0, padding: '10px 12px' }}>
-        {displayCode}
+        customStyle={{ borderRadius: 0, fontSize: '0.7rem', margin: 0, padding: '10px 12px' }}>
+        {code}
       </SyntaxHighlighter>
     </Box>
   );
+}
+
+function extractParagraphText(children: React.ReactNode): string {
+  return React.Children.toArray(children).map(c => (typeof c === 'string' ? c : '')).join('');
 }
 
 const MARKDOWN_COMPONENTS = {
@@ -2355,6 +2383,13 @@ const MARKDOWN_COMPONENTS = {
       return <pre style={{ maxHeight: 200, overflow: 'auto', background: colors.bg.tertiary, borderRadius: 4, padding: '6px 10px', margin: '4px 0' }}><code className={className} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{code}</code></pre>;
     }
     return <code className={className} style={{ background: colors.bg.tertiary, padding: '1px 5px', borderRadius: 3, fontSize: '0.72rem' }} {...props}>{children}</code>;
+  },
+  p({ children, ...props }: any) {
+    const text = extractParagraphText(children);
+    if (isStructuralArt(text)) {
+      return <CodeBlockWithCopy code={text} />;
+    }
+    return <p {...props}>{children}</p>;
   },
 };
 
@@ -2420,7 +2455,7 @@ function getResponderName(content: string): { name: string; callsign: string } |
   return null;
 }
 
-function MessageBubble({ message, loadingSteps, isLastUser, onResend, onDismissDoomLoop }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; isLastUser?: boolean; onResend?: (content: string) => void; onDismissDoomLoop?: () => void }) {
+function MessageBubble({ message, loadingSteps, onDismissDoomLoop }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onDismissDoomLoop?: () => void }) {
   const isUser = message.role === 'user';
   const crewInfo = message.crew;
   const responderName = !isUser && !crewInfo && message.content ? getResponderName(message.content) : null;
@@ -2537,16 +2572,6 @@ function MessageBubble({ message, loadingSteps, isLastUser, onResend, onDismissD
         {/* Message text (crew-aware) */}
         {message.content && !isUser && <CrewAwareMarkdown content={message.content} />}
         {message.content && isUser && <UserMentionText content={message.content} />}
-
-        {/* Resend button on last user message only */}
-        {isUser && isLastUser && message.content && onResend && (
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 0.5 }}>
-            <IconButton size="small" onClick={() => onResend(message.content)}
-              sx={{ p: 0.3, opacity: 0.4, '&:hover': { opacity: 1, bgcolor: 'transparent' } }}>
-              <ReplayIcon sx={{ fontSize: 13 }} />
-            </IconButton>
-          </Box>
-        )}
 
         {/* Streaming dots (empty content, no steps) */}
         {message.streaming && !message.content && !loadingSteps && (

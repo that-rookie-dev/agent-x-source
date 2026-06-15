@@ -96,6 +96,23 @@ export async function folderDelete(args: Record<string, unknown>, context: ToolE
   }
 }
 
+function formatSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const val = bytes / Math.pow(1024, i);
+  return val < 10 ? val.toFixed(1) + ' ' + units[i] : Math.round(val) + ' ' + units[i];
+}
+
+function formatDate(mtime: Date): string {
+  const now = new Date();
+  const isToday = mtime.toDateString() === now.toDateString();
+  const isThisYear = mtime.getFullYear() === now.getFullYear();
+  if (isToday) return mtime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (isThisYear) return mtime.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return mtime.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 export async function folderList(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const dirPath = resolve(context.scopePath, (args['path'] as string) ?? '.');
   try {
@@ -103,19 +120,46 @@ export async function folderList(args: Record<string, unknown>, context: ToolExe
       return { success: false, output: 'Directory does not exist', error: 'NOT_FOUND' };
     }
     const entries = readdirSync(dirPath);
-    const details = entries.map((entry) => {
+    const items: Array<{ name: string; isDir: boolean; size: string; modified: string; stat: import('fs').Stats | null }> = [];
+
+    for (const entry of entries) {
       try {
         const stat = statSync(resolve(dirPath, entry));
-        return `${stat.isDirectory() ? 'd' : 'f'} ${entry}`;
+        items.push({
+          name: entry,
+          isDir: stat.isDirectory(),
+          size: stat.isDirectory() ? '--' : formatSize(stat.size),
+          modified: formatDate(stat.mtime),
+          stat,
+        });
       } catch {
-        return `? ${entry}`;
+        items.push({ name: entry, isDir: false, size: '?', modified: '?', stat: null });
       }
-    });
-    const MAX_LINES = 500;
-    if (details.length > MAX_LINES) {
-      return { success: true, output: details.slice(0, MAX_LINES).join('\n') + `\n\n[Truncated — ${details.length - MAX_LINES} entries omitted. Use a more specific path.]` };
     }
-    return { success: true, output: details.join('\n') };
+
+    items.sort((a, b) => {
+      if (a.stat && b.stat) {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    const dirCount = items.filter(i => i.isDir).length;
+    const fileCount = items.length - dirCount;
+
+    const MAX_LINES = 500;
+    if (items.length > MAX_LINES) {
+      const lines = items.slice(0, MAX_LINES).map(i => ` ${i.isDir ? 'd' : 'f'}  ${i.name.padEnd(40)} ${i.size.padStart(10)}  ${i.modified}`);
+      lines.push('', `[Truncated — ${items.length - MAX_LINES} entries omitted. Use a more specific path.]`);
+      return { success: true, output: lines.join('\n') };
+    }
+
+    const header = ` ${'Type'.padEnd(5)} ${'Name'.padEnd(40)} ${'Size'.padStart(10)}  Modified`;
+    const sep = '─'.repeat(header.length);
+    const rows = items.map(i => ` ${i.isDir ? 'd' : 'f'}  ${i.name.padEnd(40)} ${i.size.padStart(10)}  ${i.modified}`);
+    const footer = `\n ${dirCount} director${dirCount === 1 ? 'y' : 'ies'}, ${fileCount} file${fileCount === 1 ? '' : 's'}`;
+
+    return { success: true, output: `${header}\n${sep}\n${rows.join('\n')}\n${sep}${footer}` };
   } catch (error) {
     return { success: false, output: `Failed to list directory: ${(error as Error).message}`, error: 'LIST_ERROR' };
   }
@@ -231,21 +275,63 @@ export async function fileOpen(args: Record<string, unknown>, context: ToolExecu
   }
 }
 
+function buildTree(
+  dirPath: string,
+  prefix: string,
+  maxDepth: number,
+  currentDepth: number,
+  maxEntries: number,
+): { lines: string[]; count: number } {
+  let entries: string[];
+  try {
+    entries = readdirSync(dirPath);
+  } catch {
+    return { lines: [`${prefix}└── [error reading]`], count: 0 };
+  }
+  entries.sort((a, b) => {
+    const aIsDir = existsSync(resolve(dirPath, a)) && statSync(resolve(dirPath, a)).isDirectory();
+    const bIsDir = existsSync(resolve(dirPath, b)) && statSync(resolve(dirPath, b)).isDirectory();
+    if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+    return a.localeCompare(b);
+  });
+
+  const lines: string[] = [];
+  let count = 0;
+  for (let i = 0; i < entries.length; i++) {
+    if (count >= maxEntries) {
+      lines.push(`${prefix}└── ... (${entries.length - count} more)`);
+      break;
+    }
+    const entry = entries[i]!;
+    const fullPath = resolve(dirPath, entry);
+    const isDir = existsSync(fullPath) && statSync(fullPath).isDirectory();
+    const isLast = i === entries.length - 1;
+    const connector = isLast ? '└── ' : '├── ';
+    lines.push(`${prefix}${connector}${entry}${isDir ? '/' : ''}`);
+    count++;
+    if (isDir && currentDepth < maxDepth) {
+      const childPrefix = prefix + (isLast ? '    ' : '│   ');
+      const child = buildTree(fullPath, childPrefix, maxDepth, currentDepth + 1, maxEntries - count);
+      if (child.lines.length > 0) {
+        lines.push(...child.lines);
+        count += child.count;
+      }
+    }
+  }
+  return { lines, count };
+}
+
 export async function folderTree(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const dirPath = resolve(context.scopePath, (args['path'] as string) ?? '.');
-  const depth = Math.min((args['depth'] as number) ?? 3, 5);
+  const depth = Math.min((args['depth'] as number) ?? 3, 6);
   if (!existsSync(dirPath)) {
     return { success: false, output: 'Directory does not exist', error: 'NOT_FOUND' };
   }
   try {
-    if (!IS_WINDOWS) {
-      const cmd = `find "${dirPath}" -maxdepth ${depth} -not -path '*/node_modules/*' -not -path '*/.git/*' 2>/dev/null | head -200 | sed 's|[^/]*/|  |g'`;
-      const output = execSync(cmd, { encoding: 'utf-8', timeout: 10000 });
-      return { success: true, output: basename(dirPath) + '\n' + output.trim() };
-    }
-    const cmd = `cmd /c "dir /s /b "${dirPath}" 2>nul"`;
-    const output = execSync(cmd, { encoding: 'utf-8', timeout: 10000 });
-    return { success: true, output: basename(dirPath) + '\n' + output.trim().split('\n').slice(0, 100).map(l => '  ' + l.replace(dirPath, '')).join('\n') };
+    const result = buildTree(dirPath, '', depth, 0, 200);
+    const title = basename(dirPath) + '/';
+    const output = [title, ...result.lines].join('\n');
+    return { success: true, output };
   } catch (error) {
     return { success: false, output: `Tree failed: ${(error as Error).message}`, error: 'TREE_ERROR' };
   }

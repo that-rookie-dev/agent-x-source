@@ -128,10 +128,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // 6. All good
       setAuthState('authenticated');
       setView('docking');
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.message === 'Unauthorized') {
+        // Auth token invalid/expired — onUnauthorized handler already set
+        // authState='unauthenticated' and view='login'. Don't override those.
+        return;
+      }
       // Server unreachable — show docking station with offline state
       setServerOnline(false);
-      setAuthState('authenticated'); // assume auth ok if offline
+      setAuthState('authenticated');
       setView('docking');
     }
   }, [refreshHealth]);

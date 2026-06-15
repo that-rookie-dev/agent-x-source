@@ -66,7 +66,17 @@ function appendContextFile(
     if (extra?.tokenCount != null) record['tokenCount'] = extra.tokenCount;
     conv.push(record);
     atomicWriteFileSync(convPath, JSON.stringify(conv, null, 2));
-  } catch { /* best-effort */ }
+    } catch (e) {
+      console.error('[ws] Failed to persist context file:', e instanceof Error ? e.message : e);
+    }
+}
+
+/**
+ * Directly persist a message to conversation.json — independent of WebSocket subscription.
+ * This is a failsafe so messages are always saved even if the event subscriber isn't active.
+ */
+export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[] }): void {
+  appendContextFile(sessionId, role, content, undefined, extra);
 }
 
 let wss: WebSocketServer | null = null;
@@ -286,7 +296,8 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     try {
       const eng = getEngine();
       const sess = eng.sessionManager.getActiveSession();
-      const sessionId = sess?.id || (event as any).sessionId || '';
+      const msgObj = (event as any).message as Record<string, unknown> | undefined;
+      const sessionId = sess?.id || (msgObj?.sessionId as string) || (event as any).sessionId || '';
 
       // Auto-fill session title from the first user message
       if (evType === 'message_sent') {

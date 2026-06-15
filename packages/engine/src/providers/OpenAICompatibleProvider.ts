@@ -28,8 +28,12 @@ export class OpenAICompatibleProvider extends OpenAIProvider {
   async listModels(): Promise<ModelInfo[]> {
     let response: Response;
     try {
+      const headers: Record<string, string> = {};
+      if (this.apiKey) {
+        headers['Authorization'] = `Bearer ${this.apiKey}`;
+      }
       response = await fetch(`${this.baseUrl}/models`, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers,
         signal: AbortSignal.timeout(10000),
       });
     } catch {

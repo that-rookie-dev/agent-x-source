@@ -234,6 +234,7 @@ export class CompletionLoop {
 
       // Stream response with retry support
       let fullContent = '';  // Content for THIS round only
+      let accumulatedReasoning = '';
       const toolCalls: CompletionToolCall[] = [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let currentToolCall: any = null;
@@ -255,22 +256,27 @@ export class CompletionLoop {
           accumulatedContent += chunk.content;
           this.deps.emit({ type: 'stream_chunk', content: chunk.content, fullContent: accumulatedContent });
         } else if ((chunk as { type?: string }).type === 'reasoning_delta' && (chunk as { content?: string }).content) {
-          this.deps.emit({ type: 'reasoning_delta', content: (chunk as { content: string }).content } as unknown as EngineEvent);
+          const reasoningContent = (chunk as { content: string }).content;
+          accumulatedReasoning += reasoningContent;
+          this.deps.emit({ type: 'reasoning_delta', content: reasoningContent } as unknown as EngineEvent);
         } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
           const tc = chunk.toolCall;
-          if (tc.id) {
+          const prevId = currentToolCall?.id;
+          const isNew = tc.id && tc.id !== prevId;
+          const hasName = !!tc.function?.name;
+          if (isNew || hasName) {
             // Push previous tool call if exists
             const prev = currentToolCall;
             if (prev && prev.id) {
               toolCalls.push(prev as CompletionToolCall);
             }
             currentToolCall = {
-              id: tc.id,
+              id: tc.id ?? prevId ?? 'tc-unknown',
               type: 'function',
               function: { name: tc.function?.name ?? '', arguments: tc.function?.arguments ?? '' },
               thought_signature: (tc as Record<string, unknown>)['thought_signature'] as string | undefined,
             };
-          } else {
+          } else if (currentToolCall) {
             const cur = currentToolCall;
             if (cur && cur.function) {
               if (tc.function?.name) cur.function.name += tc.function.name;
@@ -295,29 +301,34 @@ export class CompletionLoop {
             fullContent: accumulatedContent,
           });
         } else if ((chunk as { type?: string }).type === 'reasoning_delta' && (chunk as { content?: string }).content) {
-          this.deps.emit({ type: 'reasoning_delta', content: (chunk as { content: string }).content } as unknown as EngineEvent);
+          const reasoningContent = (chunk as { content: string }).content;
+          accumulatedReasoning += reasoningContent;
+          this.deps.emit({ type: 'reasoning_delta', content: reasoningContent } as unknown as EngineEvent);
         } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
-          // Accumulate tool call
-          if (chunk.toolCall.id) {
+          const tc = chunk.toolCall;
+          const prevId = currentToolCall?.id;
+          const isNew = tc.id && tc.id !== prevId;
+          const hasName = !!tc.function?.name;
+          if (isNew || hasName) {
             // New tool call starting
             if (currentToolCall?.id) {
               toolCalls.push(currentToolCall as CompletionToolCall);
             }
             currentToolCall = {
-              id: chunk.toolCall.id,
+              id: tc.id ?? prevId ?? 'tc-unknown',
               type: 'function',
               function: {
-                name: chunk.toolCall.function?.name ?? '',
-                arguments: chunk.toolCall.function?.arguments ?? '',
+                name: tc.function?.name ?? '',
+                arguments: tc.function?.arguments ?? '',
               },
             };
           } else if (currentToolCall) {
             // Continuation of existing tool call
-            if (chunk.toolCall.function?.name) {
-              currentToolCall.function.name = (currentToolCall.function.name ?? '') + chunk.toolCall.function.name;
+            if (tc.function?.name) {
+              currentToolCall.function.name = (currentToolCall.function.name ?? '') + tc.function.name;
             }
-            if (chunk.toolCall.function?.arguments) {
-              currentToolCall.function.arguments = (currentToolCall.function.arguments ?? '') + chunk.toolCall.function.arguments;
+            if (tc.function?.arguments) {
+              currentToolCall.function.arguments = (currentToolCall.function.arguments ?? '') + tc.function.arguments;
             }
           }
         } else if (chunk.type === 'done' && chunk.usage) {
@@ -338,6 +349,7 @@ export class CompletionLoop {
           role: 'assistant',
           content: fullContent || '',
           toolCalls,
+          reasoning: accumulatedReasoning || undefined,
         });
 
         // Execute each tool call
@@ -400,8 +412,10 @@ export class CompletionLoop {
           // Execute doom-looped tools — push error messages
           for (const p of parsedCalls) {
             if (p.skip) {
+              const lastToolResult = [...this.deps.messages].reverse().find(m => m.role === 'tool');
+              const errorCtx = lastToolResult ? ` Last result: ${(lastToolResult.content || '').slice(0, 300)}` : '';
               this.deps.emit({ type: 'error', code: 'DOOM_LOOP', message: `${p.tc.function.name} called ${p.doomCount}x consecutively — breaking loop.`, recoverable: true } as unknown as EngineEvent);
-              this.deps.messages.push({ role: 'tool', content: `[DOOM LOOP DETECTED] ${p.tc.function.name} repeated ${p.doomCount} times`, toolCallId: p.tc.id });
+              this.deps.messages.push({ role: 'tool', content: `[DOOM LOOP DETECTED] ${p.tc.function.name} repeated ${p.doomCount} times.${errorCtx}`, toolCallId: p.tc.id });
             }
           }
 
@@ -488,7 +502,7 @@ export class CompletionLoop {
       // Emit loading_end now that we have the final response
       this.deps.emit({ type: 'loading_end' });
 
-      this.deps.messages.push({ role: 'assistant', content: accumulatedContent });
+      this.deps.messages.push({ role: 'assistant', content: accumulatedContent, reasoning: accumulatedReasoning || undefined });
 
       // Log the LLM response
       this.deps.sessionLogger?.log({
@@ -562,7 +576,7 @@ export class CompletionLoop {
 
         if (graceText.trim()) {
           this.deps.emit({ type: 'loading_end' });
-          this.deps.messages.push({ role: 'assistant', content: accumulatedContent });
+      this.deps.messages.push({ role: 'assistant', content: accumulatedContent });
 
           const graceMessage: Message = {
             id: generateMessageId(),

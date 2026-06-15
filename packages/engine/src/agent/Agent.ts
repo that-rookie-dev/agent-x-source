@@ -1218,86 +1218,96 @@ Return ONLY valid JSON, no other text.`;
         return assistantMessage;
       }
 
-      // Plan mode: generate plan and wait for approval
+      // Plan mode: first understand the user through conversation, then conditionally plan
       if (this.planMode) {
-        this.emit({ type: 'loading_start', stage: 'planning' });
-        const plan = await this.generatePlan(content);
-        this.emit({ type: 'plan_generated', plan, userRequest: content });
+        const requiresPlan = intentResult.intent === 'complex_task' ||
+          intentResult.intent === 'meta_command' ||
+          /\b(plan|create a plan|make a plan|outline|roadmap|strategy|steps|milestone|break.*down|🎯\s*GOAL)\b/i.test(content);
 
-        // Wait for user to approve/reject the plan
-        const approved = await new Promise<boolean>((resolve) => {
-          this.pendingPlanApproval = resolve;
-        });
+        if (requiresPlan) {
+          this.emit({ type: 'loading_start', stage: 'planning' });
+          const plan = await this.generatePlan(content);
+          this.emit({ type: 'plan_generated', plan, userRequest: content });
 
-        if (!approved) {
-          this.emit({ type: 'plan_rejected', planId: plan.id });
-          const rejectedMessage: Message = {
+          // Wait for user to approve/reject the plan
+          const approved = await new Promise<boolean>((resolve) => {
+            this.pendingPlanApproval = resolve;
+          });
+
+          if (!approved) {
+            this.emit({ type: 'plan_rejected', planId: plan.id });
+            const rejectedMessage: Message = {
+              id: generateMessageId(),
+              sessionId: this.sessionId,
+              role: 'assistant',
+              content: '⏹ Plan rejected. No actions taken.',
+              toolCalls: null,
+              createdAt: new Date().toISOString(),
+              tokenCount: 0,
+            };
+            this.emit({ type: 'message_received', message: rejectedMessage, elapsed: Date.now() - startTime });
+            return rejectedMessage;
+          }
+
+          this.emit({ type: 'plan_approved', planId: plan.id });
+
+          // Execute each approved step sequentially with per-step approval
+          const pendingSteps = plan.steps.filter((s) => s.status === 'approved' || s.status === 'pending');
+          for (const step of pendingSteps) {
+            if (this.abortController?.signal.aborted) break;
+            step.status = 'awaiting_approval';
+            this.emit({ type: 'plan_step_pending', stepId: step.id, planId: plan.id, description: step.description });
+
+            // Wait for user to approve/skip/modify this step
+            const stepAction = await new Promise<{ action: 'approve' | 'skip' | 'modify'; description?: string }>((resolve) => {
+              this.pendingStepApproval = (_stepId: string, approved: boolean, description?: string) => {
+                if (!approved) {
+                  resolve({ action: 'skip' });
+                } else if (description) {
+                  resolve({ action: 'modify', description });
+                } else {
+                  resolve({ action: 'approve' });
+                }
+              };
+            });
+
+            if (stepAction.action === 'skip') {
+              step.status = 'skipped';
+              this.emit({ type: 'plan_step_skipped', stepId: step.id, planId: plan.id });
+              continue;
+            }
+
+            const stepDescription = stepAction.action === 'modify' && stepAction.description ? stepAction.description : step.description;
+            step.status = 'executing';
+            this.emit({ type: 'plan_step_executing', stepId: step.id, planId: plan.id, description: stepDescription });
+
+            try {
+              const stepResult = await this.runSingleStep(stepDescription);
+              step.status = 'done';
+              this.emit({ type: 'plan_step_complete', stepId: step.id, planId: plan.id, result: stepResult });
+            } catch (stepError) {
+              step.status = 'failed';
+              this.emit({ type: 'plan_step_failed', stepId: step.id, planId: plan.id, error: (stepError as Error).message });
+            }
+          }
+
+          this.emit({ type: 'loading_end' });
+          const summaryMessage: Message = {
             id: generateMessageId(),
             sessionId: this.sessionId,
             role: 'assistant',
-            content: '⏹ Plan rejected. No actions taken.',
+            content: '✓ Plan execution complete.',
             toolCalls: null,
             createdAt: new Date().toISOString(),
             tokenCount: 0,
           };
-          this.emit({ type: 'message_received', message: rejectedMessage, elapsed: Date.now() - startTime });
-          return rejectedMessage;
+          this.emit({ type: 'message_received', message: summaryMessage, elapsed: Date.now() - startTime });
+          return summaryMessage;
         }
 
-        this.emit({ type: 'plan_approved', planId: plan.id });
-
-        // Execute each approved step sequentially with per-step approval
-        const pendingSteps = plan.steps.filter((s) => s.status === 'approved' || s.status === 'pending');
-        for (const step of pendingSteps) {
-          if (this.abortController?.signal.aborted) break;
-          step.status = 'awaiting_approval';
-          this.emit({ type: 'plan_step_pending', stepId: step.id, planId: plan.id, description: step.description });
-
-          // Wait for user to approve/skip/modify this step
-          const stepAction = await new Promise<{ action: 'approve' | 'skip' | 'modify'; description?: string }>((resolve) => {
-            this.pendingStepApproval = (_stepId: string, approved: boolean, description?: string) => {
-              if (!approved) {
-                resolve({ action: 'skip' });
-              } else if (description) {
-                resolve({ action: 'modify', description });
-              } else {
-                resolve({ action: 'approve' });
-              }
-            };
-          });
-
-          if (stepAction.action === 'skip') {
-            step.status = 'skipped';
-            this.emit({ type: 'plan_step_skipped', stepId: step.id, planId: plan.id });
-            continue;
-          }
-
-          const stepDescription = stepAction.action === 'modify' && stepAction.description ? stepAction.description : step.description;
-          step.status = 'executing';
-          this.emit({ type: 'plan_step_executing', stepId: step.id, planId: plan.id, description: stepDescription });
-
-          try {
-            const stepResult = await this.runSingleStep(stepDescription);
-            step.status = 'done';
-            this.emit({ type: 'plan_step_complete', stepId: step.id, planId: plan.id, result: stepResult });
-          } catch (stepError) {
-            step.status = 'failed';
-            this.emit({ type: 'plan_step_failed', stepId: step.id, planId: plan.id, error: (stepError as Error).message });
-          }
-        }
-
-        this.emit({ type: 'loading_end' });
-        const summaryMessage: Message = {
-          id: generateMessageId(),
-          sessionId: this.sessionId,
-          role: 'assistant',
-          content: '✓ Plan execution complete.',
-          toolCalls: null,
-          createdAt: new Date().toISOString(),
-          tokenCount: 0,
-        };
-        this.emit({ type: 'message_received', message: summaryMessage, elapsed: Date.now() - startTime });
-        return summaryMessage;
+        // Idea sharing, questions, and simple tasks — clear the force-plan instruction
+        // and fall through to the normal conversational completion loop
+        this.pendingInstruction = null;
       }
 
       // Normal mode: run completion loop directly
@@ -1387,15 +1397,17 @@ Return ONLY valid JSON, no other text.`;
           recoverable: true,
           actions,
         });
+        const fallbackContent = friendlyMessage || `I encountered a provider error: ${rawProviderMessage.slice(0, 200)}. Please try again or check your API configuration.`;
         const fallbackMessage: Message = {
           id: generateMessageId(),
           sessionId: this.sessionId,
           role: 'assistant',
-          content: '',
+          content: fallbackContent,
           toolCalls: null,
           createdAt: new Date().toISOString(),
           tokenCount: 0,
         };
+        this.emit({ type: 'message_received', message: fallbackMessage, elapsed: Date.now() - startTime });
         return fallbackMessage;
       }
       this.emit({
@@ -2442,6 +2454,9 @@ Only include specialists that are actually needed for this task.`;
             this.projector.appendDelta(event.delta);
             yield { type: 'text_delta', content: event.delta };
             break;
+          case 'reasoning.delta':
+            yield { type: 'reasoning_delta', content: event.delta };
+            break;
           case 'tool.input.start':
             yield { type: 'tool_call_delta', toolCall: { id: event.toolCallId, type: 'function', function: { name: event.toolName, arguments: '' } } };
             break;
@@ -2501,6 +2516,7 @@ Only include specialists that are actually needed for this task.`;
           type: 'function' as const,
           function: { name: tc.function.name, arguments: tc.function.arguments },
         })),
+        reasoning: m.reasoning,
       })),
       tools: (request.tools ?? []).map((t) => ({
         type: 'function' as const,

@@ -241,6 +241,22 @@ export class AuthManager {
   }
 
   /**
+   * Purge all sessions — clear in-memory sessions and delete sessions file.
+   * Used during factory reset.
+   */
+  purgeSessions(): void {
+    for (const [, session] of this.sessions) {
+      session.dek.fill(0);
+    }
+    this.sessions.clear();
+    try {
+      if (existsSync(this.sessionsPath)) {
+        writeFileSync(this.sessionsPath, '[]', 'utf-8');
+      }
+    } catch { /* best effort */ }
+  }
+
+  /**
    * Logout — destroy the session and clear the DEK from memory.
    */
   logout(token: string): void {

@@ -21,9 +21,11 @@ export class OpenAIProvider implements ProviderInterface {
 
   async validate(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/models`, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
-      });
+      const headers: Record<string, string> = {};
+      if (this.apiKey) {
+        headers['Authorization'] = `Bearer ${this.apiKey}`;
+      }
+      const response = await fetch(`${this.baseUrl}/models`, { headers });
       return response.ok;
     } catch {
       return false;
@@ -31,8 +33,11 @@ export class OpenAIProvider implements ProviderInterface {
   }
 
   async listModels(): Promise<ModelInfo[]> {
-    const response = await fetch(`${this.baseUrl}/models`, {
-      headers: { Authorization: `Bearer ${this.apiKey}` },
+    const headers: Record<string, string> = {};
+    if (this.apiKey) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    }
+    const response = await fetch(`${this.baseUrl}/models`, { headers,
       signal: AbortSignal.timeout(10000),
     });
 
@@ -75,12 +80,16 @@ export class OpenAIProvider implements ProviderInterface {
       model: request.model,
       messages: request.messages.map((m) => {
         if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-          return { role: m.role, content: m.content || null, tool_calls: m.toolCalls };
+          const msg: Record<string, unknown> = { role: m.role, content: m.content || null, tool_calls: m.toolCalls };
+          if (m.reasoning) msg.reasoning_content = m.reasoning;
+          return msg;
         }
         if (m.role === 'tool') {
           return { role: m.role, content: m.content, tool_call_id: m.toolCallId };
         }
-        return { role: m.role, content: m.content };
+        const msg: Record<string, unknown> = { role: m.role, content: m.reasoning && !m.content ? null : m.content };
+        if (m.reasoning) msg.reasoning_content = m.reasoning;
+        return msg;
       }),
       stream: true,
       stream_options: { include_usage: true },
@@ -96,12 +105,16 @@ export class OpenAIProvider implements ProviderInterface {
       body['max_tokens'] = request.maxTokens;
     }
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this.apiKey) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    }
+
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(body),
       signal: request.signal,
     });
@@ -166,6 +179,9 @@ export class OpenAIProvider implements ProviderInterface {
             const delta = choice.delta;
             if (delta.content) {
               yield { type: 'text_delta', content: delta.content };
+            }
+            if ((delta as Record<string, unknown>).reasoning_content) {
+              yield { type: 'reasoning_delta', content: (delta as Record<string, unknown>).reasoning_content as string };
             }
             if (delta.tool_calls && delta.tool_calls.length > 0) {
               const tc = delta.tool_calls[0];

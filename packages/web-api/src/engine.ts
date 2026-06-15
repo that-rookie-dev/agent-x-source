@@ -96,10 +96,19 @@ export function getEngine(): EngineState {
     sessionManager = new SessionManager();
   }
 
-  // Recover any sessions that exist on disk but not in the DB (e.g. after DB migration)
+  // Set sessions directory for filesystem fallback, then recover orphaned sessions
+  const sessionsDir = join(getDataDir(), 'sessions');
   try {
-    const sessionsDir = join(getDataDir(), 'sessions');
-    (sessionManager as any).store.recoverOrphanedSessions?.(sessionsDir);
+    const store = (sessionManager as any).store;
+    if (store && typeof store.setSessionsDir === 'function') {
+      store.setSessionsDir(sessionsDir);
+    }
+    if (store && typeof store.recoverOrphanedSessions === 'function') {
+      const recovered = store.recoverOrphanedSessions(sessionsDir);
+      if (recovered > 0) {
+        console.log(`Startup: recovered ${recovered} orphaned session(s) from filesystem`);
+      }
+    }
   } catch { /* non-critical */ }
 
   const crewManager = new CrewManager();
