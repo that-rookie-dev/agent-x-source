@@ -5,9 +5,9 @@ import { createServer } from 'node:http';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir } from '@agentx/shared';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, setPendingCwd, ensureChannelAgent } from './engine.js';
-import { setupWebSocket, ensureSubscribed } from './ws.js';
+import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
@@ -112,7 +112,7 @@ app.get('/api/health', (_req, res) => {
     agentActive = !!eng.agent;
     try {
       const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
-      telegramConnected = !!tgPlugin?.enabled && !!tgPlugin?.config?.['botToken'];
+      telegramConnected = !!tgPlugin?.enabled && !!tgPlugin?.config?.['botToken'] && !!eng.telegramBridge?.isRunning();
     } catch { /* ignore */ }
     telegramBot = eng.telegramBridge?.isRunning() ? eng.telegramBridge.getStatus().botUsername ?? null : null;
   }
@@ -168,7 +168,7 @@ app.get('/api/config', (_req, res) => {
   try {
     res.json(eng.configManager.load());
   } catch {
-    res.json({ provider: { activeProvider: 'openai', activeModel: 'gpt-4o-mini', providers: {} }, ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' }, organization: null, telemetry: false });
+    res.json({ provider: { activeProvider: 'opencode-zen', activeModel: 'deepseek-v4-flash-free', providers: { 'opencode-zen': { configured: true } } }, ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' }, organization: null, telemetry: false });
   }
 });
 
@@ -210,7 +210,7 @@ const AVAILABLE_PROVIDERS = [
   { id: 'cohere', name: 'Cohere', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.cohere.com/compatibility/v1' },
   { id: 'commandcode', name: 'CommandCode', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.commandcode.ai/provider/v1' },
   { id: 'opencode', name: 'OpenCode Go', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://opencode.ai/zen/go/v1' },
-  { id: 'opencode-zen', name: 'OpenCode Zen (Free Models)', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://opencode.ai/zen/v1' },
+  { id: 'opencode-zen', name: 'OpenCode Zen (Free Models)', type: 'cloud', requiresApiKey: false, defaultBaseUrl: 'https://opencode.ai/zen/v1' },
   { id: 'ollama', name: 'Ollama', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:11434' },
   { id: 'lmstudio', name: 'LM Studio', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:1234/v1' },
 ];
@@ -279,7 +279,12 @@ app.post('/api/provider/configure', (req, res) => {
 
     config.provider.activeProvider = provider as ProviderId;
     const providerCfg = config.provider.providers[provider] ?? { configured: false };
-    if (apiKey) providerCfg.apiKey = apiKey;
+    const availableProv = AVAILABLE_PROVIDERS.find(p => p.id === provider);
+    if (apiKey) {
+      providerCfg.apiKey = apiKey;
+    } else if (availableProv && !availableProv.requiresApiKey) {
+      providerCfg.apiKey = '';
+    }
     if (baseUrl) providerCfg.baseUrl = baseUrl;
     providerCfg.configured = true;
     config.provider.providers[provider] = providerCfg;
@@ -466,8 +471,7 @@ app.get('/api/models', async (_req, res) => {
 app.get('/api/cwd', (_req, res) => {
   const eng = getEngine();
   const sess = eng.sessionManager.getActiveSession();
-  const raw = sess?.scopePath ?? null;
-  const scopePath = raw && raw !== '/' ? raw : null;
+  const scopePath = sess?.scopePath ?? null;
   res.json({ cwd: scopePath });
 });
 
@@ -482,10 +486,9 @@ app.post('/api/cwd', (req, res) => {
       eng.sessionManager.updateSession({ scopePath: resolved });
       const executor = (eng as any).toolExecutor;
       if (executor?.setScopePath) executor.setScopePath(resolved);
-    } else {
-      // No active session yet — store pending CWD for the next createAgent() call
-      setPendingCwd(resolved);
     }
+    // Always store as pending so next createAgent() picks it up
+    setPendingCwd(resolved);
     res.json({ cwd: resolved });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'scope-update-failed' });
@@ -716,7 +719,7 @@ Format: {"revisedPrompt":"...", "expertise":["skill1","skill2"], "traits":["trai
 // ───── Chat ─────
 app.post('/api/chat/message', async (req, res) => {
   try {
-    const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
+    const { text, attachments, retry } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean };
     if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
     const eng = getEngine();
     // Auto-create agent if none exists (first message in session)
@@ -740,6 +743,31 @@ app.post('/api/chat/message', async (req, res) => {
     // Apply session mode to agent
     agent.setPlanMode(sessionSettings.mode === 'plan');
 
+    // ─── Retry: remove last exchange from conversation.json to avoid duplicates ───
+    if (retry) {
+      const sid = (agent as unknown as { sessionId: string }).sessionId;
+      if (sid) {
+        const convPath = join(getSessionDir(sid), 'conversation.json');
+        try {
+          let conv: Array<Record<string, unknown>> = [];
+          if (existsSync(convPath)) {
+            conv = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
+          }
+          let removed = 0;
+          while (conv.length > 0 && removed < 2) {
+            const last = conv[conv.length - 1] as Record<string, unknown>;
+            if (last.role === 'assistant' || last.role === 'user') {
+              conv.pop();
+              removed++;
+            } else {
+              break;
+            }
+          }
+          writeFileSync(convPath, JSON.stringify(conv, null, 2));
+        } catch { /* best-effort */ }
+      }
+    }
+
     // Build the full message content with attachments if provided
     let fullText = text;
     if (attachments && attachments.length > 0) {
@@ -748,9 +776,10 @@ app.post('/api/chat/message', async (req, res) => {
     }
 
     // Build instruction based on mode (kept separate from user content)
-    const instruction = sessionSettings.mode === 'plan'
-      ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
-      : undefined;
+    let instruction: string | undefined;
+    if (sessionSettings.mode === 'plan') {
+      instruction = 'You are in plan mode. You can create structured plans for complex multi-step tasks when appropriate. First understand what the user needs through conversation. Only create a formal plan when the task genuinely requires step-by-step orchestration.';
+    }
 
     // Auto-checkpoint before each user turn — enables /undo to roll back this turn
     try {
@@ -760,19 +789,22 @@ app.post('/api/chat/message', async (req, res) => {
         if (existsSync(dir)) {
           const convPath = join(dir, 'conversation.json');
           const messages = existsSync(convPath) ? JSON.parse(readFileSync(convPath, 'utf-8') || '[]') : [];
-          const checkpointsDir = join(dir, 'checkpoints');
-          if (!existsSync(checkpointsDir)) mkdirSync(checkpointsDir, { recursive: true });
-          // Keep only most recent 20 auto-checkpoints to avoid unbounded growth
-          try {
-            const autos = readdirSync(checkpointsDir).filter(f => f.startsWith('auto-')).sort();
-            while (autos.length > 19) {
-              const oldest = autos.shift();
-              if (oldest) { try { unlinkSync(join(checkpointsDir, oldest)); } catch { /* ignore */ } }
-            }
-          } catch { /* ignore */ }
-          const ckptId = `auto-${Date.now()}`;
-          const label = `Auto · ${new Date().toLocaleTimeString()}`;
-          writeFileSync(join(checkpointsDir, `${ckptId}.json`), JSON.stringify({ id: ckptId, label, messages, createdAt: new Date().toISOString() }, null, 2));
+          // Skip checkpoint when there are no messages (empty session)
+          if (messages.length === 0) { /* skip checkpoint for empty session */ } else {
+            const checkpointsDir = join(dir, 'checkpoints');
+            if (!existsSync(checkpointsDir)) mkdirSync(checkpointsDir, { recursive: true });
+            // Keep only most recent 20 auto-checkpoints to avoid unbounded growth
+            try {
+              const autos = readdirSync(checkpointsDir).filter(f => f.startsWith('auto-')).sort();
+              while (autos.length > 19) {
+                const oldest = autos.shift();
+                if (oldest) { try { unlinkSync(join(checkpointsDir, oldest)); } catch { /* ignore */ } }
+              }
+            } catch { /* ignore */ }
+            const ckptId = `auto-${Date.now()}`;
+            const label = `Auto · ${new Date().toLocaleTimeString()}`;
+            writeFileSync(join(checkpointsDir, `${ckptId}.json`), JSON.stringify({ id: ckptId, label, messages, createdAt: new Date().toISOString() }, null, 2));
+          }
         }
       }
     } catch { /* checkpoint failure shouldn't block the message */ }
@@ -781,12 +813,27 @@ app.post('/api/chat/message', async (req, res) => {
       agent.sendMessage(fullText, instruction ? { instruction } : undefined),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('The operation was aborted due to timeout')), 180000)),
     ]);
-    if (!message || (message as Record<string, unknown>).id === '__clarify__') {
+    if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
       res.json({ ok: true, clarification: true });
       return;
     }
     res.json({ ok: true, message });
   } catch (e: unknown) {
+    // On error, make sure the user message was still persisted
+    try {
+      const eng = getEngine();
+      const agent = eng.agent;
+      if (agent) {
+        const sid = (agent as unknown as { sessionId: string }).sessionId;
+        if (sid) {
+          // The failsafe above already persisted it, but ensure it's there
+          const dir = join(getDataDir(), 'sessions', sid);
+          if (!existsSync(join(dir, 'conversation.json'))) {
+            persistMessageDirect(sid, 'user', (req.body as any).text || '');
+          }
+        }
+      }
+    } catch { /* best-effort */ }
     res.status(500).json({ error: e instanceof Error ? e.message : 'chat-failed' });
   }
 });
@@ -854,7 +901,7 @@ app.post('/api/chat/steer', async (req, res) => {
     }
     const instruction = undefined;
     const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
-    if (!message || (message as Record<string, unknown>).id === '__clarify__') {
+    if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
       res.json({ ok: true, clarification: true });
       return;
     }
@@ -886,7 +933,7 @@ app.post('/api/chat/stop-and-send', async (req, res) => {
       ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
       : undefined;
     const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
-    if (!message || (message as Record<string, unknown>).id === '__clarify__') {
+    if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
       res.json({ ok: true, clarification: true });
       return;
     }
@@ -994,6 +1041,17 @@ app.post('/api/permission/respond', (req, res) => {
 });
 
 // ───── Sessions ─────
+app.get('/api/sessions/db-status', (_req, res) => {
+  try {
+    const eng = getEngine();
+    const store = (eng.sessionManager as unknown as { store: { getInfo?: () => { dbMode: string; sessionCount: number; filesystemRecovered: number; schemaVersion: number } } }).store;
+    const info = store?.getInfo?.() ?? { dbMode: 'unknown', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 };
+    res.json(info);
+  } catch {
+    res.json({ dbMode: 'error', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 });
+  }
+});
+
 app.get('/api/sessions', (_req, res) => {
   const eng = getEngine();
   const all = eng.sessionManager.listSessions(50) as unknown as Array<Record<string, unknown>>;
@@ -1172,15 +1230,27 @@ app.post('/api/sessions/:id/restore', (req, res) => {
         agent.setCrewEnabled(state.crewId, state.enabled);
       }
     }
-    // Read messages from conversation.json (where ws.ts persists them)
-    const convPath = join(getSessionDir(req.params['id']!), 'conversation.json');
+    // Read messages from SQLite (primary), fallback to conversation.json
     let messages: Array<Record<string, unknown>> = [];
+    let parts: Array<Record<string, unknown>> = [];
     try {
-      messages = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
-    } catch {
-      messages = [];
+      const store = (eng.sessionManager as any).store;
+      if (store?.getMessages) {
+        messages = store.getMessages(req.params['id']!) as Array<Record<string, unknown>>;
+      }
+      if (store?.getParts) {
+        parts = store.getParts(req.params['id']!) as Array<Record<string, unknown>>;
+      }
+    } catch { /* fall through */ }
+
+    if (messages.length === 0) {
+      const convPath = join(getSessionDir(req.params['id']!), 'conversation.json');
+      try {
+        const raw = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
+        messages = raw.filter((m: any) => m.role !== 'part');
+      } catch { messages = []; }
     }
-    res.json({ session, messages, crewStates });
+    res.json({ session, messages, parts, crewStates });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
   }
@@ -1302,7 +1372,7 @@ app.get('/api/sessions/:id/checkpoints', (req, res) => {
     const checkpoints = files.map((f) => {
       const data = JSON.parse(readFileSync(join(checkpointsDir, f), 'utf-8'));
       return { id: data.id, label: data.label, createdAt: data.createdAt, messageCount: (data.messages || []).length };
-    }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }).filter(c => c.messageCount > 0).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     res.json({ checkpoints });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'list-failed' });
@@ -1454,7 +1524,8 @@ app.get('/api/telegram/status', (_req, res) => {
   const eng = getEngine();
   const plugin = eng.pluginRegistry.getPlugin('telegram');
   const configured = !!plugin?.enabled && !!plugin?.config?.['botToken'];
-  res.json({ configured, connected: configured, botToken: configured ? '***configured***' : null });
+  const connected = configured && !!eng.telegramBridge?.isRunning();
+  res.json({ configured, connected, botToken: configured ? '***configured***' : null });
 });
 
 // ───── TUI Active Check ─────
@@ -2576,21 +2647,54 @@ app.delete('/api/sessions', (_req, res) => {
 
 app.post('/api/reset', (_req, res) => {
   try {
+    // 1. Destroy agent and stop all running services
     destroyAgent();
 
+    // 2. Stop Telegram bridge if running
+    try {
+      const eng = getEngine();
+      if (eng.telegramBridge) {
+        try { eng.telegramBridge.stop(); } catch { /* ignore */ }
+        eng.telegramBridge = null;
+      }
+      if (eng.gateway) {
+        try { eng.gateway.stopAll(); } catch { /* ignore */ }
+        eng.gateway = null;
+      }
+      if (eng.discordBridge) {
+        try { eng.discordBridge.stop(); } catch { /* ignore */ }
+        eng.discordBridge = null;
+      }
+      if (eng.slackBridge) {
+        try { eng.slackBridge.stop(); } catch { /* ignore */ }
+        eng.slackBridge = null;
+      }
+      if (eng.emailBridge) {
+        try { eng.emailBridge.stop(); } catch { /* ignore */ }
+        eng.emailBridge = null;
+      }
+    } catch { /* engine not initialized */ }
+
+    // 3. Delete all data on disk
     const configDir = getConfigDir();
     const dataDir = getDataDir();
     const cacheDir = getCacheDir();
 
-    // Delete everything on disk
     const dirs = [configDir, dataDir, cacheDir];
     for (const dir of dirs) {
       try { rmSync(dir, { recursive: true, force: true }); } catch { /* ok */ }
     }
 
+    // 4. Purge all auth sessions (in-memory + file)
+    authManager.purgeSessions();
+
+    // 5. Clear engine state
     clearEngine();
 
-    res.json({ ok: true });
+    // 6. Clear auth cookie
+    res.clearCookie('agentx_session', { path: '/' });
+
+    res.json({ ok: true, message: 'All data deleted. You will be redirected to setup.' });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'reset-failed' });
   }

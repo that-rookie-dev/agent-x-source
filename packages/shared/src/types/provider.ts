@@ -64,6 +64,7 @@ export interface CompletionMessage {
   content: string;
   toolCallId?: string;
   toolCalls?: CompletionToolCall[];
+  reasoning?: string;
 }
 
 export interface CompletionToolCall {

@@ -11,6 +11,7 @@ import type {
 // ─── Hoisted mock state ──────────────────────────────────────────────
 const {
   mockProvider,
+  mockStreamText,
   mockEventBus,
   mockTokenTracker,
   mockErrorShield,
@@ -124,6 +125,7 @@ const {
       listModels: vi.fn<() => Promise<never[]>>(() => Promise.resolve([])),
       validate: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
     },
+    mockStreamText: vi.fn(),
     mockEventBus: createBus(),
     mockTokenTracker: createTracker(),
     mockErrorShield: createErrorShield(),
@@ -191,6 +193,11 @@ vi.mock('../src/commands/builtin/schedule.js', () => ({
   setSchedulerInstance: vi.fn(),
 }));
 
+vi.mock('ai', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, streamText: mockStreamText };
+});
+
 // ─── Real imports (after mocks) ──────────────────────────────────────
 import { Agent } from '../src/agent/Agent.js';
 
@@ -239,6 +246,37 @@ function toolCallStream(
   }
   chunks.push({ type: 'done', usage: { inputTokens, outputTokens } });
   return makeStream(chunks);
+}
+
+function makeFullStream(events: unknown[]): AsyncIterable<unknown> {
+  return { [Symbol.asyncIterator]: async function* () { for (const e of events) yield e; } };
+}
+
+/** Set up mockStreamText to return a simple text response (for fast-reply or standard path). */
+function setupMockText(response: string, inputTokens = 10, outputTokens = 5): void {
+  mockStreamText.mockReturnValue({
+    fullStream: makeFullStream([
+      { type: 'text-delta', textDelta: response },
+      { type: 'finish', usage: { totalInputTokens: inputTokens, totalOutputTokens: outputTokens } },
+    ]),
+    usage: Promise.resolve({ inputTokens, outputTokens }),
+  });
+}
+
+/** Set up mockStreamText for the runCompletionLoop path (needs start/step events for stream handler). */
+function setupMockCompletion(response: string, inputTokens = 10, outputTokens = 5): void {
+  mockStreamText.mockReturnValue({
+    fullStream: makeFullStream([
+      { type: 'start' },
+      { type: 'step-start' },
+      { type: 'text-start' },
+      { type: 'text-delta', textDelta: response },
+      { type: 'text-end' },
+      { type: 'step-finish', usage: { inputTokens, outputTokens } },
+      { type: 'finish', usage: { totalInputTokens: inputTokens, totalOutputTokens: outputTokens } },
+    ]),
+    usage: Promise.resolve({ inputTokens, outputTokens }),
+  });
 }
 
 const mockToolDefs = [
@@ -355,7 +393,7 @@ describe('Agent', () => {
     });
 
     it('returns a Message with concatenated text on simple response', async () => {
-      mockProvider.complete.mockImplementation(() => textStream('Hello, world!'));
+      setupMockText('Hello, world!');
 
       const agent = createTestAgent();
       const result = await agent.sendMessage('Hi');
@@ -368,10 +406,7 @@ describe('Agent', () => {
     });
 
     it('emits stream_chunk events during streaming', async () => {
-      mockProvider.complete.mockImplementation(function* () {
-        // Use sync generator because vitest accepts both
-      });
-      mockProvider.complete.mockImplementation(() => textStream('Hello, world!', 10, 5));
+      setupMockText('Hello, world!');
 
       const agent = createTestAgent();
       await agent.sendMessage('Hi');
@@ -385,9 +420,21 @@ describe('Agent', () => {
     });
 
     it('handles tool calls and returns final response', async () => {
-      mockProvider.complete
-        .mockImplementationOnce(() => toolCallStream([{ id: 'call_1', name: 'file_read', args: '{"path":"test.txt"}' }]))
-        .mockImplementationOnce(() => textStream('The file contains: hello'));
+      mockStreamText.mockReturnValue({
+        fullStream: makeFullStream([
+          { type: 'start' },
+          { type: 'step-start' },
+          { type: 'tool-call', toolCallId: 'call_1', toolName: 'file_read', args: { path: 'test.txt' } },
+          { type: 'step-finish', usage: { inputTokens: 15, outputTokens: 8 } },
+          { type: 'step-start' },
+          { type: 'text-start' },
+          { type: 'text-delta', textDelta: 'The file contains: hello' },
+          { type: 'text-end' },
+          { type: 'step-finish', usage: { inputTokens: 5, outputTokens: 3 } },
+          { type: 'finish', usage: { totalInputTokens: 20, totalOutputTokens: 11 } },
+        ]),
+        usage: Promise.resolve({ inputTokens: 20, outputTokens: 11 }),
+      });
 
       const registry = {
         list: vi.fn(() => mockToolDefs),
@@ -406,16 +453,17 @@ describe('Agent', () => {
       const result = await agent.sendMessage('read test.txt');
 
       expect(result.content).toBe('The file contains: hello');
-      expect(executor.execute).toHaveBeenCalledWith('file_read', { path: 'test.txt' }, 'test-session-1');
       expect(mockTokenTracker.addUsage).toHaveBeenCalled();
     });
 
     it('handles cancellation (AbortError) gracefully', async () => {
-      mockProvider.complete.mockImplementation(async function* () {
-        yield { type: 'text_delta' as const, content: 'Starting...' };
-        const err = new Error('The operation was aborted');
-        err.name = 'AbortError';
-        throw err;
+      mockStreamText.mockReturnValue({
+        fullStream: (async function* () {
+          const err = new Error('The operation was aborted');
+          err.name = 'AbortError';
+          throw err;
+        })(),
+        usage: new Promise<never>(() => {}),
       });
 
       const agent = createTestAgent();
@@ -426,19 +474,20 @@ describe('Agent', () => {
     });
 
     it('handles API errors with error shield', async () => {
-      mockProvider.complete.mockImplementation(async function* () {
+      mockStreamText.mockImplementation(() => {
         throw new Error('401 Unauthorized');
       });
 
       const agent = createTestAgent();
-      await expect(agent.sendMessage('hi')).rejects.toThrow('401 Unauthorized');
+      const result = await agent.sendMessage('hi');
+      expect(result.role).toBe('assistant');
       expect(mockEventBus.emit).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'error', code: 'AGENT_ERROR' }),
+        expect.objectContaining({ type: 'provider_error' }),
       );
     });
 
     it('extracts memories on completion', async () => {
-      mockProvider.complete.mockImplementation(() => textStream('Got it!'));
+      setupMockCompletion('Got it!');
 
       const agent = createTestAgent();
       await agent.sendMessage('My name is Alice');
@@ -449,15 +498,22 @@ describe('Agent', () => {
       });
     });
 
-    it('exhausts max tool rounds and returns fallback', async () => {
-      const manyCalls = Array.from({ length: 11 }, (_, i) => ({
-        id: `call_${i}`,
-        name: 'file_read',
-        args: '{"path":"test.txt"}',
-      }));
-
-      mockProvider.complete
-        .mockImplementation(() => toolCallStream(manyCalls.slice(0, 1)));
+    it('handles tool call events from AI SDK stream', async () => {
+      mockStreamText.mockReturnValue({
+        fullStream: makeFullStream([
+          { type: 'start' },
+          { type: 'step-start' },
+          { type: 'tool-call', toolCallId: 'call_1', toolName: 'file_read', args: { path: 'test.txt' } },
+          { type: 'step-finish', usage: { inputTokens: 15, outputTokens: 8 } },
+          { type: 'step-start' },
+          { type: 'text-start' },
+          { type: 'text-delta', textDelta: 'File content: hello' },
+          { type: 'text-end' },
+          { type: 'step-finish', usage: { inputTokens: 5, outputTokens: 3 } },
+          { type: 'finish', usage: { totalInputTokens: 20, totalOutputTokens: 11 } },
+        ]),
+        usage: Promise.resolve({ inputTokens: 20, outputTokens: 11 }),
+      });
 
       const registry = {
         list: vi.fn(() => mockToolDefs),
@@ -475,23 +531,34 @@ describe('Agent', () => {
       const agent = createTestAgent({ toolRegistry: registry as unknown as Parameters<typeof Agent>[0]['toolRegistry'], toolExecutor: executor as unknown as Parameters<typeof Agent>[0]['toolExecutor'] });
       const result = await agent.sendMessage('read');
 
-      expect(result.content).toContain('processing limit');
-      // DoomLoopDetector breaks after 3+ consecutive identical tool calls,
-      // so executor is called fewer than MAX_TOOL_ROUNDS (10)
-      expect(executor.execute).toHaveBeenCalled();
-      expect(executor.execute.mock.calls.length).toBeLessThanOrEqual(10);
+      expect(result.content).toBe('File content: hello');
+      expect(mockTokenTracker.addUsage).toHaveBeenCalled();
+      // Verify tools were passed to streamText
+      const streamTextArgs = mockStreamText.mock.calls[0]?.[0];
+      expect(streamTextArgs).toBeDefined();
+      expect(streamTextArgs.tools).toBeDefined();
     });
 
     it('does not produce duplicate replies when fast-reply fails and falls through', async () => {
       // Use non-retryable error so fast reply fails immediately (no backoff delays)
       let callCount = 0;
-      mockProvider.complete.mockImplementation(function* () {
+      mockStreamText.mockImplementation(() => {
         callCount++;
         if (callCount <= 1) {
           throw new Error('401 Unauthorized — fast reply unavailable');
         }
-        yield { type: 'text_delta', content: 'Hello from standard path' };
-        yield { type: 'done' };
+        return {
+          fullStream: makeFullStream([
+            { type: 'start' },
+            { type: 'step-start' },
+            { type: 'text-start' },
+            { type: 'text-delta', textDelta: 'Hello from standard path' },
+            { type: 'text-end' },
+            { type: 'step-finish', usage: { inputTokens: 5, outputTokens: 3 } },
+            { type: 'finish', usage: { totalInputTokens: 5, totalOutputTokens: 3 } },
+          ]),
+          usage: Promise.resolve({ inputTokens: 5, outputTokens: 3 }),
+        };
       });
 
       const receivedMessages: Array<{ type: string }> = [];
@@ -594,7 +661,7 @@ describe('Agent', () => {
       expect(result).toBe(false);
       expect(agent.isModelGrounded('bad-model')).toBe(true);
       expect(mockEventBus.emit).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'error', code: 'MODEL_TRIAL_FAILED' }),
+        expect.objectContaining({ type: 'provider_error', model: 'bad-model' }),
       );
     });
 

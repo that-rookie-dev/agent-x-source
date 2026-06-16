@@ -44,7 +44,7 @@ export { GoogleProvider } from './providers/GoogleProvider.js';
 export { LMStudioProvider } from './providers/LMStudioProvider.js';
 export { CommandParser, CommandRegistry, createDefaultRegistry } from './commands/index.js';
 export type { CommandInterface, CommandContext, CommandResult } from './commands/index.js';
-export { ToolRegistry, ToolExecutor, PermissionManager, ScopeGuard } from './tools/index.js';
+export { ToolRegistry, ToolExecutor, EnhancedToolExecutor, PermissionManager, ScopeGuard } from './tools/index.js';
 export { PythonRPCExecutor, getPythonRPC } from './tools/PythonRPCExecutor.js';
 export type { PythonTask, PythonResult } from './tools/PythonRPCExecutor.js';
 export { createDefaultToolkit } from './tools/index.js';
@@ -182,46 +182,9 @@ export { RequestPreparer } from './communication/RequestPreparer.js';
 export type { RequestPreparerConfig } from './communication/RequestPreparer.js';
 
 // Unified Streaming
-export { StreamNormalizer } from './communication/StreamNormalizer.js';
-export { EventBroadcaster } from './communication/EventBroadcaster.js';
-export type { BroadcastTarget } from './communication/EventBroadcaster.js';
-export { LiveProjector } from './communication/LiveProjector.js';
-
-// Tool Execution Enhancements
-export { ParallelClassifier } from './tools/ParallelClassifier.js';
 export type { ClassifiedTool, ParallelClassification } from './tools/ParallelClassifier.js';
-export { EnhancedToolExecutor } from './tools/EnhancedToolExecutor.js';
-export type { BatchToolCall, BatchToolResult } from './tools/EnhancedToolExecutor.js';
-export { shouldDisclose, getCoreTools, createBridgeTools, resolveBridgeToolCall } from './tools/ProgressiveDisclosure.js';
-export { ToolCallRepairer } from './tools/ToolCallRepairer.js';
 export type { RepairResult as ToolCallRepairResult } from './tools/ToolCallRepairer.js';
-export { DoomLoopDetector } from './tools/DoomLoopDetector.js';
-export type { DoomLoopState, DoomLoopResult } from './tools/DoomLoopDetector.js';
-
-// Agent Loop Components
-export { SessionProcessor } from './agent/SessionProcessor.js';
 export type { SessionProcessorContext } from './agent/SessionProcessor.js';
-export { RunStateManager } from './agent/RunStateManager.js';
-export { CommandQueue } from './communication/CommandQueue.js';
-export type { QueuePriority, QueuedItem } from './communication/CommandQueue.js';
-
-// Retry, Failover, Watchdogs
-export { RetryEngine } from './communication/RetryEngine.js';
-export type { RetryEngineConfig } from './communication/RetryEngine.js';
-export { FailoverPolicy } from './communication/FailoverPolicy.js';
-export { ErrorClassifier } from './communication/ErrorClassifier.js';
-export { RetryStatusBuffer } from './communication/RetryStatusBuffer.js';
-export { IdleTimeoutBreaker } from './communication/IdleTimeoutBreaker.js';
-export { StaleWatchdog } from './communication/StaleWatchdog.js';
-
-// Context Management
-export { CompactionManager } from './communication/CompactionManager.js';
-export type { CompactionConfig, CompactionResult } from './communication/CompactionManager.js';
-export { CompactionSummarizer } from './communication/CompactionSummarizer.js';
-export { PostCompactionGuard } from './communication/PostCompactionGuard.js';
-
-// Streaming Projection & Persistence
-export { ResponseAssembler } from './communication/ResponseAssembler.js';
 export { ToolResultReinjector } from './communication/ToolResultReinjector.js';
 
 // Observability

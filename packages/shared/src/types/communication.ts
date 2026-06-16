@@ -100,6 +100,7 @@ export interface ProviderMessage {
   name?: string;
   toolCallId?: string;
   toolCalls?: ProviderToolCall[];
+  reasoning?: string;
 }
 
 export interface ProviderContentPart {

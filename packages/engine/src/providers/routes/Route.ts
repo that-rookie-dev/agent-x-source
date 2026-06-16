@@ -52,6 +52,7 @@ export function openAIProtocol(): ProviderProtocol {
         if (msg.toolCallId) converted.tool_call_id = msg.toolCallId;
         if (msg.toolCalls) converted.tool_calls = msg.toolCalls;
         if (msg.name) converted.name = msg.name;
+        if (msg.reasoning) converted.reasoning_content = msg.reasoning;
 
         return converted;
       });
@@ -68,7 +69,7 @@ export function openAIProtocol(): ProviderProtocol {
       }));
     },
 
-    normalizeEvent(rawChunk: unknown, _state: unknown): AgentXStreamEvent | null {
+    normalizeEvent(rawChunk: unknown, state: unknown): AgentXStreamEvent | null {
       const chunk = rawChunk as Record<string, unknown> | undefined;
       if (!chunk) return null;
 
@@ -88,6 +89,15 @@ export function openAIProtocol(): ProviderProtocol {
           };
         }
 
+        if (typeof delta.reasoning_content === 'string') {
+          return {
+            type: 'reasoning.delta',
+            reasoningId: (chunk.id as string) ?? 'unknown',
+            delta: delta.reasoning_content as string,
+            ts: Date.now(),
+          };
+        }
+
         const toolCalls = delta.tool_calls as
           | Array<{
               index?: number;
@@ -98,18 +108,24 @@ export function openAIProtocol(): ProviderProtocol {
 
         if (toolCalls && toolCalls.length > 0) {
           const tc = toolCalls[0]!;
+          const s = (state as Record<string, unknown>) ?? {};
           if (tc.function?.name) {
+            const toolCallId = tc.id ?? `gen-${tc.index ?? 0}-${Date.now()}`;
+            if (tc.index !== undefined) s[`tool-idx-${tc.index}`] = toolCallId;
             return {
               type: 'tool.input.start',
-              toolCallId: tc.id ?? 'unknown',
+              toolCallId,
               toolName: tc.function.name,
               ts: Date.now(),
             };
           }
           if (tc.function?.arguments) {
+            const toolCallId = tc.id
+              ?? (tc.index !== undefined ? s[`tool-idx-${tc.index}`] as string : undefined)
+              ?? `gen-${tc.index ?? 0}-${Date.now()}`;
             return {
               type: 'tool.input.delta',
-              toolCallId: tc.id ?? 'unknown',
+              toolCallId,
               delta: tc.function.arguments,
               ts: Date.now(),
             };

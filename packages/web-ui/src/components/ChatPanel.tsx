@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -12,6 +12,7 @@ import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import LinearProgress from '@mui/material/LinearProgress';
+import Collapse from '@mui/material/Collapse';
 import MenuItem from '@mui/material/MenuItem';
 import Menu from '@mui/material/Menu';
 import Tooltip from '@mui/material/Tooltip';
@@ -39,34 +40,31 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import ReplayIcon from '@mui/icons-material/Replay';
 import RouteIcon from '@mui/icons-material/Route';
 import SearchIcon from '@mui/icons-material/Search';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import HistoryIcon from '@mui/icons-material/History';
 import DownloadIcon from '@mui/icons-material/Download';
-import FlagIcon from '@mui/icons-material/Flag';
+
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState } from '../api';
 import { colors } from '../theme';
-import ModeSuggestionModal, { shouldSuggestMode, DISMISS_KEY } from './ModeSuggestionModal';
 import {
   ConnectionHealthDot,
   ScrollToBottomPill,
-  SlashCommandMenu,
   CommandPalette,
   SessionSearchModal,
-  DoomLoopWarning,
   ReasoningBlock,
   CheckpointDrawer,
-  TurnTokenBadge,
   StreamingCursor,
-  SLASH_COMMANDS,
   CrewMentionMenu,
-  type SlashCommand,
   type PaletteAction,
 } from './ChatEnhancements';
 import { MentionInput } from './MentionInput';
 import { FolderPickerModal } from './FolderPickerModal';
+import { ToolCallCard } from './visuals/ToolCallCard';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -93,16 +91,26 @@ interface UIMessage extends ChatMessage {
   attachments?: { name: string }[];
   turnTokens?: number;
   turnCostUsd?: number;
-  doomLoop?: { toolName: string; count: number } | null;
+
   crew?: { crewId: string; name: string; callsign: string };
+  parts?: PartEntry[];
+}
+
+interface PartEntry {
+  type: 'text' | 'tool' | 'subagent';
+  id: string;
+  content?: string;
+  tool?: ToolCall;
+  agent?: SubAgent;
 }
 
 interface ToolCall {
   id: string;
   name: string;
-  args?: string;
+  args?: string | Record<string, unknown>;
   result?: string;
   status: 'running' | 'done' | 'error';
+  elapsed?: number;
 }
 
 interface SubAgent {
@@ -183,6 +191,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return msg;
   }, []);
 
+  // Replace a warning if one with the same tool name (doom loop) exists, else append
+  const replaceWarning = useCallback((prev: string[], newMsg: string): string[] => {
+    // Detect doom-loop style: "toolName called Nx consecutively" or "[DOOM LOOP DETECTED] toolName"
+    const doomMatch = newMsg.match(/(\[DOOM LOOP DETECTED\])?\s*(\S+?)\s*(?:called|repeated)/i);
+    if (doomMatch) {
+      const toolName = doomMatch[2];
+      const idx = prev.findIndex(w => w.includes(toolName) && /(called|repeated)\s+\d+\s*x?/i.test(w));
+      if (idx !== -1) {
+        const copy = [...prev];
+        copy[idx] = newMsg;
+        return copy;
+      }
+    }
+    return prev.includes(newMsg) ? prev : [...prev, newMsg];
+  }, []);
+
   // Sync view with sessionId prop from URL — also restore session history on mount/refresh
   useEffect(() => {
     if (sessionId) {
@@ -196,8 +220,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setShowJumpPill(false);
       setUnreadCount(0);
       sessions.restore(sessionId).then(({ messages: historyMsgs, session }) => {
-        const visible = historyMsgs.filter((m) => m.role !== 'system');
-        setMessages(visible.map((m) => ({ ...m, streaming: false })));
+        const visible = historyMsgs.filter((m: any) => m.role !== 'part');
+        setMessages(visible.map((m: any) => ({
+          ...m,
+          id: m.id || crypto.randomUUID(),
+          streaming: false,
+          toolCalls: m.toolCalls?.map((tc: any) => ({ ...tc, status: 'done' as const })),
+          subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
+          plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
+        })) as unknown as UIMessage[]);
         setCurrentSessionTitle(session.title ?? `Session ${sessionId.slice(0, 8)}`);
         const totalUsed = (session as any).tokenUsed ?? session.tokensUsed ?? 0;
         setTokenUsed(totalUsed);
@@ -224,7 +255,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [tokenOutputPrice, setTokenOutputPrice] = useState(0);
   const [tokenTotal, setTokenTotal] = useState(128000);
   const [compactionCount, setCompactionCount] = useState(0);
-  const skipSuggestionRef = useRef(false);
+  
 
   // Model/Provider state
   const [currentModel, setCurrentModel] = useState('');
@@ -238,9 +269,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [crewList, setCrewList] = useState<Crew[]>([]);
 
   // Agent mode
-  const [agentMode, setAgentMode] = useState<AgentMode>('plan');
-  const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
-  const [pendingSendText, setPendingSendText] = useState<string | null>(null);
+  const [agentMode, setAgentMode] = useState<AgentMode>('agent');
+  
 
   // CWD
   const [cwd, setCwd] = useState('');
@@ -265,15 +295,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [folderConsentOpen, setFolderConsentOpen] = useState(false);
   const [folderPickerLoading, setFolderPickerLoading] = useState(false);
   const pendingFolderActionRef = useRef<'newSession' | 'changeCwd' | null>(null);
-  const [showSlash, setShowSlash] = useState(false);
-  const slashQuery = useMemo(() => {
-    if (!input.startsWith('/')) return '';
-    const line = input.split('\n')[0] ?? '';
-    if (line.includes(' ')) return '';
-    return line;
-  }, [input]);
-  useEffect(() => { setShowSlash(slashQuery.length > 0); }, [slashQuery]);
-
   // @-mention detection
   const [showCrewMention, setShowCrewMention] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -361,7 +382,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
     system.cwd().then((r) => { setCwd(r.cwd || ''); }).catch(() => {});
-    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); else setAgentMode('plan'); }).catch(() => {});
+    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); else setAgentMode('agent'); }).catch(() => {});
     // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
       .then(r => r.json())
@@ -400,15 +421,18 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     if (match?.contextWindow) setTokenTotal(match.contextWindow);
   }, [currentModel, modelList]);
 
+  // Helper to immutably update the last assistant message (avoids React mutation anti-pattern).
+  // Defined at component level so other effects (streaming timeout, SSE handler) can share it.
+  const updateLastMessage = (msgs: UIMessage[], updates: Partial<UIMessage>): UIMessage[] => {
+    if (msgs.length === 0) return msgs;
+    const last = msgs[msgs.length - 1];
+    if (last?.role !== 'assistant') return msgs;
+    return [...msgs.slice(0, -1), { ...last, ...updates }];
+  };
+
   // Connect SSE for streaming events
   useEffect(() => {
-    // Helper to immutably update the last message (avoids React mutation anti-pattern)
-    const updateLastMessage = (msgs: UIMessage[], updates: Partial<UIMessage>): UIMessage[] => {
-      if (msgs.length === 0) return msgs;
-      const last = msgs[msgs.length - 1];
-      if (last?.role !== 'assistant') return msgs;
-      return [...msgs.slice(0, -1), { ...last, ...updates }];
-    };
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const handleEvent = (ev: TelemetryEvent) => {
       // Reset activity timer on every event from the agent
@@ -420,18 +444,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
         switch (ev.type) {
           case 'loading_start': {
-            // Set up loading steps if provided
-            const loadingStepsEvent = ev as { type: 'loading_start'; stage: string; steps?: Array<{ id: string; label: string; status: string }> };
-            if (loadingStepsEvent.steps && loadingStepsEvent.steps.length > 0) {
-              setLoadingSteps(loadingStepsEvent.steps);
-            }
-            // If the last assistant message is no longer streaming (closed by
-            // a prior loading_end from a fast-reply failure), reuse it instead
-            // of creating a duplicate placeholder.
-            if (last?.role === 'assistant' && !last.streaming && last.content) {
+            setLoadingSteps(null);
+            // Only create a placeholder when a user message just arrived (new turn).
+            // If the last message is a completed assistant (race with handleSend),
+            // let stream_chunk or message_received handle the placeholder instead.
+            if (last?.role === 'user') {
               setStreaming(true);
-              return updateLastMessage(prev, { streaming: true });
-            } else if (!last || last.role !== 'assistant' || !last.streaming) {
+              return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
+            }
+            if (!last) {
               setStreaming(true);
               return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
             }
@@ -448,23 +469,34 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             });
             return prev;
 
-          case 'stream_chunk':
+          case 'stream_chunk': {
+            const delta = (ev.content as string) ?? '';
+            const fullContent = (ev.fullContent as string) ?? '';
             if (last?.role === 'assistant' && last.streaming) {
-              const newContent = (ev.fullContent as string) ?? (last.content + ((ev.content as string) ?? ''));
-              return updateLastMessage(prev, { content: newContent });
-            } else {
-              // If no streaming placeholder exists, create one
-              setStreaming(true);
-              return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: (ev.content as string) ?? '', streaming: true }];
+              const parts = last.parts || [];
+              const lastPart = parts[parts.length - 1];
+              if (lastPart?.type === 'text') {
+                // Append delta to existing text part
+                const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: (lastPart.content || '') + delta }];
+                return updateLastMessage(prev, { content: fullContent, parts: updatedParts });
+              } else {
+                // Create new text part after tools
+                const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: delta };
+                return updateLastMessage(prev, { content: fullContent, parts: [...parts, textPart] });
+              }
             }
+            setStreaming(true);
+            const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: delta };
+            return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: delta, streaming: true, parts: [textPart] }];
+          }
 
           case 'loading_end':
             setLoadingSteps(null);
             setStreaming(false);
-            return updateLastMessage(prev, { streaming: false });
+            return prev;
 
           case 'message_received': {
-            const msg = ev.message as { id?: string; content?: string; role?: string; crew?: { crewId: string; name: string; callsign: string } } | undefined;
+            const msg = ev.message as { id?: string; content?: string; role?: string; parts?: PartEntry[]; toolCalls?: ToolCall[]; crew?: { crewId: string; name: string; callsign: string }; tokenCount?: number } | undefined;
             const crew = msg?.crew;
             setStreaming(false);
             if (!msg || msg.role === 'system') return prev;
@@ -472,24 +504,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             if (last?.role === 'assistant') {
               if (last.streaming) {
                 if (last.content) {
-                  // Streaming with content — this is an independent message (e.g. reminder).
-                  // Finalize the streaming message and append the new one.
-                  const finalized = { ...last, streaming: false };
-                  return msg.role === 'assistant'
-                    ? [...prev.slice(0, -1), finalized, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, ...(crew ? { crew } : {}) } as UIMessage]
-                    : [...prev.slice(0, -1), finalized];
+                  // Streaming already showed content — just finalize with accumulated parts
+                  return updateLastMessage(prev, { streaming: false, ...(crew ? { crew } : {}) });
                 }
-                // Streaming placeholder with no content yet — this is the final content
                 return updateLastMessage(prev, { content: text || last.content, streaming: false, ...(crew ? { crew } : {}) });
               }
-              // Not streaming — independent message, append
-              if (msg.role === 'assistant' && text) {
-                return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, ...(crew ? { crew } : {}) } as UIMessage];
-              }
-              return prev;
+              return updateLastMessage(prev, { streaming: false, ...(crew ? { crew } : {}) });
             }
             if (msg.role === 'assistant' && text) {
-              return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, ...(crew ? { crew } : {}) } as UIMessage];
+              const parts = msg.parts || (last?.parts) || [{ type: 'text' as const, id: crypto.randomUUID(), content: text }];
+              return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, parts, ...(crew ? { crew } : {}) } as UIMessage];
             }
             return prev;
           }
@@ -497,52 +521,65 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'tool_executing': {
             if (last?.role !== 'assistant') return prev;
             const toolName = (ev.tool as string) ?? 'unknown';
-            if (toolName === 'delegate_to_subagent') {
-              const sa: SubAgent = { id: crypto.randomUUID(), name: 'Sub-Agent', task: (ev.description as string) ?? '', status: 'running' };
-              return updateLastMessage(prev, { subAgents: [...(last.subAgents ?? []), sa] });
-            } else {
-              const tc: ToolCall = { id: crypto.randomUUID(), name: toolName, args: (ev.description as string) ?? '', status: 'running' };
-              const newToolCalls = [...(last.toolCalls ?? []), tc];
-              // Doom-loop detection: same tool called 3+ times in a row with similar args
-              const recent = newToolCalls.slice(-4);
-              let doomLoop = last.doomLoop;
-              if (recent.length >= 3) {
-                const same = recent.slice(-3).every(t => t.name === toolName && (t.args ?? '').slice(0, 80) === (tc.args ?? '').slice(0, 80));
-                doomLoop = same ? { toolName, count: recent.filter(t => t.name === toolName).length } : null;
-              }
-              return updateLastMessage(prev, { toolCalls: newToolCalls, doomLoop });
-            }
-          }
+            const desc = (ev.description as string) ?? '';
+            const eventArgs = (ev.args as Record<string, unknown> | string | undefined) ?? desc;
+            const callId = (ev.callId as string) ?? crypto.randomUUID();
 
-          case 'doom_loop':
-            return last?.role === 'assistant'
-              ? updateLastMessage(prev, { doomLoop: { toolName: (ev.tool as string) ?? 'unknown', count: (ev.count as number) ?? 3 } })
-              : prev;
+            if (toolName === 'delegate_to_subagent') {
+              const sa: SubAgent = { id: callId, name: 'Sub-Agent', task: desc, status: 'running' };
+              const saPart: PartEntry = { type: 'subagent', id: callId, agent: sa };
+              return updateLastMessage(prev, {
+                subAgents: [...(last.subAgents ?? []), sa],
+                parts: [...(last.parts || []), saPart],
+              });
+            }
+
+            const tc: ToolCall = { id: callId, name: toolName, args: eventArgs, status: 'running' };
+            const toolPart: PartEntry = { type: 'tool', id: callId, tool: tc };
+            const parts = [...(last.parts || []), toolPart];
+
+            return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts });
+          }
 
           case 'tool_complete': {
             if (last?.role !== 'assistant') return prev;
             const toolName = (ev.tool as string) ?? '';
+            const elapsed = (ev.elapsed as number) ?? 0;
+            const callId = (ev.callId as string) ?? '';
+            const result = (ev as any).result ?? (ev as any).output as string ?? '';
+            const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+
             if (toolName === 'delegate_to_subagent' && last.subAgents) {
-              const newSubAgents = last.subAgents.map((a) => {
+              const newSubAgents = last.subAgents.map((a: SubAgent) => {
                 if (a.status !== 'running') return a;
-                const result = ev.result as { output?: string; success?: boolean } | string | undefined;
-                return { ...a, status: 'done' as const, result: typeof result === 'string' ? result : result?.output ?? 'Done' };
+                return { ...a, status: 'done' as const, result: resultStr };
               });
-              return updateLastMessage(prev, { subAgents: newSubAgents });
-            } else if (last.toolCalls) {
-              let foundToolError = false;
-              const newToolCalls = last.toolCalls.map((t) => {
-                if (t.name !== toolName || t.status !== 'running') return t;
-                const result = ev.result;
-                const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
-                const resObj = typeof result === 'object' && result !== null ? result as Record<string, unknown> : null;
-                if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') foundToolError = true;
-                return { ...t, status: 'done' as const, result: resultStr };
-              });
-              if (foundToolError) setToolEnablePrompt({ toolId: toolName, toolName });
-              return updateLastMessage(prev, { toolCalls: newToolCalls });
+              // Update part too
+              const newParts = (last.parts || []).map((p: PartEntry) =>
+                p.type === 'subagent' && p.agent?.id === callId ? ({ ...p, agent: { ...p.agent!, status: 'done' as const, result: resultStr } }) : p
+              );
+              return updateLastMessage(prev, { subAgents: newSubAgents, parts: newParts });
             }
-            return prev;
+
+            // Update tool in both toolCalls array and parts array
+            const newToolCalls = (last.toolCalls || []).map((t: ToolCall) => {
+              if (callId && t.id !== callId) return t;
+              if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
+              return { ...t, status: 'done' as const, result: resultStr, elapsed };
+            });
+            const newParts = (last.parts || []).map((p: PartEntry) => {
+              if (p.type === 'tool' && p.tool) {
+                if (callId && p.tool.id !== callId) return p;
+                if (!callId && (p.tool.name !== toolName || p.tool.status !== 'running')) return p;
+                return { ...p, tool: { ...p.tool, status: 'done' as const, result: resultStr, elapsed } };
+              }
+              return p;
+            });
+            let foundToolError = false;
+            const resObj = typeof (ev as any).result === 'object' && (ev as any).result !== null ? (ev as any).result as Record<string, unknown> : null;
+            if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') foundToolError = true;
+            if (foundToolError) setToolEnablePrompt({ toolId: toolName, toolName });
+            return updateLastMessage(prev, { toolCalls: newToolCalls, parts: newParts });
           }
 
           case 'todo_update': {
@@ -618,9 +655,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'provider_error': {
             const providerMsg = (ev.message as string) ?? 'Provider error';
             const msg = extractProviderError(providerMsg);
-            setWarnings(prev => prev.includes(msg) ? prev : [...prev, msg]);
+            setWarnings(prev => replaceWarning(prev, msg));
             if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
             setStreaming(false);
+            if (last?.role === 'assistant' && last.streaming && !last.content && !last.toolCalls?.length) {
+              return prev.slice(0, -1);
+            }
             if (last?.role !== 'assistant') return prev;
             return updateLastMessage(prev, { streaming: false });
           }
@@ -639,8 +679,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'error': {
             const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
             // Route to warning band — errors should not pollute the chat bubble
-            setWarnings(prev => prev.includes(errorText) ? prev : [...prev, errorText]);
+            setWarnings(prev => replaceWarning(prev, errorText));
             setStreaming(false);
+            if (last?.role === 'assistant' && last.streaming && !last.content && !last.toolCalls?.length) {
+              return prev.slice(0, -1);
+            }
             if (last?.role !== 'assistant') return prev;
             return updateLastMessage(prev, { streaming: false });
           }
@@ -653,9 +696,36 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
     disconnectRef.current = connectSSE({
       onEvent: handleEvent,
-      onState: (state) => { setConnState(state); if (state === 'open') setLastEventAt(Date.now()); },
+      onState: (state) => {
+        setConnState(state);
+        if (state === 'open') {
+          setLastEventAt(Date.now());
+        } else if (state === 'reconnecting') {
+          // Safety: if streaming and SSE drops, force-close after a grace period
+          // so the UI doesn't stay stuck in loading state forever.
+          // Cleared if the connection restores before the timeout.
+          reconnectTimeout = setTimeout(() => {
+            setMessages(prev => {
+              const last = prev[prev.length - 1];
+              if (last?.role === 'assistant' && last.streaming) {
+                return updateLastMessage(prev, { streaming: false });
+              }
+              return prev;
+            });
+            setStreaming(false);
+          }, 30000);
+        }
+        // Separate check: clear reconnect timeout when SSE restores
+        if (state === 'open' && reconnectTimeout) {
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = null;
+        }
+      },
     });
-    return () => { disconnectRef.current?.(); };
+    return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      disconnectRef.current?.();
+    };
   }, []);
 
   // Load history on mount — only if no sessionId (session restore handles it instead)
@@ -673,18 +743,31 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }).catch(() => {});
   }, [sessionId]);
 
-  // Streaming timeout — if no content or events arrive within 120s, fail gracefully
-  // Uses a ref to reset the timer on each new event (activity-based timeout)
+  // Streaming timeout — if no content or events arrive, fail gracefully.
+  // Uses a ref to reset the timer on each new event (activity-based timeout).
+  // - If no content starts within 60s, time out with error.
+  // - If content is flowing but stalls for 60s, force-close streaming.
   const lastActivityRef = useRef<number>(Date.now());
   useEffect(() => {
     if (!streaming) return;
     lastActivityRef.current = Date.now();
     const timer = setInterval(() => {
-      if (Date.now() - lastActivityRef.current > 120000) {
+      const elapsed = Date.now() - lastActivityRef.current;
+      if (elapsed > 120000) {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (last?.role === 'assistant' && last.streaming && !last.content) {
-            return [...prev.slice(0, -1), { ...last, content: '⚠️ Request timed out. The agent took too long to respond. Please try again.', streaming: false }];
+          if (last?.role === 'assistant') {
+            return updateLastMessage(prev, { content: '⚠️ Request timed out. The agent took too long to respond. Please try again.', streaming: false });
+          }
+          return prev;
+        });
+        setStreaming(false);
+      } else if (elapsed > 60000) {
+        // Force-close streaming if stuck for over 60s with no activity
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'assistant' && last.streaming) {
+            return updateLastMessage(prev, { streaming: false });
           }
           return prev;
         });
@@ -721,21 +804,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const handleSend = useCallback(async (overrideText?: string) => {
     const text = typeof overrideText === 'string' ? overrideText.trim() : input.trim();
     if ((!text && attachments.length === 0) || streaming) return;
-
-    // Mode suggestion: if in Plan mode and text implies action, suggest switching to Agent
-    if (agentMode === 'plan' && shouldSuggestMode(text) && !localStorage.getItem(DISMISS_KEY) && !skipSuggestionRef.current) {
-      setPendingSendText(text);
-      setModeSuggestOpen(true);
-      return;
-    }
-
-    if (text.startsWith('/')) {
-      const handled = await runSlashCommand(text);
-      if (handled) {
-        setInput('');
-        return;
-      }
-    }
     if (!currentProvider || !currentModel) return;
 
     // Create session lazily on first message
@@ -751,12 +819,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       streaming: false,
       attachments: attachments.map((a) => ({ name: a.name })),
     };
-    // Add user message + a placeholder assistant message to show thinking immediately
-    setMessages((prev) => [
-      ...prev,
-      userMsg,
-      { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true },
-    ]);
+    // Add user message — SSE (loading_start) will create the assistant placeholder
+    setMessages((prev) => [...prev, userMsg]);
 
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
@@ -795,13 +859,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired|insufficient|credits|balance|dunning|deny/i.test(errorMsg);
       if (isProviderErr) {
         const msg = extractProviderError(errorMsg);
-        setWarnings(prev => prev.includes(msg) ? prev : [...prev, msg]);
+        setWarnings(prev => replaceWarning(prev, msg));
         if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
         // Clear server-side agent processing state so next message isn't blocked
         chat.cancel().catch(() => {});
       } else {
         // Non-provider errors (e.g., "Agent is busy") — also show in warning band
-        setWarnings(prev => prev.includes(displayError) ? prev : [...prev, displayError]);
+        setWarnings(prev => replaceWarning(prev, displayError));
         chat.cancel().catch(() => {});
       }
       setMessages((prev) => {
@@ -815,6 +879,56 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setStreaming(false);
     }
   }, [input, streaming, attachments, currentProvider, currentModel, agentMode]);
+
+  // Retry last user message — re-sends without duplicating the user message,
+  // replaces the existing assistant response on success.
+  const handleResend = useCallback(async (text: string) => {
+    if (!text || streaming || !currentProvider || !currentModel) return;
+    if (!(await ensureSession())) return;
+
+    setStreaming(true);
+
+    // Remove the old assistant response — SSE (loading_start) will create the placeholder
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      return last?.role === 'assistant' ? prev.slice(0, -1) : prev;
+    });
+
+    try {
+      const result = await chat.send(text, undefined, true);
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'assistant' && last.streaming) {
+          if (!last.content && result?.message?.content) {
+            return [...prev.slice(0, -1), { ...result.message, streaming: false }];
+          }
+          return [...prev.slice(0, -1), { ...last, streaming: false }];
+        }
+        return prev;
+      });
+      setStreaming(false);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
+      const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired|insufficient|credits|balance|dunning|deny/i.test(errorMsg);
+      if (isProviderErr) {
+        const msg = extractProviderError(errorMsg);
+        setWarnings(prev => replaceWarning(prev, msg));
+        chat.cancel().catch(() => {});
+      } else {
+        setWarnings(prev => replaceWarning(prev, displayError));
+        chat.cancel().catch(() => {});
+      }
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'assistant' && last.streaming) {
+          return prev.slice(0, -1);
+        }
+        return prev;
+      });
+      setStreaming(false);
+    }
+  }, [streaming, currentProvider, currentModel]);
 
   // --- Clarification keyboard navigation & submission ---
   const clearClarification = useCallback(() => {
@@ -896,122 +1010,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   };
 
   // ─── Slash command handler ───
-  const runSlashCommand = useCallback(async (raw: string): Promise<boolean> => {
-    const line = raw.trim();
-    if (!line.startsWith('/')) return false;
-    const [cmd, ...rest] = line.slice(1).split(/\s+/);
-    const argStr = rest.join(' ');
-    const sid = currentSessionId;
-    switch (cmd) {
-      case 'help': {
-        const helpText = 'Available slash commands:\n\n' + SLASH_COMMANDS.map(c => `**${c.name}** — ${c.description}`).join('\n');
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: helpText, streaming: false }]);
-        return true;
-      }
-      case 'clear': {
-        try { await chat.clear(); } catch { /* ignore */ }
-        setMessages([]);
-        setTokenUsed(0);
-        setTokenInput(0);
-        setTokenOutput(0);
-        setCompactionCount(0);
-        return true;
-      }
-      case 'compact': {
-        if (!sid) return true;
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '✨ Compacting session…', streaming: true }]);
-        try {
-          const r = await sessions.compact(sid);
-          setMessages(prev => {
-            const m = [...prev];
-            const last = m[m.length - 1];
-            if (last?.streaming) { last.streaming = false; last.content = `✨ Session compacted.\n\n${r.summary || ''}`; }
-            return m;
-          });
-        } catch (e) {
-          setMessages(prev => [...prev.slice(0, -1), { id: crypto.randomUUID(), role: 'assistant', content: `⚠️ Compaction failed: ${e instanceof Error ? e.message : 'unknown'}`, streaming: false }]);
-        }
-        return true;
-      }
-      case 'retry': {
-        const lastUser = [...messages].reverse().find(m => m.role === 'user');
-        if (lastUser?.content) {
-          setInput(lastUser.content);
-          setTimeout(() => handleSend(), 50);
-        }
-        return true;
-      }
-      case 'undo': {
-        if (!sid) return true;
-        try {
-          const list = await sessions.checkpoints(sid);
-          if (list.length === 0) {
-            setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '⚠️ No checkpoints available. Use `/checkpoint` to save one first.', streaming: false }]);
-            return true;
-          }
-          await sessions.restoreCheckpoint(sid, list[0]!.id);
-          const h = await chat.history();
-          const visible = h.filter(m => m.role !== 'system');
-          setMessages(visible.map(m => ({ ...m, streaming: false })));
-          const totalUsed = visible.reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
-          setTokenUsed(totalUsed);
-          const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
-          const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
-          setTokenInput(inputEst);
-          setTokenOutput(outputEst);
-        } catch { /* ignore */ }
-        return true;
-      }
-      case 'checkpoint': {
-        if (!sid) return true;
-        try {
-          const r = await sessions.checkpoint(sid, argStr || undefined);
-          setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `📝 Checkpoint saved: **${r.label}**`, streaming: false }]);
-        } catch { /* ignore */ }
-        return true;
-      }
-      case 'checkpoints': {
-        setCheckpointsOpen(true);
-        return true;
-      }
-      case 'search': {
-        setSearchOpen(true);
-        return true;
-      }
-      case 'think': {
-        // Force plan mode for this turn
-        setAgentMode('plan');
-        sessionSettings.setMode('plan').catch(() => {});
-        if (argStr) {
-          setInput(argStr);
-          setTimeout(() => handleSend(), 30);
-        }
-        return true;
-      }
-      case 'export': {
-        if (!sid) return true;
-        sessions.exportTrajectory(sid);
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `📦 Exporting trajectory for session **${sid.slice(0, 8)}**…`, streaming: false }]);
-        return true;
-      }
-      case 'goal': {
-        if (!argStr) {
-          setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '⚠️ Usage: `/goal <multi-step objective>`', streaming: false }]);
-          return true;
-        }
-        // Goal mode: force plan mode + prepend a goal-framing instruction
-        setAgentMode('plan');
-        sessionSettings.setMode('plan').catch(() => {});
-        setInput(`🎯 GOAL: ${argStr}\n\nBreak this down into concrete steps, then execute them. Use the task tracker. Stop and report after each major milestone.`);
-        setTimeout(() => handleSend(), 30);
-        return true;
-      }
-      default:
-        return false;
-    }
-  }, [currentSessionId, messages]);
-
-  // ─── Global keyboard shortcuts (declared after runSlashCommand to avoid TDZ) ───
+  // ─── Global keyboard shortcuts ───
   // Tab key cycles mode when not typing in input
   const handleToggleMode = useCallback(() => {
     setAgentMode(prev => {
@@ -1034,10 +1033,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         e.preventDefault();
         setSearchOpen(true);
       } else if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
-        if (currentSessionId) {
-          e.preventDefault();
-          runSlashCommand('/undo');
-        }
+        e.preventDefault();
+        handleResend(messages.filter(m => m.role === 'user').pop()?.content ?? '');
       } else if (e.key === 'Escape' && streaming) {
         e.preventDefault();
         handleCancel();
@@ -1045,23 +1042,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentSessionId, streaming, runSlashCommand, view, handleToggleMode]);
+  }, [currentSessionId, streaming, messages, handleResend, view, handleToggleMode]);
 
-  // ─── Command palette actions (declared after runSlashCommand to avoid TDZ) ───
+  // ─── Command palette actions ───
   const paletteActions: PaletteAction[] = useMemo(() => [
     { id: 'new-session', label: 'New session', hint: 'N', icon: <AddIcon sx={{ fontSize: 14 }} />, run: () => handleNewSession() },
     { id: 'sessions', label: 'Show all sessions', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => handleShowSessions() },
     { id: 'search', label: 'Search sessions', hint: '⌘F', icon: <SearchIcon sx={{ fontSize: 14 }} />, run: () => setSearchOpen(true) },
     { id: 'checkpoints', label: 'Open checkpoints', icon: <HistoryIcon sx={{ fontSize: 14 }} />, run: () => setCheckpointsOpen(true) },
-    { id: 'clear', label: 'Clear chat', icon: <DeleteIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/clear') },
-    { id: 'compact', label: 'Compact session', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/compact') },
-    { id: 'undo', label: 'Undo (restore latest checkpoint)', hint: '⌘Z', icon: <ArrowBackIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/undo') },
-    { id: 'retry', label: 'Retry last message', icon: <SendIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/retry') },
-    { id: 'export', label: 'Export trajectory (JSON)', icon: <DownloadIcon sx={{ fontSize: 14 }} />, run: () => runSlashCommand('/export') },
-    { id: 'goal', label: 'Set Goal Mode objective', icon: <FlagIcon sx={{ fontSize: 14 }} />, run: () => { setInput('/goal '); } },
     { id: 'mode-agent', label: 'Switch mode → Agent', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('agent'); sessionSettings.setMode('agent').catch(() => {}); } },
     { id: 'mode-plan', label: 'Switch mode → Plan', icon: <RouteIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('plan'); sessionSettings.setMode('plan').catch(() => {}); } },
-  ], [runSlashCommand]);
+  ], []);
 
   const handleStopAndSend = async () => {
     const text = input.trim();
@@ -1126,6 +1117,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       e.preventDefault();
       handleSend();
     }
+    // Shift+Enter → let the textarea insert the newline (don't prevent default)
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1156,8 +1148,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setStreaming(false);
     try {
       const { messages: historyMsgs, session } = await sessions.restore(s.id);
-      const visible = historyMsgs.filter((m) => m.role !== 'system');
-      setMessages(visible.map((m) => ({ ...m, streaming: false })));
+      const visible = historyMsgs.filter((m: any) => m.role !== 'part');
+      setMessages(visible.map((m: any) => ({
+        ...m, id: m.id || crypto.randomUUID(), streaming: false,
+        toolCalls: m.toolCalls?.map((tc: any) => ({ ...tc, status: 'done' as const })),
+        subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
+        plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
+      })) as unknown as UIMessage[]);
       setCurrentSessionTitle(s.title ?? `Session ${s.id.slice(0, 8)}`);
       setCurrentSessionId(s.id);
       setShowJumpPill(false);
@@ -1422,26 +1419,28 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
           {visibleMessages.map((msg, idx) => {
             const isLastUser = msg.role === 'user' && visibleMessages.slice(idx + 1).every(m => m.role !== 'user');
-            return (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              isLastUser={isLastUser}
-              onResend={isLastUser ? handleSend : undefined}
-              onDismissDoomLoop={() => setMessages(prev => { const last = prev[prev.length - 1]; if (!last?.doomLoop) return prev; return [...prev.slice(0, -1), { ...last, doomLoop: null }]; })}
-              loadingSteps={idx === visibleMessages.length - 1 && msg.streaming && !msg.content ? loadingSteps : null}
-            />
+             return (
+               <Box key={msg.id}>
+                  <MessageBubble
+                    message={msg}
+                    loadingSteps={idx === visibleMessages.length - 1 && msg.streaming && !msg.content ? loadingSteps : null}
+                  />
+                  {isLastUser && msg.content && (
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: -1, mb: 0.5, mr: 5 }}>
+                     <IconButton size="small" onClick={() => handleResend(msg.content)}
+                       sx={{ p: 0.3, opacity: 0.4, '&:hover': { opacity: 1, bgcolor: 'transparent' } }}>
+                       <ReplayIcon sx={{ fontSize: 13 }} />
+                     </IconButton>
+                   </Box>
+                 )}
+               </Box>
             );
           })}
-          {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
+           {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
             <ThinkingIndicator label={loadingSteps?.[0]?.label} />
           )}
 
-          {permissionPrompt && (
-            <PermissionBanner prompt={permissionPrompt} onRespond={() => setPermissionPrompt(null)} />
-          )}
-
-          {toolEnablePrompt && (
+           {toolEnablePrompt && (
             <ToolEnableBanner toolId={toolEnablePrompt.toolId} toolName={toolEnablePrompt.toolName} onRespond={() => setToolEnablePrompt(null)} />
           )}
 
@@ -1473,20 +1472,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             transition: 'max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease',
             mb: hasWarnings ? '-20px' : 0,
           }}>
-            <Box sx={{
-              bgcolor: colors.accent.orange + '18',
-              border: `1px solid ${colors.accent.orange}30`,
-              borderBottom: 'none',
-              borderRadius: '14px 14px 0 0',
-              px: 1.5,
-              pt: 1,
-              pb: 3,
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 0.75,
-              maxHeight: 250,
-            }}>
-              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0.3, overflowY: 'auto', maxHeight: 240, pb: 2 }}>
+    <Box sx={{
+      bgcolor: colors.accent.orange + '18',
+      border: `1px solid ${colors.accent.orange}30`,
+      borderBottom: 'none',
+      borderRadius: '14px 14px 0 0',
+      px: 1.5, pt: 1, pb: 1.5,
+      display: 'flex', alignItems: 'flex-start', gap: 0.75,
+      maxHeight: 250,
+    }}>
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0.3, overflowY: 'auto', maxHeight: 240, pb: 1 }}>
                 {allWarnings.map((msg, i) => (
                   <Typography key={i} sx={{
                     fontSize: '0.58rem',
@@ -1541,17 +1536,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             transition: 'border-color 0.2s, background-color 0.2s',
             '&:focus-within': { borderColor: agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
           }}>
-            {/* Slash command autocomplete */}
-            {showSlash && (
-              <SlashCommandMenu
-                query={slashQuery}
-                onSelect={(cmd: SlashCommand) => {
-                  setInput(cmd.example ? cmd.name + ' ' : cmd.name);
-                  setShowSlash(false);
-                }}
-                onClose={() => setShowSlash(false)}
-              />
-            )}
             {/* @-mention crew autocomplete */}
             {showCrewMention && (
               <CrewMentionMenu
@@ -1727,6 +1711,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                     ↑↓ Navigate · Enter to select · Esc to cancel
                   </Typography>
                 </Box>
+              </Box>
+            )}
+            {/* Permission banner above input */}
+            {permissionPrompt && (
+              <Box sx={{ px: 1.25, pt: 1.25, pb: 0.5 }}>
+                <PermissionBanner prompt={permissionPrompt} onRespond={() => setPermissionPrompt(null)} />
               </Box>
             )}
             {/* Input row */}
@@ -2147,7 +2137,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             • You can change the working directory at any time from the sidebar.
           </Typography>
           <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7 }}>
-            • Use the approval mode ("Ask" / "Moderate" / "Auto") to control how much autonomy Agent-X has.
+            • Switch between Agent (full autonomy with tool execution) and Plan (structured plan with step approval) modes in the toolbar.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
@@ -2165,29 +2155,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         </Box>
       )}
 
-      <ModeSuggestionModal
-        open={modeSuggestOpen}
-        onSwitch={() => {
-          setModeSuggestOpen(false);
-          setAgentMode('agent');
-          sessionSettings.setMode('agent').catch(() => {});
-          // Re-send with Agent mode
-          const txt = pendingSendText;
-          setPendingSendText(null);
-          if (txt) setTimeout(() => handleSend(txt), 50);
-        }}
-        onStay={() => {
-          setModeSuggestOpen(false);
-          skipSuggestionRef.current = true;
-          const txt = pendingSendText;
-          setPendingSendText(null);
-          if (txt) setTimeout(() => handleSend(txt), 50);
-        }}
-        onClose={() => {
-          setModeSuggestOpen(false);
-          setPendingSendText(null);
-        }}
-      />
     </Box>
   );
 }
@@ -2299,9 +2266,104 @@ const MARKDOWN_BASE_SX = {
 
 const MAX_CODE_LINES = 30;
 
+// Box-drawing and tree characters used in ASCII structural art (folder trees, diagrams)
+const STRUCTURAL_CHARS = new Set([
+  '├', '─', '│', '└', '┌', '┐', '┘', '┃', '┏', '┓', '┗', '┛',
+  '╋', '╂', '┊', '┆', '═', '║', '╟', '╠', '╢', '╣', '╩', '╦',
+  '╬', '▌', '▐', '▀', '▄', '█', '░', '▒', '▓',
+]);
+
+function isStructuralArt(text: string): boolean {
+  const lines = text.split('\n');
+  if (lines.length < 2) return false;
+  const treeLineRe = /^[\s│├└┌┐┘┃┏┓┗┛╋╂╟╠╢╣╩╦╬+|\-`].*[─│└├┌┐┘║]/;
+  let structuralCount = 0;
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    if (!trimmed) continue;
+    // Check if line contains box-drawing chars
+    let hasStructural = false;
+    for (const ch of trimmed) {
+      if (STRUCTURAL_CHARS.has(ch)) { hasStructural = true; break; }
+    }
+    // Also check common ASCII tree/diagram patterns
+    if (!hasStructural && treeLineRe.test(trimmed)) hasStructural = true;
+    // Check for indentation-heavy content (code-like)
+    if (!hasStructural && /^[ \t]{2,}[\w\/\-.]/.test(trimmed)) hasStructural = true;
+    if (hasStructural) structuralCount++;
+  }
+  // At least half the non-empty lines should look structural
+  const nonEmpty = lines.filter(l => l.trim().length > 0).length;
+  return nonEmpty >= 2 && structuralCount >= Math.ceil(nonEmpty / 2);
+}
+
+const CONTENT_TYPE: Record<string, { type: string; label: string }> = {
+  ts: { type: 'Code', label: 'TypeScript' },
+  tsx: { type: 'Code', label: 'TSX' },
+  js: { type: 'Code', label: 'JavaScript' },
+  jsx: { type: 'Code', label: 'JSX' },
+  py: { type: 'Code', label: 'Python' },
+  rs: { type: 'Code', label: 'Rust' },
+  go: { type: 'Code', label: 'Go' },
+  java: { type: 'Code', label: 'Java' },
+  rb: { type: 'Code', label: 'Ruby' },
+  php: { type: 'Code', label: 'PHP' },
+  scala: { type: 'Code', label: 'Scala' },
+  kt: { type: 'Code', label: 'Kotlin' },
+  swift: { type: 'Code', label: 'Swift' },
+  c: { type: 'Code', label: 'C' },
+  cpp: { type: 'Code', label: 'C++' },
+  cs: { type: 'Code', label: 'C#' },
+  html: { type: 'Code', label: 'HTML' },
+  css: { type: 'Code', label: 'CSS' },
+  scss: { type: 'Code', label: 'SCSS' },
+  less: { type: 'Code', label: 'Less' },
+  json: { type: 'Config', label: 'JSON' },
+  yaml: { type: 'Config', label: 'YAML' },
+  yml: { type: 'Config', label: 'YAML' },
+  toml: { type: 'Config', label: 'TOML' },
+  xml: { type: 'Config', label: 'XML' },
+  csv: { type: 'Config', label: 'CSV' },
+  ini: { type: 'Config', label: 'INI' },
+  env: { type: 'Config', label: '.env' },
+  sh: { type: 'Shell', label: 'Shell' },
+  bash: { type: 'Shell', label: 'Shell' },
+  zsh: { type: 'Shell', label: 'Shell' },
+  shell: { type: 'Shell', label: 'Shell' },
+  powershell: { type: 'Shell', label: 'PowerShell' },
+  ps1: { type: 'Shell', label: 'PowerShell' },
+  sql: { type: 'SQL', label: 'SQL' },
+  prompt: { type: 'Prompt', label: 'Prompt' },
+  md: { type: 'Markdown', label: 'Markdown' },
+  markdown: { type: 'Markdown', label: 'Markdown' },
+  mdx: { type: 'Markdown', label: 'MDX' },
+  diff: { type: 'Diff', label: 'Diff' },
+  patch: { type: 'Diff', label: 'Patch' },
+  graphql: { type: 'Code', label: 'GraphQL' },
+  gql: { type: 'Code', label: 'GraphQL' },
+  dockerfile: { type: 'Code', label: 'Dockerfile' },
+  docker: { type: 'Code', label: 'Dockerfile' },
+  makefile: { type: 'Code', label: 'Makefile' },
+  cmake: { type: 'Code', label: 'CMake' },
+  r: { type: 'Code', label: 'R' },
+  dart: { type: 'Code', label: 'Dart' },
+  lua: { type: 'Code', label: 'Lua' },
+  elixir: { type: 'Code', label: 'Elixir' },
+  erlang: { type: 'Code', label: 'Erlang' },
+  haskell: { type: 'Code', label: 'Haskell' },
+  clojure: { type: 'Code', label: 'Clojure' },
+  solidity: { type: 'Code', label: 'Solidity' },
+  nix: { type: 'Config', label: 'Nix' },
+  terraform: { type: 'Config', label: 'Terraform' },
+  tf: { type: 'Config', label: 'Terraform' },
+  hcl: { type: 'Config', label: 'HCL' },
+  text: { type: 'Text', label: 'Text' },
+  plain: { type: 'Text', label: 'Text' },
+};
+
 function CodeBlockWithCopy({ code, language }: { code: string; language?: string }) {
   const [copied, setCopied] = useState(false);
-  const displayCode = code;
+  const meta = (language ? CONTENT_TYPE[language.toLowerCase()] : null) || { type: 'Code', label: language || 'Text' };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code).catch(() => {});
@@ -2310,33 +2372,47 @@ function CodeBlockWithCopy({ code, language }: { code: string; language?: string
   };
 
   return (
-    <Box sx={{ position: 'relative', my: 0.75 }}>
+    <Box sx={{ my: 1, border: `1px solid ${colors.border.default}`, borderRadius: 1, overflow: 'hidden' }}>
       <Box sx={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        px: 1.5, py: 0.4,
-        bgcolor: '#2d2d2d', borderTopLeftRadius: 6, borderTopRightRadius: 6,
-        borderBottom: '1px solid #3a3a3a',
+        px: 1.25, py: 0.45,
+        bgcolor: colors.bg.secondary,
+        borderBottom: `1px solid ${colors.border.default}`,
       }}>
-        <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, textTransform: 'lowercase' }}>
-          {language || 'code'}
+        <Typography sx={{
+          fontSize: '0.55rem', fontWeight: 700,
+          color: colors.accent.blue,
+          fontFamily: "'JetBrains Mono', monospace",
+          letterSpacing: '0.4px',
+        }}>
+          {meta.type}{meta.label !== meta.type.toLowerCase() ? ` · ${meta.label}` : ''}
         </Typography>
         <Box component="button" onClick={handleCopy}
           sx={{
             display: 'flex', alignItems: 'center', gap: 0.4,
-            bgcolor: 'transparent', border: 'none', cursor: 'pointer', p: 0.25,
+            bgcolor: 'transparent', border: `1px solid ${colors.border.subtle}`, borderRadius: '4px',
+            cursor: 'pointer', px: 0.75, py: 0.15,
             color: copied ? colors.accent.green : colors.text.dim,
-            fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace",
-            '&:hover': { color: copied ? colors.accent.green : colors.text.secondary },
+            fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace",
+            transition: 'all 0.15s',
+            '&:hover': {
+              color: copied ? colors.accent.green : colors.text.secondary,
+              borderColor: colors.text.dim,
+            },
           }}>
-          {copied ? 'Copied' : 'Copy'}
+          {copied ? '✓ Copied' : 'Copy'}
         </Box>
       </Box>
       <SyntaxHighlighter style={oneDark} language={language || 'text'} PreTag="div"
-        customStyle={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, borderBottomLeftRadius: 6, borderBottomRightRadius: 6, fontSize: '0.7rem', margin: 0, padding: '10px 12px' }}>
-        {displayCode}
+        customStyle={{ borderRadius: 0, fontSize: '0.7rem', margin: 0, padding: '10px 12px' }}>
+        {code}
       </SyntaxHighlighter>
     </Box>
   );
+}
+
+function extractParagraphText(children: React.ReactNode): string {
+  return React.Children.toArray(children).map(c => (typeof c === 'string' ? c : '')).join('');
 }
 
 const MARKDOWN_COMPONENTS = {
@@ -2355,6 +2431,13 @@ const MARKDOWN_COMPONENTS = {
       return <pre style={{ maxHeight: 200, overflow: 'auto', background: colors.bg.tertiary, borderRadius: 4, padding: '6px 10px', margin: '4px 0' }}><code className={className} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{code}</code></pre>;
     }
     return <code className={className} style={{ background: colors.bg.tertiary, padding: '1px 5px', borderRadius: 3, fontSize: '0.72rem' }} {...props}>{children}</code>;
+  },
+  p({ children, ...props }: any) {
+    const text = extractParagraphText(children);
+    if (isStructuralArt(text)) {
+      return <CodeBlockWithCopy code={text} />;
+    }
+    return <p {...props}>{children}</p>;
   },
 };
 
@@ -2380,9 +2463,46 @@ function CrewAwareMarkdown({ content }: { content: string }) {
   const segments = parseWebContentSegments(content);
   const hasCrew = segments.some(s => s.type === 'crew');
 
+  const cardSx = {
+    bgcolor: colors.bg.elevated,
+    border: `1px solid ${colors.border.subtle}`,
+    borderRadius: 1.5,
+    p: 1.75,
+    my: 0.5,
+    ...MARKDOWN_BASE_SX,
+    '& p': {
+      ...MARKDOWN_BASE_SX['& p'],
+      color: colors.text.primary,
+      fontSize: '0.75rem',
+      lineHeight: 1.7,
+    },
+    '& hr': {
+      border: 'none',
+      height: 1,
+      my: 1.5,
+      bgcolor: colors.border.subtle,
+      opacity: 0.4,
+    },
+    '& ul, & ol': {
+      m: 0,
+      pl: 2,
+      fontSize: '0.75rem',
+      lineHeight: 1.7,
+    },
+    '& li': {
+      mb: 0.35,
+      color: colors.text.primary,
+    },
+    '& li:last-child': { mb: 0 },
+    '& li::marker': { color: colors.text.dim },
+    '& input[type="checkbox"]': {
+      accentColor: colors.accent.blue,
+    },
+  };
+
   if (!hasCrew) {
     return (
-      <Box sx={{ ...MARKDOWN_BASE_SX, '& p': { ...MARKDOWN_BASE_SX['& p'], color: colors.text.primary } }}>
+      <Box sx={cardSx}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{content}</ReactMarkdown>
       </Box>
     );
@@ -2398,14 +2518,14 @@ function CrewAwareMarkdown({ content }: { content: string }) {
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: cc, mb: 0.25, letterSpacing: 0.3 }}>
                 ◆ {seg.name} (@{seg.callsign})
               </Typography>
-              <Box sx={{ ...MARKDOWN_BASE_SX, '& p': { ...MARKDOWN_BASE_SX['& p'], color: cc } }}>
+              <Box sx={{ ...cardSx, '& p': { ...cardSx['& p'], color: cc } } as any}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{seg.text}</ReactMarkdown>
               </Box>
             </Box>
           );
         }
         return (
-          <Box key={i} sx={{ ...MARKDOWN_BASE_SX, '& p': { ...MARKDOWN_BASE_SX['& p'], color: colors.text.primary } }}>
+          <Box key={i} sx={cardSx}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{seg.text}</ReactMarkdown>
           </Box>
         );
@@ -2414,185 +2534,128 @@ function CrewAwareMarkdown({ content }: { content: string }) {
   );
 }
 
-function getResponderName(content: string): { name: string; callsign: string } | null {
-  const match = content.match(/^\*\*([^*]+)\*\*\s*\(@(\w+)\):/);
-  if (match) return { name: match[1].trim(), callsign: match[2] };
-  return null;
-}
-
-function MessageBubble({ message, loadingSteps, isLastUser, onResend, onDismissDoomLoop }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; isLastUser?: boolean; onResend?: (content: string) => void; onDismissDoomLoop?: () => void }) {
+function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null }) {
   const isUser = message.role === 'user';
   const crewInfo = message.crew;
-  const responderName = !isUser && !crewInfo && message.content ? getResponderName(message.content) : null;
-
-  const displayName = crewInfo ? crewInfo.name : (responderName ? responderName.name : 'Agent-X');
-  const displayColor = crewInfo ? getWebCrewColor(crewInfo.callsign) : (responderName ? getWebCrewColor(responderName.callsign) : colors.accent.blue);
-  const displayInitial = crewInfo ? crewInfo.name.charAt(0).toUpperCase() : null;
+  const displayColor = crewInfo ? getWebCrewColor(crewInfo.callsign) : colors.accent.blue;
 
   if (message.role === 'system') return null;
 
-  return (
-    <Box sx={{
-      mb: 2, display: 'flex', gap: 1.5,
-      flexDirection: isUser ? 'row-reverse' : 'row',
-      alignItems: 'flex-start',
-      animation: 'agentx-fadeIn 0.25s ease-out',
-    }}>
-      {/* Avatar — only for assistant */}
-      {!isUser && (
-        <Box sx={{
-          width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          bgcolor: displayColor + '18', mt: 0.5, flexShrink: 0,
-          border: crewInfo ? `1px solid ${displayColor}40` : 'none',
-        }}>
-          {displayInitial ? (
-            <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: displayColor, fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>
-              {displayInitial}
-            </Typography>
-          ) : (
-            <SmartToyIcon sx={{ fontSize: 15, color: colors.accent.purple }} />
+  // User messages: right-aligned subtle card
+  if (isUser) {
+    return (
+      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'flex-end', animation: 'agentx-fadeIn 0.25s ease-out' }}>
+        <Box sx={{ maxWidth: '72%', px: 1.5, py: 1, border: `1px solid ${colors.border.strong}`, borderRadius: 1.5, bgcolor: colors.bg.elevated }}>
+          {message.attachments && message.attachments.length > 0 && (
+            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
+              {message.attachments.map((a, i) => (<Chip key={i} size="small" icon={<InsertDriveFileIcon sx={{ fontSize: '11px !important' }} />} label={a.name} sx={{ fontSize: '0.5rem', height: 18, bgcolor: colors.accent.blue + '08', border: `1px solid ${colors.accent.blue}20` }} />))}
+            </Box>
           )}
+          <UserMentionText content={message.content} />
         </Box>
+      </Box>
+    );
+  }
+
+  // Assistant: flat chronological document — no bubble, no avatar
+  return (
+    <Box sx={{ mb: 3, animation: 'agentx-fadeIn 0.25s ease-out' }}>
+      <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: displayColor, fontFamily: "'JetBrains Mono', monospace", mb: 0.75, letterSpacing: '0.5px' }}>
+        {crewInfo ? crewInfo.name : 'Agent-X'}
+      </Typography>
+      {message.thinking && (<ReasoningBlock text={message.thinking} streaming={message.streaming && !message.thinkingDoneAt} durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined} />)}
+      {message.todos && message.todos.length > 0 && (<InlineTodoList items={message.todos} />)}
+
+      {/* Chronological parts: text + tools interleaved in order of appearance */}
+      {message.parts && message.parts.length > 0 ? (
+        message.parts.map((part) => {
+          switch (part.type) {
+            case 'text':
+              return part.content ? <CrewAwareMarkdown key={part.id} content={part.content} /> : null;
+            case 'tool':
+              return part.tool ? <Box key={part.id} sx={{ mt: 0.5 }}><ToolCardsGrouped tools={[part.tool] as any[]} /></Box> : null;
+            case 'subagent':
+              return part.agent ? (
+                <Box key={part.id} sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  <SubAgentChip agent={part.agent as any} />
+                </Box>
+              ) : null;
+            default:
+              return null;
+          }
+        })
+      ) : (
+        // Fallback: render content + toolCalls the old way (for restored messages without parts)
+        <>
+          {message.content && <CrewAwareMarkdown content={message.content} />}
+          {message.toolCalls && message.toolCalls.length > 0 && (<Box sx={{ mt: 0.75 }}><ToolCardsGrouped tools={message.toolCalls as any[]} /></Box>)}
+          {message.subAgents && message.subAgents.length > 0 && (<Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{message.subAgents.map((sa) => (<SubAgentChip key={sa.id} agent={sa as any} />))}</Box>)}
+        </>
       )}
 
-      {/* Bubble content */}
-      <Box sx={{ minWidth: 0, maxWidth: isUser ? '72%' : '85%' }}>
-        {/* Responder name label */}
-        {!isUser && (
-          <Typography sx={{
-            fontSize: '0.6rem', fontWeight: 600,
-            color: displayColor,
-            fontFamily: "'JetBrains Mono', monospace",
-            mb: 0.5,
-            letterSpacing: '0.5px',
-          }}>
-            {displayName}
-          </Typography>
-        )}
-        <Box sx={{
-          ...(isUser ? {
-            bgcolor: colors.accent.blue + '10',
-            border: `1px solid ${colors.accent.blue}20`,
-            borderRadius: '14px 14px 4px 14px',
-            px: 1.75, py: 1,
-          } : {
-            bgcolor: displayColor + '08',
-            border: `1px solid ${displayColor}15`,
-            borderRadius: '14px 14px 14px 4px',
-            px: 1.75, py: 1,
-          }),
-        }}>
-        {/* Reasoning (first-class) */}
-        {message.thinking && !isUser && (
-          <ReasoningBlock
-            text={message.thinking}
-            streaming={message.streaming && !message.thinkingDoneAt}
-            durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined}
-          />
-        )}
-
-        {/* Doom-loop warning */}
-        {message.doomLoop && !isUser && (
-          <DoomLoopWarning
-            toolName={message.doomLoop.toolName}
-            count={message.doomLoop.count}
-            onContinue={() => onDismissDoomLoop?.()}
-            onStop={() => { chat.cancel().catch(() => {}); }}
-          />
-        )}
-
-        {/* Plan */}
-        {message.plan && message.plan.length > 0 && (
-          <Box sx={{ mb: 0.75, p: 1, borderRadius: 1, border: `1px solid ${colors.accent.blue}20`, bgcolor: colors.accent.blue + '05' }}>
-            <Typography sx={{ fontSize: '0.55rem', fontWeight: 600, color: colors.accent.blue, mb: 0.3 }}>Plan</Typography>
-            {message.plan.map((step, i) => (
-              <Typography key={i} sx={{ fontSize: '0.6rem', color: colors.text.secondary, pl: 1 }}>{i + 1}. {step}</Typography>
-            ))}
-          </Box>
-        )}
-
-        {/* Tool calls */}
-        {message.toolCalls && message.toolCalls.length > 0 && (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: '0.25em', mb: 0.75 }}>{message.toolCalls.map((tc) => (<ToolCallChip key={tc.id} tool={tc} />))}</Box>
-        )}
-
-        {/* Sub agents */}
-        {message.subAgents && message.subAgents.length > 0 && (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: '0.25em', mb: 0.75 }}>{message.subAgents.map((sa) => (<SubAgentChip key={sa.id} agent={sa} />))}</Box>
-        )}
-
-        {/* Inline todos */}
-        {message.todos && message.todos.length > 0 && (<InlineTodoList items={message.todos} />)}
-
-        {/* File attachments on user messages */}
-        {isUser && message.attachments && message.attachments.length > 0 && (
-          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
-            {message.attachments.map((a, i) => (
-              <Chip key={i} size="small" icon={<InsertDriveFileIcon sx={{ fontSize: '11px !important' }} />} label={a.name}
-                sx={{ fontSize: '0.5rem', height: 18, bgcolor: colors.accent.blue + '08', border: `1px solid ${colors.accent.blue}20` }} />
-            ))}
-          </Box>
-        )}
-
-        {/* Message text (crew-aware) */}
-        {message.content && !isUser && <CrewAwareMarkdown content={message.content} />}
-        {message.content && isUser && <UserMentionText content={message.content} />}
-
-        {/* Resend button on last user message only */}
-        {isUser && isLastUser && message.content && onResend && (
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 0.5 }}>
-            <IconButton size="small" onClick={() => onResend(message.content)}
-              sx={{ p: 0.3, opacity: 0.4, '&:hover': { opacity: 1, bgcolor: 'transparent' } }}>
-              <ReplayIcon sx={{ fontSize: 13 }} />
-            </IconButton>
-          </Box>
-        )}
-
-        {/* Streaming dots (empty content, no steps) */}
-        {message.streaming && !message.content && !loadingSteps && (
-          <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>
-            <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite' }} />
-            <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out 0.2s infinite' }} />
-            <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out 0.4s infinite' }} />
-          </Box>
-        )}
-
-        {/* Shimmer bar while streaming content */}
-        {message.streaming && message.content && (
-          <>
-            <Box component="span" sx={{ display: 'inline' }}><StreamingCursor /></Box>
-            <Box sx={{
-              mt: 0.5, height: 2, borderRadius: 1, width: '50%',
-              background: `linear-gradient(90deg, transparent, ${colors.accent.purple}50, transparent)`,
-              backgroundSize: '200% 100%',
-              animation: 'agentx-shimmer 1.5s infinite linear',
-            }} />
-          </>
-        )}
-
-        {/* Per-turn token economics badge */}
-        {!isUser && !message.streaming && (message.turnTokens != null || message.turnCostUsd != null) && (
-          <TurnTokenBadge tokens={message.turnTokens} />
-        )}
-      </Box>
-      </Box>
+      {message.streaming && !message.content && !loadingSteps && (
+        <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>{[0, 1, 2].map(i => (<Box key={i} sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.2}s` }} />))}</Box>
+      )}
+      {message.streaming && message.content && <Box component="span" sx={{ display: 'inline' }}><StreamingCursor /></Box>}
+      {!message.streaming && (
+        <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75, opacity: 0.45 }}>
+          {message.timestamp && <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Typography>}
+          {message.turnTokens != null && <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{message.turnTokens.toLocaleString()} tok</Typography>}
+          <Box onClick={() => { navigator.clipboard.writeText(message.content).catch(() => {}); }} sx={{ cursor: 'pointer', display: 'flex', '&:hover': { opacity: 1 }, opacity: 0.7 }}><ContentCopyIcon sx={{ fontSize: 11, color: colors.text.dim }} /></Box>
+        </Box>
+      )}
+      {message.streaming && message.content && (
+        <Box sx={{ mt: 0.5, height: 2, borderRadius: 1, width: '50%', background: `linear-gradient(90deg, transparent, ${colors.accent.purple}50, transparent)`, backgroundSize: '200% 100%', animation: 'agentx-shimmer 1.5s infinite linear' }} />
+      )}
     </Box>
   );
 }
 
-// ─── Tool Call Chip ───
+// ─── Tool Cards Grouped ───
 
-function ToolCallChip({ tool }: { tool: ToolCall }) {
+function ToolCardsGrouped({ tools }: { tools: Array<{ id: string; name: string; status: string; args?: any; result?: string; elapsed?: number }> }) {
+  const contextToolNames = new Set(['file_read', 'code_grep', 'code_search', 'file_find', 'folder_list', 'folder_tree', 'code_references', 'code_definitions']);
+  const isContextTool = (t: typeof tools[number]) => contextToolNames.has(t.name);
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+  while (i < tools.length) {
+    if (isContextTool(tools[i])) {
+      const group: typeof tools = [];
+      while (i < tools.length && isContextTool(tools[i])) { group.push(tools[i]); i++; }
+      elements.push(<ContextToolGroup key={group[0].id} tools={group} />);
+    } else {
+      elements.push(<ToolCallCard key={tools[i].id} tool={tools[i] as any} />);
+      i++;
+    }
+  }
+  return <Box>{elements}</Box>;
+}
+
+function ContextToolGroup({ tools }: { tools: Array<{ id: string; name: string; status: string; args?: any; result?: string; elapsed?: number }> }) {
+  const [expanded, setExpanded] = useState(false);
+  const done = tools.filter(t => t.status === 'done' || t.status === 'error').length;
+  const isComplete = done === tools.length;
+  const parts: string[] = [];
+  const reads = tools.filter(t => t.name.includes('read')).length;
+  const searches = tools.filter(t => t.name.includes('grep') || t.name.includes('search') || t.name.includes('find')).length;
+  const lists = tools.filter(t => t.name.includes('list') || t.name.includes('tree')).length;
+  if (reads > 0) parts.push(`${reads} read${reads > 1 ? 's' : ''}`);
+  if (searches > 0) parts.push(`${searches} search${searches > 1 ? 'es' : ''}`);
+  if (lists > 0) parts.push(`${lists} folder${lists > 1 ? 's' : ''}`);
   return (
-    <Chip size="small"
-      label={tool.name}
-      sx={{
-        fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", height: 20,
-        bgcolor: tool.status === 'running' ? colors.accent.orange + '10' : tool.status === 'error' ? colors.accent.red + '10' : colors.accent.green + '10',
-        border: `1px solid ${tool.status === 'running' ? colors.accent.orange : tool.status === 'error' ? colors.accent.red : colors.accent.green}20`,
-        color: tool.status === 'running' ? colors.accent.orange : tool.status === 'error' ? colors.accent.red : colors.accent.green,
-      }}
-    />
+    <Box sx={{ mb: 0.5, borderRadius: 1, border: `1px solid ${colors.accent.blue}25`, bgcolor: colors.accent.blue + '06', overflow: 'hidden' }}>
+      <Box onClick={() => isComplete && setExpanded(e => !e)} sx={{ display: 'flex', alignItems: 'center', gap: 0.75, px: 1.25, py: 0.625, cursor: isComplete ? 'pointer' : 'default', '&:hover': isComplete ? { bgcolor: colors.accent.blue + '0A' } : {} }}>
+        <Box sx={{ display: 'flex', gap: 0.3 }}>{tools.map((t, i) => (<Box key={i} sx={{ width: 4, height: 4, borderRadius: '50%', bgcolor: t.status === 'running' ? colors.accent.blue : t.status === 'error' ? colors.accent.red : colors.accent.green }} />))}</Box>
+        <SearchIcon sx={{ fontSize: 14, color: colors.accent.blue }} />
+        <Typography sx={{ fontSize: '0.6rem', fontWeight: 500, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>{isComplete ? 'Gathered context' : 'Gathering context...'}</Typography>
+        <Typography sx={{ fontSize: '0.55rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace" }}>{parts.join(', ')}</Typography>
+        <Box sx={{ flex: 1 }} />
+        {isComplete && <KeyboardArrowDownIcon sx={{ fontSize: 14, color: colors.text.dim, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />}
+      </Box>
+      <Collapse in={expanded}>
+        <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.blue}15` }}>{tools.map(t => (<ToolCallCard key={t.id} tool={t as any} />))}</Box>
+      </Collapse>
+    </Box>
   );
 }
 
@@ -2647,14 +2710,12 @@ function PermissionBanner({ prompt, onRespond }: { prompt: { tool: string; path:
   const isCritical = prompt.riskLevel === 'critical';
   const isHigh = prompt.riskLevel === 'high';
   const borderColor = isCritical ? colors.accent.red + '50' : isHigh ? colors.accent.orange + '40' : colors.accent.orange + '30';
-  const bgColor = isCritical ? colors.accent.red + '08' : isHigh ? colors.accent.orange + '08' : colors.accent.orange + '05';
-  const titleColor = isCritical ? colors.accent.red : isHigh ? colors.accent.orange : colors.accent.orange;
 
   return (
-    <Box sx={{ p: 1.5, mb: 2, borderRadius: 1, border: `1px solid ${borderColor}`, bgcolor: bgColor, animation: 'agentx-fadeIn 0.3s ease-out' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5 }}>
-        <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: titleColor }}>
-          {isCritical ? '⚠ Critical Permission Required' : isHigh ? '⚡ High-Risk Permission' : 'Permission Required'}
+    <Box sx={{ p: 1.5, borderRadius: 1.5, border: `1px solid ${borderColor}`, bgcolor: colors.bg.secondary, animation: 'agentx-fadeIn 0.3s ease-out' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+        <Typography sx={{ fontSize: '0.65rem', fontWeight: 600, color: isCritical ? colors.accent.red : isHigh ? colors.accent.orange : colors.accent.blue }}>
+          {isCritical ? '⚠ Critical' : isHigh ? '⚡ High Risk' : 'Permission Required'}
         </Typography>
         <Chip size="small" label={prompt.riskLevel.toUpperCase()} sx={{
           fontSize: '0.45rem', height: 15, fontWeight: 600,
@@ -2662,23 +2723,23 @@ function PermissionBanner({ prompt, onRespond }: { prompt: { tool: string; path:
           color: isCritical ? colors.accent.red : isHigh ? colors.accent.orange : colors.accent.blue,
         }} />
       </Box>
-      <Typography sx={{ fontSize: '0.6rem', mb: 0.25, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
+      <Typography sx={{ fontSize: '0.6rem', mb: 0.5, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
         {prompt.tool}
       </Typography>
       {prompt.path && (
-        <Typography sx={{ fontSize: '0.55rem', mb: 1, color: colors.text.dim, wordBreak: 'break-all' }}>
+        <Typography sx={{ fontSize: '0.55rem', mb: 0.75, color: colors.text.dim, wordBreak: 'break-all' }}>
           {prompt.path}
         </Typography>
       )}
       {isCritical && (
-        <Typography sx={{ fontSize: '0.5rem', mb: 1, color: colors.accent.red, fontStyle: 'italic' }}>
+        <Typography sx={{ fontSize: '0.5rem', mb: 0.75, color: colors.accent.red, fontStyle: 'italic' }}>
           This operation could permanently affect your system. Review carefully before allowing.
         </Typography>
       )}
       <Box sx={{ display: 'flex', gap: 0.75 }}>
-        <Chip size="small" label="Allow Once" onClick={() => handleRespond('allow_once')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.green + '12', color: colors.accent.green, '&:hover': { bgcolor: colors.accent.green + '25' } }} />
-        <Chip size="small" label="Always" onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.blue + '12', color: colors.accent.blue, '&:hover': { bgcolor: colors.accent.blue + '25' } }} />
-        <Chip size="small" label="Deny" onClick={() => handleRespond('deny')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.red + '12', color: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + '25' } }} />
+        <Chip size="small" label="Allow Once" onClick={() => handleRespond('allow_once')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.green + '15', color: colors.accent.green, '&:hover': { bgcolor: colors.accent.green + '30' } }} />
+        <Chip size="small" label="Always" onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.blue + '15', color: colors.accent.blue, '&:hover': { bgcolor: colors.accent.blue + '30' } }} />
+        <Chip size="small" label="Deny" onClick={() => handleRespond('deny')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.red + '15', color: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + '30' } }} />
       </Box>
     </Box>
   );

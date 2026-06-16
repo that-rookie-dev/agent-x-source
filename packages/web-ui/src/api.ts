@@ -145,7 +145,7 @@ export const crews = {
 
 // ─── Chat ───
 export const chat = {
-  send: (text: string, attachments?: { name: string; content: string }[]) => request<{ ok: boolean; message: ChatMessage }>('/chat/message', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
+  send: (text: string, attachments?: { name: string; content: string }[], retry?: boolean) => request<{ ok: boolean; message: ChatMessage }>('/chat/message', { method: 'POST', body: JSON.stringify({ text, attachments, retry }) }),
   cancel: () => request<{ ok: boolean }>('/chat/cancel', { method: 'POST' }),
   history: () => request<ChatMessage[]>('/chat/history'),
   clear: () => request<{ ok: boolean }>('/chat/clear', { method: 'POST' }),
@@ -164,12 +164,20 @@ export interface Checkpoint {
   messageCount: number;
 }
 
+export interface DbStatus {
+  dbMode: 'sqlite' | 'memory' | 'unknown' | 'error';
+  sessionCount: number;
+  filesystemRecovered: number;
+  schemaVersion: number;
+}
+
 export const sessions = {
+  dbStatus: () => request<DbStatus>('/sessions/db-status'),
   list: () => request<SessionInfo[]>('/sessions'),
   create: () => request<{ sessionId: string }>('/sessions', { method: 'POST' }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
-  restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; crewStates?: Array<{ crewId: string; enabled: boolean }> }>(`/sessions/${id}/restore`, { method: 'POST' }),
+  restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; parts?: Array<Record<string, unknown>>; crewStates?: Array<{ crewId: string; enabled: boolean }> }>(`/sessions/${id}/restore`, { method: 'POST' }),
   context: (id: string) => request<SessionContext>(`/sessions/${id}/context`),
   compact: (id: string) => request<{ ok: boolean; summary: string }>(`/sessions/${id}/compact`, { method: 'POST' }),
   checkpoint: (id: string, label?: string) => request<{ checkpointId: string; label: string }>(`/sessions/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ label }) }),
@@ -473,7 +481,7 @@ export interface ChatMessage {
   thinking?: string;
   thinkingStartedAt?: number;
   thinkingDoneAt?: number;
-  toolCalls?: Array<{ id: string; name: string; args?: string; result?: string; status: 'running' | 'done' | 'error'; elapsed?: number }>;
+  toolCalls?: Array<{ id: string; name: string; args?: string | Record<string, unknown>; result?: string; status: 'running' | 'done' | 'error'; elapsed?: number }>;
   subAgents?: Array<{ id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }>;
   plan?: string[];
   turnTokens?: number;
@@ -662,4 +670,9 @@ export const webuiActive = {
     body: JSON.stringify({ pid: pid ?? Date.now() }) 
   }),
   unregister: () => request<{ ok: boolean }>('/webui-active', { method: 'DELETE' }),
+};
+
+// ─── Factory Reset ───
+export const factoryReset = {
+  reset: () => request<{ ok: boolean; message: string }>('/reset', { method: 'POST' }),
 };

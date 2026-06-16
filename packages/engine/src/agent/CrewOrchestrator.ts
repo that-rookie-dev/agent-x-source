@@ -1,9 +1,13 @@
-import type { Crew, EngineEvent, CollaborationProtocol } from '@agentx/shared';
+import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig } from '@agentx/shared';
 import { generateMessageId, CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import type { AgentEventBus } from '../EventBus.js';
 import { countInputTokens, estimateOutputTokens } from '../session/tokenCount.js';
 import type { TokenTracker } from '../session/TokenTracker.js';
+import type { ToolRegistry } from '../tools/ToolRegistry.js';
+import type { ToolExecutor } from '../tools/ToolExecutor.js';
+import { streamText, stepCountIs } from 'ai';
+import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
 
 const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
 
@@ -37,6 +41,10 @@ export class CrewOrchestrator {
   private eventBus: AgentEventBus;
   private primaryMember: CrewMember | null = null;
   private activeModel: string = '';
+  private toolRegistry?: ToolRegistry;
+  private toolExecutor?: ToolExecutor;
+  private config?: AgentXConfig;
+  private sessionId: string = 'crew';
 
   constructor(provider: ProviderInterface, eventBus: AgentEventBus, tokenTracker?: TokenTracker) {
     this.provider = provider;
@@ -48,6 +56,19 @@ export class CrewOrchestrator {
 
   setActiveModel(model: string): void {
     this.activeModel = model;
+  }
+
+  setTools(registry: ToolRegistry, executor: ToolExecutor): void {
+    this.toolRegistry = registry;
+    this.toolExecutor = executor;
+  }
+
+  setConfig(config: AgentXConfig): void {
+    this.config = config;
+  }
+
+  setSessionId(id: string): void {
+    this.sessionId = id;
   }
 
   addMember(crew: Crew): void {
@@ -130,29 +151,53 @@ export class CrewOrchestrator {
   private async callCrew(
     member: CrewMember,
     userMessage: string,
-    mainSystemPrompt: string,
+    _mainSystemPrompt: string,
     contextText?: string
   ): Promise<{ content: string; elapsed: number }> {
-    const crewContext = this.buildCrewContext(member, userMessage);
-    const classificationNote = contextText && /\[Classified as/.test(contextText)
-      ? `\n\n[CLASSIFICATION CONTEXT]\n${contextText}`
-      : '';
-    const systemPrompt = `${mainSystemPrompt}\n\n[CREW MEMBER: ${member.crew.name}]\n${member.crew.systemPrompt}\n\n[CONVERSATION CONTEXT]\n${crewContext}${classificationNote}\n\n[RESPONSE FORMAT — ABSOLUTELY REQUIRED]\nYou MUST respond in EXACTLY ONE of these two formats. No exceptions.\n\nFORMAT 1 — Task is clear (you have enough info):\nProvide the result directly. Code, config, or action taken. Zero questions. Zero requests for info.\n\nFORMAT 2 — Task is unclear (need more info):\nStart with "CLARIFY:" on its own line, then your question on the NEXT line, then 2-5 options prefixed with "- ".\nThe FIRST option will be shown as RECOMMENDED. Optionally prefix any option with "[RECOMMENDED] " to override.\nTo let the user select ALL options at once, add "[ALLOW_ALL]" on its own line at the end.\nDo NOT write anything else. No greetings, no explanations.\n\nExample of FORMAT 2:\nCLARIFY:\nWhich part of the infrastructure needs fixing?\n- [RECOMMENDED] Deployment pipeline is failing\n- Server performance is degraded\n- Security compliance issue\n\nExample with choose-all:\nCLARIFY:\nWhich features should I implement?\n- User authentication\n- Dashboard UI\n- Payment integration\n[ALLOW_ALL]\n\n[CRITICAL RULES]\n- Do NOT delegate tasks to yourself (@${member.crew.callsign}). You ARE ${member.crew.name}. Respond directly.\n- Do NOT @mention other crew members to assign work. You do not have that authority.\n- Do NOT write questions, requests, or ask for clarification in free text. Only use FORMAT 2 above.\n- Do NOT make assumptions or guess. If unsure, use FORMAT 2.\n- Maximum 5 options in FORMAT 2.\n- Keep responses to 1-2 sentences unless providing code or config output (FORMAT 1).`;
+    const sections: string[] = [
+      `You are ${member.crew.name}. ${member.crew.systemPrompt}
 
+Use file_read, folder_list, code_search, code_grep, file_find, and code_references tools to explore the workspace and gather information before answering. Be thorough — use glob patterns to find relevant files, read them, and base your analysis on real code.`,
+    ];
+
+    const crewHistory = this.buildCrewContext(member, userMessage);
+    if (contextText) sections.push(`[SESSION CONTEXT]\n${contextText}`);
+    if (crewHistory) sections.push(`[CREW HISTORY]\n${crewHistory}`);
+
+    const systemPrompt = sections.join('\n\n');
     const startTime = Date.now();
+    const emit = (e: EngineEvent) => this.eventBus.emit(e);
+
+    // ── AI SDK path: tools available ──────────────────────────────────────────
+    if (this.toolRegistry && this.toolExecutor && this.config) {
+      try {
+        return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit);
+      } catch (err) {
+        // Fall through to legacy path on error
+      }
+    }
+
+    // ── Legacy path: plain provider.complete() fallback ───────────────────────
     const completion = this.provider.complete({
       model: this.activeModel,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
       ],
-      temperature: 0.7,
-      maxTokens: member.crew.quotas?.maxTokensPerTurn ?? 300,
+      temperature: 0,
+      maxTokens: member.crew.quotas?.maxTokensPerTurn ?? 4096,
     });
 
     let content = '';
     for await (const chunk of completion) {
       if (chunk.content) content += chunk.content;
+    }
+
+    const parsed = this.parseJsonAnswer(content);
+    content = parsed || this.stripPlanningPrefix(content);
+
+    if (/^(Your direct response|Output ONLY|Respond in JSON)/i.test(content.trim())) {
+      content = content.trim().split('\n')[0]!;
     }
 
     const elapsed = Date.now() - startTime;
@@ -167,6 +212,144 @@ export class CrewOrchestrator {
     }
 
     return { content, elapsed };
+  }
+
+  private async callCrewWithAiSdk(
+    member: CrewMember,
+    userMessage: string,
+    systemPrompt: string,
+    startTime: number,
+    emit: (e: EngineEvent) => void,
+  ): Promise<{ content: string; elapsed: number }> {
+    // Filter tools to read-only exploration set
+    const CREW_READ_TOOLS = new Set(['file_read', 'folder_list', 'file_find', 'code_search', 'code_grep', 'code_references']);
+    const { ToolRegistry: TR } = await import('../tools/ToolRegistry.js');
+    const filteredRegistry = new TR();
+    for (const toolId of CREW_READ_TOOLS) {
+      const def = this.toolRegistry!.get(toolId);
+      if (def) filteredRegistry.register(def);
+    }
+
+    const tools = createAiSdkTools(
+      filteredRegistry,
+      this.toolExecutor!,
+      this.sessionId,
+      emit,
+      () => Promise.resolve('Clarification not available in crew mode.'),
+      () => Promise.resolve({ success: false as const, output: 'Sub-agents not supported in crew mode.', elapsed: 0 }),
+    );
+
+    const model = createAiSdkModel(this.config!);
+
+    const result = streamText({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      tools,
+      temperature: 0,
+      stopWhen: stepCountIs(5),
+    });
+
+    let content = '';
+    for await (const chunk of result.fullStream) {
+      switch (chunk.type) {
+        case 'text-delta': {
+          const delta = (chunk as any).textDelta || (chunk as any).text || '';
+          content += delta;
+          emit({ type: 'stream_chunk', content: delta, fullContent: content });
+          break;
+        }
+        case 'error': {
+          const errMsg = String((chunk as any).error || 'AI SDK error');
+          emit({ type: 'error', code: 'CREW_AI_SDK_ERROR', message: errMsg, recoverable: false } as unknown as EngineEvent);
+          break;
+        }
+      }
+    }
+
+    if (!content) content = `${member.crew.name} was unable to generate a response.`;
+
+    const elapsed = Date.now() - startTime;
+    member.cpuTimeMs += elapsed;
+    const outputTokens = estimateOutputTokens(content);
+    const inputTokens = countInputTokens(systemPrompt + userMessage);
+    member.tokensUsedThisSession += outputTokens;
+    if (this.tokenTracker) {
+      this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
+      const costUsd = (inputTokens * this.tokenTracker.inputPrice + outputTokens * this.tokenTracker.outputPrice) / 1_000_000;
+      emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.tokenTracker.tokensTotal, turnTokens: inputTokens + outputTokens, costUsd, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, inputPrice: this.tokenTracker.inputPrice, outputPrice: this.tokenTracker.outputPrice } as unknown as EngineEvent);
+    }
+
+    return { content, elapsed };
+  }
+
+  /**
+   * Try to parse a JSON response from the LLM. Handles:
+   * - Raw JSON: {"answer":"...","reasoning":"..."}
+   * - JSON wrapped in markdown code fences: ```json\n...\n```
+   * - JSON with surrounding text (extracts first JSON object found)
+   *
+   * Returns the "answer" field if found, or null to trigger fallback.
+   */
+  private parseJsonAnswer(raw: string): string | null {
+    // Remove markdown code fences
+    const text = raw.replace(/```(?:json)?\s*\n?/gi, '').replace(/\n?```/g, '');
+
+    // Find the first '{' and extract the complete JSON object (handles nested braces)
+    const start = text.indexOf('{');
+    if (start < 0) return null;
+
+    let depth = 0;
+    let inString = false;
+    let end = -1;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i]!;
+      if (inString) {
+        if (ch === '\\') { i++; continue; }
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === '{') depth++;
+      if (ch === '}') depth--;
+      if (depth === 0) { end = i; break; }
+    }
+
+    if (end < 0) return null;
+
+    try {
+      const obj = JSON.parse(text.slice(start, end + 1));
+      if (obj.answer && typeof obj.answer === 'string' && obj.answer.trim().length > 0) {
+        return obj.answer.trim();
+      }
+    } catch {
+      // Invalid JSON — fall through
+    }
+
+    return null;
+  }
+
+  private stripPlanningPrefix(content: string): string {
+    const lines = content.split('\n');
+    let startIdx = 0;
+    const cotPattern = /^(Given that I|Thinking|Here(‘|')s (what|my)|Output only|Final:|Let me|I need to|We need to|I should|We should|First I'll|I will |I'll |We'll |We are |I am |As (an |)AI |The user |Sure, I'd|Sure! I'd|According to|But the instruction|The instruction says|The rules say|Based on the rules|Per the rules|But let's)/i;
+    for (let i = 0; i < Math.min(lines.length, 12); i++) {
+      const trimmed = lines[i]!.trim();
+      if (!trimmed) { startIdx = i + 1; continue; }
+      if (cotPattern.test(trimmed)) { startIdx = i + 1; continue; }
+      if (/^\[.*\]$/.test(trimmed) && trimmed.length < 60) { startIdx = i + 1; continue; }
+      if (/^\d+\.\s+\*\*/i.test(trimmed) && /Analyze|Identify|Consider|Evaluate|Break.*down|Plan|Approach|Task|Step/i.test(trimmed)) {
+        startIdx = i + 1;
+        continue;
+      }
+      break;
+    }
+    if (startIdx > 0) {
+      return lines.slice(startIdx).join('\n').trim();
+    }
+    return content;
   }
 
   hasExpertiseFor(member: CrewMember, userMessage: string, contextText?: string): boolean {
@@ -206,18 +389,6 @@ export class CrewOrchestrator {
     const responders = explicitResponders ?? this.routeMessage(userMessage);
     const responses: Array<{ member: string; content: string }> = [];
 
-    // Expertise gate: if a specific member was requested but lacks expertise, decline
-    if (explicitResponders && explicitResponders.length === 1) {
-      const member = explicitResponders[0]!;
-      if (!this.hasExpertiseFor(member, userMessage, contextText)) {
-        responses.push({
-          member: member.crew.name,
-          content: `I'm ${member.crew.name} — not an expert in the domain you're asking about. My expertise covers: ${member.expertise.length > 0 ? member.expertise.join(', ') : 'general tasks'}.`,
-        });
-        return { responses };
-      }
-    }
-
     this.emit({ type: 'loading_start', stage: 'crew_routing' });
 
     const protocol = this.resolveProtocol(responders);
@@ -242,7 +413,7 @@ export class CrewOrchestrator {
             return { member: responder.crew.name, content: `[${quotaError}]` };
           }
 
-          this.emit({ type: 'tool_executing', tool: 'crew_member', description: `${responder.crew.name} is thinking...` });
+          // AI SDK streaming emits its own tool_executing/stream_chunk events
 
           try {
             const { content } = await this.callCrew(responder, userMessage, mainSystemPrompt, contextText);
@@ -254,7 +425,6 @@ export class CrewOrchestrator {
               timestamp: new Date().toISOString(),
             });
 
-            this.emit({ type: 'tool_complete', tool: 'crew_member', result: { success: true, output: `${responder.crew.name}: ${content.slice(0, 100)}` }, elapsed: 0 });
             return { member: responder.crew.name, content };
           } catch (err) {
             return { member: responder.crew.name, content: `[Error: ${err instanceof Error ? err.message : 'failed'}]` };

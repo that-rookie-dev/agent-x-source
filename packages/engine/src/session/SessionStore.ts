@@ -15,7 +15,14 @@ try {
   BetterSqlite3 = null;
 }
 
+const CURRENT_SCHEMA_VERSION = 3;
+
 const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS _schema (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id          TEXT PRIMARY KEY,
     title       TEXT NOT NULL DEFAULT 'New Session',
@@ -36,6 +43,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role        TEXT NOT NULL,
     content     TEXT NOT NULL,
     tool_calls  TEXT,
+    plan        TEXT,
     token_count INTEGER DEFAULT 0,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (session_id) REFERENCES sessions(id)
@@ -146,7 +154,64 @@ CREATE INDEX IF NOT EXISTS idx_token_logs_session ON token_logs(session_id);
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id);
 CREATE INDEX IF NOT EXISTS idx_crews_default ON crews(is_default);
 CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id);
+
+CREATE TABLE IF NOT EXISTS message_parts (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    content     TEXT,
+    tool_name   TEXT,
+    tool_call_id TEXT,
+    tool_args   TEXT,
+    tool_result TEXT,
+    tool_success INTEGER,
+    usage_input INTEGER,
+    usage_output INTEGER,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_parts_session ON message_parts(session_id);
 `;
+
+const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) => void }> = [
+  {
+    version: 1,
+    description: 'Baseline schema (all current tables + indexes)',
+    run: () => { /* baseline — tables already created by SCHEMA_SQL */ },
+  },
+  {
+    version: 2,
+    description: 'Add message_parts table for AI SDK part-level persistence',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS message_parts (
+            id          TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            type        TEXT NOT NULL,
+            content     TEXT,
+            tool_name   TEXT,
+            tool_call_id TEXT,
+            tool_args   TEXT,
+            tool_result TEXT,
+            tool_success INTEGER,
+            usage_input INTEGER,
+            usage_output INTEGER,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (session_id) REFERENCES sessions(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_parts_session ON message_parts(session_id);
+      `);
+    },
+  },
+  {
+    version: 3,
+    description: 'Add plan column to messages table for plan persistence',
+    run: (db: any) => {
+      db.exec(`ALTER TABLE messages ADD COLUMN plan TEXT`);
+    },
+  },
+];
 
 export class SessionStore {
   // If BetterSqlite3 is unavailable we operate in in-memory fallback mode.
@@ -159,21 +224,33 @@ export class SessionStore {
   private memCrewStates: Map<string, Record<string, unknown>> = new Map();
   private memToolExecutions: Map<string, Array<Record<string, unknown>>> = new Map();
   private dek: Buffer | null = null;
+  private sessionsDir: string | null = null;
+  private filesystemRecovered = 0;
 
   constructor(dbPath?: string) {
     const path = dbPath ?? getDbPath();
     mkdirSync(dirname(path), { recursive: true });
 
     if (!BetterSqlite3) {
+      getLogger().warn('STORE', 'better-sqlite3 module not available. Falling back to in-memory mode.');
       this.memMode = true;
       this.db = null;
-      return;
+    } else {
+      try {
+        this.db = new BetterSqlite3(path);
+        this.db.pragma('journal_mode = WAL');
+        this.db.pragma('foreign_keys = ON');
+        this.initialize();
+      } catch (e) {
+        getLogger().warn('STORE', `better-sqlite3 failed to open DB at ${path}: ${e instanceof Error ? e.message : e}. Falling back to in-memory mode.`);
+        this.memMode = true;
+        this.db = null;
+      }
     }
 
-    this.db = new BetterSqlite3(path);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('foreign_keys = ON');
-    this.initialize();
+    if (this.memMode && this.sessionsDir) {
+      this.loadFromFilesystem();
+    }
   }
 
   /**
@@ -241,6 +318,31 @@ export class SessionStore {
   private initialize(): void {
     if (this.memMode || !this.db) return;
     this.db.exec(SCHEMA_SQL);
+
+    // Schema versioning: get current version and run pending migrations
+    try {
+      const row = this.db.prepare('SELECT COALESCE(MAX(version), 0) as v FROM _schema').get() as { v: number } | undefined;
+      const currentVersion = row?.v ?? 0;
+
+      if (currentVersion < CURRENT_SCHEMA_VERSION) {
+        getLogger().info('SCHEMA', `DB schema at version ${currentVersion}, target ${CURRENT_SCHEMA_VERSION}. Running migrations...`);
+        for (const m of MIGRATIONS) {
+          if (m.version > currentVersion && m.version <= CURRENT_SCHEMA_VERSION) {
+            try {
+              m.run(this.db);
+              this.db.prepare('INSERT INTO _schema (version) VALUES (?)').run(m.version);
+              getLogger().info('SCHEMA', `Migration v${m.version} applied: ${m.description}`);
+            } catch (e) {
+              getLogger().error('SCHEMA', `Migration v${m.version} failed: ${e instanceof Error ? e.message : e}`);
+              throw e;
+            }
+          }
+        }
+        getLogger().info('SCHEMA', `Schema updated to v${CURRENT_SCHEMA_VERSION}`);
+      }
+    } catch (e) {
+      getLogger().warn('SCHEMA', `Schema version check failed (non-fatal): ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   /**
@@ -248,8 +350,11 @@ export class SessionStore {
    * but have no DB record (e.g. after DB migration, Docker→native switch, or crash).
    */
   recoverOrphanedSessions(sessionsDir: string): number {
-    if (this.memMode || !this.db) return 0;
-    if (!existsSync(sessionsDir)) return 0;
+    if (this.memMode) {
+      this.sessionsDir = sessionsDir;
+      return this.loadFromFilesystem();
+    }
+    if (!this.db || !existsSync(sessionsDir)) return 0;
 
     let recovered = 0;
     try {
@@ -304,6 +409,99 @@ export class SessionStore {
 
   getDb(): unknown {
     return this.db;
+  }
+
+  setSessionsDir(dir: string): void {
+    this.sessionsDir = dir;
+  }
+
+  getInfo(): { dbMode: string; sessionCount: number; filesystemRecovered: number; schemaVersion: number } {
+    let sessionCount: number;
+    if (this.memMode) {
+      sessionCount = this.memSessions.size;
+    } else if (this.db) {
+      try {
+        const row = this.db.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
+        sessionCount = row?.count ?? 0;
+      } catch {
+        sessionCount = 0;
+      }
+    } else {
+      sessionCount = 0;
+    }
+    return {
+      dbMode: this.memMode ? 'memory' : 'sqlite',
+      sessionCount,
+      filesystemRecovered: this.filesystemRecovered,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+    };
+  }
+
+  /**
+   * Load sessions from the filesystem sessions directory into the in-memory store.
+   * This provides data continuity when the SQLite DB is unavailable.
+   * Scans each session's conversation.json, context.json, etc.
+   */
+  loadFromFilesystem(): number {
+    if (!this.sessionsDir || !existsSync(this.sessionsDir)) return 0;
+    let loaded = 0;
+    try {
+      const entries = readdirSync(this.sessionsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const sessionDir = join(this.sessionsDir, entry.name);
+        const convPath = join(sessionDir, 'conversation.json');
+        if (!existsSync(convPath)) continue;
+        try {
+          const convRaw = readFileSync(convPath, 'utf-8');
+          const messages = JSON.parse(convRaw) as Array<{ role: string; content: string }>;
+          const firstUserMsg = messages.find(m => m.role === 'user');
+          const title = firstUserMsg?.content?.slice(0, 80) ?? 'Recovered session';
+
+          let scopePath = process.cwd();
+          const ctxPath = join(sessionDir, 'context.json');
+          if (existsSync(ctxPath)) {
+            try {
+              const ctx = JSON.parse(readFileSync(ctxPath, 'utf-8'));
+              if (ctx.scopePath) scopePath = ctx.scopePath;
+            } catch { /* ignore */ }
+          }
+
+          const now = new Date().toISOString();
+          const msgCount = messages.length;
+
+          this.memSessions.set(entry.name, {
+            id: entry.name,
+            title,
+            status: 'active',
+            provider: '',
+            model: '',
+            crewId: null,
+            tokensUsed: 0,
+            tokenAvailable: 128000,
+            scopePath,
+            createdAt: now,
+            updatedAt: now,
+            messageCount: msgCount,
+          });
+
+          this.memMessages.set(entry.name, messages.map((m, i) => ({
+            id: `${m.role}-${i}-${entry.name}`,
+            session_id: entry.name,
+            role: m.role,
+            content: m.content,
+            token_count: 0,
+            tool_calls: null,
+            created_at: now,
+          })));
+
+          loaded++;
+        } catch { /* skip sessions that can't be read */ }
+      }
+      this.filesystemRecovered = loaded;
+      getLogger().info('STORE', `Loaded ${loaded} session(s) from filesystem into in-memory store`);
+    } catch { /* best-effort */ }
+    return loaded;
   }
 
   createSession(session: {
@@ -523,6 +721,88 @@ export class SessionStore {
     }));
   }
 
+  insertMessage(msg: {
+    sessionId: string;
+    role: string;
+    content: string;
+    toolCalls?: unknown;
+    tokenCount?: number;
+    crew?: unknown;
+    thinking?: string;
+    plan?: string;
+  }): void {
+    if (this.memMode) {
+      const msgs = this.memMessages.get(msg.sessionId) ?? [];
+      msgs.push({ ...msg, id: crypto.randomUUID(), created_at: new Date().toISOString() });
+      this.memMessages.set(msg.sessionId, msgs);
+      return;
+    }
+    try {
+      this.db!.prepare(`
+        INSERT INTO messages (id, session_id, role, content, tool_calls, token_count, plan, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `).run(
+        crypto.randomUUID(),
+        msg.sessionId,
+        msg.role,
+        this.encryptField(msg.content),
+        msg.toolCalls ? this.encryptField(JSON.stringify(msg.toolCalls)) : null,
+        msg.tokenCount ?? 0,
+        msg.plan || null,
+      );
+    } catch (e) {
+      getLogger().warn('STORE', `insertMessage failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  insertPart(sessionId: string, part: {
+    type: string;
+    content?: string;
+    toolName?: string;
+    toolCallId?: string;
+    toolArgs?: Record<string, unknown>;
+    toolResult?: string;
+    toolSuccess?: boolean;
+    usage?: { inputTokens: number; outputTokens: number };
+  }): void {
+    if (this.memMode) {
+      const msgs = this.memMessages.get(sessionId) ?? [];
+      msgs.push({ ...part, id: crypto.randomUUID(), session_id: sessionId, role: 'part', created_at: new Date().toISOString() });
+      this.memMessages.set(sessionId, msgs);
+      return;
+    }
+    try {
+      this.db!.prepare(`
+        INSERT INTO message_parts (id, session_id, type, content, tool_name, tool_call_id, tool_args, tool_result, tool_success, usage_input, usage_output)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        crypto.randomUUID(),
+        sessionId,
+        part.type,
+        part.content || null,
+        part.toolName || null,
+        part.toolCallId || null,
+        part.toolArgs ? JSON.stringify(part.toolArgs) : null,
+        part.toolResult || null,
+        part.toolSuccess != null ? (part.toolSuccess ? 1 : 0) : null,
+        part.usage?.inputTokens || null,
+        part.usage?.outputTokens || null,
+      );
+    } catch (e) {
+      getLogger().warn('STORE', `insertPart failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  getParts(sessionId: string): Array<Record<string, unknown>> {
+    if (this.memMode) {
+      const msgs = this.memMessages.get(sessionId) ?? [];
+      return msgs.filter(m => (m as any).role === 'part');
+    }
+    try {
+      return this.db!.prepare('SELECT * FROM message_parts WHERE session_id = ? ORDER BY created_at ASC').all(sessionId) as Array<Record<string, unknown>>;
+    } catch { return []; }
+  }
+
   deleteMessages(sessionId: string): void {
     if (this.memMode) {
       this.memMessages.set(sessionId, []);
@@ -531,6 +811,7 @@ export class SessionStore {
 
     const stmt = this.db.prepare('DELETE FROM messages WHERE session_id = ?');
     stmt.run(sessionId);
+    this.db.prepare('DELETE FROM message_parts WHERE session_id = ?').run(sessionId);
   }
 
   getMessageCount(sessionId: string): number {
@@ -748,6 +1029,7 @@ export class SessionStore {
     this.db.prepare('DELETE FROM permissions WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM agent_tasks WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+    this.db.prepare('DELETE FROM message_parts WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   }
 
@@ -766,6 +1048,7 @@ export class SessionStore {
     this.db.exec('DELETE FROM permissions');
     this.db.exec('DELETE FROM agent_tasks');
     this.db.exec('DELETE FROM messages');
+    this.db.exec('DELETE FROM message_parts');
     this.db.exec('DELETE FROM sessions');
   }
 

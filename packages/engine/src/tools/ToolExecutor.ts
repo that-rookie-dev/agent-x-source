@@ -30,7 +30,11 @@ const WRITE_TOOLS = new Set([
   'json_set', 'http_download', 'archive_create', 'archive_extract',
   'browser_screenshot', 'chart_generate', 'qr_generate',
   'shell_exec', 'shell_background', 'shell_exec_streaming',
-  'db_query',
+  'process_kill', 'db_query', 'db_migrate',
+  'git_commit', 'git_push', 'git_merge', 'git_rebase', 'git_reset', 'git_tag', 'git_stash',
+  'package_install', 'package_remove', 'pkg_update',
+  'docker_build', 'container_run', 'container_start', 'container_stop', 'container_exec',
+  'cron_create', 'encrypt_file', 'decrypt_file',
 ]);
 
 export class ToolExecutor {
@@ -160,13 +164,22 @@ export class ToolExecutor {
     const needsPermission = decision !== 'allow_always';
 
     if (needsPermission && this.permissionRequestHandler && tool.riskLevel !== 'low') {
-      const response = await this.permissionRequestHandler(toolId, scopePathForHook ?? '*', tool.riskLevel);
-      if (response === 'deny') {
-        this.permissionManager.deny(toolId, scopePathForHook);
-        return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
-      }
-      if (response === 'allow_always') {
+      // Agent mode: auto-approve within scopePath for medium risk; prompt for high risk
+      if (this.mode === 'agent' && tool.riskLevel === 'medium' && scopePathForHook && this.scopeGuard.validatePath(scopePathForHook).valid) {
         this.permissionManager.grant(toolId, 'allow_always', scopePathForHook);
+      } else if (this.mode === 'plan') {
+        // Plan mode: never ask for permissions — just deny any risky tool
+        return { success: false, output: `"${toolId}" is not available in Plan mode.`, error: 'MODE_RESTRICTED' };
+      } else {
+        // Other modes: prompt user for permission
+        const response = await this.permissionRequestHandler(toolId, scopePathForHook ?? '*', tool.riskLevel);
+        if (response === 'deny') {
+          this.permissionManager.deny(toolId, scopePathForHook);
+          return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
+        }
+        if (response === 'allow_always') {
+          this.permissionManager.grant(toolId, 'allow_always', scopePathForHook);
+        }
       }
     }
 

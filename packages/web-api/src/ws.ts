@@ -14,9 +14,51 @@ function atomicWriteFileSync(filePath: string, content: string): void {
   renameSync(tmpPath, filePath);
 }
 
-interface ToolCallRecord { id: string; name: string; args?: string; result?: string; status: 'running' | 'done' | 'error'; elapsed?: number }
+interface PartRecord {
+  type: string;
+  content?: string;
+  toolName?: string;
+  toolCallId?: string;
+  toolArgs?: Record<string, unknown>;
+  toolResult?: string;
+  toolSuccess?: boolean;
+  usage?: { inputTokens: number; outputTokens: number };
+  timestamp: number;
+}
+
+/**
+ * Incrementally persist each AI SDK part event to conversation.json.
+ */
+export function persistPart(sessionId: string, part: PartRecord): void {
+  if (!sessionId) return;
+
+  // Primary: SQLite (ACID, crash-safe, O(1) inserts)
+  try {
+    const eng = getEngine();
+    const store = (eng.sessionManager as any).store;
+    if (store?.insertPart) { store.insertPart(sessionId, part); }
+  } catch { /* best-effort */ }
+
+  // Legacy: conversation.json (portable export, backward compatibility)
+  const dir = join(SESSIONS_DIR, sessionId);
+  if (!existsSync(dir)) {
+    try { mkdirSync(dir, { recursive: true }); } catch { return; }
+  }
+  const convPath = join(dir, 'conversation.json');
+  try {
+    let conv: any[] = [];
+    if (existsSync(convPath)) {
+      try { conv = JSON.parse(readFileSync(convPath, 'utf-8')) as any[]; } catch { conv = []; }
+    }
+    conv.push({ ...part, role: 'part' });
+    atomicWriteFileSync(convPath, JSON.stringify(conv, null, 2));
+  } catch (e) {
+    // best-effort — don't block streaming for persistence failures
+  }
+}
 interface SubAgentRecord { id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }
 interface CrewInfo { crewId: string; name: string; callsign: string }
+interface ToolCallRecord { id: string; name: string; args: unknown; status: string; result?: string; elapsed?: number; metadata?: Record<string, unknown> }
 
 function appendContextFile(
   sessionId: string,
@@ -36,6 +78,26 @@ function appendContextFile(
   }
 ): void {
   if (!sessionId || !content) return;
+
+  // Primary: SQLite messages table
+  try {
+    const eng = getEngine();
+    const store = (eng.sessionManager as any).store;
+    if (store?.insertMessage) {
+      store.insertMessage({
+        sessionId,
+        role,
+        content,
+        toolCalls: extra?.toolCalls,
+        tokenCount: extra?.tokenCount,
+        crew,
+        thinking: extra?.thinking,
+        plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
+      });
+    }
+  } catch { /* best-effort */ }
+
+  // Legacy: conversation.json
   const dir = join(SESSIONS_DIR, sessionId);
   if (!existsSync(dir)) {
     try { mkdirSync(dir, { recursive: true }); } catch { return; }
@@ -66,7 +128,17 @@ function appendContextFile(
     if (extra?.tokenCount != null) record['tokenCount'] = extra.tokenCount;
     conv.push(record);
     atomicWriteFileSync(convPath, JSON.stringify(conv, null, 2));
-  } catch { /* best-effort */ }
+    } catch (e) {
+      console.error('[ws] Failed to persist context file:', e instanceof Error ? e.message : e);
+    }
+}
+
+/**
+ * Directly persist a message to conversation.json — independent of WebSocket subscription.
+ * This is a failsafe so messages are always saved even if the event subscriber isn't active.
+ */
+export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[] }): void {
+  appendContextFile(sessionId, role, content, undefined, extra);
 }
 
 let wss: WebSocketServer | null = null;
@@ -225,6 +297,14 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     });
 
     // Accumulate thinking deltas
+    // Fetch session ID early for part-level persistence
+    let currentSessionId = '';
+    try {
+      const eng0 = getEngine();
+      const sess0 = eng0.sessionManager.getActiveSession();
+      currentSessionId = sess0?.id || '';
+    } catch { /* ignore */ }
+
     if (evType === 'thinking_delta' || evType === 'reasoning_delta') {
       if (thinkingStartedAt == null) thinkingStartedAt = Date.now();
       const delta = ((event as any).content as string) ?? ((event as any).text as string) ?? '';
@@ -251,42 +331,90 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     if (evType === 'tool_executing') {
       const toolName = ((event as any).tool as string) ?? 'unknown';
       const description = ((event as any).description as string) ?? '';
+      const eventArgs = ((event as any).args as Record<string, unknown> | undefined) ?? description;
       if (toolName === 'delegate_to_subagent') {
-        const id = (event as any).id as string || `sub-${Date.now()}-${subAgentMap.size}`;
+        const id = (event as any).callId as string || (event as any).id as string || `sub-${Date.now()}-${subAgentMap.size}`;
         subAgentMap.set(id, { id, name: 'Sub-Agent', task: description, status: 'running' });
       } else {
-        const id = (event as any).toolCallId as string || (event as any).id as string || `tool-${Date.now()}-${toolCallMap.size}`;
-        toolCallMap.set(id, { id, name: toolName, args: description, status: 'running' });
+        const id = (event as any).callId as string || (event as any).toolCallId as string || (event as any).id as string || `tool-${Date.now()}-${toolCallMap.size}`;
+        toolCallMap.set(id, { id, name: toolName, args: eventArgs, status: 'running' });
+        // Persist part to SQLite immediately
+        persistPart(currentSessionId, { type: 'tool-call', toolName, toolCallId: id, toolArgs: typeof eventArgs === 'object' ? eventArgs as Record<string, unknown> : undefined, timestamp: Date.now() });
       }
     }
     if (evType === 'tool_complete') {
       const toolName = ((event as any).tool as string) ?? '';
       const elapsed = ((event as any).elapsed as number) ?? 0;
-      const result = (event as any).result;
+      const result = (event as any).result ?? (event as any).output as string ?? '';
       const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+      const metadata = (event as any).metadata as Record<string, unknown> | undefined;
       if (toolName === 'delegate_to_subagent') {
-        const id = (event as any).id as string;
+        const id = (event as any).callId as string || (event as any).id as string;
         if (id && subAgentMap.has(id)) {
           const sa = subAgentMap.get(id)!;
           sa.status = 'done';
           sa.result = resultStr;
         }
       } else {
-        const id = (event as any).toolCallId as string || (event as any).id as string;
+        const id = (event as any).callId as string || (event as any).toolCallId as string || (event as any).id as string;
         if (id && toolCallMap.has(id)) {
           const tc = toolCallMap.get(id)!;
           tc.status = 'done';
           tc.result = resultStr;
           tc.elapsed = elapsed;
+          if (metadata) tc.metadata = metadata as ToolCallRecord['metadata'];
         }
       }
+
+      // Persist tool result to SQLite parts table immediately
+      if (toolName !== 'delegate_to_subagent') {
+        const id = (event as any).callId as string || (event as any).toolCallId as string || (event as any).id as string;
+        persistPart(currentSessionId, {
+          type: 'tool-result',
+          toolName,
+          toolCallId: id,
+          toolResult: resultStr,
+          toolSuccess: true,
+          timestamp: Date.now(),
+        });
+      }
+
+      // Incrementally persist tool results so they survive crashes/restarts.
+      // Previously, tool data was only writable on message_received — if the
+      // turn crashed or timed out before the final response, ALL tool records
+      // were lost. Now each completed tool is persisted immediately.
+      try {
+        const eng2 = getEngine();
+        const sess2 = eng2.sessionManager.getActiveSession();
+        const sid = sess2?.id;
+        if (sid) {
+          const convPath = join(SESSIONS_DIR, sid, 'conversation.json');
+          let conv: unknown[] = [];
+          if (existsSync(convPath)) {
+            try { conv = JSON.parse(readFileSync(convPath, 'utf-8')) as unknown[]; } catch { conv = []; }
+          }
+          // Update or create the last assistant record with current tool state
+          const lastIdx = conv.length - 1;
+          const toolCalls = Array.from(toolCallMap.values());
+          const subAgents = Array.from(subAgentMap.values());
+          if (lastIdx >= 0) {
+            const last = conv[lastIdx] as Record<string, unknown>;
+            if (last.role === 'assistant' || (last.role === 'system' && (last.content as string)?.startsWith('[tool]'))) {
+              if (toolCalls.length > 0) (last as any).toolCalls = toolCalls;
+              if (subAgents.length > 0) (last as any).subAgents = subAgents;
+              atomicWriteFileSync(convPath, JSON.stringify(conv, null, 2));
+            }
+          }
+        }
+      } catch { /* best-effort incremental persist */ }
     }
 
     // Persist conversation to session context files
     try {
       const eng = getEngine();
       const sess = eng.sessionManager.getActiveSession();
-      const sessionId = sess?.id || (event as any).sessionId || '';
+      const msgObj = (event as any).message as Record<string, unknown> | undefined;
+      const sessionId = sess?.id || (msgObj?.sessionId as string) || (event as any).sessionId || '';
 
       // Auto-fill session title from the first user message
       if (evType === 'message_sent') {

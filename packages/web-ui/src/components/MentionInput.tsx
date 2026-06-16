@@ -53,7 +53,7 @@ function parseInitialSegments(value: string): Segment[] {
 
 export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, placeholder, crewList: _crewList, disabled, onInsertReady }: MentionInputProps) {
   const [segments, setSegments] = useState<Segment[]>(() => parseInitialSegments(value));
-  const textInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const textInputRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const isComposing = useRef(false);
   const prevValueRef = useRef(value);
@@ -174,7 +174,7 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
       const preChar = atIdx === 0 ? ' ' : newValue[atIdx - 1];
       if (preChar === ' ' || preChar === '\n' || atIdx === 0) {
         const q = newValue.slice(atIdx + 1);
-        if (!q.includes(' ')) {
+        if (!q.includes(' ') && !q.includes('\n')) {
           setMentionQueryLocal(q);
           mentionOriginRef.current = { segmentIdx: idx, atIdx };
           onMentionQuery(q);
@@ -202,11 +202,11 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
     });
   }, [notifyChange, onMentionQuery]);
 
-  const handleInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>, seg: Segment, idx: number) => {
+  const handleInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>, seg: Segment, idx: number) => {
     if (isComposing.current) return;
 
     if (mentionActiveRef.current) {
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      if (e.key === 'Enter' && !e.shiftKey || e.key === 'Tab') {
         e.preventDefault();
         return;
       }
@@ -283,11 +283,9 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
       }
     }
 
-    if (mentionActiveRef.current) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        return;
-      }
+    if (mentionActiveRef.current && e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      return;
     }
 
     onKeyDown(e);
@@ -375,19 +373,29 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
               flex: isLast ? '1 1 auto' : '0 0 auto',
               minWidth: isLast ? '2ch' : 0,
               width: isLast ? undefined : (isEmpty ? 0 : 'auto'),
-              overflow: 'hidden',
             }}
           >
             <Box
-              component="input"
-              ref={(el: HTMLInputElement | null) => {
+              component="textarea"
+              ref={(el: HTMLTextAreaElement | null) => {
                 if (el) textInputRefs.current.set(seg.id, el);
                 else textInputRefs.current.delete(seg.id);
               }}
-              type="text"
               value={(seg as TextSegment).value}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleTextChange(seg.id, e.target.value, idx)}
-              onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => handleInputKeyDown(e, seg, idx)}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+                handleTextChange(seg.id, e.target.value, idx);
+                e.target.style.height = 'auto';
+                e.target.style.height = e.target.scrollHeight + 'px';
+              }}
+              onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+                handleInputKeyDown(e, seg, idx);
+                if (e.key === 'Enter' && e.shiftKey) {
+                  requestAnimationFrame(() => {
+                    e.currentTarget.style.height = 'auto';
+                    e.currentTarget.style.height = e.currentTarget.scrollHeight + 'px';
+                  });
+                }
+              }}
               onCompositionStart={() => { isComposing.current = true; }}
               onCompositionEnd={() => { isComposing.current = false; }}
               disabled={disabled}
@@ -395,7 +403,7 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
               autoCorrect="off"
               autoCapitalize="off"
               spellCheck={false}
-              size={isLast ? undefined : (isEmpty ? 0 : Math.max(1, textLen))}
+              rows={1}
               style={{
                 border: 'none',
                 outline: 'none',
@@ -406,9 +414,16 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
                 lineHeight: 1.5,
                 width: isLast ? '100%' : (isEmpty ? '0' : `${Math.max(1, textLen)}ch`),
                 minWidth: isLast ? '2ch' : 0,
+                minHeight: '1.5em',
+                height: 'auto',
                 padding: 0,
                 margin: 0,
                 flex: isLast ? '1 1 auto' : '0 0 auto',
+                resize: 'none',
+                overflow: 'hidden',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                display: 'inline-block',
               }}
             />
           </Box>
