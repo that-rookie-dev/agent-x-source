@@ -130,14 +130,11 @@ export class CrewOrchestrator {
   private async callCrew(
     member: CrewMember,
     userMessage: string,
-    mainSystemPrompt: string,
-    contextText?: string
+    _mainSystemPrompt: string,
+    _contextText?: string
   ): Promise<{ content: string; elapsed: number }> {
     const crewContext = this.buildCrewContext(member, userMessage);
-    const classificationNote = contextText && /\[Classified as/.test(contextText)
-      ? `\n\n[CLASSIFICATION CONTEXT]\n${contextText}`
-      : '';
-    const systemPrompt = `${mainSystemPrompt}\n\n[CREW MEMBER: ${member.crew.name}]\n${member.crew.systemPrompt}\n\n[CONVERSATION CONTEXT]\n${crewContext}${classificationNote}\n\n[RESPONSE FORMAT — ABSOLUTELY REQUIRED]\nYou MUST respond in EXACTLY ONE of these two formats. No exceptions.\n\nFORMAT 1 — Task is clear (you have enough info):\nProvide the result directly. Code, config, or action taken. Zero questions. Zero requests for info.\n\nFORMAT 2 — Task is unclear (need more info):\nStart with "CLARIFY:" on its own line, then your question on the NEXT line, then 2-5 options prefixed with "- ".\nThe FIRST option will be shown as RECOMMENDED. Optionally prefix any option with "[RECOMMENDED] " to override.\nTo let the user select ALL options at once, add "[ALLOW_ALL]" on its own line at the end.\nDo NOT write anything else. No greetings, no explanations.\n\nExample of FORMAT 2:\nCLARIFY:\nWhich part of the infrastructure needs fixing?\n- [RECOMMENDED] Deployment pipeline is failing\n- Server performance is degraded\n- Security compliance issue\n\nExample with choose-all:\nCLARIFY:\nWhich features should I implement?\n- User authentication\n- Dashboard UI\n- Payment integration\n[ALLOW_ALL]\n\n[CRITICAL RULES]\n- Do NOT delegate tasks to yourself (@${member.crew.callsign}). You ARE ${member.crew.name}. Respond directly.\n- Do NOT @mention other crew members to assign work. You do not have that authority.\n- Do NOT write questions, requests, or ask for clarification in free text. Only use FORMAT 2 above.\n- Do NOT make assumptions or guess. If unsure, use FORMAT 2.\n- Maximum 5 options in FORMAT 2.\n- Keep responses to 1-2 sentences unless providing code or config output (FORMAT 1).`;
+    const systemPrompt = `You are ${member.crew.name}, a specialist crew member. ${member.crew.systemPrompt}\n\n[CONTEXT]\n${crewContext}\n\n[CRITICAL]\nRespond directly to the user in your natural voice. Do NOT analyze the user's message or describe what you need to do — just DO it. If the user says "build a website", start building it. If they say "help finish the task", look at what's been done and continue. Be concise. Lean into your specialist expertise. Keep responses to 1-3 sentences unless providing code, configs, or structured output.\n\nNever say "I need to parse" or "the user seems to want" — just act.`;
 
     const startTime = Date.now();
     const completion = this.provider.complete({
@@ -147,7 +144,7 @@ export class CrewOrchestrator {
         { role: 'user', content: userMessage },
       ],
       temperature: 0.7,
-      maxTokens: member.crew.quotas?.maxTokensPerTurn ?? 300,
+      maxTokens: member.crew.quotas?.maxTokensPerTurn ?? 1024,
     });
 
     let content = '';
@@ -205,18 +202,6 @@ export class CrewOrchestrator {
 
     const responders = explicitResponders ?? this.routeMessage(userMessage);
     const responses: Array<{ member: string; content: string }> = [];
-
-    // Expertise gate: if a specific member was requested but lacks expertise, decline
-    if (explicitResponders && explicitResponders.length === 1) {
-      const member = explicitResponders[0]!;
-      if (!this.hasExpertiseFor(member, userMessage, contextText)) {
-        responses.push({
-          member: member.crew.name,
-          content: `I'm ${member.crew.name} — not an expert in the domain you're asking about. My expertise covers: ${member.expertise.length > 0 ? member.expertise.join(', ') : 'general tasks'}.`,
-        });
-        return { responses };
-      }
-    }
 
     this.emit({ type: 'loading_start', stage: 'crew_routing' });
 

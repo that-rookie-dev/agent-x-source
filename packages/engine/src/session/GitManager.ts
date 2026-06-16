@@ -12,6 +12,8 @@ export class GitManager {
   private branchPrefix: string;
   private repoRoot: string | null = null;
   private trackedFilesCache: string[] | null = null;
+  private snapshots: Array<{ hash: string; timestamp: number; step: number }> = [];
+  private currentStep = 0;
 
   constructor(options: GitManagerOptions = {}) {
     this.scopePath = options.scopePath ?? process.cwd();
@@ -116,6 +118,58 @@ export class GitManager {
 
   getBranchName(sessionId?: string): string {
     return sessionId ? `${this.branchPrefix}${sessionId.slice(0, 8)}` : `${this.branchPrefix}auto`;
+  }
+
+  /**
+   * Take a git tree snapshot at the start of a step.
+   * Returns the tree hash that can be used later for diff/undo.
+   */
+  snapshot(): string | null {
+    if (!this.repoRoot) return null;
+    try {
+      this.currentStep++;
+      const hash = execSync('git write-tree', { cwd: this.repoRoot, encoding: 'utf-8', timeout: 5000 }).trim();
+      this.snapshots.push({ hash, timestamp: Date.now(), step: this.currentStep });
+      return hash;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get the diff between two snapshots or between the last snapshot and current state.
+   */
+  diff(fromHash?: string): string | null {
+    if (!this.repoRoot) return null;
+    try {
+      const last = this.snapshots.length > 0 ? this.snapshots[this.snapshots.length - 1] : undefined;
+      const from = fromHash || last?.hash || 'HEAD~1';
+      return execSync(`git diff ${from}`, { cwd: this.repoRoot, encoding: 'utf-8', timeout: 10000 });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Revert files to a previous snapshot state.
+   */
+  revert(hash?: string): boolean {
+    if (!this.repoRoot) return false;
+    try {
+      const last = this.snapshots.length > 0 ? this.snapshots[this.snapshots.length - 1] : undefined;
+      const targetHash = hash || last?.hash || 'HEAD';
+      execSync(`git checkout ${targetHash} -- .`, { cwd: this.repoRoot, encoding: 'utf-8', timeout: 10000 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * List all snapshots with their hashes, timestamps, and step numbers.
+   */
+  listSnapshots(): Array<{ hash: string; timestamp: number; step: number }> {
+    return [...this.snapshots];
   }
 
   private findRepoRoot(): string | null {

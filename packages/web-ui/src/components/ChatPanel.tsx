@@ -12,6 +12,7 @@ import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import LinearProgress from '@mui/material/LinearProgress';
+import Collapse from '@mui/material/Collapse';
 import MenuItem from '@mui/material/MenuItem';
 import Menu from '@mui/material/Menu';
 import Tooltip from '@mui/material/Tooltip';
@@ -39,6 +40,8 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import ReplayIcon from '@mui/icons-material/Replay';
 import RouteIcon from '@mui/icons-material/Route';
 import SearchIcon from '@mui/icons-material/Search';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import HistoryIcon from '@mui/icons-material/History';
 import DownloadIcon from '@mui/icons-material/Download';
 
@@ -56,13 +59,13 @@ import {
   DoomLoopWarning,
   ReasoningBlock,
   CheckpointDrawer,
-  TurnTokenBadge,
   StreamingCursor,
   CrewMentionMenu,
   type PaletteAction,
 } from './ChatEnhancements';
 import { MentionInput } from './MentionInput';
 import { FolderPickerModal } from './FolderPickerModal';
+import { ToolCallCard } from './visuals/ToolCallCard';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -91,14 +94,24 @@ interface UIMessage extends ChatMessage {
   turnCostUsd?: number;
   doomLoop?: { toolName: string; count: number } | null;
   crew?: { crewId: string; name: string; callsign: string };
+  parts?: PartEntry[];
+}
+
+interface PartEntry {
+  type: 'text' | 'tool' | 'subagent';
+  id: string;
+  content?: string;
+  tool?: ToolCall;
+  agent?: SubAgent;
 }
 
 interface ToolCall {
   id: string;
   name: string;
-  args?: string;
+  args?: string | Record<string, unknown>;
   result?: string;
   status: 'running' | 'done' | 'error';
+  elapsed?: number;
 }
 
 interface SubAgent {
@@ -208,8 +221,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setShowJumpPill(false);
       setUnreadCount(0);
       sessions.restore(sessionId).then(({ messages: historyMsgs, session }) => {
-        const visible = historyMsgs.filter((m) => m.role !== 'system');
-        setMessages(visible.map((m) => ({ ...m, streaming: false })));
+        const visible = historyMsgs.filter((m: any) => m.role !== 'part');
+        setMessages(visible.map((m: any) => ({
+          ...m,
+          id: m.id || crypto.randomUUID(),
+          streaming: false,
+          toolCalls: m.toolCalls?.map((tc: any) => ({ ...tc, status: 'done' as const })),
+          subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
+          plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
+        })) as unknown as UIMessage[]);
         setCurrentSessionTitle(session.title ?? `Session ${sessionId.slice(0, 8)}`);
         const totalUsed = (session as any).tokenUsed ?? session.tokensUsed ?? 0;
         setTokenUsed(totalUsed);
@@ -450,15 +470,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             });
             return prev;
 
-          case 'stream_chunk':
+          case 'stream_chunk': {
+            const delta = (ev.content as string) ?? '';
+            const fullContent = (ev.fullContent as string) ?? '';
             if (last?.role === 'assistant' && last.streaming) {
-              const newContent = (ev.fullContent as string) ?? (last.content + ((ev.content as string) ?? ''));
-              return updateLastMessage(prev, { content: newContent });
-            } else {
-              // If no streaming placeholder exists, create one
-              setStreaming(true);
-              return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: (ev.content as string) ?? '', streaming: true }];
+              const parts = last.parts || [];
+              const lastPart = parts[parts.length - 1];
+              if (lastPart?.type === 'text') {
+                // Append delta to existing text part
+                const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: (lastPart.content || '') + delta }];
+                return updateLastMessage(prev, { content: fullContent, parts: updatedParts });
+              } else {
+                // Create new text part after tools
+                const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: delta };
+                return updateLastMessage(prev, { content: fullContent, parts: [...parts, textPart] });
+              }
             }
+            setStreaming(true);
+            const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: delta };
+            return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: delta, streaming: true, parts: [textPart] }];
+          }
 
           case 'loading_end':
             setLoadingSteps(null);
@@ -466,7 +497,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return prev;
 
           case 'message_received': {
-            const msg = ev.message as { id?: string; content?: string; role?: string; crew?: { crewId: string; name: string; callsign: string }; tokenCount?: number } | undefined;
+            const msg = ev.message as { id?: string; content?: string; role?: string; parts?: PartEntry[]; toolCalls?: ToolCall[]; crew?: { crewId: string; name: string; callsign: string }; tokenCount?: number } | undefined;
             const crew = msg?.crew;
             setStreaming(false);
             if (!msg || msg.role === 'system') return prev;
@@ -474,17 +505,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             if (last?.role === 'assistant') {
               if (last.streaming) {
                 if (last.content) {
-                  // Content already streamed via stream_chunk — just finalize.
+                  // Streaming already showed content — just finalize with accumulated parts
                   return updateLastMessage(prev, { streaming: false, ...(crew ? { crew } : {}) });
                 }
-                // Streaming placeholder with no content yet — this is the final content
                 return updateLastMessage(prev, { content: text || last.content, streaming: false, ...(crew ? { crew } : {}) });
               }
-              // Not streaming — it's the final confirmation for the same message, update in place
               return updateLastMessage(prev, { streaming: false, ...(crew ? { crew } : {}) });
             }
             if (msg.role === 'assistant' && text) {
-              return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, ...(crew ? { crew } : {}) } as UIMessage];
+              const parts = msg.parts || (last?.parts) || [{ type: 'text' as const, id: crypto.randomUUID(), content: text }];
+              return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, parts, ...(crew ? { crew } : {}) } as UIMessage];
             }
             return prev;
           }
@@ -492,21 +522,31 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'tool_executing': {
             if (last?.role !== 'assistant') return prev;
             const toolName = (ev.tool as string) ?? 'unknown';
+            const desc = (ev.description as string) ?? '';
+            const eventArgs = (ev.args as Record<string, unknown> | string | undefined) ?? desc;
+            const callId = (ev.callId as string) ?? crypto.randomUUID();
+
             if (toolName === 'delegate_to_subagent') {
-              const sa: SubAgent = { id: crypto.randomUUID(), name: 'Sub-Agent', task: (ev.description as string) ?? '', status: 'running' };
-              return updateLastMessage(prev, { subAgents: [...(last.subAgents ?? []), sa] });
-            } else {
-              const tc: ToolCall = { id: crypto.randomUUID(), name: toolName, args: (ev.description as string) ?? '', status: 'running' };
-              const newToolCalls = [...(last.toolCalls ?? []), tc];
-              // Doom-loop detection: same tool called 3+ times in a row with similar args
-              const recent = newToolCalls.slice(-4);
-              let doomLoop = last.doomLoop;
-              if (recent.length >= 3) {
-                const same = recent.slice(-3).every(t => t.name === toolName && (t.args ?? '').slice(0, 80) === (tc.args ?? '').slice(0, 80));
-                doomLoop = same ? { toolName, count: recent.filter(t => t.name === toolName).length } : null;
-              }
-              return updateLastMessage(prev, { toolCalls: newToolCalls, doomLoop });
+              const sa: SubAgent = { id: callId, name: 'Sub-Agent', task: desc, status: 'running' };
+              const saPart: PartEntry = { type: 'subagent', id: callId, agent: sa };
+              return updateLastMessage(prev, {
+                subAgents: [...(last.subAgents ?? []), sa],
+                parts: [...(last.parts || []), saPart],
+              });
             }
+
+            const tc: ToolCall = { id: callId, name: toolName, args: eventArgs, status: 'running' };
+            const toolPart: PartEntry = { type: 'tool', id: callId, tool: tc };
+            const parts = [...(last.parts || []), toolPart];
+
+            // Doom-loop detection
+            const toolParts = parts.filter(p => p.type === 'tool');
+            const recent = toolParts.slice(-4);
+            let doomLoop = last.doomLoop;
+            if (recent.length >= 3 && recent.slice(-3).every(p => p.tool?.name === toolName)) {
+              doomLoop = { toolName, count: recent.filter(p => p.tool?.name === toolName).length };
+            }
+            return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts, doomLoop });
           }
 
           case 'doom_loop':
@@ -517,27 +557,42 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'tool_complete': {
             if (last?.role !== 'assistant') return prev;
             const toolName = (ev.tool as string) ?? '';
+            const elapsed = (ev.elapsed as number) ?? 0;
+            const callId = (ev.callId as string) ?? '';
+            const result = (ev as any).result ?? (ev as any).output as string ?? '';
+            const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+
             if (toolName === 'delegate_to_subagent' && last.subAgents) {
-              const newSubAgents = last.subAgents.map((a) => {
+              const newSubAgents = last.subAgents.map((a: SubAgent) => {
                 if (a.status !== 'running') return a;
-                const result = ev.result as { output?: string; success?: boolean } | string | undefined;
-                return { ...a, status: 'done' as const, result: typeof result === 'string' ? result : result?.output ?? 'Done' };
+                return { ...a, status: 'done' as const, result: resultStr };
               });
-              return updateLastMessage(prev, { subAgents: newSubAgents });
-            } else if (last.toolCalls) {
-              let foundToolError = false;
-              const newToolCalls = last.toolCalls.map((t) => {
-                if (t.name !== toolName || t.status !== 'running') return t;
-                const result = ev.result;
-                const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
-                const resObj = typeof result === 'object' && result !== null ? result as Record<string, unknown> : null;
-                if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') foundToolError = true;
-                return { ...t, status: 'done' as const, result: resultStr };
-              });
-              if (foundToolError) setToolEnablePrompt({ toolId: toolName, toolName });
-              return updateLastMessage(prev, { toolCalls: newToolCalls });
+              // Update part too
+              const newParts = (last.parts || []).map((p: PartEntry) =>
+                p.type === 'subagent' && p.agent?.id === callId ? ({ ...p, agent: { ...p.agent!, status: 'done' as const, result: resultStr } }) : p
+              );
+              return updateLastMessage(prev, { subAgents: newSubAgents, parts: newParts });
             }
-            return prev;
+
+            // Update tool in both toolCalls array and parts array
+            const newToolCalls = (last.toolCalls || []).map((t: ToolCall) => {
+              if (callId && t.id !== callId) return t;
+              if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
+              return { ...t, status: 'done' as const, result: resultStr, elapsed };
+            });
+            const newParts = (last.parts || []).map((p: PartEntry) => {
+              if (p.type === 'tool' && p.tool) {
+                if (callId && p.tool.id !== callId) return p;
+                if (!callId && (p.tool.name !== toolName || p.tool.status !== 'running')) return p;
+                return { ...p, tool: { ...p.tool, status: 'done' as const, result: resultStr, elapsed } };
+              }
+              return p;
+            });
+            let foundToolError = false;
+            const resObj = typeof (ev as any).result === 'object' && (ev as any).result !== null ? (ev as any).result as Record<string, unknown> : null;
+            if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') foundToolError = true;
+            if (foundToolError) setToolEnablePrompt({ toolId: toolName, toolName });
+            return updateLastMessage(prev, { toolCalls: newToolCalls, parts: newParts });
           }
 
           case 'todo_update': {
@@ -1106,8 +1161,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setStreaming(false);
     try {
       const { messages: historyMsgs, session } = await sessions.restore(s.id);
-      const visible = historyMsgs.filter((m) => m.role !== 'system');
-      setMessages(visible.map((m) => ({ ...m, streaming: false })));
+      const visible = historyMsgs.filter((m: any) => m.role !== 'part');
+      setMessages(visible.map((m: any) => ({
+        ...m, id: m.id || crypto.randomUUID(), streaming: false,
+        toolCalls: m.toolCalls?.map((tc: any) => ({ ...tc, status: 'done' as const })),
+        subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
+        plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
+      })) as unknown as UIMessage[]);
       setCurrentSessionTitle(s.title ?? `Session ${s.id.slice(0, 8)}`);
       setCurrentSessionId(s.id);
       setShowJumpPill(false);
@@ -2449,175 +2509,129 @@ function CrewAwareMarkdown({ content }: { content: string }) {
   );
 }
 
-function getResponderName(content: string): { name: string; callsign: string } | null {
-  const match = content.match(/^\*\*([^*]+)\*\*\s*\(@(\w+)\):/);
-  if (match) return { name: match[1].trim(), callsign: match[2] };
-  return null;
-}
-
 function MessageBubble({ message, loadingSteps, onDismissDoomLoop }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onDismissDoomLoop?: () => void }) {
   const isUser = message.role === 'user';
   const crewInfo = message.crew;
-  const responderName = !isUser && !crewInfo && message.content ? getResponderName(message.content) : null;
-
-  const displayName = crewInfo ? crewInfo.name : (responderName ? responderName.name : 'Agent-X');
-  const displayColor = crewInfo ? getWebCrewColor(crewInfo.callsign) : (responderName ? getWebCrewColor(responderName.callsign) : colors.accent.blue);
-  const displayInitial = crewInfo ? crewInfo.name.charAt(0).toUpperCase() : null;
+  const displayColor = crewInfo ? getWebCrewColor(crewInfo.callsign) : colors.accent.blue;
 
   if (message.role === 'system') return null;
 
-  return (
-    <Box sx={{
-      mb: 2, display: 'flex', gap: 1.5,
-      flexDirection: isUser ? 'row-reverse' : 'row',
-      alignItems: 'flex-start',
-      animation: 'agentx-fadeIn 0.25s ease-out',
-    }}>
-      {/* Avatar — only for assistant */}
-      {!isUser && (
-        <Box sx={{
-          width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          bgcolor: displayColor + '18', mt: 0.5, flexShrink: 0,
-          border: crewInfo ? `1px solid ${displayColor}40` : 'none',
-        }}>
-          {displayInitial ? (
-            <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: displayColor, fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>
-              {displayInitial}
-            </Typography>
-          ) : (
-            <SmartToyIcon sx={{ fontSize: 15, color: colors.accent.purple }} />
+  // User messages: right-aligned subtle card
+  if (isUser) {
+    return (
+      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'flex-end', animation: 'agentx-fadeIn 0.25s ease-out' }}>
+        <Box sx={{ maxWidth: '72%', px: 1.5, py: 1, border: `1px solid ${colors.border.strong}`, borderRadius: 1.5, bgcolor: colors.bg.elevated }}>
+          {message.attachments && message.attachments.length > 0 && (
+            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
+              {message.attachments.map((a, i) => (<Chip key={i} size="small" icon={<InsertDriveFileIcon sx={{ fontSize: '11px !important' }} />} label={a.name} sx={{ fontSize: '0.5rem', height: 18, bgcolor: colors.accent.blue + '08', border: `1px solid ${colors.accent.blue}20` }} />))}
+            </Box>
           )}
+          <UserMentionText content={message.content} />
         </Box>
+      </Box>
+    );
+  }
+
+  // Assistant: flat chronological document — no bubble, no avatar
+  return (
+    <Box sx={{ mb: 3, animation: 'agentx-fadeIn 0.25s ease-out' }}>
+      <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: displayColor, fontFamily: "'JetBrains Mono', monospace", mb: 0.75, letterSpacing: '0.5px' }}>
+        {crewInfo ? crewInfo.name : 'Agent-X'}
+      </Typography>
+      {message.thinking && (<ReasoningBlock text={message.thinking} streaming={message.streaming && !message.thinkingDoneAt} durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined} />)}
+      {message.doomLoop && (<DoomLoopWarning toolName={message.doomLoop.toolName} count={message.doomLoop.count} onContinue={() => onDismissDoomLoop?.()} onStop={() => { chat.cancel().catch(() => {}); }} />)}
+      {message.todos && message.todos.length > 0 && (<InlineTodoList items={message.todos} />)}
+
+      {/* Chronological parts: text + tools interleaved in order of appearance */}
+      {message.parts && message.parts.length > 0 ? (
+        message.parts.map((part) => {
+          switch (part.type) {
+            case 'text':
+              return part.content ? <CrewAwareMarkdown key={part.id} content={part.content} /> : null;
+            case 'tool':
+              return part.tool ? <Box key={part.id} sx={{ mt: 0.5 }}><ToolCardsGrouped tools={[part.tool] as any[]} /></Box> : null;
+            case 'subagent':
+              return part.agent ? (
+                <Box key={part.id} sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  <SubAgentChip agent={part.agent as any} />
+                </Box>
+              ) : null;
+            default:
+              return null;
+          }
+        })
+      ) : (
+        // Fallback: render content + toolCalls the old way (for restored messages without parts)
+        <>
+          {message.content && <CrewAwareMarkdown content={message.content} />}
+          {message.toolCalls && message.toolCalls.length > 0 && (<Box sx={{ mt: 0.75 }}><ToolCardsGrouped tools={message.toolCalls as any[]} /></Box>)}
+          {message.subAgents && message.subAgents.length > 0 && (<Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{message.subAgents.map((sa) => (<SubAgentChip key={sa.id} agent={sa as any} />))}</Box>)}
+        </>
       )}
 
-      {/* Bubble content */}
-      <Box sx={{ minWidth: 0, maxWidth: isUser ? '72%' : '85%' }}>
-        {/* Responder name label */}
-        {!isUser && (
-          <Typography sx={{
-            fontSize: '0.6rem', fontWeight: 600,
-            color: displayColor,
-            fontFamily: "'JetBrains Mono', monospace",
-            mb: 0.5,
-            letterSpacing: '0.5px',
-          }}>
-            {displayName}
-          </Typography>
-        )}
-        <Box sx={{
-          ...(isUser ? {
-            bgcolor: colors.accent.blue + '10',
-            border: `1px solid ${colors.accent.blue}20`,
-            borderRadius: '14px 14px 4px 14px',
-            px: 1.75, py: 1,
-          } : {
-            bgcolor: displayColor + '08',
-            border: `1px solid ${displayColor}15`,
-            borderRadius: '14px 14px 14px 4px',
-            px: 1.75, py: 1,
-          }),
-        }}>
-        {/* Reasoning (first-class) */}
-        {message.thinking && !isUser && (
-          <ReasoningBlock
-            text={message.thinking}
-            streaming={message.streaming && !message.thinkingDoneAt}
-            durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined}
-          />
-        )}
-
-        {/* Doom-loop warning */}
-        {message.doomLoop && !isUser && (
-          <DoomLoopWarning
-            toolName={message.doomLoop.toolName}
-            count={message.doomLoop.count}
-            onContinue={() => onDismissDoomLoop?.()}
-            onStop={() => { chat.cancel().catch(() => {}); }}
-          />
-        )}
-
-        {/* Plan */}
-        {message.plan && message.plan.length > 0 && (
-          <Box sx={{ mb: 0.75, p: 1, borderRadius: 1, border: `1px solid ${colors.accent.blue}20`, bgcolor: colors.accent.blue + '05' }}>
-            <Typography sx={{ fontSize: '0.55rem', fontWeight: 600, color: colors.accent.blue, mb: 0.3 }}>Plan</Typography>
-            {message.plan.map((step, i) => (
-              <Typography key={i} sx={{ fontSize: '0.6rem', color: colors.text.secondary, pl: 1 }}>{i + 1}. {step}</Typography>
-            ))}
-          </Box>
-        )}
-
-        {/* Tool calls */}
-        {message.toolCalls && message.toolCalls.length > 0 && (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: '0.25em', mb: 0.75 }}>{message.toolCalls.map((tc) => (<ToolCallChip key={tc.id} tool={tc} />))}</Box>
-        )}
-
-        {/* Sub agents */}
-        {message.subAgents && message.subAgents.length > 0 && (
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: '0.25em', mb: 0.75 }}>{message.subAgents.map((sa) => (<SubAgentChip key={sa.id} agent={sa} />))}</Box>
-        )}
-
-        {/* Inline todos */}
-        {message.todos && message.todos.length > 0 && (<InlineTodoList items={message.todos} />)}
-
-        {/* File attachments on user messages */}
-        {isUser && message.attachments && message.attachments.length > 0 && (
-          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
-            {message.attachments.map((a, i) => (
-              <Chip key={i} size="small" icon={<InsertDriveFileIcon sx={{ fontSize: '11px !important' }} />} label={a.name}
-                sx={{ fontSize: '0.5rem', height: 18, bgcolor: colors.accent.blue + '08', border: `1px solid ${colors.accent.blue}20` }} />
-            ))}
-          </Box>
-        )}
-
-        {/* Message text (crew-aware) */}
-        {message.content && !isUser && <CrewAwareMarkdown content={message.content} />}
-        {message.content && isUser && <UserMentionText content={message.content} />}
-
-        {/* Streaming dots (empty content, no steps) */}
-        {message.streaming && !message.content && !loadingSteps && (
-          <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>
-            <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite' }} />
-            <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out 0.2s infinite' }} />
-            <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out 0.4s infinite' }} />
-          </Box>
-        )}
-
-        {/* Shimmer bar while streaming content */}
-        {message.streaming && message.content && (
-          <>
-            <Box component="span" sx={{ display: 'inline' }}><StreamingCursor /></Box>
-            <Box sx={{
-              mt: 0.5, height: 2, borderRadius: 1, width: '50%',
-              background: `linear-gradient(90deg, transparent, ${colors.accent.purple}50, transparent)`,
-              backgroundSize: '200% 100%',
-              animation: 'agentx-shimmer 1.5s infinite linear',
-            }} />
-          </>
-        )}
-
-        {/* Per-turn token economics badge */}
-        {!isUser && !message.streaming && (message.turnTokens != null || message.turnCostUsd != null) && (
-          <TurnTokenBadge tokens={message.turnTokens} />
-        )}
-      </Box>
-      </Box>
+      {message.streaming && !message.content && !loadingSteps && (
+        <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>{[0, 1, 2].map(i => (<Box key={i} sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.2}s` }} />))}</Box>
+      )}
+      {message.streaming && message.content && <Box component="span" sx={{ display: 'inline' }}><StreamingCursor /></Box>}
+      {!message.streaming && (
+        <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75, opacity: 0.45 }}>
+          {message.timestamp && <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Typography>}
+          {message.turnTokens != null && <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{message.turnTokens.toLocaleString()} tok</Typography>}
+          <Box onClick={() => { navigator.clipboard.writeText(message.content).catch(() => {}); }} sx={{ cursor: 'pointer', display: 'flex', '&:hover': { opacity: 1 }, opacity: 0.7 }}><ContentCopyIcon sx={{ fontSize: 11, color: colors.text.dim }} /></Box>
+        </Box>
+      )}
+      {message.streaming && message.content && (
+        <Box sx={{ mt: 0.5, height: 2, borderRadius: 1, width: '50%', background: `linear-gradient(90deg, transparent, ${colors.accent.purple}50, transparent)`, backgroundSize: '200% 100%', animation: 'agentx-shimmer 1.5s infinite linear' }} />
+      )}
     </Box>
   );
 }
 
-// ─── Tool Call Chip ───
+// ─── Tool Cards Grouped ───
 
-function ToolCallChip({ tool }: { tool: ToolCall }) {
+function ToolCardsGrouped({ tools }: { tools: Array<{ id: string; name: string; status: string; args?: any; result?: string; elapsed?: number }> }) {
+  const contextToolNames = new Set(['file_read', 'code_grep', 'code_search', 'file_find', 'folder_list', 'folder_tree', 'code_references', 'code_definitions']);
+  const isContextTool = (t: typeof tools[number]) => contextToolNames.has(t.name);
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+  while (i < tools.length) {
+    if (isContextTool(tools[i])) {
+      const group: typeof tools = [];
+      while (i < tools.length && isContextTool(tools[i])) { group.push(tools[i]); i++; }
+      elements.push(<ContextToolGroup key={group[0].id} tools={group} />);
+    } else {
+      elements.push(<ToolCallCard key={tools[i].id} tool={tools[i] as any} />);
+      i++;
+    }
+  }
+  return <Box>{elements}</Box>;
+}
+
+function ContextToolGroup({ tools }: { tools: Array<{ id: string; name: string; status: string; args?: any; result?: string; elapsed?: number }> }) {
+  const [expanded, setExpanded] = useState(false);
+  const done = tools.filter(t => t.status === 'done' || t.status === 'error').length;
+  const isComplete = done === tools.length;
+  const parts: string[] = [];
+  const reads = tools.filter(t => t.name.includes('read')).length;
+  const searches = tools.filter(t => t.name.includes('grep') || t.name.includes('search') || t.name.includes('find')).length;
+  const lists = tools.filter(t => t.name.includes('list') || t.name.includes('tree')).length;
+  if (reads > 0) parts.push(`${reads} read${reads > 1 ? 's' : ''}`);
+  if (searches > 0) parts.push(`${searches} search${searches > 1 ? 'es' : ''}`);
+  if (lists > 0) parts.push(`${lists} folder${lists > 1 ? 's' : ''}`);
   return (
-    <Chip size="small"
-      label={tool.name}
-      sx={{
-        fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", height: 20,
-        bgcolor: tool.status === 'running' ? colors.accent.orange + '10' : tool.status === 'error' ? colors.accent.red + '10' : colors.accent.green + '10',
-        border: `1px solid ${tool.status === 'running' ? colors.accent.orange : tool.status === 'error' ? colors.accent.red : colors.accent.green}20`,
-        color: tool.status === 'running' ? colors.accent.orange : tool.status === 'error' ? colors.accent.red : colors.accent.green,
-      }}
-    />
+    <Box sx={{ mb: 0.5, borderRadius: 1, border: `1px solid ${colors.accent.blue}25`, bgcolor: colors.accent.blue + '06', overflow: 'hidden' }}>
+      <Box onClick={() => isComplete && setExpanded(e => !e)} sx={{ display: 'flex', alignItems: 'center', gap: 0.75, px: 1.25, py: 0.625, cursor: isComplete ? 'pointer' : 'default', '&:hover': isComplete ? { bgcolor: colors.accent.blue + '0A' } : {} }}>
+        <Box sx={{ display: 'flex', gap: 0.3 }}>{tools.map((t, i) => (<Box key={i} sx={{ width: 4, height: 4, borderRadius: '50%', bgcolor: t.status === 'running' ? colors.accent.blue : t.status === 'error' ? colors.accent.red : colors.accent.green }} />))}</Box>
+        <SearchIcon sx={{ fontSize: 14, color: colors.accent.blue }} />
+        <Typography sx={{ fontSize: '0.6rem', fontWeight: 500, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>{isComplete ? 'Gathered context' : 'Gathering context...'}</Typography>
+        <Typography sx={{ fontSize: '0.55rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace" }}>{parts.join(', ')}</Typography>
+        <Box sx={{ flex: 1 }} />
+        {isComplete && <KeyboardArrowDownIcon sx={{ fontSize: 14, color: colors.text.dim, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />}
+      </Box>
+      <Collapse in={expanded}>
+        <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.blue}15` }}>{tools.map(t => (<ToolCallCard key={t.id} tool={t as any} />))}</Box>
+      </Collapse>
+    </Box>
   );
 }
 

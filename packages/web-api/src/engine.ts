@@ -254,6 +254,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     config: cfg,
     sessionId: session.id,
     systemPrompt: '',
+    scopePath: session.scopePath,
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
   });
@@ -382,6 +383,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
           config: userCfg,
           sessionId: userSession.id,
           systemPrompt: '',
+          scopePath: userSession.scopePath,
           toolExecutor: eng.toolkit.executor,
           toolRegistry: eng.toolkit.registry,
         });
@@ -417,6 +419,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
           config: userCfg,
           sessionId: userSession.id,
           systemPrompt: '',
+          scopePath: userSession.scopePath,
           toolExecutor: eng.toolkit.executor,
           toolRegistry: eng.toolkit.registry,
         });
@@ -516,9 +519,11 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
 function getDefaultConfig(): AgentXConfig {
   return {
     provider: {
-      activeProvider: 'openai',
-      activeModel: 'gpt-4o-mini',
-      providers: {},
+      activeProvider: 'opencode-zen',
+      activeModel: 'deepseek-v4-flash-free',
+      providers: {
+        'opencode-zen': { configured: true },
+      },
     },
     ui: {
       theme: 'dark',
@@ -568,6 +573,7 @@ export function ensureChannelAgent(): Agent {
     config: cfg,
     sessionId: session.id,
     systemPrompt: '',
+    scopePath: session.scopePath,
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
   });

@@ -13,7 +13,7 @@ import type {
   ToolResult,
 } from '@agentx/shared';
 import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, type ChannelKind, getConfigDir } from '@agentx/shared';
-import { join } from 'node:path';
+import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { ProviderFactory } from '../providers/index.js';
@@ -72,31 +72,21 @@ import type { SessionLogger } from '../session/SessionLogger.js';
 
 // ─── UNIFIED PIPELINE IMPORTS (Phase 1-11 integration) ───
 import { InputNormalizer } from '../communication/InputNormalizer.js';
-import { PromptComposer } from '../communication/prompt/PromptComposer.js';
-import { PromptCache } from '../communication/prompt/PromptCache.js';
 import { ErrorClassifier } from '../communication/ErrorClassifier.js';
-import { FailoverPolicy } from '../communication/FailoverPolicy.js';
-import { CompactionManager } from '../communication/CompactionManager.js';
 import { TelemetryEmitter } from '../communication/telemetry/TelemetryEmitter.js';
-import { DoomLoopDetector } from '../tools/DoomLoopDetector.js';
 import { AuthProfileManager } from '../providers/AuthProfileManager.js';
-import { ProviderRouter } from '../providers/ProviderRouter.js';
-import { LiveProjector } from '../communication/LiveProjector.js';
-import { SessionProcessor } from './SessionProcessor.js';
-import { RetryEngine } from '../communication/RetryEngine.js';
-import { EventBroadcaster } from '../communication/EventBroadcaster.js';
 import { VisualEventBridge } from '../communication/visuals/VisualEventBridge.js';
 import { CommandQueue } from '../communication/CommandQueue.js';
 import { RunStateManager } from '../agent/RunStateManager.js';
-import { StreamNormalizer } from '../communication/StreamNormalizer.js';
-import { ResponseAssembler } from '../communication/ResponseAssembler.js';
 import { IdleTimeoutBreaker } from '../communication/IdleTimeoutBreaker.js';
-import { PluginSystem } from '../plugin/PluginSystem.js';
-import { StaleWatchdog } from '../communication/StaleWatchdog.js';
-import { CompletionLoop } from './CompletionLoop.js';
-import { IntentClassifier, getLoadingSteps } from './IntentClassifier.js';
-import { makeRoute, openAIProtocol } from '../providers/routes/Route.js';
-import { GenericTransport } from '../providers/transports/GenericTransport.js';
+import { createAiSdkModel, createAiSdkTools, aiSdkStream } from './AiSdkBridge.js';
+import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
+import { streamText, stepCountIs, type ToolSet } from 'ai';
+// IntentClassifier import removed — DecisionEngine (heuristic) handles all routing
+function getLoadingSteps(_intent: string): Array<{ id: string; label: string; status: 'active' | 'completed' | 'pending' }> {
+  const labels: string[] = ['Thinking…', 'Working…', 'Processing…', 'One moment…'];
+  return [{ id: 'load', label: labels[Math.floor(Math.random() * labels.length)]!, status: 'active' as const }];
+}
 
 export interface AgentOptions {
   config: AgentXConfig;
@@ -117,6 +107,7 @@ export class Agent {
   private messages: CompletionMessage[] = [];
   private config: AgentXConfig;
   private sessionId: string;
+  private scopePath: string;
   private isProcessing = false;
   readonly lifecycle = new AgentLifecycle();
   private abortController: AbortController | null = null;
@@ -127,7 +118,8 @@ export class Agent {
   private taskManager: TaskManager;
   private todoManager: TodoManager;
   private scheduler: Scheduler;
-  private secretSauce: SecretSauceManager;
+  private _secretSauce: SecretSauceManager | null = null;
+  private get secretSauce(): SecretSauceManager { if (!this._secretSauce) { this._secretSauce = new SecretSauceManager(); } return this._secretSauce; }
   private memoryExtractor: MemoryExtractor | null = null;
   private errorShield: ErrorShield;
   private toolExecutor?: EnhancedToolExecutor;
@@ -144,55 +136,61 @@ export class Agent {
   private fallbackModel: string | null = null;
   private gitAutoCommit = false;
   private gitManager: GitManager | null = null;
-  private fileWatcher: FileWatcher | null = null;
-  private backgroundQueue: BackgroundQueue | null = null;
-  private modelRouter: ModelRouter | null = null;
-  private userCommandRegistry: UserCommandRegistry | null = null;
-  private recipeEngine: RecipeEngine | null = null;
+  private _fileWatcher: FileWatcher | null = null;
+  private get fileWatcher(): FileWatcher {
+    if (!this._fileWatcher) { this._fileWatcher = new FileWatcher(); setFileWatcherInstance(this._fileWatcher); this._fileWatcher.on('file_changed', (e, fp, c) => { this.emit({ type: 'watch_event', event: e, filePath: fp, command: c, timestamp: Date.now() }); }); }
+    return this._fileWatcher;
+  }
+  private _modelRouter: ModelRouter | null = null;
+  private get modelRouter(): ModelRouter {
+    if (!this._modelRouter) { this._modelRouter = new ModelRouter(); setModelRouterInstance(this._modelRouter); }
+    return this._modelRouter;
+  }
   private promptEngine: PromptEngine;
   private decisionEngine: DecisionEngine;
-  private intentClassifier: IntentClassifier;
+  // IntentClassifier removed — DecisionEngine (heuristic) handles all routing
+  private _treeOfThoughts: TreeOfThoughts | null = null;
   private currentIntent: IntentResult | null = null;
   private currentDecision: DecisionResult | null = null;
-  private treeOfThoughts: TreeOfThoughts | null = null;
   private researchEngine: ResearchEngine | null = null;
   private lastRagResults: Array<{ content: string; score?: number; metadata?: Record<string, unknown> }> = [];
   private clarificationResolve: ((response: string) => void) | null = null;
   private agentBus: AgentBus;
   private specialistRegistry: SpecialistRegistry;
-  private skillGenerator: SkillGenerator;
-  private reflectionLoop: ReflectionLoop;
+  private _skillGenerator: SkillGenerator | null = null;
+  private get skillGenerator(): SkillGenerator { if (!this._skillGenerator) this._skillGenerator = new SkillGenerator(); return this._skillGenerator; }
+  private _reflectionLoop: ReflectionLoop | null = null;
+  private get reflectionLoop(): ReflectionLoop { if (!this._reflectionLoop) this._reflectionLoop = new ReflectionLoop(); return this._reflectionLoop; }
   private toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
 
   // Anti-duplicate: prevents double message_received within a single turn
   private _turnMessageEmitted = false;
   // Anti-duplicate: prevents repeated model capability warnings per session
   private _capabilityWarningEmitted = false;
-  // ─── UNIFIED PIPELINE MODULES ───
-  private inputNormalizer: InputNormalizer = null!;
-  private promptComposer: PromptComposer = null!;
-  private promptCache: PromptCache = null!;
-  private errorClassifier: ErrorClassifier = null!;
-  private failoverPolicy: FailoverPolicy = null!;
-  private compactionManager: CompactionManager = null!;
-  private telemetry: TelemetryEmitter = null!;
-  private doomLoopDetector: DoomLoopDetector = null!;
-  private authProfileManager: AuthProfileManager = null!;
-  private providerRouter: ProviderRouter = null!;
-  private projector: LiveProjector = null!;
-  private sessionProcessor: SessionProcessor = null!;
-  private retryEngine: RetryEngine = null!;
-  private broadcaster: EventBroadcaster = null!;
-  private visualBridge: VisualEventBridge = null!;
-  private commandQueue: CommandQueue = null!;
-  private runStateMgr: RunStateManager = null!;
-  private streamNormalizer: StreamNormalizer = null!;
-  private responseAssembler: ResponseAssembler = null!;
-  private idleBreaker: IdleTimeoutBreaker = null!;
-  private pluginSystem: PluginSystem = null!;
+  // ─── LAZY PIPELINE MODULES (created on first access) ───
+  private _inputNormalizer: InputNormalizer | null = null;
+  private get inputNormalizer(): InputNormalizer { if (!this._inputNormalizer) this._inputNormalizer = new InputNormalizer(); return this._inputNormalizer; }
+  private _errorClassifier: ErrorClassifier | null = null;
+  private get errorClassifier(): ErrorClassifier { if (!this._errorClassifier) this._errorClassifier = new ErrorClassifier(); return this._errorClassifier; }
+  private _telemetry: TelemetryEmitter | null = null;
+  private get telemetry(): TelemetryEmitter { if (!this._telemetry) this._telemetry = new TelemetryEmitter(); return this._telemetry; }
+  private _authProfileManager: AuthProfileManager | null = null;
+  private get authProfileManager(): AuthProfileManager { if (!this._authProfileManager) this._authProfileManager = new AuthProfileManager(); return this._authProfileManager; }
+  private _visualBridge: VisualEventBridge | null = null;
+  private get visualBridge(): VisualEventBridge { if (!this._visualBridge) this._visualBridge = new VisualEventBridge(); return this._visualBridge; }
+  private _commandQueue: CommandQueue | null = null;
+  private get commandQueue(): CommandQueue { if (!this._commandQueue) this._commandQueue = new CommandQueue(); return this._commandQueue; }
+  private _runStateMgr: RunStateManager | null = null;
+  private get runStateMgr(): RunStateManager { if (!this._runStateMgr) this._runStateMgr = new RunStateManager(); return this._runStateMgr; }
+  private _idleBreaker: IdleTimeoutBreaker | null = null;
+  private get idleBreaker(): IdleTimeoutBreaker { if (!this._idleBreaker) this._idleBreaker = new IdleTimeoutBreaker(); return this._idleBreaker; }
   private _telegramConnected = false;
   private _telegramChatId: number | null = null;
-  private crewOrchestrator: CrewOrchestrator | null = null;
+  private _crewOrchestrator: CrewOrchestrator | null = null;
+  private get crewOrchestrator(): CrewOrchestrator {
+    if (!this._crewOrchestrator) { this._crewOrchestrator = new CrewOrchestrator(this.provider, this.eventBus, this.tokenTracker); this._crewOrchestrator.setActiveModel(this.config.provider.activeModel); }
+    return this._crewOrchestrator;
+  }
   private contextTracker = new ContextTracker();
   sessionLogger: SessionLogger | null = null;
   onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number }) => void) | null = null;
@@ -221,6 +219,7 @@ export class Agent {
   constructor(options: AgentOptions) {
     this.config = options.config;
     this.sessionId = options.sessionId;
+    this.scopePath = normalize(resolve(options.scopePath ?? process.cwd()));
     this.eventBus = options.eventBus ?? new AgentEventBus();
     this.tokenTracker = new TokenTracker(this.getContextWindow());
     this.subAgents = new SubAgentManager(this.eventBus);
@@ -246,7 +245,7 @@ export class Agent {
     this.scheduler = new Scheduler(this.eventBus, this.sessionId);
     setSchedulerInstance(this.sessionId, this.scheduler);
     setIndexerEventBus(this.eventBus);
-    this.secretSauce = new SecretSauceManager();
+    // secretSauce is lazy — created on first access via getter
     this.errorShield = new ErrorShield();
 
     // Set up tools - use provided or create defaults
@@ -350,50 +349,37 @@ export class Agent {
       }
     }
 
-    // Initialize background queue
-    this.backgroundQueue = new BackgroundQueue();
-    this.backgroundQueue.onComplete((task) => {
-      this.eventBus.emit({
-        type: 'background_task_complete',
-        taskId: task.id,
-        summary: `[${task.status}] ${task.command}`.slice(0, 120),
+    // Initialize background queue (global singleton, not stored on `this`)
+    {
+      const bq = new BackgroundQueue();
+      bq.onComplete((task) => {
+        this.eventBus.emit({ type: 'background_task_complete', taskId: task.id, summary: `[${task.status}] ${task.command}`.slice(0, 120) });
       });
-    });
-    setBackgroundQueueInstance(this.backgroundQueue);
+      setBackgroundQueueInstance(bq);
+    }
 
-    // Initialize model router
-    this.modelRouter = new ModelRouter();
-    setModelRouterInstance(this.modelRouter);
+    // modelRouter is lazy-init via getter
 
-    // Initialize user command registry (loads from config.commands if available)
+    // Initialize user command registry (global singleton, not stored on `this`)
     {
       const cmdRegistry = new CommandRegistry();
-      this.userCommandRegistry = new UserCommandRegistry(cmdRegistry);
-      setUserCommandRegistryInstance(this.userCommandRegistry);
+      const ucr = new UserCommandRegistry(cmdRegistry);
+      setUserCommandRegistryInstance(ucr);
       const userCmds = (options.config as unknown as Record<string, unknown>)['commands'] as UserCommandConfig[] | undefined;
       if (userCmds) {
-        this.userCommandRegistry.loadFromConfig(userCmds);
+        ucr.loadFromConfig(userCmds);
       }
     }
 
-    // Initialize recipe engine
-    this.recipeEngine = new RecipeEngine();
-    setRecipeEngineInstance(this.recipeEngine);
-    const recipeDir = join(getConfigDir(), 'recipes');
-    this.recipeEngine.addDirectory(recipeDir);
+    // Initialize recipe engine (global singleton, not stored on `this`)
+    {
+      const re = new RecipeEngine();
+      setRecipeEngineInstance(re);
+      const recipeDir = join(getConfigDir(), 'recipes');
+      re.addDirectory(recipeDir);
+    }
 
-    // Initialize file watcher for watch mode
-    this.fileWatcher = new FileWatcher();
-    setFileWatcherInstance(this.fileWatcher);
-    this.fileWatcher.on('file_changed', (event, filePath, command) => {
-      this.emit({
-        type: 'watch_event',
-        event,
-        filePath,
-        command,
-        timestamp: Date.now(),
-      });
-    });
+    // fileWatcher is lazy-init via getter (creates + sets up listeners on first access)
 
     this.provider = ProviderFactory.create(
       options.config.provider.activeProvider,
@@ -401,8 +387,7 @@ export class Agent {
       this.getBaseUrl(),
     );
 
-    this.crewOrchestrator = new CrewOrchestrator(this.provider, this.eventBus, this.tokenTracker);
-    this.crewOrchestrator.setActiveModel(options.config.provider.activeModel);
+    // crewOrchestrator is lazy-init (created on first access)
     this.maxSubAgents = options.config.maxSubAgents ?? 5;
 
     // Initialize prompt engine for token-efficient prompting
@@ -411,73 +396,27 @@ export class Agent {
     // Initialize decision engine for message classification and routing
     this.decisionEngine = new DecisionEngine();
 
-    // Initialize intent classifier (LLM-based) for understanding user intent
-    this.intentClassifier = new IntentClassifier(this.provider, options.config.provider.activeModel);
+    // IntentClassifier removed — DecisionEngine (heuristic) handles all routing
 
     // Initialize agent mesh components
     this.agentBus = getAgentBus();
     this.agentBus.attachEventBus(this.eventBus);
     this.specialistRegistry = new SpecialistRegistry(this.agentBus);
     this.specialistRegistry.registerDefaults();
-    this.skillGenerator = new SkillGenerator();
-    this.reflectionLoop = new ReflectionLoop();
+    // skillGenerator and reflectionLoop are lazy-init (created on first access)
 
     // Register this agent on the bus
     this.agentBus.registerAgent(this.sessionId, ['main', 'orchestrator']);
 
-    // ─── UNIFIED PIPELINE INITIALIZATION ───
-    this.inputNormalizer = new InputNormalizer();
-    this.promptCache = new PromptCache();
-    this.promptComposer = new PromptComposer();
-    this.promptComposer.setCache(this.promptCache);
-
+    // ─── LAZY PIPELINE — components created on first access via getters ───
     const apiKey = this.getApiKey() ?? '';
-    this.authProfileManager = new AuthProfileManager();
     if (apiKey) {
       this.authProfileManager.addCredential(options.config.provider.activeProvider, apiKey);
     }
-    this.errorClassifier = new ErrorClassifier();
-    this.failoverPolicy = new FailoverPolicy(this.authProfileManager);
-    this.providerRouter = new ProviderRouter(this.authProfileManager);
-    this._registerProviderRoutes(apiKey);
 
-    this.projector = new LiveProjector();
-    this.compactionManager = new CompactionManager({ contextLimit: this.getContextWindow() });
-    this.doomLoopDetector = new DoomLoopDetector();
-    this.telemetry = new TelemetryEmitter();
-    this.visualBridge = new VisualEventBridge();
-
-    // ─── UNIFIED: Remaining modules ───
-    this.commandQueue = new CommandQueue();
-    this.runStateMgr = new RunStateManager();
-    this.streamNormalizer = new StreamNormalizer();
-    this.responseAssembler = new ResponseAssembler();
-    this.idleBreaker = new IdleTimeoutBreaker();
-    this.pluginSystem = new PluginSystem({ autoEnable: true });
-    this.pluginSystem.startHealthChecks();
-
-    // Unified streaming + retry infrastructure
-    this.broadcaster = new EventBroadcaster();
-    this.sessionProcessor = new SessionProcessor({
-      sessionId: this.sessionId,
-      eventBus: this.eventBus,
-      broadcaster: this.broadcaster,
-      projector: this.projector,
-    });
-    this.retryEngine = new RetryEngine(this.authProfileManager, {
-      providerId: options.config.provider.activeProvider,
-      maxRetries: 3,
-    });
-
-    // Auto health check on startup (non-blocking)
-    // Skip automatic model trial when running under test to avoid
-    // consuming mocked provider responses during unit tests.
     if (process.env['NODE_ENV'] !== 'test') {
-      this.trialModel(options.config.provider.activeModel).catch(() => { /* silent — will be caught at first actual use */ });
+      this.trialModel(options.config.provider.activeModel).catch(() => {});
     }
-
-    // Initialize memory extractor for cross-session knowledge
-    this.memoryExtractor = new MemoryExtractor(this.provider, this.config.provider.activeModel);
 
     // Build system prompt from Secret Sauce + user override
     const sauceContext = this.secretSauce.buildSystemContext();
@@ -488,6 +427,15 @@ export class Agent {
       `[TOOLS]`,
       `You have the following tools available:`,
       toolLines.join('\n'),
+      ``,
+      `[WORKING_DIRECTORY]`,
+      `Your working directory is: ${this.scopePath}`,
+      `ALL file operations and shell commands MUST operate within this directory.`,
+      `Use RELATIVE paths (e.g. "src/index.ts") — NOT absolute paths.`,
+      `For shell_exec: you are already IN this directory — do NOT cd to other absolute paths.`,
+      `The 'path' and 'file' arguments on all tools are relative to this directory.`,
+      `Creating a project named "myapp" means: mkdir myapp, cd myapp, write files there.`,
+      `[/WORKING_DIRECTORY]`,
       ``,
       `[MASTER_CONTROLLER]`,
       `You are a MASTER agent controlling a fleet of sub-agents and tools. Your job: achieve the goal with MINIMUM tokens and MAXIMUM efficiency.`,
@@ -698,18 +646,18 @@ export class Agent {
   }
 
   get sauce(): SecretSauceManager {
-    return this.secretSauce;
+    return this.secretSauce; // lazy getter creates on first access
   }
 
   get treeOfThoughtsCapability(): TreeOfThoughts {
-    if (!this.treeOfThoughts) {
-      this.treeOfThoughts = new TreeOfThoughts({
+    if (!this._treeOfThoughts) {
+      this._treeOfThoughts = new TreeOfThoughts({
         provider: this.provider,
         model: this.config.provider.activeModel,
         emit: (event) => this.emit(event),
       });
     }
-    return this.treeOfThoughts;
+    return this._treeOfThoughts;
   }
 
   get researchEngineCapability(): ResearchEngine {
@@ -743,9 +691,11 @@ export class Agent {
   setPlanMode(enabled: boolean): void {
     this.planMode = enabled;
     if (enabled) {
+      this.toolExecutor?.setMode('plan');
       this.emit({ type: 'plan_mode_entered' });
     } else {
       this.currentPlan = null;
+      this.toolExecutor?.setMode('agent');
       this.emit({ type: 'plan_mode_exited' });
     }
   }
@@ -1002,20 +952,13 @@ Return ONLY valid JSON, no other text.`;
 
     this.emit({ type: 'message_sent', message: userMessage });
 
-    // ─── INTENT CLASSIFIER (ALWAYS first): LLM-powered message understanding ───
-    // Runs before @mention, auto-delegation, or any routing — provides context for all paths
-    const recentCtx = this.messages
-      .filter(m => m.role === 'user' || m.role === 'assistant')
-      .slice(-10)
-      .map(m => ({ role: m.role, content: m.content }));
-    const intentResult = await this.intentClassifier.classify({
-      message: cleanContent,
-      recentMessages: recentCtx.slice(0, -1),
-    });
-    const isSocial = intentResult.intent === 'greeting' || intentResult.intent === 'farewell' || intentResult.intent === 'conversational';
+    // ─── DECISION ENGINE (heuristic — zero LLM calls) ───
+    const conversationLen = this.messages.filter(m => m.role === 'user').length;
+    const decision = this.decisionEngine.classify(cleanContent, conversationLen);
+    const isSocial = decision.executionPath === 'fast_reply';
 
     // ─── MODEL CAPABILITY CHECK: warn if model lacks function calling for task intents ───
-    const isTaskIntent = intentResult.intent === 'simple_task' || intentResult.intent === 'complex_task';
+    const isTaskIntent = decision.messageClass === 'simple_task' || decision.messageClass === 'complex_task';
     if (isTaskIntent && !this._capabilityWarningEmitted) {
       const caps = this.cachedModelCapabilities.get(this.config.provider.activeModel) ?? [];
       if (!caps.includes('function_calling')) {
@@ -1030,25 +973,26 @@ Return ONLY valid JSON, no other text.`;
     }
 
     // Build a natural-language context summary for crew routing (passed to crew LLM calls)
-    const classificationContext = `[Classified as "${intentResult.intent}" (confidence: ${intentResult.confidence}) — ${intentResult.reasoning}]`;
+    const classificationContext = `[Classified as "${decision.messageClass}" (confidence: ${decision.confidence}) — ${decision.reasoning}]`;
 
-    getLogger().info('CLASSIFY', `intent=${intentResult.intent} confidence=${intentResult.confidence} needsClar=${intentResult.needsClarification} msg="${cleanContent.slice(0, 60)}"`);
+    getLogger().info('CLASSIFY', `class=${decision.messageClass} conf=${decision.confidence} msg="${cleanContent.slice(0, 60)}"`);
 
     // Emit as the general decision event for UI consumption
     this.emit({
       type: 'decision_made',
-      messageClass: intentResult.intent,
-      executionPath: isSocial ? 'fast_reply' : 'standard',
-      confidence: intentResult.confidence,
-      reasoning: intentResult.reasoning,
+      messageClass: decision.messageClass,
+      executionPath: decision.executionPath,
+      confidence: decision.confidence,
+      reasoning: decision.reasoning,
     } as unknown as EngineEvent);
 
-    // ─── CLARIFICATION: If classifier is confused, ask the user ───
-    if (intentResult.needsClarification && intentResult.clarificationQuestion) {
+    // ─── CLARIFICATION: removed — DecisionEngine is heuristic-only and never needs clarification
+    if (false) {
+      // Clarification disabled — DecisionEngine never needs it
       this.emit({
         type: 'clarification_required',
-        question: intentResult.clarificationQuestion,
-        options: intentResult.clarificationOptions ?? [],
+        question: 'What do you mean?',
+        options: [],
         allowFreeform: true,
       } as unknown as EngineEvent);
       this.emit({ type: 'loading_end' });
@@ -1072,10 +1016,10 @@ Return ONLY valid JSON, no other text.`;
 
     // ─── FAST REPLY PATH (social messages) ───
     if (isSocial) {
-      const steps = getLoadingSteps(intentResult.intent);
+      const steps = getLoadingSteps(decision.messageClass);
       this.emit({
         type: 'loading_start',
-        stage: intentResult.intent,
+        stage: decision.messageClass,
         steps: steps.map(s => ({ ...s, status: 'pending' as const })),
       });
       // Advance through loading steps as visual feedback
@@ -1125,10 +1069,10 @@ Return ONLY valid JSON, no other text.`;
     // planning, tool execution, project creation, everything. Crews are ONLY invoked
     // via explicit @mention or when Agent-X decides to delegate a sub-task during execution.
     // ─── EMIT LOADING STEPS (standard / non-social path) ───
-    const loadSteps = getLoadingSteps(intentResult.intent);
+    const loadSteps = getLoadingSteps(decision.messageClass);
     this.emit({
       type: 'loading_start',
-      stage: intentResult.intent,
+      stage: decision.messageClass,
       steps: loadSteps.map(s => ({ ...s, status: 'pending' as const })),
     });
     // Step 1: classify → already done
@@ -1138,9 +1082,8 @@ Return ONLY valid JSON, no other text.`;
     }
 
     // ─── DECISION ENGINE: Heuristic refinement for non-social messages ───
-    const conversationLen = this.messages.filter(m => m.role === 'user').length;
     this.currentDecision = this.decisionEngine.classify(content, conversationLen);
-    this.currentDecision.reasoning = `${intentResult.reasoning} | ${this.currentDecision.reasoning}`;
+    this.currentDecision.reasoning = `${decision.reasoning} | ${this.currentDecision.reasoning}`;
     this.emit({
       type: 'decision_made',
       messageClass: this.currentDecision.messageClass,
@@ -1220,8 +1163,7 @@ Return ONLY valid JSON, no other text.`;
 
       // Plan mode: first understand the user through conversation, then conditionally plan
       if (this.planMode) {
-        const requiresPlan = intentResult.intent === 'complex_task' ||
-          intentResult.intent === 'meta_command' ||
+        const requiresPlan = decision.messageClass === 'complex_task' ||
           /\b(plan|create a plan|make a plan|outline|roadmap|strategy|steps|milestone|break.*down|🎯\s*GOAL)\b/i.test(content);
 
         if (requiresPlan) {
@@ -1250,6 +1192,19 @@ Return ONLY valid JSON, no other text.`;
           }
 
           this.emit({ type: 'plan_approved', planId: plan.id });
+
+          // Plan mode: return the plan without executing. User must switch to agent mode to execute.
+          const planMessage: Message = {
+            id: generateMessageId(),
+            sessionId: this.sessionId,
+            role: 'assistant',
+            content: `✓ Plan approved. Switch to **Agent mode** to execute this plan.\n\n**Plan:** ${plan.title}\n${plan.steps.map((s, i) => `${i + 1}. ${s.description}`).join('\n')}`,
+            toolCalls: null,
+            createdAt: new Date().toISOString(),
+            tokenCount: 0,
+          };
+          this.emit({ type: 'message_received', message: planMessage, elapsed: Date.now() - startTime });
+          return planMessage;
 
           // Execute each approved step sequentially with per-step approval
           const pendingSteps = plan.steps.filter((s) => s.status === 'approved' || s.status === 'pending');
@@ -1282,7 +1237,7 @@ Return ONLY valid JSON, no other text.`;
             this.emit({ type: 'plan_step_executing', stepId: step.id, planId: plan.id, description: stepDescription });
 
             try {
-              const stepResult = await this.runSingleStep(stepDescription);
+              const stepResult = await this.runSingleStep(stepDescription!);
               step.status = 'done';
               this.emit({ type: 'plan_step_complete', stepId: step.id, planId: plan.id, result: stepResult });
             } catch (stepError) {
@@ -1431,9 +1386,10 @@ Return ONLY valid JSON, no other text.`;
    * Uses minimal system prompt, no tools, no RAG — saves significant tokens.
    */
   private async runFastReply(content: string, startTime: number): Promise<Message> {
-    // Build minimal prompt — just identity + user message
-    const sauceCtx = this.secretSauce.buildSystemContext();
-    const identity = sauceCtx.soul || sauceCtx.crew || '';
+    // Build minimal prompt — extract identity from existing system message (no I/O)
+    const existingSystemMsg = this.messages.find(m => m.role === 'system');
+    const soulMatch = existingSystemMsg?.content?.match(/\[SOUL\]([\s\S]*?)\[\/SOUL\]/);
+    const identity = soulMatch?.[1]?.trim() || '';
     const fastPrompt = this.decisionEngine.buildFastReplyPrompt(identity);
 
     const callsign = this.config.user?.callsign;
@@ -1516,52 +1472,150 @@ Return ONLY valid JSON, no other text.`;
   }
 
   /**
-   * Runs the model completion loop, handling tool calls iteratively.
-   * Max 10 tool-call rounds to prevent infinite loops.
+   * Runs the model completion loop using the Vercel AI SDK (streamText).
+   * Replaces the manual CompletionLoop with AI SDK's built-in multi-step
+   * tool execution, streaming, and retry.
    *
-   * Delegates to CompletionLoop which contains the full implementation.
+   * The AI SDK handles:
+   * - LLM call with streaming
+   * - Tool execution (calls our wrapped tools asynchronously)
+   * - Multi-step loop (maxSteps = 20, auto-feeds tool results back to LLM)
+   * - Structured events for UI visualization
    */
   private async runCompletionLoop(startTime: number): Promise<Message> {
-    const loop = new CompletionLoop({
-      config: this.config,
-      sessionId: this.sessionId,
-      gitAutoCommit: this.gitAutoCommit,
-      gitManager: this.gitManager,
-      turnStartTokens: this._turnStartTokens,
-      turnStartCost: this._turnStartCost,
-      messages: this.messages,
-      toolCallLogForReflection: this.toolCallLogForReflection,
-      ragResults: this.lastRagResults,
-      toolRegistry: this.toolRegistry,
-      toolExecutor: this.toolExecutor,
-      promptEngine: this.promptEngine,
-      compactionManager: this.compactionManager,
-      telemetry: this.telemetry,
-      doomLoopDetector: this.doomLoopDetector,
-      tokenTracker: this.tokenTracker,
-      getIntent: () => this.currentIntent,
-      getAbortController: () => this.abortController,
-      getPendingInstruction: () => this.pendingInstruction,
-      clearPendingInstruction: () => { this.pendingInstruction = null; },
-      emit: (e) => this.emit(e),
-      retryWithBackoff: (fn, label) => this.retryWithBackoff(fn, label),
-      unifiedStream: (req) => this._unifiedStream(req),
-      isEditTool: (id) => this.isEditTool(id),
-      getContextWindow: () => this.getContextWindow(),
-      onTokenLog: this.onTokenLog,
-      runSubAgent: async (instruction, tools, timeout) => {
-        const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools, timeout });
-        return subAgent.execute();
-      },
-      waitForClarification: async (question, options, allowFreeform) => {
+    const emit = (e: EngineEvent) => this.emit(e);
+    const registry = this.toolRegistry;
+    const executor = this.toolExecutor;
+    if (!registry) throw new Error('Tool registry not initialized');
+    if (!executor) throw new Error('Tool executor not initialized');
+
+    // Wrap agent-x tools as AI SDK tool definitions
+    const tools = createAiSdkTools(
+      registry,
+      executor,
+      this.sessionId,
+      emit,
+      async (question, options, allowFreeform) => {
         this.emit({ type: 'clarification_required', question, options, allowFreeform });
         const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
         this.clarificationResolve = null;
         return response;
       },
-      sessionLogger: this.sessionLogger ?? null,
-    });
-    return loop.run(startTime);
+      async (instruction, toolsList, timeout) => {
+        const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
+        return subAgent.execute();
+      },
+    );
+
+    // Create AI SDK model from agent-x provider config
+    const model = createAiSdkModel(this.config, this.getApiKey());
+
+    // Create stream handler that maps AI SDK events → agent-x EngineEvents
+    const streamHandler = createAiSdkStreamHandler(
+      emit,
+      this.sessionId,
+      (inputTokens, outputTokens) => {
+        this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
+        this.onTokenLog?.({ inputTokens, outputTokens, costUsd: 0 });
+      },
+      undefined,
+      this.config.provider.activeModel,
+      this.gitManager ?? undefined,
+    );
+
+    // Convert agent-x messages to AI SDK format (role + content only)
+    const aiMessages = this.messages.map((m) => ({
+      role: m.role as 'user' | 'assistant' | 'system',
+      content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+    }));
+
+    // Inject pending instruction as system message (plan mode, etc.)
+    if (this.pendingInstruction) {
+      aiMessages.push({ role: 'system' as const, content: this.pendingInstruction });
+      this.pendingInstruction = null;
+    }
+
+    // Inject RAG results as system context
+    if (this.lastRagResults.length > 0) {
+      const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
+      const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
+      if (userIdx >= 0) {
+        aiMessages.splice(userIdx, 0, { role: 'system' as const, content: ragCtx });
+      }
+    }
+
+    try {
+      this.emit({ type: 'loading_start', stage: 'thinking' });
+
+      const result = streamText({
+        model,
+        messages: aiMessages,
+        tools,
+        temperature: 0,
+        stopWhen: stepCountIs(5),
+        abortSignal: this.abortController?.signal,
+      });
+
+      // Process AI SDK's fullStream for typed events (text-delta, tool-call, etc.)
+      for await (const chunk of result.fullStream) {
+        streamHandler.handleEvent(chunk);
+      }
+
+      const text = streamHandler.getState().accumulatedContent || '';
+      const usage = await result.usage;
+      const content = text || 'I apologize, I was unable to generate a response.';
+      const tokenCount = usage
+        ? (usage.inputTokens || 0) + (usage.outputTokens || 0)
+        : Math.ceil(content.length / 4);
+
+      // Log session activity
+      this.sessionLogger?.log({
+        type: 'llm_response',
+        round: 0,
+        content: content.slice(0, 1000),
+        usage: usage ? { inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 } : null,
+      } as any);
+
+      const assistantMessage: Message = {
+        id: generateMessageId(),
+        sessionId: this.sessionId,
+        role: 'assistant',
+        content,
+        toolCalls: null,
+        createdAt: new Date().toISOString(),
+        tokenCount,
+      };
+
+      this.messages.push({ role: 'assistant', content });
+
+      emit({
+        type: 'message_received',
+        message: assistantMessage,
+        elapsed: Date.now() - startTime,
+      });
+
+      return assistantMessage;
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        const cancelledMessage: Message = {
+          id: generateMessageId(),
+          sessionId: this.sessionId,
+          role: 'assistant',
+          content: '⏹ Cancelled.',
+          toolCalls: null,
+          createdAt: new Date().toISOString(),
+          tokenCount: 0,
+        };
+        emit({ type: 'message_received', message: cancelledMessage, elapsed: Date.now() - startTime });
+        return cancelledMessage;
+      }
+
+      // Log the real error instead of silently failing
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      getLogger().error('COMPLETION', `AI SDK streamText failed: ${errorMsg}`);
+      this.emit({ type: 'error', code: 'AI_SDK_ERROR', message: errorMsg, recoverable: false });
+      throw error;
+    }
   }
 
   /**
@@ -1639,7 +1693,10 @@ Return ONLY valid JSON, no other text.`;
    * Runs asynchronously and silently — never blocks the main flow.
    */
   private extractMemories(userMessage: string, assistantResponse: string): void {
-    if (!this.memoryExtractor) return;
+    if ((this.config as unknown as Record<string, unknown>)['autoMemory'] === false) return;
+    if (!this.memoryExtractor) {
+      this.memoryExtractor = new MemoryExtractor(this.provider, this.config.provider.activeModel);
+    }
 
     void this.memoryExtractor.extract(userMessage, assistantResponse).then((memories) => {
       for (const mem of memories) {
@@ -2375,170 +2432,42 @@ Only include specialists that are actually needed for this task.`;
     return editTools.has(toolId);
   }
 
-  // ─── UNIFIED PIPELINE: Provider route registration ───
-
-  private _registerProviderRoutes(apiKey: string): void {
-    // In test environments, skip route registration so tests use mocked provider.complete()
-    // In production (NODE_ENV not 'test'), register routes to use ProviderRouter + transports
-    const isTest = process.env['NODE_ENV'] === 'test';
-    if (!apiKey || isTest) return;
-
-    const provider = this.config.provider.activeProvider;
-    const baseUrl = this.getBaseUrl();
-    if (!baseUrl) return;
-
-    const routeId = `${provider}-chat`;
-    const route = makeRoute({
-      id: routeId,
-      provider,
-      protocol: openAIProtocol(),
-      endpoint: {
-        baseUrl: baseUrl || 'https://api.openai.com/v1',
-        path: '/chat/completions',
-      },
-      auth: {
-        type: 'api-key',
-        getHeaders: async () => ({
-          Authorization: `Bearer ${apiKey}`,
-        }),
-      },
-      framing: 'sse',
-    });
-
-    this.providerRouter.registerRoute(route, new GenericTransport(route));
-  }
-
-  // ─── UNIFIED PIPELINE: Unified streaming with ProviderRouter ───
+  // ─── AI SDK PIPELINE: Replaces old _unifiedStream ───
+  // Uses the Vercel AI SDK (streamText) under the hood. All tool execution,
+  // streaming, retry, and event generation handled by the AI SDK.
+  // Emits CompletionChunk for backward compatibility with existing callers.
 
   private async *_unifiedStream(request: CompletionRequest): AsyncIterable<CompletionChunk> {
-    const plan = this._buildProviderPlan(request);
+    const messages = request.messages.map(m => ({
+      role: m.role,
+      content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+    }));
 
-    let transport;
-    try {
-      transport = this.providerRouter.route(plan);
-    } catch {
-      // No registered route — fall back to legacy provider.complete()
-      yield* this.provider.complete(request);
-      return;
-    }
+    const signal = request.signal || this.abortController?.signal;
 
-    const abortSignal = request.signal || this.abortController?.signal;
-    const watchdog = new StaleWatchdog(90000, 60000);
-
-    try {
-      const stream = transport.stream(plan, abortSignal || watchdog.signal);
-
-      for await (const event of stream) {
-        watchdog.poke();
-
-        // ─── UNIFIED: Normalize provider events through StreamNormalizer ───
-        const normalized = this.streamNormalizer.normalize(event);
-        const events = Array.isArray(normalized) ? normalized : normalized ? [normalized] : [];
-
-        for (const ev of events.length > 0 ? events : [event]) {
-          // ─── UNIFIED: Feed response assembler + visual bridge ───
-          this.responseAssembler.feed(ev);
-        const visualUpdate = this.visualBridge.handleEvent(event);
-        if (visualUpdate) {
-          this.eventBus.emit({
-            type: 'agent_message',
-            message: visualUpdate as unknown as Record<string, unknown>,
-          });
-        }
-
-        // ─── UNIFIED: Feed SessionProcessor for structured turn processing ───
-        this.sessionProcessor.processEvent(event);
-
-        switch (event.type) {
-          case 'text.delta':
-            this.projector.appendDelta(event.delta);
-            yield { type: 'text_delta', content: event.delta };
-            break;
-          case 'reasoning.delta':
-            yield { type: 'reasoning_delta', content: event.delta };
-            break;
-          case 'tool.input.start':
-            yield { type: 'tool_call_delta', toolCall: { id: event.toolCallId, type: 'function', function: { name: event.toolName, arguments: '' } } };
-            break;
-          case 'tool.input.delta':
-            yield { type: 'tool_call_delta', toolCall: { id: event.toolCallId, type: 'function', function: { name: '', arguments: event.delta } } };
-            break;
-          case 'tool.input.end':
-            break;
-          case 'turn.end':
-            yield { type: 'done', usage: { inputTokens: event.usage.promptTokens, outputTokens: event.usage.completionTokens } };
-            return;
-          case 'provider.error': {
-            const rawBody = (event as any).rawBody as string || '';
-            const details = rawBody ? ` [${rawBody.slice(0, 500)}]` : '';
-            const classified = this.errorClassifier.classify(
-              new Error(`Provider error: ${event.code} - ${event.message}${details}`),
-            );
-            const action = this.failoverPolicy.decide(
-              classified,
-              0,
-              this.config.provider.activeProvider,
-            );
-            throw new Error(
-              `${classified.reason}: ${event.message}${details} [action: ${action.type}]`,
-            );
-          }
-          default:
-            break;
-        }
-        } // inner event loop (StreamNormalizer)
-      }
-    } catch (streamErr) {
-      // ─── UNIFIED: Log retry via RetryEngine status buffer ───
-      this.retryEngine.getStatusBuffer().add(
-        plan.requestId,
-        `Stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
+    // Create tools if the request includes tool schemas
+    let tools: ToolSet | undefined;
+    if (request.tools && request.tools.length > 0 && this.toolRegistry && this.toolExecutor) {
+      tools = createAiSdkTools(
+        this.toolRegistry,
+        this.toolExecutor,
+        this.sessionId,
+        (e) => this.emit(e),
+        async (question, options, allowFreeform) => {
+          this.emit({ type: 'clarification_required', question, options, allowFreeform });
+          const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
+          this.clarificationResolve = null;
+          return response;
+        },
+        async (instruction, toolsList, timeout) => {
+          const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
+          return subAgent.execute();
+        },
       );
-      throw streamErr;
-    } finally {
-      watchdog.clear();
     }
+
+    yield* aiSdkStream(this.config, messages, tools, signal, this.getApiKey());
   }
-
-  private _buildProviderPlan(request: CompletionRequest): import('@agentx/shared').ProviderPlan {
-    const routeId = `${this.config.provider.activeProvider}-chat`;
-    return {
-      requestId: `req-${Date.now()}`,
-      sessionId: this.sessionId,
-      providerId: this.config.provider.activeProvider,
-      modelId: request.model,
-      messages: request.messages.map((m) => ({
-        role: m.role as 'system' | 'user' | 'assistant' | 'tool',
-        content: m.content,
-        toolCallId: m.toolCallId,
-        toolCalls: m.toolCalls?.map((tc) => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: { name: tc.function.name, arguments: tc.function.arguments },
-        })),
-        reasoning: m.reasoning,
-      })),
-      tools: (request.tools ?? []).map((t) => ({
-        type: 'function' as const,
-        function: { name: t.function.name, description: t.function.description, parameters: t.function.parameters },
-      })),
-      toolChoice: request.tools && request.tools.length > 0 ? 'auto' : 'none',
-      generation: {
-        temperature: request.temperature,
-        maxOutputTokens: request.maxTokens,
-      },
-      http: {
-        timeoutMs: 120000,
-        maxRetries: 3,
-        headers: {},
-      },
-      route: routeId,
-    };
-  }
-
-  // ─── UNIFIED PIPELINE: Retry-wrapped provider call ───
-
-  // _retryableStream kept as available infrastructure for future integration
 
   // ─── CREW ORCHESTRATION ───
 
@@ -2574,93 +2503,76 @@ Only include specialists that are actually needed for this task.`;
   }
 
   /**
-   * Route a message to a specific crew member and return their response directly.
-   * Used for both explicit @mentions and auto-delegation.
+   * Build a concise session context summary for agentic delegation.
+   * Used when routing to crew members, sub-agents, or research queries —
+   * gives them just enough context to understand the session without
+   * overwhelming them with full history.
    */
-  private async routeToCrew(member: CrewMember, cleanContent: string, startTime: number, classificationContext?: string): Promise<Message> {
-    this.emit({ type: 'loading_start', stage: 'crew_routing' });
-    const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'You are a capable AI assistant.';
-    const sessionContext = this.contextTracker.getTextForExpertiseCheck(this.sessionId);
-    const augmentedContext = classificationContext
-      ? `${classificationContext}\n\n${sessionContext}`
-      : sessionContext;
-    const result = await this.crewOrchestrator!.processMessage(cleanContent, crewPrompt, [member], augmentedContext);
+  buildAgenticContext(): string {
+    const recent = this.messages.slice(-12);
+    if (recent.length <= 1) return '';
 
-    // Intercept "not an expert" → convert to clarification with crew's expertise as options
-    const firstResponse = result.responses[0]?.content ?? '';
-    const isNotExpert = /not an expert/i.test(firstResponse);
-    if (isNotExpert && member.expertise && member.expertise.length > 0) {
-        const opts = member.expertise.slice(0, 5);
-        this.emit({
-          type: 'clarification_required',
-          question: `What area are you working on? (${member.crew.name})`,
-          options: opts,
-          allowFreeform: true,
-          recommended: opts[0],
-          allowChooseAll: false,
-        } as unknown as EngineEvent);
-        this.emit({ type: 'loading_end' });
-        this.lifecycle.forceTransition('idle');
-        this.abortController = null;
-        this.runStateMgr.release(this.sessionId);
-        this.commandQueue.release(this.sessionId);
-        const clarifyMsg: Message = {
-          id: '__clarify__',
-          sessionId: this.sessionId,
-          role: 'assistant',
-          content: '',
-          toolCalls: null,
-          createdAt: new Date().toISOString(),
-          tokenCount: 0,
-        };
-        return clarifyMsg;
+    const parts: string[] = [];
+    const userMsgs = recent.filter(m => m.role === 'user');
+    const assistantMsgs = recent.filter(m => m.role === 'assistant');
+    const toolMsgs = recent.filter(m => m.role === 'tool');
+    const systemMsgs = recent.filter(m => m.role === 'system' && typeof m.content === 'string' && !(m.content as string).startsWith('[tool]') && (m.content as string).length > 20);
+
+    // What the user has been asking
+    const lastUser = userMsgs[userMsgs.length - 1];
+    if (lastUser && typeof lastUser.content === 'string') {
+      const stripped = lastUser.content.replace(/@\w+/g, '').trim();
+      if (stripped) parts.push(`User is working on: "${stripped.slice(0, 200)}"`);
     }
 
-    // Intercept CLARIFY responses: crew is confused → show clarifying chips instead of message
-    getLogger().info('CREW_RESP', `firstResp=${JSON.stringify(firstResponse.slice(0, 60))}`);
-    if (/CLARIFY/i.test(firstResponse)) {
-      getLogger().info('CREW_CLARIFY', `matched CLARIFY for ${member.crew.name}`);
-      const lines = firstResponse.split('\n').map(l => l.trim()).filter(Boolean);
-      const clarifyIdx = lines.findIndex(l => /^CLARIFY/i.test(l));
-      // Format: "CLARIFY:" on its own line, question on the NEXT line, options after
-      const question = clarifyIdx >= 0 && lines[clarifyIdx + 1] ? lines[clarifyIdx + 1]! : '';
-      const allowChooseAll = /\[ALLOW_ALL\]/i.test(firstResponse);
-      const rawOptions = lines
-        .filter(l => l.startsWith('- ') || l.startsWith('• '))
-        .slice(0, 5);
-      // Detect which option has [RECOMMENDED] prefix
-      const recommendedIdx = rawOptions.findIndex(l => /\[RECOMMENDED\]/i.test(l));
-      const options = rawOptions.map(l => l.replace(/^[-•]\s*/, '').replace(/^\[RECOMMENDED\]\s*/, ''));
-      const recommended = recommendedIdx >= 0 ? options[recommendedIdx] : options[0];
-      if (question && options.length >= 1) {
-        this.emit({
-          type: 'clarification_required',
-          question,
-          options,
-          allowFreeform: true,
-          recommended,
-          allowChooseAll,
-        } as unknown as EngineEvent);
-        this.emit({ type: 'loading_end' });
-        this.lifecycle.forceTransition('idle');
-        this.abortController = null;
-        this.runStateMgr.release(this.sessionId);
-        this.commandQueue.release(this.sessionId);
-        // Return a sentinel message so auto-delegation doesn't fall through
-        const clarifyMsg: Message = {
-          id: '__clarify__',
-          sessionId: this.sessionId,
-          role: 'assistant',
-          content: '',
-          toolCalls: null,
-          createdAt: new Date().toISOString(),
-          tokenCount: 0,
-        };
-        return clarifyMsg;
+    // What's been done so far
+    if (toolMsgs.length > 0) {
+      const toolsUsed = [...new Set(toolMsgs.map(m => {
+        const c = typeof m.content === 'string' ? m.content : '';
+        const m2 = c.match(/\[tool\]\s*(\w+)/);
+        return m2 ? m2[1] : '';
+      }).filter(Boolean))];
+      if (toolsUsed.length > 0) {
+        parts.push(`Tools used: ${toolsUsed.join(', ')}`);
       }
     }
 
-    // Emit each crew response as a separate message bubble
+    // Key assistant responses
+    const keyResponses = assistantMsgs
+      .filter(m => typeof m.content === 'string' && (m.content as string).length > 10 && (m.content as string).length < 300)
+      .slice(-2);
+    for (const r of keyResponses) {
+      const text = (typeof r.content === 'string' ? r.content : '').replace(/\n/g, ' ').slice(0, 200);
+      if (text) parts.push(`Progress: ${text}`);
+    }
+
+    // Relevant system context (directory creation, project init, etc.)
+    for (const s of systemMsgs.slice(-3)) {
+      const text = (typeof s.content === 'string' ? s.content : '').slice(0, 200);
+      if (text) parts.push(`Context: ${text}`);
+    }
+
+    if (parts.length === 0) return '';
+    return `[SESSION CONTEXT]\n${parts.join('\n')}\n[/SESSION CONTEXT]`;
+  }
+
+  /**
+   * Route a message to a specific crew member and return their response directly.
+   * Used for both explicit @mentions and auto-delegation.
+   */
+  private async routeToCrew(member: CrewMember, cleanContent: string, startTime: number, _classificationContext?: string): Promise<Message> {
+    this.emit({ type: 'loading_start', stage: 'crew_routing' });
+    const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'You are a capable AI assistant.';
+
+    // Build concise session context so the crew knows what's happening
+    const sessionContext = this.buildAgenticContext();
+    const contextualMessage = sessionContext
+      ? `${sessionContext}\n\n[USER MESSAGE]\n${cleanContent}`
+      : cleanContent;
+
+    const result = await this.crewOrchestrator!.processMessage(contextualMessage, crewPrompt, [member], undefined);
+
+    // Emit each crew response as a separate message bubble (natural, no popups)
     let lastMessage: Message | null = null;
     for (const r of result.responses) {
       const responder = this.crewOrchestrator!.getMembers().find(

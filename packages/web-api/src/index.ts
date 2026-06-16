@@ -168,7 +168,7 @@ app.get('/api/config', (_req, res) => {
   try {
     res.json(eng.configManager.load());
   } catch {
-    res.json({ provider: { activeProvider: 'openai', activeModel: 'gpt-4o-mini', providers: {} }, ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' }, organization: null, telemetry: false });
+    res.json({ provider: { activeProvider: 'opencode-zen', activeModel: 'deepseek-v4-flash-free', providers: { 'opencode-zen': { configured: true } } }, ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' }, organization: null, telemetry: false });
   }
 });
 
@@ -471,8 +471,7 @@ app.get('/api/models', async (_req, res) => {
 app.get('/api/cwd', (_req, res) => {
   const eng = getEngine();
   const sess = eng.sessionManager.getActiveSession();
-  const raw = sess?.scopePath ?? null;
-  const scopePath = raw && raw !== '/' ? raw : null;
+  const scopePath = sess?.scopePath ?? null;
   res.json({ cwd: scopePath });
 });
 
@@ -487,10 +486,9 @@ app.post('/api/cwd', (req, res) => {
       eng.sessionManager.updateSession({ scopePath: resolved });
       const executor = (eng as any).toolExecutor;
       if (executor?.setScopePath) executor.setScopePath(resolved);
-    } else {
-      // No active session yet — store pending CWD for the next createAgent() call
-      setPendingCwd(resolved);
     }
+    // Always store as pending so next createAgent() picks it up
+    setPendingCwd(resolved);
     res.json({ cwd: resolved });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'scope-update-failed' });
@@ -1232,15 +1230,27 @@ app.post('/api/sessions/:id/restore', (req, res) => {
         agent.setCrewEnabled(state.crewId, state.enabled);
       }
     }
-    // Read messages from conversation.json (where ws.ts persists them)
-    const convPath = join(getSessionDir(req.params['id']!), 'conversation.json');
+    // Read messages from SQLite (primary), fallback to conversation.json
     let messages: Array<Record<string, unknown>> = [];
+    let parts: Array<Record<string, unknown>> = [];
     try {
-      messages = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
-    } catch {
-      messages = [];
+      const store = (eng.sessionManager as any).store;
+      if (store?.getMessages) {
+        messages = store.getMessages(req.params['id']!) as Array<Record<string, unknown>>;
+      }
+      if (store?.getParts) {
+        parts = store.getParts(req.params['id']!) as Array<Record<string, unknown>>;
+      }
+    } catch { /* fall through */ }
+
+    if (messages.length === 0) {
+      const convPath = join(getSessionDir(req.params['id']!), 'conversation.json');
+      try {
+        const raw = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
+        messages = raw.filter((m: any) => m.role !== 'part');
+      } catch { messages = []; }
     }
-    res.json({ session, messages, crewStates });
+    res.json({ session, messages, parts, crewStates });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
   }

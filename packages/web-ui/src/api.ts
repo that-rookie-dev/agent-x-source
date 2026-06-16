@@ -177,7 +177,7 @@ export const sessions = {
   create: () => request<{ sessionId: string }>('/sessions', { method: 'POST' }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
-  restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; crewStates?: Array<{ crewId: string; enabled: boolean }> }>(`/sessions/${id}/restore`, { method: 'POST' }),
+  restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; parts?: Array<Record<string, unknown>>; crewStates?: Array<{ crewId: string; enabled: boolean }> }>(`/sessions/${id}/restore`, { method: 'POST' }),
   context: (id: string) => request<SessionContext>(`/sessions/${id}/context`),
   compact: (id: string) => request<{ ok: boolean; summary: string }>(`/sessions/${id}/compact`, { method: 'POST' }),
   checkpoint: (id: string, label?: string) => request<{ checkpointId: string; label: string }>(`/sessions/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ label }) }),
@@ -481,7 +481,7 @@ export interface ChatMessage {
   thinking?: string;
   thinkingStartedAt?: number;
   thinkingDoneAt?: number;
-  toolCalls?: Array<{ id: string; name: string; args?: string; result?: string; status: 'running' | 'done' | 'error'; elapsed?: number }>;
+  toolCalls?: Array<{ id: string; name: string; args?: string | Record<string, unknown>; result?: string; status: 'running' | 'done' | 'error'; elapsed?: number }>;
   subAgents?: Array<{ id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }>;
   plan?: string[];
   turnTokens?: number;

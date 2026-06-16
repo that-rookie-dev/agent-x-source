@@ -42,7 +42,13 @@ export class SmartSubAgent {
 
   constructor(options: SmartSubAgentOptions) {
     this.parentAgent = options.parentAgent;
-    this.instruction = options.instruction;
+
+    // Prepend session context to instruction so sub-agents understand the bigger picture
+    const parentCtx = (options.parentAgent as any).buildAgenticContext?.() || '';
+    this.instruction = parentCtx
+      ? `${parentCtx}\n\n[TASK]\n${options.instruction}`
+      : options.instruction;
+
     this.allowedTools = options.tools ?? [];
     this.timeout = options.timeout ?? 120_000;
 
