@@ -11,6 +11,7 @@ import { createPerplexity } from '@ai-sdk/perplexity';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall } from '@agentx/shared';
+import { FiberSet } from '../concurrency/FiberSet.js';
 
 const DEFAULT_BASE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
@@ -136,11 +137,16 @@ export function createAiSdkTools(
         description: toolDef.modelDescription,
         inputSchema: jsonSchema(schema),
         async execute(args) {
-          const question = (args as any).question || 'I need more information.';
-          const options = Array.isArray((args as any).options) ? (args as any).options : [];
-          const allowFreeform = (args as any).allowFreeform !== false;
-          const response = await waitForClarification(question, options, allowFreeform);
-          return `User response: ${response}`;
+          const fiberSet = new FiberSet();
+          fiberSet.run('ask_clarification', async () => {
+            const question = (args as any).question || 'I need more information.';
+            const options = Array.isArray((args as any).options) ? (args as any).options : [];
+            const allowFreeform = (args as any).allowFreeform !== false;
+            const response = await waitForClarification(question, options, allowFreeform);
+            return `User response: ${response}`;
+          });
+          const [result] = await fiberSet.joinAll<string>();
+          return result;
         },
       });
       continue;
@@ -151,16 +157,21 @@ export function createAiSdkTools(
         description: toolDef.modelDescription,
         inputSchema: jsonSchema(schema),
         async execute(args) {
-          const mission = (args as any).mission || '';
-          const toolsList = Array.isArray((args as any).tools) ? (args as any).tools : undefined;
-          const timeout = typeof (args as any).timeout === 'number' ? (args as any).timeout : 120_000;
-          emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${mission}`, startTime: Date.now(), args: args as Record<string, unknown>, callId: 'subagent' });
-          const result = await runSubAgent(mission, toolsList, timeout);
-          const output = result.success
-            ? `[Sub-agent completed in ${result.elapsed}ms]\n${result.output}`
-            : `[Sub-agent failed: ${result.output}]`;
-          emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: result.success, output }, elapsed: result.elapsed, args: args as Record<string, unknown>, callId: 'subagent' });
-          return output;
+          const fiberSet = new FiberSet();
+          fiberSet.run('delegate_to_subagent', async () => {
+            const mission = (args as any).mission || '';
+            const toolsList = Array.isArray((args as any).tools) ? (args as any).tools : undefined;
+            const timeout = typeof (args as any).timeout === 'number' ? (args as any).timeout : 120_000;
+            emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${mission}`, startTime: Date.now(), args: args as Record<string, unknown>, callId: 'subagent' });
+            const result2 = await runSubAgent(mission, toolsList, timeout);
+            const output = result2.success
+              ? `[Sub-agent completed in ${result2.elapsed}ms]\n${result2.output}`
+              : `[Sub-agent failed: ${result2.output}]`;
+            emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: result2.success, output }, elapsed: result2.elapsed, args: args as Record<string, unknown>, callId: 'subagent' });
+            return output;
+          });
+          const [result] = await fiberSet.joinAll<string>();
+          return result;
         },
       });
       continue;
@@ -170,29 +181,34 @@ export function createAiSdkTools(
       description: toolDef.modelDescription,
       inputSchema: jsonSchema(schema),
       async execute(args, options) {
-        const startTime = Date.now();
-        const callId = options?.toolCallId || `tc-${toolDef.id}-${startTime}`;
-        emit({ type: 'tool_executing', tool: toolDef.id, description: `Executing ${toolDef.name}`, startTime, args: args as Record<string, unknown>, callId });
+        const fiberSet = new FiberSet();
+        fiberSet.run(toolDef.id, async () => {
+          const startTime = Date.now();
+          const callId = options?.toolCallId || `tc-${toolDef.id}-${startTime}`;
+          emit({ type: 'tool_executing', tool: toolDef.id, description: `Executing ${toolDef.name}`, startTime, args: args as Record<string, unknown>, callId });
 
-        try {
-          const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
-          const elapsed = Date.now() - startTime;
-          emit({ type: 'tool_complete', tool: toolDef.id, result: { success: result.success, output: result.output }, elapsed, args: args as Record<string, unknown>, callId });
+          try {
+            const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
+            const elapsed = Date.now() - startTime;
+            emit({ type: 'tool_complete', tool: toolDef.id, result: { success: result.success, output: result.output }, elapsed, args: args as Record<string, unknown>, callId });
 
-          if (!result.success) {
-            if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
-              abortController?.abort();
-              return `[${result.error}] ${result.output}`;
+            if (!result.success) {
+              if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
+                abortController?.abort();
+                return `[${result.error}] ${result.output}`;
+              }
+              return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
             }
-            return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
+            return result.output;
+          } catch (err) {
+            const elapsed = Date.now() - startTime;
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output: errorMsg }, elapsed, args: args as Record<string, unknown>, callId });
+            return `[TOOL ERROR] ${errorMsg}`;
           }
-          return result.output;
-        } catch (err) {
-          const elapsed = Date.now() - startTime;
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output: errorMsg }, elapsed, args: args as Record<string, unknown>, callId });
-          return `[TOOL ERROR] ${errorMsg}`;
-        }
+        });
+        const results = await fiberSet.joinAll<string>();
+        return results[0];
       },
     });
   }

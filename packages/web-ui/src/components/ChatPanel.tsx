@@ -51,6 +51,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState } from '../api';
 import { colors } from '../theme';
+
 import {
   ConnectionHealthDot,
   ScrollToBottomPill,
@@ -92,7 +93,7 @@ interface UIMessage extends ChatMessage {
   turnTokens?: number;
   turnCostUsd?: number;
 
-  crew?: { crewId: string; name: string; callsign: string };
+  crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
   parts?: PartEntry[];
 }
 
@@ -151,6 +152,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const disconnectRef = useRef<(() => void) | null>(null);
   const skipRestoreRef = useRef(false);
+  const streamChunkRAFRef = useRef<number | null>(null);
+  const streamChunkPendingRef = useRef<{ delta: string; fullContent: string } | null>(null);
 
   // Loading step indicator state
   const [loadingSteps, setLoadingSteps] = useState<Array<{ id: string; label: string; status: string }> | null>(null);
@@ -219,7 +222,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setCurrentSessionId(sessionId);
       setShowJumpPill(false);
       setUnreadCount(0);
-      sessions.restore(sessionId).then(({ messages: historyMsgs, session }) => {
+      sessions.restore(sessionId).then(({ messages: historyMsgs, session, scopePath }) => {
+        const resolvedScope = scopePath || session.scopePath;
         const visible = historyMsgs.filter((m: any) => m.role !== 'part');
         setMessages(visible.map((m: any) => ({
           ...m,
@@ -236,7 +240,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
         setTokenInput(inputEst);
         setTokenOutput(outputEst);
-        if (session.scopePath) setCwd(session.scopePath);
+        if (resolvedScope) setCwd(resolvedScope);
         loadTodos();
       }).catch((err) => {
         console.error('Failed to restore session on mount:', err);
@@ -267,6 +271,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // Crew state (fixed per session)
   const [crewList, setCrewList] = useState<Crew[]>([]);
+
 
   // Agent mode
   const [agentMode, setAgentMode] = useState<AgentMode>('agent');
@@ -381,7 +386,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       })
       .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
-    system.cwd().then((r) => { setCwd(r.cwd || ''); }).catch(() => {});
+    system.cwd().then((r) => { if (r.cwd) setCwd(r.cwd); }).catch(() => {});
     sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); else setAgentMode('agent'); }).catch(() => {});
     // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
@@ -444,6 +449,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
         switch (ev.type) {
           case 'loading_start': {
+            streamChunkPendingRef.current = null;
+            if (streamChunkRAFRef.current !== null) {
+              cancelAnimationFrame(streamChunkRAFRef.current);
+              streamChunkRAFRef.current = null;
+            }
             setLoadingSteps(null);
             // Only create a placeholder when a user message just arrived (new turn).
             // If the last message is a completed assistant (race with handleSend),
@@ -462,7 +472,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
           case 'loading_step_update':
             setLoadingSteps((prevSteps) => {
-              if (!prevSteps) return prevSteps;
+              const step = { id: ev.stepId as string, label: ev.label as string, status: ev.status as string };
+              if (!prevSteps) return [step];
+              const exists = prevSteps.some(s => s.id === step.id);
+              if (!exists) return [...prevSteps, step];
               return prevSteps.map((s) =>
                 s.id === ev.stepId ? { ...s, status: ev.status as string } : s,
               );
@@ -473,17 +486,32 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             const delta = (ev.content as string) ?? '';
             const fullContent = (ev.fullContent as string) ?? '';
             if (last?.role === 'assistant' && last.streaming) {
-              const parts = last.parts || [];
-              const lastPart = parts[parts.length - 1];
-              if (lastPart?.type === 'text') {
-                // Append delta to existing text part
-                const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: (lastPart.content || '') + delta }];
-                return updateLastMessage(prev, { content: fullContent, parts: updatedParts });
-              } else {
-                // Create new text part after tools
-                const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: delta };
-                return updateLastMessage(prev, { content: fullContent, parts: [...parts, textPart] });
+              const pending = streamChunkPendingRef.current;
+              streamChunkPendingRef.current = {
+                delta: pending ? pending.delta + delta : delta,
+                fullContent,
+              };
+              if (streamChunkRAFRef.current === null) {
+                streamChunkRAFRef.current = requestAnimationFrame(() => {
+                  streamChunkRAFRef.current = null;
+                  const chunk = streamChunkPendingRef.current;
+                  if (!chunk) return;
+                  streamChunkPendingRef.current = null;
+                  setMessages(p => {
+                    const l = p[p.length - 1];
+                    if (l?.role !== 'assistant' || !l.streaming) return p;
+                    const parts = l.parts || [];
+                    const lastPart = parts[parts.length - 1];
+                    if (lastPart?.type === 'text') {
+                      const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: (lastPart.content || '') + chunk.delta }];
+                      return updateLastMessage(p, { content: chunk.fullContent, parts: updatedParts });
+                    }
+                    const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: chunk.delta };
+                    return updateLastMessage(p, { content: chunk.fullContent, parts: [...parts, textPart] });
+                  });
+                });
               }
+              return prev;
             }
             setStreaming(true);
             const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: delta };
@@ -708,7 +736,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             setMessages(prev => {
               const last = prev[prev.length - 1];
               if (last?.role === 'assistant' && last.streaming) {
-                return updateLastMessage(prev, { streaming: false });
+                const updatedToolCalls = (last.toolCalls || []).map((tc: any) =>
+                  tc.status === 'running' ? { ...tc, status: 'error' as const, result: 'Connection lost' } : tc
+                );
+                return updateLastMessage(prev, { streaming: false, toolCalls: updatedToolCalls });
               }
               return prev;
             });
@@ -1147,7 +1178,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setWarnings([]);
     setStreaming(false);
     try {
-      const { messages: historyMsgs, session } = await sessions.restore(s.id);
+      const { messages: historyMsgs, session, scopePath } = await sessions.restore(s.id);
       const visible = historyMsgs.filter((m: any) => m.role !== 'part');
       setMessages(visible.map((m: any) => ({
         ...m, id: m.id || crypto.randomUUID(), streaming: false,
@@ -1164,7 +1195,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
       setTokenInput(inputEst);
       setTokenOutput(outputEst);
-      if (session?.scopePath) setCwd(session.scopePath);
+      const restoredCwd = scopePath || session?.scopePath || '';
+      if (restoredCwd) setCwd(restoredCwd);
       navigate(`/console/chat/${s.id}`);
       loadTodos();
     } catch { /* ignore */ }
@@ -1961,22 +1993,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       {/* ─── Right sidebar ─── */}
       <Box sx={{
         width: '15%', minWidth: 220, flexShrink: 0, borderLeft: `1px solid ${colors.border.default}`,
-        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        display: 'flex', flexDirection: 'column', overflow: 'auto',
       }}>
-        {/* Crew (fixed for session) */}
-        <Box sx={{ p: 1.5, borderBottom: `1px solid ${colors.border.default}` }}>
-          <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', mb: 0.5 }}>
-            CREW
-          </Typography>
-          <Typography sx={{ fontSize: '0.6rem', color: colors.accent.purple, fontWeight: 500 }}>
-            Agent-X
-          </Typography>
-          {crewList.length > 1 && (
-            <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, mt: 0.25 }}>
-              Fixed for this session
-            </Typography>
-          )}
-        </Box>
+
+
 
         {/* Token usage */}
         <Box sx={{ p: 1.5, borderBottom: `1px solid ${colors.border.default}` }}>
@@ -2537,7 +2557,8 @@ function CrewAwareMarkdown({ content }: { content: string }) {
 function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null }) {
   const isUser = message.role === 'user';
   const crewInfo = message.crew;
-  const displayColor = crewInfo ? getWebCrewColor(crewInfo.callsign) : colors.accent.blue;
+  const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
+  const [whyOpen, setWhyOpen] = useState(false);
 
   if (message.role === 'system') return null;
 
@@ -2560,9 +2581,55 @@ function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingS
   // Assistant: flat chronological document — no bubble, no avatar
   return (
     <Box sx={{ mb: 3, animation: 'agentx-fadeIn 0.25s ease-out' }}>
-      <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: displayColor, fontFamily: "'JetBrains Mono', monospace", mb: 0.75, letterSpacing: '0.5px' }}>
-        {crewInfo ? crewInfo.name : 'Agent-X'}
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+        {crewInfo && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            {crewInfo.icon && (
+              <Typography sx={{ fontSize: '0.85rem', lineHeight: 1 }}>{crewInfo.icon}</Typography>
+            )}
+            <Box sx={{
+              width: 8, height: 8, borderRadius: '50%',
+              bgcolor: displayColor,
+              boxShadow: `0 0 6px ${displayColor}80`,
+              flexShrink: 0,
+            }} />
+          </Box>
+        )}
+        <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: displayColor, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.5px' }}>
+          {crewInfo ? crewInfo.name : 'Agent-X'}
+        </Typography>
+        {crewInfo && (crewInfo.confidence || crewInfo.reasons) && (
+          <Tooltip
+            open={whyOpen}
+            onOpen={() => setWhyOpen(true)}
+            onClose={() => setWhyOpen(false)}
+            title={
+              <Box>
+                <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, mb: 0.25 }}>
+                  Match: {crewInfo.confidence ?? 'N/A'}
+                </Typography>
+                {crewInfo.reasons?.map((r, i) => (
+                  <Typography key={i} sx={{ fontSize: '0.55rem', opacity: 0.8 }}>• {r}</Typography>
+                ))}
+              </Box>
+            }
+            arrow
+            placement="top"
+          >
+            <Typography
+              onClick={() => setWhyOpen(!whyOpen)}
+              sx={{
+                fontSize: '0.5rem', cursor: 'pointer', color: colors.text.dim,
+                fontFamily: "'JetBrains Mono', monospace", opacity: 0.5,
+                '&:hover': { opacity: 1, color: displayColor },
+                lineHeight: 1,
+              }}
+            >
+              Why?
+            </Typography>
+          </Tooltip>
+        )}
+      </Box>
       {message.thinking && (<ReasoningBlock text={message.thinking} streaming={message.streaming && !message.thinkingDoneAt} durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined} />)}
       {message.todos && message.todos.length > 0 && (<InlineTodoList items={message.todos} />)}
 

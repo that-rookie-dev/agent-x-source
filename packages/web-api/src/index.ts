@@ -6,7 +6,7 @@ import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, setPendingCwd, ensureChannelAgent } from './engine.js';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, setPendingCwd, getPendingCwd, ensureChannelAgent } from './engine.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent } from '@agentx/engine';
@@ -481,14 +481,13 @@ app.post('/api/cwd', (req, res) => {
     if (!path || typeof path !== 'string') { res.status(400).json({ error: 'path-required' }); return; }
     const resolved = resolve(path);
     const eng = getEngine();
+    setPendingCwd(resolved);
     const sess = eng.sessionManager.getActiveSession();
     if (sess) {
       eng.sessionManager.updateSession({ scopePath: resolved });
-      const executor = (eng as any).toolExecutor;
-      if (executor?.setScopePath) executor.setScopePath(resolved);
     }
-    // Always store as pending so next createAgent() picks it up
-    setPendingCwd(resolved);
+    const agent = (eng as any).agent;
+    if (agent && typeof agent.setScopePath === 'function') agent.setScopePath(resolved);
     res.json({ cwd: resolved });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'scope-update-failed' });
@@ -597,8 +596,8 @@ app.post('/api/crew/toggle', (req, res) => {
 
 app.post('/api/crews', (req, res) => {
   try {
-    const { id, name, title, callsign, systemPrompt, emotion, isDefault, expertise, traits } = req.body as {
-      id: string; name: string; title?: string; callsign?: string; systemPrompt: string; emotion?: string; isDefault?: boolean; expertise?: string[]; traits?: string[];
+    const { id, name, title, callsign, systemPrompt, emotion, isDefault, expertise, traits, color, icon } = req.body as {
+      id: string; name: string; title?: string; callsign?: string; systemPrompt: string; emotion?: string; isDefault?: boolean; expertise?: string[]; traits?: string[]; color?: string; icon?: string;
     };
     const eng = getEngine();
     const crew = eng.crewManager.create({
@@ -611,6 +610,8 @@ app.post('/api/crews', (req, res) => {
       isDefault,
       expertise,
       traits,
+      color,
+      icon,
     });
     if (eng.agent && crew.enabled) {
       eng.agent.addCrewMember(crew);
@@ -654,6 +655,77 @@ app.delete('/api/crews/:id', (req, res) => {
     res.json({ ok: true });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'delete-failed' });
+  }
+});
+
+app.get('/api/crew/:id', (_req, res) => {
+  const eng = getEngine();
+  const crew = eng.crewManager.list().find(c => c.id === _req.params.id);
+  if (!crew) return res.status(404).json({ error: 'Crew not found' });
+  res.json(crew);
+});
+
+app.post('/api/crew/:id/chat', async (req, res) => {
+  try {
+    const eng = getEngine();
+    const crewId = req.params['id']!;
+    const { text } = req.body as { text: string };
+    if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
+    const crew = eng.crewManager.list().find(c => c.id === crewId);
+    if (!crew) { res.status(404).json({ error: 'Crew not found' }); return; }
+    if (!eng.agent) { res.status(400).json({ error: 'no-session' }); return; }
+    const orch = (eng.agent as any).crewOrchestrator;
+    if (!orch) { res.status(400).json({ error: 'no-orchestrator' }); return; }
+    const members = orch.getMembers();
+    const member = members.find((m: any) => m.crew.id === crewId);
+    if (!member) {
+      orch.addMember(crew);
+    }
+    const freshMembers = orch.getMembers();
+    const freshMember = freshMembers.find((m: any) => m.crew.id === crewId);
+    if (!freshMember) { res.status(400).json({ error: 'crew-not-found-in-orchestrator' }); return; }
+    const crewPrompt = (eng as any).secretSauce?.crew?.getMultiCrewSystemPrompt?.() || 'You are a capable AI assistant.';
+    const result = await orch.processMessage(text, crewPrompt, [freshMember]);
+    const response = result.responses[0]?.content ?? '';
+    const synthesized = result.synthesized ?? response;
+    res.json({ ok: true, response: synthesized, responses: result.responses });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'crew-chat-failed' });
+  }
+});
+
+app.get('/api/crew/:id/sessions', (_req, res) => {
+  const eng = getEngine();
+  const store = (eng.sessionManager as any)?.store ?? (eng.sessionManager as any)?.['_store'];
+  const sessionId = (eng.agent as any)?.sessionId ?? '';
+  const rows = typeof store?.getMessages === 'function'
+    ? (store.getMessages(`${sessionId}:crew:${_req.params.id}`) as any[])
+    : [];
+  res.json(rows);
+});
+
+app.post('/api/crew/:id/feedback', (req, res) => {
+  try {
+    const eng = getEngine();
+    const crewId = req.params['id']!;
+    const { positive, comment } = req.body as { positive: boolean; comment?: string };
+    if (typeof positive !== 'boolean') { res.status(400).json({ error: 'positive must be a boolean' }); return; }
+    const store = (eng.sessionManager as any)?.store ?? (eng.sessionManager as any)?.['_store'];
+    if (store && typeof store.addCrewFeedback === 'function') {
+      store.addCrewFeedback({
+        id: `fb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        sessionId: (eng.agent as any)?.sessionId ?? 'unknown',
+        crewId,
+        positive,
+        comment: comment ?? null,
+        createdAt: new Date().toISOString(),
+      });
+      res.json({ ok: true });
+    } else {
+      res.status(500).json({ error: 'store-unavailable' });
+    }
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'feedback-failed' });
   }
 });
 
@@ -1176,14 +1248,16 @@ app.get('/api/sessions/:id/export', (req, res) => {
   }
 });
 
-app.post('/api/sessions', (_req, res) => {
+app.post('/api/sessions', (req, res) => {
   try {
+    const body = req.body as { scopePath?: string } | undefined;
+    if (body?.scopePath) setPendingCwd(resolve(body.scopePath));
     destroyAgent();
     const agent = createAgent();
     ensureSubscribed();
     const sessionId = (agent as unknown as { sessionId: string }).sessionId;
     ensureSessionDir(sessionId);
-    res.json({ sessionId });
+    res.json({ sessionId, scopePath: body?.scopePath || getPendingCwd() });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'create-failed' });
   }
@@ -1250,7 +1324,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
         messages = raw.filter((m: any) => m.role !== 'part');
       } catch { messages = []; }
     }
-    res.json({ session, messages, parts, crewStates });
+    res.json({ session, messages, parts, crewStates, scopePath: session.scopePath });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
   }

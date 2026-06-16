@@ -303,6 +303,7 @@ function createTestAgent(overrides?: Partial<{
   const opts: Record<string, unknown> = {
     config: MINIMAL_CONFIG,
     sessionId: 'test-session-1',
+    scopePath: '/tmp/agent-x-test',
     ...overrides,
   };
   return new Agent(opts as Parameters<typeof Agent>[0]);

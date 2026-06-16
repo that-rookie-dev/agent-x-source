@@ -1,4 +1,4 @@
-import type { Session, SessionStatus } from '@agentx/shared';
+import type { Session, SessionStatus, SessionEvent } from '@agentx/shared';
 import type { StorageAdapter } from '@agentx/shared';
 import { generateSessionId, generateId } from '@agentx/shared';
 import { SessionStore } from './SessionStore.js';
@@ -61,6 +61,7 @@ export class SessionManager {
         provider: session.providerId,
         model: session.modelId,
         crewId: session.crewId,
+        parentId: session.parentId,
         scopePath: session.scopePath,
         tokensUsed: session.tokenUsed,
         tokenAvailable: session.tokenAvailable,
@@ -93,16 +94,17 @@ export class SessionManager {
     return this.getSessionStore().listSessions(limit) as unknown as Session[];
   }
 
-  createSession(providerId: string, modelId: string, crewId?: string, scopePath?: string, id?: string): Session {
+  createSession(providerId: string, modelId: string, crewId?: string, scopePath?: string, id?: string, parentId?: string): Session {
     const contextWindow = 128_000;
     const session: Session = {
       id: id ?? generateSessionId(),
-      title: 'New Session',
+      title: parentId ? 'Child Session' : 'New Session',
       status: 'active' as SessionStatus,
+      parentId: parentId ?? null,
       providerId,
       modelId,
       crewId: crewId ?? null,
-      scopePath: scopePath ?? process.cwd(),
+      scopePath: scopePath!,
       tokenUsed: 0,
       tokenAvailable: contextWindow,
       createdAt: new Date().toISOString(),
@@ -117,6 +119,16 @@ export class SessionManager {
     this.startAutoSave();
 
     return session;
+  }
+
+  getChildSessions(parentId: string): Session[] {
+    const all = this.listSessions(9999);
+    return all.filter(s => s.parentId === parentId);
+  }
+
+  getSessionTree(): Session[] {
+    const all = this.listSessions(9999);
+    return all;
   }
 
   getActiveSession(): Session | null {
@@ -156,6 +168,21 @@ export class SessionManager {
     return null;
   }
 
+  replayEvents(sessionId: string, sinceSequence?: number): Generator<SessionEvent, void, undefined> {
+    if (this.usingStorageAdapter) {
+      return {
+        next: () => ({ value: undefined, done: true }),
+        [Symbol.iterator]() { return this; },
+      } as unknown as Generator<SessionEvent, void, undefined>;
+    }
+    return this.getSessionStore().replayEvents(sessionId, sinceSequence);
+  }
+
+  getSessionEvents(sessionId: string, sinceSequence?: number): SessionEvent[] {
+    if (this.usingStorageAdapter) return [];
+    return this.getSessionStore().getSessionEvents(sessionId, sinceSequence);
+  }
+
   saveCrewState(crewId: string, enabled: boolean, messageCount?: number): void {
     if (!this.activeSession || this.usingStorageAdapter) return;
     
@@ -181,11 +208,30 @@ export class SessionManager {
     }));
   }
 
+  loadCrewStates(sessionId: string): Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }> {
+    if (this.usingStorageAdapter) return [];
+    const rows = this.getSessionStore().getCrewStates(sessionId);
+    return rows.map((row) => ({
+      crewId: row['crew_id'] as string,
+      enabled: (row['enabled'] as number) === 1,
+      lastActive: row['last_active'] as string | undefined,
+      messageCount: row['message_count'] as number | undefined,
+    }));
+  }
+
+  restoreCrewStates(): Array<{ crewId: string; enabled: boolean }> {
+    if (!this.activeSession || this.usingStorageAdapter) return [];
+    return this.loadCrewStates(this.activeSession.id).map((s) => ({
+      crewId: s.crewId,
+      enabled: s.enabled,
+    }));
+  }
+
   listSessions(limit = 20): Session[] {
     return this.listSessionRecords(limit);
   }
 
-  addTokenLog(opts: { sessionId: string; inputTokens: number; outputTokens: number; model: string; costUsd: number; providerId: string }): void {
+  addTokenLog(opts: { sessionId: string; inputTokens: number; outputTokens: number; model: string; costUsd: number; providerId: string; crewId?: string }): void {
     const log = {
       sessionId: opts.sessionId,
       model: opts.model,
@@ -197,7 +243,7 @@ export class SessionManager {
     if (this.usingStorageAdapter) {
       (this.store as StorageAdapter).addTokenLog(opts.sessionId, log);
     } else {
-      this.getSessionStore().addTokenLog({ id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, sessionId: opts.sessionId, providerId: opts.providerId, modelId: opts.model, inputTokens: opts.inputTokens, outputTokens: opts.outputTokens, costUsd: opts.costUsd });
+      this.getSessionStore().addTokenLog({ id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, sessionId: opts.sessionId, providerId: opts.providerId, modelId: opts.model, inputTokens: opts.inputTokens, outputTokens: opts.outputTokens, costUsd: opts.costUsd, crewId: opts.crewId });
     }
   }
 

@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Crew, CrewEmotion, CrewCreateInput, CollaborationProtocol, CrewResourceQuota } from '@agentx/shared';
+import type { Crew, CrewEmotion, CrewCreateInput, CollaborationProtocol, CrewResourceQuota, PermissionRule } from '@agentx/shared';
 import { encrypt, decrypt, getLogger } from '@agentx/shared';
 import type { EncryptedData } from '@agentx/shared';
 import { getSecretSauceDir } from '../config/paths.js';
@@ -60,6 +60,13 @@ export class CrewManager {
           expertise: (p['expertise'] as string[] | undefined),
           traits: (p['traits'] as string[] | undefined),
           toolPreferences: (p['toolPreferences'] as { enabled?: string[]; disabled?: string[] } | undefined),
+          tools: (p['tools'] as string[] | undefined),
+          permissions: (p['permissions'] as PermissionRule[] | undefined),
+          model: (p['model'] as { provider: string; modelId: string } | undefined),
+          color: (p['color'] as string | undefined),
+          icon: (p['icon'] as string | undefined),
+          protocol: (p['protocol'] as CollaborationProtocol | undefined),
+          quotas: (p['quotas'] as CrewResourceQuota | undefined),
           createdAt: (p['createdAt'] as string) ?? new Date().toISOString(),
           updatedAt: (p['updatedAt'] as string) ?? new Date().toISOString(),
         }));
@@ -135,8 +142,13 @@ export class CrewManager {
       expertise: input.expertise,
       traits: input.traits,
       toolPreferences: input.toolPreferences,
+      tools: input.tools,
+      permissions: input.permissions,
+      model: input.model,
       protocol: input.protocol,
       quotas: input.quotas,
+      color: input.color,
+      icon: input.icon,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -153,7 +165,7 @@ export class CrewManager {
     return true;
   }
 
-  update(id: string, updates: { name?: string; title?: string; callsign?: string; systemPrompt?: string; emotion?: CrewEmotion; expertise?: string[]; traits?: string[]; toolPreferences?: { enabled?: string[]; disabled?: string[] }; protocol?: CollaborationProtocol; quotas?: CrewResourceQuota }): Crew | null {
+  update(id: string, updates: { name?: string; title?: string; callsign?: string; systemPrompt?: string; emotion?: CrewEmotion; expertise?: string[]; traits?: string[]; toolPreferences?: { enabled?: string[]; disabled?: string[] }; protocol?: CollaborationProtocol; quotas?: CrewResourceQuota; color?: string; icon?: string }): Crew | null {
     const idx = this.crews.findIndex((p) => p.id === id);
     if (idx < 0) return null;
     const crew = this.crews[idx]!;
@@ -172,6 +184,8 @@ export class CrewManager {
     if (updates.toolPreferences !== undefined) crew.toolPreferences = updates.toolPreferences;
     if (updates.protocol !== undefined) crew.protocol = updates.protocol;
     if (updates.quotas !== undefined) crew.quotas = updates.quotas;
+    if (updates.color !== undefined) crew.color = updates.color;
+    if (updates.icon !== undefined) crew.icon = updates.icon;
     crew.updatedAt = new Date().toISOString();
     this.crews[idx] = crew;
     this.save();

@@ -1,6 +1,7 @@
 export interface Session {
   id: string;
   title: string;
+  parentId?: string | null;
   crewId: string | null;
   providerId: string;
   modelId: string;

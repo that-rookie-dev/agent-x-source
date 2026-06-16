@@ -1,4 +1,4 @@
-import type { EngineEvent, Message } from '@agentx/shared';
+import type { EngineEvent, Message, SessionEvent } from '@agentx/shared';
 import { generateMessageId } from '@agentx/shared';
 
 interface PartRecord {
@@ -21,6 +21,7 @@ interface StreamState {
   totalOutputTokens: number;
   stepSnapshots: Array<{ step: number; hash: string }>;
   modelName: string;
+  toolCallCount: number;
 }
 
 export type PartPersistFn = (sessionId: string, part: PartRecord) => void;
@@ -37,6 +38,8 @@ export function createAiSdkStreamHandler(
   onPart?: PartPersistFn,
   modelName?: string,
   gitManager?: GitDiffProvider,
+  onSessionEvent?: (event: SessionEvent) => void,
+  contextWindow?: number,
 ) {
   const state: StreamState = {
     accumulatedContent: '',
@@ -46,9 +49,30 @@ export function createAiSdkStreamHandler(
     totalOutputTokens: 0,
     stepSnapshots: [],
     modelName: modelName || '',
+    toolCallCount: 0,
   };
 
+  let sequence = 0;
+  const warnings70 = { emitted: false };
+  const warnings85 = { emitted: false };
+  const warnings95 = { emitted: false };
+
   const streamStartTime = Date.now();
+
+  function checkContextWarning(totalTokens: number): void {
+    if (!contextWindow || contextWindow <= 0) return;
+    const percentage = (totalTokens / contextWindow) * 100;
+    if (percentage >= 95 && !warnings95.emitted) {
+      warnings95.emitted = true;
+      emit({ type: 'context_warning', currentTokens: totalTokens, threshold: 95, percentage: Math.round(percentage) } as unknown as EngineEvent);
+    } else if (percentage >= 85 && !warnings85.emitted) {
+      warnings85.emitted = true;
+      emit({ type: 'context_warning', currentTokens: totalTokens, threshold: 85, percentage: Math.round(percentage) } as unknown as EngineEvent);
+    } else if (percentage >= 70 && !warnings70.emitted) {
+      warnings70.emitted = true;
+      emit({ type: 'context_warning', currentTokens: totalTokens, threshold: 70, percentage: Math.round(percentage) } as unknown as EngineEvent);
+    }
+  }
 
   function persist(part: PartRecord) {
     onPart?.(sessionId, part);
@@ -66,12 +90,12 @@ export function createAiSdkStreamHandler(
         if (state.stepCount > 1) {
           emit({ type: 'loading_start', stage: 'tool_execution' });
         }
-        // Take git snapshot for diff tracking
         const snapshot = gitManager?.snapshot();
         if (snapshot) {
           state.stepSnapshots.push({ step: state.stepCount, hash: snapshot });
         }
         persist({ type: 'step-start', timestamp: Date.now() });
+        onSessionEvent?.({ type: 'step_started', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { step: state.stepCount } });
         break;
       }
 
@@ -85,6 +109,9 @@ export function createAiSdkStreamHandler(
         state.accumulatedContent += delta;
         persist({ type: 'text-delta', content: delta, timestamp: Date.now() });
         emit({ type: 'stream_chunk', content: delta, fullContent: state.accumulatedContent });
+        onSessionEvent?.({ type: 'text_delta', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { content: delta, fullContent: state.accumulatedContent } });
+        const total = state.totalInputTokens + state.totalOutputTokens;
+        checkContextWarning(total);
         break;
       }
 
@@ -109,6 +136,7 @@ export function createAiSdkStreamHandler(
       case 'tool-input-end': break;
 
       case 'tool-call': {
+        state.toolCallCount++;
         persist({
           type: 'tool-call',
           toolName: event.toolName,
@@ -116,6 +144,8 @@ export function createAiSdkStreamHandler(
           toolArgs: event.args,
           timestamp: Date.now(),
         });
+        onSessionEvent?.({ type: 'tool_called', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { tool: event.toolName, callId: event.toolCallId, args: event.args } });
+        emit({ type: 'tool_executing', tool: event.toolName, description: `Calling ${event.toolName}`, startTime: Date.now(), callId: event.toolCallId });
         break;
       }
 
@@ -128,6 +158,11 @@ export function createAiSdkStreamHandler(
           toolSuccess: true,
           timestamp: Date.now(),
         });
+        const output = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
+        onSessionEvent?.({ type: 'tool_result', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { tool: event.toolName, callId: event.toolCallId, success: true, output, elapsed: 0 } });
+        emit({ type: 'tool_complete', tool: event.toolName, result: { success: true, output }, elapsed: 0, callId: event.toolCallId });
+        const total = state.totalInputTokens + state.totalOutputTokens;
+        checkContextWarning(total);
         break;
       }
 
@@ -139,8 +174,8 @@ export function createAiSdkStreamHandler(
           const total = state.totalInputTokens + state.totalOutputTokens;
           emit({ type: 'token_usage', totalTokens: total, contextWindow: 128000, turnTokens: total } as unknown as EngineEvent);
           onTokenUsage(state.totalInputTokens, state.totalOutputTokens);
+          checkContextWarning(total);
         }
-        // Compute diff from last snapshot
         const lastSnapshot = state.stepSnapshots.length > 0 ? state.stepSnapshots[state.stepSnapshots.length - 1] : undefined;
         if (lastSnapshot && gitManager) {
           const diffText = gitManager.diff(lastSnapshot.hash);
@@ -158,6 +193,7 @@ export function createAiSdkStreamHandler(
         }
         persist({ type: 'step-finish', usage: usage ? { inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 } : undefined, timestamp: Date.now() });
         emit({ type: 'loading_end' });
+        onSessionEvent?.({ type: 'step_ended', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { step: state.stepCount, usage: usage ? { inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 } : undefined } });
         break;
       }
 
@@ -191,17 +227,21 @@ export function createAiSdkStreamHandler(
           message: assistantMessage,
           elapsed,
         });
+
+        onSessionEvent?.({ type: 'finish', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { content: state.accumulatedContent, usage: usage ? { inputTokens: state.totalInputTokens, outputTokens: state.totalOutputTokens } : undefined } });
         break;
       }
 
       case 'error': {
         persist({ type: 'error', content: String(event.error || 'Unknown error'), timestamp: Date.now() });
         emit({ type: 'error', code: 'AI_SDK_ERROR', message: String(event.error || 'Unknown error'), recoverable: false });
+        onSessionEvent?.({ type: 'error', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { code: 'AI_SDK_ERROR', message: String(event.error || 'Unknown error') } });
         break;
       }
 
       case 'abort': {
         persist({ type: 'abort', timestamp: Date.now() });
+        onSessionEvent?.({ type: 'abort', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { reason: 'Stream aborted' } });
         break;
       }
     }
@@ -214,6 +254,7 @@ export function createAiSdkStreamHandler(
       state.accumulatedContent = '';
       state.accumulatedReasoning = '';
       state.stepCount = 0;
+      state.toolCallCount = 0;
     },
   };
 }

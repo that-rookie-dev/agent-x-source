@@ -177,7 +177,7 @@ export const sessions = {
   create: () => request<{ sessionId: string }>('/sessions', { method: 'POST' }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
-  restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; parts?: Array<Record<string, unknown>>; crewStates?: Array<{ crewId: string; enabled: boolean }> }>(`/sessions/${id}/restore`, { method: 'POST' }),
+  restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; parts?: Array<Record<string, unknown>>; crewStates?: Array<{ crewId: string; enabled: boolean }>; scopePath?: string }>(`/sessions/${id}/restore`, { method: 'POST' }),
   context: (id: string) => request<SessionContext>(`/sessions/${id}/context`),
   compact: (id: string) => request<{ ok: boolean; summary: string }>(`/sessions/${id}/compact`, { method: 'POST' }),
   checkpoint: (id: string, label?: string) => request<{ checkpointId: string; label: string }>(`/sessions/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ label }) }),
@@ -459,6 +459,8 @@ export interface Crew {
   enabled?: boolean;
   expertise?: string[];
   traits?: string[];
+  color?: string;
+  icon?: string;
 }
 
 export interface CrewInput {
@@ -469,6 +471,8 @@ export interface CrewInput {
   tone?: string;
   expertise?: string[];
   traits?: string[];
+  color?: string;
+  icon?: string;
 }
 
 export interface ChatMessage {
@@ -477,7 +481,7 @@ export interface ChatMessage {
   content: string;
   timestamp?: string;
   tokenCount?: number;
-  crew?: { crewId: string; name: string; callsign: string };
+  crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
   thinking?: string;
   thinkingStartedAt?: number;
   thinkingDoneAt?: number;

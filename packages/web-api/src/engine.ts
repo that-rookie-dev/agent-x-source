@@ -231,7 +231,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
         activeProvider,
         cfg.provider.activeModel,
         undefined,
-        pendingCwd || process.cwd(),
+        pendingCwd || (cfg as any).scopePath || '',
       );
     }
   } else {
@@ -239,14 +239,11 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       activeProvider,
       cfg.provider.activeModel,
       undefined,
-      pendingCwd || process.cwd(),
+        pendingCwd!,
     );
   }
-  // Use the session's stored scopePath, falling back to pendingCwd if set
   if (session?.scopePath) {
     eng.toolkit.executor.setScopePath(session.scopePath);
-  } else if (pendingCwd) {
-    eng.toolkit.executor.setScopePath(pendingCwd);
   }
   pendingCwd = null;
 
@@ -271,6 +268,12 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     agent.setCrewEnabled(crew.id, true);
   }
 
+  // Wire session manager into CrewOrchestrator for crew session isolation (Phase 6)
+  const crewOrch = (agent as any).crewOrchestrator;
+  if (crewOrch && typeof crewOrch.setSessionManager === 'function') {
+    crewOrch.setSessionManager(eng.sessionManager);
+  }
+
   eng.agent = agent;
 
   // Create session logger for this agent
@@ -292,6 +295,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       model: cfg.provider.activeModel,
       costUsd: opts.costUsd,
       providerId: cfg.provider.activeProvider,
+      crewId: opts.crewId,
     });
   };
 
@@ -318,6 +322,7 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
             model: cfg.provider.activeModel,
             costUsd,
             providerId: cfg.provider.activeProvider,
+            crewId: (ev['crewId'] as string) || undefined,
           });
         } catch { /* best effort */ }
       }
@@ -579,11 +584,16 @@ export function ensureChannelAgent(): Agent {
   });
   (agent.sauce as { crew: CrewManager }).crew = eng.crewManager;
   agent.sauce.crew.refresh();
+
+  const crewOrch = (agent as any).crewOrchestrator;
+  if (crewOrch && typeof crewOrch.setSessionManager === 'function') {
+    crewOrch.setSessionManager(eng.sessionManager);
+  }
+
   const dataDir = getDataDir();
   const sessDir = join(dataDir, 'sessions', session.id);
   agent.setContextPersistDir(sessDir);
 
-  // Create session logger for the channel agent
   const channelLogger = new SessionLogger(session.id);
   channelLogger.init();
   agent.sessionLogger = channelLogger;

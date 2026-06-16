@@ -1,4 +1,4 @@
-import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig } from '@agentx/shared';
+import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, PermissionRule } from '@agentx/shared';
 import { generateMessageId, CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import type { AgentEventBus } from '../EventBus.js';
@@ -6,8 +6,11 @@ import { countInputTokens, estimateOutputTokens } from '../session/tokenCount.js
 import type { TokenTracker } from '../session/TokenTracker.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
-import { streamText, stepCountIs } from 'ai';
+import { streamText, stepCountIs, tool, jsonSchema } from 'ai';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
+import { FiberSet } from '../concurrency/FiberSet.js';
+import type { SessionManager } from '../session/SessionManager.js';
+import { DecisionEngine } from './DecisionEngine.js';
 
 const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
 
@@ -45,6 +48,7 @@ export class CrewOrchestrator {
   private toolExecutor?: ToolExecutor;
   private config?: AgentXConfig;
   private sessionId: string = 'crew';
+  sessionManager?: SessionManager;
 
   constructor(provider: ProviderInterface, eventBus: AgentEventBus, tokenTracker?: TokenTracker) {
     this.provider = provider;
@@ -53,6 +57,14 @@ export class CrewOrchestrator {
   }
 
   private tokenTracker: TokenTracker | null = null;
+
+  onPersistCrewResponse: ((response: { crewId: string; crewName: string; callsign: string; content: string }) => void) | null = null;
+
+  onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number; crewId: string }) => void) | null = null;
+
+  setSessionManager(sm: SessionManager): void {
+    this.sessionManager = sm;
+  }
 
   setActiveModel(model: string): void {
     this.activeModel = model;
@@ -104,6 +116,14 @@ export class CrewOrchestrator {
     return [...this.conversation];
   }
 
+  getCrewHistory(crewId: string): Array<Record<string, unknown>> {
+    if (!this.sessionManager) return [];
+    const store = (this.sessionManager as any).store;
+    if (!store || typeof store.getMessages !== 'function') return [];
+    const childSessionId = `${this.sessionId}:crew:${crewId}`;
+    return store.getMessages(childSessionId);
+  }
+
   routeMessage(userMessage: string): CrewMember[] {
     if (this.members.length <= 1) {
       return this.members.slice(0, 1);
@@ -136,6 +156,27 @@ export class CrewOrchestrator {
     return [scored[0]!.member];
   }
 
+  private getCrewChildSessionId(crewId: string): string {
+    return `${this.sessionId}:crew:${crewId}`;
+  }
+
+  private persistCrewMessage(crewId: string, crewName: string, role: string, content: string): void {
+    if (!this.sessionManager) return;
+    const store = (this.sessionManager as any).store;
+    if (!store || typeof store.insertMessage !== 'function') return;
+    const childSessionId = this.getCrewChildSessionId(crewId);
+    try {
+      store.insertMessage({
+        sessionId: childSessionId,
+        role,
+        content,
+        metadata: { crewId, crewName, childSessionId },
+      });
+    } catch {
+      // best-effort persistence
+    }
+  }
+
   private checkQuota(member: CrewMember): string | null {
     const q = member.crew.quotas;
     if (!q) return null;
@@ -146,6 +187,23 @@ export class CrewOrchestrator {
       return `${member.crew.name} has exceeded its CPU time quota`;
     }
     return null;
+  }
+
+  private async extractCrewMemories(userMessage: string, crewResponse: string, crewId: string): Promise<void> {
+    try {
+      const { MemoryExtractor } = await import('../secret-sauce/MemoryExtractor.js');
+      const extractor = new MemoryExtractor(this.provider, this.activeModel);
+      const memories = await extractor.extract(userMessage, crewResponse);
+      if (memories.length > 0) {
+        const { MemoryManager } = await import('../secret-sauce/MemoryManager.js');
+        const mm = new MemoryManager(`crew:${crewId}`);
+        for (const mem of memories) {
+          mm.addMemory(mem.content, mem.category);
+        }
+      }
+    } catch {
+      // best-effort
+    }
   }
 
   private async callCrew(
@@ -168,7 +226,6 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
     const startTime = Date.now();
     const emit = (e: EngineEvent) => this.eventBus.emit(e);
 
-    // ── AI SDK path: tools available ──────────────────────────────────────────
     if (this.toolRegistry && this.toolExecutor && this.config) {
       try {
         return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit);
@@ -177,7 +234,6 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
       }
     }
 
-    // ── Legacy path: plain provider.complete() fallback ───────────────────────
     const completion = this.provider.complete({
       model: this.activeModel,
       messages: [
@@ -208,8 +264,11 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
     if (this.tokenTracker) {
       this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
       const costUsd = (inputTokens * this.tokenTracker.inputPrice + outputTokens * this.tokenTracker.outputPrice) / 1_000_000;
+      this.onTokenLog?.({ inputTokens, outputTokens, costUsd, crewId: member.crew.id });
       this.eventBus.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.tokenTracker.tokensTotal, turnTokens: inputTokens + outputTokens, costUsd, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, inputPrice: this.tokenTracker.inputPrice, outputPrice: this.tokenTracker.outputPrice } as unknown as EngineEvent);
     }
+
+    this.extractCrewMemories(userMessage, content, member.crew.id).catch(() => {});
 
     return { content, elapsed };
   }
@@ -221,25 +280,112 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
     startTime: number,
     emit: (e: EngineEvent) => void,
   ): Promise<{ content: string; elapsed: number }> {
-    // Filter tools to read-only exploration set
     const CREW_READ_TOOLS = new Set(['file_read', 'folder_list', 'file_find', 'code_search', 'code_grep', 'code_references']);
     const { ToolRegistry: TR } = await import('../tools/ToolRegistry.js');
     const filteredRegistry = new TR();
+
+    const allowedTools = member.crew.tools;
+    const enabledPrefs = member.crew.toolPreferences?.enabled;
+    const disabledPrefs = member.crew.toolPreferences?.disabled;
+
     for (const toolId of CREW_READ_TOOLS) {
       const def = this.toolRegistry!.get(toolId);
-      if (def) filteredRegistry.register(def);
+      if (!def) continue;
+      if (allowedTools && !allowedTools.includes(toolId)) continue;
+      if (enabledPrefs && !enabledPrefs.includes(toolId)) continue;
+      if (disabledPrefs && disabledPrefs.includes(toolId)) continue;
+      filteredRegistry.register(def);
     }
+
+    this.eventBus.emit({ type: 'crew_activity', crewId: member.crew.id, crewName: member.crew.name, activity: 'thinking' });
+
+    const baseExecutor = this.toolExecutor!;
+    const crewPermissions = member.crew.permissions || [];
+
+    let prevSessionRules: PermissionRule[] = [];
+    const crewExecutor = crewPermissions.length > 0 ? {
+      execute: async (toolId: string, args: Record<string, unknown>, sid: string) => {
+        prevSessionRules = [...((baseExecutor as any).sessionRules || [])];
+        baseExecutor.setSessionRules([...prevSessionRules, ...crewPermissions]);
+        try {
+          return await baseExecutor.execute(toolId, args, sid);
+        } finally {
+          baseExecutor.setSessionRules(prevSessionRules);
+        }
+      },
+    } : baseExecutor;
 
     const tools = createAiSdkTools(
       filteredRegistry,
-      this.toolExecutor!,
+      crewExecutor,
       this.sessionId,
       emit,
       () => Promise.resolve('Clarification not available in crew mode.'),
       () => Promise.resolve({ success: false as const, output: 'Sub-agents not supported in crew mode.', elapsed: 0 }),
     );
 
-    const model = createAiSdkModel(this.config!);
+    const interCrewTool = tool<Record<string, unknown>, string>({
+      description: 'Send a message to another crew member by callsign or ID. Use this to collaborate with other team members.',
+      inputSchema: jsonSchema({
+        type: 'object',
+        properties: {
+          to: { type: 'string', description: 'Target crew member callsign or ID' },
+          message: { type: 'string', description: 'Message content' },
+        },
+        required: ['to', 'message'],
+      }),
+      execute: async (args: Record<string, unknown>) => {
+        const fiberSet = new FiberSet();
+        fiberSet.run('crew_message', async () => {
+          const to = args['to'] as string || '';
+          const msg = args['message'] as string || '';
+          const target = this.members.find(m => m.crew.callsign === to || m.crew.id === to);
+          if (!target) return `[Crew member "${to}" not found]`;
+          const response = await this.interCrewMessage(member.crew.id, target.crew.id, msg, systemPrompt);
+          return response;
+        });
+        const results = await fiberSet.joinAll<string>();
+        return results[0] ?? '';
+      },
+    });
+
+    const model = member.crew.model
+      ? createAiSdkModel({
+          ...this.config!,
+          provider: {
+            ...this.config!.provider,
+            activeProvider: member.crew.model.provider,
+            activeModel: member.crew.model.modelId,
+          },
+        } as AgentXConfig)
+      : createAiSdkModel(this.config!);
+
+    const crewResponseTool = tool<Record<string, unknown>, string>({
+      description: 'Respond to a message from another crew member. Use this to reply back when another crew member has asked you a question.',
+      inputSchema: jsonSchema({
+        type: 'object',
+        properties: {
+          to: { type: 'string', description: 'Target crew member callsign or ID to respond to' },
+          message: { type: 'string', description: 'Your response message' },
+        },
+        required: ['to', 'message'],
+      }),
+      execute: async (args: Record<string, unknown>) => {
+        const fiberSet = new FiberSet();
+        fiberSet.run('crew_response', async () => {
+          const to = args['to'] as string || '';
+          const msg = args['message'] as string || '';
+          const target = this.members.find(m => m.crew.callsign === to || m.crew.id === to);
+          if (!target) return `[Crew member "${to}" not found]`;
+          const response = await this.interCrewMessage(target.crew.id, member.crew.id, msg, systemPrompt);
+          return response;
+        });
+        const results = await fiberSet.joinAll<string>();
+        return results[0] ?? '';
+      },
+    });
+
+    const allTools = { ...tools, crew_message: interCrewTool, crew_response: crewResponseTool };
 
     const result = streamText({
       model,
@@ -247,7 +393,7 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
       ],
-      tools,
+      tools: allTools,
       temperature: 0,
       stopWhen: stepCountIs(5),
     });
@@ -279,8 +425,13 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
     if (this.tokenTracker) {
       this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
       const costUsd = (inputTokens * this.tokenTracker.inputPrice + outputTokens * this.tokenTracker.outputPrice) / 1_000_000;
+      this.onTokenLog?.({ inputTokens, outputTokens, costUsd, crewId: member.crew.id });
       emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.tokenTracker.tokensTotal, turnTokens: inputTokens + outputTokens, costUsd, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, inputPrice: this.tokenTracker.inputPrice, outputPrice: this.tokenTracker.outputPrice } as unknown as EngineEvent);
     }
+
+    this.eventBus.emit({ type: 'crew_activity', crewId: member.crew.id, crewName: member.crew.name, activity: 'done', content: content.slice(0, 200) });
+
+    this.extractCrewMemories(userMessage, content, member.crew.id).catch(() => {});
 
     return { content, elapsed };
   }
@@ -403,17 +554,16 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
       const handoffResponses = await this.runHandoff(responders, userMessage, mainSystemPrompt);
       responses.push(...handoffResponses);
     } else {
-      // standard or parallel — run all responders concurrently
-      const results = await Promise.allSettled(
-        responders.map(async (responder) => {
+      // standard or parallel — use FiberSet for concurrent execution
+      const fiberSet = new FiberSet();
+      for (const responder of responders) {
+        fiberSet.run(`crew-${responder.crew.id}`, async () => {
           const quotaError = this.checkQuota(responder);
           if (quotaError) {
             this.emit({ type: 'tool_executing', tool: 'crew_member', description: `${responder.crew.name} is thinking...` });
             this.emit({ type: 'tool_complete', tool: 'crew_member', result: { success: false, output: quotaError }, elapsed: 0 });
             return { member: responder.crew.name, content: `[${quotaError}]` };
           }
-
-          // AI SDK streaming emits its own tool_executing/stream_chunk events
 
           try {
             const { content } = await this.callCrew(responder, userMessage, mainSystemPrompt, contextText);
@@ -425,15 +575,32 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
               timestamp: new Date().toISOString(),
             });
 
+            this.persistCrewMessage(responder.crew.id, responder.crew.name, 'assistant', content);
+
             return { member: responder.crew.name, content };
           } catch (err) {
             return { member: responder.crew.name, content: `[Error: ${err instanceof Error ? err.message : 'failed'}]` };
           }
-        })
-      );
+        });
+      }
 
+      const results = await fiberSet.joinAll<{ member: string; content: string }>();
       for (const r of results) {
-        if (r.status === 'fulfilled') responses.push(r.value);
+        responses.push(r);
+      }
+    }
+
+    if (this.onPersistCrewResponse) {
+      for (const r of responses) {
+        const responder = this.members.find(m => m.crew.name === r.member);
+        if (responder) {
+          this.onPersistCrewResponse({
+            crewId: responder.crew.id,
+            crewName: responder.crew.name,
+            callsign: responder.crew.callsign,
+            content: r.content,
+          });
+        }
       }
     }
 
@@ -468,9 +635,11 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
     mainSystemPrompt: string
   ): Promise<Array<{ member: string; content: string }>> {
     const responses: Array<{ member: string; content: string }> = [];
-    // Round 1: initial answers
-    const initialResults = await Promise.allSettled(
-      participants.map(async (p) => {
+
+    // Round 1: initial answers (parallel via FiberSet)
+    const fiberSet1 = new FiberSet();
+    for (const p of participants) {
+      fiberSet1.run(`debate-r1-${p.crew.id}`, async () => {
         const quotaError = this.checkQuota(p);
         if (quotaError) return { member: p.crew.name, content: `[${quotaError}]` };
         this.emit({ type: 'tool_executing', tool: 'crew_member', description: `${p.crew.name} is building initial argument...` });
@@ -480,13 +649,10 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
         } catch (err) {
           return { member: p.crew.name, content: `[Error: ${err instanceof Error ? err.message : 'failed'}]` };
         }
-      })
-    );
-
-    const round1Results: Array<{ member: string; content: string }> = [];
-    for (const r of initialResults) {
-      if (r.status === 'fulfilled') round1Results.push(r.value);
+      });
     }
+
+    const round1Results = await fiberSet1.joinAll<{ member: string; content: string }>();
 
     for (const r of round1Results) {
       this.conversation.push({
@@ -495,12 +661,17 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
         content: r.content,
         timestamp: new Date().toISOString(),
       });
+      this.persistCrewMessage(
+        participants.find(p => p.crew.name === r.member)?.crew.id ?? 'unknown',
+        r.member, 'assistant', r.content,
+      );
     }
 
-    // Round 2: critique and refine each other
+    // Round 2: critique and refine each other (parallel via FiberSet)
     if (participants.length >= 2) {
-      const critiqueResults = await Promise.allSettled(
-        participants.map(async (p) => {
+      const fiberSet2 = new FiberSet();
+      for (const p of participants) {
+        fiberSet2.run(`debate-r2-${p.crew.id}`, async () => {
           const quotaError = this.checkQuota(p);
           if (quotaError) return { member: p.crew.name, content: `[${quotaError}]` };
           const others = round1Results.filter(r => r.member !== p.crew.name);
@@ -515,11 +686,12 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
           } catch (err) {
             return { member: p.crew.name, content: `[Error: ${err instanceof Error ? err.message : 'failed'}]` };
           }
-        })
-      );
+        });
+      }
 
+      const critiqueResults = await fiberSet2.joinAll<{ member: string; content: string }>();
       for (const r of critiqueResults) {
-        if (r.status === 'fulfilled') responses.push(r.value);
+        responses.push(r);
       }
     } else {
       responses.push(...round1Results);
@@ -559,6 +731,8 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
           timestamp: new Date().toISOString(),
         });
 
+        this.persistCrewMessage(member.crew.id, member.crew.name, 'assistant', content);
+
         responses.push({ member: member.crew.name, content });
         currentInput = `Continue the work. Previous output from ${member.crew.name}:\n${content.slice(0, 1000)}`;
       } catch (err) {
@@ -596,6 +770,7 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
         content: firstOutput,
         timestamp: new Date().toISOString(),
       });
+      this.persistCrewMessage(first.crew.id, first.crew.name, 'assistant', firstOutput);
       responses.push({ member: first.crew.name, content: firstOutput });
 
       // Remaining handlers refine in sequence
@@ -619,6 +794,7 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
             content: refined,
             timestamp: new Date().toISOString(),
           });
+          this.persistCrewMessage(handler.crew.id, handler.crew.name, 'assistant', refined);
           responses.push({ member: handler.crew.name, content: refined });
         } catch (err) {
           responses.push({ member: handler.crew.name, content: `[Error: ${err instanceof Error ? err.message : 'failed'}]` });
@@ -713,9 +889,9 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
    * the user's message to the best crew member. Infinitely scalable.
    * Falls back to keyword matching on error.
    */
-  async matchCrew(userMessage: string, enabledMembers: CrewMember[]): Promise<CrewMember | null> {
-    if (enabledMembers.length === 0) return null;
-    if (enabledMembers.length === 1) return enabledMembers[0]!;
+  async matchCrew(userMessage: string, enabledMembers: CrewMember[]): Promise<{ member: CrewMember | null; confidence: 'high' | 'medium' | 'low'; reasons: string[] }> {
+    if (enabledMembers.length === 0) return { member: null, confidence: 'low', reasons: ['No crew members available'] };
+    if (enabledMembers.length === 1) return { member: enabledMembers[0]!, confidence: 'high', reasons: ['Only available crew member'] };
 
     const crewList = enabledMembers.map((m) => {
       const exp = (m.expertise && m.expertise.length > 0) ? m.expertise.join(', ') : 'general';
@@ -725,7 +901,7 @@ Use file_read, folder_list, code_search, code_grep, file_find, and code_referenc
 
     const prompt = `Match this user request to the best crew member. Only match if the request CLEARLY fits their expertise.
 If the match is weak or the query is vague (like "how can I..." or "what do you think about..."), respond with "none".
-Respond with TWO lines: callsign (or "none"), then confidence (high/medium/low).
+Respond with THREE lines: callsign (or "none"), then confidence (high/medium/low), then a brief reason for the match.
 
 User: "${userMessage.slice(0, 300)}"
 
@@ -734,17 +910,18 @@ ${crewList}
 
 Example output:
 sam_wilson
-high`;
+high
+The user is asking about code review which matches Sam's expertise in code quality and review.`;
 
     try {
       const completion = this.provider.complete({
         model: this.activeModel,
         messages: [
-          { role: 'system', content: 'Routing classifier. Respond with callsign then confidence on separate lines.' },
+          { role: 'system', content: 'Routing classifier. Respond with callsign, confidence, and reason on separate lines.' },
           { role: 'user', content: prompt },
         ],
         temperature: 0,
-        maxTokens: 30,
+        maxTokens: 60,
       });
 
       let content = '';
@@ -752,22 +929,82 @@ high`;
         if (chunk.content) content += chunk.content;
       }
 
-      const lines = content.trim().split('\n').map((l) => l.trim().toLowerCase());
+      const lines = content.trim().split('\n').map((l) => l.trim());
       const callsign = lines[0]?.replace(/[^a-z0-9_]/g, '') ?? '';
-      const confidence = lines[1]?.replace(/[^a-z]/g, '') ?? '';
+      const confidence = (lines[1]?.replace(/[^a-z]/g, '') ?? '') as 'high' | 'medium' | 'low';
+      const reason = lines.slice(2).join(' ').replace(/^["']|["']$/g, '') || 'Matched based on expertise keywords';
 
-      if (!callsign || callsign === 'none' || confidence === 'low') return null;
+      if (!callsign || callsign === 'none' || confidence === 'low') {
+        return { member: null, confidence: confidence || 'low', reasons: [reason] };
+      }
 
       const matched = enabledMembers.find(
         (m) => m.crew.callsign.toLowerCase() === callsign || m.crew.name.toLowerCase() === callsign,
       );
-      return matched ?? null;
+
+      if (!matched) return { member: null, confidence: 'low', reasons: [`Could not find crew matching "${callsign}"`] };
+
+      return { member: matched, confidence, reasons: [reason] };
     } catch {
-      return null;
+      return { member: null, confidence: 'low', reasons: ['Error during LLM-based crew matching'] };
     }
   }
 
   private emit(event: Partial<EngineEvent> & { type: string }): void {
     this.eventBus.emit(event as EngineEvent);
+  }
+
+  recordFeedback(crewId: string, thumbsUp: boolean): void {
+    if (!this.sessionManager) return;
+    const store = (this.sessionManager as any).store;
+    if (!store || typeof store.addCrewFeedback !== 'function') return;
+    try {
+      store.addCrewFeedback({
+        id: `fb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        sessionId: this.sessionId,
+        crewId,
+        positive: thumbsUp,
+        comment: null,
+        createdAt: new Date().toISOString(),
+      });
+      this.eventBus.emit({ type: 'crew_feedback', crewId, positive: thumbsUp });
+    } catch { /* best-effort */ }
+  }
+
+  autoCompose(task: string, availableMembers: CrewMember[]): CrewMember[] {
+    const engine = new DecisionEngine();
+    const suggestion = engine.suggestCrewComposition(task);
+    const composed: CrewMember[] = [];
+    for (const { role } of suggestion) {
+      const best = this.findBestMatchForRole(role, availableMembers);
+      if (best) composed.push(best);
+    }
+    if (composed.length === 0 && availableMembers.length > 0) {
+      composed.push(availableMembers[0]!);
+    }
+    return composed;
+  }
+
+  private findBestMatchForRole(role: string, members: CrewMember[]): CrewMember | null {
+    const lower = role.toLowerCase();
+    let best: CrewMember | null = null;
+    let bestScore = 0;
+    for (const member of members) {
+      let score = 0;
+      const name = member.crew.name.toLowerCase();
+      const exp = member.expertise.map(e => e.toLowerCase());
+      const prompt = member.crew.systemPrompt.toLowerCase();
+      if (name.includes(lower) || exp.some(e => e.includes(lower))) score = 10;
+      else if (prompt.includes(lower)) score = 5;
+      const words = lower.split(/\s+/);
+      for (const w of words) {
+        if (w.length > 2) {
+          if (exp.some(e => e.includes(w))) score += 3;
+          else if (prompt.includes(w)) score += 1;
+        }
+      }
+      if (score > bestScore) { bestScore = score; best = member; }
+    }
+    return best;
   }
 }
