@@ -3,14 +3,12 @@ import type {
   EngineEvent,
   CompletionRequest,
   CompletionMessage,
-  CompletionToolCall,
   CompletionChunk,
   ProviderId,
   AgentXConfig,
   RemediationAction,
   Plan,
   PlanStep,
-  ToolResult,
 } from '@agentx/shared';
 import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, type ChannelKind, getConfigDir } from '@agentx/shared';
 import { join, resolve, normalize } from 'node:path';
@@ -188,7 +186,7 @@ export class Agent {
   private _telegramChatId: number | null = null;
   private _crewOrchestrator: CrewOrchestrator | null = null;
   private get crewOrchestrator(): CrewOrchestrator {
-    if (!this._crewOrchestrator) { this._crewOrchestrator = new CrewOrchestrator(this.provider, this.eventBus, this.tokenTracker); this._crewOrchestrator.setActiveModel(this.config.provider.activeModel); }
+    if (!this._crewOrchestrator) { this._crewOrchestrator = new CrewOrchestrator(this.provider, this.eventBus, this.tokenTracker); this._crewOrchestrator.setActiveModel(this.config.provider.activeModel); if (this.toolRegistry && this.toolExecutor) { this._crewOrchestrator.setTools(this.toolRegistry, this.toolExecutor); } this._crewOrchestrator.setConfig(this.config); this._crewOrchestrator.setSessionId(this.sessionId); }
     return this._crewOrchestrator;
   }
   private contextTracker = new ContextTracker();
@@ -337,7 +335,7 @@ export class Agent {
 
     // Git integration
     this.gitAutoCommit = options.gitAutoCommit ?? false;
-    if (options.gitAware || options.gitAutoCommit) {
+    if (options.gitAware || this.gitAutoCommit) {
       this.gitManager = new GitManager({ scopePath: options.scopePath ?? process.cwd() });
     }
 
@@ -986,24 +984,6 @@ Return ONLY valid JSON, no other text.`;
       reasoning: decision.reasoning,
     } as unknown as EngineEvent);
 
-    // ─── CLARIFICATION: removed — DecisionEngine is heuristic-only and never needs clarification
-    if (false) {
-      // Clarification disabled — DecisionEngine never needs it
-      this.emit({
-        type: 'clarification_required',
-        question: 'What do you mean?',
-        options: [],
-        allowFreeform: true,
-      } as unknown as EngineEvent);
-      this.emit({ type: 'loading_end' });
-      this.lifecycle.forceTransition('idle');
-      this.abortController = null;
-      this.runStateMgr.release(this.sessionId);
-      this.commandQueue.release(this.sessionId);
-      // Return null signal — UI shows chips via clarification_required event
-      return null as unknown as Message;
-    }
-
     // ─── @MENTION ROUTING (with classifier context) ───
     const mentionedCrewId = this.detectAtMention(cleanContent);
     if (mentionedCrewId && this.crewOrchestrator) {
@@ -1205,59 +1185,6 @@ Return ONLY valid JSON, no other text.`;
           };
           this.emit({ type: 'message_received', message: planMessage, elapsed: Date.now() - startTime });
           return planMessage;
-
-          // Execute each approved step sequentially with per-step approval
-          const pendingSteps = plan.steps.filter((s) => s.status === 'approved' || s.status === 'pending');
-          for (const step of pendingSteps) {
-            if (this.abortController?.signal.aborted) break;
-            step.status = 'awaiting_approval';
-            this.emit({ type: 'plan_step_pending', stepId: step.id, planId: plan.id, description: step.description });
-
-            // Wait for user to approve/skip/modify this step
-            const stepAction = await new Promise<{ action: 'approve' | 'skip' | 'modify'; description?: string }>((resolve) => {
-              this.pendingStepApproval = (_stepId: string, approved: boolean, description?: string) => {
-                if (!approved) {
-                  resolve({ action: 'skip' });
-                } else if (description) {
-                  resolve({ action: 'modify', description });
-                } else {
-                  resolve({ action: 'approve' });
-                }
-              };
-            });
-
-            if (stepAction.action === 'skip') {
-              step.status = 'skipped';
-              this.emit({ type: 'plan_step_skipped', stepId: step.id, planId: plan.id });
-              continue;
-            }
-
-            const stepDescription = stepAction.action === 'modify' && stepAction.description ? stepAction.description : step.description;
-            step.status = 'executing';
-            this.emit({ type: 'plan_step_executing', stepId: step.id, planId: plan.id, description: stepDescription });
-
-            try {
-              const stepResult = await this.runSingleStep(stepDescription!);
-              step.status = 'done';
-              this.emit({ type: 'plan_step_complete', stepId: step.id, planId: plan.id, result: stepResult });
-            } catch (stepError) {
-              step.status = 'failed';
-              this.emit({ type: 'plan_step_failed', stepId: step.id, planId: plan.id, error: (stepError as Error).message });
-            }
-          }
-
-          this.emit({ type: 'loading_end' });
-          const summaryMessage: Message = {
-            id: generateMessageId(),
-            sessionId: this.sessionId,
-            role: 'assistant',
-            content: '✓ Plan execution complete.',
-            toolCalls: null,
-            createdAt: new Date().toISOString(),
-            tokenCount: 0,
-          };
-          this.emit({ type: 'message_received', message: summaryMessage, elapsed: Date.now() - startTime });
-          return summaryMessage;
         }
 
         // Idea sharing, questions, and simple tasks — clear the force-plan instruction
@@ -1505,6 +1432,7 @@ Return ONLY valid JSON, no other text.`;
         const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
         return subAgent.execute();
       },
+      this.abortController,
     );
 
     // Create AI SDK model from agent-x provider config
@@ -1621,73 +1549,6 @@ Return ONLY valid JSON, no other text.`;
   /**
    * Execute a single plan step as a self-contained completion.
    */
-  private async runSingleStep(stepDescription: string): Promise<ToolResult> {
-    const toolSchemas = this.toolRegistry ? this.toolRegistry.toSchemas() : undefined;
-
-    const request: CompletionRequest = {
-      messages: [
-        ...this.messages.slice(-10),
-        { role: 'user', content: `Execute this step: ${stepDescription}\nUse the available tools as needed. Return a summary when done.` },
-      ],
-      model: this.config.provider.activeModel,
-      maxTokens: 4000,
-      stream: true,
-      tools: toolSchemas,
-    };
-
-    const stream = this._unifiedStream(request);
-    let fullContent = '';
-    const toolCalls: CompletionToolCall[] = [];
-    let currentToolCall: Partial<CompletionToolCall> | null = null;
-
-    for await (const chunk of stream) {
-      if (chunk.type === 'text_delta' && chunk.content) {
-        fullContent += chunk.content;
-      } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
-        if (chunk.toolCall.id) {
-          if (currentToolCall?.id) toolCalls.push(currentToolCall as CompletionToolCall);
-          currentToolCall = {
-            id: chunk.toolCall.id,
-            type: 'function',
-            function: { name: chunk.toolCall.function?.name ?? '', arguments: chunk.toolCall.function?.arguments ?? '' },
-          };
-        } else if (currentToolCall) {
-          if (chunk.toolCall.function?.name) {
-            currentToolCall.function = { name: (currentToolCall.function?.name ?? '') + chunk.toolCall.function.name, arguments: currentToolCall.function?.arguments ?? '' };
-          }
-          if (chunk.toolCall.function?.arguments) {
-            currentToolCall.function = { name: currentToolCall.function?.name ?? '', arguments: (currentToolCall.function?.arguments ?? '') + chunk.toolCall.function.arguments };
-          }
-        }
-      }
-    }
-    if (currentToolCall?.id) toolCalls.push(currentToolCall as CompletionToolCall);
-
-    // Execute accumulated tool calls
-    for (const tc of toolCalls) {
-      const toolStartTime = Date.now();
-      this.emit({ type: 'tool_executing', tool: tc.function.name, description: `Plan step: ${stepDescription}`, startTime: toolStartTime });
-      try {
-        let args: Record<string, unknown> = {};
-        try { args = JSON.parse(tc.function.arguments); } catch { /* bad JSON */ }
-        const result = await this.toolExecutor?.execute(tc.function.name, args, this.sessionId);
-        if (result) {
-          if (this.gitAutoCommit && this.gitManager && this.isEditTool(tc.function.name) && result.success) {
-            const filePath = (args['path'] ?? args['file'] ?? '') as string;
-            if (filePath) this.gitManager.commitAfterEdit(filePath, this.sessionId);
-          }
-          this.emit({ type: 'tool_complete', tool: tc.function.name, result, elapsed: Date.now() - toolStartTime });
-        }
-      } catch (err) {
-        const errorResult: ToolResult = { success: false, output: (err as Error).message, error: 'STEP_ERROR' };
-        this.sessionLogger?.logToolError(tc.function.name, (err as Error).message);
-        this.emit({ type: 'tool_complete', tool: tc.function.name, result: errorResult, elapsed: Date.now() - toolStartTime });
-      }
-    }
-
-    return { success: true, output: fullContent || `Step completed: ${stepDescription}` };
-  }
-
   /**
    * Extract memorable facts from the exchange and persist them.
    * Runs asynchronously and silently — never blocks the main flow.
@@ -2423,15 +2284,6 @@ Only include specialists that are actually needed for this task.`;
     };
   }
 
-  private isEditTool(toolId: string): boolean {
-    const editTools = new Set([
-      'file_write', 'file_delete', 'folder_move', 'file_copy',
-      'code_replace', 'code_insert', 'file_patch',
-      'folder_create', 'folder_delete',
-    ]);
-    return editTools.has(toolId);
-  }
-
   // ─── AI SDK PIPELINE: Replaces old _unifiedStream ───
   // Uses the Vercel AI SDK (streamText) under the hood. All tool execution,
   // streaming, retry, and event generation handled by the AI SDK.
@@ -2463,6 +2315,7 @@ Only include specialists that are actually needed for this task.`;
           const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
           return subAgent.execute();
         },
+        this.abortController,
       );
     }
 
@@ -2513,6 +2366,11 @@ Only include specialists that are actually needed for this task.`;
     if (recent.length <= 1) return '';
 
     const parts: string[] = [];
+
+    // Workspace path so delegated agents can explore from the right directory
+    if (this.scopePath) {
+      parts.push(`Working directory: ${this.scopePath}`);
+    }
     const userMsgs = recent.filter(m => m.role === 'user');
     const assistantMsgs = recent.filter(m => m.role === 'assistant');
     const toolMsgs = recent.filter(m => m.role === 'tool');
@@ -2566,11 +2424,7 @@ Only include specialists that are actually needed for this task.`;
 
     // Build concise session context so the crew knows what's happening
     const sessionContext = this.buildAgenticContext();
-    const contextualMessage = sessionContext
-      ? `${sessionContext}\n\n[USER MESSAGE]\n${cleanContent}`
-      : cleanContent;
-
-    const result = await this.crewOrchestrator!.processMessage(contextualMessage, crewPrompt, [member], undefined);
+    const result = await this.crewOrchestrator!.processMessage(cleanContent, crewPrompt, [member], sessionContext || undefined);
 
     // Emit each crew response as a separate message bubble (natural, no popups)
     let lastMessage: Message | null = null;

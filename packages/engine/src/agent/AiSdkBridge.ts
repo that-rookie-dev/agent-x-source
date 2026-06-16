@@ -1,4 +1,4 @@
-import { tool, jsonSchema, streamText, stepCountIs, type ToolSet, type LanguageModelV2 } from 'ai';
+import { tool, jsonSchema, streamText, stepCountIs, type ToolSet, type LanguageModel } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -29,51 +29,7 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   cohere: 'https://api.cohere.com/compatibility/v1',
 };
 
-/**
- * Provider-aware retry configuration.
- * Different providers have different rate limits and error patterns.
- * This maps each provider to appropriate retry behavior for the AI SDK.
- */
-function getProviderRetryConfig(providerId: string): { maxRetries: number; initialBackoffMs: number } {
-  switch (providerId) {
-    // Premium providers — generous retry on rate limits
-    case 'openai':
-    case 'azure':
-      return { maxRetries: 5, initialBackoffMs: 1000 };
-    // Anthropic has strict rate limits — fewer retries, longer backoff
-    case 'anthropic':
-      return { maxRetries: 3, initialBackoffMs: 2000 };
-    // Google is fairly permissive
-    case 'google':
-      return { maxRetries: 5, initialBackoffMs: 500 };
-    // Fast inference providers — quick retry
-    case 'groq':
-    case 'together':
-    case 'fireworks':
-      return { maxRetries: 3, initialBackoffMs: 500 };
-    // Budget providers — conservative retry
-    case 'deepseek':
-    case 'moonshot':
-    case 'mistral':
-    case 'cohere':
-    case 'commandcode':
-    case 'xai':
-    case 'perplexity':
-      return { maxRetries: 2, initialBackoffMs: 1000 };
-    // Local providers — no retry needed
-    case 'ollama':
-    case 'lmstudio':
-      return { maxRetries: 1, initialBackoffMs: 100 };
-    // OpenCode providers — standard retry
-    case 'opencode':
-    case 'opencode-zen':
-      return { maxRetries: 3, initialBackoffMs: 1000 };
-    default:
-      return { maxRetries: 2, initialBackoffMs: 1000 };
-  }
-}
-
-export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string): LanguageModelV2 {
+export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string): LanguageModel {
   const activeProvider = config.provider.activeProvider;
   const providerCfg = config.provider.providers?.[activeProvider];
   const configApiKey = providerCfg?.apiKey || '';
@@ -102,7 +58,7 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       return google(modelId);
     }
     case 'azure': {
-      const azure = createAzure({ apiKey, baseURL: baseURL || '', ...(providerCfg?.azureResourceName ? { resourceName: (providerCfg as any).azureResourceName } : {}) });
+      const azure = createAzure({ apiKey, baseURL: baseURL || '', ...((providerCfg as any)?.azureResourceName ? { resourceName: (providerCfg as any).azureResourceName } : {}) });
       return azure(modelId);
     }
     case 'groq': {
@@ -167,6 +123,7 @@ export function createAiSdkTools(
   emit: (event: EngineEvent) => void,
   waitForClarification: (question: string, options: string[], allowFreeform: boolean) => Promise<string>,
   runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number) => Promise<{ success: boolean; output: string; elapsed: number }>,
+  abortController?: AbortController | null,
 ): ToolSet {
   const allTools = toolRegistry.list();
   const tools: ToolSet = {};
@@ -223,6 +180,10 @@ export function createAiSdkTools(
           emit({ type: 'tool_complete', tool: toolDef.id, result: { success: result.success, output: result.output }, elapsed, args: args as Record<string, unknown>, callId });
 
           if (!result.success) {
+            if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
+              abortController?.abort();
+              return `[${result.error}] ${result.output}`;
+            }
             return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
           }
           return result.output;
@@ -279,50 +240,40 @@ export async function* aiSdkStream(
 
         case 'tool-call': {
           const tc: CompletionToolCall = {
-            id: chunk.toolCallId,
+            id: (chunk as any).toolCallId,
             type: 'function',
             function: {
-              name: chunk.toolName,
-              arguments: JSON.stringify(chunk.args),
+              name: (chunk as any).toolName,
+              arguments: JSON.stringify((chunk as any).args || (chunk as any).input || {}),
             },
           };
           yield { type: 'tool_call_delta', toolCall: tc };
           break;
         }
 
-        case 'step-finish':
-          if (chunk.usage) {
+        case 'finish': {
+          const usage = (chunk as any).usage || (chunk as any).totalUsage;
+          if (usage) {
             yield {
               type: 'done',
               usage: {
-                inputTokens: chunk.usage.inputTokens || 0,
-                outputTokens: chunk.usage.outputTokens || 0,
+                inputTokens: usage.inputTokens || 0,
+                outputTokens: usage.outputTokens || 0,
               },
             };
           }
           break;
-
-        case 'finish':
-          if (chunk.usage) {
-            yield {
-              type: 'done',
-              usage: {
-                inputTokens: chunk.totalUsage?.inputTokens || chunk.usage?.inputTokens || 0,
-                outputTokens: chunk.totalUsage?.outputTokens || chunk.usage?.outputTokens || 0,
-              },
-            };
-          }
-          break;
+        }
 
         case 'error':
-          throw new Error(String(chunk.error || 'AI SDK stream error'));
+          throw new Error(String((chunk as any).error || 'AI SDK stream error'));
       }
     }
     if (chunkCount === 0) {
-      getLogger().warn('AI_SDK', `streamText produced ZERO fullStream chunks. Model: ${modelId}, Provider: ${activeProvider}`);
+      console.warn(`[AiSdkBridge] streamText produced ZERO fullStream chunks. Model: ${config.provider.activeModel}, Provider: ${config.provider.activeProvider}`);
     }
     if (textChunkCount === 0 && chunkCount > 0) {
-      getLogger().warn('AI_SDK', `streamText produced ${chunkCount} chunks but ZERO text-delta chunks. Types: check fullStream output`);
+      console.warn(`[AiSdkBridge] streamText produced ${chunkCount} chunks but ZERO text-delta chunks`);
     }
   } finally {
     // no cleanup needed — AI SDK handles its own lifecycle

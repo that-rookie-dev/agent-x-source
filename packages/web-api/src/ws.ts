@@ -58,6 +58,7 @@ export function persistPart(sessionId: string, part: PartRecord): void {
 }
 interface SubAgentRecord { id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }
 interface CrewInfo { crewId: string; name: string; callsign: string }
+interface ToolCallRecord { id: string; name: string; args: unknown; status: string; result?: string; elapsed?: number; metadata?: Record<string, unknown> }
 
 function appendContextFile(
   sessionId: string,

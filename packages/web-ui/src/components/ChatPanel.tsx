@@ -56,7 +56,6 @@ import {
   ScrollToBottomPill,
   CommandPalette,
   SessionSearchModal,
-  DoomLoopWarning,
   ReasoningBlock,
   CheckpointDrawer,
   StreamingCursor,
@@ -92,7 +91,7 @@ interface UIMessage extends ChatMessage {
   attachments?: { name: string }[];
   turnTokens?: number;
   turnCostUsd?: number;
-  doomLoop?: { toolName: string; count: number } | null;
+
   crew?: { crewId: string; name: string; callsign: string };
   parts?: PartEntry[];
 }
@@ -539,20 +538,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             const toolPart: PartEntry = { type: 'tool', id: callId, tool: tc };
             const parts = [...(last.parts || []), toolPart];
 
-            // Doom-loop detection
-            const toolParts = parts.filter(p => p.type === 'tool');
-            const recent = toolParts.slice(-4);
-            let doomLoop = last.doomLoop;
-            if (recent.length >= 3 && recent.slice(-3).every(p => p.tool?.name === toolName)) {
-              doomLoop = { toolName, count: recent.filter(p => p.tool?.name === toolName).length };
-            }
-            return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts, doomLoop });
+            return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts });
           }
-
-          case 'doom_loop':
-            return last?.role === 'assistant'
-              ? updateLastMessage(prev, { doomLoop: { toolName: (ev.tool as string) ?? 'unknown', count: (ev.count as number) ?? 3 } })
-              : prev;
 
           case 'tool_complete': {
             if (last?.role !== 'assistant') return prev;
@@ -1434,11 +1421,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             const isLastUser = msg.role === 'user' && visibleMessages.slice(idx + 1).every(m => m.role !== 'user');
              return (
                <Box key={msg.id}>
-                 <MessageBubble
-                   message={msg}
-                   onDismissDoomLoop={() => setMessages(prev => { const last = prev[prev.length - 1]; if (!last?.doomLoop) return prev; return [...prev.slice(0, -1), { ...last, doomLoop: null }]; })}
-                   loadingSteps={idx === visibleMessages.length - 1 && msg.streaming && !msg.content ? loadingSteps : null}
-                 />
+                  <MessageBubble
+                    message={msg}
+                    loadingSteps={idx === visibleMessages.length - 1 && msg.streaming && !msg.content ? loadingSteps : null}
+                  />
                   {isLastUser && msg.content && (
                     <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: -1, mb: 0.5, mr: 5 }}>
                      <IconButton size="small" onClick={() => handleResend(msg.content)}
@@ -1454,11 +1440,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             <ThinkingIndicator label={loadingSteps?.[0]?.label} />
           )}
 
-          {permissionPrompt && (
-            <PermissionBanner prompt={permissionPrompt} onRespond={() => setPermissionPrompt(null)} />
-          )}
-
-          {toolEnablePrompt && (
+           {toolEnablePrompt && (
             <ToolEnableBanner toolId={toolEnablePrompt.toolId} toolName={toolEnablePrompt.toolName} onRespond={() => setToolEnablePrompt(null)} />
           )}
 
@@ -1729,6 +1711,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                     ↑↓ Navigate · Enter to select · Esc to cancel
                   </Typography>
                 </Box>
+              </Box>
+            )}
+            {/* Permission banner above input */}
+            {permissionPrompt && (
+              <Box sx={{ px: 1.25, pt: 1.25, pb: 0.5 }}>
+                <PermissionBanner prompt={permissionPrompt} onRespond={() => setPermissionPrompt(null)} />
               </Box>
             )}
             {/* Input row */}
@@ -2475,9 +2463,46 @@ function CrewAwareMarkdown({ content }: { content: string }) {
   const segments = parseWebContentSegments(content);
   const hasCrew = segments.some(s => s.type === 'crew');
 
+  const cardSx = {
+    bgcolor: colors.bg.elevated,
+    border: `1px solid ${colors.border.subtle}`,
+    borderRadius: 1.5,
+    p: 1.75,
+    my: 0.5,
+    ...MARKDOWN_BASE_SX,
+    '& p': {
+      ...MARKDOWN_BASE_SX['& p'],
+      color: colors.text.primary,
+      fontSize: '0.75rem',
+      lineHeight: 1.7,
+    },
+    '& hr': {
+      border: 'none',
+      height: 1,
+      my: 1.5,
+      bgcolor: colors.border.subtle,
+      opacity: 0.4,
+    },
+    '& ul, & ol': {
+      m: 0,
+      pl: 2,
+      fontSize: '0.75rem',
+      lineHeight: 1.7,
+    },
+    '& li': {
+      mb: 0.35,
+      color: colors.text.primary,
+    },
+    '& li:last-child': { mb: 0 },
+    '& li::marker': { color: colors.text.dim },
+    '& input[type="checkbox"]': {
+      accentColor: colors.accent.blue,
+    },
+  };
+
   if (!hasCrew) {
     return (
-      <Box sx={{ ...MARKDOWN_BASE_SX, '& p': { ...MARKDOWN_BASE_SX['& p'], color: colors.text.primary } }}>
+      <Box sx={cardSx}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{content}</ReactMarkdown>
       </Box>
     );
@@ -2493,14 +2518,14 @@ function CrewAwareMarkdown({ content }: { content: string }) {
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: cc, mb: 0.25, letterSpacing: 0.3 }}>
                 ◆ {seg.name} (@{seg.callsign})
               </Typography>
-              <Box sx={{ ...MARKDOWN_BASE_SX, '& p': { ...MARKDOWN_BASE_SX['& p'], color: cc } }}>
+              <Box sx={{ ...cardSx, '& p': { ...cardSx['& p'], color: cc } } as any}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{seg.text}</ReactMarkdown>
               </Box>
             </Box>
           );
         }
         return (
-          <Box key={i} sx={{ ...MARKDOWN_BASE_SX, '& p': { ...MARKDOWN_BASE_SX['& p'], color: colors.text.primary } }}>
+          <Box key={i} sx={cardSx}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{seg.text}</ReactMarkdown>
           </Box>
         );
@@ -2509,7 +2534,7 @@ function CrewAwareMarkdown({ content }: { content: string }) {
   );
 }
 
-function MessageBubble({ message, loadingSteps, onDismissDoomLoop }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onDismissDoomLoop?: () => void }) {
+function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null }) {
   const isUser = message.role === 'user';
   const crewInfo = message.crew;
   const displayColor = crewInfo ? getWebCrewColor(crewInfo.callsign) : colors.accent.blue;
@@ -2539,7 +2564,6 @@ function MessageBubble({ message, loadingSteps, onDismissDoomLoop }: { message: 
         {crewInfo ? crewInfo.name : 'Agent-X'}
       </Typography>
       {message.thinking && (<ReasoningBlock text={message.thinking} streaming={message.streaming && !message.thinkingDoneAt} durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined} />)}
-      {message.doomLoop && (<DoomLoopWarning toolName={message.doomLoop.toolName} count={message.doomLoop.count} onContinue={() => onDismissDoomLoop?.()} onStop={() => { chat.cancel().catch(() => {}); }} />)}
       {message.todos && message.todos.length > 0 && (<InlineTodoList items={message.todos} />)}
 
       {/* Chronological parts: text + tools interleaved in order of appearance */}
@@ -2686,14 +2710,12 @@ function PermissionBanner({ prompt, onRespond }: { prompt: { tool: string; path:
   const isCritical = prompt.riskLevel === 'critical';
   const isHigh = prompt.riskLevel === 'high';
   const borderColor = isCritical ? colors.accent.red + '50' : isHigh ? colors.accent.orange + '40' : colors.accent.orange + '30';
-  const bgColor = isCritical ? colors.accent.red + '08' : isHigh ? colors.accent.orange + '08' : colors.accent.orange + '05';
-  const titleColor = isCritical ? colors.accent.red : isHigh ? colors.accent.orange : colors.accent.orange;
 
   return (
-    <Box sx={{ p: 1.5, mb: 2, borderRadius: 1, border: `1px solid ${borderColor}`, bgcolor: bgColor, animation: 'agentx-fadeIn 0.3s ease-out' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5 }}>
-        <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: titleColor }}>
-          {isCritical ? '⚠ Critical Permission Required' : isHigh ? '⚡ High-Risk Permission' : 'Permission Required'}
+    <Box sx={{ p: 1.5, borderRadius: 1.5, border: `1px solid ${borderColor}`, bgcolor: colors.bg.secondary, animation: 'agentx-fadeIn 0.3s ease-out' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+        <Typography sx={{ fontSize: '0.65rem', fontWeight: 600, color: isCritical ? colors.accent.red : isHigh ? colors.accent.orange : colors.accent.blue }}>
+          {isCritical ? '⚠ Critical' : isHigh ? '⚡ High Risk' : 'Permission Required'}
         </Typography>
         <Chip size="small" label={prompt.riskLevel.toUpperCase()} sx={{
           fontSize: '0.45rem', height: 15, fontWeight: 600,
@@ -2701,23 +2723,23 @@ function PermissionBanner({ prompt, onRespond }: { prompt: { tool: string; path:
           color: isCritical ? colors.accent.red : isHigh ? colors.accent.orange : colors.accent.blue,
         }} />
       </Box>
-      <Typography sx={{ fontSize: '0.6rem', mb: 0.25, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
+      <Typography sx={{ fontSize: '0.6rem', mb: 0.5, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
         {prompt.tool}
       </Typography>
       {prompt.path && (
-        <Typography sx={{ fontSize: '0.55rem', mb: 1, color: colors.text.dim, wordBreak: 'break-all' }}>
+        <Typography sx={{ fontSize: '0.55rem', mb: 0.75, color: colors.text.dim, wordBreak: 'break-all' }}>
           {prompt.path}
         </Typography>
       )}
       {isCritical && (
-        <Typography sx={{ fontSize: '0.5rem', mb: 1, color: colors.accent.red, fontStyle: 'italic' }}>
+        <Typography sx={{ fontSize: '0.5rem', mb: 0.75, color: colors.accent.red, fontStyle: 'italic' }}>
           This operation could permanently affect your system. Review carefully before allowing.
         </Typography>
       )}
       <Box sx={{ display: 'flex', gap: 0.75 }}>
-        <Chip size="small" label="Allow Once" onClick={() => handleRespond('allow_once')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.green + '12', color: colors.accent.green, '&:hover': { bgcolor: colors.accent.green + '25' } }} />
-        <Chip size="small" label="Always" onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.blue + '12', color: colors.accent.blue, '&:hover': { bgcolor: colors.accent.blue + '25' } }} />
-        <Chip size="small" label="Deny" onClick={() => handleRespond('deny')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.red + '12', color: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + '25' } }} />
+        <Chip size="small" label="Allow Once" onClick={() => handleRespond('allow_once')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.green + '15', color: colors.accent.green, '&:hover': { bgcolor: colors.accent.green + '30' } }} />
+        <Chip size="small" label="Always" onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.blue + '15', color: colors.accent.blue, '&:hover': { bgcolor: colors.accent.blue + '30' } }} />
+        <Chip size="small" label="Deny" onClick={() => handleRespond('deny')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.red + '15', color: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + '30' } }} />
       </Box>
     </Box>
   );

@@ -813,7 +813,7 @@ app.post('/api/chat/message', async (req, res) => {
       agent.sendMessage(fullText, instruction ? { instruction } : undefined),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('The operation was aborted due to timeout')), 180000)),
     ]);
-    if (!message || (message as Record<string, unknown>).id === '__clarify__') {
+    if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
       res.json({ ok: true, clarification: true });
       return;
     }
@@ -829,7 +829,7 @@ app.post('/api/chat/message', async (req, res) => {
           // The failsafe above already persisted it, but ensure it's there
           const dir = join(getDataDir(), 'sessions', sid);
           if (!existsSync(join(dir, 'conversation.json'))) {
-            persistMessageDirect(sid, 'user', fullText);
+            persistMessageDirect(sid, 'user', (req.body as any).text || '');
           }
         }
       }
@@ -901,7 +901,7 @@ app.post('/api/chat/steer', async (req, res) => {
     }
     const instruction = undefined;
     const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
-    if (!message || (message as Record<string, unknown>).id === '__clarify__') {
+    if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
       res.json({ ok: true, clarification: true });
       return;
     }
@@ -933,7 +933,7 @@ app.post('/api/chat/stop-and-send', async (req, res) => {
       ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
       : undefined;
     const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
-    if (!message || (message as Record<string, unknown>).id === '__clarify__') {
+    if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
       res.json({ ok: true, clarification: true });
       return;
     }

@@ -164,8 +164,8 @@ export class ToolExecutor {
     const needsPermission = decision !== 'allow_always';
 
     if (needsPermission && this.permissionRequestHandler && tool.riskLevel !== 'low') {
-      // Agent mode: auto-approve within scopePath to avoid interrupting the UX flow
-      if (this.mode === 'agent' && scopePathForHook && this.scopeGuard.validatePath(scopePathForHook).valid) {
+      // Agent mode: auto-approve within scopePath for medium risk; prompt for high risk
+      if (this.mode === 'agent' && tool.riskLevel === 'medium' && scopePathForHook && this.scopeGuard.validatePath(scopePathForHook).valid) {
         this.permissionManager.grant(toolId, 'allow_always', scopePathForHook);
       } else if (this.mode === 'plan') {
         // Plan mode: never ask for permissions — just deny any risky tool
