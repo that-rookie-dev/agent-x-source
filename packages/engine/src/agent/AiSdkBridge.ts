@@ -123,7 +123,7 @@ export function createAiSdkTools(
   sessionId: string,
   emit: (event: EngineEvent) => void,
   waitForClarification: (question: string, options: string[], allowFreeform: boolean) => Promise<string>,
-  runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number) => Promise<{ success: boolean; output: string; elapsed: number }>,
+  runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number }>,
   abortController?: AbortController | null,
 ): ToolSet {
   const allTools = toolRegistry.list();
@@ -171,10 +171,69 @@ export function createAiSdkTools(
           const fiberSet = new FiberSet();
           fiberSet.run('delegate_to_subagent', async () => {
             const mission = (args as any).mission || '';
+            const items = Array.isArray((args as any).items) ? (args as any).items as string[] : undefined;
             const toolsList = Array.isArray((args as any).tools) ? (args as any).tools : undefined;
             const timeout = typeof (args as any).timeout === 'number' ? (args as any).timeout : 120_000;
+            const background = (args as any).background === true;
+            const batchSize = Math.max(1, Math.min(typeof (args as any).batchSize === 'number' ? (args as any).batchSize : 10, 50));
+
+            // Batch mode: auto-parallelize items across sub-agents
+            if (items && items.length > 0) {
+              const chunks: string[][] = [];
+              for (let i = 0; i < items.length; i += batchSize) {
+                chunks.push(items.slice(i, i + batchSize));
+              }
+
+              emit({
+                type: 'tool_executing',
+                tool: 'delegate_to_subagent',
+                description: `Dispatching ${items.length} items across ${chunks.length} sub-agents (batch size ${batchSize})`,
+                startTime: Date.now(),
+                args: args as Record<string, unknown>,
+                callId: 'subagent',
+              });
+
+              const batchResults: string[] = [];
+              let totalElapsed = 0;
+
+              // Spawn each chunk as a sub-agent and wait for all
+              const pending = chunks.map((chunk) =>
+                runSubAgent(
+                  `Process these items:\n${chunk.map((item, i) => `${i + 1}. ${item}`).join('\n')}\n\nReturn a summary of processing results for each item.`,
+                  toolsList,
+                  timeout,
+                  false,
+                ),
+              );
+
+              const resolved = await Promise.all(pending);
+              for (const r of resolved) {
+                totalElapsed += r.elapsed;
+                batchResults.push(r.success ? r.output : `[FAILED] ${r.output}`);
+              }
+
+              const output = [
+                `=== BATCH RESULT ===`,
+                `${items.length} items processed across ${chunks.length} sub-agents`,
+                `Total elapsed: ${totalElapsed}ms`,
+                ``,
+                ...batchResults,
+              ].join('\n');
+
+              emit({
+                type: 'tool_complete',
+                tool: 'delegate_to_subagent',
+                result: { success: true, output },
+                elapsed: totalElapsed,
+                args: args as Record<string, unknown>,
+                callId: 'subagent',
+              });
+              return output;
+            }
+
+            // Single mode
             emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${mission}`, startTime: Date.now(), args: args as Record<string, unknown>, callId: 'subagent' });
-            const result2 = await runSubAgent(mission, toolsList, timeout);
+            const result2 = await runSubAgent(mission, toolsList, timeout, background);
             const output = result2.success
               ? `[Sub-agent completed in ${result2.elapsed}ms]\n${result2.output}`
               : `[Sub-agent failed: ${result2.output}]`;

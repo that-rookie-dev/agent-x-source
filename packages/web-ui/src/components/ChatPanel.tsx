@@ -153,6 +153,7 @@ interface SubAgent {
   task: string;
   status: 'running' | 'done' | 'error';
   result?: string;
+  toolCalls?: ToolCall[];
 }
 
 interface FileAttachment {
@@ -172,6 +173,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [sessionList, setSessionList] = useState<SessionInfo[]>([]);
   const [currentSessionTitle, setCurrentSessionTitle] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [parentSessionId, setParentSessionId] = useState<string | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
 
   // Chat state
@@ -201,6 +203,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [clarifyCustomText, setClarifyCustomText] = useState('');
   const clarifyCustomRef = useRef<HTMLInputElement>(null);
   const providerErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rateLimitSeenRef = useRef(false);
 
   // Extract a clean, human-readable message from raw provider errors
   const extractProviderError = useCallback((raw: string): string => {
@@ -272,6 +275,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           };
         }) as unknown as UIMessage[]);
         setCurrentSessionTitle(session.title ?? `Session ${sessionId.slice(0, 8)}`);
+        setParentSessionId(session.parentId ?? null);
         const totalUsed = (session as any).tokenUsed ?? session.tokensUsed ?? 0;
         setTokenUsed(totalUsed);
         const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
@@ -279,10 +283,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         setTokenInput(inputEst);
         setTokenOutput(outputEst);
         if (resolvedScope) setCwd(resolvedScope);
-        // Restore saved session mode
+        // Restore saved session mode from DB (do not re-send to server)
         if (session.mode === 'plan' || session.mode === 'agent') {
           setAgentMode(session.mode);
-          sessionSettings.setMode(session.mode).catch(() => {});
         }
         loadTodos();
       }).catch((err) => {
@@ -480,7 +483,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
     system.cwd().then((r) => { if (r.cwd) setCwd(r.cwd); }).catch(() => {});
-    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); else setAgentMode('agent'); }).catch(() => {});
+    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); }).catch(() => {});
     // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
       .then(r => r.json())
@@ -790,6 +793,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'provider_error': {
             const providerMsg = (ev.message as string) ?? 'Provider error';
             const msg = extractProviderError(providerMsg);
+            // Rate-limit errors suppress all subsequent warnings for this turn
+            if (/rate.?limit|429|too many requests|quota/i.test(providerMsg)) {
+              rateLimitSeenRef.current = true;
+            }
             setWarnings(prev => replaceWarning(prev, msg));
             if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
             setStreaming(false);
@@ -812,6 +819,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
 
           case 'error': {
+            // Suppress cascaded errors after a rate-limit — only show the first warning
+            if (rateLimitSeenRef.current) {
+              setStreaming(false);
+              return prev;
+            }
             const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
             // Route to warning band — errors should not pollute the chat bubble
             setWarnings(prev => replaceWarning(prev, errorText));
@@ -853,6 +865,57 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               timestamp: new Date().toISOString(),
               isModeChange: { from: 'Hyperdrive', to: (ev as any).wasPlan ? 'Plan' : 'Agent' },
             }];
+
+          case 'subagent_event': {
+            const subagentId = (ev as any).subagentId as string;
+            const parentEvent = (ev as any).parentEvent as Record<string, unknown>;
+            if (!subagentId || !parentEvent || !last?.subAgents) return prev;
+            switch (parentEvent.type) {
+              case 'tool_executing': {
+                const toolName = (parentEvent.tool as string) ?? 'unknown';
+                const desc = (parentEvent.description as string) ?? '';
+                const eventArgs = parentEvent.args ?? desc;
+                const callId = (parentEvent.callId as string) ?? crypto.randomUUID();
+                const tc: ToolCall = { id: callId, name: toolName, args: eventArgs as any, status: 'running' };
+                const newSubAgents = last.subAgents.map((a: SubAgent) =>
+                  a.id !== subagentId ? a : { ...a, toolCalls: [...(a.toolCalls || []), tc] });
+                return updateLastMessage(prev, { subAgents: newSubAgents });
+              }
+              case 'tool_output': {
+                const outputCallId = (parentEvent.callId as string) ?? '';
+                const outputText = (parentEvent.output as string) ?? '';
+                if (!outputCallId || !outputText) return prev;
+                const newSubAgents = last.subAgents.map((a: SubAgent) =>
+                  a.id !== subagentId ? a : {
+                    ...a,
+                    toolCalls: (a.toolCalls || []).map((t: ToolCall) =>
+                      t.id === outputCallId && t.status === 'running'
+                        ? { ...t, streamOutput: (t.streamOutput || '') + outputText } : t),
+                  });
+                return updateLastMessage(prev, { subAgents: newSubAgents });
+              }
+              case 'tool_complete': {
+                const toolName = (parentEvent.tool as string) ?? '';
+                const elapsed = (parentEvent.elapsed as number) ?? 0;
+                const callId = (parentEvent.callId as string) ?? '';
+                const result = (parentEvent as any).result ?? (parentEvent as any).output ?? '';
+                const resultStr = typeof result === 'string' ? result
+                  : (result && typeof result === 'object' ? ((result as any).output || (result as any).message || JSON.stringify(result)) : '');
+                const newSubAgents = last.subAgents.map((a: SubAgent) =>
+                  a.id !== subagentId ? a : {
+                    ...a,
+                    toolCalls: (a.toolCalls || []).map((t: ToolCall) => {
+                      if (callId && t.id !== callId) return t;
+                      if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
+                      return { ...t, status: 'done' as const, result: resultStr, elapsed };
+                    }),
+                  });
+                return updateLastMessage(prev, { subAgents: newSubAgents });
+              }
+              default:
+                return prev;
+            }
+          }
 
           default:
             return prev;
@@ -974,6 +1037,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const text = typeof overrideText === 'string' ? overrideText.trim() : input.trim();
     if ((!text && attachments.length === 0)) return;
     if (!currentProvider || !currentModel) return;
+    rateLimitSeenRef.current = false;
 
     // Create session lazily on first message
     if (!(await ensureSession())) return;
@@ -1369,6 +1433,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const handleSelectSession = async (s: SessionInfo) => {
     setWarnings([]);
+    rateLimitSeenRef.current = false;
     setStreaming(false);
     try {
       const { messages: historyMsgs, session, scopePath } = await sessions.restore(s.id);
@@ -1394,10 +1459,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setTokenOutput(outputEst);
       const restoredCwd = scopePath || session?.scopePath || '';
       if (restoredCwd) setCwd(restoredCwd);
-      // Restore saved session mode
+      // Restore saved session mode from DB (do not re-send to server)
       if (session?.mode === 'plan' || session?.mode === 'agent') {
         setAgentMode(session.mode);
-        sessionSettings.setMode(session.mode).catch(() => {});
       }
       loadTodos();
       navigate(`/console/chat/${s.id}`);
@@ -1645,6 +1709,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           <IconButton size="small" onClick={handleShowSessions} sx={{ color: colors.text.dim, p: 0.5 }}>
             <ArrowBackIcon sx={{ fontSize: 16 }} />
           </IconButton>
+          {parentSessionId && (
+            <Chip size="small"
+              icon={<ArrowBackIcon sx={{ fontSize: 10 }} />}
+              label="Parent"
+              onClick={() => navigate(`/console/chat/${parentSessionId}`)}
+              sx={{
+                fontSize: '0.50rem', fontFamily: "'JetBrains Mono', monospace", height: 18,
+                bgcolor: colors.accent.blue + '10',
+                border: `1px solid ${colors.accent.blue}20`,
+                color: colors.accent.blue,
+                cursor: 'pointer',
+                '&:hover': { filter: 'brightness(1.2)' },
+                mr: 0.5,
+              }}
+            />
+          )}
           <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {currentSessionTitle ?? 'New Session'}
           </Typography>
@@ -3108,17 +3188,44 @@ function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingS
 // ─── Sub-Agent Chip ───
 
 function SubAgentChip({ agent }: { agent: SubAgent }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasToolCalls = agent.toolCalls && agent.toolCalls.length > 0;
+  const navigate = useNavigate();
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (agent.status !== 'running') {
+      // Left-click navigates to child session, expand/collapse on tool call toggle
+      if (hasToolCalls && (e.target as HTMLElement).closest('[data-expand-area]')) {
+        setExpanded(!expanded);
+      } else {
+        navigate(`/console/chat/${agent.id}`);
+      }
+    }
+  };
+
   return (
-    <Chip size="small"
-      icon={agent.status === 'running' ? <CircularProgress size={10} sx={{ color: 'inherit' }} /> : <AccountTreeIcon sx={{ fontSize: 11 }} />}
-      label={`${agent.name}: ${agent.task.slice(0, 35)}${agent.task.length > 35 ? '…' : ''}`}
-      sx={{
-        fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", height: 20,
-        bgcolor: agent.status === 'running' ? colors.accent.purple + '10' : colors.accent.green + '10',
-        border: `1px solid ${agent.status === 'running' ? colors.accent.purple : colors.accent.green}20`,
-        color: agent.status === 'running' ? colors.accent.purple : colors.accent.green,
-      }}
-    />
+    <Box>
+      <Chip size="small"
+        icon={agent.status === 'running' ? <CircularProgress size={10} sx={{ color: 'inherit' }} /> : <AccountTreeIcon sx={{ fontSize: 11 }} />}
+        label={`${agent.name}: ${agent.task.slice(0, 35)}${agent.task.length > 35 ? '…' : ''}${hasToolCalls ? ` (${agent.toolCalls!.length})` : ''}`}
+        onClick={handleClick}
+        sx={{
+          fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", height: 20,
+          bgcolor: agent.status === 'running' ? colors.accent.purple + '10' : colors.accent.green + '10',
+          border: `1px solid ${agent.status === 'running' ? colors.accent.purple : colors.accent.green}20`,
+          color: agent.status === 'running' ? colors.accent.purple : colors.accent.green,
+          cursor: 'pointer',
+          '&:hover': { filter: 'brightness(1.2)' },
+        }}
+      />
+      {expanded && agent.toolCalls && (
+        <Box data-expand-area sx={{ mt: 0.75, ml: 0.5, borderLeft: `2px solid ${colors.border.subtle}`, pl: 1.5 }}>
+          {agent.toolCalls.map((tc) => (
+            <InlineToolCall key={tc.id} tool={tc} />
+          ))}
+        </Box>
+      )}
+    </Box>
   );
 }
 

@@ -29,12 +29,11 @@ function ensureSessionDir(sessionId: string): string {
   const dir = getSessionDir(sessionId);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
-    const files = ['context.txt', 'memories.txt', 'pending.txt', 'completed.txt', 'suggestions.txt', 'conversation.json'];
+    const files = ['context.txt', 'memories.txt', 'pending.txt', 'completed.txt', 'suggestions.txt'];
     for (const f of files) {
       const fp = join(dir, f);
       if (!existsSync(fp)) {
-        const initial = f === 'conversation.json' ? '[]' : '';
-        writeFileSync(fp, initial, 'utf-8');
+        writeFileSync(fp, '', 'utf-8');
       }
     }
   }
@@ -563,9 +562,6 @@ app.post('/api/session/mode', (req, res) => {
       const sess = eng.sessionManager.getActiveSession();
       if (sess) {
         eng.sessionManager.updateSession({ mode } as any);
-        const from = previousMode === 'plan' ? 'Plan' : 'Agent';
-        const to = mode === 'plan' ? 'Plan' : 'Agent';
-        persistMessageDirect(sess.id, 'assistant', `[MODE_CHANGE] ${from} → ${to}`);
       }
     } catch { /* best-effort */ }
     res.json({ ok: true, mode });
@@ -853,29 +849,15 @@ app.post('/api/chat/message', async (req, res) => {
     // Apply session mode to agent
     agent.setPlanMode(sessionSettings.mode === 'plan');
 
-    // ─── Retry: remove last exchange from conversation.json to avoid duplicates ───
+    // ─── Retry: remove last exchange from DB to avoid duplicates ───
     if (retry) {
-      const sid = (agent as unknown as { sessionId: string }).sessionId;
-      if (sid) {
-        const convPath = join(getSessionDir(sid), 'conversation.json');
-        try {
-          let conv: Array<Record<string, unknown>> = [];
-          if (existsSync(convPath)) {
-            conv = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
-          }
-          let removed = 0;
-          while (conv.length > 0 && removed < 2) {
-            const last = conv[conv.length - 1] as Record<string, unknown>;
-            if (last.role === 'assistant' || last.role === 'user') {
-              conv.pop();
-              removed++;
-            } else {
-              break;
-            }
-          }
-          writeFileSync(convPath, JSON.stringify(conv, null, 2));
-        } catch { /* best-effort */ }
-      }
+      try {
+        const store = (eng.sessionManager as any).store;
+        if (store?.deleteLastMessages) {
+          const sid = (agent as unknown as { sessionId: string }).sessionId;
+          if (sid) store.deleteLastMessages(sid, 2, ['user', 'assistant']);
+        }
+      } catch { /* best-effort */ }
     }
 
     // Build the full message content with attachments if provided
@@ -888,33 +870,17 @@ app.post('/api/chat/message', async (req, res) => {
     // Build instruction based on mode (kept separate from user content)
     let instruction: string | undefined;
     if (sessionSettings.mode === 'plan') {
-      instruction = 'You are in plan mode. You can create structured plans for complex multi-step tasks when appropriate. First understand what the user needs through conversation. Only create a formal plan when the task genuinely requires step-by-step orchestration.';
+      instruction = 'You are in PLAN MODE. You have READ-ONLY access — you can read, search, and analyze files, but you CANNOT write, edit, delete, execute commands, or modify the filesystem in any way. If the user asks you to build, create, write, generate, or modify files: tell them to switch to Agent mode first. You can create a plan for how you would do it, but you cannot execute it until the user switches to Agent mode.';
     }
 
     // Auto-checkpoint before each user turn — enables /undo to roll back this turn
     try {
-      const sid = (agent as unknown as { sessionId: string }).sessionId;
-      if (sid) {
-        const dir = getSessionDir(sid);
-        if (existsSync(dir)) {
-          const convPath = join(dir, 'conversation.json');
-          const messages = existsSync(convPath) ? JSON.parse(readFileSync(convPath, 'utf-8') || '[]') : [];
-          // Skip checkpoint when there are no messages (empty session)
-          if (messages.length === 0) { /* skip checkpoint for empty session */ } else {
-            const checkpointsDir = join(dir, 'checkpoints');
-            if (!existsSync(checkpointsDir)) mkdirSync(checkpointsDir, { recursive: true });
-            // Keep only most recent 20 auto-checkpoints to avoid unbounded growth
-            try {
-              const autos = readdirSync(checkpointsDir).filter(f => f.startsWith('auto-')).sort();
-              while (autos.length > 19) {
-                const oldest = autos.shift();
-                if (oldest) { try { unlinkSync(join(checkpointsDir, oldest)); } catch { /* ignore */ } }
-              }
-            } catch { /* ignore */ }
-            const ckptId = `auto-${Date.now()}`;
-            const label = `Auto · ${new Date().toLocaleTimeString()}`;
-            writeFileSync(join(checkpointsDir, `${ckptId}.json`), JSON.stringify({ id: ckptId, label, messages, createdAt: new Date().toISOString() }, null, 2));
-          }
+      const store = (eng.sessionManager as any).store;
+      if (store?.createCheckpoint) {
+        const sid = (agent as unknown as { sessionId: string }).sessionId;
+        if (sid) {
+          const label = `Auto · ${new Date().toLocaleTimeString()}`;
+          store.createCheckpoint(sid, label);
         }
       }
     } catch { /* checkpoint failure shouldn't block the message */ }
@@ -930,18 +896,14 @@ app.post('/api/chat/message', async (req, res) => {
     res.json({ ok: true, message });
   } catch (e: unknown) {
     getLogger().error('CHAT_MESSAGE', e instanceof Error ? e : String(e));
-    // On error, make sure the user message was still persisted
+    // On error, make sure the user message was still persisted to DB
     try {
       const eng = getEngine();
       const agent = eng.agent;
       if (agent) {
         const sid = (agent as unknown as { sessionId: string }).sessionId;
         if (sid) {
-          // The failsafe above already persisted it, but ensure it's there
-          const dir = join(getDataDir(), 'sessions', sid);
-          if (!existsSync(join(dir, 'conversation.json'))) {
-            persistMessageDirect(sid, 'user', (req.body as any).text || '');
-          }
+          persistMessageDirect(sid, 'user', (req.body as any).text || '');
         }
       }
     } catch { /* best-effort */ }
@@ -1229,22 +1191,17 @@ app.post('/api/mode/hyperdrive', (_req, res) => {
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     const enabled = agent.toggleHyperdriveMode();
-    // Sync sessionSettings.mode so subsequent chat messages don't re-apply Plan mode
     if (enabled) {
       _preHyperdriveMode = sessionSettings.mode;
       sessionSettings.mode = 'agent';
     } else {
       sessionSettings.mode = _preHyperdriveMode;
     }
-    // Persist hyperdrive mode change to conversation
+    // Persist hyperdrive state to DB (mode unchanged — hyperdrive is an overlay)
     try {
       const sess = eng.sessionManager.getActiveSession();
       if (sess) {
-        const prev = enabled ? _preHyperdriveMode : 'hyperdrive' as const;
-        const current = enabled ? 'hyperdrive' as const : sessionSettings.mode;
-        const fmt = (m: 'agent' | 'plan' | 'hyperdrive') => m === 'hyperdrive' ? 'Hyperdrive' : m === 'agent' ? 'Agent' : 'Plan';
-        const announcement = `[MODE_CHANGE] ${fmt(prev)} → ${fmt(current)}`;
-        persistMessageDirect(sess.id, 'assistant', announcement);
+        eng.sessionManager.updateSession({ hyperdrive: enabled } as any);
       }
     } catch { /* best-effort */ }
     res.json({ ok: true, hyperdriveMode: enabled, mode: sessionSettings.mode });
@@ -1283,10 +1240,9 @@ app.get('/api/sessions', (_req, res) => {
   const sessions = all.filter(s => s.id !== '__channel__');
   for (const s of sessions) {
     try {
-      const convPath = join(getSessionDir(s.id as string), 'conversation.json');
-      if (existsSync(convPath)) {
-        const data = JSON.parse(readFileSync(convPath, 'utf-8'));
-        s['messageCount'] = Array.isArray(data) ? data.length : 0;
+      const store = (eng.sessionManager as any).store;
+      if (store?.getMessageCount) {
+        s['messageCount'] = store.getMessageCount(s.id as string) as number;
       } else {
         s['messageCount'] = 0;
       }
@@ -1295,7 +1251,7 @@ app.get('/api/sessions', (_req, res) => {
   res.json(sessions);
 });
 
-// Cross-session full-text search. Scans each session's conversation.json.
+// Cross-session full-text search. Queries the messages table via SQLite.
 app.get('/api/sessions/search', (req, res) => {
   try {
     const q = String(req.query['q'] ?? '').trim();
@@ -1303,14 +1259,19 @@ app.get('/api/sessions/search', (req, res) => {
     const needle = q.toLowerCase();
     const eng = getEngine();
     const sessions = eng.sessionManager.listSessions(200);
+    const store = (eng.sessionManager as any).store;
     const results: Array<{ sessionId: string; title?: string; createdAt?: string; snippet: string; matchCount: number }> = [];
     for (const s of sessions) {
       const sid = (s as unknown as { id?: string; sessionId?: string }).id ?? (s as unknown as { sessionId?: string }).sessionId;
       if (!sid || sid === '__channel__') continue;
-      const conv = join(getSessionDir(sid), 'conversation.json');
-      if (!existsSync(conv)) continue;
+
       let messages: Array<{ role?: string; content?: string }> = [];
-      try { messages = JSON.parse(readFileSync(conv, 'utf-8')) as Array<{ role?: string; content?: string }>; } catch { continue; }
+      try {
+        if (store?.getMessages) {
+          messages = store.getMessages(sid) as Array<{ role?: string; content?: string }>;
+        }
+      } catch { continue; }
+
       let matchCount = 0;
       let snippet = '';
       for (const m of messages) {
@@ -1362,28 +1323,28 @@ app.post('/api/config/reload', (_req, res) => {
 app.get('/api/sessions/:id/export', (req, res) => {
   try {
     const sid = req.params['id']!;
+    const eng = getEngine();
     const dir = getSessionDir(sid);
     if (!existsSync(dir)) { res.status(404).json({ error: 'not-found' }); return; }
     let messages: unknown[] = [];
-    try { messages = JSON.parse(readFileSync(join(dir, 'conversation.json'), 'utf-8')) as unknown[]; } catch { /* empty */ }
+    try {
+      const store = (eng.sessionManager as any).store;
+      if (store?.getMessages) {
+        messages = store.getMessages(sid) as unknown[];
+      }
+    } catch { /* empty */ }
     const ctxFiles = ['context.txt', 'memories.txt', 'pending.txt', 'completed.txt', 'suggestions.txt'];
     const contextFiles: Record<string, string> = {};
     for (const f of ctxFiles) {
       try { contextFiles[f.replace('.txt', '')] = readFileSync(join(dir, f), 'utf-8'); } catch { /* skip */ }
     }
-    const cpDir = join(dir, 'checkpoints');
     const checkpoints: Array<{ id: string; label?: string; createdAt?: string; messageCount?: number }> = [];
-    if (existsSync(cpDir)) {
-      try {
-        const files = readdirSync(cpDir).filter((f: string) => f.endsWith('.json'));
-        for (const f of files) {
-          try {
-            const cp = JSON.parse(readFileSync(join(cpDir, f), 'utf-8')) as { id?: string; label?: string; createdAt?: string; messages?: unknown[] };
-            checkpoints.push({ id: cp.id ?? f.replace('.json', ''), label: cp.label, createdAt: cp.createdAt, messageCount: Array.isArray(cp.messages) ? cp.messages.length : 0 });
-          } catch { /* skip bad cp */ }
-        }
-      } catch { /* skip */ }
-    }
+    try {
+      const store = (eng.sessionManager as any).store;
+      if (store?.listCheckpoints) {
+        checkpoints.push(...(store.listCheckpoints(sid) as Array<{ id: string; label: string; createdAt: string; messageCount: number }>));
+      }
+    } catch { /* skip */ }
     const exportData = {
       sessionId: sid,
       exportedAt: new Date().toISOString(),
@@ -1461,6 +1422,15 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     // Restore saved session mode (defaults to 'plan')
     sessionSettings.mode = session.mode || 'plan';
     createAgent(undefined, session);
+    // Restore hyperdrive state from DB
+    if (session.hyperdrive) {
+      try {
+        const agent = (eng as unknown as { agent?: { hyperdriveMode?: boolean; toggleHyperdriveMode?: () => boolean } }).agent;
+        if (agent?.toggleHyperdriveMode && !agent.hyperdriveMode) {
+          agent.toggleHyperdriveMode();
+        }
+      } catch { /* best-effort */ }
+    }
     ensureSubscribed();
     // Restore crew states from session store
     const crewStates = eng.sessionManager.getCrewStates();
@@ -1470,7 +1440,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
         agent.setCrewEnabled(state.crewId, state.enabled);
       }
     }
-    // Read messages from SQLite (primary), fallback to conversation.json
+    // Read messages from DB
     let messages: Array<Record<string, unknown>> = [];
     let parts: Array<Record<string, unknown>> = [];
     try {
@@ -1483,13 +1453,6 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       }
     } catch { /* fall through */ }
 
-    if (messages.length === 0) {
-      const convPath = join(getSessionDir(req.params['id']!), 'conversation.json');
-      try {
-        const raw = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
-        messages = raw.filter((m: any) => m.role !== 'part');
-      } catch { messages = []; }
-    }
     res.json({ session, messages, parts, crewStates, scopePath: session.scopePath });
   } catch (e: unknown) {
     getLogger().error('RESTORE_SESSION', e instanceof Error ? e : String(e));
@@ -1601,16 +1564,13 @@ app.post('/api/sessions/:id/compact', async (req, res) => {
 // ───── Checkpoints (Message Branching) ─────
 app.post('/api/sessions/:id/checkpoint', (req, res) => {
   try {
-    const dir = getSessionDir(req.params['id']!);
-    if (!existsSync(dir)) { res.status(404).json({ error: 'session-not-found' }); return; }
+    const eng = getEngine();
+    const store = (eng.sessionManager as any).store;
+    if (!store?.createCheckpoint) { res.status(500).json({ error: 'store-unavailable' }); return; }
     const label = (req.body as Record<string, string>)['label'] || new Date().toLocaleTimeString();
-    const convPath = join(dir, 'conversation.json');
-    const messages = existsSync(convPath) ? JSON.parse(readFileSync(convPath, 'utf-8') || '[]') : [];
-    const checkpointId = `ckpt-${Date.now()}`;
-    const checkpointsDir = join(dir, 'checkpoints');
-    if (!existsSync(checkpointsDir)) mkdirSync(checkpointsDir, { recursive: true });
-    writeFileSync(join(checkpointsDir, `${checkpointId}.json`), JSON.stringify({ id: checkpointId, label, messages, createdAt: new Date().toISOString() }, null, 2));
-    res.json({ checkpointId, label });
+    const result = store.createCheckpoint(req.params['id']!, label);
+    if (!result) { res.status(400).json({ error: 'no-messages' }); return; }
+    res.json({ checkpointId: result.id, label });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'checkpoint-failed' });
   }
@@ -1618,14 +1578,10 @@ app.post('/api/sessions/:id/checkpoint', (req, res) => {
 
 app.get('/api/sessions/:id/checkpoints', (req, res) => {
   try {
-    const dir = getSessionDir(req.params['id']!);
-    const checkpointsDir = join(dir, 'checkpoints');
-    if (!existsSync(checkpointsDir)) { res.json({ checkpoints: [] }); return; }
-    const files = readdirSync(checkpointsDir).filter((f) => f.endsWith('.json'));
-    const checkpoints = files.map((f) => {
-      const data = JSON.parse(readFileSync(join(checkpointsDir, f), 'utf-8'));
-      return { id: data.id, label: data.label, createdAt: data.createdAt, messageCount: (data.messages || []).length };
-    }).filter(c => c.messageCount > 0).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const eng = getEngine();
+    const store = (eng.sessionManager as any).store;
+    if (!store?.listCheckpoints) { res.json({ checkpoints: [] }); return; }
+    const checkpoints = store.listCheckpoints(req.params['id']!);
     res.json({ checkpoints });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'list-failed' });
@@ -1634,15 +1590,12 @@ app.get('/api/sessions/:id/checkpoints', (req, res) => {
 
 app.post('/api/sessions/:id/checkpoint/:checkpointId/restore', (req, res) => {
   try {
-    const dir = getSessionDir(req.params['id']!);
-    const checkpointId = req.params['checkpointId']!;
-    const checkpointPath = join(dir, 'checkpoints', `${checkpointId}.json`);
-    if (!existsSync(checkpointPath)) { res.status(404).json({ error: 'checkpoint-not-found' }); return; }
-    const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf-8'));
-    // Write messages back to conversation.json
-    const convPath = join(dir, 'conversation.json');
-    atomicWriteFileSync(convPath, JSON.stringify(checkpoint.messages || [], null, 2));
-    res.json({ ok: true, label: checkpoint.label, messageCount: (checkpoint.messages || []).length });
+    const eng = getEngine();
+    const store = (eng.sessionManager as any).store;
+    if (!store?.restoreCheckpoint) { res.status(500).json({ error: 'store-unavailable' }); return; }
+    const ok = store.restoreCheckpoint(req.params['id']!, req.params['checkpointId']!);
+    if (!ok) { res.status(404).json({ error: 'checkpoint-not-found' }); return; }
+    res.json({ ok: true });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
   }
@@ -1650,14 +1603,44 @@ app.post('/api/sessions/:id/checkpoint/:checkpointId/restore', (req, res) => {
 
 app.delete('/api/sessions/:id/checkpoint/:checkpointId', (req, res) => {
   try {
-    const dir = getSessionDir(req.params['id']!);
-    const checkpointId = req.params['checkpointId']!;
-    const checkpointPath = join(dir, 'checkpoints', `${checkpointId}.json`);
-    if (!existsSync(checkpointPath)) { res.status(404).json({ error: 'checkpoint-not-found' }); return; }
-    rmSync(checkpointPath);
+    const eng = getEngine();
+    const store = (eng.sessionManager as any).store;
+    if (!store?.deleteCheckpoint) { res.status(500).json({ error: 'store-unavailable' }); return; }
+    const ok = store.deleteCheckpoint(req.params['id']!, req.params['checkpointId']!);
+    if (!ok) { res.status(404).json({ error: 'checkpoint-not-found' }); return; }
     res.json({ ok: true });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'delete-failed' });
+  }
+});
+
+// ───── Session Compaction ─────
+app.post('/api/sessions/:id/compact', async (req, res) => {
+  try {
+    const dir = getSessionDir(req.params['id']!);
+    const contextPath = join(dir, 'context.txt');
+    let existingContent = '';
+    try { existingContent = readFileSync(contextPath, 'utf-8'); } catch { /* no context */ }
+
+    // Ask the agent to summarize current context
+    let summary = '';
+    const eng = getEngine();
+    if (eng.agent) {
+      try {
+        summary = await (eng.agent as any).compactContext?.() || '';
+      } catch { /* agent may not support compaction */ }
+    }
+
+    if (!summary && existingContent) {
+      summary = `[session compacted at ${new Date().toISOString()}]\n\nOriginal content (${existingContent.length} chars) preserved.`;
+    }
+    if (summary) {
+      writeFileSync(contextPath, summary, 'utf-8');
+    }
+
+    res.json({ ok: true, summary });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'compact-failed' });
   }
 });
 

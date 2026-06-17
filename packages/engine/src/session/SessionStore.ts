@@ -15,7 +15,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 10;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
@@ -299,6 +299,37 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
       db.exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'plan'`);
     },
   },
+  {
+    version: 10,
+    description: 'Add parent_id column to sessions for child session model',
+    run: (db: any) => {
+      try { db.exec(`ALTER TABLE sessions ADD COLUMN parent_id TEXT REFERENCES sessions(id)`); } catch { /* column may already exist */ }
+    },
+  },
+  {
+    version: 11,
+    description: 'Add hyperdrive column to sessions for persisting hyperdrive state',
+    run: (db: any) => {
+      try { db.exec(`ALTER TABLE sessions ADD COLUMN hyperdrive INTEGER NOT NULL DEFAULT 0`); } catch { /* column may already exist */ }
+    },
+  },
+  {
+    version: 12,
+    description: 'Add checkpoints table for DB-backed session snapshots',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS checkpoints (
+          id          TEXT PRIMARY KEY,
+          session_id  TEXT NOT NULL,
+          label       TEXT NOT NULL,
+          messages    TEXT NOT NULL,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (session_id) REFERENCES sessions(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON checkpoints(session_id);
+      `);
+    },
+  },
 ];
 
 export class SessionStore {
@@ -314,6 +345,7 @@ export class SessionStore {
   private memSessionEvents: Map<string, Array<SessionEvent>> = new Map();
   private memPermissionRules: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCrewFeedback: Map<string, Array<Record<string, unknown>>> = new Map();
+  private memCheckpoints: Map<string, Array<Record<string, unknown>>> = new Map();
   private dek: Buffer | null = null;
   private sessionsDir: string | null = null;
   private filesystemRecovered = 0;
@@ -612,6 +644,7 @@ export class SessionStore {
     tokenAvailable?: number;
     scopePath?: string;
     mode?: string;
+    hyperdrive?: boolean;
     createdAt: string;
     updatedAt: string;
   }): void {
@@ -628,6 +661,7 @@ export class SessionStore {
         tokenAvailable: session.tokenAvailable ?? 128000,
         scopePath: session.scopePath!,
         mode: session.mode ?? 'plan',
+        hyperdrive: session.hyperdrive ? 1 : 0,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       });
@@ -635,8 +669,8 @@ export class SessionStore {
     }
 
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, mode, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, parent_id, token_used, token_available, scope_path, mode, hyperdrive, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       session.id,
@@ -645,10 +679,12 @@ export class SessionStore {
       session.provider,
       session.model,
       session.crewId ?? null,
+      session.parentId ?? null,
       session.tokensUsed ?? 0,
       session.tokenAvailable ?? 128000,
       session.scopePath ?? process.cwd(),
       session.mode ?? 'plan',
+      session.hyperdrive ? 1 : 0,
       session.createdAt,
       session.updatedAt,
     );
@@ -670,9 +706,11 @@ export class SessionStore {
       provider: row['provider_id'],
       model: row['model_id'],
       crewId: row['crew_id'],
+      parentId: row['parent_id'] ?? null,
       tokensUsed: row['token_used'],
       scopePath: row['scope_path'],
       mode: row['mode'] ?? 'plan',
+      hyperdrive: !!row['hyperdrive'],
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     };
@@ -700,6 +738,7 @@ export class SessionStore {
       model: 'model_id',
       crewId: 'crew_id',
       mode: 'mode',
+      hyperdrive: 'hyperdrive',
       tokensUsed: 'token_used',
       scopePath: 'scope_path',
       updatedAt: 'updated_at',
@@ -740,8 +779,11 @@ export class SessionStore {
       provider: row['provider_id'],
       model: row['model_id'],
       crewId: row['crew_id'],
+      parentId: row['parent_id'] ?? null,
       tokensUsed: row['token_used'],
       scopePath: row['scope_path'],
+      mode: row['mode'] ?? 'plan',
+      hyperdrive: !!row['hyperdrive'],
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     }));
@@ -920,6 +962,35 @@ export class SessionStore {
     this.db.prepare('DELETE FROM message_parts WHERE session_id = ?').run(sessionId);
   }
 
+  /**
+   * Delete the last N messages with specified roles (user, assistant).
+   * Used for retry logic to remove the last exchange without touching whole session.
+   */
+  deleteLastMessages(sessionId: string, count: number, roles: string[]): void {
+    if (this.memMode) {
+      const msgs = this.memMessages.get(sessionId) ?? [];
+      let removed = 0;
+      for (let i = msgs.length - 1; i >= 0 && removed < count; i--) {
+        if (roles.includes(msgs[i]?.role as string)) {
+          msgs.splice(i, 1);
+          removed++;
+        }
+      }
+      this.memMessages.set(sessionId, msgs);
+      return;
+    }
+
+    const stmt = this.db.prepare(
+      `DELETE FROM messages WHERE id IN (
+        SELECT id FROM messages
+        WHERE session_id = ? AND role IN (${roles.map(() => '?').join(',')})
+        ORDER BY created_at DESC
+        LIMIT ?
+      )`,
+    );
+    stmt.run(sessionId, ...roles, count);
+  }
+
   getMessageCount(sessionId: string): number {
     if (this.memMode) {
       return (this.memMessages.get(sessionId) ?? []).length;
@@ -928,6 +999,92 @@ export class SessionStore {
     const stmt = this.db.prepare('SELECT COUNT(*) as count FROM messages WHERE session_id = ?');
     const row = stmt.get(sessionId) as { count: number } | undefined;
     return row?.count ?? 0;
+  }
+
+  createCheckpoint(sessionId: string, label: string): { id: string } | null {
+    const msgs = this.getMessages(sessionId);
+    if (!msgs || msgs.length === 0) return null;
+    const id = crypto.randomUUID();
+    const messagesJson = JSON.stringify(msgs);
+
+    if (this.memMode) {
+      const arr = this.memCheckpoints.get(sessionId) ?? [];
+      arr.push({ id, session_id: sessionId, label, messages: messagesJson, created_at: new Date().toISOString() });
+      this.memCheckpoints.set(sessionId, arr);
+      return { id };
+    }
+
+    // Keep only 20 most recent checkpoints per session
+    this.db.prepare(`
+      DELETE FROM checkpoints WHERE id IN (
+        SELECT id FROM checkpoints WHERE session_id = ?
+        ORDER BY created_at ASC
+        LIMIT MAX(0, (SELECT COUNT(*) FROM checkpoints WHERE session_id = ?) - 19)
+      )
+    `).run(sessionId, sessionId);
+
+    this.db.prepare(`
+      INSERT INTO checkpoints (id, session_id, label, messages, created_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+    `).run(id, sessionId, label, messagesJson);
+    return { id };
+  }
+
+  listCheckpoints(sessionId: string): Array<{ id: string; label: string; createdAt: string; messageCount: number }> {
+    if (this.memMode) {
+      const arr = this.memCheckpoints.get(sessionId) ?? [];
+      return arr.map((c: any) => ({ id: c.id, label: c.label, createdAt: c.created_at, messageCount: JSON.parse(c.messages as string).length }));
+    }
+
+    const rows = this.db.prepare('SELECT id, label, messages, created_at FROM checkpoints WHERE session_id = ? ORDER BY created_at DESC').all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ id: r['id'] as string, label: r['label'] as string, createdAt: r['created_at'] as string, messageCount: JSON.parse(r['messages'] as string).length }));
+  }
+
+  getCheckpoint(sessionId: string, checkpointId: string): Array<Record<string, unknown>> | null {
+    if (this.memMode) {
+      const arr = this.memCheckpoints.get(sessionId) ?? [];
+      const c = arr.find((c: any) => c.id === checkpointId);
+      if (!c) return null;
+      return JSON.parse(c.messages as string);
+    }
+
+    const row = this.db.prepare('SELECT messages FROM checkpoints WHERE id = ? AND session_id = ?').get(checkpointId, sessionId) as { messages: string } | undefined;
+    if (!row) return null;
+    return JSON.parse(row.messages);
+  }
+
+  restoreCheckpoint(sessionId: string, checkpointId: string): boolean {
+    const msgs = this.getCheckpoint(sessionId, checkpointId);
+    if (!msgs) return false;
+
+    // Clear existing messages
+    this.deleteMessages(sessionId);
+
+    // Restore checkpoint messages
+    for (const msg of msgs) {
+      if (msg['role'] === 'part') continue;
+      this.insertMessage({
+        sessionId,
+        role: msg['role'] as string || 'system',
+        content: msg['content'] as string || '',
+        toolCalls: msg['tool_calls'] || undefined,
+        tokenCount: msg['token_count'] as number || undefined,
+      });
+    }
+    return true;
+  }
+
+  deleteCheckpoint(sessionId: string, checkpointId: string): boolean {
+    if (this.memMode) {
+      const arr = this.memCheckpoints.get(sessionId) ?? [];
+      const idx = arr.findIndex((c: any) => c.id === checkpointId);
+      if (idx === -1) return false;
+      arr.splice(idx, 1);
+      return true;
+    }
+
+    const result = this.db.prepare('DELETE FROM checkpoints WHERE id = ? AND session_id = ?').run(checkpointId, sessionId);
+    return result.changes > 0;
   }
 
   addTokenLog(log: {

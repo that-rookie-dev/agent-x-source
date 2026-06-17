@@ -10,6 +10,7 @@ import { SmartSubAgent } from './SmartSubAgent.js';
 import { SubAgentCache } from './SubAgentCache.js';
 import { Fiber } from '../concurrency/Fiber.js';
 import { Scope } from '../concurrency/Scope.js';
+import { Deferred } from '../concurrency/Deferred.js';
 import type { SubAgentType } from './subagent-types.js';
 import { SUBAGENT_TYPES } from './subagent-types.js';
 
@@ -35,17 +36,21 @@ export interface SubAgentTask {
 
 export class SubAgentManager {
   private agents: Map<string, SubAgentTask> = new Map();
+  private completedAgents: Map<string, SubAgentTask> = new Map();
   private eventBus: AgentEventBus;
   private provider: ProviderInterface | null = null;
   private config: AgentXConfig | null = null;
   private systemPrompt: string = '';
-  private sandboxEnabled = false;
+  private sandboxEnabled = true;
   private tempDirs: Set<string> = new Set();
   private parentAgent: Agent | null = null;
   private cache: SubAgentCache = new SubAgentCache();
   private subAgentTypes = SUBAGENT_TYPES;
   private systemPromptHash: string = '';
   private scope: Scope = new Scope();
+  private runningCount = 0;
+  private idleDeferred: Deferred<void> | null = null;
+  private taskCompletions: Map<string, Deferred<void>> = new Map();
 
   constructor(eventBus: AgentEventBus) {
     this.eventBus = eventBus;
@@ -142,7 +147,7 @@ export class SubAgentManager {
     }
 
     // Enforce concurrent sub-agent limit
-    const runningCount = Array.from(this.agents.values()).filter((a) => a.status === 'running' || a.status === 'pending').length;
+    const runningCount = this.runningCount;
     if (runningCount >= maxConcurrent) {
       const task: SubAgentTask = {
         id: generateId(),
@@ -170,6 +175,9 @@ export class SubAgentManager {
     };
 
     this.agents.set(task.id, task);
+    this.runningCount++;
+    this.taskCompletions.set(task.id, new Deferred<void>());
+
     this.eventBus.emit({
       type: 'agent_spawned',
       agentId: task.id,
@@ -190,105 +198,115 @@ export class SubAgentManager {
    * Execute a sub-agent task — uses SmartSubAgent if tools are specified, otherwise raw LLM call.
    */
   private async execute(task: SubAgentTask): Promise<void> {
-    task.status = 'running';
-    task.startTime = Date.now();
-    const startMemory = process.memoryUsage().heapUsed;
-    
-    this.eventBus.emit({
-      type: 'agent_progress',
-      agentId: task.id,
-      status: 'running',
-    } as EngineEvent);
+    // Acquire per-session serial lock so sub-agents don't interleave with each other
+    // or with the parent agent's tool execution
+    const runFn = async () => {
+      task.status = 'running';
+      task.startTime = Date.now();
+      const startMemory = process.memoryUsage().heapUsed;
 
-    try {
-      // Use SmartSubAgent if tools are specified and parent agent is available
-      if (task.tools.length > 0 && this.parentAgent) {
-        const smartAgent = new SmartSubAgent({
-          parentAgent: this.parentAgent,
-          instruction: task.instruction,
-          tools: task.tools,
-          timeout: task.timeout,
-          sessionId: task.id,
-        });
+      this.eventBus.emit({
+        type: 'agent_progress',
+        agentId: task.id,
+        status: 'running',
+      } as EngineEvent);
 
-        // Set up timeout
-        const timeoutId = setTimeout(() => {
-          task.abortController?.abort();
-        }, task.timeout);
+      try {
+        // Use SmartSubAgent if tools are specified and parent agent is available
+        if (task.tools.length > 0 && this.parentAgent) {
+          const smartAgent = new SmartSubAgent({
+            parentAgent: this.parentAgent,
+            instruction: task.instruction,
+            tools: task.tools,
+            timeout: task.timeout,
+            sessionId: task.id,
+          });
 
-        const result = await smartAgent.execute();
-        clearTimeout(timeoutId);
+          // Set up timeout
+          const timeoutId = setTimeout(() => {
+            task.abortController?.abort();
+          }, task.timeout);
 
-        // Track resource usage
-        const endMemory = process.memoryUsage().heapUsed;
-        task.resourceUsage = {
-          cpuTime: result.elapsed,
-          memoryPeak: Math.max(startMemory, endMemory),
-          tokenUsage: result.tokenUsage,
-        };
+          const result = await smartAgent.execute();
+          clearTimeout(timeoutId);
 
-        if (task.abortController?.signal.aborted && task.status === 'running') {
-          this.fail(task.id, 'Timed out');
-        } else if (result.success) {
-          this.complete(task.id, result.output);
+          // Track resource usage
+          const endMemory = process.memoryUsage().heapUsed;
+          task.resourceUsage = {
+            cpuTime: result.elapsed,
+            memoryPeak: Math.max(startMemory, endMemory),
+            tokenUsage: result.tokenUsage,
+          };
+
+          if (task.abortController?.signal.aborted && task.status === 'running') {
+            this.fail(task.id, 'Timed out');
+          } else if (result.success) {
+            this.complete(task.id, result.output);
+          } else {
+            this.fail(task.id, result.output);
+          }
         } else {
-          this.fail(task.id, result.output);
-        }
-      } else {
-        // Fallback to raw LLM call (no tools)
-        if (!this.provider || !this.config) {
-          this.fail(task.id, 'SubAgent not configured — no provider attached');
-          return;
-        }
+          // Fallback to raw LLM call (no tools)
+          if (!this.provider || !this.config) {
+            this.fail(task.id, 'SubAgent not configured — no provider attached');
+            return;
+          }
 
-        const messages: CompletionMessage[] = [];
-        let systemContent = this.systemPrompt;
-        if (task.workDir) {
-          systemContent += `\n\nYou are running in an isolated workspace at: ${task.workDir}\nAll file operations are scoped to this directory.`;
-        }
-        if (systemContent) {
-          messages.push({ role: 'system', content: systemContent });
-        }
-        messages.push({ role: 'user', content: task.instruction });
+          const messages: CompletionMessage[] = [];
+          let systemContent = this.systemPrompt;
+          if (task.workDir) {
+            systemContent += `\n\nYou are running in an isolated workspace at: ${task.workDir}\nAll file operations are scoped to this directory.`;
+          }
+          if (systemContent) {
+            messages.push({ role: 'system', content: systemContent });
+          }
+          messages.push({ role: 'user', content: task.instruction });
 
-        const request = {
-          messages,
-          model: this.config.provider.activeModel,
-          stream: true,
-          maxTokens: 4096,
-        };
+          const request = {
+            messages,
+            model: this.config.provider.activeModel,
+            stream: true,
+            maxTokens: 4096,
+          };
 
-        // Set up timeout
-        const timeoutId = setTimeout(() => {
-          task.abortController?.abort();
-        }, task.timeout);
+          // Set up timeout
+          const timeoutId = setTimeout(() => {
+            task.abortController?.abort();
+          }, task.timeout);
 
-        let result = '';
-        const stream = this.provider.complete(request);
-        for await (const chunk of stream) {
-          if (task.abortController?.signal.aborted) break;
-          if (chunk.type === 'text_delta' && chunk.content) {
-            result += chunk.content;
+          let result = '';
+          const stream = this.provider.complete(request);
+          for await (const chunk of stream) {
+            if (task.abortController?.signal.aborted) break;
+            if (chunk.type === 'text_delta' && chunk.content) {
+              result += chunk.content;
+            }
+          }
+          clearTimeout(timeoutId);
+
+          // Track resource usage
+          const endMemory = process.memoryUsage().heapUsed;
+          const elapsed = Date.now() - (task.startTime ?? Date.now());
+          task.resourceUsage = {
+            cpuTime: elapsed,
+            memoryPeak: Math.max(startMemory, endMemory),
+          };
+
+          if (task.abortController?.signal.aborted && task.status === 'running') {
+            this.fail(task.id, 'Timed out');
+          } else {
+            this.complete(task.id, result);
           }
         }
-        clearTimeout(timeoutId);
-
-        // Track resource usage
-        const endMemory = process.memoryUsage().heapUsed;
-        const elapsed = Date.now() - (task.startTime ?? Date.now());
-        task.resourceUsage = {
-          cpuTime: elapsed,
-          memoryPeak: Math.max(startMemory, endMemory),
-        };
-
-        if (task.abortController?.signal.aborted && task.status === 'running') {
-          this.fail(task.id, 'Timed out');
-        } else {
-          this.complete(task.id, result);
-        }
+      } catch (error) {
+        this.fail(task.id, error instanceof Error ? error.message : 'Sub-agent execution failed');
       }
-    } catch (error) {
-      this.fail(task.id, error instanceof Error ? error.message : 'Sub-agent execution failed');
+    };
+
+    if (this.parentAgent) {
+      await this.parentAgent.serialLock.run(runFn);
+    } else {
+      await runFn();
     }
   }
 
@@ -321,8 +339,7 @@ export class SubAgentManager {
         summary: result.slice(0, 200),
         elapsed,
       } as EngineEvent);
-      // Remove from active agents to prevent memory growth
-      this.agents.delete(agentId);
+      this.finalizeTask(agentId);
     }
   }
 
@@ -339,8 +356,29 @@ export class SubAgentManager {
         summary: `Failed: ${error}`,
         elapsed: Date.now() - (task.startTime ?? Date.now()),
       } as EngineEvent);
-      // Remove from active agents to prevent memory growth
-      this.agents.delete(agentId);
+      this.finalizeTask(agentId);
+    }
+  }
+
+  private finalizeTask(agentId: string): void {
+    const task = this.agents.get(agentId);
+    if (!task) return;
+    // Move to completed map so results stay accessible
+    this.completedAgents.set(agentId, task);
+    this.agents.delete(agentId);
+    this.runningCount = Math.max(0, this.runningCount - 1);
+
+    // Resolve per-task completion deferred
+    const taskDef = this.taskCompletions.get(agentId);
+    if (taskDef) {
+      taskDef.resolve();
+      this.taskCompletions.delete(agentId);
+    }
+
+    // If all agents are done, resolve idle deferred
+    if (this.runningCount === 0 && this.idleDeferred) {
+      this.idleDeferred.resolve();
+      this.idleDeferred = null;
     }
   }
 
@@ -397,28 +435,40 @@ export class SubAgentManager {
     return [...this.agents.values()];
   }
 
+  getAllIncludingCompleted(): SubAgentTask[] {
+    return [...this.agents.values(), ...this.completedAgents.values()];
+  }
+
   /**
-   * Wait for all currently running agents to finish.
+   * Wait for all currently running agents to finish (event-driven, no polling).
    */
-  awaitAll(): Promise<SubAgentTask[]> {
-    return new Promise((resolve) => {
-      const check = () => {
-        const running = this.getRunning();
-        if (running.length === 0) {
-          resolve(this.getAll());
-        } else {
-          setTimeout(check, 100);
-        }
-      };
-      check();
-    });
+  async awaitAll(): Promise<SubAgentTask[]> {
+    if (this.runningCount === 0) return this.getAllIncludingCompleted();
+    if (!this.idleDeferred) {
+      this.idleDeferred = new Deferred<void>();
+    }
+    await this.idleDeferred.promise;
+    return this.getAllIncludingCompleted();
+  }
+
+  /**
+   * Wait for a specific task to complete (event-driven).
+   */
+  async waitFor(agentId: string): Promise<SubAgentTask | undefined> {
+    const existing = this.completedAgents.get(agentId) || this.agents.get(agentId);
+    if (!existing) return undefined;
+    if (existing.status !== 'pending' && existing.status !== 'running') return existing;
+    const def = this.taskCompletions.get(agentId);
+    if (!def) return existing;
+    await def.promise;
+    return this.completedAgents.get(agentId) || this.agents.get(agentId);
   }
 
   /**
    * Get completed tasks (with results).
    */
   getCompleted(): SubAgentTask[] {
-    return [...this.agents.values()].filter((t) => t.status === 'completed');
+    return [...this.completedAgents.values()].filter((t) => t.status === 'completed');
   }
 
   /**

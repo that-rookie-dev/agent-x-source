@@ -7,6 +7,7 @@ export interface Session {
   modelId: string;
   scopePath: string;
   mode: 'agent' | 'plan';
+  hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;
   status: SessionStatus;

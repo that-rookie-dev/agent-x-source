@@ -249,6 +249,15 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     onPart,
   });
 
+  // Apply session mode immediately so the agent starts in the correct mode
+  if (session.mode === 'plan') {
+    agent.setPlanMode(true);
+  } else {
+    agent.setPlanMode(false);
+  }
+
+  agent.setSessionManager(eng.sessionManager);
+
   (agent.sauce as { crew: CrewManager }).crew = eng.crewManager;
   agent.sauce.crew.refresh();
 
@@ -306,19 +315,16 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     }
   } catch { /* best-effort */ }
 
-  // Restore recent conversation history into agent memory
-  // Limit to last 20 messages to prevent old topics from dominating new instructions
+  // Restore recent conversation history from DB into agent memory
   try {
-    const convPath = join(sessDir, 'conversation.json');
-    if (existsSync(convPath)) {
-      const raw = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
-      const userAssistant = raw.filter((m: any) => m.role === 'user' || m.role === 'assistant');
+    const store = (eng.sessionManager as any).store;
+    if (store?.getMessages) {
+      const msgs = store.getMessages(session.id) as Array<{ role: string; content: string }>;
+      const userAssistant = msgs.filter((m) => m.role === 'user' || m.role === 'assistant');
       const recent = userAssistant.slice(-20);
       for (const msg of recent) {
-        const role = msg['role'] as string;
-        const content = (msg['content'] as string) || '';
-        if (content) {
-          agent.addToHistory({ role: role as 'user' | 'assistant', content });
+        if (msg.content) {
+          agent.addToHistory({ role: msg.role as 'user' | 'assistant', content: msg.content });
         }
       }
     }

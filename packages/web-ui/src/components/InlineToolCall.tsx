@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { colors } from '../theme';
-import { getToolDisplay, extractArgs } from './tool-display';
+import { getToolDisplay } from './tool-display';
+import { ShellRender, ReadRender, EditRender, GlobRender, GrepRender, TaskRender } from './tool-renders';
 
 export interface InlineToolData {
   id: string;
@@ -19,27 +20,21 @@ function getColor(status: string): string {
   return colors.accent.green;
 }
 
-function formatResult(tool: InlineToolData): string {
-  const result = tool.result;
-  if (!result) return '';
+function getToolRenderer(tool: InlineToolData): ((props: { tool: InlineToolData }) => JSX.Element) | null {
+  const SHELL_TOOLS = new Set(['shell_exec', 'shell_exec_streaming', 'shell_background']);
+  const READ_TOOLS = new Set(['file_read']);
+  const EDIT_TOOLS = new Set(['file_write', 'file_patch', 'code_replace', 'code_insert']);
+  const GLOB_TOOLS = new Set(['glob', 'file_find']);
+  const GREP_TOOLS = new Set(['grep', 'code_grep', 'code_search']);
+  const TASK_TOOLS = new Set(['delegate_to_subagent', 'sub_agent_spawn']);
 
-  if (tool.status === 'error') return result.replace(/^error/i, '').trim();
-
-  let text = result;
-  try {
-    const parsed = JSON.parse(result);
-    if (parsed && typeof parsed === 'object') {
-      text = parsed.output || parsed.message || parsed.result || JSON.stringify(parsed, null, 2);
-    }
-  } catch {}
-  return String(text).trim();
-}
-
-function formatArgsRaw(tool: InlineToolData): string | null {
-  const parsed = extractArgs(tool.args);
-  const keys = Object.keys(parsed);
-  if (keys.length === 0) return null;
-  return JSON.stringify(parsed, null, 2);
+  if (SHELL_TOOLS.has(tool.name)) return ShellRender;
+  if (READ_TOOLS.has(tool.name)) return ReadRender;
+  if (EDIT_TOOLS.has(tool.name)) return EditRender;
+  if (GLOB_TOOLS.has(tool.name)) return GlobRender;
+  if (GREP_TOOLS.has(tool.name)) return GrepRender;
+  if (TASK_TOOLS.has(tool.name)) return TaskRender;
+  return null;
 }
 
 export function InlineToolCall({ tool }: { tool: InlineToolData }) {
@@ -47,6 +42,7 @@ export function InlineToolCall({ tool }: { tool: InlineToolData }) {
   const cc = getColor(tool.status);
   const display = getToolDisplay(tool.name, tool.args);
   const headerRef = useRef<HTMLDivElement>(null);
+  const SpecializedRender = getToolRenderer(tool);
 
   const [liveElapsed, setLiveElapsed] = useState(0);
   useEffect(() => {
@@ -63,9 +59,6 @@ export function InlineToolCall({ tool }: { tool: InlineToolData }) {
       : null;
 
   const marker = tool.status === 'running' ? '│' : tool.status === 'error' ? '✕' : '✓';
-  const details = !expanded || tool.status === 'running' ? null : (
-    <DetailsPanel tool={tool} cc={cc} formatResult={formatResult} formatArgsRaw={formatArgsRaw} />
-  );
 
   return (
     <Box sx={{
@@ -131,19 +124,20 @@ export function InlineToolCall({ tool }: { tool: InlineToolData }) {
         )}
       </Box>
 
-      {details}
+      {expanded && tool.status !== 'running' && SpecializedRender && (
+        <SpecializedRender tool={tool} />
+      )}
+
+      {expanded && tool.status !== 'running' && !SpecializedRender && (
+        <DefaultDetailsPanel tool={tool} cc={cc} />
+      )}
     </Box>
   );
 }
 
-function DetailsPanel({ tool, cc, formatResult: fmtResult, formatArgsRaw: fmtArgs }: {
-  tool: InlineToolData;
-  cc: string;
-  formatResult: (t: InlineToolData) => string;
-  formatArgsRaw: (t: InlineToolData) => string | null;
-}) {
-  const argsRaw = fmtArgs(tool);
-  const resultText = fmtResult(tool);
+function DefaultDetailsPanel({ tool, cc }: { tool: InlineToolData; cc: string }) {
+  const argsRaw = formatArgsRaw(tool);
+  const resultText = formatResult(tool);
 
   return (
     <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${cc}15` }}>
@@ -161,6 +155,30 @@ function DetailsPanel({ tool, cc, formatResult: fmtResult, formatArgsRaw: fmtArg
       )}
     </Box>
   );
+}
+
+function formatResult(tool: InlineToolData): string {
+  const result = tool.result;
+  if (!result) return '';
+
+  if (tool.status === 'error') return result.replace(/^error/i, '').trim();
+
+  let text = result;
+  try {
+    const parsed = JSON.parse(result);
+    if (parsed && typeof parsed === 'object') {
+      text = parsed.output || parsed.message || parsed.result || JSON.stringify(parsed, null, 2);
+    }
+  } catch {}
+  return String(text).trim();
+}
+
+function formatArgsRaw(tool: InlineToolData): string | null {
+  if (!tool.args) return null;
+  const parsed = typeof tool.args === 'string' ? (() => { try { return JSON.parse(tool.args) as Record<string, unknown>; } catch { return {}; } })() : tool.args;
+  const keys = Object.keys(parsed);
+  if (keys.length === 0) return null;
+  return JSON.stringify(parsed, null, 2);
 }
 
 function Label({ children }: { children: string }) {

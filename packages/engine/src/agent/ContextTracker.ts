@@ -193,29 +193,20 @@ export class ContextTracker {
   }
 
   /**
-   * Rebuild context entries and recent history from conversation.json.
-   * Call this when the user wants to refresh/rebuild the context summary.
+   * Rebuild context entries from an array of messages (from DB or in-memory).
    */
-  rebuildFromConversation(sessionId: string): number {
-    if (!this.sessionDir) return 0;
+  rebuildFromMessages(sessionId: string, messages: Array<{ role: string; content: string }>): number {
     this.clear(sessionId);
-    try {
-      const convPath = join(this.sessionDir, 'conversation.json');
-      if (!existsSync(convPath)) return 0;
-      const raw = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
-      const userAssistant = raw.filter((m: any) => m.role === 'user' || m.role === 'assistant');
-      const recent = userAssistant.slice(-50);
-      let count = 0;
-      for (const msg of recent) {
-        const role = msg['role'] as string;
-        const content = (msg['content'] as string) || '';
-        if (content) {
-          this.record(sessionId, role as 'user' | 'assistant', content);
-          count++;
-        }
+    const userAssistant = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
+    const recent = userAssistant.slice(-50);
+    let count = 0;
+    for (const msg of recent) {
+      if (msg.content) {
+        this.record(sessionId, msg.role as 'user' | 'assistant', msg.content);
+        count++;
       }
-      return count;
-    } catch { return 0; }
+    }
+    return count;
   }
 
   getAll(sessionId: string): ContextEntry[] {

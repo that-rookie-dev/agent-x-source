@@ -1,18 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'http';
-import { join } from 'node:path';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
-import { getDataDir } from '@agentx/shared';
 import { getEngine } from './engine.js';
-
-const DATA_DIR = getDataDir();
-const SESSIONS_DIR = join(DATA_DIR, 'sessions');
-
-function atomicWriteFileSync(filePath: string, content: string): void {
-  const tmpPath = filePath + '.tmp.' + Date.now();
-  writeFileSync(tmpPath, content, 'utf-8');
-  renameSync(tmpPath, filePath);
-}
 
 interface PartRecord {
   type: string;
@@ -27,34 +15,15 @@ interface PartRecord {
 }
 
 /**
- * Incrementally persist each AI SDK part event to conversation.json.
+ * Incrementally persist each AI SDK part event to SQLite.
  */
 export function persistPart(sessionId: string, part: PartRecord): void {
   if (!sessionId) return;
-
-  // Primary: SQLite (ACID, crash-safe, O(1) inserts)
   try {
     const eng = getEngine();
     const store = (eng.sessionManager as any).store;
     if (store?.insertPart) { store.insertPart(sessionId, part); }
   } catch { /* best-effort */ }
-
-  // Legacy: conversation.json (portable export, backward compatibility)
-  const dir = join(SESSIONS_DIR, sessionId);
-  if (!existsSync(dir)) {
-    try { mkdirSync(dir, { recursive: true }); } catch { return; }
-  }
-  const convPath = join(dir, 'conversation.json');
-  try {
-    let conv: any[] = [];
-    if (existsSync(convPath)) {
-      try { conv = JSON.parse(readFileSync(convPath, 'utf-8')) as any[]; } catch { conv = []; }
-    }
-    conv.push({ ...part, role: 'part' });
-    atomicWriteFileSync(convPath, JSON.stringify(conv, null, 2));
-  } catch (e) {
-    // best-effort — don't block streaming for persistence failures
-  }
 }
 interface SubAgentRecord { id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }
 interface CrewInfo { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] }
@@ -107,45 +76,10 @@ function appendContextFile(
       });
     }
   } catch { /* best-effort */ }
-
-  // Legacy: conversation.json
-  const dir = join(SESSIONS_DIR, sessionId);
-  if (!existsSync(dir)) {
-    try { mkdirSync(dir, { recursive: true }); } catch { return; }
-  }
-  const convPath = join(dir, 'conversation.json');
-  try {
-    const timestamp = new Date().toISOString();
-
-    // Note: context.txt is now structured via ContextTracker.getStructuredContext()
-    // Raw append removed to avoid overwriting the structured summary
-
-    let conv: unknown[] = [];
-    if (existsSync(convPath)) {
-      try { conv = JSON.parse(readFileSync(convPath, 'utf-8')) as unknown[]; } catch { conv = []; }
-    }
-
-    const record: Record<string, unknown> = { timestamp, role, content };
-    if (crew) record['crew'] = crew;
-    if (extra?.thinking) record['thinking'] = extra.thinking;
-    if (extra?.thinkingStartedAt != null) record['thinkingStartedAt'] = extra.thinkingStartedAt;
-    if (extra?.thinkingDoneAt != null) record['thinkingDoneAt'] = extra.thinkingDoneAt;
-    if (extra?.toolCalls && extra.toolCalls.length > 0) record['toolCalls'] = extra.toolCalls;
-    if (extra?.subAgents && extra.subAgents.length > 0) record['subAgents'] = extra.subAgents;
-    if (extra?.plan && extra.plan.length > 0) record['plan'] = extra.plan;
-    if (extra?.turnTokens != null) record['turnTokens'] = extra.turnTokens;
-    if (extra?.turnCostUsd != null) record['turnCostUsd'] = extra.turnCostUsd;
-    if (extra?.tokenCount != null) record['tokenCount'] = extra.tokenCount;
-    conv.push(record);
-    atomicWriteFileSync(convPath, JSON.stringify(conv, null, 2));
-    } catch (e) {
-      console.error('[ws] Failed to persist context file:', e instanceof Error ? e.message : e);
-    }
 }
 
 /**
- * Directly persist a message to conversation.json — independent of WebSocket subscription.
- * This is a failsafe so messages are always saved even if the event subscriber isn't active.
+ * Directly persist a message to SQLite — independent of WebSocket subscription.
  */
 export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[] }): void {
   appendContextFile(sessionId, role, content, undefined, extra);
@@ -432,35 +366,6 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
           timestamp: Date.now(),
         });
       }
-
-      // Incrementally persist tool results so they survive crashes/restarts.
-      // Previously, tool data was only writable on message_received — if the
-      // turn crashed or timed out before the final response, ALL tool records
-      // were lost. Now each completed tool is persisted immediately.
-      try {
-        const eng2 = getEngine();
-        const sess2 = eng2.sessionManager.getActiveSession();
-        const sid = sess2?.id;
-        if (sid) {
-          const convPath = join(SESSIONS_DIR, sid, 'conversation.json');
-          let conv: unknown[] = [];
-          if (existsSync(convPath)) {
-            try { conv = JSON.parse(readFileSync(convPath, 'utf-8')) as unknown[]; } catch { conv = []; }
-          }
-          // Update or create the last assistant record with current tool state
-          const lastIdx = conv.length - 1;
-          const toolCalls = Array.from(toolCallMap.values());
-          const subAgents = Array.from(subAgentMap.values());
-          if (lastIdx >= 0) {
-            const last = conv[lastIdx] as Record<string, unknown>;
-            if (last.role === 'assistant' || (last.role === 'system' && (last.content as string)?.startsWith('[tool]'))) {
-              if (toolCalls.length > 0) (last as any).toolCalls = toolCalls;
-              if (subAgents.length > 0) (last as any).subAgents = subAgents;
-              atomicWriteFileSync(convPath, JSON.stringify(conv, null, 2));
-            }
-          }
-        }
-      } catch { /* best-effort incremental persist */ }
     }
 
     // Track crew activity for real-time UI updates

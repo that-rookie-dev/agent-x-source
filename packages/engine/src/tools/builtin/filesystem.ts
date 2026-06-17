@@ -393,3 +393,95 @@ export async function archiveExtract(args: Record<string, unknown>, context: Too
     return { success: false, output: `Extraction failed: ${(error as Error).message}`, error: 'EXTRACT_ERROR' };
   }
 }
+
+/**
+ * Batch-read multiple files with per-file truncation and template detection.
+ * Returns a structured summary table so the LLM can decide which files need full reads.
+ */
+export async function fileReadBatch(
+  args: Record<string, unknown>,
+  context: ToolExecutionContext,
+): Promise<ToolResult> {
+  const paths = args['paths'] as string[] | undefined;
+  if (!paths || !Array.isArray(paths) || paths.length === 0) {
+    return { success: false, output: 'paths (string array) is required', error: 'INVALID_ARGS' };
+  }
+
+  const maxFiles = Math.min((args['maxFiles'] as number) ?? 50, 200);
+  const maxCharsPerFile = Math.min((args['maxCharsPerFile'] as number) ?? 400, 2000);
+
+  const files: Array<{
+    path: string;
+    size: number;
+    lines: number;
+    fullContent: string;
+    isTruncated: boolean;
+  }> = [];
+
+  const errors: Array<{ path: string; error: string }> = [];
+
+  for (let i = 0; i < Math.min(paths.length, maxFiles); i++) {
+    const rel = String(paths[i]);
+    try {
+      const filePath = resolve(context.scopePath, rel);
+      const content = readFileSync(filePath, 'utf-8');
+      const lines = content.split('\n');
+      files.push({
+        path: rel,
+        size: content.length,
+        lines: lines.length,
+        fullContent: content,
+        isTruncated: content.length > maxCharsPerFile,
+      });
+    } catch (err) {
+      errors.push({ path: rel, error: (err as Error).message });
+    }
+  }
+
+  const results = files.map((f) => ({
+    path: f.path,
+    size: f.size,
+    lines: f.lines,
+    isTruncated: f.isTruncated,
+    content: f.isTruncated
+      ? f.fullContent.slice(0, maxCharsPerFile) + `\n...[truncated ${f.size - maxCharsPerFile} chars]`
+      : f.fullContent,
+  }));
+
+  const truncated = results.filter((r) => r.isTruncated);
+
+  const summary = [
+    `=== FILE READ BATCH SUMMARY ===`,
+    `Total requested: ${paths.length} | Read: ${files.length} | Errors: ${errors.length}`,
+    `Truncated: ${truncated.length}`,
+    `Total chars read: ${files.reduce((s, f) => s + f.size, 0).toLocaleString()} | Total lines: ${files.reduce((s, f) => s + f.lines, 0).toLocaleString()}`,
+    ``,
+    truncated.length > 0 ? `⚠ Truncated files (${truncated.length}): use file_read to get full content of: ${truncated.map((t) => t.path).join(', ')}` : '',
+    ``,
+    `=== PER-FILE CONTENTS ===`,
+    ``,
+  ].filter(Boolean).join('\n');
+
+  const perFile = results.map((r) => {
+    return `--- ${r.path} (${r.lines} lines, ${r.size.toLocaleString()} chars${r.isTruncated ? ' [TRUNCATED]' : ''}) ---\n${r.content}`;
+  }).join('\n\n');
+
+  const errorsSection = errors.length > 0
+    ? `\n\n=== ERRORS ===\n${errors.map((e) => `  ${e.path}: ${e.error}`).join('\n')}`
+    : '';
+
+  return {
+    success: true,
+    output: summary + perFile + errorsSection,
+    metadata: {
+      totalRequested: paths.length,
+      totalRead: files.length,
+      totalErrors: errors.length,
+      truncatedCount: truncated.length,
+      totalChars: files.reduce((s, f) => s + f.size, 0),
+      totalLines: files.reduce((s, f) => s + f.lines, 0),
+      truncated: truncated.map((t) => t.path),
+      errors: errors,
+    },
+  };
+}
