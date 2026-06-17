@@ -105,6 +105,7 @@ export class SessionManager {
       modelId,
       crewId: crewId ?? null,
       scopePath: scopePath!,
+      mode: 'plan',
       tokenUsed: 0,
       tokenAvailable: contextWindow,
       createdAt: new Date().toISOString(),
@@ -245,6 +246,19 @@ export class SessionManager {
     } else {
       this.getSessionStore().addTokenLog({ id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, sessionId: opts.sessionId, providerId: opts.providerId, modelId: opts.model, inputTokens: opts.inputTokens, outputTokens: opts.outputTokens, costUsd: opts.costUsd, crewId: opts.crewId });
     }
+  }
+
+  addToolExecution(exec: {
+    id: string;
+    sessionId: string;
+    toolName: string;
+    input: string;
+    output: string;
+    success: boolean;
+    elapsedMs: number;
+  }): void {
+    if (this.usingStorageAdapter) return;
+    this.getSessionStore().addToolExecution(exec);
   }
 
   private startAutoSave(): void {

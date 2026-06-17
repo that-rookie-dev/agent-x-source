@@ -200,7 +200,8 @@ export class ConfigManager {
           const validated = agentXConfigSchema.parse(parsed);
           this.config = validated as AgentXConfig;
           // Restore backup as primary
-          writeFileSync(this.configPath, raw, 'utf-8');
+          const cfgPath = this.configPath || getConfigPath();
+      writeFileSync(cfgPath, raw, 'utf-8');
           return this.config;
         } catch (backupErr) {
           logger.error('CONFIG_BACKUP_ALSO_CORRUPT', backupErr);
@@ -212,6 +213,7 @@ export class ConfigManager {
   }
 
   save(config: AgentXConfig): void {
+    if (!this.configPath) this.configPath = getConfigPath();
     const validated = agentXConfigSchema.parse(config);
     const dir = dirname(this.configPath);
     mkdirSync(dir, { recursive: true });
@@ -284,9 +286,10 @@ export class ConfigManager {
       const parsed = JSON.parse(raw) as unknown;
       agentXConfigSchema.parse(parsed);
       // Replace current with backup
-      const dir = dirname(this.configPath);
+    const dir = dirname(this.configPath || getConfigPath());
       mkdirSync(dir, { recursive: true });
-      writeFileSync(this.configPath, raw, 'utf-8');
+      const cfgPath = this.configPath || getConfigPath();
+      writeFileSync(cfgPath, raw, 'utf-8');
       this.config = null; // Force reload on next access
       return true;
     } catch {

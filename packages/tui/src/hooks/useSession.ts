@@ -10,6 +10,7 @@ import { SessionManager } from '@agentx/engine';
 import { copyToClipboard } from '../utils/clipboard.js';
 
 interface PermissionRequest {
+  requestId: string;
   tool: string;
   path?: string;
   riskLevel: string;
@@ -39,7 +40,9 @@ interface UseSessionReturn {
   selectProvider: (providerId: ProviderId, modelId: string, contextWindow: number, apiKey?: string, baseUrl?: string) => void;
   dismissProviderPicker: () => void;
   permissionRequest: PermissionRequest | null;
-  respondToPermission: (choice: 'allow_once' | 'allow_always' | 'deny') => void;
+  pendingPermissions: PermissionRequest[];
+  respondToPermission: (requestId: string, choice: 'allow_once' | 'allow_always' | 'deny') => void;
+  respondToPermissionBatch: (choice: 'allow_once' | 'allow_always' | 'deny') => void;
   todoItems: TodoItem[];
   reasoningText: string;
   isReasoning: boolean;
@@ -102,6 +105,7 @@ export function useSession(
   const [currentModel, setCurrentModel] = useState(config.provider.activeModel);
   const [showProviderPicker, setShowProviderPicker] = useState(false);
   const [permissionRequest, setPermissionRequest] = useState<PermissionRequest | null>(null);
+  const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
   const [reasoningText, setReasoningText] = useState('');
   const [isReasoning, setIsReasoning] = useState(false);
@@ -276,9 +280,11 @@ export function useSession(
         setErrorActions(event.actions ?? []);
         setActiveTools([]);
         setPermissionRequest(null);
+        setPendingPermissions([]);
         break;
       case 'permission_required':
-        setPermissionRequest({ tool: event.tool, path: event.path, riskLevel: event.riskLevel });
+        setPendingPermissions((prev) => [...prev, { requestId: event.requestId, tool: event.tool, path: event.path, riskLevel: event.riskLevel }]);
+        setPermissionRequest({ requestId: event.requestId, tool: event.tool, path: event.path, riskLevel: event.riskLevel });
         break;
       case 'tool_executing':
         setActiveTools((prev) => [...prev, { id: `${event.tool}-${Date.now()}-${Math.random()}`, tool: event.tool, description: event.description, startTime: event.startTime }]);
@@ -1032,12 +1038,23 @@ export function useSession(
     description: c.description,
   }));
 
-  const respondToPermission = useCallback((choice: 'allow_once' | 'allow_always' | 'deny') => {
+  const respondToPermission = useCallback((requestId: string, choice: 'allow_once' | 'allow_always' | 'deny') => {
     if (daemonMode) {
-      sendWsRef.current({ type: 'permission_respond', choice });
+      sendWsRef.current({ type: 'permission_respond', requestId, choice });
     } else if (agentRef.current) {
-      agentRef.current.respondToPermission(choice);
+      agentRef.current.respondToPermission(requestId, choice);
     }
+    setPendingPermissions((prev) => prev.filter((p) => p.requestId !== requestId));
+    setPermissionRequest((prev) => prev?.requestId === requestId ? null : prev);
+  }, [daemonMode]);
+
+  const respondToPermissionBatch = useCallback((choice: 'allow_once' | 'allow_always' | 'deny') => {
+    if (daemonMode) {
+      sendWsRef.current({ type: 'permission_respond_batch', choice });
+    } else if (agentRef.current) {
+      agentRef.current.respondToPermissionBatch(choice);
+    }
+    setPendingPermissions([]);
     setPermissionRequest(null);
   }, [daemonMode]);
 
@@ -1168,7 +1185,9 @@ export function useSession(
     selectProvider,
     dismissProviderPicker,
     permissionRequest,
+    pendingPermissions,
     respondToPermission,
+    respondToPermissionBatch,
     todoItems,
     reasoningText,
     isReasoning,

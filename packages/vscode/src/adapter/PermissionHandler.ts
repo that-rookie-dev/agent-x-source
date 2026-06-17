@@ -171,9 +171,9 @@ export class PermissionHandler implements vscode.Disposable {
     }
   }
 
-  private resolveToEngine(_request: PermissionRequest, choice: PermissionChoice): void {
+  private resolveToEngine(request: PermissionRequest, choice: PermissionChoice): void {
     if (this.agent) {
-      this.agent.respondToPermission(choice);
+      this.agent.respondToPermission(request.requestId, choice);
     }
   }
 

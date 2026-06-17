@@ -15,7 +15,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 8;
+const CURRENT_SCHEMA_VERSION = 9;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     provider_id TEXT NOT NULL,
     model_id    TEXT NOT NULL,
     scope_path  TEXT NOT NULL,
+    mode        TEXT NOT NULL DEFAULT 'plan',
     token_used  INTEGER DEFAULT 0,
     token_available INTEGER NOT NULL,
     status      TEXT NOT NULL DEFAULT 'active',
@@ -291,6 +292,13 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
       `);
     },
   },
+  {
+    version: 9,
+    description: 'Add mode column to sessions table for plan/agent mode persistence',
+    run: (db: any) => {
+      db.exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'plan'`);
+    },
+  },
 ];
 
 export class SessionStore {
@@ -416,8 +424,7 @@ export class SessionStore {
               this.db.prepare('INSERT INTO _schema (version) VALUES (?)').run(m.version);
               getLogger().info('SCHEMA', `Migration v${m.version} applied: ${m.description}`);
             } catch (e) {
-              getLogger().error('SCHEMA', `Migration v${m.version} failed: ${e instanceof Error ? e.message : e}`);
-              throw e;
+              getLogger().warn('SCHEMA', `Migration v${m.version} failed (non-fatal): ${e instanceof Error ? e.message : e}`);
             }
           }
         }
@@ -462,21 +469,22 @@ export class SessionStore {
           const firstUserMsg = messages.find(m => m.role === 'user');
           const title = firstUserMsg?.content?.slice(0, 80) ?? 'Recovered session';
 
-          // Try to read scope from context.json
-          let scopePath = process.cwd();
+          let scopePath = '';
           const ctxPath = join(sessionDir, 'context.json');
           if (existsSync(ctxPath)) {
             try {
               const ctx = JSON.parse(readFileSync(ctxPath, 'utf-8'));
-              if (ctx.scopePath) scopePath = ctx.scopePath;
+              if (ctx.__scopePath__) scopePath = ctx.__scopePath__ as string;
+              else if (ctx.scopePath) scopePath = ctx.scopePath as string;
             } catch { /* ignore */ }
           }
+          if (!scopePath) continue;
 
           const now = new Date().toISOString();
 
           this.db.prepare(`
-            INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, created_at, updated_at)
-            VALUES (?, ?, 'active', '', '', NULL, 0, 128000, ?, ?, ?)
+            INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, mode, created_at, updated_at)
+            VALUES (?, ?, 'active', '', '', NULL, 0, 128000, ?, 'plan', ?, ?)
           `).run(entry.name, title, scopePath, now, now);
 
           recovered++;
@@ -541,13 +549,17 @@ export class SessionStore {
           const firstUserMsg = messages.find(m => m.role === 'user');
           const title = firstUserMsg?.content?.slice(0, 80) ?? 'Recovered session';
 
-          let scopePath = process.cwd();
+          let scopePath = '';
           const ctxPath = join(sessionDir, 'context.json');
           if (existsSync(ctxPath)) {
             try {
               const ctx = JSON.parse(readFileSync(ctxPath, 'utf-8'));
-              if (ctx.scopePath) scopePath = ctx.scopePath;
+              if (ctx.__scopePath__) scopePath = ctx.__scopePath__ as string;
+              else if (ctx.scopePath) scopePath = ctx.scopePath as string;
             } catch { /* ignore */ }
+          }
+          if (!scopePath) {
+            scopePath = '';
           }
 
           const now = new Date().toISOString();
@@ -563,6 +575,7 @@ export class SessionStore {
             tokensUsed: 0,
             tokenAvailable: 128000,
             scopePath,
+            mode: 'plan',
             createdAt: now,
             updatedAt: now,
             messageCount: msgCount,
@@ -598,6 +611,7 @@ export class SessionStore {
     tokensUsed?: number;
     tokenAvailable?: number;
     scopePath?: string;
+    mode?: string;
     createdAt: string;
     updatedAt: string;
   }): void {
@@ -613,6 +627,7 @@ export class SessionStore {
         tokensUsed: session.tokensUsed ?? 0,
         tokenAvailable: session.tokenAvailable ?? 128000,
         scopePath: session.scopePath!,
+        mode: session.mode ?? 'plan',
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       });
@@ -620,8 +635,8 @@ export class SessionStore {
     }
 
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, mode, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       session.id,
@@ -633,6 +648,7 @@ export class SessionStore {
       session.tokensUsed ?? 0,
       session.tokenAvailable ?? 128000,
       session.scopePath ?? process.cwd(),
+      session.mode ?? 'plan',
       session.createdAt,
       session.updatedAt,
     );
@@ -656,6 +672,7 @@ export class SessionStore {
       crewId: row['crew_id'],
       tokensUsed: row['token_used'],
       scopePath: row['scope_path'],
+      mode: row['mode'] ?? 'plan',
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     };
@@ -682,6 +699,7 @@ export class SessionStore {
       provider: 'provider_id',
       model: 'model_id',
       crewId: 'crew_id',
+      mode: 'mode',
       tokensUsed: 'token_used',
       scopePath: 'scope_path',
       updatedAt: 'updated_at',
@@ -1207,9 +1225,10 @@ export class SessionStore {
       return;
     }
 
-    this.db.prepare('DELETE FROM session_events WHERE session_id = ?').run(sessionId);
+    try { this.db.prepare('DELETE FROM session_events WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
+    try { this.db.prepare('DELETE FROM crew_feedback WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
+    try { this.db.prepare('DELETE FROM permission_rules WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
     this.db.prepare('DELETE FROM session_crew_states WHERE session_id = ?').run(sessionId);
-    this.db.prepare('DELETE FROM crew_feedback WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM tool_executions WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM token_logs WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM permissions WHERE session_id = ?').run(sessionId);
@@ -1231,9 +1250,10 @@ export class SessionStore {
       if (this.memCrewStates) this.memCrewStates.clear();
       return;
     }
-    this.db.exec('DELETE FROM session_events');
+    try { this.db.exec('DELETE FROM session_events'); } catch { /* table may not exist yet */ }
+    try { this.db.exec('DELETE FROM crew_feedback'); } catch { /* table may not exist yet */ }
+    try { this.db.exec('DELETE FROM permission_rules'); } catch { /* table may not exist yet */ }
     this.db.exec('DELETE FROM session_crew_states');
-    this.db.exec('DELETE FROM crew_feedback');
     this.db.exec('DELETE FROM tool_executions');
     this.db.exec('DELETE FROM token_logs');
     this.db.exec('DELETE FROM permissions');

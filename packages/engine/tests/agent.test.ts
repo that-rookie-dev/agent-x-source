@@ -726,14 +726,48 @@ describe('Agent', () => {
 
       // Call the permission handler (this creates a pending promise) and respond
       const promise = permissionHandler('file_read', '/test.txt', 'low');
-      agent.respondToPermission('allow_once');
+      // Since we can't easily extract the generated requestId from outside,
+      // respondToPermissionBatch covers the multi-request path
+      agent.respondToPermissionBatch('allow_once');
 
       await expect(promise).resolves.toBe('allow_once');
     });
 
     it('does nothing if no pending permission', () => {
       const agent = createTestAgent();
-      expect(() => agent.respondToPermission('deny')).not.toThrow();
+      expect(() => agent.respondToPermission('nonexistent-id', 'deny')).not.toThrow();
+    });
+
+    it('respondToPermissionBatch resolves all pending permissions', async () => {
+      const registry = {
+        list: vi.fn(() => mockToolDefs),
+        toSchemas: vi.fn(() => []),
+        get: vi.fn(),
+        has: vi.fn(),
+      };
+      const executor = {
+        execute: vi.fn(),
+        setPermissionRequestHandler: vi.fn(),
+        setBeforeToolHook: vi.fn(),
+        setScopePath: vi.fn(),
+      };
+
+      const agent = createTestAgent({
+        toolRegistry: registry as unknown as Parameters<typeof Agent>[0]['toolRegistry'],
+        toolExecutor: executor as unknown as Parameters<typeof Agent>[0]['toolExecutor'],
+      });
+
+      const permissionHandler = executor.setPermissionRequestHandler.mock.calls[0]?.[0] as
+        ((toolId: string, path: string, riskLevel: string) => Promise<'allow_once' | 'allow_always' | 'deny'>);
+      expect(permissionHandler).toBeDefined();
+
+      const promise1 = permissionHandler('file_write', '/test/a.ts', 'high');
+      const promise2 = permissionHandler('bash', 'rm -rf /', 'critical');
+
+      agent.respondToPermissionBatch('deny');
+
+      await expect(promise1).resolves.toBe('deny');
+      await expect(promise2).resolves.toBe('deny');
     });
   });
 

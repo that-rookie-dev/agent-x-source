@@ -6,10 +6,10 @@ import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, setPendingCwd, getPendingCwd, ensureChannelAgent } from './engine.js';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent } from './engine.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
@@ -168,7 +168,7 @@ app.get('/api/config', (_req, res) => {
   try {
     res.json(eng.configManager.load());
   } catch {
-    res.json({ provider: { activeProvider: 'opencode-zen', activeModel: 'deepseek-v4-flash-free', providers: { 'opencode-zen': { configured: true } } }, ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' }, organization: null, telemetry: false });
+    res.status(400).json({ error: 'Agent-X is not configured. Configure a provider and model first.' });
   }
 });
 
@@ -266,7 +266,12 @@ app.get('/api/provider/models', async (req, res) => {
 
 app.post('/api/provider/configure', (req, res) => {
   try {
-    const { provider, apiKey, baseUrl } = req.body as { provider: string; apiKey?: string; baseUrl?: string };
+    const { provider, apiKey, baseUrl, profileName } = req.body as { provider: string; apiKey?: string; baseUrl?: string; profileName?: string };
+    if (!profileName || typeof profileName !== 'string' || !profileName.trim()) {
+      res.status(400).json({ error: 'profileName is required. Provide a name for your provider profile (e.g. "My OpenAI Key" or "Work Account").' });
+      return;
+    }
+    const profileId = profileName.trim();
     destroyAgent();
     const eng = getEngine();
 
@@ -292,7 +297,6 @@ app.post('/api/provider/configure', (req, res) => {
     eng.configManager.save(config);
 
     // Create a profile for this provider configuration
-    const profileId = (req.body as Record<string, string>).profileName || 'default';
     eng.configManager.addProviderProfile(provider, profileId, {
       label: profileId,
       apiKey,
@@ -303,7 +307,7 @@ app.post('/api/provider/configure', (req, res) => {
     cfg.provider.activeProvider = provider as ProviderId;
     eng.configManager.save(cfg);
 
-    res.json({ ok: true, provider });
+    res.json({ ok: true, provider, profileId });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
   }
@@ -328,7 +332,7 @@ app.get('/api/providers', (_req, res) => {
     }
     res.json({ active: config.provider.activeProvider, providers: configured });
   } catch {
-    res.json({ active: 'openai', providers: [] });
+    res.json({ active: '', providers: [] });
   }
 });
 
@@ -337,9 +341,13 @@ app.post('/api/provider/profile', (req, res) => {
     const { provider, profileId, label, apiKey, baseUrl, setActive } = req.body as {
       provider: string; profileId: string; label?: string; apiKey?: string; baseUrl?: string; setActive?: boolean;
     };
+    if (!label || typeof label !== 'string' || !label.trim()) {
+      res.status(400).json({ error: 'label is required. Provide a name for your profile (e.g. "My OpenAI Key" or "Work Account").' });
+      return;
+    }
     const eng = getEngine();
     eng.configManager.addProviderProfile(provider, profileId, {
-      label: label || profileId,
+      label: label.trim(),
       apiKey,
       baseUrl,
       createdAt: new Date().toISOString(),
@@ -375,7 +383,8 @@ app.post('/api/provider/profile/switch', (req, res) => {
     if (!targetProvider) { res.status(400).json({ error: 'Unable to determine provider for profile' }); return; }
     eng.configManager.setActiveProviderProfile(targetProvider, profileId);
     destroyAgent();
-    createAgent();
+    const sess = eng.sessionManager.getActiveSession();
+    if (sess) createAgent(undefined, sess);
     res.json({ ok: true, provider: targetProvider, profileId });
   } catch (e: unknown) {
     res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
@@ -419,19 +428,19 @@ app.post('/api/model/switch', (req, res) => {
     const eng = getEngine();
     const config = eng.configManager.load();
 
-    // If a providerId was sent, switch both provider and model atomically
     if (providerId && providerId !== config.provider.activeProvider) {
       config.provider.activeProvider = providerId as ProviderId;
+      config.provider.activeModel = modelId;
+      eng.configManager.save(config);
       destroyAgent();
-    }
-
-    config.provider.activeModel = modelId;
-    eng.configManager.save(config);
-
-    if (providerId) {
-      // Recreate agent with new provider/model if provider changed
-      getOrCreateAgent();
+      const sess = eng.sessionManager.getActiveSession();
+      if (sess) {
+        createAgent(undefined, sess);
+      }
+      ensureSubscribed();
     } else {
+      config.provider.activeModel = modelId;
+      eng.configManager.save(config);
       const agent = eng.agent ?? getOrCreateAgent();
       agent.switchModel(modelId, contextWindow);
     }
@@ -481,10 +490,19 @@ app.post('/api/cwd', (req, res) => {
     if (!path || typeof path !== 'string') { res.status(400).json({ error: 'path-required' }); return; }
     const resolved = resolve(path);
     const eng = getEngine();
-    setPendingCwd(resolved);
     const sess = eng.sessionManager.getActiveSession();
     if (sess) {
       eng.sessionManager.updateSession({ scopePath: resolved });
+      const ctxPath = join(getSessionDir(sess.id), 'context.json');
+      try {
+        let ctx: Record<string, unknown> = {};
+        if (existsSync(ctxPath)) {
+          ctx = JSON.parse(readFileSync(ctxPath, 'utf-8'));
+        }
+        ctx['scopePath'] = resolved;
+        mkdirSync(dirname(ctxPath), { recursive: true });
+        writeFileSync(ctxPath, JSON.stringify(ctx, null, 2));
+      } catch { /* best-effort */ }
     }
     const agent = (eng as any).agent;
     if (agent && typeof agent.setScopePath === 'function') agent.setScopePath(resolved);
@@ -525,6 +543,11 @@ app.get('/api/session/settings', (_req, res) => {
 app.post('/api/session/mode', (req, res) => {
   const { mode } = req.body as { mode: 'agent' | 'plan' };
   if (!['agent', 'plan'].includes(mode)) { res.status(400).json({ error: 'invalid-mode' }); return; }
+  const previousMode = sessionSettings.mode;
+  if (previousMode === mode) {
+    res.json({ ok: true, mode });
+    return;
+  }
   sessionSettings.mode = mode;
   const eng = getEngine();
   if (eng.agent) {
@@ -533,6 +556,16 @@ app.post('/api/session/mode', (req, res) => {
   // Sync mode to toolkit executor for Plan mode tool restriction
   try {
     (eng as any).toolkit?.executor?.setMode?.(mode);
+  } catch { /* best-effort */ }
+  // Persist mode to session store so it survives restores
+  try {
+    const sess = eng.sessionManager.getActiveSession();
+    if (sess) {
+      eng.sessionManager.updateSession({ mode } as any);
+      const from = previousMode === 'plan' ? 'Plan' : 'Agent';
+      const to = mode === 'plan' ? 'Plan' : 'Agent';
+      persistMessageDirect(sess.id, 'assistant', `[MODE_CHANGE] ${from} → ${to}`);
+    }
   } catch { /* best-effort */ }
   res.json({ ok: true, mode });
 });
@@ -882,7 +915,7 @@ app.post('/api/chat/message', async (req, res) => {
     } catch { /* checkpoint failure shouldn't block the message */ }
 
     const message = await Promise.race([
-      agent.sendMessage(fullText, instruction ? { instruction } : undefined),
+      agent.sendMessage(fullText, { ...(instruction ? { instruction } : {}), ...(retry ? { retry: true } : {}) }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('The operation was aborted due to timeout')), 180000)),
     ]);
     if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
@@ -1098,17 +1131,121 @@ app.get('/api/metrics', (_req, res) => {
   res.send(lines.join('\n') + '\n');
 });
 
+// ───── Logs ─────
+app.get('/api/logs', (req, res) => {
+  try {
+    const collector = getLogCollector();
+    const level = req.query['level'] as string | undefined;
+    const code = req.query['code'] as string | undefined;
+    const search = req.query['search'] as string | undefined;
+    const limit = parseInt(req.query['limit'] as string) || 500;
+    const since = req.query['since'] ? parseInt(req.query['since'] as string) : undefined;
+
+    const entries = collector.query({ level, code, search, limit, since });
+    res.json({ count: collector.count, entries });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'logs-failed' });
+  }
+});
+
+app.get('/api/logs/stream', (req, res) => {
+  const collector = getLogCollector();
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  res.write(`data: ${JSON.stringify({ type: 'connected', count: collector.count })}\n\n`);
+
+  const onEntry = (evt: { entry: Record<string, unknown>; index: number }) => {
+    try {
+      res.write(`event: log\ndata: ${JSON.stringify(evt)}\n\n`);
+    } catch { /* client disconnected */ }
+  };
+
+  collector.on('entry', onEntry);
+
+  const heartbeat = setInterval(() => {
+    try { res.write(':heartbeat\n\n'); } catch { clearInterval(heartbeat); }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    collector.off('entry', onEntry);
+  });
+});
+
+app.delete('/api/logs', (_req, res) => {
+  try {
+    getLogCollector().clear();
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'clear-failed' });
+  }
+});
+
 // ───── Permissions ─────
 app.post('/api/permission/respond', (req, res) => {
+  try {
+    const { requestId, choice } = req.body as { requestId: string; choice: 'allow_once' | 'allow_always' | 'deny' };
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    agent.respondToPermission(requestId, choice);
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'respond-failed' });
+  }
+});
+
+app.post('/api/permission/respond-batch', (req, res) => {
   try {
     const { choice } = req.body as { choice: 'allow_once' | 'allow_always' | 'deny' };
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
-    agent.respondToPermission(choice);
+    agent.respondToPermissionBatch(choice);
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'respond-failed' });
+    res.status(400).json({ error: e instanceof Error ? e.message : 'respond-batch-failed' });
+  }
+});
+
+// ───── Hyperdrive Mode ─────
+app.post('/api/mode/hyperdrive', (_req, res) => {
+  try {
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    const enabled = agent.toggleHyperdriveMode();
+    // Persist hyperdrive mode change to conversation
+    try {
+      const sess = eng.sessionManager.getActiveSession();
+      if (sess) {
+        const currentMode = sessionSettings.mode === 'plan' ? 'Plan' : 'Agent';
+        const announcement = enabled
+          ? `[MODE_CHANGE] ${currentMode} → Hyperdrive`
+          : `[MODE_CHANGE] Hyperdrive → ${currentMode}`;
+        persistMessageDirect(sess.id, 'assistant', announcement);
+      }
+    } catch { /* best-effort */ }
+    res.json({ ok: true, hyperdriveMode: enabled });
+  } catch (e: unknown) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'toggle-failed' });
+  }
+});
+
+app.get('/api/mode/hyperdrive', (_req, res) => {
+  try {
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.json({ hyperdriveMode: false }); return; }
+    res.json({ hyperdriveMode: agent.hyperdriveMode });
+  } catch {
+    res.json({ hyperdriveMode: false });
   }
 });
 
@@ -1251,13 +1388,24 @@ app.get('/api/sessions/:id/export', (req, res) => {
 app.post('/api/sessions', (req, res) => {
   try {
     const body = req.body as { scopePath?: string } | undefined;
-    if (body?.scopePath) setPendingCwd(resolve(body.scopePath));
+    if (!body?.scopePath) {
+      res.status(400).json({ error: 'scopePath is required to create a session' });
+      return;
+    }
     destroyAgent();
-    const agent = createAgent();
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+    const session = eng.sessionManager.createSession(
+      cfg.provider.activeProvider as any,
+      cfg.provider.activeModel,
+      undefined,
+      resolve(body.scopePath),
+    );
+    // Ensure new sessions start in Plan mode
+    sessionSettings.mode = 'plan';
+    createAgent(undefined, session);
     ensureSubscribed();
-    const sessionId = (agent as unknown as { sessionId: string }).sessionId;
-    ensureSessionDir(sessionId);
-    res.json({ sessionId, scopePath: body?.scopePath || getPendingCwd() });
+    res.json({ sessionId: session.id });
   } catch (e: unknown) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'create-failed' });
   }
@@ -1294,7 +1442,9 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     destroyAgent();
     const session = eng.sessionManager.restoreSession(sessionId);
     if (!session) { res.status(404).json({ error: 'not-found' }); return; }
-    createAgent(undefined, req.params['id']!);
+    // Restore saved session mode (defaults to 'plan')
+    sessionSettings.mode = session.mode || 'plan';
+    createAgent(undefined, session);
     ensureSubscribed();
     // Restore crew states from session store
     const crewStates = eng.sessionManager.getCrewStates();
@@ -1331,6 +1481,18 @@ app.post('/api/sessions/:id/restore', (req, res) => {
 });
 
 // ───── Session Context Files ─────
+app.post('/api/sessions/:id/context/rebuild', (_req, res) => {
+  try {
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    const count = agent.rebuildContext();
+    res.json({ ok: true, rebuilt: count });
+  } catch (e: unknown) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'rebuild-failed' });
+  }
+});
+
 app.get('/api/sessions/:id/context', (req, res) => {
   try {
     const dir = getSessionDir(req.params['id']!);
@@ -2847,6 +3009,16 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
       console.error('Server error:', err.message);
     }
   });
+  const shutdown = () => {
+    try {
+      const eng = getEngine();
+      eng?.sessionManager?.close();
+    } catch { /* best-effort */ }
+    server.close();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+  process.on('SIGQUIT', shutdown);
   return server.listen(port, () => {
     console.log(`Agent-X web API listening on http://localhost:${port}`);
   });

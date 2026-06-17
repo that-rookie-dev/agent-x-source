@@ -113,13 +113,12 @@ function appendContextFile(
   if (!existsSync(dir)) {
     try { mkdirSync(dir, { recursive: true }); } catch { return; }
   }
-  const contextPath = join(dir, 'context.txt');
   const convPath = join(dir, 'conversation.json');
   try {
     const timestamp = new Date().toISOString();
-    const entry = `[${timestamp}] ${role}:\n${content}\n\n`;
-    const existing = existsSync(contextPath) ? readFileSync(contextPath, 'utf-8') : '';
-    atomicWriteFileSync(contextPath, existing + entry);
+
+    // Note: context.txt is now structured via ContextTracker.getStructuredContext()
+    // Raw append removed to avoid overwriting the structured summary
 
     let conv: unknown[] = [];
     if (existsSync(convPath)) {
@@ -224,8 +223,16 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
     case 'permission_respond': {
       const eng = getEngine();
       const agent = eng.agent;
+      const requestId = msg.requestId as string;
       const choice = msg.choice as 'allow_once' | 'allow_always' | 'deny';
-      if (agent) agent.respondToPermission(choice);
+      if (agent && requestId) agent.respondToPermission(requestId, choice);
+      break;
+    }
+    case 'permission_respond_batch': {
+      const eng = getEngine();
+      const agent = eng.agent;
+      const choice = msg.choice as 'allow_once' | 'allow_always' | 'deny';
+      if (agent) agent.respondToPermissionBatch(choice);
       break;
     }
     case 'clarification_response': {

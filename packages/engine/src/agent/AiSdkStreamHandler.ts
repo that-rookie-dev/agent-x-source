@@ -145,7 +145,6 @@ export function createAiSdkStreamHandler(
           timestamp: Date.now(),
         });
         onSessionEvent?.({ type: 'tool_called', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { tool: event.toolName, callId: event.toolCallId, args: event.args } });
-        emit({ type: 'tool_executing', tool: event.toolName, description: `Calling ${event.toolName}`, startTime: Date.now(), callId: event.toolCallId });
         break;
       }
 
@@ -160,7 +159,6 @@ export function createAiSdkStreamHandler(
         });
         const output = typeof event.result === 'string' ? event.result : JSON.stringify(event.result);
         onSessionEvent?.({ type: 'tool_result', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { tool: event.toolName, callId: event.toolCallId, success: true, output, elapsed: 0 } });
-        emit({ type: 'tool_complete', tool: event.toolName, result: { success: true, output }, elapsed: 0, callId: event.toolCallId });
         const total = state.totalInputTokens + state.totalOutputTokens;
         checkContextWarning(total);
         break;

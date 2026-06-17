@@ -6,6 +6,7 @@ export interface Session {
   providerId: string;
   modelId: string;
   scopePath: string;
+  mode: 'agent' | 'plan';
   tokenUsed: number;
   tokenAvailable: number;
   status: SessionStatus;

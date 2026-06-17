@@ -174,7 +174,7 @@ export interface DbStatus {
 export const sessions = {
   dbStatus: () => request<DbStatus>('/sessions/db-status'),
   list: () => request<SessionInfo[]>('/sessions'),
-  create: () => request<{ sessionId: string }>('/sessions', { method: 'POST' }),
+  create: (scopePath?: string) => request<{ sessionId: string }>('/sessions', { method: 'POST', body: scopePath ? JSON.stringify({ scopePath }) : undefined }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
   restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; parts?: Array<Record<string, unknown>>; crewStates?: Array<{ crewId: string; enabled: boolean }>; scopePath?: string }>(`/sessions/${id}/restore`, { method: 'POST' }),
@@ -497,6 +497,7 @@ export interface SessionInfo {
   provider: string;
   model: string;
   crewId?: string;
+  mode?: 'agent' | 'plan';
   messageCount: number;
   status?: string;
   tokensUsed: number;

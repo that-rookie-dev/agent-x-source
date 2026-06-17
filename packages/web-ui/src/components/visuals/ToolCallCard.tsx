@@ -4,12 +4,14 @@ import Typography from '@mui/material/Typography';
 import Collapse from '@mui/material/Collapse';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { colors } from '../../theme';
+import { getToolDisplay, extractArgs, formatArgs as formatExtraArgs } from '../tool-display';
 
 export interface ToolCallData {
   id: string;
   name: string;
   args?: string | Record<string, unknown>;
   result?: string;
+  streamOutput?: string;
   status: 'running' | 'done' | 'error';
   elapsed?: number;
   metadata?: { diff?: string; filePath?: string; oldContent?: string; newContent?: string };
@@ -28,49 +30,6 @@ interface DetailSection {
   filePath?: string;
 }
 
-function formatArgs(args: string | Record<string, unknown> | undefined, toolName: string): { primary: string; secondary?: string } {
-  if (!args) return { primary: '' };
-  if (typeof args === 'string') return { primary: args };
-  const n = toolName.toLowerCase();
-  const command = (args['command'] as string) || (args['cmd'] as string) || '';
-  const filePath = (args['path'] as string) || (args['file'] as string) || (args['filePath'] as string) || (args['target'] as string) || '';
-  const content = (args['content'] as string) || (args['newContent'] as string) || (args['text'] as string) || '';
-  const oldStr = (args['oldString'] as string) || (args['old_str'] as string) || '';
-  const newStr = (args['newString'] as string) || (args['new_str'] as string) || '';
-  const pattern = (args['pattern'] as string) || (args['query'] as string) || (args['regex'] as string) || '';
-  const url = (args['url'] as string) || '';
-
-  if (command) {
-    const second = (args['workdir'] as string) || (args['cwd'] as string) || (args['workingDirectory'] as string) || '';
-    return { primary: command, secondary: second };
-  }
-  if (url) return { primary: url };
-  if (pattern) return { primary: pattern, secondary: (args['path'] as string) || (args['include'] as string) || (args['directory'] as string) || '' };
-  if (filePath) {
-    if (content) return { primary: filePath, secondary: content.length > 160 ? content.slice(0, 160) + '...' : content };
-    if (oldStr || newStr) return { primary: filePath, secondary: (oldStr ? `- ${oldStr.slice(0, 60)}` : '') + (newStr ? ` → + ${newStr.slice(0, 60)}` : '') };
-    return { primary: filePath };
-  }
-  if (n.includes('delegate') || n.includes('subagent') || n.includes('crew')) {
-    return { primary: (args['mission'] as string) || (args['task'] as string) || (args['instruction'] as string) || '' };
-  }
-  if (n.includes('glob') || n.includes('ls') || n.includes('list')) {
-    return { primary: (args['pattern'] as string) || (args['path'] as string) || '' };
-  }
-  if (n.includes('read') || n.includes('grep') || n.includes('search') || n.includes('find')) {
-    return { primary: filePath || pattern || '' };
-  }
-  if (n.includes('write') || n.includes('edit') || n.includes('create') || n.includes('replace')) {
-    return { primary: filePath || '' };
-  }
-  if (n.includes('web') || n.includes('fetch') || n.includes('http') || n.includes('url') || n.includes('curl')) {
-    return { primary: url || '' };
-  }
-  if (n.includes('question') || n.includes('ask') || n.includes('clarif')) {
-    return { primary: (args['question'] as string) || '' };
-  }
-  return { primary: '' };
-}
 
 function buildExpandedSections(tool: ToolCallData): DetailSection[] {
   const sections: DetailSection[] = [];
@@ -136,6 +95,12 @@ function buildExpandedSections(tool: ToolCallData): DetailSection[] {
     sections.push({ label: 'Arguments', content: JSON.stringify(args, null, 2).slice(0, 2000), type: 'code' });
   }
 
+  // Streaming output (real-time while tool is running)
+  if (tool.streamOutput && tool.streamOutput.length > 0) {
+    const display = tool.streamOutput.length > 8000 ? '…' + tool.streamOutput.slice(-8000) : tool.streamOutput;
+    sections.push({ label: 'Stream Output', content: display, type: 'pre' });
+  }
+
   // Output
   if (tool.result) {
     let out = tool.result;
@@ -167,11 +132,12 @@ function buildExpandedSections(tool: ToolCallData): DetailSection[] {
 }
 
 export function ToolCallCard({ tool }: { tool: ToolCallData }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(tool.status === 'running');
   const cc = getToolStatusColor(tool.status);
-  const formatted = formatArgs(tool.args, tool.name);
+  const display = getToolDisplay(tool.name, tool.args);
+  const parsed = extractArgs(tool.args);
+  const extraArgs = formatExtraArgs(parsed, new Set());
 
-  // Live elapsed timer for running tools
   const [liveElapsed, setLiveElapsed] = useState(0);
   useEffect(() => {
     if (tool.status !== 'running') { setLiveElapsed(0); return; }
@@ -203,43 +169,46 @@ export function ToolCallCard({ tool }: { tool: ToolCallData }) {
           '&:hover': tool.status !== 'running' ? { bgcolor: cc + '0A' } : {},
         }}
       >
-        {/* Color dot — no icons */}
         <Box sx={{
-          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-          bgcolor: cc,
-          ...(tool.status === 'running' ? {
-            animation: 'agentx-pulse 1.4s ease-in-out infinite',
-          } : {}),
-        }} />
+          fontSize: '0.75rem', flexShrink: 0, opacity: tool.status === 'running' ? 0.7 : 1,
+          ...(tool.status === 'running' ? { animation: 'agentx-pulse 1.4s ease-in-out infinite' } : {}),
+        }}>
+          {display.icon}
+        </Box>
 
-        {/* Tool name + detail */}
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{
-            fontSize: '0.6rem', fontWeight: 600, color: colors.text.primary,
-            fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.2,
-          }}>
-            {tool.name.split('_').join(' ')}
-          </Typography>
-          {formatted.primary && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Typography sx={{
+              fontSize: '0.6rem', fontWeight: 600, color: colors.text.primary,
+              fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.2,
+              opacity: tool.status === 'running' ? 0.7 : 1,
+            }}>
+              {display.title}
+            </Typography>
+            {extraArgs.length > 0 && (
+              <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                · {extraArgs.join(' · ')}
+              </Typography>
+            )}
+          </Box>
+          {display.subtitle && (
             <Typography sx={{
               fontSize: '0.55rem', color: colors.text.secondary,
               fontFamily: "'JetBrains Mono', monospace",
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               lineHeight: 1.3, mt: 0.15,
+              opacity: tool.status === 'running' ? 0.5 : 1,
             }}>
-              {formatted.primary}
+              {display.subtitle}
             </Typography>
           )}
         </Box>
 
-        {/* Timing + status */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
           <Typography sx={{
             fontSize: '0.5rem', color: cc, fontFamily: "'JetBrains Mono', monospace",
             opacity: tool.status === 'running' ? 0.8 : 0.5,
-            ...(tool.status === 'running' ? {
-              animation: 'agentx-pulse 1.4s ease-in-out infinite',
-            } : {}),
+            ...(tool.status === 'running' ? { animation: 'agentx-pulse 1.4s ease-in-out infinite' } : {}),
           }}>
             {tool.status === 'running' ? 'running' : tool.status === 'error' ? 'failed' : 'done'}
           </Typography>
@@ -250,7 +219,6 @@ export function ToolCallCard({ tool }: { tool: ToolCallData }) {
           )}
         </Box>
 
-        {/* Expand arrow */}
         {tool.status !== 'running' && (
           <KeyboardArrowDownIcon sx={{
             fontSize: 14, color: colors.text.dim,

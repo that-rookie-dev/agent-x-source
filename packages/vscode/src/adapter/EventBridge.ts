@@ -160,7 +160,7 @@ export class EventBridge {
         break;
 
       case 'permission_required':
-        this.handlePermissionRequired(event.tool, event.path, event.riskLevel);
+        this.handlePermissionRequired(event.requestId, event.tool, event.path, event.riskLevel);
         for (const handler of this.permissionRequestHandlers) {
           try { handler(); } catch { /* swallow */ }
         }
@@ -473,8 +473,9 @@ export class EventBridge {
     }
   }
 
-  private handlePermissionRequired(tool: string, path: string, riskLevel: string): void {
+  private handlePermissionRequired(requestId: string, tool: string, path: string, riskLevel: string): void {
     this.emitAll(this.permissionHandlers, {
+      requestId,
       tool,
       path,
       riskLevel,

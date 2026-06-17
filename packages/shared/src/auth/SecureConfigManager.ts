@@ -65,7 +65,8 @@ export class SecureConfigManager {
       checksum,
     };
 
-    mkdirSync(dirname(this.configPath), { recursive: true });
+    const dir = dirname(this.configPath || getConfigPath());
+    mkdirSync(dir, { recursive: true });
     
     const tmpPath = this.configPath + '.tmp.' + Date.now();
     writeFileSync(tmpPath, JSON.stringify(secureFile, null, 2), 'utf-8');

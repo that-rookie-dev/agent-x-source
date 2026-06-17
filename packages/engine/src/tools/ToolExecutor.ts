@@ -31,9 +31,11 @@ export class ToolExecutor {
   private scopeGuard: ScopeGuard;
   private handlers: Map<string, (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<ToolResult>> = new Map();
   private permissionRequestHandler?: PermissionRequestHandler;
+  private onToolOutput?: (output: string) => void;
   private toolCache: Map<string, ReturnType<ToolRegistry['get']>> = new Map();
   private beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null = null;
   private safetyAuditor: SafetyAuditor | null = null;
+  private onExecutionPersist: ((entry: ToolExecutionEntry) => void) | null = null;
   private policyEngine: PolicyEngine | null = null;
   private executionHistory: ToolExecutionEntry[] = [];
   private mode: 'agent' | 'plan' = 'agent';
@@ -85,8 +87,16 @@ export class ToolExecutor {
     this.beforeToolHook = hook;
   }
 
+  setExecutionPersist(cb: (entry: ToolExecutionEntry) => void): void {
+    this.onExecutionPersist = cb;
+  }
+
   setPermissionRequestHandler(handler: PermissionRequestHandler): void {
     this.permissionRequestHandler = handler;
+  }
+
+  setToolOutputHandler(handler: (output: string) => void): void {
+    this.onToolOutput = handler;
   }
 
   setScopePath(scopePath: string): void {
@@ -182,9 +192,17 @@ export class ToolExecutor {
     }
 
     if (ruleResult === 'ask' && this.permissionRequestHandler && tool.riskLevel !== 'low') {
-      const response = await this.permissionRequestHandler(toolId, scopePathForHook ?? '*', tool.riskLevel);
-      if (response === 'deny') {
-        return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
+      const existingGrant = this.permissionManager.check(toolId, scopePathForHook ?? undefined);
+      if (existingGrant === 'allow_always') {
+        // Previously granted — skip prompt
+      } else {
+        const response = await this.permissionRequestHandler(toolId, scopePathForHook ?? '*', tool.riskLevel);
+        if (response === 'deny') {
+          return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
+        }
+        if (response === 'allow_always') {
+          this.permissionManager.grant(toolId, 'allow_always', scopePathForHook ?? undefined);
+        }
       }
     }
 
@@ -200,11 +218,13 @@ export class ToolExecutor {
     }
 
     const abortController = new AbortController();
+    const onToolOutput = this.onToolOutput;
     const context: ToolExecutionContext = {
       sessionId,
       scopePath: this.scopeGuard.getScopePath(),
       timeout: 30_000,
       mode: this.mode,
+      onOutput: onToolOutput,
     };
 
     try {
@@ -224,8 +244,11 @@ export class ToolExecutor {
       ]);
       
       const elapsed = Date.now() - startTime;
-      this.executionHistory.push({ toolId, args, result, timestamp: startTime, elapsed, sessionId });
+      const entry: ToolExecutionEntry = { toolId, args, result, timestamp: startTime, elapsed, sessionId };
+      this.executionHistory.push(entry);
       if (this.executionHistory.length > MAX_HISTORY) this.executionHistory.shift();
+
+      this.onExecutionPersist?.(entry);
 
       // Enterprise audit log
       this.policyEngine?.logAudit({ action: 'execute', toolId, args, result, sessionId, duration: elapsed });
@@ -242,8 +265,11 @@ export class ToolExecutor {
         error: isTimeout ? 'TIMEOUT' : 'EXECUTION_ERROR',
       };
       const elapsed = now - (this.executionHistory[this.executionHistory.length - 1]?.timestamp ?? now);
-      this.executionHistory.push({ toolId, args, result, timestamp: now, elapsed, sessionId });
+      const entry: ToolExecutionEntry = { toolId, args, result, timestamp: now, elapsed, sessionId };
+      this.executionHistory.push(entry);
       if (this.executionHistory.length > MAX_HISTORY) this.executionHistory.shift();
+
+      this.onExecutionPersist?.(entry);
 
       // Enterprise audit log
       this.policyEngine?.logAudit({ action: 'execute', toolId, args, result, sessionId, duration: elapsed });

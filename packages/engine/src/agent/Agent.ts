@@ -16,6 +16,7 @@ import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, type C
 import { Scope } from '../concurrency/Scope.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { ProviderFactory } from '../providers/index.js';
 import { AgentLifecycle } from './AgentLifecycle.js';
@@ -85,6 +86,7 @@ import { RunStateManager } from '../agent/RunStateManager.js';
 import { IdleTimeoutBreaker } from '../communication/IdleTimeoutBreaker.js';
 import { createAiSdkModel, createAiSdkTools, aiSdkStream } from './AiSdkBridge.js';
 import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
+import type { PartPersistFn } from './AiSdkStreamHandler.js';
 import { streamText, stepCountIs, type ToolSet } from 'ai';
 import { SessionRunner } from '../session/SessionRunner.js';
 import type { AgentInfo } from './AgentInfo.js';
@@ -105,6 +107,7 @@ export interface AgentOptions {
   gitAutoCommit?: boolean;
   gitAware?: boolean;
   eventBus?: AgentEventBus;
+  onPart?: PartPersistFn;
 }
 
 export class Agent {
@@ -132,8 +135,30 @@ export class Agent {
   private errorShield: ErrorShield;
   private toolExecutor?: EnhancedToolExecutor;
   private toolRegistry?: ToolRegistry;
-  private permissionResolve: ((choice: 'allow_once' | 'allow_always' | 'deny') => void) | null = null;
+  private pendingPermissions = new Map<string, { resolve: (choice: 'allow_once' | 'allow_always' | 'deny') => void; toolName: string; path: string; riskLevel: string }>();
+  private turnApprovedAll = false;
+  private _onPart?: PartPersistFn;
   autoApproveTools = false;
+  private _hyperdriveMode = false;
+
+  get hyperdriveMode(): boolean {
+    return this._hyperdriveMode;
+  }
+
+  toggleHyperdriveMode(): boolean {
+    this._hyperdriveMode = !this._hyperdriveMode;
+    this.autoApproveTools = this._hyperdriveMode;
+    this.lastContextEpoch = null;
+    this.rebuildSystemPrompt();
+    this.contextTracker.record(this.sessionId, 'assistant',
+      this._hyperdriveMode
+        ? '[Hyperdrive ON — full autonomous acceleration, all permissions pre-granted]'
+        : '[Hyperdrive OFF — standard permission checks restored]');
+    this.emit({
+      type: this._hyperdriveMode ? 'hyperdrive_entered' : 'hyperdrive_exited',
+    } as unknown as EngineEvent);
+    return this._hyperdriveMode;
+  }
   private lastContextEpoch: string | null = null;
   private cachedModels: Map<string, number> = new Map(); // modelId -> contextWindow
   private cachedModelCapabilities: Map<string, string[]> = new Map(); // modelId -> capabilities
@@ -228,8 +253,8 @@ export class Agent {
   onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number; crewId?: string }) => void) | null = null;
   onSessionEvent: ((event: SessionEvent) => void) | null = null;
 
-  setContextPersistDir(dir: string): void {
-    this.contextTracker.setSessionDir(dir);
+  setContextPersistDir(dir: string, scopePath?: string): void {
+    this.contextTracker.setSessionDir(dir, scopePath);
   }
   private maxSubAgents = 5;
   private enabledCrewSessionIds: Set<string> = new Set();
@@ -254,6 +279,7 @@ export class Agent {
     this.sessionId = options.sessionId;
     this.scopePath = normalize(resolve(options.scopePath!));
     this.eventBus = options.eventBus ?? new AgentEventBus();
+    this._onPart = options.onPart;
     this.tokenTracker = new TokenTracker(this.getContextWindow());
     this.subAgents = new SubAgentManager(this.eventBus);
     this.subAgents.setParentAgent(this);
@@ -386,10 +412,11 @@ export class Agent {
     // Wire permission requests to event bus
     if (this.toolExecutor) {
       this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel) => {
-        if (this.autoApproveTools) return 'allow_once';
+        if (this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
+        const requestId = randomUUID();
         return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-          this.permissionResolve = resolve;
-          this.emit({ type: 'permission_required', tool: toolId, path, riskLevel });
+          this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
+          this.emit({ type: 'permission_required', requestId, tool: toolId, path, riskLevel });
         });
       });
 
@@ -795,12 +822,15 @@ export class Agent {
   }
 
   setPlanMode(enabled: boolean): void {
+    if (enabled === this.planMode) return;
     if (enabled) {
       this.switchAgent('plan');
+      this.contextTracker.record(this.sessionId, 'assistant', '[Mode switched to Plan — read/analysis tools only, no writes or execution]');
       this.emit({ type: 'plan_mode_entered' });
     } else {
       this.currentPlan = null;
       this.switchAgent('build');
+      this.contextTracker.record(this.sessionId, 'assistant', '[Mode switched to Agent — full tool access and execution enabled]');
       this.emit({ type: 'plan_mode_exited' });
     }
   }
@@ -812,13 +842,7 @@ export class Agent {
     this.planMode = agent.mode === 'plan';
     this.toolExecutor?.setMode(agent.mode);
     this.toolExecutor?.setAgent(agent);
-    if (agent.prompt) {
-      const systemIdx = this.messages.findIndex((m) => m.role === 'system');
-      if (systemIdx >= 0) {
-        const existing = this.messages[systemIdx]!.content;
-        this.messages[systemIdx] = { role: 'system', content: existing + '\n\n' + agent.prompt };
-      }
-    }
+    this.rebuildSystemPrompt();
     this.emit({ type: 'agent_switched', agent: { id: agent.id, name: agent.name, mode: agent.mode, color: agent.color } });
     return true;
   }
@@ -988,7 +1012,7 @@ Return ONLY valid JSON, no other text.`;
     }
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1058,7 +1082,9 @@ Return ONLY valid JSON, no other text.`;
     this.pendingInstruction = options?.instruction || null;
 
     // Add user message (clean, without instruction)
-    this.messages.push({ role: 'user', content: cleanContent });
+    if (!options?.retry) {
+      this.messages.push({ role: 'user', content: cleanContent });
+    }
 
     // Record in context tracker
     this.contextTracker.record(this.sessionId, 'user', cleanContent);
@@ -1073,7 +1099,12 @@ Return ONLY valid JSON, no other text.`;
       tokenCount: 0,
     };
 
-    this.emit({ type: 'message_sent', message: userMessage });
+    if (!options?.retry) {
+      this.emit({ type: 'message_sent', message: userMessage });
+    }
+
+    // Reset turn-level permission auto-approve from any prior batch approval
+    this.turnApprovedAll = false;
 
     // ─── DECISION ENGINE (heuristic — zero LLM calls) ───
     const conversationLen = this.messages.filter(m => m.role === 'user').length;
@@ -1578,7 +1609,7 @@ Return ONLY valid JSON, no other text.`;
         this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
         this.onTokenLog?.({ inputTokens, outputTokens, costUsd: 0 });
       },
-      undefined,
+      this._onPart,
       this.config.provider.activeModel,
       this.gitManager ?? undefined,
       this.onSessionEvent ?? undefined,
@@ -1735,7 +1766,12 @@ Return ONLY valid JSON, no other text.`;
       toolLines.join('\n'),
       ``,
       `[AUTONOMOUS_EXECUTION]`,
-      `You are a fully autonomous agent. Your job is to COMPLETE tasks, not describe them.`,
+      `You are a fully autonomous agent. Your job is to EXECUTE, not describe.`,
+      ``,
+      `CRITICAL TOOL RULES:`,
+      `1. EVERY task MUST use tools. If the user asks you to "list files" → call folder_list IMMEDIATELY. If they ask to "check system" → call system_info. NEVER reply with text when a tool exists for the task.`,
+      `2. NEVER say "Let me check" or "I'll start by" and then NOT call a tool. Those phrases MUST be followed by an ACTUAL tool call. If you say it, you MUST do it.`,
+      `3. NEVER describe a plan — EXECUTE it. Each step you describe should be a tool call.`,
       ``,
       `Core principles:`,
       `1. INTERPRET INTENT — Understand what the user truly wants from their natural language. "Ping me in telegram" means set a reminder. "Save this" means write to a file. "Check my code" means read + analyze.`,
@@ -1797,8 +1833,27 @@ Return ONLY valid JSON, no other text.`;
       `- Replies: 1-3 sentences max. Bullet points preferred over paragraphs.`,
       `- Confirmations: "Done: [what]". Errors: "Failed: [why] — [fix]".`,
       `- Technical output, code, configs: unlimited length. Be thorough.`,
+      `[/OUTPUT_FORMAT]`,
+      ``,
       `[/TOOLS]`,
       ``,
+      ...(this._hyperdriveMode ? [
+        `[HYPERDRIVE]`,
+        `YOU ARE IN HYPERDRIVE MODE — FULL AUTONOMOUS ACCELERATION.`,
+        `- ALL tools are enabled and available. No tool is restricted or disabled.`,
+        `- ALL permissions are PRE-GRANTED. You DO NOT need to ask, confirm, or wait.`,
+        `- ALL shell commands, file operations, network access are AUTHORIZED.`,
+        `- You have MAXIMUM AGENCY. Execute tasks to completion without hesitation.`,
+        `- Every tool in your toolkit is fully operational. Use them AGGRESSIVELY.`,
+        `- Do NOT describe what you would do — DO IT.`,
+        `- Do NOT say "let me check" — RUN the check immediately.`,
+        `- Do NOT ask clarifying questions unless absolutely ambiguous — INFER and ACT.`,
+        `- If a tool fails, try the next approach without asking.`,
+        `- SPEED is paramount. Parallelize where possible.`,
+        `- COMPLETE the entire task in one turn if possible. Push through all steps.`,
+        `[/HYPERDRIVE]`,
+        ``,
+      ] : []),
       `[CHANNEL_FOCUS]`,
       `Messages can come from TUI, Web-UI, or Telegram. The active "focus" channel receives responses.`,
       `Focus automatically switches to whichever channel the user last sent a message from.`,
@@ -2017,10 +2072,24 @@ Return ONLY valid JSON, no other text.`;
   /**
    * Respond to a pending permission request from the tool executor.
    */
-  respondToPermission(choice: 'allow_once' | 'allow_always' | 'deny'): void {
-    if (this.permissionResolve) {
-      this.permissionResolve(choice);
-      this.permissionResolve = null;
+  respondToPermission(requestId: string, choice: 'allow_once' | 'allow_always' | 'deny'): void {
+    const entry = this.pendingPermissions.get(requestId);
+    if (entry) {
+      entry.resolve(choice);
+      this.pendingPermissions.delete(requestId);
+    }
+  }
+
+  /**
+   * Approve or deny all pending permission requests at once.
+   */
+  respondToPermissionBatch(choice: 'allow_once' | 'allow_always' | 'deny'): void {
+    if (choice !== 'deny') {
+      this.turnApprovedAll = true;
+    }
+    for (const [id, entry] of this.pendingPermissions) {
+      entry.resolve(choice);
+      this.pendingPermissions.delete(id);
     }
   }
 
@@ -2029,10 +2098,18 @@ Return ONLY valid JSON, no other text.`;
   }
 
   /**
+   * Rebuild session context from conversation.json.
+   */
+  rebuildContext(): number {
+    return this.contextTracker.rebuildFromConversation(this.sessionId);
+  }
+
+  /**
    * Add a message to the history (used for restoring sessions).
    */
   addToHistory(msg: { role: 'user' | 'assistant'; content: string }): void {
     this.messages.push({ role: msg.role, content: msg.content });
+    this.contextTracker.record(this.sessionId, msg.role, msg.content);
   }
 
   clearHistory(): void {
@@ -2058,6 +2135,7 @@ Return ONLY valid JSON, no other text.`;
     };
 
     this.messages.push({ role: 'user', content: userMessage.content });
+    this.turnApprovedAll = false;
     this.emit({ type: 'message_sent', message: userMessage });
     this.emit({ type: 'loading_start', stage: 'research' });
 

@@ -119,7 +119,7 @@ function convertToJsonSchema(schema: unknown): Record<string, unknown> {
 
 export function createAiSdkTools(
   toolRegistry: ToolRegistry,
-  toolExecutor: { execute: (toolId: string, args: Record<string, unknown>, sessionId: string) => Promise<ToolResult> },
+  toolExecutor: { execute: (toolId: string, args: Record<string, unknown>, sessionId: string) => Promise<ToolResult>; setToolOutputHandler?: (handler: (output: string) => void) => void },
   sessionId: string,
   emit: (event: EngineEvent) => void,
   waitForClarification: (question: string, options: string[], allowFreeform: boolean) => Promise<string>,
@@ -128,6 +128,17 @@ export function createAiSdkTools(
 ): ToolSet {
   const allTools = toolRegistry.list();
   const tools: ToolSet = {};
+
+  // Wire real-time tool output streaming
+  const activeOutputCalls = new Map<string, string>(); // callId -> tool name
+  if (toolExecutor.setToolOutputHandler) {
+    toolExecutor.setToolOutputHandler((output: string) => {
+      // Find the currently executing tool call
+      for (const [callId, toolName] of activeOutputCalls) {
+        emit({ type: 'tool_output', tool: toolName, callId, output, timestamp: Date.now() });
+      }
+    });
+  }
 
   for (const toolDef of allTools) {
     const schema = convertToJsonSchema(toolDef.schema);
@@ -185,22 +196,26 @@ export function createAiSdkTools(
         fiberSet.run(toolDef.id, async () => {
           const startTime = Date.now();
           const callId = options?.toolCallId || `tc-${toolDef.id}-${startTime}`;
+          activeOutputCalls.set(callId, toolDef.id);
           emit({ type: 'tool_executing', tool: toolDef.id, description: `Executing ${toolDef.name}`, startTime, args: args as Record<string, unknown>, callId });
 
           try {
             const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
             const elapsed = Date.now() - startTime;
+            activeOutputCalls.delete(callId);
             emit({ type: 'tool_complete', tool: toolDef.id, result: { success: result.success, output: result.output }, elapsed, args: args as Record<string, unknown>, callId });
 
             if (!result.success) {
               if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
                 abortController?.abort();
-                return `[${result.error}] ${result.output}`;
+                const modeName = result.error === 'MODE_RESTRICTED' ? 'Plan mode' : 'your current permissions';
+                return `[${result.error}] "${toolDef.id}" is not available in ${modeName}. ${result.output}\n\nIMPORTANT: You are in a restricted mode. Do NOT fabricate or hallucinate any output for this tool. Do NOT pretend the tool ran. Instead, tell the user exactly which tool was blocked and suggest switching to Agent mode if execution is needed.`;
               }
               return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
             }
             return result.output;
           } catch (err) {
+            activeOutputCalls.delete(callId);
             const elapsed = Date.now() - startTime;
             const errorMsg = err instanceof Error ? err.message : String(err);
             emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output: errorMsg }, elapsed, args: args as Record<string, unknown>, callId });

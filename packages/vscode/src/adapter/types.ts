@@ -75,6 +75,7 @@ export interface ToolExecution {
 }
 
 export interface PermissionRequest {
+  requestId: string;
   tool: string;
   path: string;
   riskLevel: string;
