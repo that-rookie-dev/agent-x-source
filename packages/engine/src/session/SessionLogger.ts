@@ -5,7 +5,7 @@ import { getDataDir } from '@agentx/shared';
 export interface SessionLogEntry {
   ts: number;
   type: 'user_message' | 'assistant_message' | 'system_prompt'
-    | 'llm_request' | 'llm_response_raw' | 'llm_response_chunk'
+    | 'llm_request' | 'llm_response_raw' | 'llm_response_chunk' | 'llm_response'
     | 'tool_call' | 'tool_result' | 'tool_error'
     | 'error_user' | 'error_api' | 'warning' | 'info';
   data: Record<string, unknown>;

@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager } from '@agentx/shared';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent } from './engine.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
@@ -541,33 +541,38 @@ app.get('/api/session/settings', (_req, res) => {
 });
 
 app.post('/api/session/mode', (req, res) => {
-  const { mode } = req.body as { mode: 'agent' | 'plan' };
-  if (!['agent', 'plan'].includes(mode)) { res.status(400).json({ error: 'invalid-mode' }); return; }
-  const previousMode = sessionSettings.mode;
-  if (previousMode === mode) {
-    res.json({ ok: true, mode });
-    return;
-  }
-  sessionSettings.mode = mode;
-  const eng = getEngine();
-  if (eng.agent) {
-    eng.agent.setPlanMode(mode === 'plan');
-  }
-  // Sync mode to toolkit executor for Plan mode tool restriction
   try {
-    (eng as any).toolkit?.executor?.setMode?.(mode);
-  } catch { /* best-effort */ }
-  // Persist mode to session store so it survives restores
-  try {
-    const sess = eng.sessionManager.getActiveSession();
-    if (sess) {
-      eng.sessionManager.updateSession({ mode } as any);
-      const from = previousMode === 'plan' ? 'Plan' : 'Agent';
-      const to = mode === 'plan' ? 'Plan' : 'Agent';
-      persistMessageDirect(sess.id, 'assistant', `[MODE_CHANGE] ${from} → ${to}`);
+    const { mode } = req.body as { mode: 'agent' | 'plan' };
+    if (!['agent', 'plan'].includes(mode)) { res.status(400).json({ error: 'invalid-mode' }); return; }
+    const previousMode = sessionSettings.mode;
+    if (previousMode === mode) {
+      res.json({ ok: true, mode });
+      return;
     }
-  } catch { /* best-effort */ }
-  res.json({ ok: true, mode });
+    sessionSettings.mode = mode;
+    const eng = getEngine();
+    if (eng.agent) {
+      eng.agent.setPlanMode(mode === 'plan');
+    }
+    // Sync mode to toolkit executor for Plan mode tool restriction
+    try {
+      (eng as any).toolkit?.executor?.setMode?.(mode);
+    } catch { /* best-effort */ }
+    // Persist mode to session store so it survives restores
+    try {
+      const sess = eng.sessionManager.getActiveSession();
+      if (sess) {
+        eng.sessionManager.updateSession({ mode } as any);
+        const from = previousMode === 'plan' ? 'Plan' : 'Agent';
+        const to = mode === 'plan' ? 'Plan' : 'Agent';
+        persistMessageDirect(sess.id, 'assistant', `[MODE_CHANGE] ${from} → ${to}`);
+      }
+    } catch { /* best-effort */ }
+    res.json({ ok: true, mode });
+  } catch (e: unknown) {
+    getLogger().error('SESSION_MODE', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'mode-failed' });
+  }
 });
 
 // ───── Agent State Sync (for Web-UI reconnect) ─────
@@ -924,6 +929,7 @@ app.post('/api/chat/message', async (req, res) => {
     }
     res.json({ ok: true, message });
   } catch (e: unknown) {
+    getLogger().error('CHAT_MESSAGE', e instanceof Error ? e : String(e));
     // On error, make sure the user message was still persisted
     try {
       const eng = getEngine();
@@ -1215,25 +1221,35 @@ app.post('/api/permission/respond-batch', (req, res) => {
 });
 
 // ───── Hyperdrive Mode ─────
+let _preHyperdriveMode: 'agent' | 'plan' = 'plan';
+
 app.post('/api/mode/hyperdrive', (_req, res) => {
   try {
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     const enabled = agent.toggleHyperdriveMode();
+    // Sync sessionSettings.mode so subsequent chat messages don't re-apply Plan mode
+    if (enabled) {
+      _preHyperdriveMode = sessionSettings.mode;
+      sessionSettings.mode = 'agent';
+    } else {
+      sessionSettings.mode = _preHyperdriveMode;
+    }
     // Persist hyperdrive mode change to conversation
     try {
       const sess = eng.sessionManager.getActiveSession();
       if (sess) {
-        const currentMode = sessionSettings.mode === 'plan' ? 'Plan' : 'Agent';
-        const announcement = enabled
-          ? `[MODE_CHANGE] ${currentMode} → Hyperdrive`
-          : `[MODE_CHANGE] Hyperdrive → ${currentMode}`;
+        const prev = enabled ? _preHyperdriveMode : 'hyperdrive' as const;
+        const current = enabled ? 'hyperdrive' as const : sessionSettings.mode;
+        const fmt = (m: 'agent' | 'plan' | 'hyperdrive') => m === 'hyperdrive' ? 'Hyperdrive' : m === 'agent' ? 'Agent' : 'Plan';
+        const announcement = `[MODE_CHANGE] ${fmt(prev)} → ${fmt(current)}`;
         persistMessageDirect(sess.id, 'assistant', announcement);
       }
     } catch { /* best-effort */ }
-    res.json({ ok: true, hyperdriveMode: enabled });
+    res.json({ ok: true, hyperdriveMode: enabled, mode: sessionSettings.mode });
   } catch (e: unknown) {
+    getLogger().error('HYPERDRIVE_TOGGLE', e instanceof Error ? e : String(e));
     res.status(400).json({ error: e instanceof Error ? e.message : 'toggle-failed' });
   }
 });
@@ -1476,6 +1492,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     }
     res.json({ session, messages, parts, crewStates, scopePath: session.scopePath });
   } catch (e: unknown) {
+    getLogger().error('RESTORE_SESSION', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
   }
 });

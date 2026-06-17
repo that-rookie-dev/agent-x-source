@@ -140,6 +140,7 @@ export class Agent {
   private _onPart?: PartPersistFn;
   autoApproveTools = false;
   private _hyperdriveMode = false;
+  private _preHyperdrivePlanMode = true;
 
   get hyperdriveMode(): boolean {
     return this._hyperdriveMode;
@@ -148,6 +149,18 @@ export class Agent {
   toggleHyperdriveMode(): boolean {
     this._hyperdriveMode = !this._hyperdriveMode;
     this.autoApproveTools = this._hyperdriveMode;
+    if (this._hyperdriveMode) {
+      this._preHyperdrivePlanMode = this.planMode;
+      if (this.planMode) {
+        this.switchAgent('build');
+      }
+    } else {
+      if (this._preHyperdrivePlanMode) {
+        if (!this.planMode) {
+          this.switchAgent('plan');
+        }
+      }
+    }
     this.lastContextEpoch = null;
     this.rebuildSystemPrompt();
     this.contextTracker.record(this.sessionId, 'assistant',
@@ -156,6 +169,8 @@ export class Agent {
         : '[Hyperdrive OFF — standard permission checks restored]');
     this.emit({
       type: this._hyperdriveMode ? 'hyperdrive_entered' : 'hyperdrive_exited',
+      mode: this.planMode ? 'plan' : 'agent',
+      wasPlan: this._preHyperdrivePlanMode,
     } as unknown as EngineEvent);
     return this._hyperdriveMode;
   }
@@ -1659,31 +1674,19 @@ Return ONLY valid JSON, no other text.`;
 
       this.sessionLogger?.log({
         type: 'llm_response',
-        round: 0,
-        content: content.slice(0, 1000),
-        usage: usage ? { inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 } : null,
-      } as any);
+        data: {
+          round: 0,
+          content: content.slice(0, 1000),
+          usage: usage ? { inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 } : null,
+        },
+      });
 
-      const assistantMessage: Message = {
-        id: generateMessageId(),
-        sessionId: this.sessionId,
-        role: 'assistant',
-        content,
-        toolCalls: null,
-        createdAt: new Date().toISOString(),
-        tokenCount,
-      };
-
+      // Stream handler already emitted message_received in its finish case.
+      // Only push to local state and compact — no second emit needed.
       this.messages.push({ role: 'assistant', content });
       await this.compactContext();
 
-      emit({
-        type: 'message_received',
-        message: assistantMessage,
-        elapsed: Date.now() - startTime,
-      });
-
-      return assistantMessage;
+      return { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant' as const, content, toolCalls: null, createdAt: new Date().toISOString(), tokenCount };
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         const cancelledMessage: Message = {

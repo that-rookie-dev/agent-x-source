@@ -75,8 +75,8 @@ export type EngineEvent =
   | { type: 'plan_cancelled'; planId: string; reason: string }
   | { type: 'plan_mode_entered' }
   | { type: 'plan_mode_exited' }
-  | { type: 'hyperdrive_entered' }
-  | { type: 'hyperdrive_exited' }
+  | { type: 'hyperdrive_entered'; mode: 'agent' | 'plan'; wasPlan: boolean }
+  | { type: 'hyperdrive_exited'; mode: 'agent' | 'plan'; wasPlan: boolean }
   | { type: 'indexing_start'; totalFiles: number }
   | { type: 'indexing_progress'; indexed: number; total: number; currentFile?: string }
   | { type: 'indexing_complete'; indexed: number; total: number; chunks: number }
