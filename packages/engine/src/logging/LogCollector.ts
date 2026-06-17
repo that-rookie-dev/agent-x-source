@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { LogEntry } from '@agentx/shared';
-import { getLogger } from '@agentx/shared';
+import { getLogger, type Logger } from '@agentx/shared';
 import type { SessionLogger } from '../session/SessionLogger.js';
 
 export interface LogCollectorEvent {
@@ -13,7 +13,7 @@ const MAX_BUFFER = 5000;
 export class LogCollector extends EventEmitter {
   private buffer: LogEntry[] = [];
   private index = 0;
-  private _originalLogger: { error: Function; warn: Function; info: Function } | null = null;
+  private _originalLogger: Logger | null = null;
 
   get entries(): readonly LogEntry[] {
     return this.buffer;
@@ -64,14 +64,14 @@ export class LogCollector extends EventEmitter {
     return results;
   }
 
-  hook(logger: { error: Function; warn: Function; info: Function }): void {
+  hook(logger: Logger): void {
     if (this._originalLogger) return;
-    this._originalLogger = { error: logger.error.bind(logger), warn: logger.warn.bind(logger), info: logger.info.bind(logger) };
+    this._originalLogger = logger;
 
-    const self = this;
-    logger.error = function (code: string, error: unknown, context?: Record<string, unknown>) {
-      self._originalLogger!.error(code, error, context);
-      self.push({
+    const orig = logger;
+    logger.error = ((code: string, error: unknown, context?: Record<string, unknown>) => {
+      orig.error(code, error, context);
+      this.push({
         timestamp: new Date().toISOString(),
         level: 'error',
         code,
@@ -79,37 +79,36 @@ export class LogCollector extends EventEmitter {
         stack: error instanceof Error ? error.stack : undefined,
         context,
       });
-    };
-    logger.warn = function (code: string, message: string, context?: Record<string, unknown>) {
-      self._originalLogger!.warn(code, message, context);
-      self.push({
+    }) as Logger['error'];
+    logger.warn = ((code: string, message: string, context?: Record<string, unknown>) => {
+      orig.warn(code, message, context);
+      this.push({
         timestamp: new Date().toISOString(),
         level: 'warn',
         code,
         message,
         context,
       });
-    };
-    logger.info = function (code: string, message: string, context?: Record<string, unknown>) {
-      self._originalLogger!.info(code, message, context);
-      self.push({
+    }) as Logger['warn'];
+    logger.info = ((code: string, message: string, context?: Record<string, unknown>) => {
+      orig.info(code, message, context);
+      this.push({
         timestamp: new Date().toISOString(),
         level: 'info',
         code,
         message,
         context,
       });
-    };
+    }) as Logger['info'];
   }
 
   hookSessionLogger(sessionLogger: SessionLogger): void {
     const originalLog = sessionLogger.log.bind(sessionLogger);
-    const self = this;
-    sessionLogger.log = function (entry: Parameters<SessionLogger['log']>[0]) {
+    sessionLogger.log = (entry: Parameters<SessionLogger['log']>[0]) => {
       originalLog(entry);
       const level = entry.type.startsWith('error') ? 'error' : entry.type === 'warning' ? 'warn' : 'info';
       const msg = typeof entry.data === 'object' ? JSON.stringify(entry.data, null, 2) : String(entry.data);
-      self.push({
+      this.push({
         timestamp: new Date().toISOString(),
         level: level as 'error' | 'warn' | 'info',
         code: entry.type,
