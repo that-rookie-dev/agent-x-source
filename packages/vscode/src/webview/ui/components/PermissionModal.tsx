@@ -3,10 +3,12 @@ import type { PermissionRequest } from '../App';
 
 interface PermissionModalProps {
   request: PermissionRequest;
+  pendingCount: number;
   onRespond: (decision: 'allow-once' | 'allow-always' | 'deny') => void;
+  onApproveAll: (decision: 'allow-once' | 'allow-always') => void;
 }
 
-export function PermissionModal({ request, onRespond }: PermissionModalProps) {
+export function PermissionModal({ request, pendingCount, onRespond, onApproveAll }: PermissionModalProps) {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Enter') { e.preventDefault(); onRespond('allow-once'); }
     else if (e.key === 'Escape') { e.preventDefault(); onRespond('deny'); }
@@ -30,6 +32,9 @@ export function PermissionModal({ request, onRespond }: PermissionModalProps) {
         <div className="permission-header">
           <span className="codicon codicon-shield" />
           <span className="permission-title">Permission Required</span>
+          {pendingCount > 1 && (
+            <span className="permission-badge">{pendingCount - 1} more pending</span>
+          )}
         </div>
         <div className="permission-body">
           <div className="permission-field">
@@ -65,6 +70,11 @@ export function PermissionModal({ request, onRespond }: PermissionModalProps) {
           <button className="permission-btn permission-btn-allow-always" onClick={() => onRespond('allow-always')} aria-label="Always allow">
             <span className="codicon codicon-check-all" /> Allow Always
           </button>
+          {pendingCount > 1 && (
+            <button className="permission-btn permission-btn-allow-batch" onClick={() => onApproveAll('allow-once')} aria-label="Approve all pending">
+              <span className="codicon codicon-check-all" /> Approve All ({pendingCount})
+            </button>
+          )}
         </div>
       </div>
     </div>

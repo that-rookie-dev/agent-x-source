@@ -84,7 +84,7 @@ export class SmartSubAgent {
           }
           toolExecutor = new ToolExecutor(
             toolRegistry,
-            (parentExecutor as unknown as { scopePath?: string }).scopePath ?? process.cwd(),
+            (parentExecutor as unknown as { scopePath?: string }).scopePath!,
           );
         } else {
           toolRegistry = parentRegistry;

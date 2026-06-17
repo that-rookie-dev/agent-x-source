@@ -170,7 +170,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }),
       this.eventBridge.onPermission((req) => {
         this.postToWebview('permissionRequired', {
-          requestId: `${req.tool}-${req.timestamp}`,
+          requestId: req.requestId ?? `${req.tool}-${req.timestamp}`,
           tool: req.tool,
           path: req.path,
           riskLevel: req.riskLevel,
@@ -339,6 +339,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         decision: 'allow-once' | 'allow-always' | 'deny';
       };
       await this.engineLifecycle.respondToPermission(requestId, decision);
+    });
+
+    this.onWebviewMessage('permissionRespondBatch', async (data) => {
+      const { decision } = data as {
+        decision: 'allow-once' | 'allow-always';
+      };
+      await this.engineLifecycle.respondToPermissionBatch(decision);
     });
 
     this.onWebviewMessage('planApprove', async (data) => {

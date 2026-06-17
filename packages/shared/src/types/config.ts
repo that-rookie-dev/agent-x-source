@@ -1,5 +1,6 @@
 import type { ProviderId } from './provider.js';
 import type { RAGConfig } from './rag.js';
+import type { PermissionRule } from './permission.js';
 
 export interface UserConfig {
   callsign: string;
@@ -15,6 +16,14 @@ export interface AgentXConfig {
   setupComplete?: boolean; // true after Mission Control wizard finishes
   rag?: RAGConfig;
   maxSubAgents?: number; // Maximum number of concurrent sub-agents (default: 5, max: 20)
+  permissions?: Record<string, 'allow' | 'deny' | 'ask'>;
+  agents?: Record<string, {
+    model?: string;
+    temperature?: number;
+    systemPrompt?: string;
+    deniedTools?: string[];
+    permissions?: PermissionRule[];
+  }>;
 }
 
 export interface ProviderSettings {

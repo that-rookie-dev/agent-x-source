@@ -132,12 +132,15 @@ export async function shellExecStreaming(args: Record<string, unknown>, context:
     let stderr = '';
     const maxBuffer = 100 * 1024;
 
+    const onOutput = context.onOutput;
+
     child.stdout.on('data', (data: Buffer) => {
       const chunk = data.toString();
       stdout += chunk;
       if (stdout.length > maxBuffer) {
         stdout = stdout.slice(-maxBuffer);
       }
+      onOutput?.(chunk);
     });
 
     child.stderr.on('data', (data: Buffer) => {
@@ -146,6 +149,7 @@ export async function shellExecStreaming(args: Record<string, unknown>, context:
       if (stderr.length > maxBuffer) {
         stderr = stderr.slice(-maxBuffer);
       }
+      onOutput?.(chunk);
     });
 
     child.on('close', (code) => {

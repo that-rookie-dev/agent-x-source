@@ -71,4 +71,5 @@ export interface ToolExecutionContext {
   agentId?: string;
   timeout: number;
   mode?: 'agent' | 'plan';
+  onOutput?: (output: string) => void;
 }

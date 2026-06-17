@@ -2,6 +2,7 @@ import { resolve, normalize, sep } from 'node:path';
 import { realpathSync, existsSync } from 'node:fs';
 import { platform } from 'node:os';
 import { GitManager } from '../../session/GitManager.js';
+import { execSync } from 'node:child_process';
 
 export class ScopeGuard {
   private scopePath: string;
@@ -9,6 +10,9 @@ export class ScopeGuard {
   private dangerousPaths: string[];
   private gitManager: GitManager | null = null;
   private gitAware: boolean = false;
+  private gitRoot: string | null = null;
+  private gitBranch: string | null = null;
+  private allowOutsideGit: boolean = false;
 
   constructor(scopePath: string, gitAware = false) {
     this.scopePath = normalize(resolve(scopePath));
@@ -17,7 +21,30 @@ export class ScopeGuard {
     this.gitAware = gitAware;
     if (gitAware) {
       this.gitManager = new GitManager({ scopePath: this.scopePath });
+      this.gitRoot = this.resolveGitRoot();
+      this.gitBranch = this.resolveGitBranch();
     }
+  }
+
+  private resolveGitRoot(): string | null {
+    try {
+      const output = execSync('git rev-parse --show-toplevel 2>/dev/null', { cwd: this.scopePath, encoding: 'utf-8', timeout: 5000 });
+      return output.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveGitBranch(): string | null {
+    try {
+      return execSync('git rev-parse --abbrev-ref HEAD 2>/dev/null', { cwd: this.scopePath, encoding: 'utf-8', timeout: 5000 }).trim();
+    } catch {
+      return null;
+    }
+  }
+
+  isInsideGitRepo(): boolean {
+    return this.gitRoot !== null;
   }
 
   isWithinScope(targetPath: string): boolean {
@@ -59,6 +86,16 @@ export class ScopeGuard {
     // Git-aware scope: reject paths outside repo root
     if (this.gitAware && this.gitManager?.isInsideRepo()) {
       if (!this.gitManager.isPathInsideRepo(resolved)) {
+        return {
+          valid: false,
+          resolved,
+          error: `Path is outside the Git repository root: ${resolved}`,
+        };
+      }
+    }
+
+    if (!this.allowOutsideGit && this.isInsideGitRepo() && this.gitRoot) {
+      if (!resolved.startsWith(this.gitRoot)) {
         return {
           valid: false,
           resolved,
@@ -120,6 +157,19 @@ export class ScopeGuard {
 
   getGitManager(): GitManager | null {
     return this.gitManager;
+  }
+
+  getGitInfo(): { root: string | null; branch: string | null; dirty: boolean } {
+    let dirty = false;
+    if (this.gitRoot) {
+      try {
+        const status = execSync('git status --porcelain', { cwd: this.gitRoot, encoding: 'utf-8', timeout: 5000 });
+        dirty = status.trim().length > 0;
+      } catch {
+        dirty = false;
+      }
+    }
+    return { root: this.gitRoot, branch: this.gitBranch, dirty };
   }
 }
 

@@ -82,7 +82,9 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList =
     selectProvider,
     dismissProviderPicker,
     permissionRequest,
+    pendingPermissions,
     respondToPermission,
+    respondToPermissionBatch,
     todoItems,
     reasoningText,
     isReasoning,
@@ -319,7 +321,10 @@ export const WelcomeScreen: FC<WelcomeScreenProps> = ({ config, crew, crewList =
               toolName={permissionRequest.tool}
               targetPath={permissionRequest.path ?? ''}
               riskLevel={permissionRequest.riskLevel as 'low' | 'medium' | 'high' | 'critical'}
+              pendingCount={pendingPermissions.length}
+              requestId={permissionRequest.requestId}
               onDecision={respondToPermission}
+              onApproveAll={respondToPermissionBatch}
             />
           )}
 

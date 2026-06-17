@@ -293,7 +293,7 @@ export function MentionInput({ value, onChange, onKeyDown, onMentionQuery, place
 
   const handleContainerClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    if (target.tagName === 'INPUT') return;
+    if (target.closest('textarea, input, button')) return;
     if (target.closest('[data-mention-chip]')) return;
     setSegments(prev => {
       const lastSeg = prev[prev.length - 1];

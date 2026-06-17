@@ -1,9 +1,10 @@
-import { Component, type ReactNode } from 'react';
+import { Component, type ReactNode, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { Sidebar } from '../components/Sidebar';
 import { Footer } from '../components/Footer';
+import { LogsPanel } from '../components/LogsPanel';
 import { ChatPanel } from '../components/ChatPanel';
 import { ToolsPanel } from '../components/ToolsPanel';
 import { PluginsPanel } from '../components/PluginsPanel';
@@ -43,13 +44,18 @@ export function Console() {
   const { panel, sessionId } = useParams<{ panel?: string; sessionId?: string }>();
   const navigate = useNavigate();
   const activePanel = (panel || 'chat') as PanelId;
+  const [logsOpen, setLogsOpen] = useState(false);
 
   const handleNavigate = (p: PanelId) => {
     navigate(`/console/${p}`);
   };
 
+  const toggleLogs = useCallback(() => {
+    setLogsOpen((prev) => !prev);
+  }, []);
+
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <Sidebar active={activePanel} onNavigate={handleNavigate} />
         <Box sx={{ flex: 1, overflow: 'hidden' }}>
@@ -69,7 +75,8 @@ export function Console() {
           </PanelErrorBoundary>
         </Box>
       </Box>
-      <Footer />
+      <LogsPanel open={logsOpen} onClose={() => setLogsOpen(false)} />
+      <Footer onToggleLogs={toggleLogs} logsOpen={logsOpen} />
     </Box>
   );
 }

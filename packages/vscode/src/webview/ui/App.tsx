@@ -151,6 +151,7 @@ interface AppState {
   stream: StreamState;
   tools: Map<string, ToolState>;
   permission: PermissionRequest | null;
+  permissions: PermissionRequest[];
   plan: PlanState | null;
   subAgents: SubAgentState[];
   reasoning: ReasoningState;
@@ -173,6 +174,7 @@ export function App() {
       stream: { active: false, content: '' },
       tools: new Map(),
       permission: null,
+      permissions: [],
       plan: null,
       subAgents: [],
       reasoning: { active: false, text: '' },
@@ -274,7 +276,11 @@ export function App() {
     }));
 
     unsubs.push(messageBus.on<PermissionRequest>('permissionRequired', (data) => {
-      setState((prev) => ({ ...prev, permission: data }));
+      setState((prev) => ({
+        ...prev,
+        permission: data,
+        permissions: [...prev.permissions, data],
+      }));
     }));
 
     unsubs.push(messageBus.on<{ action: string; plan?: PlanState; stepId?: string; status?: string; result?: string; error?: string }>('planUpdate', (data) => {
@@ -415,8 +421,16 @@ export function App() {
         requestId: stateRef.current.permission.requestId,
         decision,
       });
-      setState((prev) => ({ ...prev, permission: null }));
+      setState((prev) => {
+        const remaining = prev.permissions.filter((p) => p.requestId !== prev.permission?.requestId);
+        return { ...prev, permission: remaining.length > 0 ? remaining[0]! : null, permissions: remaining };
+      });
     }
+  }, []);
+
+  const handlePermissionBatchRespond = useCallback((decision: 'allow-once' | 'allow-always') => {
+    vscodeApi.postMessage('permissionRespondBatch', { decision });
+    setState((prev) => ({ ...prev, permission: null, permissions: [] }));
   }, []);
 
   const handlePlanApprove = useCallback(() => {
@@ -475,7 +489,12 @@ export function App() {
         <ErrorBanner error={state.error} onDismiss={handleDismissError} onRetry={() => handleSendMessage('retry')} />
       )}
       {state.permission && (
-        <PermissionModal request={state.permission} onRespond={handlePermissionRespond} />
+        <PermissionModal
+          request={state.permission}
+          pendingCount={state.permissions.length}
+          onRespond={handlePermissionRespond}
+          onApproveAll={handlePermissionBatchRespond}
+        />
       )}
       {state.showWelcome && state.messages.length === 0 ? (
         <WelcomeScreen onStartChat={handleSendMessage} />

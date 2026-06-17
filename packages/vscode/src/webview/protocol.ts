@@ -173,6 +173,9 @@ export interface WebviewToExtensionMessages {
     requestId: string;
     decision: 'allow-once' | 'allow-always' | 'deny';
   };
+  permissionRespondBatch: {
+    decision: 'allow-once' | 'allow-always';
+  };
   planApprove: {
     planId: string;
   };

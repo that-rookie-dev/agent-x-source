@@ -1,10 +1,12 @@
 export interface Session {
   id: string;
   title: string;
+  parentId?: string | null;
   crewId: string | null;
   providerId: string;
   modelId: string;
   scopePath: string;
+  mode: 'agent' | 'plan';
   tokenUsed: number;
   tokenAvailable: number;
   status: SessionStatus;

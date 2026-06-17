@@ -218,16 +218,7 @@ export class OpenAIProvider implements ProviderInterface {
     return 128000;
   }
 
-  protected getCapabilities(modelId: string): ModelInfo['capabilities'] {
-    const caps: ModelInfo['capabilities'] = ['text', 'streaming'];
-    if (modelId.includes('gpt-4o') || modelId.includes('gpt-4-turbo')) {
-      caps.push('vision', 'function_calling', 'json_mode');
-    } else if (modelId.includes('gpt-4') || modelId.includes('gpt-3.5')) {
-      caps.push('function_calling', 'json_mode');
-    }
-    if (modelId.includes('o1') || modelId.includes('o3')) {
-      caps.push('reasoning', 'function_calling');
-    }
-    return caps;
+  protected getCapabilities(_modelId: string): ModelInfo['capabilities'] {
+    return ['text', 'streaming', 'function_calling', 'json_mode'];
   }
 }

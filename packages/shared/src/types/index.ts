@@ -13,3 +13,4 @@ export * from './telemetry.js';
 export * from './rag.js';
 export * from './communication.js';
 export * from './visualization.js';
+export * from './session-events.js';

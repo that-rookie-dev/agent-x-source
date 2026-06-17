@@ -1,9 +1,11 @@
-import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import type { ToolResult, ToolExecutionContext, PermissionRule } from '@agentx/shared';
+import { evaluateRules } from './permissions/RuleEngine.js';
 import { PermissionManager } from './permissions/PermissionManager.js';
 import { ScopeGuard } from './permissions/ScopeGuard.js';
 import { ToolRegistry } from './ToolRegistry.js';
 import type { SafetyAuditor } from '../safety/SafetyAuditor.js';
 import type { PolicyEngine } from '../enterprise/PolicyEngine.js';
+import type { AgentInfo } from '../agent/AgentInfo.js';
 
 
 export type PermissionRequestHandler = (
@@ -23,32 +25,24 @@ export interface ToolExecutionEntry {
 
 const MAX_HISTORY = 200;
 
-const WRITE_TOOLS = new Set([
-  'file_write', 'file_delete', 'folder_create', 'folder_delete', 'folder_move', 'file_copy',
-  'file_patch', 'code_replace', 'code_insert', 'code_range',
-  'csv_create', 'pdf_create', 'docx_create', 'pptx_create', 'xlsx_create',
-  'json_set', 'http_download', 'archive_create', 'archive_extract',
-  'browser_screenshot', 'chart_generate', 'qr_generate',
-  'shell_exec', 'shell_background', 'shell_exec_streaming',
-  'process_kill', 'db_query', 'db_migrate',
-  'git_commit', 'git_push', 'git_merge', 'git_rebase', 'git_reset', 'git_tag', 'git_stash',
-  'package_install', 'package_remove', 'pkg_update',
-  'docker_build', 'container_run', 'container_start', 'container_stop', 'container_exec',
-  'cron_create', 'encrypt_file', 'decrypt_file',
-]);
-
 export class ToolExecutor {
   private registry: ToolRegistry;
   private permissionManager: PermissionManager;
   private scopeGuard: ScopeGuard;
   private handlers: Map<string, (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<ToolResult>> = new Map();
   private permissionRequestHandler?: PermissionRequestHandler;
+  private onToolOutput?: (output: string) => void;
   private toolCache: Map<string, ReturnType<ToolRegistry['get']>> = new Map();
   private beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null = null;
   private safetyAuditor: SafetyAuditor | null = null;
+  private onExecutionPersist: ((entry: ToolExecutionEntry) => void) | null = null;
   private policyEngine: PolicyEngine | null = null;
   private executionHistory: ToolExecutionEntry[] = [];
   private mode: 'agent' | 'plan' = 'agent';
+  private currentAgent: AgentInfo | null = null;
+  private sessionRules: PermissionRule[] = [];
+  private agentPermissions: PermissionRule[] = [];
+  private userConfigRules: PermissionRule[] = [];
 
   constructor(registry: ToolRegistry, scopePath: string) {
     this.registry = registry;
@@ -58,6 +52,23 @@ export class ToolExecutor {
 
   setMode(mode: 'agent' | 'plan'): void {
     this.mode = mode;
+  }
+
+  setAgent(agent: AgentInfo): void {
+    this.currentAgent = agent;
+    this.setAgentPermissions(agent.permissions ?? []);
+  }
+
+  setSessionRules(rules: PermissionRule[]): void {
+    this.sessionRules = rules;
+  }
+
+  setAgentPermissions(rules: PermissionRule[]): void {
+    this.agentPermissions = rules;
+  }
+
+  setUserConfigRules(rules: PermissionRule[]): void {
+    this.userConfigRules = rules;
   }
 
   getExecutionHistory(): ToolExecutionEntry[] {
@@ -76,8 +87,16 @@ export class ToolExecutor {
     this.beforeToolHook = hook;
   }
 
+  setExecutionPersist(cb: (entry: ToolExecutionEntry) => void): void {
+    this.onExecutionPersist = cb;
+  }
+
   setPermissionRequestHandler(handler: PermissionRequestHandler): void {
     this.permissionRequestHandler = handler;
+  }
+
+  setToolOutputHandler(handler: (output: string) => void): void {
+    this.onToolOutput = handler;
   }
 
   setScopePath(scopePath: string): void {
@@ -154,31 +173,35 @@ export class ToolExecutor {
       }
     }
 
-    // Plan mode: block write/exec tools entirely
-    if (this.mode === 'plan' && WRITE_TOOLS.has(toolId)) {
+    // Plan mode: block denied tools
+    if (this.mode === 'plan' && this.currentAgent?.deniedTools?.includes(toolId)) {
       return { success: false, output: `"${toolId}" is not available in Plan mode. Switch to Agent mode to use this tool.`, error: 'MODE_RESTRICTED' };
     }
 
-    // Check permissions — previously denied tools still get a chance to be re-allowed
-    const decision = this.permissionManager.check(toolId, scopePathForHook);
-    const needsPermission = decision !== 'allow_always';
+    // Evaluate permission rules (agent rules → session rules → user config rules)
+    const ruleResult = evaluateRules(
+      `tool:${toolId}`,
+      scopePathForHook ?? '*',
+      this.agentPermissions,
+      this.sessionRules,
+      this.userConfigRules,
+    );
 
-    if (needsPermission && this.permissionRequestHandler && tool.riskLevel !== 'low') {
-      // Agent mode: auto-approve within scopePath for medium risk; prompt for high risk
-      if (this.mode === 'agent' && tool.riskLevel === 'medium' && scopePathForHook && this.scopeGuard.validatePath(scopePathForHook).valid) {
-        this.permissionManager.grant(toolId, 'allow_always', scopePathForHook);
-      } else if (this.mode === 'plan') {
-        // Plan mode: never ask for permissions — just deny any risky tool
-        return { success: false, output: `"${toolId}" is not available in Plan mode.`, error: 'MODE_RESTRICTED' };
+    if (ruleResult === 'deny') {
+      return { success: false, output: `"${toolId}" is not available.`, error: 'MODE_RESTRICTED' };
+    }
+
+    if (ruleResult === 'ask' && this.permissionRequestHandler && tool.riskLevel !== 'low') {
+      const existingGrant = this.permissionManager.check(toolId, scopePathForHook ?? undefined);
+      if (existingGrant === 'allow_always') {
+        // Previously granted — skip prompt
       } else {
-        // Other modes: prompt user for permission
         const response = await this.permissionRequestHandler(toolId, scopePathForHook ?? '*', tool.riskLevel);
         if (response === 'deny') {
-          this.permissionManager.deny(toolId, scopePathForHook);
           return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
         }
         if (response === 'allow_always') {
-          this.permissionManager.grant(toolId, 'allow_always', scopePathForHook);
+          this.permissionManager.grant(toolId, 'allow_always', scopePathForHook ?? undefined);
         }
       }
     }
@@ -195,11 +218,13 @@ export class ToolExecutor {
     }
 
     const abortController = new AbortController();
+    const onToolOutput = this.onToolOutput;
     const context: ToolExecutionContext = {
       sessionId,
       scopePath: this.scopeGuard.getScopePath(),
       timeout: 30_000,
       mode: this.mode,
+      onOutput: onToolOutput,
     };
 
     try {
@@ -219,8 +244,11 @@ export class ToolExecutor {
       ]);
       
       const elapsed = Date.now() - startTime;
-      this.executionHistory.push({ toolId, args, result, timestamp: startTime, elapsed, sessionId });
+      const entry: ToolExecutionEntry = { toolId, args, result, timestamp: startTime, elapsed, sessionId };
+      this.executionHistory.push(entry);
       if (this.executionHistory.length > MAX_HISTORY) this.executionHistory.shift();
+
+      this.onExecutionPersist?.(entry);
 
       // Enterprise audit log
       this.policyEngine?.logAudit({ action: 'execute', toolId, args, result, sessionId, duration: elapsed });
@@ -237,8 +265,11 @@ export class ToolExecutor {
         error: isTimeout ? 'TIMEOUT' : 'EXECUTION_ERROR',
       };
       const elapsed = now - (this.executionHistory[this.executionHistory.length - 1]?.timestamp ?? now);
-      this.executionHistory.push({ toolId, args, result, timestamp: now, elapsed, sessionId });
+      const entry: ToolExecutionEntry = { toolId, args, result, timestamp: now, elapsed, sessionId };
+      this.executionHistory.push(entry);
       if (this.executionHistory.length > MAX_HISTORY) this.executionHistory.shift();
+
+      this.onExecutionPersist?.(entry);
 
       // Enterprise audit log
       this.policyEngine?.logAudit({ action: 'execute', toolId, args, result, sessionId, duration: elapsed });

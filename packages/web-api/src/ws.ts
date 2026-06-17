@@ -57,7 +57,7 @@ export function persistPart(sessionId: string, part: PartRecord): void {
   }
 }
 interface SubAgentRecord { id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }
-interface CrewInfo { crewId: string; name: string; callsign: string }
+interface CrewInfo { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] }
 interface ToolCallRecord { id: string; name: string; args: unknown; status: string; result?: string; elapsed?: number; metadata?: Record<string, unknown> }
 
 function appendContextFile(
@@ -84,6 +84,16 @@ function appendContextFile(
     const eng = getEngine();
     const store = (eng.sessionManager as any).store;
     if (store?.insertMessage) {
+      const metadata: Record<string, unknown> = {};
+      if (crew) {
+        metadata.crewId = crew.crewId;
+        metadata.crewName = crew.name;
+        metadata.callsign = crew.callsign;
+        if (crew.color) metadata.color = crew.color;
+        if (crew.icon) metadata.icon = crew.icon;
+        if (crew.confidence) metadata.confidence = crew.confidence;
+        if (crew.reasons) metadata.reasons = crew.reasons;
+      }
       store.insertMessage({
         sessionId,
         role,
@@ -93,6 +103,7 @@ function appendContextFile(
         crew,
         thinking: extra?.thinking,
         plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       });
     }
   } catch { /* best-effort */ }
@@ -102,13 +113,12 @@ function appendContextFile(
   if (!existsSync(dir)) {
     try { mkdirSync(dir, { recursive: true }); } catch { return; }
   }
-  const contextPath = join(dir, 'context.txt');
   const convPath = join(dir, 'conversation.json');
   try {
     const timestamp = new Date().toISOString();
-    const entry = `[${timestamp}] ${role}:\n${content}\n\n`;
-    const existing = existsSync(contextPath) ? readFileSync(contextPath, 'utf-8') : '';
-    atomicWriteFileSync(contextPath, existing + entry);
+
+    // Note: context.txt is now structured via ContextTracker.getStructuredContext()
+    // Raw append removed to avoid overwriting the structured summary
 
     let conv: unknown[] = [];
     if (existsSync(convPath)) {
@@ -144,6 +154,7 @@ export function persistMessageDirect(sessionId: string, role: string, content: s
 let wss: WebSocketServer | null = null;
 let subscribedAgent: unknown | null = null;
 let unsubscribeFromAgent: (() => void) | null = null;
+const sessionEventSubscribers = new Map<WebSocket, () => void>();
 
 export function setupWebSocket(server: Server): void {
   wss = new WebSocketServer({ server, path: '/ws' });
@@ -161,10 +172,18 @@ export function setupWebSocket(server: Server): void {
   wss.on('connection', (ws: WebSocket) => {
     ws.send(JSON.stringify({ type: 'connected' }));
 
+    ws.on('close', () => {
+      const unsub = sessionEventSubscribers.get(ws);
+      if (unsub) {
+        unsub();
+        sessionEventSubscribers.delete(ws);
+      }
+    });
+
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
-        handleWsMessage(msg);
+        handleWsMessage(ws, msg);
       } catch {
         // ignore malformed
       }
@@ -172,7 +191,7 @@ export function setupWebSocket(server: Server): void {
   });
 }
 
-async function handleWsMessage(msg: { type: string; [key: string]: unknown }): Promise<void> {
+async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]: unknown }): Promise<void> {
   switch (msg.type) {
     case 'chat_message': {
       const text = msg.text as string;
@@ -204,8 +223,16 @@ async function handleWsMessage(msg: { type: string; [key: string]: unknown }): P
     case 'permission_respond': {
       const eng = getEngine();
       const agent = eng.agent;
+      const requestId = msg.requestId as string;
       const choice = msg.choice as 'allow_once' | 'allow_always' | 'deny';
-      if (agent) agent.respondToPermission(choice);
+      if (agent && requestId) agent.respondToPermission(requestId, choice);
+      break;
+    }
+    case 'permission_respond_batch': {
+      const eng = getEngine();
+      const agent = eng.agent;
+      const choice = msg.choice as 'allow_once' | 'allow_always' | 'deny';
+      if (agent) agent.respondToPermissionBatch(choice);
       break;
     }
     case 'clarification_response': {
@@ -213,6 +240,33 @@ async function handleWsMessage(msg: { type: string; [key: string]: unknown }): P
       const agent = eng.agent;
       const response = msg.response as string;
       if (agent && response) agent.respondToClarification(response);
+      break;
+    }
+    case 'subscribe': {
+      const sessionId = msg.sessionId as string;
+      if (!sessionId) break;
+      try {
+        const eng = getEngine();
+        const store = (eng.sessionManager as any).store;
+        if (store?.getSessionEvents) {
+          const sinceSeq = typeof msg.sinceSequence === 'number' ? msg.sinceSequence : undefined;
+          const events = store.getSessionEvents(sessionId, sinceSeq) as Array<Record<string, unknown>>;
+          ws.send(JSON.stringify({ type: 'session_events', data: events, sessionId }));
+        }
+        const agent = eng.agent;
+        if (agent && agent.events && typeof (agent.events as any).onSessionEvent === 'function') {
+          const unsubOld = sessionEventSubscribers.get(ws);
+          if (unsubOld) unsubOld();
+          const unsub = (agent.events as any).onSessionEvent((event: Record<string, unknown>) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'session_event', data: event }));
+            }
+          });
+          sessionEventSubscribers.set(ws, unsub);
+        }
+      } catch {
+        // best-effort
+      }
       break;
     }
     default:
@@ -407,6 +461,16 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
           }
         }
       } catch { /* best-effort incremental persist */ }
+    }
+
+    // Track crew activity for real-time UI updates
+    if (evType === 'crew_activity') {
+      const crewId = (event as any).crewId as string;
+      const crewName = (event as any).crewName as string;
+      const activity = (event as any).activity as string;
+      if (crewId && activity) {
+        broadcast({ type: 'crew_activity', crewId, crewName, activity, content: (event as any).content });
+      }
     }
 
     // Persist conversation to session context files

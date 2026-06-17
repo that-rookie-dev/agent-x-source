@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'module';
 import { getDbPath } from '../config/paths.js';
 import { encrypt, decrypt, getLogger } from '@agentx/shared';
-import type { EncryptedData } from '@agentx/shared';
+import type { EncryptedData, SessionEvent } from '@agentx/shared';
 
 // Try to load better-sqlite3, but don't crash if native bindings are missing.
 let BetterSqlite3: any = null;
@@ -15,7 +15,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 9;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     provider_id TEXT NOT NULL,
     model_id    TEXT NOT NULL,
     scope_path  TEXT NOT NULL,
+    mode        TEXT NOT NULL DEFAULT 'plan',
     token_used  INTEGER DEFAULT 0,
     token_available INTEGER NOT NULL,
     status      TEXT NOT NULL DEFAULT 'active',
@@ -127,6 +128,17 @@ CREATE TABLE IF NOT EXISTS tool_registry (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS permission_rules (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    pattern     TEXT NOT NULL DEFAULT '*',
+    effect      TEXT NOT NULL,
+    comment     TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
 CREATE TABLE IF NOT EXISTS tool_executions (
     id          TEXT PRIMARY KEY,
     session_id  TEXT NOT NULL,
@@ -211,6 +223,82 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
       db.exec(`ALTER TABLE messages ADD COLUMN plan TEXT`);
     },
   },
+  {
+    version: 4,
+    description: 'Add metadata column to messages table for crew response metadata',
+    run: (db: any) => {
+      db.exec(`ALTER TABLE messages ADD COLUMN metadata TEXT`);
+    },
+  },
+  {
+    version: 5,
+    description: 'Add crew_id column to token_logs table for crew-specific token tracking',
+    run: (db: any) => {
+      db.exec(`ALTER TABLE token_logs ADD COLUMN crew_id TEXT`);
+    },
+  },
+  {
+    version: 6,
+    description: 'Add session_events table for durable event sourcing',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_events (
+            id          TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            sequence    INTEGER NOT NULL,
+            event_type  TEXT NOT NULL,
+            payload     TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (session_id) REFERENCES sessions(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id, sequence);
+      `);
+    },
+  },
+  {
+    version: 7,
+    description: 'Add permission_rules table for PermissionRule persistence',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS permission_rules (
+            id          TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            action      TEXT NOT NULL,
+            pattern     TEXT NOT NULL DEFAULT '*',
+            effect      TEXT NOT NULL,
+            comment     TEXT,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (session_id) REFERENCES sessions(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_permission_rules_session ON permission_rules(session_id);
+      `);
+    },
+  },
+  {
+    version: 8,
+    description: 'Add crew_feedback table for crew training feedback',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS crew_feedback (
+            id          TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            crew_id     TEXT NOT NULL,
+            positive    INTEGER NOT NULL,
+            comment     TEXT,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (session_id) REFERENCES sessions(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_crew_feedback_crew ON crew_feedback(crew_id);
+      `);
+    },
+  },
+  {
+    version: 9,
+    description: 'Add mode column to sessions table for plan/agent mode persistence',
+    run: (db: any) => {
+      db.exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'plan'`);
+    },
+  },
 ];
 
 export class SessionStore {
@@ -223,6 +311,9 @@ export class SessionStore {
   private memPermissions: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCrewStates: Map<string, Record<string, unknown>> = new Map();
   private memToolExecutions: Map<string, Array<Record<string, unknown>>> = new Map();
+  private memSessionEvents: Map<string, Array<SessionEvent>> = new Map();
+  private memPermissionRules: Map<string, Array<Record<string, unknown>>> = new Map();
+  private memCrewFeedback: Map<string, Array<Record<string, unknown>>> = new Map();
   private dek: Buffer | null = null;
   private sessionsDir: string | null = null;
   private filesystemRecovered = 0;
@@ -333,8 +424,7 @@ export class SessionStore {
               this.db.prepare('INSERT INTO _schema (version) VALUES (?)').run(m.version);
               getLogger().info('SCHEMA', `Migration v${m.version} applied: ${m.description}`);
             } catch (e) {
-              getLogger().error('SCHEMA', `Migration v${m.version} failed: ${e instanceof Error ? e.message : e}`);
-              throw e;
+              getLogger().warn('SCHEMA', `Migration v${m.version} failed (non-fatal): ${e instanceof Error ? e.message : e}`);
             }
           }
         }
@@ -379,21 +469,22 @@ export class SessionStore {
           const firstUserMsg = messages.find(m => m.role === 'user');
           const title = firstUserMsg?.content?.slice(0, 80) ?? 'Recovered session';
 
-          // Try to read scope from context.json
-          let scopePath = process.cwd();
+          let scopePath = '';
           const ctxPath = join(sessionDir, 'context.json');
           if (existsSync(ctxPath)) {
             try {
               const ctx = JSON.parse(readFileSync(ctxPath, 'utf-8'));
-              if (ctx.scopePath) scopePath = ctx.scopePath;
+              if (ctx.__scopePath__) scopePath = ctx.__scopePath__ as string;
+              else if (ctx.scopePath) scopePath = ctx.scopePath as string;
             } catch { /* ignore */ }
           }
+          if (!scopePath) continue;
 
           const now = new Date().toISOString();
 
           this.db.prepare(`
-            INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, created_at, updated_at)
-            VALUES (?, ?, 'active', '', '', NULL, 0, 128000, ?, ?, ?)
+            INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, mode, created_at, updated_at)
+            VALUES (?, ?, 'active', '', '', NULL, 0, 128000, ?, 'plan', ?, ?)
           `).run(entry.name, title, scopePath, now, now);
 
           recovered++;
@@ -458,13 +549,17 @@ export class SessionStore {
           const firstUserMsg = messages.find(m => m.role === 'user');
           const title = firstUserMsg?.content?.slice(0, 80) ?? 'Recovered session';
 
-          let scopePath = process.cwd();
+          let scopePath = '';
           const ctxPath = join(sessionDir, 'context.json');
           if (existsSync(ctxPath)) {
             try {
               const ctx = JSON.parse(readFileSync(ctxPath, 'utf-8'));
-              if (ctx.scopePath) scopePath = ctx.scopePath;
+              if (ctx.__scopePath__) scopePath = ctx.__scopePath__ as string;
+              else if (ctx.scopePath) scopePath = ctx.scopePath as string;
             } catch { /* ignore */ }
+          }
+          if (!scopePath) {
+            scopePath = '';
           }
 
           const now = new Date().toISOString();
@@ -480,6 +575,7 @@ export class SessionStore {
             tokensUsed: 0,
             tokenAvailable: 128000,
             scopePath,
+            mode: 'plan',
             createdAt: now,
             updatedAt: now,
             messageCount: msgCount,
@@ -511,9 +607,11 @@ export class SessionStore {
     provider: string;
     model: string;
     crewId?: string | null;
+    parentId?: string | null;
     tokensUsed?: number;
     tokenAvailable?: number;
     scopePath?: string;
+    mode?: string;
     createdAt: string;
     updatedAt: string;
   }): void {
@@ -525,9 +623,11 @@ export class SessionStore {
         provider: session.provider,
         model: session.model,
         crewId: session.crewId ?? null,
+        parentId: session.parentId ?? null,
         tokensUsed: session.tokensUsed ?? 0,
         tokenAvailable: session.tokenAvailable ?? 128000,
-        scopePath: session.scopePath ?? process.cwd(),
+        scopePath: session.scopePath!,
+        mode: session.mode ?? 'plan',
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       });
@@ -535,8 +635,8 @@ export class SessionStore {
     }
 
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, mode, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       session.id,
@@ -548,6 +648,7 @@ export class SessionStore {
       session.tokensUsed ?? 0,
       session.tokenAvailable ?? 128000,
       session.scopePath ?? process.cwd(),
+      session.mode ?? 'plan',
       session.createdAt,
       session.updatedAt,
     );
@@ -571,6 +672,7 @@ export class SessionStore {
       crewId: row['crew_id'],
       tokensUsed: row['token_used'],
       scopePath: row['scope_path'],
+      mode: row['mode'] ?? 'plan',
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     };
@@ -597,6 +699,7 @@ export class SessionStore {
       provider: 'provider_id',
       model: 'model_id',
       crewId: 'crew_id',
+      mode: 'mode',
       tokensUsed: 'token_used',
       scopePath: 'scope_path',
       updatedAt: 'updated_at',
@@ -718,6 +821,7 @@ export class SessionStore {
         messageId: row['id'] as string,
         fieldName: 'toolCalls',
       }),
+      metadata: row['metadata'] ? JSON.parse(row['metadata'] as string) : undefined,
     }));
   }
 
@@ -730,6 +834,7 @@ export class SessionStore {
     crew?: unknown;
     thinking?: string;
     plan?: string;
+    metadata?: Record<string, unknown>;
   }): void {
     if (this.memMode) {
       const msgs = this.memMessages.get(msg.sessionId) ?? [];
@@ -739,8 +844,8 @@ export class SessionStore {
     }
     try {
       this.db!.prepare(`
-        INSERT INTO messages (id, session_id, role, content, tool_calls, token_count, plan, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        INSERT INTO messages (id, session_id, role, content, tool_calls, token_count, plan, metadata, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `).run(
         crypto.randomUUID(),
         msg.sessionId,
@@ -749,6 +854,7 @@ export class SessionStore {
         msg.toolCalls ? this.encryptField(JSON.stringify(msg.toolCalls)) : null,
         msg.tokenCount ?? 0,
         msg.plan || null,
+        msg.metadata ? JSON.stringify(msg.metadata) : null,
       );
     } catch (e) {
       getLogger().warn('STORE', `insertMessage failed: ${e instanceof Error ? e.message : e}`);
@@ -834,6 +940,7 @@ export class SessionStore {
     outputTokens: number;
     reasoningTokens?: number;
     costUsd?: number;
+    crewId?: string;
   }): void {
     if (this.memMode) {
       const arr = this.memTokenLogs.get(log.sessionId) ?? [];
@@ -847,14 +954,15 @@ export class SessionStore {
         output_tokens: log.outputTokens,
         reasoning_tokens: log.reasoningTokens ?? 0,
         cost_usd: log.costUsd ?? null,
+        crew_id: log.crewId ?? null,
       });
       this.memTokenLogs.set(log.sessionId, arr);
       return;
     }
 
     const stmt = this.db.prepare(`
-      INSERT INTO token_logs (id, session_id, message_id, provider_id, model_id, input_tokens, output_tokens, reasoning_tokens, cost_usd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO token_logs (id, session_id, message_id, provider_id, model_id, input_tokens, output_tokens, reasoning_tokens, cost_usd, crew_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       log.id,
@@ -866,6 +974,7 @@ export class SessionStore {
       log.outputTokens,
       log.reasoningTokens ?? 0,
       log.costUsd ?? null,
+      log.crewId ?? null,
     );
   }
 
@@ -954,6 +1063,53 @@ export class SessionStore {
     return stmt.all(sessionId) as Array<Record<string, unknown>>;
   }
 
+  addPermissionRule(rule: {
+    id: string;
+    sessionId: string;
+    action: string;
+    pattern?: string;
+    effect: string;
+    comment?: string;
+  }): void {
+    if (this.memMode) {
+      const arr = this.memPermissionRules.get(rule.sessionId) ?? [];
+      arr.push({
+        id: rule.id,
+        session_id: rule.sessionId,
+        action: rule.action,
+        pattern: rule.pattern ?? '*',
+        effect: rule.effect,
+        comment: rule.comment ?? null,
+      });
+      this.memPermissionRules.set(rule.sessionId, arr);
+      return;
+    }
+
+    const stmt = this.db.prepare(`
+      INSERT INTO permission_rules (id, session_id, action, pattern, effect, comment)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(rule.id, rule.sessionId, rule.action, rule.pattern ?? '*', rule.effect, rule.comment ?? null);
+  }
+
+  getPermissionRules(sessionId: string): Array<Record<string, unknown>> {
+    if (this.memMode) {
+      return (this.memPermissionRules.get(sessionId) ?? []) as Array<Record<string, unknown>>;
+    }
+
+    const stmt = this.db.prepare('SELECT * FROM permission_rules WHERE session_id = ? ORDER BY created_at ASC');
+    return stmt.all(sessionId) as Array<Record<string, unknown>>;
+  }
+
+  clearPermissionRules(sessionId: string): void {
+    if (this.memMode) {
+      this.memPermissionRules.set(sessionId, []);
+      return;
+    }
+
+    this.db.prepare('DELETE FROM permission_rules WHERE session_id = ?').run(sessionId);
+  }
+
   saveCrewState(state: {
     id: string;
     sessionId: string;
@@ -1007,12 +1163,58 @@ export class SessionStore {
     return stmt.all(sessionId) as Array<Record<string, unknown>>;
   }
 
+  addCrewFeedback(feedback: {
+    id: string;
+    sessionId: string;
+    crewId: string;
+    positive: boolean;
+    comment?: string | null;
+    createdAt: string;
+  }): void {
+    if (this.memMode) {
+      const arr = this.memCrewFeedback.get(feedback.crewId) ?? [];
+      arr.push({
+        id: feedback.id,
+        session_id: feedback.sessionId,
+        crew_id: feedback.crewId,
+        positive: feedback.positive ? 1 : 0,
+        comment: feedback.comment ?? null,
+        created_at: feedback.createdAt,
+      });
+      this.memCrewFeedback.set(feedback.crewId, arr);
+      return;
+    }
+
+    const stmt = this.db.prepare(`
+      INSERT INTO crew_feedback (id, session_id, crew_id, positive, comment)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      feedback.id,
+      feedback.sessionId,
+      feedback.crewId,
+      feedback.positive ? 1 : 0,
+      feedback.comment ?? null,
+    );
+  }
+
+  getCrewFeedback(crewId: string): Array<Record<string, unknown>> {
+    if (this.memMode) {
+      return (this.memCrewFeedback.get(crewId) ?? []) as Array<Record<string, unknown>>;
+    }
+
+    const stmt = this.db.prepare('SELECT * FROM crew_feedback WHERE crew_id = ? ORDER BY created_at DESC');
+    return stmt.all(crewId) as Array<Record<string, unknown>>;
+  }
+
   deleteSession(sessionId: string): void {
     if (this.memMode) {
       this.memSessions.delete(sessionId);
       this.memMessages.delete(sessionId);
       this.memTokenLogs.delete(sessionId);
       this.memPermissions.delete(sessionId);
+      this.memSessionEvents.delete(sessionId);
+      this.memPermissionRules.delete(sessionId);
       if (this.memCrewStates) {
         for (const key of this.memCrewStates.keys()) {
           if (key.startsWith(`${sessionId}:`)) {
@@ -1023,10 +1225,14 @@ export class SessionStore {
       return;
     }
 
+    try { this.db.prepare('DELETE FROM session_events WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
+    try { this.db.prepare('DELETE FROM crew_feedback WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
+    try { this.db.prepare('DELETE FROM permission_rules WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
     this.db.prepare('DELETE FROM session_crew_states WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM tool_executions WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM token_logs WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM permissions WHERE session_id = ?').run(sessionId);
+    this.db.prepare('DELETE FROM permission_rules WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM agent_tasks WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM message_parts WHERE session_id = ?').run(sessionId);
@@ -1039,17 +1245,69 @@ export class SessionStore {
       this.memMessages.clear();
       this.memTokenLogs.clear();
       this.memPermissions.clear();
+      this.memPermissionRules.clear();
+      this.memSessionEvents.clear();
       if (this.memCrewStates) this.memCrewStates.clear();
       return;
     }
+    try { this.db.exec('DELETE FROM session_events'); } catch { /* table may not exist yet */ }
+    try { this.db.exec('DELETE FROM crew_feedback'); } catch { /* table may not exist yet */ }
+    try { this.db.exec('DELETE FROM permission_rules'); } catch { /* table may not exist yet */ }
     this.db.exec('DELETE FROM session_crew_states');
     this.db.exec('DELETE FROM tool_executions');
     this.db.exec('DELETE FROM token_logs');
     this.db.exec('DELETE FROM permissions');
+    this.db.exec('DELETE FROM permission_rules');
     this.db.exec('DELETE FROM agent_tasks');
     this.db.exec('DELETE FROM messages');
     this.db.exec('DELETE FROM message_parts');
     this.db.exec('DELETE FROM sessions');
+  }
+
+  insertSessionEvent(event: SessionEvent): void {
+    if (this.memMode) {
+      const arr = this.memSessionEvents.get(event.sessionId) ?? [];
+      arr.push(event);
+      this.memSessionEvents.set(event.sessionId, arr);
+      return;
+    }
+    try {
+      this.db!.prepare(`
+        INSERT INTO session_events (id, session_id, sequence, event_type, payload)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        crypto.randomUUID(),
+        event.sessionId,
+        event.sequence,
+        event.type,
+        JSON.stringify(event),
+      );
+    } catch (e) {
+      getLogger().warn('STORE', `insertSessionEvent failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  getSessionEvents(sessionId: string, sinceSequence?: number): SessionEvent[] {
+    if (this.memMode) {
+      const all = (this.memSessionEvents.get(sessionId) ?? []) as SessionEvent[];
+      return sinceSequence != null ? all.filter(e => e.sequence > sinceSequence!) : [...all];
+    }
+    try {
+      let rows: Record<string, unknown>[];
+      if (sinceSequence != null) {
+        rows = this.db!.prepare('SELECT * FROM session_events WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC').all(sessionId, sinceSequence) as Record<string, unknown>[];
+      } else {
+        rows = this.db!.prepare('SELECT * FROM session_events WHERE session_id = ? ORDER BY sequence ASC').all(sessionId) as Record<string, unknown>[];
+      }
+      return rows.map(row => JSON.parse(row['payload'] as string) as SessionEvent);
+    } catch { return []; }
+  }
+
+  *replayEvents(sessionId: string, sinceSequence?: number): Generator<SessionEvent, void, undefined> {
+    const events = this.getSessionEvents(sessionId, sinceSequence);
+    for (const event of events) {
+      yield event;
+    }
   }
 
   close(): void {

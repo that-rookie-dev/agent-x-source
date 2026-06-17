@@ -21,10 +21,14 @@ import {
   SQLiteBrowserRuntime,
   MCPBridge,
   SessionLogger,
+  initLogCollector,
+  getLogCollector,
 } from '@agentx/engine';
-import type { AgentXConfig, ProviderId, TelemetryBus } from '@agentx/shared';
+import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
+import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
 import { join } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
 import { getDataDir } from '@agentx/shared';
 
 export interface EngineState {
@@ -51,16 +55,11 @@ export interface EngineState {
 }
 
 let state: EngineState | null = null;
-let pendingCwd: string | null = null;
-
-export function setPendingCwd(cwd: string | null): void { pendingCwd = cwd; }
-export function getPendingCwd(): string | null { return pendingCwd; }
 
 function safeLoadConfig(configManager: ConfigManager): void {
   try {
     configManager.load();
   } catch {
-    // not configured yet
   }
 }
 
@@ -77,6 +76,9 @@ export function getEngine(): EngineState {
   const pluginRegistry = new PluginRegistry();
 
   const mcpBridge = new MCPBridge();
+
+  // Initialize log collector — hooks into the shared logger to capture all logs
+  initLogCollector();
 
   const pgPlugin = pluginRegistry.getPlugin('postgresql');
   const pgConfig = pgPlugin?.config ?? {};
@@ -96,7 +98,6 @@ export function getEngine(): EngineState {
     sessionManager = new SessionManager();
   }
 
-  // Set sessions directory for filesystem fallback, then recover orphaned sessions
   const sessionsDir = join(getDataDir(), 'sessions');
   try {
     const store = (sessionManager as any).store;
@@ -130,7 +131,6 @@ export function getEngine(): EngineState {
         void rag.storeBackend.connect();
       }
     } catch {
-      // RAG init is best-effort
     }
   }
 
@@ -157,7 +157,6 @@ export function getEngine(): EngineState {
     dek: null,
   };
 
-  // Boot-time channel auto-start — bridge starts, agent attaches on first session
   const tgPlugin = state!.pluginRegistry.getPlugin('telegram');
   const tgConfig = tgPlugin?.config ?? {};
   if (tgPlugin?.enabled && tgConfig['botToken'] && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
@@ -195,95 +194,136 @@ export function setEngineDEK(dek: Buffer | null): void {
   }
 }
 
-export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
+export function createAgent(config: AgentXConfig | undefined, session: Session): Agent {
   const eng = getEngine();
   let cfg: AgentXConfig;
   if (config) {
     cfg = config;
   } else {
-    try {
-      cfg = eng.configManager.load();
-    } catch {
-      cfg = getDefaultConfig();
-    }
+    cfg = eng.configManager.load();
   }
 
-  const activeProvider = cfg.provider.activeProvider as ProviderId;
-  const providerCfg = cfg.provider.providers[activeProvider];
-  const apiKey = providerCfg?.apiKey;
-
-  if (providerCfg?.configured) {
-    try {
-      const prov = ProviderFactory.create(activeProvider, apiKey, providerCfg?.baseUrl);
-      prov.validate().catch(() => {});
-    } catch {
-      // provider not available yet
-    }
+  if (!cfg.provider.activeProvider || !cfg.provider.activeModel) {
+    throw new Error('No provider configured. Configure a provider and model first.');
   }
 
-  
-
-  let session;
-  if (sessionId) {
-    session = eng.sessionManager.restoreSession(sessionId);
-    if (!session) {
-      session = eng.sessionManager.createSession(
-        activeProvider,
-        cfg.provider.activeModel,
-        undefined,
-        pendingCwd || process.cwd(),
-      );
-    }
-  } else {
-    session = eng.sessionManager.createSession(
-      activeProvider,
-      cfg.provider.activeModel,
-      undefined,
-      pendingCwd || process.cwd(),
-    );
+  const providerCfg = cfg.provider.providers[cfg.provider.activeProvider];
+  if (!providerCfg?.configured) {
+    throw new Error(`Provider "${cfg.provider.activeProvider}" is not fully configured. Please configure it first.`);
   }
-  // Use the session's stored scopePath, falling back to pendingCwd if set
+
   if (session?.scopePath) {
     eng.toolkit.executor.setScopePath(session.scopePath);
-  } else if (pendingCwd) {
-    eng.toolkit.executor.setScopePath(pendingCwd);
   }
-  pendingCwd = null;
+
+  // Ensure scopePath is valid — check context.json as fallback
+  const effectiveScopePath = session.scopePath
+    || (() => {
+        try {
+          const ctxPath = join(getDataDir(), 'sessions', session.id, 'context.json');
+          if (existsSync(ctxPath)) {
+            const ctx = JSON.parse(readFileSync(ctxPath, 'utf-8'));
+            return (ctx.__scopePath__ || ctx.scopePath || '') as string;
+          }
+        } catch { /* ignore */ }
+        return '';
+      })()
+    || process.cwd();
+
+  const onPart: PartPersistFn = (sessionId, part) => {
+    try {
+      const store = (eng.sessionManager as any).store;
+      if (store && typeof store.insertPart === 'function') {
+        store.insertPart(sessionId, part);
+      }
+    } catch { /* best effort */ }
+  };
 
   const agent = new Agent({
     config: cfg,
     sessionId: session.id,
     systemPrompt: '',
-    scopePath: session.scopePath,
+    scopePath: effectiveScopePath,
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
+    onPart,
   });
 
-  // Replace the Agent's internal CrewManager with the shared instance
-  // so crew changes via the API are immediately visible to the orchestrator
   (agent.sauce as { crew: CrewManager }).crew = eng.crewManager;
   agent.sauce.crew.refresh();
 
-  // Sync enabled crew members into the Agent's CrewOrchestrator
   const enabledCrews = eng.crewManager.listEnabled();
   for (const crew of enabledCrews) {
     agent.addCrewMember(crew);
     agent.setCrewEnabled(crew.id, true);
   }
 
+  const crewOrch = (agent as any).crewOrchestrator;
+  if (crewOrch && typeof crewOrch.setSessionManager === 'function') {
+    crewOrch.setSessionManager(eng.sessionManager);
+  }
+
   eng.agent = agent;
 
-  // Create session logger for this agent
   const sessionLogger = new SessionLogger(session.id);
   sessionLogger.init();
   agent.sessionLogger = sessionLogger;
 
-  // Set context persistence directory for session restore
+  // Hook session-level logs into the global log collector
+  getLogCollector().hookSessionLogger(sessionLogger);
+
   const dataDir = getDataDir();
   const sessDir = join(dataDir, 'sessions', session.id);
-  agent.setContextPersistDir(sessDir);
+  agent.setContextPersistDir(sessDir, effectiveScopePath);
 
-  // Wire token logging to persistent DB
+  // Wire session events to SessionStore (DB persistence)
+  agent.onSessionEvent = (event) => {
+    try {
+      const store = (eng.sessionManager as any).store;
+      if (store?.insertSessionEvent) {
+        store.insertSessionEvent(event);
+      }
+    } catch { /* best-effort */ }
+  };
+
+  // Wire tool executions to SessionStore (DB persistence)
+  try {
+    const executor = (agent as any).toolExecutor;
+    if (executor?.setExecutionPersist) {
+      executor.setExecutionPersist((entry: { toolId: string; args: Record<string, unknown>; result: { success: boolean; output: string; error?: string }; timestamp: number; elapsed: number; sessionId: string }) => {
+        try {
+          eng.sessionManager.addToolExecution({
+            id: crypto.randomUUID(),
+            sessionId: entry.sessionId,
+            toolName: entry.toolId,
+            input: JSON.stringify(entry.args),
+            output: entry.result.output,
+            success: entry.result.success,
+            elapsedMs: entry.elapsed,
+          });
+        } catch { /* best-effort */ }
+      });
+    }
+  } catch { /* best-effort */ }
+
+  // Restore recent conversation history into agent memory
+  // Limit to last 20 messages to prevent old topics from dominating new instructions
+  try {
+    const convPath = join(sessDir, 'conversation.json');
+    if (existsSync(convPath)) {
+      const raw = JSON.parse(readFileSync(convPath, 'utf-8')) as Array<Record<string, unknown>>;
+      const userAssistant = raw.filter((m: any) => m.role === 'user' || m.role === 'assistant');
+      const recent = userAssistant.slice(-20);
+      for (const msg of recent) {
+        const role = msg['role'] as string;
+        const content = (msg['content'] as string) || '';
+        if (content) {
+          agent.addToHistory({ role: role as 'user' | 'assistant', content });
+        }
+      }
+    }
+  } catch { /* best-effort */ }
+
   agent.onTokenLog = (opts) => {
     eng.sessionManager.addTokenLog({
       sessionId: session.id,
@@ -292,20 +332,18 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       model: cfg.provider.activeModel,
       costUsd: opts.costUsd,
       providerId: cfg.provider.activeProvider,
+      crewId: opts.crewId,
     });
   };
 
-  // Bridge agent events to telemetry bus + persist token logs
   agent.events.on((event) => {
     eng.telemetry.emit(event as any);
-    // Persist token usage to DB for every token_usage event (catches all paths)
     const ev = event as Record<string, unknown>;
     if (ev['type'] === 'token_usage') {
       const totalTokens = (ev['totalTokens'] as number) ?? 0;
       const inputTokens = (ev['inputTokens'] as number) ?? 0;
       const outputTokens = (ev['outputTokens'] as number) ?? 0;
       const costUsd = (ev['costUsd'] as number) ?? 0;
-      // Sync to session table and SessionManager's tracker (prevents auto-save overwrite)
       (eng.sessionManager as any).store.updateSession(session.id, { tokensUsed: totalTokens });
       const smTracker = (eng.sessionManager as any).tokenTracker;
       if (smTracker?.setUsed) smTracker.setUsed(totalTokens);
@@ -318,25 +356,23 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
             model: cfg.provider.activeModel,
             costUsd,
             providerId: cfg.provider.activeProvider,
+            crewId: (ev['crewId'] as string) || undefined,
           });
         } catch { /* best effort */ }
       }
     }
   });
 
-  // ─── Create Gateway for channel management ───
   if (!eng.gateway) {
     const gateway = new Gateway();
     eng.gateway = gateway;
   }
   eng.gateway!.attachAgent(agent);
 
-  // Start Telegram bridge via Gateway (skip if daemon handles it)
   const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
   const tgConfig = tgPlugin?.config ?? {};
   if (tgPlugin?.enabled && tgConfig['botToken'] && !eng.telegramBridge && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
     try {
-      // Create a dedicated agent for Telegram so it doesn't conflict with web UI
       const channelAgent = ensureChannelAgent();
       const tgChannelPlugin = eng.gateway!.registerTelegram(tgConfig['botToken'] as string);
       tgChannelPlugin.setAgent(channelAgent);
@@ -354,7 +390,6 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
       console.error('Failed to start Telegram bridge', e);
     }
   } else if (eng.gateway && tgPlugin?.enabled && tgConfig['botToken']) {
-    // Bridge already running — ensure Telegram has its dedicated agent
     try {
       const channelAgent = ensureChannelAgent();
       const entry = (eng.gateway as any).registry.getChannel('telegram');
@@ -364,7 +399,6 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     } catch { /* best-effort */ }
   }
 
-  // Start Discord bridge if plugin is configured (direct bridge until Gateway migration)
   const dcPlugin = eng.pluginRegistry.getPlugin('discord');
   const dcConfig = dcPlugin?.config ?? {};
   if (dcPlugin?.enabled && dcConfig['botToken'] && !eng.discordBridge) {
@@ -398,7 +432,6 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     }
   }
 
-  // Start Slack bridge if plugin is configured
   const slPlugin = eng.pluginRegistry.getPlugin('slack');
   const slConfig = slPlugin?.config ?? {};
   if (slPlugin?.enabled && slConfig['botToken'] && slConfig['appToken'] && !eng.slackBridge) {
@@ -434,7 +467,6 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     }
   }
 
-  // Start Email bridge if plugin is configured
   const emPlugin = eng.pluginRegistry.getPlugin('email');
   const emConfig = emPlugin?.config ?? {};
   if (emPlugin?.enabled && emConfig['smtpHost'] && !eng.emailBridge) {
@@ -464,7 +496,6 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     }
   }
 
-  // Start Redis cache runtime
   if (!eng.redisRuntime) {
     const redisPlugin = eng.pluginRegistry.getPlugin('redis-cache');
     const redisConfig = redisPlugin?.config ?? {};
@@ -476,7 +507,6 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     }
   }
 
-  // Start Webhook notifier
   if (!eng.webhookRuntime) {
     const whPlugin = eng.pluginRegistry.getPlugin('webhook-notifier');
     const whConfig = whPlugin?.config ?? {};
@@ -495,7 +525,6 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
     }
   }
 
-  // Start SQLite browser
   if (!eng.sqliteBrowser) {
     const sqlPlugin = eng.pluginRegistry.getPlugin('sqlite-web');
     if (sqlPlugin?.enabled) {
@@ -516,52 +545,28 @@ export function createAgent(config?: AgentXConfig, sessionId?: string): Agent {
   return agent;
 }
 
-function getDefaultConfig(): AgentXConfig {
-  return {
-    provider: {
-      activeProvider: 'opencode-zen',
-      activeModel: 'deepseek-v4-flash-free',
-      providers: {
-        'opencode-zen': { configured: true },
-      },
-    },
-    ui: {
-      theme: 'dark',
-      showTokenBar: true,
-      showTimers: true,
-      animationSpeed: 'normal',
-    },
-    organization: null,
-    telemetry: false,
-  };
-}
-
-export function getOrCreateAgent(config?: AgentXConfig): Agent {
+export function getOrCreateAgent(config?: AgentXConfig, session?: Session): Agent {
   const eng = getEngine();
   if (eng.agent && !config) return eng.agent;
-  return createAgent(config);
+  if (!session) {
+    const sess = eng.sessionManager.getActiveSession();
+    if (!sess) throw new Error('No active session. Create a session first.');
+    return createAgent(config, sess);
+  }
+  return createAgent(config, session);
 }
 
-/** Create or return a dedicated agent for messaging channels — independent of web UI agent */
 export function ensureChannelAgent(): Agent {
   const eng = getEngine();
   if (eng.channelAgent) return eng.channelAgent;
 
-  let cfg: AgentXConfig;
-  try {
-    cfg = eng.configManager.load();
-  } catch {
-    cfg = getDefaultConfig();
-  }
+  const cfg = eng.configManager.load();
 
-  const activeProvider = cfg.provider.activeProvider as ProviderId;
   const CHANNEL_SESSION_ID = '__channel__';
-
-  // Restore persistent channel session, or create it once
   let session = eng.sessionManager.restoreSession(CHANNEL_SESSION_ID);
   if (!session) {
     session = eng.sessionManager.createSession(
-      activeProvider,
+      cfg.provider.activeProvider as ProviderId,
       cfg.provider.activeModel,
       undefined,
       process.cwd(),
@@ -569,39 +574,17 @@ export function ensureChannelAgent(): Agent {
     );
   }
 
-  const agent = new Agent({
-    config: cfg,
-    sessionId: session.id,
-    systemPrompt: '',
-    scopePath: session.scopePath,
-    toolExecutor: eng.toolkit.executor,
-    toolRegistry: eng.toolkit.registry,
-  });
-  (agent.sauce as { crew: CrewManager }).crew = eng.crewManager;
-  agent.sauce.crew.refresh();
-  const dataDir = getDataDir();
-  const sessDir = join(dataDir, 'sessions', session.id);
-  agent.setContextPersistDir(sessDir);
-
-  // Create session logger for the channel agent
-  const channelLogger = new SessionLogger(session.id);
-  channelLogger.init();
-  agent.sessionLogger = channelLogger;
-
-  eng.channelAgent = agent;
-  return agent;
+  return createAgent(cfg, session);
 }
 
 export function destroyAgent(): void {
   const eng = getEngine();
-  // Unsubscribe WebSocket event listener before destroying agent
   unsubscribeAgent();
   if (eng.agent) {
     (eng.agent as any).sessionLogger?.close();
     eng.agent.endSession();
     eng.agent = null;
   }
-  // Keep gateway and telegram bridge alive — they serve Telegram independently
 }
 
 export function clearEngine(): void {

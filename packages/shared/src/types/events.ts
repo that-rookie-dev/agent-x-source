@@ -34,12 +34,13 @@ export type EngineEvent =
   | { type: 'processing_start'; taskDescription: string }
   | { type: 'processing_progress'; stage: string; progress: number }
   | { type: 'processing_complete'; result: FormattedResponse }
-  | { type: 'permission_required'; tool: string; path: string; riskLevel: string }
+  | { type: 'permission_required'; requestId: string; tool: string; path: string; riskLevel: string }
   | { type: 'token_update'; used: number; available: number }
   | { type: 'error'; code: string; message: string; recoverable: boolean; actions?: RemediationAction[] }
   | { type: 'provider_error'; provider: string; model: string; statusCode?: number; message: string; recoverable: boolean; actions?: RemediationAction[] }
   | { type: 'tool_executing'; tool: string; description: string; startTime: number; args?: Record<string, unknown>; callId?: string }
   | { type: 'tool_complete'; tool: string; result: ToolResult; elapsed: number; args?: Record<string, unknown>; callId?: string }
+  | { type: 'tool_output'; tool: string; callId: string; output: string; timestamp: number }
   | { type: 'tool_called'; callId: string; tool: string; args: Record<string, unknown>; startTime: number }
   | { type: 'tool_result'; callId: string; tool: string; success: boolean; output: string; elapsed: number; args?: Record<string, unknown>; metadata?: { diff?: string; filePath?: string; oldContent?: string; newContent?: string; error?: string } }
   | { type: 'agent_spawned'; agentId: string; task: string; startTime: number }
@@ -49,7 +50,8 @@ export type EngineEvent =
   | { type: 'task_backgrounded'; taskId: string }
   | { type: 'steer_message'; taskId: string; instruction: string }
   | { type: 'reminder_fired'; taskId: string; name: string; message: string }
-  | { type: 'background_task_complete'; taskId: string; summary: string }
+  | { type: 'background_task_complete'; taskId: string; childSessionId?: string; tokensUsed?: number; elapsedMs?: number; summary: string }
+  | { type: 'subagent_result'; taskId: string; childSessionId: string; tokensUsed: number; elapsedMs: number }
   | { type: 'reasoning_start' }
   | { type: 'reasoning_glimpse'; text: string }
   | { type: 'reasoning_complete' }
@@ -73,6 +75,8 @@ export type EngineEvent =
   | { type: 'plan_cancelled'; planId: string; reason: string }
   | { type: 'plan_mode_entered' }
   | { type: 'plan_mode_exited' }
+  | { type: 'hyperdrive_entered' }
+  | { type: 'hyperdrive_exited' }
   | { type: 'indexing_start'; totalFiles: number }
   | { type: 'indexing_progress'; indexed: number; total: number; currentFile?: string }
   | { type: 'indexing_complete'; indexed: number; total: number; chunks: number }
@@ -81,7 +85,7 @@ export type EngineEvent =
   | { type: 'command_action'; action: 'show_watch_status'; entries: Array<{ pattern: string; command: string }> }
   | { type: 'clarification_required'; question: string; options: string[]; allowFreeform: boolean; recommended?: string; allowChooseAll?: boolean }
   | { type: 'model_capability_warning'; model: string; missing: string[]; message: string }
-  | { type: 'intent_detected'; intent: string; confidence: number }
+  | { type: 'intent_detected'; intent: string; confidence: number; reasons?: string[] }
   | { type: 'rag_queried'; resultCount: number; elapsed: number }
   | { type: 'subagent_event'; subagentId: string; parentEvent: EngineEvent }
   | { type: 'discord_connected'; code: string; message: string; recoverable: boolean }
@@ -105,8 +109,12 @@ export type EngineEvent =
   | { type: 'decomposition_fallback'; task: string }
   | { type: 'reflection_complete'; result: Record<string, unknown> }
   | { type: 'decision_made'; messageClass: string; executionPath: string; confidence: number; reasoning: string }
-  | { type: 'token_usage'; totalTokens: number; contextWindow: number }
-  | { type: 'reasoning_delta'; content: string };
+  | { type: 'token_usage'; totalTokens: number; contextWindow: number; turnTokens?: number; costUsd?: number; inputTokens?: number; outputTokens?: number; inputPrice?: number; outputPrice?: number }
+  | { type: 'reasoning_delta'; content: string }
+  | { type: 'agent_switched'; agent: { id: string; name: string; mode: string; color?: string } }
+  | { type: 'context_warning'; currentTokens: number; threshold: number; percentage: number }
+  | { type: 'crew_activity'; crewId: string; crewName?: string; activity: 'speaking' | 'thinking' | 'done'; content?: string }
+  | { type: 'crew_feedback'; crewId: string; positive: boolean };
 
 export interface FormattedResponse {
   content: string;

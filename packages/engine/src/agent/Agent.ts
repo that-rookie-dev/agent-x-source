@@ -1,6 +1,7 @@
 import type {
   Message,
   EngineEvent,
+  SessionEvent,
   CompletionRequest,
   CompletionMessage,
   CompletionChunk,
@@ -9,10 +10,13 @@ import type {
   RemediationAction,
   Plan,
   PlanStep,
+  PermissionRule,
 } from '@agentx/shared';
 import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, type ChannelKind, getConfigDir } from '@agentx/shared';
+import { Scope } from '../concurrency/Scope.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { ProviderFactory } from '../providers/index.js';
 import { AgentLifecycle } from './AgentLifecycle.js';
@@ -60,13 +64,16 @@ import { SpecialistRegistry } from './SpecialistRegistry.js';
 import type { SpecialistType } from './SpecialistRegistry.js';
 import { SkillGenerator } from './SkillGenerator.js';
 import { ReflectionLoop } from './ReflectionLoop.js';
+import { SkillRegistry } from './SkillRegistry.js';
 import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
 import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 import { CrewOrchestrator, type CrewMember } from './CrewOrchestrator.js';
 import { ContextTracker } from './ContextTracker.js';
+import { computeContextEpoch } from './ContextEpoch.js';
 
 import { TodoManager } from './TodoManager.js';
 import type { SessionLogger } from '../session/SessionLogger.js';
+import { COMPACTION_PROMPT } from './compaction-prompt.js';
 
 // ─── UNIFIED PIPELINE IMPORTS (Phase 1-11 integration) ───
 import { InputNormalizer } from '../communication/InputNormalizer.js';
@@ -79,7 +86,11 @@ import { RunStateManager } from '../agent/RunStateManager.js';
 import { IdleTimeoutBreaker } from '../communication/IdleTimeoutBreaker.js';
 import { createAiSdkModel, createAiSdkTools, aiSdkStream } from './AiSdkBridge.js';
 import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
+import type { PartPersistFn } from './AiSdkStreamHandler.js';
 import { streamText, stepCountIs, type ToolSet } from 'ai';
+import { SessionRunner } from '../session/SessionRunner.js';
+import type { AgentInfo } from './AgentInfo.js';
+import { BUILTIN_AGENTS } from './agent-configs.js';
 // IntentClassifier import removed — DecisionEngine (heuristic) handles all routing
 function getLoadingSteps(_intent: string): Array<{ id: string; label: string; status: 'active' | 'completed' | 'pending' }> {
   const labels: string[] = ['Thinking…', 'Working…', 'Processing…', 'One moment…'];
@@ -96,6 +107,7 @@ export interface AgentOptions {
   gitAutoCommit?: boolean;
   gitAware?: boolean;
   eventBus?: AgentEventBus;
+  onPart?: PartPersistFn;
 }
 
 export class Agent {
@@ -108,7 +120,8 @@ export class Agent {
   private scopePath: string;
   private isProcessing = false;
   readonly lifecycle = new AgentLifecycle();
-  private abortController: AbortController | null = null;
+  private scope: Scope | null = null;
+  private _abortSignalController: AbortController | null = null;
   private pendingInstruction: string | null = null;
   private _turnStartTokens = 0;
   private _turnStartCost = 0;
@@ -122,11 +135,35 @@ export class Agent {
   private errorShield: ErrorShield;
   private toolExecutor?: EnhancedToolExecutor;
   private toolRegistry?: ToolRegistry;
-  private permissionResolve: ((choice: 'allow_once' | 'allow_always' | 'deny') => void) | null = null;
+  private pendingPermissions = new Map<string, { resolve: (choice: 'allow_once' | 'allow_always' | 'deny') => void; toolName: string; path: string; riskLevel: string }>();
+  private turnApprovedAll = false;
+  private _onPart?: PartPersistFn;
   autoApproveTools = false;
+  private _hyperdriveMode = false;
+
+  get hyperdriveMode(): boolean {
+    return this._hyperdriveMode;
+  }
+
+  toggleHyperdriveMode(): boolean {
+    this._hyperdriveMode = !this._hyperdriveMode;
+    this.autoApproveTools = this._hyperdriveMode;
+    this.lastContextEpoch = null;
+    this.rebuildSystemPrompt();
+    this.contextTracker.record(this.sessionId, 'assistant',
+      this._hyperdriveMode
+        ? '[Hyperdrive ON — full autonomous acceleration, all permissions pre-granted]'
+        : '[Hyperdrive OFF — standard permission checks restored]');
+    this.emit({
+      type: this._hyperdriveMode ? 'hyperdrive_entered' : 'hyperdrive_exited',
+    } as unknown as EngineEvent);
+    return this._hyperdriveMode;
+  }
+  private lastContextEpoch: string | null = null;
   private cachedModels: Map<string, number> = new Map(); // modelId -> contextWindow
   private cachedModelCapabilities: Map<string, string[]> = new Map(); // modelId -> capabilities
   private groundedModels: Set<string> = new Set(); // models that failed trial this session
+  currentAgent: AgentInfo;
   private planMode = false;
   private currentPlan: Plan | null = null;
   private pendingPlanApproval: ((approved: boolean) => void) | null = null;
@@ -157,9 +194,18 @@ export class Agent {
   private specialistRegistry: SpecialistRegistry;
   private _skillGenerator: SkillGenerator | null = null;
   private get skillGenerator(): SkillGenerator { if (!this._skillGenerator) this._skillGenerator = new SkillGenerator(); return this._skillGenerator; }
+  private _skillRegistry: SkillRegistry | null = null;
+  private get skillRegistry(): SkillRegistry {
+    if (!this._skillRegistry) {
+      const skillsDir = join(getConfigDir(), 'skills');
+      this._skillRegistry = new SkillRegistry(skillsDir);
+    }
+    return this._skillRegistry;
+  }
   private _reflectionLoop: ReflectionLoop | null = null;
   private get reflectionLoop(): ReflectionLoop { if (!this._reflectionLoop) this._reflectionLoop = new ReflectionLoop(); return this._reflectionLoop; }
   private toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
+  private sessionRunner: SessionRunner;
 
   // Anti-duplicate: prevents double message_received within a single turn
   private _turnMessageEmitted = false;
@@ -186,15 +232,29 @@ export class Agent {
   private _telegramChatId: number | null = null;
   private _crewOrchestrator: CrewOrchestrator | null = null;
   private get crewOrchestrator(): CrewOrchestrator {
-    if (!this._crewOrchestrator) { this._crewOrchestrator = new CrewOrchestrator(this.provider, this.eventBus, this.tokenTracker); this._crewOrchestrator.setActiveModel(this.config.provider.activeModel); if (this.toolRegistry && this.toolExecutor) { this._crewOrchestrator.setTools(this.toolRegistry, this.toolExecutor); } this._crewOrchestrator.setConfig(this.config); this._crewOrchestrator.setSessionId(this.sessionId); }
+    if (!this._crewOrchestrator) {
+      this._crewOrchestrator = new CrewOrchestrator(this.provider, this.eventBus, this.tokenTracker);
+      this._crewOrchestrator.setActiveModel(this.config.provider.activeModel);
+      if (this.toolRegistry && this.toolExecutor) { this._crewOrchestrator.setTools(this.toolRegistry, this.toolExecutor); }
+      this._crewOrchestrator.setConfig(this.config);
+      this._crewOrchestrator.setSessionId(this.sessionId);
+      this._crewOrchestrator.onTokenLog = (opts) => {
+        this.onTokenLog?.({ ...opts, crewId: opts.crewId });
+      };
+      this._crewOrchestrator.onPersistCrewResponse = (response) => {
+        getLogger().info('CREW_PERSIST', `Crew response from ${response.crewName} (${response.crewId})`);
+      };
+    }
     return this._crewOrchestrator;
   }
   private contextTracker = new ContextTracker();
+  private compactionMarkerIndices: number[] = [];
   sessionLogger: SessionLogger | null = null;
-  onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number }) => void) | null = null;
+  onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number; crewId?: string }) => void) | null = null;
+  onSessionEvent: ((event: SessionEvent) => void) | null = null;
 
-  setContextPersistDir(dir: string): void {
-    this.contextTracker.setSessionDir(dir);
+  setContextPersistDir(dir: string, scopePath?: string): void {
+    this.contextTracker.setSessionDir(dir, scopePath);
   }
   private maxSubAgents = 5;
   private enabledCrewSessionIds: Set<string> = new Set();
@@ -217,8 +277,9 @@ export class Agent {
   constructor(options: AgentOptions) {
     this.config = options.config;
     this.sessionId = options.sessionId;
-    this.scopePath = normalize(resolve(options.scopePath ?? process.cwd()));
+    this.scopePath = normalize(resolve(options.scopePath!));
     this.eventBus = options.eventBus ?? new AgentEventBus();
+    this._onPart = options.onPart;
     this.tokenTracker = new TokenTracker(this.getContextWindow());
     this.subAgents = new SubAgentManager(this.eventBus);
     this.subAgents.setParentAgent(this);
@@ -253,7 +314,7 @@ export class Agent {
         this.toolExecutor = options.toolExecutor;
       } else if (options.toolExecutor instanceof ToolExecutor && !(options.toolExecutor instanceof EnhancedToolExecutor)) {
         // Wrap plain ToolExecutor in Enhanced for parallel/doom-loop/repair capabilities
-        this.toolExecutor = new EnhancedToolExecutor(options.toolRegistry, options.scopePath ?? process.cwd());
+        this.toolExecutor = new EnhancedToolExecutor(options.toolRegistry, this.scopePath);
         // Copy handlers and hooks from provided executor
         const providedHandlers = (options.toolExecutor as unknown as Record<string, unknown>)['handlers'] as
           | Map<string, (args: Record<string, unknown>, ctx: import('@agentx/shared').ToolExecutionContext) => Promise<import('@agentx/shared').ToolResult>>
@@ -270,7 +331,7 @@ export class Agent {
         }
       } else {
         // Plain mock object from tests — wrap it
-        this.toolExecutor = new EnhancedToolExecutor(options.toolRegistry, options.scopePath ?? process.cwd());
+        this.toolExecutor = new EnhancedToolExecutor(options.toolRegistry, this.scopePath);
         const mockObj = options.toolExecutor as unknown as Record<string, unknown>;
         if (typeof mockObj['execute'] === 'function') {
           const mockExec = mockObj['execute'] as (...args: unknown[]) => Promise<unknown>;
@@ -288,7 +349,7 @@ export class Agent {
       }
       this.toolRegistry = options.toolRegistry;
     } else {
-      const effectiveScope = options.scopePath ?? process.cwd();
+      const effectiveScope = this.scopePath;
       const toolkit = createDefaultToolkit(effectiveScope);
       this.toolRegistry = toolkit.registry;
       // Use EnhancedToolExecutor for parallel/doom-loop/repair capabilities
@@ -305,18 +366,57 @@ export class Agent {
     }
     setToolRegistryInstance(this.toolRegistry ?? null);
 
+    this.sessionRunner = new SessionRunner({
+      sessionId: this.sessionId,
+      config: this.config,
+      eventBus: this.eventBus,
+      toolRegistry: this.toolRegistry!,
+      toolExecutor: this.toolExecutor!,
+      apiKey: this.getApiKey(),
+      waitForClarification: async (question, options, allowFreeform) => {
+        this.emit({ type: 'clarification_required', question, options, allowFreeform });
+        const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
+        this.clarificationResolve = null;
+        return response;
+      },
+      runSubAgent: async (instruction, toolsList, timeout) => {
+        const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
+        return subAgent.execute();
+      },
+      onTokenUsage: (input, output) => {
+        this.tokenTracker.addTokenUsage(input, output);
+        this.onTokenLog?.({ inputTokens: input, outputTokens: output, costUsd: 0 });
+      },
+      gitManager: this.gitManager ?? undefined,
+      onSessionEvent: this.onSessionEvent ?? undefined,
+      modelName: this.config.provider.activeModel,
+    });
+
     // Reset permissions for each new session — no persistent deny across sessions
     if (this.toolExecutor) {
       this.toolExecutor.getPermissionManager().resetForNewSession(this.sessionId);
     }
 
+    // Load user-configured permission overrides from config
+    if (this.config.permissions && this.toolExecutor) {
+      const userRules: PermissionRule[] = Object.entries(this.config.permissions).map(([key, effect]) => {
+        const colonIdx = key.indexOf(':');
+        if (colonIdx >= 0) {
+          return { action: key.slice(0, colonIdx), pattern: key.slice(colonIdx + 1), effect };
+        }
+        return { action: `tool:${key}`, pattern: '*', effect };
+      });
+      this.toolExecutor.setUserConfigRules(userRules);
+    }
+
     // Wire permission requests to event bus
     if (this.toolExecutor) {
       this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel) => {
-        if (this.autoApproveTools) return 'allow_once';
+        if (this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
+        const requestId = randomUUID();
         return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-          this.permissionResolve = resolve;
-          this.emit({ type: 'permission_required', tool: toolId, path, riskLevel });
+          this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
+          this.emit({ type: 'permission_required', requestId, tool: toolId, path, riskLevel });
         });
       });
 
@@ -336,7 +436,7 @@ export class Agent {
     // Git integration
     this.gitAutoCommit = options.gitAutoCommit ?? false;
     if (options.gitAware || this.gitAutoCommit) {
-      this.gitManager = new GitManager({ scopePath: options.scopePath ?? process.cwd() });
+      this.gitManager = new GitManager({ scopePath: this.scopePath });
     }
 
     // Apply git-aware scope if requested
@@ -402,6 +502,9 @@ export class Agent {
     this.specialistRegistry = new SpecialistRegistry(this.agentBus);
     this.specialistRegistry.registerDefaults();
     // skillGenerator and reflectionLoop are lazy-init (created on first access)
+
+    // Initialize current agent from built-in build agent
+    this.currentAgent = BUILTIN_AGENTS.find(a => a.id === 'build')!;
 
     // Register this agent on the bus
     this.agentBus.registerAgent(this.sessionId, ['main', 'orchestrator']);
@@ -523,9 +626,10 @@ export class Agent {
       `[/TOOLS]`,
     ].join('\n');
 
-    // ─── UNIFIED: Inject ReflectionLoop learnings + SkillGenerator skills ───
+    // ─── UNIFIED: Inject ReflectionLoop learnings + SkillGenerator skills + SkillRegistry ───
     const reflectionLearnings = this.reflectionLoop.getCumulativeLearnings();
     const generatedSkills = this.skillGenerator.getAll();
+    const registrySkills = this.skillRegistry.list();
     let augmentedPrompt = toolAwareness;
 
     if (reflectionLearnings) {
@@ -537,6 +641,13 @@ export class Agent {
         augmentedPrompt += `- ${skill.name}: ${skill.description}\n`;
       }
       augmentedPrompt += '[/SKILLS]';
+    }
+    if (registrySkills.length > 0) {
+      augmentedPrompt += '\n\n[FORMAL_SKILLS]\n';
+      for (const skill of registrySkills) {
+        augmentedPrompt += `- ${skill.name}: ${skill.description} [trigger: ${skill.trigger}]\n`;
+      }
+      augmentedPrompt += '[/FORMAL_SKILLS]';
     }
 
     const systemPrompt = options.systemPrompt
@@ -596,6 +707,23 @@ export class Agent {
     return this.lifecycle.isProcessing();
   }
 
+  get abortSignal(): AbortSignal | undefined {
+    if (!this.scope) {
+      if (this._abortSignalController) {
+        this._abortSignalController.abort();
+        this._abortSignalController = null;
+      }
+      return undefined;
+    }
+    if (!this._abortSignalController) {
+      this._abortSignalController = new AbortController();
+      this.scope.onDispose(() => {
+        this._abortSignalController?.abort();
+      });
+    }
+    return this._abortSignalController.signal;
+  }
+
   /** Public accessor for the visual event bridge (TUI/Web UI can subscribe) */
   get visuals(): VisualEventBridge {
     return this.visualBridge;
@@ -617,18 +745,25 @@ export class Agent {
     return this.toolExecutor;
   }
 
+  setScopePath(path: string): void {
+    this.scopePath = normalize(resolve(path));
+    this.toolExecutor?.setScopePath(this.scopePath);
+  }
+
   /**
    * Cancel an in-progress completion. Aborts the active stream and tool executions.
    */
   cancel(): void {
     this.runStateMgr.cancel(this.sessionId);
     this.commandQueue.cancelSession(this.sessionId);
-    if (this.abortController) {
-      this.abortController.abort();
-      this.abortController = null;
+    if (this.scope) {
+      this.scope.dispose();
+      this.scope = null;
+      this._abortSignalController = null;
     }
     this.lifecycle.transition('idle');
     this.subAgents.cancelAll();
+    this.sessionRunner.interrupt();
   }
 
   get agents(): SubAgentManager {
@@ -687,15 +822,29 @@ export class Agent {
   }
 
   setPlanMode(enabled: boolean): void {
-    this.planMode = enabled;
+    if (enabled === this.planMode) return;
     if (enabled) {
-      this.toolExecutor?.setMode('plan');
+      this.switchAgent('plan');
+      this.contextTracker.record(this.sessionId, 'assistant', '[Mode switched to Plan — read/analysis tools only, no writes or execution]');
       this.emit({ type: 'plan_mode_entered' });
     } else {
       this.currentPlan = null;
-      this.toolExecutor?.setMode('agent');
+      this.switchAgent('build');
+      this.contextTracker.record(this.sessionId, 'assistant', '[Mode switched to Agent — full tool access and execution enabled]');
       this.emit({ type: 'plan_mode_exited' });
     }
+  }
+
+  switchAgent(agentId: string): boolean {
+    const agent = BUILTIN_AGENTS.find(a => a.id === agentId);
+    if (!agent) return false;
+    this.currentAgent = agent;
+    this.planMode = agent.mode === 'plan';
+    this.toolExecutor?.setMode(agent.mode);
+    this.toolExecutor?.setAgent(agent);
+    this.rebuildSystemPrompt();
+    this.emit({ type: 'agent_switched', agent: { id: agent.id, name: agent.name, mode: agent.mode, color: agent.color } });
+    return true;
   }
 
   setFallbackModel(model: string): void {
@@ -863,26 +1012,26 @@ Return ONLY valid JSON, no other text.`;
     }
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
       if (reset) {
-        this.abortController = null;
+        this.scope = null;
       } else {
         throw new Error('Agent is already processing a message');
       }
     }
 
     this.lifecycle.transition('receiving');
-    this.abortController = new AbortController();
+    this.scope = new Scope();
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
     try {
       this.runStateMgr.ensureRunning(this.sessionId);
     } catch (e) {
       this.lifecycle.forceTransition('idle');
-      this.abortController = null;
+      this.scope = null;
       throw e;
     }
     void this.commandQueue.enqueue(this.sessionId, {
@@ -933,7 +1082,9 @@ Return ONLY valid JSON, no other text.`;
     this.pendingInstruction = options?.instruction || null;
 
     // Add user message (clean, without instruction)
-    this.messages.push({ role: 'user', content: cleanContent });
+    if (!options?.retry) {
+      this.messages.push({ role: 'user', content: cleanContent });
+    }
 
     // Record in context tracker
     this.contextTracker.record(this.sessionId, 'user', cleanContent);
@@ -948,7 +1099,12 @@ Return ONLY valid JSON, no other text.`;
       tokenCount: 0,
     };
 
-    this.emit({ type: 'message_sent', message: userMessage });
+    if (!options?.retry) {
+      this.emit({ type: 'message_sent', message: userMessage });
+    }
+
+    // Reset turn-level permission auto-approve from any prior batch approval
+    this.turnApprovedAll = false;
 
     // ─── DECISION ENGINE (heuristic — zero LLM calls) ───
     const conversationLen = this.messages.filter(m => m.role === 'user').length;
@@ -994,6 +1150,15 @@ Return ONLY valid JSON, no other text.`;
       }
     }
 
+    // ─── AUTO-CREW COMPOSITION (complex tasks → compose crew proactively) ───
+    if (decision?.messageClass === 'complex_task' && this.crewOrchestrator) {
+      const members = this.crewOrchestrator.getMembers();
+      const composed = this.crewOrchestrator.autoCompose(cleanContent, members);
+      if (composed.length > 0 && composed[0]) {
+        return await this.routeToCrew(composed[0], cleanContent, startTime, classificationContext);
+      }
+    }
+
     // ─── FAST REPLY PATH (social messages) ───
     if (isSocial) {
       const steps = getLoadingSteps(decision.messageClass);
@@ -1015,12 +1180,12 @@ Return ONLY valid JSON, no other text.`;
       try {
         const fastMessage = await this.runFastReply(content, startTime);
         this.lifecycle.forceTransition('idle');
-        this.abortController = null;
+        this.scope = null;
         this.runStateMgr.release(this.sessionId);
         this.commandQueue.release(this.sessionId);
         return fastMessage;
       } catch (e) {
-        if ((e instanceof Error && e.name === 'AbortError') || !this.abortController) {
+        if ((e instanceof Error && e.name === 'AbortError') || !this.scope) {
           this.emit({ type: 'loading_end' });
           const cancelledMessage: Message = {
             id: generateMessageId(),
@@ -1033,7 +1198,7 @@ Return ONLY valid JSON, no other text.`;
           };
           this.emit({ type: 'message_received', message: cancelledMessage, elapsed: Date.now() - startTime });
           this.lifecycle.forceTransition('idle');
-          this.abortController = null;
+          this.scope = null;
           this.runStateMgr.release(this.sessionId);
           this.commandQueue.release(this.sessionId);
           return cancelledMessage;
@@ -1302,7 +1467,7 @@ Return ONLY valid JSON, no other text.`;
       throw error;
     } finally {
       this.lifecycle.forceTransition('idle');
-      this.abortController = null;
+      this.scope = null;
       this.runStateMgr.release(this.sessionId);
       this.commandQueue.release(this.sessionId);
     }
@@ -1334,7 +1499,7 @@ Return ONLY valid JSON, no other text.`;
       messages: fastMessages,
       stream: true,
       // No tools for fast reply
-      signal: this.abortController?.signal,
+      signal: this.abortSignal,
     };
 
     let fullContent = '';
@@ -1370,6 +1535,7 @@ Return ONLY valid JSON, no other text.`;
 
     // Add to conversation history
     this.messages.push({ role: 'assistant', content: fullContent });
+    await this.compactContext();
 
     const assistantMessage: Message = {
       id: generateMessageId(),
@@ -1394,7 +1560,7 @@ Return ONLY valid JSON, no other text.`;
     this.onTokenLog?.({ inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, costUsd });
     this.contextTracker.record(this.sessionId, 'assistant', fullContent);
 
-    // Note: isProcessing and abortController are cleaned up by sendMessage's finally block
+    // Note: isProcessing and scope are cleaned up by sendMessage's finally block
     return assistantMessage;
   }
 
@@ -1416,7 +1582,6 @@ Return ONLY valid JSON, no other text.`;
     if (!registry) throw new Error('Tool registry not initialized');
     if (!executor) throw new Error('Tool executor not initialized');
 
-    // Wrap agent-x tools as AI SDK tool definitions
     const tools = createAiSdkTools(
       registry,
       executor,
@@ -1432,13 +1597,11 @@ Return ONLY valid JSON, no other text.`;
         const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
         return subAgent.execute();
       },
-      this.abortController,
+      this._abortSignalController,
     );
 
-    // Create AI SDK model from agent-x provider config
     const model = createAiSdkModel(this.config, this.getApiKey());
 
-    // Create stream handler that maps AI SDK events → agent-x EngineEvents
     const streamHandler = createAiSdkStreamHandler(
       emit,
       this.sessionId,
@@ -1446,24 +1609,23 @@ Return ONLY valid JSON, no other text.`;
         this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
         this.onTokenLog?.({ inputTokens, outputTokens, costUsd: 0 });
       },
-      undefined,
+      this._onPart,
       this.config.provider.activeModel,
       this.gitManager ?? undefined,
+      this.onSessionEvent ?? undefined,
+      this.getContextWindow(),
     );
 
-    // Convert agent-x messages to AI SDK format (role + content only)
     const aiMessages = this.messages.map((m) => ({
       role: m.role as 'user' | 'assistant' | 'system',
       content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
     }));
 
-    // Inject pending instruction as system message (plan mode, etc.)
     if (this.pendingInstruction) {
       aiMessages.push({ role: 'system' as const, content: this.pendingInstruction });
       this.pendingInstruction = null;
     }
 
-    // Inject RAG results as system context
     if (this.lastRagResults.length > 0) {
       const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
       const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
@@ -1480,11 +1642,10 @@ Return ONLY valid JSON, no other text.`;
         messages: aiMessages,
         tools,
         temperature: 0,
-        stopWhen: stepCountIs(5),
-        abortSignal: this.abortController?.signal,
+        stopWhen: stepCountIs(this.currentAgent.steps ?? 5),
+        abortSignal: this.abortSignal,
       });
 
-      // Process AI SDK's fullStream for typed events (text-delta, tool-call, etc.)
       for await (const chunk of result.fullStream) {
         streamHandler.handleEvent(chunk);
       }
@@ -1496,7 +1657,6 @@ Return ONLY valid JSON, no other text.`;
         ? (usage.inputTokens || 0) + (usage.outputTokens || 0)
         : Math.ceil(content.length / 4);
 
-      // Log session activity
       this.sessionLogger?.log({
         type: 'llm_response',
         round: 0,
@@ -1515,6 +1675,7 @@ Return ONLY valid JSON, no other text.`;
       };
 
       this.messages.push({ role: 'assistant', content });
+      await this.compactContext();
 
       emit({
         type: 'message_received',
@@ -1538,7 +1699,6 @@ Return ONLY valid JSON, no other text.`;
         return cancelledMessage;
       }
 
-      // Log the real error instead of silently failing
       const errorMsg = error instanceof Error ? error.message : String(error);
       getLogger().error('COMPLETION', `AI SDK streamText failed: ${errorMsg}`);
       this.emit({ type: 'error', code: 'AI_SDK_ERROR', message: errorMsg, recoverable: false });
@@ -1589,6 +1749,15 @@ Return ONLY valid JSON, no other text.`;
    * Call this after crew switch to apply the new persona.
    */
   rebuildSystemPrompt(): void {
+    const epochComponents = [
+      this.currentAgent?.id ?? '',
+      String(this._telegramConnected),
+      this.config.user?.callsign ?? '',
+    ];
+    const epoch = computeContextEpoch(epochComponents);
+    if (this.lastContextEpoch === epoch) return;
+    this.lastContextEpoch = epoch;
+
     const sauceContext = this.secretSauce.buildSystemContext();
     const toolLines = (this.toolRegistry?.list() ?? []).map((t) => `- ${t.id} (${t.name}): ${t.modelDescription}`);
     const toolAwareness = [
@@ -1597,7 +1766,12 @@ Return ONLY valid JSON, no other text.`;
       toolLines.join('\n'),
       ``,
       `[AUTONOMOUS_EXECUTION]`,
-      `You are a fully autonomous agent. Your job is to COMPLETE tasks, not describe them.`,
+      `You are a fully autonomous agent. Your job is to EXECUTE, not describe.`,
+      ``,
+      `CRITICAL TOOL RULES:`,
+      `1. EVERY task MUST use tools. If the user asks you to "list files" → call folder_list IMMEDIATELY. If they ask to "check system" → call system_info. NEVER reply with text when a tool exists for the task.`,
+      `2. NEVER say "Let me check" or "I'll start by" and then NOT call a tool. Those phrases MUST be followed by an ACTUAL tool call. If you say it, you MUST do it.`,
+      `3. NEVER describe a plan — EXECUTE it. Each step you describe should be a tool call.`,
       ``,
       `Core principles:`,
       `1. INTERPRET INTENT — Understand what the user truly wants from their natural language. "Ping me in telegram" means set a reminder. "Save this" means write to a file. "Check my code" means read + analyze.`,
@@ -1659,8 +1833,27 @@ Return ONLY valid JSON, no other text.`;
       `- Replies: 1-3 sentences max. Bullet points preferred over paragraphs.`,
       `- Confirmations: "Done: [what]". Errors: "Failed: [why] — [fix]".`,
       `- Technical output, code, configs: unlimited length. Be thorough.`,
+      `[/OUTPUT_FORMAT]`,
+      ``,
       `[/TOOLS]`,
       ``,
+      ...(this._hyperdriveMode ? [
+        `[HYPERDRIVE]`,
+        `YOU ARE IN HYPERDRIVE MODE — FULL AUTONOMOUS ACCELERATION.`,
+        `- ALL tools are enabled and available. No tool is restricted or disabled.`,
+        `- ALL permissions are PRE-GRANTED. You DO NOT need to ask, confirm, or wait.`,
+        `- ALL shell commands, file operations, network access are AUTHORIZED.`,
+        `- You have MAXIMUM AGENCY. Execute tasks to completion without hesitation.`,
+        `- Every tool in your toolkit is fully operational. Use them AGGRESSIVELY.`,
+        `- Do NOT describe what you would do — DO IT.`,
+        `- Do NOT say "let me check" — RUN the check immediately.`,
+        `- Do NOT ask clarifying questions unless absolutely ambiguous — INFER and ACT.`,
+        `- If a tool fails, try the next approach without asking.`,
+        `- SPEED is paramount. Parallelize where possible.`,
+        `- COMPLETE the entire task in one turn if possible. Push through all steps.`,
+        `[/HYPERDRIVE]`,
+        ``,
+      ] : []),
       `[CHANNEL_FOCUS]`,
       `Messages can come from TUI, Web-UI, or Telegram. The active "focus" channel receives responses.`,
       `Focus automatically switches to whichever channel the user last sent a message from.`,
@@ -1879,10 +2072,24 @@ Return ONLY valid JSON, no other text.`;
   /**
    * Respond to a pending permission request from the tool executor.
    */
-  respondToPermission(choice: 'allow_once' | 'allow_always' | 'deny'): void {
-    if (this.permissionResolve) {
-      this.permissionResolve(choice);
-      this.permissionResolve = null;
+  respondToPermission(requestId: string, choice: 'allow_once' | 'allow_always' | 'deny'): void {
+    const entry = this.pendingPermissions.get(requestId);
+    if (entry) {
+      entry.resolve(choice);
+      this.pendingPermissions.delete(requestId);
+    }
+  }
+
+  /**
+   * Approve or deny all pending permission requests at once.
+   */
+  respondToPermissionBatch(choice: 'allow_once' | 'allow_always' | 'deny'): void {
+    if (choice !== 'deny') {
+      this.turnApprovedAll = true;
+    }
+    for (const [id, entry] of this.pendingPermissions) {
+      entry.resolve(choice);
+      this.pendingPermissions.delete(id);
     }
   }
 
@@ -1891,10 +2098,18 @@ Return ONLY valid JSON, no other text.`;
   }
 
   /**
+   * Rebuild session context from conversation.json.
+   */
+  rebuildContext(): number {
+    return this.contextTracker.rebuildFromConversation(this.sessionId);
+  }
+
+  /**
    * Add a message to the history (used for restoring sessions).
    */
   addToHistory(msg: { role: 'user' | 'assistant'; content: string }): void {
     this.messages.push({ role: msg.role, content: msg.content });
+    this.contextTracker.record(this.sessionId, msg.role, msg.content);
   }
 
   clearHistory(): void {
@@ -1907,7 +2122,7 @@ Return ONLY valid JSON, no other text.`;
    */
   async research(question: string): Promise<Message> {
     const startTime = Date.now();
-    this.abortController = new AbortController();
+    this.scope = new Scope();
 
     const userMessage: Message = {
       id: generateMessageId(),
@@ -1920,6 +2135,7 @@ Return ONLY valid JSON, no other text.`;
     };
 
     this.messages.push({ role: 'user', content: userMessage.content });
+    this.turnApprovedAll = false;
     this.emit({ type: 'message_sent', message: userMessage });
     this.emit({ type: 'loading_start', stage: 'research' });
 
@@ -1957,7 +2173,7 @@ Return ONLY valid JSON, no other text.`;
       return fallback;
     } finally {
       this.lifecycle.forceTransition('idle');
-      this.abortController = null;
+      this.scope = null;
     }
   }
 
@@ -2167,6 +2383,50 @@ Only include specialists that are actually needed for this task.`;
   get skillGeneratorInstance(): SkillGenerator { return this.skillGenerator; }
   get reflectionLoopInstance(): ReflectionLoop { return this.reflectionLoop; }
 
+  private async compactContext(): Promise<void> {
+    const maxTokens = this.getContextWindow();
+    const usedTokens = this.tokenTracker.tokensUsed;
+    const percentage = (usedTokens / maxTokens) * 100;
+    if (percentage < 85) return;
+
+    const lastMarkerIdx: number = this.compactionMarkerIndices.length > 0
+      ? this.compactionMarkerIndices[this.compactionMarkerIndices.length - 1]!
+      : -1;
+    const recentMessages = this.messages.slice(lastMarkerIdx + 1)
+      .filter(m => m.role !== 'system')
+      .map(m => `${m.role}: ${m.content}`)
+      .join('\n\n');
+    if (!recentMessages.trim()) return;
+
+    this.emit({ type: 'compaction_start', currentTokens: usedTokens, threshold: 85 } as EngineEvent);
+
+    let summary = '';
+    try {
+      summary = await this.simpleComplete(COMPACTION_PROMPT + '\n\n' + recentMessages);
+    } catch {
+      return;
+    }
+    if (!summary.trim()) return;
+
+    const insertIdx = this.messages.length;
+    this.messages.push({ role: 'system', content: `[COMPACTION SUMMARY — ${new Date().toISOString()}]\n${summary}` });
+    this.compactionMarkerIndices.push(insertIdx);
+
+    const pruneStart = lastMarkerIdx + 1;
+    const pruneEnd = insertIdx;
+    if (pruneStart < pruneEnd) {
+      const removeCount = pruneEnd - pruneStart;
+      this.messages.splice(pruneStart, removeCount);
+      this.compactionMarkerIndices = this.compactionMarkerIndices
+        .filter(i => i !== insertIdx)
+        .map(i => i >= pruneEnd ? i - removeCount : i)
+        .concat(pruneStart);
+    }
+
+    const saved = pruneEnd - pruneStart;
+    this.emit({ type: 'compaction_complete', saved } as EngineEvent);
+  }
+
   private emit(event: EngineEvent, isUpdate?: boolean): void {
     // Guard against duplicate message_received — only first one wins per turn
     // Pass isUpdate=true to allow re-emitting an updated message (e.g. crew delegation)
@@ -2295,11 +2555,13 @@ Only include specialists that are actually needed for this task.`;
       content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
     }));
 
-    const signal = request.signal || this.abortController?.signal;
+    const signal = request.signal || this.abortSignal;
 
     // Create tools if the request includes tool schemas
     let tools: ToolSet | undefined;
     if (request.tools && request.tools.length > 0 && this.toolRegistry && this.toolExecutor) {
+      const toolsAbortController = new AbortController();
+      this.scope?.onDispose(() => toolsAbortController.abort());
       tools = createAiSdkTools(
         this.toolRegistry,
         this.toolExecutor,
@@ -2315,7 +2577,7 @@ Only include specialists that are actually needed for this task.`;
           const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
           return subAgent.execute();
         },
-        this.abortController,
+        toolsAbortController,
       );
     }
 
@@ -2339,6 +2601,12 @@ Only include specialists that are actually needed for this task.`;
   getCrewMembers(): Array<{ crew: import('@agentx/shared').Crew; expertise: string[]; active: boolean }> {
     if (!this.crewOrchestrator) return [];
     return this.crewOrchestrator.getMembers();
+  }
+
+  restoreCrewStates(states: Array<{ crewId: string; enabled: boolean }>): void {
+    for (const state of states) {
+      this.setCrewEnabled(state.crewId, state.enabled);
+    }
   }
 
   setCrewEnabled(crewId: string, enabled: boolean): void {
@@ -2426,12 +2694,20 @@ Only include specialists that are actually needed for this task.`;
     const sessionContext = this.buildAgenticContext();
     const result = await this.crewOrchestrator!.processMessage(cleanContent, crewPrompt, [member], sessionContext || undefined);
 
+    this.emit({
+      type: 'intent_detected',
+      intent: `crew:${member.crew.callsign}`,
+      confidence: 1,
+      reasons: [`Explicitly mentioned @${member.crew.callsign}`],
+    });
+
     // Emit each crew response as a separate message bubble (natural, no popups)
     let lastMessage: Message | null = null;
     for (const r of result.responses) {
       const responder = this.crewOrchestrator!.getMembers().find(
         (m) => m.crew.name === r.member,
       );
+      const crewMember = responder ?? member;
       const msg: Message = {
         id: generateMessageId(),
         sessionId: this.sessionId,
@@ -2441,9 +2717,13 @@ Only include specialists that are actually needed for this task.`;
         createdAt: new Date().toISOString(),
         tokenCount: 0,
         crew: {
-          crewId: responder?.crew.id ?? member.crew.id,
+          crewId: crewMember.crew.id,
           name: r.member,
-          callsign: responder?.crew.callsign ?? member.crew.callsign,
+          callsign: crewMember.crew.callsign,
+          color: crewMember.crew.color,
+          icon: crewMember.crew.icon,
+          confidence: 'high',
+          reasons: [`Explicitly mentioned @${crewMember.crew.callsign}`],
         },
       };
       this.messages.push({ role: 'assistant', content: r.content });
@@ -2454,7 +2734,7 @@ Only include specialists that are actually needed for this task.`;
 
     this.emit({ type: 'loading_end' });
     this.lifecycle.forceTransition('idle');
-    this.abortController = null;
+    this.scope = null;
     this.runStateMgr.release(this.sessionId);
     this.commandQueue.release(this.sessionId);
     return lastMessage ?? {

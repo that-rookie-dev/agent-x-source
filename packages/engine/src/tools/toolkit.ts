@@ -28,6 +28,7 @@ import * as media from './builtin/media.js';
 import * as build from './builtin/build.js';
 import { getPythonRPC } from './PythonRPCExecutor.js';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { SUBAGENT_TYPES } from '../agent/subagent-types.js';
 
 // All tool definitions with schemas the model uses to invoke them
 const CORE_TOOLS: ToolDefinition[] = [
@@ -122,6 +123,8 @@ const CORE_TOOLS: ToolDefinition[] = [
   { id: 'sub_agent_status', name: 'Sub-Agent Status', description: 'Check status of running sub-agents', modelDescription: 'Check status of a specific sub-agent by ID, or list all running sub-agents.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { agent_id: { type: 'string', description: 'Agent ID (optional — omit to list all)' } }, required: [] }, composable: true, source: 'builtin' },
   { id: 'sub_agent_cancel', name: 'Cancel Sub-Agent', description: 'Cancel a running sub-agent', modelDescription: 'Cancel and abort a running sub-agent by its ID.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { agent_id: { type: 'string', description: 'Agent ID to cancel' } }, required: ['agent_id'] }, composable: true, source: 'builtin' },
   { id: 'delegate_to_crew', name: 'Delegate to Crew', description: 'Delegate a specific sub-task to an expert crew member', modelDescription: 'Delegate a clearly scoped sub-task to a specialized crew member by name or callsign. The crew runs in parallel and returns their result independently. Use for tasks that require deep domain expertise (DevOps, security, frontend, etc.). The crew name must match exactly — available crews are listed in the system.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { crew: { type: 'string', description: 'Crew member name or @callsign to delegate to (e.g. "Jordan Taylor" or "jordan_taylor")' }, task: { type: 'string', description: 'Specific, scoped task description for the crew to execute' } }, required: ['crew', 'task'] }, composable: true, source: 'builtin' },
+  { id: 'crew_message', name: 'Crew Message', description: 'Send a message to another crew member', modelDescription: 'Send a message to another crew member by callsign or ID. Use this to coordinate with other specialists on multi-disciplinary tasks. The target crew member will receive your message and respond.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { to: { type: 'string', description: 'Target crew member callsign or ID' }, message: { type: 'string', description: 'Message content to send' } }, required: ['to', 'message'] }, composable: false, source: 'builtin' },
+  { id: 'crew_response', name: 'Crew Response', description: 'Reply to a message from another crew member', modelDescription: 'Reply to an earlier message from another crew member. Use this to respond to questions or follow up on a previous inter-crew exchange.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { replyToMessageId: { type: 'string', description: 'ID of the message being replied to' }, content: { type: 'string', description: 'Reply content' } }, required: ['replyToMessageId', 'content'] }, composable: false, source: 'builtin' },
 
   // ═══ BROWSER ═══
   { id: 'browser_open', name: 'Open Web Page', description: 'Open URL in headless browser', modelDescription: 'Open a URL, return page title and text content.', category: 'browser_automation', riskLevel: 'medium', schema: { type: 'object', properties: { url: { type: 'string', description: 'URL to open' } }, required: ['url'] }, composable: true, source: 'builtin' },
@@ -596,4 +599,4 @@ async function pythonRpcHandler(args: Record<string, unknown>, _context: ToolExe
   };
 }
 
-export { CORE_TOOLS };
+export { CORE_TOOLS, SUBAGENT_TYPES };

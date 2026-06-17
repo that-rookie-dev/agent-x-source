@@ -481,11 +481,19 @@ export class EngineLifecycle implements vscode.Disposable {
     }
   }
 
-  async respondToPermission(_requestId: string, decision: string): Promise<void> {
+  async respondToPermission(requestId: string, decision: string): Promise<void> {
     const agent = this.engine?.getAgent();
     if (agent) {
       const mapped = decision.replace(/-/g, '_') as 'allow_once' | 'allow_always' | 'deny';
-      agent.respondToPermission(mapped);
+      agent.respondToPermission(requestId, mapped);
+    }
+  }
+
+  async respondToPermissionBatch(decision: string): Promise<void> {
+    const agent = this.engine?.getAgent();
+    if (agent) {
+      const mapped = decision.replace(/-/g, '_') as 'allow_once' | 'allow_always' | 'deny';
+      agent.respondToPermissionBatch(mapped);
     }
   }
 

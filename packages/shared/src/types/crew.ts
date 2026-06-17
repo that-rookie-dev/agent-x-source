@@ -19,6 +19,8 @@ export interface CrewResourceQuota {
   maxMemoryBytes?: number;
 }
 
+import type { PermissionRule } from './permission.js';
+
 export interface Crew {
   id: string;
   name: string;
@@ -34,8 +36,13 @@ export interface Crew {
     enabled?: string[];
     disabled?: string[];
   };
+  tools?: string[];
+  permissions?: PermissionRule[];
+  model?: { provider: string; modelId: string };
   protocol?: CollaborationProtocol;
   quotas?: CrewResourceQuota;
+  color?: string;
+  icon?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -55,8 +62,13 @@ export interface CrewCreateInput {
     enabled?: string[];
     disabled?: string[];
   };
+  tools?: string[];
+  permissions?: PermissionRule[];
+  model?: { provider: string; modelId: string };
   protocol?: CollaborationProtocol;
   quotas?: CrewResourceQuota;
+  color?: string;
+  icon?: string;
 }
 
 export interface SessionCrewState {

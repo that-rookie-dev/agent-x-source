@@ -195,6 +195,41 @@ Keep responses friendly, concise, and natural. No tools, no code, no markdown un
     return actions.some(a => lower.includes(a));
   }
 
+  suggestCrewComposition(task: string): Array<{ role: string; reason: string }> {
+    const lower = task.toLowerCase();
+
+    if (lower.includes('rest api') || lower.includes('api endpoint') || lower.includes('backend') || lower.includes('microservice')) {
+      return [
+        { role: 'Architect', reason: 'Designs API schema and service boundaries' },
+        { role: 'Backend Dev', reason: 'Implements endpoints and business logic' },
+        { role: 'QA', reason: 'Verifies API contracts and edge cases' },
+      ];
+    }
+
+    if (lower.includes('bug') || lower.includes('fix') || lower.includes('error') || lower.includes('issue') || lower.includes('debug')) {
+      return [
+        { role: 'Debugger', reason: 'Root-cause analysis and bug identification' },
+        { role: 'Reviewer', reason: 'Reviews code for additional issues and regressions' },
+      ];
+    }
+
+    if (lower.includes('research') || lower.includes('investigate') || lower.includes('analyze') || lower.includes('compare')) {
+      return [
+        { role: 'Researcher', reason: 'Deep dives into the topic and gathers information' },
+      ];
+    }
+
+    if (lower.includes('full stack') || lower.includes('fullstack') || lower.includes('web app') || lower.includes('frontend') || lower.includes('front-end')) {
+      return [
+        { role: 'Frontend Dev', reason: 'Builds UI components and user-facing features' },
+        { role: 'Backend Dev', reason: 'Implements server logic and data APIs' },
+        { role: 'DevOps', reason: 'Sets up infrastructure, CI/CD, and deployment' },
+      ];
+    }
+
+    return [{ role: 'Generalist', reason: 'Default composition for generic tasks' }];
+  }
+
   private result(
     messageClass: MessageClass,
     executionPath: ExecutionPath,
