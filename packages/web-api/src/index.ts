@@ -1453,7 +1453,45 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       }
     } catch { /* fall through */ }
 
-    res.json({ session, messages, parts, crewStates, scopePath: session.scopePath });
+    // Merge parts into messages so the frontend gets chronological parts arrays
+    for (const msg of messages) {
+      if (msg['role'] !== 'assistant') continue;
+      const msgTools = (msg['tool_calls'] as string | null);
+      const parsedTools: Array<{ id?: string; name?: string; callId?: string; toolCallId?: string }> = msgTools
+        ? (() => { try { return JSON.parse(msgTools); } catch { return []; } })()
+        : [];
+      const toolIds = new Set(parsedTools.map((t: any) => t.id || t.callId || t.toolCallId).filter(Boolean));
+      const msgParts: Array<Record<string, unknown>> = [];
+      for (const p of parts) {
+        const partCallId = (p['tool_call_id'] as string) || '';
+        if (partCallId && toolIds.has(partCallId)) {
+          msgParts.push(p);
+        }
+      }
+      if (msgParts.length > 0 || parsedTools.length > 0) {
+        // Build chronological parts: text part for content, then tool parts
+        const built: Array<{ type: string; id: string; content?: string; toolName?: string; toolCallId?: string; toolArgs?: unknown; toolResult?: string; toolSuccess?: number }> = [];
+        if (msg['content']) {
+          built.push({ type: 'text', id: crypto.randomUUID(), content: msg['content'] as string });
+        }
+        for (const t of parsedTools) {
+          const tid = t.id || t.callId || t.toolCallId || crypto.randomUUID();
+          const matchedPart = msgParts.find((p) => (p['tool_call_id'] as string) === tid);
+          built.push({
+            type: 'tool',
+            id: tid,
+            toolName: t.name || 'unknown',
+            toolCallId: tid,
+            toolArgs: matchedPart?.['tool_args'] ? (() => { try { return JSON.parse(matchedPart['tool_args'] as string); } catch { return matchedPart['tool_args']; } })() : undefined,
+            toolResult: matchedPart?.['tool_result'] as string | undefined,
+            toolSuccess: matchedPart?.['tool_success'] as number | undefined,
+          });
+        }
+        (msg as any)['parts'] = built;
+      }
+    }
+
+    res.json({ session, messages, parts: [], crewStates, scopePath: session.scopePath });
   } catch (e: unknown) {
     getLogger().error('RESTORE_SESSION', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });

@@ -1531,7 +1531,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const tokenPercent = tokenTotal > 0 ? Math.min((tokenUsed / tokenTotal) * 100, 100) : 0;
 
   // ─── Chat view ───
-  const visibleMessages = messages.filter((m) => m.role !== 'system' || m.isModeChange);
+  const visibleMessages = messages.filter((m) => {
+    if (m.role === 'system' && !m.isModeChange) return false;
+    if (m.role === 'assistant' && !m.content && !m.thinking && (!m.toolCalls || m.toolCalls.length === 0) && (!m.subAgents || m.subAgents.length === 0) && (!m.parts || m.parts.length === 0)) return false;
+    return true;
+  });
 
   return (
     <Box sx={{ height: '100%', display: 'flex' }}>
@@ -3134,7 +3138,12 @@ function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingS
 
       {/* Chronological parts: text + tools interleaved in order of appearance */}
       {message.parts && message.parts.length > 0 ? (
-        message.parts.map((part) => {
+        message.parts.filter((p) => {
+          if (p.type === 'text') return !!p.content;
+          if (p.type === 'tool') return !!p.tool;
+          if (p.type === 'subagent') return !!p.agent;
+          return false;
+        }).map((part) => {
           switch (part.type) {
             case 'text':
               return part.content ? <CrewAwareMarkdown key={part.id} content={part.content} /> : null;
