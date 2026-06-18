@@ -26,11 +26,13 @@ CREATE TABLE IF NOT EXISTS _schema (
 CREATE TABLE IF NOT EXISTS sessions (
     id          TEXT PRIMARY KEY,
     title       TEXT NOT NULL DEFAULT 'New Session',
-    crew_id  TEXT,
+    crew_id     TEXT,
     provider_id TEXT NOT NULL,
     model_id    TEXT NOT NULL,
     scope_path  TEXT NOT NULL,
     mode        TEXT NOT NULL DEFAULT 'plan',
+    parent_id   TEXT REFERENCES sessions(id),
+    hyperdrive  INTEGER NOT NULL DEFAULT 0,
     token_used  INTEGER DEFAULT 0,
     token_available INTEGER NOT NULL,
     status      TEXT NOT NULL DEFAULT 'active',
@@ -184,6 +186,17 @@ CREATE TABLE IF NOT EXISTS message_parts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_parts_session ON message_parts(session_id);
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    messages    TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON checkpoints(session_id);
 `;
 
 const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) => void }> = [
