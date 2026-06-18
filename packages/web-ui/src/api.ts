@@ -658,10 +658,6 @@ export const gateway = {
   setFocus: (channel: string) => request<{ ok: boolean; focus: string }>('/gateway/focus', { method: 'POST', body: JSON.stringify({ channel }) }),
 };
 
-export const tuiActive = {
-  check: () => request<TuiActiveStatus>('/tui-active'),
-};
-
 // ─── Web-UI Active ───
 export interface WebuiActiveStatus {
   active: boolean;

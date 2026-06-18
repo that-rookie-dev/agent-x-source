@@ -2,14 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { Box, Chip, Tooltip, Menu, MenuItem, ListItemIcon, ListItemText, Typography } from '@mui/material';
 import CircleIcon from '@mui/icons-material/Circle';
 import TelegramIcon from '@mui/icons-material/Telegram';
-import ComputerIcon from '@mui/icons-material/Computer';
 import PublicIcon from '@mui/icons-material/Public';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import { colors } from '../theme';
 import { gateway } from '../api';
 
 const FOCUS_CHANNELS = [
-  { id: 'tui', label: 'TUI', icon: ComputerIcon },
   { id: 'web', label: 'Web-UI', icon: PublicIcon },
   { id: 'telegram', label: 'Telegram', icon: TelegramIcon },
 ];
