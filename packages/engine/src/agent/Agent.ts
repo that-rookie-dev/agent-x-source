@@ -14,6 +14,7 @@ import type {
 } from '@agentx/shared';
 import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, type ChannelKind, getConfigDir } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
+import { Mutex } from '../concurrency/Mutex.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -140,6 +141,7 @@ export class Agent {
   private _onPart?: PartPersistFn;
   autoApproveTools = false;
   private _hyperdriveMode = false;
+  private _preHyperdrivePlanMode = true;
 
   get hyperdriveMode(): boolean {
     return this._hyperdriveMode;
@@ -148,6 +150,18 @@ export class Agent {
   toggleHyperdriveMode(): boolean {
     this._hyperdriveMode = !this._hyperdriveMode;
     this.autoApproveTools = this._hyperdriveMode;
+    if (this._hyperdriveMode) {
+      this._preHyperdrivePlanMode = this.planMode;
+      if (this.planMode) {
+        this.switchAgent('build');
+      }
+    } else {
+      if (this._preHyperdrivePlanMode) {
+        if (!this.planMode) {
+          this.switchAgent('plan');
+        }
+      }
+    }
     this.lastContextEpoch = null;
     this.rebuildSystemPrompt();
     this.contextTracker.record(this.sessionId, 'assistant',
@@ -156,6 +170,8 @@ export class Agent {
         : '[Hyperdrive OFF — standard permission checks restored]');
     this.emit({
       type: this._hyperdriveMode ? 'hyperdrive_entered' : 'hyperdrive_exited',
+      mode: this.planMode ? 'plan' : 'agent',
+      wasPlan: this._preHyperdrivePlanMode,
     } as unknown as EngineEvent);
     return this._hyperdriveMode;
   }
@@ -257,6 +273,8 @@ export class Agent {
     this.contextTracker.setSessionDir(dir, scopePath);
   }
   private maxSubAgents = 5;
+  readonly serialLock: Mutex = new Mutex();
+  private sessionManager: { createSession: (providerId: string, modelId: string, crewId: string | undefined, scopePath: string | undefined, id: string | undefined, parentId: string | undefined) => { id: string } } | null = null;
   private enabledCrewSessionIds: Set<string> = new Set();
 
   setTelegramConnected(connected: boolean, chatId?: number | null): void {
@@ -379,9 +397,21 @@ export class Agent {
         this.clarificationResolve = null;
         return response;
       },
-      runSubAgent: async (instruction, toolsList, timeout) => {
-        const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
-        return subAgent.execute();
+      runSubAgent: async (instruction, toolsList, timeout, background) => {
+        const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents);
+        if (!task) {
+          return { success: false, output: 'Sub-agent limit reached. Wait for existing sub-agents to complete.', elapsed: 0 };
+        }
+        if (background) {
+          this.emit({ type: 'task_backgrounded', taskId: task.id } as EngineEvent);
+          return { success: true, output: `[Sub-agent started in background — task ${task.id}]`, elapsed: 0 };
+        }
+        const completed = await this.subAgents.waitFor(task.id);
+        return {
+          success: completed?.status === 'completed',
+          output: completed?.result ?? '',
+          elapsed: (completed?.endTime ?? Date.now()) - (completed?.startTime ?? Date.now()),
+        };
       },
       onTokenUsage: (input, output) => {
         this.tokenTracker.addTokenUsage(input, output);
@@ -1644,6 +1674,7 @@ Return ONLY valid JSON, no other text.`;
         temperature: 0,
         stopWhen: stepCountIs(this.currentAgent.steps ?? 5),
         abortSignal: this.abortSignal,
+        maxRetries: 0,
       });
 
       for await (const chunk of result.fullStream) {
@@ -1659,31 +1690,19 @@ Return ONLY valid JSON, no other text.`;
 
       this.sessionLogger?.log({
         type: 'llm_response',
-        round: 0,
-        content: content.slice(0, 1000),
-        usage: usage ? { inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 } : null,
-      } as any);
+        data: {
+          round: 0,
+          content: content.slice(0, 1000),
+          usage: usage ? { inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 } : null,
+        },
+      });
 
-      const assistantMessage: Message = {
-        id: generateMessageId(),
-        sessionId: this.sessionId,
-        role: 'assistant',
-        content,
-        toolCalls: null,
-        createdAt: new Date().toISOString(),
-        tokenCount,
-      };
-
+      // Stream handler already emitted message_received in its finish case.
+      // Only push to local state and compact — no second emit needed.
       this.messages.push({ role: 'assistant', content });
       await this.compactContext();
 
-      emit({
-        type: 'message_received',
-        message: assistantMessage,
-        elapsed: Date.now() - startTime,
-      });
-
-      return assistantMessage;
+      return { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant' as const, content, toolCalls: null, createdAt: new Date().toISOString(), tokenCount };
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         const cancelledMessage: Message = {
@@ -2101,7 +2120,7 @@ Return ONLY valid JSON, no other text.`;
    * Rebuild session context from conversation.json.
    */
   rebuildContext(): number {
-    return this.contextTracker.rebuildFromConversation(this.sessionId);
+    return this.contextTracker.rebuildFromMessages(this.sessionId, this.messages as Array<{ role: string; content: string }>);
   }
 
   /**
@@ -2782,6 +2801,22 @@ Only include specialists that are actually needed for this task.`;
 
   setMaxSubAgents(limit: number): void {
     this.maxSubAgents = Math.max(1, Math.min(20, limit));
+  }
+
+  setSessionManager(sm: { createSession: (providerId: string, modelId: string, crewId: string | undefined, scopePath: string | undefined, id: string | undefined, parentId: string | undefined) => { id: string } }): void {
+    this.sessionManager = sm;
+  }
+
+  createChildSession(childId: string): void {
+    if (!this.sessionManager) return;
+    this.sessionManager.createSession(
+      this.config.provider.activeProvider,
+      this.config.provider.activeModel,
+      undefined,
+      this.scopePath,
+      childId,
+      this.sessionId,
+    );
   }
 
   private detectAtMention(content: string): string | null {

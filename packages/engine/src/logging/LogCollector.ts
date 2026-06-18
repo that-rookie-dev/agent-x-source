@@ -66,11 +66,16 @@ export class LogCollector extends EventEmitter {
 
   hook(logger: Logger): void {
     if (this._originalLogger) return;
+
+    // Capture original methods BEFORE replacing them (avoids infinite recursion)
+    const origError = logger.error.bind(logger);
+    const origWarn = logger.warn.bind(logger);
+    const origInfo = logger.info.bind(logger);
+
     this._originalLogger = logger;
 
-    const orig = logger;
     logger.error = ((code: string, error: unknown, context?: Record<string, unknown>) => {
-      orig.error(code, error, context);
+      origError(code, error, context);
       this.push({
         timestamp: new Date().toISOString(),
         level: 'error',
@@ -81,7 +86,7 @@ export class LogCollector extends EventEmitter {
       });
     }) as Logger['error'];
     logger.warn = ((code: string, message: string, context?: Record<string, unknown>) => {
-      orig.warn(code, message, context);
+      origWarn(code, message, context);
       this.push({
         timestamp: new Date().toISOString(),
         level: 'warn',
@@ -91,7 +96,7 @@ export class LogCollector extends EventEmitter {
       });
     }) as Logger['warn'];
     logger.info = ((code: string, message: string, context?: Record<string, unknown>) => {
-      orig.info(code, message, context);
+      origInfo(code, message, context);
       this.push({
         timestamp: new Date().toISOString(),
         level: 'info',

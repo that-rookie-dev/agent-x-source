@@ -65,7 +65,8 @@ import {
 } from './ChatEnhancements';
 import { MentionInput } from './MentionInput';
 import { FolderPickerModal } from './FolderPickerModal';
-import { ToolCallCard } from './visuals/ToolCallCard';
+import { InlineToolCall } from './InlineToolCall';
+import { StyledTableWrapper, StyledUl, StyledOl, StyledLi } from './StructuredViews';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -152,6 +153,7 @@ interface SubAgent {
   task: string;
   status: 'running' | 'done' | 'error';
   result?: string;
+  toolCalls?: ToolCall[];
 }
 
 interface FileAttachment {
@@ -171,6 +173,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [sessionList, setSessionList] = useState<SessionInfo[]>([]);
   const [currentSessionTitle, setCurrentSessionTitle] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [parentSessionId, setParentSessionId] = useState<string | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
 
   // Chat state
@@ -200,6 +203,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [clarifyCustomText, setClarifyCustomText] = useState('');
   const clarifyCustomRef = useRef<HTMLInputElement>(null);
   const providerErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rateLimitSeenRef = useRef(false);
 
   // Extract a clean, human-readable message from raw provider errors
   const extractProviderError = useCallback((raw: string): string => {
@@ -271,6 +275,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           };
         }) as unknown as UIMessage[]);
         setCurrentSessionTitle(session.title ?? `Session ${sessionId.slice(0, 8)}`);
+        setParentSessionId(session.parentId ?? null);
         const totalUsed = (session as any).tokenUsed ?? session.tokensUsed ?? 0;
         setTokenUsed(totalUsed);
         const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
@@ -278,14 +283,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         setTokenInput(inputEst);
         setTokenOutput(outputEst);
         if (resolvedScope) setCwd(resolvedScope);
-        // Restore saved session mode
+        // Restore saved session mode from DB (do not re-send to server)
         if (session.mode === 'plan' || session.mode === 'agent') {
           setAgentMode(session.mode);
-          sessionSettings.setMode(session.mode).catch(() => {});
         }
         loadTodos();
       }).catch((err) => {
         console.error('Failed to restore session on mount:', err);
+        setWarnings([`Failed to restore session: ${err instanceof Error ? err.message : 'Unknown error'}`]);
       });
     } else {
       setView('sessions');
@@ -414,6 +419,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [showJumpPill, setShowJumpPill] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // RAF-batched tool event accumulator (prevents render storm on long-running tasks)
+  const toolBatchRef = useRef<TelemetryEvent[]>([]);
+  const toolFlushRef = useRef<number | null>(null);
+
   // ─── Smart auto-scroll: track user scroll position ───
   useEffect(() => {
     const el = messagesContainerRef.current;
@@ -430,8 +439,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return () => el.removeEventListener('scroll', onScroll);
   }, [view]);
 
-  // Auto-scroll only when user is at bottom
+  // Auto-scroll only when user is at bottom — only count user/assistant messages
+  const prevRealCountRef = useRef(0);
   useEffect(() => {
+    const realMsgs = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+    if (realMsgs.length <= prevRealCountRef.current) return;
+    prevRealCountRef.current = realMsgs.length;
     if (isAtBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     } else {
@@ -470,7 +483,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
     system.cwd().then((r) => { if (r.cwd) setCwd(r.cwd); }).catch(() => {});
-    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); else setAgentMode('agent'); }).catch(() => {});
+    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); }).catch(() => {});
     // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
       .then(r => r.json())
@@ -520,12 +533,104 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // Connect SSE for streaming events
   useEffect(() => {
-    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
+
+    // Pure function to apply a single tool event to messages state (used by RAF batch)
+    const applyToolEvent = (prev: UIMessage[], ev: TelemetryEvent): UIMessage[] => {
+      const last = prev[prev.length - 1];
+      if (last?.role !== 'assistant') return prev;
+      switch (ev.type) {
+        case 'tool_executing': {
+          const toolName = (ev.tool as string) ?? 'unknown';
+          const desc = (ev.description as string) ?? '';
+          const eventArgs = (ev.args as Record<string, unknown> | string | undefined) ?? desc;
+          const callId = (ev.callId as string) ?? crypto.randomUUID();
+          if (toolName === 'delegate_to_subagent') {
+            const sa: SubAgent = { id: callId, name: 'Sub-Agent', task: desc, status: 'running' };
+            const saPart: PartEntry = { type: 'subagent', id: callId, agent: sa };
+            return updateLastMessage(prev, {
+              subAgents: [...(last.subAgents ?? []), sa],
+              parts: [...(last.parts || []), saPart],
+            });
+          }
+          const tc: ToolCall = { id: callId, name: toolName, args: eventArgs, status: 'running' };
+          const toolPart: PartEntry = { type: 'tool', id: callId, tool: tc };
+          return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts: [...(last.parts || []), toolPart] });
+        }
+        case 'tool_output': {
+          const outputCallId = (ev.callId as string) ?? '';
+          const outputText = (ev.output as string) ?? '';
+          if (!outputCallId || !outputText) return prev;
+          const newParts = (last.parts || []).map((p: PartEntry) =>
+            p.type === 'tool' && p.tool?.id === outputCallId && p.tool?.status === 'running'
+              ? { ...p, tool: { ...p.tool, streamOutput: (p.tool.streamOutput || '') + outputText } } : p);
+          const newToolCalls = (last.toolCalls || []).map((t: ToolCall) =>
+            t.id === outputCallId && t.status === 'running'
+              ? { ...t, streamOutput: (t.streamOutput || '') + outputText } : t);
+          return updateLastMessage(prev, { toolCalls: newToolCalls, parts: newParts });
+        }
+        case 'tool_complete': {
+          const toolName = (ev.tool as string) ?? '';
+          const elapsed = (ev.elapsed as number) ?? 0;
+          const callId = (ev.callId as string) ?? '';
+          const result = (ev as any).result ?? (ev as any).output as string ?? '';
+          const resultStr = typeof result === 'string' ? result
+            : (result && typeof result === 'object' ? ((result as any).output || (result as any).message || JSON.stringify(result)) : '');
+          if (toolName === 'delegate_to_subagent' && last.subAgents) {
+            const newSubAgents = last.subAgents.map((a: SubAgent) =>
+              a.status !== 'running' ? a : { ...a, status: 'done' as const, result: resultStr });
+            const newParts = (last.parts || []).map((p: PartEntry) =>
+              p.type === 'subagent' && p.agent?.id === callId
+                ? { ...p, agent: { ...p.agent!, status: 'done' as const, result: resultStr } } : p);
+            return updateLastMessage(prev, { subAgents: newSubAgents, parts: newParts });
+          }
+          const newToolCalls = (last.toolCalls || []).map((t: ToolCall) => {
+            if (callId && t.id !== callId) return t;
+            if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
+            return { ...t, status: 'done' as const, result: resultStr, elapsed };
+          });
+          const newParts = (last.parts || []).map((p: PartEntry) => {
+            if (p.type === 'tool' && p.tool) {
+              if (callId && p.tool.id !== callId) return p;
+              if (!callId && (p.tool.name !== toolName || p.tool.status !== 'running')) return p;
+              return { ...p, tool: { ...p.tool, status: 'done' as const, result: resultStr, elapsed } };
+            }
+            return p;
+          });
+          const resObj = typeof (ev as any).result === 'object' && (ev as any).result !== null ? (ev as any).result as Record<string, unknown> : null;
+          if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') setToolEnablePrompt({ toolId: toolName, toolName });
+          return updateLastMessage(prev, { toolCalls: newToolCalls, parts: newParts });
+        }
+        default:
+          return prev;
+      }
+    };
 
     const handleEvent = (ev: TelemetryEvent) => {
       // Reset activity timer on every event from the agent
       lastActivityRef.current = Date.now();
       setLastEventAt(Date.now());
+
+      // RAF-batch high-frequency tool events to prevent render storm on long-running tasks
+      if (ev.type === 'tool_executing' || ev.type === 'tool_output' || ev.type === 'tool_complete') {
+        toolBatchRef.current.push(ev);
+        if (toolFlushRef.current === null) {
+          toolFlushRef.current = requestAnimationFrame(() => {
+            toolFlushRef.current = null;
+            const batch = toolBatchRef.current;
+            toolBatchRef.current = [];
+            if (batch.length === 0) return;
+            setMessages(prev => {
+              let current = prev;
+              for (const e of batch) {
+                current = applyToolEvent(current, e);
+              }
+              return current;
+            });
+          });
+        }
+        return;
+      }
 
       setMessages((prev) => {
         const last = prev[prev.length - 1];
@@ -614,11 +719,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             const text = msg.content ?? '';
             if (last?.role === 'assistant') {
               if (last.streaming) {
-                if (last.content) {
-                  // Streaming already showed content — just finalize with accumulated parts
-                  return updateLastMessage(prev, { streaming: false, ...(crew ? { crew } : {}) });
-                }
-                return updateLastMessage(prev, { content: text || last.content, streaming: false, ...(crew ? { crew } : {}) });
+                // Merge final content from server (may be more complete than streamed content)
+                const mergedText = text.length > (last.content || '').length ? text : (last.content || '');
+                return updateLastMessage(prev, { content: mergedText, streaming: false, ...(crew ? { crew } : {}) });
               }
               return updateLastMessage(prev, { streaming: false, ...(crew ? { crew } : {}) });
             }
@@ -629,108 +732,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return prev;
           }
 
-          case 'tool_executing': {
-            if (last?.role !== 'assistant') return prev;
-            const toolName = (ev.tool as string) ?? 'unknown';
-            const desc = (ev.description as string) ?? '';
-            const eventArgs = (ev.args as Record<string, unknown> | string | undefined) ?? desc;
-            const callId = (ev.callId as string) ?? crypto.randomUUID();
-
-            if (toolName === 'delegate_to_subagent') {
-              const sa: SubAgent = { id: callId, name: 'Sub-Agent', task: desc, status: 'running' };
-              const saPart: PartEntry = { type: 'subagent', id: callId, agent: sa };
-              return updateLastMessage(prev, {
-                subAgents: [...(last.subAgents ?? []), sa],
-                parts: [...(last.parts || []), saPart],
-              });
-            }
-
-            const tc: ToolCall = { id: callId, name: toolName, args: eventArgs, status: 'running' };
-            const toolPart: PartEntry = { type: 'tool', id: callId, tool: tc };
-            const parts = [...(last.parts || []), toolPart];
-
-            return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts });
-          }
-
-          case 'tool_output': {
-            if (last?.role !== 'assistant') return prev;
-            const outputCallId = (ev.callId as string) ?? '';
-            const outputText = (ev.output as string) ?? '';
-            if (!outputCallId || !outputText) return prev;
-
-            // Append streaming output to the matching running tool card
-            const newParts = (last.parts || []).map((p: PartEntry) => {
-              if (p.type === 'tool' && p.tool?.id === outputCallId && p.tool?.status === 'running') {
-                return { ...p, tool: { ...p.tool, streamOutput: (p.tool.streamOutput || '') + outputText } };
-              }
-              return p;
+          case 'permission_required':
+            setPendingPermissionCount((prev) => prev + 1);
+            setPermissionPrompt({
+              requestId: (ev.requestId as string) ?? `${ev.tool}-${Date.now()}`,
+              tool: (ev.tool as string) ?? 'unknown',
+              path: (ev.path as string) ?? '',
+              riskLevel: (ev.riskLevel as string) ?? 'medium',
             });
-
-            const newToolCalls = (last.toolCalls || []).map((t: ToolCall) => {
-              if (t.id === outputCallId && t.status === 'running') {
-                return { ...t, streamOutput: (t.streamOutput || '') + outputText };
-              }
-              return t;
-            });
-
-            return updateLastMessage(prev, { toolCalls: newToolCalls, parts: newParts });
-          }
-
-          case 'tool_complete': {
-            if (last?.role !== 'assistant') return prev;
-            const toolName = (ev.tool as string) ?? '';
-            const elapsed = (ev.elapsed as number) ?? 0;
-            const callId = (ev.callId as string) ?? '';
-            const result = (ev as any).result ?? (ev as any).output as string ?? '';
-            const resultStr = typeof result === 'string' ? result
-              : (result && typeof result === 'object' ? ((result as any).output || (result as any).message || JSON.stringify(result)) : '');
-
-            if (toolName === 'delegate_to_subagent' && last.subAgents) {
-              const newSubAgents = last.subAgents.map((a: SubAgent) => {
-                if (a.status !== 'running') return a;
-                return { ...a, status: 'done' as const, result: resultStr };
-              });
-              // Update part too
-              const newParts = (last.parts || []).map((p: PartEntry) =>
-                p.type === 'subagent' && p.agent?.id === callId ? ({ ...p, agent: { ...p.agent!, status: 'done' as const, result: resultStr } }) : p
-              );
-              return updateLastMessage(prev, { subAgents: newSubAgents, parts: newParts });
-            }
-
-            // Update tool in both toolCalls array and parts array
-            const newToolCalls = (last.toolCalls || []).map((t: ToolCall) => {
-              if (callId && t.id !== callId) return t;
-              if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
-              return { ...t, status: 'done' as const, result: resultStr, elapsed };
-            });
-            const newParts = (last.parts || []).map((p: PartEntry) => {
-              if (p.type === 'tool' && p.tool) {
-                if (callId && p.tool.id !== callId) return p;
-                if (!callId && (p.tool.name !== toolName || p.tool.status !== 'running')) return p;
-                return { ...p, tool: { ...p.tool, status: 'done' as const, result: resultStr, elapsed } };
-              }
-              return p;
-            });
-            let foundToolError = false;
-            const resObj = typeof (ev as any).result === 'object' && (ev as any).result !== null ? (ev as any).result as Record<string, unknown> : null;
-            if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') foundToolError = true;
-            if (foundToolError) setToolEnablePrompt({ toolId: toolName, toolName });
-            return updateLastMessage(prev, { toolCalls: newToolCalls, parts: newParts });
-          }
-
-          case 'todo_update': {
-            setTodoItems(ev.items as TodoItem[]);
-            return last?.role === 'assistant' ? updateLastMessage(prev, { todos: ev.items as TodoItem[] }) : prev;
-          }
-
-          case 'plan_generated': {
-            if (last?.role !== 'assistant') return prev;
-            const plan = ev.plan as { steps?: { description: string }[] } | undefined;
-            if (plan?.steps) {
-              return updateLastMessage(prev, { plan: plan.steps.map((s) => s.description) });
-            }
             return prev;
-          }
 
           case 'token_usage': {
             const used = ev.totalTokens as number | undefined;
@@ -780,19 +790,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return updateLastMessage(prev, { thinking: `${cls} → ${path}` });
           }
 
-          case 'permission_required':
-            setPendingPermissionCount((prev) => prev + 1);
-            setPermissionPrompt({
-              requestId: (ev.requestId as string) ?? `${ev.tool}-${Date.now()}`,
-              tool: (ev.tool as string) ?? 'unknown',
-              path: (ev.path as string) ?? '',
-              riskLevel: (ev.riskLevel as string) ?? 'medium',
-            });
-            return prev;
-
           case 'provider_error': {
             const providerMsg = (ev.message as string) ?? 'Provider error';
             const msg = extractProviderError(providerMsg);
+            // Rate-limit errors suppress all subsequent warnings for this turn
+            if (/rate.?limit|429|too many requests|quota/i.test(providerMsg)) {
+              rateLimitSeenRef.current = true;
+            }
             setWarnings(prev => replaceWarning(prev, msg));
             if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
             setStreaming(false);
@@ -815,6 +819,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
 
           case 'error': {
+            // Suppress cascaded errors after a rate-limit — only show the first warning
+            if (rateLimitSeenRef.current) {
+              setStreaming(false);
+              return prev;
+            }
             const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
             // Route to warning band — errors should not pollute the chat bubble
             setWarnings(prev => replaceWarning(prev, errorText));
@@ -827,6 +836,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
 
           case 'plan_mode_entered':
+            if (prev.length === 0) return prev; // skip default mode on fresh session
             return [...prev, {
               id: crypto.randomUUID(), role: 'system' as const, content: '',
               timestamp: new Date().toISOString(),
@@ -841,18 +851,71 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             }];
 
           case 'hyperdrive_entered':
+            setAgentMode('agent');
             return [...prev, {
               id: crypto.randomUUID(), role: 'system' as const, content: '',
               timestamp: new Date().toISOString(),
-              isModeChange: { from: agentMode === 'plan' ? 'Plan' : 'Agent', to: 'Hyperdrive' },
+              isModeChange: { from: (ev as any).wasPlan ? 'Plan' : 'Agent', to: 'Hyperdrive' },
             }];
 
           case 'hyperdrive_exited':
+            setAgentMode((ev as any).mode);
             return [...prev, {
               id: crypto.randomUUID(), role: 'system' as const, content: '',
               timestamp: new Date().toISOString(),
-              isModeChange: { from: 'Hyperdrive', to: agentMode === 'plan' ? 'Plan' : 'Agent' },
+              isModeChange: { from: 'Hyperdrive', to: (ev as any).wasPlan ? 'Plan' : 'Agent' },
             }];
+
+          case 'subagent_event': {
+            const subagentId = (ev as any).subagentId as string;
+            const parentEvent = (ev as any).parentEvent as Record<string, unknown>;
+            if (!subagentId || !parentEvent || !last?.subAgents) return prev;
+            switch (parentEvent.type) {
+              case 'tool_executing': {
+                const toolName = (parentEvent.tool as string) ?? 'unknown';
+                const desc = (parentEvent.description as string) ?? '';
+                const eventArgs = parentEvent.args ?? desc;
+                const callId = (parentEvent.callId as string) ?? crypto.randomUUID();
+                const tc: ToolCall = { id: callId, name: toolName, args: eventArgs as any, status: 'running' };
+                const newSubAgents = last.subAgents.map((a: SubAgent) =>
+                  a.id !== subagentId ? a : { ...a, toolCalls: [...(a.toolCalls || []), tc] });
+                return updateLastMessage(prev, { subAgents: newSubAgents });
+              }
+              case 'tool_output': {
+                const outputCallId = (parentEvent.callId as string) ?? '';
+                const outputText = (parentEvent.output as string) ?? '';
+                if (!outputCallId || !outputText) return prev;
+                const newSubAgents = last.subAgents.map((a: SubAgent) =>
+                  a.id !== subagentId ? a : {
+                    ...a,
+                    toolCalls: (a.toolCalls || []).map((t: ToolCall) =>
+                      t.id === outputCallId && t.status === 'running'
+                        ? { ...t, streamOutput: (t.streamOutput || '') + outputText } : t),
+                  });
+                return updateLastMessage(prev, { subAgents: newSubAgents });
+              }
+              case 'tool_complete': {
+                const toolName = (parentEvent.tool as string) ?? '';
+                const elapsed = (parentEvent.elapsed as number) ?? 0;
+                const callId = (parentEvent.callId as string) ?? '';
+                const result = (parentEvent as any).result ?? (parentEvent as any).output ?? '';
+                const resultStr = typeof result === 'string' ? result
+                  : (result && typeof result === 'object' ? ((result as any).output || (result as any).message || JSON.stringify(result)) : '');
+                const newSubAgents = last.subAgents.map((a: SubAgent) =>
+                  a.id !== subagentId ? a : {
+                    ...a,
+                    toolCalls: (a.toolCalls || []).map((t: ToolCall) => {
+                      if (callId && t.id !== callId) return t;
+                      if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
+                      return { ...t, status: 'done' as const, result: resultStr, elapsed };
+                    }),
+                  });
+                return updateLastMessage(prev, { subAgents: newSubAgents });
+              }
+              default:
+                return prev;
+            }
+          }
 
           default:
             return prev;
@@ -867,32 +930,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         if (state === 'open') {
           setLastEventAt(Date.now());
         } else if (state === 'reconnecting') {
-          // Safety: if streaming and SSE drops, force-close after a grace period
-          // so the UI doesn't stay stuck in loading state forever.
-          // Cleared if the connection restores before the timeout.
-          reconnectTimeout = setTimeout(() => {
-            setMessages(prev => {
-              const last = prev[prev.length - 1];
-              if (last?.role === 'assistant' && last.streaming) {
-                const updatedToolCalls = (last.toolCalls || []).map((tc: any) =>
-                  tc.status === 'running' ? { ...tc, status: 'error' as const, result: 'Connection lost' } : tc
-                );
-                return updateLastMessage(prev, { streaming: false, toolCalls: updatedToolCalls });
+          // On reconnect, fetch current agent state to recover any missed updates
+          fetch('/api/agent/state', { credentials: 'include' })
+            .then(r => r.json())
+            .then(data => {
+              if (data.processing) {
+                setStreaming(true);
               }
-              return prev;
-            });
-            setStreaming(false);
-          }, 30000);
-        }
-        // Separate check: clear reconnect timeout when SSE restores
-        if (state === 'open' && reconnectTimeout) {
-          clearTimeout(reconnectTimeout);
-          reconnectTimeout = null;
+            })
+            .catch(() => {});
         }
       },
     });
     return () => {
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
       disconnectRef.current?.();
     };
   }, []);
@@ -912,10 +962,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }).catch(() => {});
   }, [sessionId]);
 
-  // Streaming timeout — if no content or events arrive, fail gracefully.
-  // Uses a ref to reset the timer on each new event (activity-based timeout).
-  // - If no content starts within 60s, time out with error.
-  // - If content is flowing but stalls for 60s, force-close streaming.
+  // Streaming timeout — tracks activity via SSE events.
+  // - All SSE events (tool, chunk, status) reset the activity timer.
+  // - After 2 minutes of inactivity, tries to recover the response from the API.
+  // - Retries recovery every tick until streaming ends or a complete response is found.
+  // - Never force-closes streaming — the agent may be processing tools for minutes.
   const lastActivityRef = useRef<number>(Date.now());
   useEffect(() => {
     if (!streaming) return;
@@ -923,26 +974,34 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const timer = setInterval(() => {
       const elapsed = Date.now() - lastActivityRef.current;
       if (elapsed > 120000) {
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === 'assistant') {
-            return updateLastMessage(prev, { content: '⚠️ Request timed out. The agent took too long to respond. Please try again.', streaming: false });
-          }
-          return prev;
-        });
-        setStreaming(false);
-      } else if (elapsed > 60000) {
-        // Force-close streaming if stuck for over 60s with no activity
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === 'assistant' && last.streaming) {
-            return updateLastMessage(prev, { streaming: false });
-          }
-          return prev;
-        });
-        setStreaming(false);
+        // 2 min inactivity — SSE may be disconnected. Try to recover by fetching
+        // /api/chat/history. If the agent already produced a response, display it.
+        // Keep retrying on every tick until streaming ends.
+        fetch(`/api/chat/history`, { credentials: 'include' })
+          .then(r => r.json())
+          .then(data => {
+            const msgs = Array.isArray(data) ? data : [];
+            // Iterate backwards to find the most recent complete assistant response
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              const m = msgs[i];
+              if (m.role === 'assistant' && m.content && !m.toolCalls) {
+                setMessages(prev => {
+                  const last = prev[prev.length - 1];
+                  if (last?.role !== 'assistant') return prev;
+                  // Only apply if our local content is shorter (stale/partial)
+                  if (last.streaming || !last.content || last.content.length < m.content.length) {
+                    return updateLastMessage(prev, { content: m.content, streaming: false });
+                  }
+                  return prev;
+                });
+                setStreaming(false);
+                break;
+              }
+            }
+          })
+          .catch(() => {});
       }
-    }, 5000);
+    }, 15000);
     return () => clearInterval(timer);
   }, [streaming]);
 
@@ -976,8 +1035,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const handleSend = useCallback(async (overrideText?: string) => {
     const text = typeof overrideText === 'string' ? overrideText.trim() : input.trim();
-    if ((!text && attachments.length === 0) || streaming) return;
+    if ((!text && attachments.length === 0)) return;
     if (!currentProvider || !currentModel) return;
+    rateLimitSeenRef.current = false;
 
     // Create session lazily on first message
     if (!(await ensureSession())) return;
@@ -1000,26 +1060,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
     try {
       const result = await chat.send(text, fileRefs);
-      // Fallback: if SSE didn't deliver the response (e.g., first message before agent existed),
-      // display the response from the API call directly.
-      // The API only resolves after agent.sendMessage() completes, so SSE should have
-      // already delivered the content. This fallback handles edge cases where SSE missed it.
+      // Fallback: if SSE didn't deliver the response (e.g., connection dropped during streaming),
+      // display the response from the API call directly. SSE should have already delivered the
+      // content via message_received, but this handles edge cases where the event was lost.
       setMessages((prev) => {
         const last = prev[prev.length - 1];
-        if (last?.role === 'assistant' && last.streaming && !last.content) {
-          // Replace the empty streaming placeholder with the API response
-          const content = result?.message?.content || '';
-          if (content) {
+        if (last?.role === 'assistant' && last.streaming) {
+          const fullContent = result?.message?.content || '';
+          if (fullContent) {
+            // Prefer the API response — it's guaranteed complete
             return [...prev.slice(0, -1), { ...result.message, streaming: false }];
           }
-          // Clarification response: remove the empty placeholder, chips already showing
-          if ((result as Record<string, unknown>)?.clarification) {
-            return prev.slice(0, -1);
-          }
-        }
-        // If SSE already delivered content, just finalize the streaming state
-        if (last?.role === 'assistant' && last.streaming) {
-          return [...prev.slice(0, -1), { ...last, streaming: false }];
+          // Empty content: clarification or no-op, remove the stale placeholder
+          return prev.slice(0, -1);
         }
         return prev;
       });
@@ -1199,8 +1252,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setShowDisclaimer(true);
     } else {
       try {
-        await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
+        const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
+        const data = await res.json();
         setHyperdriveMode(false);
+        if (data.mode) setAgentMode(data.mode);
       } catch { /* ignore */ }
     }
   }, [hyperdriveMode]);
@@ -1208,8 +1263,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const confirmHyperdrive = useCallback(async () => {
     setShowDisclaimer(false);
     try {
-      await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
+      const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
+      const data = await res.json();
       setHyperdriveMode(true);
+      if (data.mode) setAgentMode(data.mode);
     } catch { /* ignore */ }
   }, []);
 
@@ -1376,6 +1433,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const handleSelectSession = async (s: SessionInfo) => {
     setWarnings([]);
+    rateLimitSeenRef.current = false;
     setStreaming(false);
     try {
       const { messages: historyMsgs, session, scopePath } = await sessions.restore(s.id);
@@ -1401,14 +1459,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setTokenOutput(outputEst);
       const restoredCwd = scopePath || session?.scopePath || '';
       if (restoredCwd) setCwd(restoredCwd);
-      // Restore saved session mode
+      // Restore saved session mode from DB (do not re-send to server)
       if (session?.mode === 'plan' || session?.mode === 'agent') {
         setAgentMode(session.mode);
-        sessionSettings.setMode(session.mode).catch(() => {});
       }
       loadTodos();
       navigate(`/console/chat/${s.id}`);
-    } catch { /* ignore */ }
+    } catch (e) {
+      setWarnings([`Failed to restore session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
+    }
   };
 
   const handleNewSession = async () => {
@@ -1472,7 +1531,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const tokenPercent = tokenTotal > 0 ? Math.min((tokenUsed / tokenTotal) * 100, 100) : 0;
 
   // ─── Chat view ───
-  const visibleMessages = messages.filter((m) => m.role !== 'system' || m.isModeChange);
+  const visibleMessages = messages.filter((m) => {
+    if (m.role === 'system' && !m.isModeChange) return false;
+    if (m.role === 'assistant' && !m.content && !m.thinking && (!m.toolCalls || m.toolCalls.length === 0) && (!m.subAgents || m.subAgents.length === 0) && (!m.parts || m.parts.length === 0)) return false;
+    return true;
+  });
 
   return (
     <Box sx={{ height: '100%', display: 'flex' }}>
@@ -1650,6 +1713,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           <IconButton size="small" onClick={handleShowSessions} sx={{ color: colors.text.dim, p: 0.5 }}>
             <ArrowBackIcon sx={{ fontSize: 16 }} />
           </IconButton>
+          {parentSessionId && (
+            <Chip size="small"
+              icon={<ArrowBackIcon sx={{ fontSize: 10 }} />}
+              label="Parent"
+              onClick={() => navigate(`/console/chat/${parentSessionId}`)}
+              sx={{
+                fontSize: '0.50rem', fontFamily: "'JetBrains Mono', monospace", height: 18,
+                bgcolor: colors.accent.blue + '10',
+                border: `1px solid ${colors.accent.blue}20`,
+                color: colors.accent.blue,
+                cursor: 'pointer',
+                '&:hover': { filter: 'brightness(1.2)' },
+                mr: 0.5,
+              }}
+            />
+          )}
           <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {currentSessionTitle ?? 'New Session'}
           </Typography>
@@ -2018,7 +2097,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 onInsertReady={(fn) => { insertMentionRef.current = fn; }}
                 placeholder="@agentx — message your AI wingman..."
                 crewList={crewList}
-                disabled={streaming}
               />
 
               {streaming ? (
@@ -2846,6 +2924,18 @@ const MARKDOWN_COMPONENTS = {
     }
     return <p {...props}>{children}</p>;
   },
+  table({ children }: any) {
+    return <StyledTableWrapper>{children}</StyledTableWrapper>;
+  },
+  ul({ children }: any) {
+    return <StyledUl>{children}</StyledUl>;
+  },
+  ol({ children }: any) {
+    return <StyledOl>{children}</StyledOl>;
+  },
+  li({ children }: any) {
+    return <StyledLi>{children}</StyledLi>;
+  },
 };
 
 function UserMentionText({ content }: { content: string }) {
@@ -2892,16 +2982,16 @@ function CrewAwareMarkdown({ content }: { content: string }) {
     },
     '& ul, & ol': {
       m: 0,
-      pl: 2,
+      pl: 0,
       fontSize: '0.75rem',
       lineHeight: 1.7,
     },
     '& li': {
       mb: 0.35,
       color: colors.text.primary,
+      listStyle: 'none',
     },
     '& li:last-child': { mb: 0 },
-    '& li::marker': { color: colors.text.dim },
     '& input[type="checkbox"]': {
       accentColor: colors.accent.blue,
     },
@@ -3048,12 +3138,17 @@ function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingS
 
       {/* Chronological parts: text + tools interleaved in order of appearance */}
       {message.parts && message.parts.length > 0 ? (
-        message.parts.map((part) => {
+        message.parts.filter((p) => {
+          if (p.type === 'text') return !!p.content;
+          if (p.type === 'tool') return !!p.tool;
+          if (p.type === 'subagent') return !!p.agent;
+          return false;
+        }).map((part) => {
           switch (part.type) {
             case 'text':
               return part.content ? <CrewAwareMarkdown key={part.id} content={part.content} /> : null;
             case 'tool':
-              return part.tool ? <Box key={part.id} sx={{ mt: 0.5 }}><ToolCardsList tools={[part.tool] as any[]} /></Box> : null;
+              return part.tool ? <InlineToolCall key={part.id} tool={part.tool as any} /> : null;
             case 'subagent':
               return part.agent ? (
                 <Box key={part.id} sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
@@ -3068,7 +3163,7 @@ function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingS
         // Fallback: render content + toolCalls the old way (for restored messages without parts)
         <>
           {message.content && <CrewAwareMarkdown content={message.content} />}
-          {message.toolCalls && message.toolCalls.length > 0 && (<Box sx={{ mt: 0.75 }}><ToolCardsList tools={message.toolCalls as any[]} /></Box>)}
+          {message.toolCalls && message.toolCalls.length > 0 && (<Box sx={{ mt: 0.5 }}>{message.toolCalls.map((t: any) => <InlineToolCall key={t.id} tool={t} />)}</Box>)}
           {message.subAgents && message.subAgents.length > 0 && (<Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{message.subAgents.map((sa) => (<SubAgentChip key={sa.id} agent={sa as any} />))}</Box>)}
         </>
       )}
@@ -3097,26 +3192,49 @@ function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingS
   );
 }
 
-// ─── Tool Cards Grouped ───
 
-function ToolCardsList({ tools }: { tools: Array<{ id: string; name: string; status: string; args?: any; result?: string; elapsed?: number }> }) {
-  return <Box>{tools.map(t => <ToolCallCard key={t.id} tool={t as any} />)}</Box>;
-}
 
 // ─── Sub-Agent Chip ───
 
 function SubAgentChip({ agent }: { agent: SubAgent }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasToolCalls = agent.toolCalls && agent.toolCalls.length > 0;
+  const navigate = useNavigate();
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (agent.status !== 'running') {
+      // Left-click navigates to child session, expand/collapse on tool call toggle
+      if (hasToolCalls && (e.target as HTMLElement).closest('[data-expand-area]')) {
+        setExpanded(!expanded);
+      } else {
+        navigate(`/console/chat/${agent.id}`);
+      }
+    }
+  };
+
   return (
-    <Chip size="small"
-      icon={agent.status === 'running' ? <CircularProgress size={10} sx={{ color: 'inherit' }} /> : <AccountTreeIcon sx={{ fontSize: 11 }} />}
-      label={`${agent.name}: ${agent.task.slice(0, 35)}${agent.task.length > 35 ? '…' : ''}`}
-      sx={{
-        fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", height: 20,
-        bgcolor: agent.status === 'running' ? colors.accent.purple + '10' : colors.accent.green + '10',
-        border: `1px solid ${agent.status === 'running' ? colors.accent.purple : colors.accent.green}20`,
-        color: agent.status === 'running' ? colors.accent.purple : colors.accent.green,
-      }}
-    />
+    <Box>
+      <Chip size="small"
+        icon={agent.status === 'running' ? <CircularProgress size={10} sx={{ color: 'inherit' }} /> : <AccountTreeIcon sx={{ fontSize: 11 }} />}
+        label={`${agent.name}: ${agent.task.slice(0, 35)}${agent.task.length > 35 ? '…' : ''}${hasToolCalls ? ` (${agent.toolCalls!.length})` : ''}`}
+        onClick={handleClick}
+        sx={{
+          fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", height: 20,
+          bgcolor: agent.status === 'running' ? colors.accent.purple + '10' : colors.accent.green + '10',
+          border: `1px solid ${agent.status === 'running' ? colors.accent.purple : colors.accent.green}20`,
+          color: agent.status === 'running' ? colors.accent.purple : colors.accent.green,
+          cursor: 'pointer',
+          '&:hover': { filter: 'brightness(1.2)' },
+        }}
+      />
+      {expanded && agent.toolCalls && (
+        <Box data-expand-area sx={{ mt: 0.75, ml: 0.5, borderLeft: `2px solid ${colors.border.subtle}`, pl: 1.5 }}>
+          {agent.toolCalls.map((tc) => (
+            <InlineToolCall key={tc.id} tool={tc} />
+          ))}
+        </Box>
+      )}
+    </Box>
   );
 }
 

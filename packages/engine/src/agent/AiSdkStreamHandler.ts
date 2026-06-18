@@ -210,11 +210,13 @@ export function createAiSdkStreamHandler(
           timestamp: Date.now(),
         });
 
+        const finalContent = state.accumulatedContent || 'I apologize, I was unable to generate a response.';
+
         const assistantMessage: Message = {
           id: generateMessageId(),
           sessionId,
           role: 'assistant',
-          content: state.accumulatedContent,
+          content: finalContent,
           toolCalls: null,
           createdAt: new Date().toISOString(),
           tokenCount: totalTokens,

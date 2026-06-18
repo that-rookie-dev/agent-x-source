@@ -17,7 +17,7 @@ export interface SessionRunnerOptions {
   sessionStore?: SessionStore;
   apiKey?: string;
   waitForClarification?: (question: string, options: string[], allowFreeform: boolean) => Promise<string>;
-  runSubAgent?: (instruction: string, tools: string[] | undefined, timeout: number) => Promise<{ success: boolean; output: string; elapsed: number }>;
+  runSubAgent?: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number }>;
   onTokenUsage?: (input: number, output: number) => void;
   onBackgroundTask?: (taskId: string, result: string) => void;
   gitManager?: GitDiffProvider;

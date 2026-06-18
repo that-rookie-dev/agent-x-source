@@ -11,12 +11,45 @@ import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
-import Divider from '@mui/material/Divider';
 import Alert from '@mui/material/Alert';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import SettingsIcon from '@mui/icons-material/Settings';
+import PersonIcon from '@mui/icons-material/Person';
+import PaletteIcon from '@mui/icons-material/Palette';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { config, factoryReset, setAuthToken, type AgentXConfig } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
+
+const cardSx = {
+  bgcolor: colors.bg.secondary,
+  border: `1px solid ${colors.border.default}`,
+  borderRadius: 1.5,
+  p: 3,
+  mb: 2,
+};
+
+const sectionLabelSx = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 1,
+  mb: 2.5,
+};
+
+const sectionTitleSx = {
+  fontSize: '0.8rem',
+  fontWeight: 600,
+  color: colors.text.primary,
+  letterSpacing: '0.01em',
+};
+
+const helperSx = {
+  fontSize: '0.65rem',
+  color: colors.text.dim,
+  mt: 0.5,
+  lineHeight: 1.5,
+};
 
 export function SettingsPanel() {
   const { config: appConfig, setConfig, initialize } = useApp();
@@ -39,9 +72,10 @@ export function SettingsPanel() {
     try {
       await config.update(cfg);
       setConfig(cfg);
-      setMessage('Settings saved');
+      setMessage('saved');
+      setTimeout(() => setMessage(''), 2500);
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : 'Save failed');
+      setMessage('error');
     } finally {
       setSaving(false);
     }
@@ -64,106 +98,207 @@ export function SettingsPanel() {
     }
   };
 
-  if (!cfg) return <Box sx={{ p: 2 }}><Typography variant="body2" sx={{ color: colors.text.dim }}>Loading settings...</Typography></Box>;
+  if (!cfg) {
+    return (
+      <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Typography sx={{ fontSize: '0.8rem', color: colors.text.dim }}>Loading settings...</Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <Box sx={{ flexShrink: 0, px: 3, pt: 2.5, pb: 1.5 }}>
-        <Typography sx={{ fontSize: '0.95rem', fontWeight: 600 }}>Settings</Typography>
-        <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, mt: 0.25 }}>
-          Configure user preferences and UI behavior
+      {/* Header */}
+      <Box sx={{ flexShrink: 0, px: 4, pt: 3, pb: 2, borderBottom: `1px solid ${colors.border.default}` }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.5 }}>
+          <SettingsIcon sx={{ fontSize: 20, color: colors.text.secondary }} />
+          <Typography sx={{ fontSize: '0.95rem', fontWeight: 600, color: colors.text.primary }}>
+            Settings
+          </Typography>
+        </Box>
+        <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, ml: 4.5 }}>
+          Configure your profile, appearance, and application preferences
         </Typography>
       </Box>
 
-      <Box sx={{ flex: 1, overflow: 'auto', px: 3, pb: 3 }}>
-        {message && <Alert severity={message.includes('failed') || message.includes('Failed') ? 'error' : 'success'} sx={{ mb: 2, fontSize: '0.75rem' }} onClose={() => setMessage('')}>{message}</Alert>}
+      {/* Content */}
+      <Box sx={{ flex: 1, overflow: 'auto', px: 4, pt: 3, pb: 10 }}>
+        {/* ── Profile ── */}
+        <Box sx={cardSx}>
+          <Box sx={sectionLabelSx}>
+            <PersonIcon sx={{ fontSize: 16, color: colors.text.secondary }} />
+            <Typography sx={sectionTitleSx}>Profile</Typography>
+          </Box>
 
-        <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: colors.text.secondary, mb: 1.5 }}>User</Typography>
-        <TextField size="small" label="Callsign" value={cfg.user?.callsign ?? ''}
-          onChange={(e) => setCfg({ ...cfg, user: { callsign: e.target.value } })}
-          sx={{ mb: 3, maxWidth: 360 }} InputProps={{ sx: { fontSize: '0.75rem' } }}
-          placeholder="e.g. Commander" />
+          <TextField
+            size="small"
+            label="Callsign"
+            value={cfg.user?.callsign ?? ''}
+            onChange={(e) => setCfg({ ...cfg, user: { callsign: e.target.value } })}
+            sx={{ maxWidth: 320 }}
+            slotProps={{
+              input: { sx: { fontSize: '0.8rem' } },
+              inputLabel: { sx: { fontSize: '0.75rem' } },
+            }}
+            placeholder="e.g. Commander"
+          />
+          <Typography sx={helperSx}>
+            Your personal callsign. Used in crew communication and logs to identify you.
+          </Typography>
+        </Box>
 
-        <Divider sx={{ my: 2.5, borderColor: colors.border.default }} />
+        {/* ── Appearance ── */}
+        <Box sx={cardSx}>
+          <Box sx={sectionLabelSx}>
+            <PaletteIcon sx={{ fontSize: 16, color: colors.text.secondary }} />
+            <Typography sx={sectionTitleSx}>Appearance</Typography>
+          </Box>
 
-        <Typography sx={{ fontSize: '0.75rem', fontWeight: 600, color: colors.text.secondary, mb: 1.5 }}>UI Preferences</Typography>
-        <FormControl size="small" sx={{ minWidth: 160, mb: 3 }}>
-          <InputLabel sx={{ fontSize: '0.75rem' }}>Animation</InputLabel>
-          <Select value={cfg.ui?.animationSpeed ?? 'normal'} label="Animation"
-            onChange={(e) => setCfg({ ...cfg, ui: { ...cfg.ui, animationSpeed: e.target.value } })} sx={{ fontSize: '0.75rem' }}>
-            <MenuItem value="none" sx={{ fontSize: '0.75rem' }}>None</MenuItem>
-            <MenuItem value="reduced" sx={{ fontSize: '0.75rem' }}>Reduced</MenuItem>
-            <MenuItem value="normal" sx={{ fontSize: '0.75rem' }}>Normal</MenuItem>
-          </Select>
-        </FormControl>
+          <FormControl size="small" sx={{ minWidth: 200 }}>
+            <InputLabel sx={{ fontSize: '0.75rem' }}>Animation Speed</InputLabel>
+            <Select
+              value={cfg.ui?.animationSpeed ?? 'normal'}
+              label="Animation Speed"
+              onChange={(e) => setCfg({ ...cfg, ui: { ...cfg.ui, animationSpeed: e.target.value } })}
+              sx={{ fontSize: '0.8rem' }}
+            >
+              <MenuItem value="none" sx={{ fontSize: '0.8rem' }}>None — instant transitions</MenuItem>
+              <MenuItem value="reduced" sx={{ fontSize: '0.8rem' }}>Reduced — subtle motion</MenuItem>
+              <MenuItem value="normal" sx={{ fontSize: '0.8rem' }}>Normal — full animations</MenuItem>
+            </Select>
+          </FormControl>
+          <Typography sx={helperSx}>
+            Controls the speed of UI transitions, shimmer effects, and loading animations.
+          </Typography>
+        </Box>
 
-        <Button variant="contained" onClick={handleSave} disabled={saving}
-          sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, fontSize: '0.75rem', textTransform: 'none', px: 3 }}>
-          {saving ? 'Saving...' : 'Save Settings'}
-        </Button>
-
-        {/* ─── Danger Zone ─── */}
-        <Divider sx={{ my: 3, borderColor: '#d32f2f40' }} />
-
-        <Box sx={{ border: '1px solid #d32f2f40', borderRadius: 1, p: 2.5 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-            <WarningAmberIcon sx={{ fontSize: 18, color: '#d32f2f' }} />
-            <Typography sx={{ fontSize: '0.8rem', fontWeight: 700, color: '#d32f2f', letterSpacing: '0.5px' }}>
-              DANGER ZONE
+        {/* ── Danger Zone ── */}
+        <Box
+          sx={{
+            ...cardSx,
+            border: `1px solid ${colors.accent.red}30`,
+            bgcolor: `${colors.accent.red}05`,
+            mb: 0,
+          }}
+        >
+          <Box sx={{ ...sectionLabelSx, mb: 2 }}>
+            <WarningAmberIcon sx={{ fontSize: 16, color: colors.accent.red }} />
+            <Typography sx={{ ...sectionTitleSx, color: colors.accent.red }}>
+              Danger Zone
             </Typography>
           </Box>
 
-          <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, mb: 2, lineHeight: 1.6 }}>
-            Permanently deletes all local data and resets the application to its factory state.
-            This includes your configuration, credentials, sessions, chat history, files, memory,
-            and all plugin settings. This action cannot be undone.
+          <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, mb: 2.5, lineHeight: 1.7 }}>
+            Permanently erase all local data — configuration, credentials, sessions, chat history,
+            memories, plugins, and preferences. Your account will be signed out.
           </Typography>
 
-          <Button variant="outlined" onClick={() => setResetOpen(true)}
+          <Button
+            variant="outlined"
+            startIcon={<DeleteOutlineIcon />}
+            onClick={() => setResetOpen(true)}
             sx={{
-              borderColor: '#d32f2f', color: '#d32f2f', fontSize: '0.75rem', textTransform: 'none',
-              '&:hover': { borderColor: '#ff6659', bgcolor: '#d32f2f10' },
-            }}>
+              borderColor: colors.accent.red,
+              color: colors.accent.red,
+              fontSize: '0.75rem',
+              textTransform: 'none',
+              px: 2.5,
+              '&:hover': {
+                borderColor: colors.accent.red,
+                bgcolor: `${colors.accent.red}10`,
+              },
+            }}
+          >
             Factory Reset
           </Button>
         </Box>
       </Box>
 
-      {/* ─── Factory Reset Confirmation Dialog ─── */}
-      <Dialog open={resetOpen} onClose={() => { if (!resetting) { setResetOpen(false); setConfirmText(''); setResetError(''); } }} maxWidth="sm" fullWidth>
+      {/* Sticky Save Bar */}
+      <Box
+        sx={{
+          flexShrink: 0,
+          px: 4,
+          py: 2,
+          borderTop: `1px solid ${colors.border.default}`,
+          bgcolor: colors.bg.secondary,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: 2,
+        }}
+      >
+        {message === 'saved' && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+            <CheckCircleIcon sx={{ fontSize: 16, color: colors.accent.green }} />
+            <Typography sx={{ fontSize: '0.75rem', color: colors.accent.green }}>Settings saved</Typography>
+          </Box>
+        )}
+        {message === 'error' && (
+          <Typography sx={{ fontSize: '0.75rem', color: colors.accent.red }}>Save failed — try again</Typography>
+        )}
+        <Button
+          variant="contained"
+          onClick={handleSave}
+          disabled={saving}
+          sx={{
+            bgcolor: colors.text.primary,
+            color: colors.bg.primary,
+            fontSize: '0.8rem',
+            fontWeight: 600,
+            textTransform: 'none',
+            px: 3.5,
+            py: 1,
+            minWidth: 120,
+            '&:hover': { bgcolor: colors.text.secondary },
+          }}
+        >
+          {saving ? 'Saving...' : 'Save'}
+        </Button>
+      </Box>
+
+      {/* Factory Reset Dialog */}
+      <Dialog
+        open={resetOpen}
+        onClose={() => {
+          if (!resetting) { setResetOpen(false); setConfirmText(''); setResetError(''); }
+        }}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}` } }}
+      >
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pb: 1 }}>
-          <WarningAmberIcon sx={{ color: '#d32f2f', fontSize: 22 }} />
+          <WarningAmberIcon sx={{ color: colors.accent.red, fontSize: 22 }} />
           <Typography sx={{ fontSize: '0.9rem', fontWeight: 700 }}>Factory Reset</Typography>
         </DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
           <Typography sx={{ fontSize: '0.75rem', color: colors.text.secondary, mb: 2, lineHeight: 1.7 }}>
-            This will permanently delete <strong>all</strong> of the following local data:
+            This will permanently delete everything stored locally:
           </Typography>
 
-          <Box component="ul" sx={{ m: 0, pl: 2, mb: 2, fontSize: '0.7rem', color: colors.text.dim, lineHeight: 2 }}>
-            <li>Authentication credentials and sessions</li>
-            <li>Provider API keys and model configuration</li>
-            <li>Chat history, conversations, and message logs</li>
+          <Box component="ul" sx={{ m: 0, pl: 2, mb: 2, fontSize: '0.7rem', color: colors.text.dim, lineHeight: 2.1 }}>
+            <li>Authentication credentials and active sessions</li>
+            <li>Provider API keys and model configurations</li>
+            <li>All chat history, conversations, and message logs</li>
             <li>Uploaded files and file references</li>
-            <li>Secret Sauce (SOUL, memories, identity, diary)</li>
-            <li>Crew definitions and agent orchestration settings</li>
-            <li>Plugin registry and all plugin configurations</li>
-            <li>MCP and ACP server configurations</li>
-            <li>RAG index and knowledge base</li>
+            <li>Crew definitions and orchestration settings</li>
             <li>User preferences and UI settings</li>
           </Box>
 
-          <Typography sx={{ fontSize: '0.75rem', color: '#d32f2f', fontWeight: 600, mb: 1.5 }}>
-            This action cannot be undone. You will need to set up Agent-X from scratch.
+          <Typography sx={{ fontSize: '0.75rem', color: colors.accent.red, fontWeight: 600, mb: 1.5 }}>
+            This cannot be undone. You will need to reconfigure Agent-X from scratch.
           </Typography>
 
           <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, mb: 1 }}>
-            Type <strong>RESET</strong> to confirm.
+            Type <strong style={{ color: colors.text.primary }}>RESET</strong> to confirm.
           </Typography>
-          <TextField size="small" fullWidth value={confirmText}
+          <TextField
+            size="small"
+            fullWidth
+            value={confirmText}
             onChange={(e) => setConfirmText(e.target.value)}
             placeholder="Type RESET to confirm"
-            sx={{ '& .MuiInputBase-input': { fontSize: '0.75rem' } }}
+            slotProps={{ input: { sx: { fontSize: '0.8rem' } } }}
           />
 
           {resetError && (
@@ -171,17 +306,28 @@ export function SettingsPanel() {
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => { setResetOpen(false); setConfirmText(''); setResetError(''); }}
+          <Button
+            onClick={() => { setResetOpen(false); setConfirmText(''); setResetError(''); }}
             disabled={resetting}
-            sx={{ fontSize: '0.75rem', textTransform: 'none', color: colors.text.secondary }}>
+            sx={{ fontSize: '0.8rem', textTransform: 'none', color: colors.text.secondary }}
+          >
             Cancel
           </Button>
-          <Button onClick={handleFactoryReset} disabled={confirmText !== 'RESET' || resetting} variant="contained"
+          <Button
+            onClick={handleFactoryReset}
+            disabled={confirmText !== 'RESET' || resetting}
+            variant="contained"
             sx={{
-              bgcolor: '#d32f2f', color: '#fff', fontSize: '0.75rem', textTransform: 'none',
-              '&:hover': { bgcolor: '#b71c1c' },
-              '&.Mui-disabled': { bgcolor: '#d32f2f50', color: '#ffffff80' },
-            }}>
+              bgcolor: colors.accent.red,
+              color: '#fff',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              textTransform: 'none',
+              px: 3,
+              '&:hover': { bgcolor: '#d32f2f' },
+              '&.Mui-disabled': { bgcolor: `${colors.accent.red}40`, color: '#ffffff60' },
+            }}
+          >
             {resetting ? 'Deleting...' : 'Delete Everything'}
           </Button>
         </DialogActions>

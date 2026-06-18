@@ -17,6 +17,11 @@ export class DefaultTelemetryBus implements TelemetryBus {
   private config: TelemetryConfig;
   private running = false;
 
+  // Replay ring buffer — stores the last N telemetry events so SSE reconnections
+  // don't lose critical events like message_received or loading_end.
+  private replayBuffer: TelemetryEvent[] = [];
+  private static readonly REPLAY_SIZE = 50;
+
   constructor(config?: Partial<TelemetryConfig>) {
     this.config = {
       enabled: config?.enabled ?? true,
@@ -63,6 +68,13 @@ export class DefaultTelemetryBus implements TelemetryBus {
 
   emit(event: TelemetryEvent): void {
     if (!this.config.enabled) return;
+
+    // Push into replay ring buffer (replace oldest when full)
+    this.replayBuffer.push(event);
+    if (this.replayBuffer.length > DefaultTelemetryBus.REPLAY_SIZE) {
+      this.replayBuffer.shift();
+    }
+
     for (const handler of this.eventHandlers) {
       try { handler(event); } catch { /* swallow */ }
     }
@@ -107,6 +119,10 @@ export class DefaultTelemetryBus implements TelemetryBus {
   }
 
   onEvent(handler: EventHandler): () => void {
+    // Replay buffered events so reconnecting subscribers don't miss critical state
+    for (const ev of this.replayBuffer) {
+      try { handler(ev); } catch { /* swallow */ }
+    }
     this.eventHandlers.add(handler);
     return () => this.eventHandlers.delete(handler);
   }

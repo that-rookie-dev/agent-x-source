@@ -296,6 +296,9 @@ function createWindow(): void {
 
   mainWindow.loadURL(`http://localhost:${PORT}`);
 
+  // Clear webview cache on each launch to prevent stale assets
+  mainWindow.webContents.session.clearCache().catch(() => {});
+
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
     if (isDev) mainWindow?.webContents.openDevTools({ mode: 'bottom' });

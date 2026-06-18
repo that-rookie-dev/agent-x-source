@@ -50,18 +50,6 @@ function extractArgs(args: Record<string, unknown> | string | undefined): Record
   return args;
 }
 
-function formatArgs(args: Record<string, unknown>, exclude: Set<string>): string[] {
-  const result: string[] = [];
-  for (const [key, value] of Object.entries(args)) {
-    if (exclude.has(key)) continue;
-    if (TOOL_LABEL_KEYS.includes(key)) continue;
-    if (value === undefined || value === null) continue;
-    if (typeof value === 'string') result.push(`${key}=${value.length > 40 ? value.slice(0, 37) + '...' : value}`);
-    else if (typeof value === 'number' || typeof value === 'boolean') result.push(`${key}=${String(value)}`);
-  }
-  return result.slice(0, 4);
-}
-
 const iconSx = { fontSize: 13 };
 
 export function getToolDisplay(toolName: string, args: Record<string, unknown> | string | undefined): ToolDisplayInfo {
@@ -125,4 +113,4 @@ export function getToolDisplay(toolName: string, args: Record<string, unknown> |
   }
 }
 
-export { extractArgs, formatArgs };
+

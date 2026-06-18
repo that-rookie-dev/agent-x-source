@@ -4,6 +4,7 @@ import { Agent } from './Agent.js';
 import { AgentEventBus } from '../EventBus.js';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
+import { randomUUID } from 'node:crypto';
 
 const logger = getLogger();
 
@@ -49,7 +50,7 @@ export class SmartSubAgent {
       ? `${parentCtx}\n\n[TASK]\n${options.instruction}`
       : options.instruction;
 
-    this.allowedTools = options.tools ?? [];
+    this.allowedTools = options.tools ? this.deriveAllowedTools(options.tools) : [];
     this.timeout = options.timeout ?? 120_000;
 
     const parentConfig = (options.parentAgent as unknown as { config: AgentXConfig }).config;
@@ -65,7 +66,6 @@ export class SmartSubAgent {
     const subEventBus = new AgentEventBus();
 
     try {
-      // Create a filtered tool registry if specific tools requested
       let toolRegistry: ToolRegistry | undefined;
       let toolExecutor: ToolExecutor | undefined;
 
@@ -74,7 +74,6 @@ export class SmartSubAgent {
 
       if (parentRegistry && parentExecutor) {
         if (this.allowedTools.length > 0) {
-          // Clone registry with only allowed tools
           const { ToolRegistry } = await import('../tools/ToolRegistry.js');
           const { ToolExecutor } = await import('../tools/ToolExecutor.js');
           toolRegistry = new ToolRegistry();
@@ -92,7 +91,8 @@ export class SmartSubAgent {
         }
       }
 
-      // Create sub-agent with custom system prompt, wiring event bus for forwarding
+      this.parentAgent.createChildSession(this.sessionId);
+
       const subAgent = new Agent({
         config: this.config,
         sessionId: this.sessionId,
@@ -102,8 +102,32 @@ export class SmartSubAgent {
         eventBus: subEventBus,
       });
 
-      // Forward events to parent (for UI visibility)
+      // Wire up session-based persistence so the child session is replayable
+      const sessionManager = (this.parentAgent as unknown as { sessionManager?: { store?: { insertMessage?: (msg: Record<string, unknown>) => void; insertPart?: (sid: string, part: Record<string, unknown>) => void } } }).sessionManager;
+      const childStore = sessionManager?.store;
+
+      // Persist tool parts in real-time as the child agent runs, and forward to parent UI
       subEventBus.on((event) => {
+        const evType = (event as { type?: string }).type ?? '';
+
+        // Persist tool-call and tool-result parts to child session's SQLite store
+        if (childStore?.insertPart) {
+          if (evType === 'tool_executing') {
+            const toolName = ((event as any).tool as string) ?? '';
+            const toolCallId = (event as any).callId as string || (event as any).toolCallId as string || randomUUID();
+            const toolArgs = (event as any).args as Record<string, unknown> | undefined;
+            childStore.insertPart(this.sessionId, { type: 'tool-call', toolName, toolCallId, toolArgs });
+          }
+          if (evType === 'tool_complete') {
+            const toolName = ((event as any).tool as string) ?? '';
+            const toolCallId = (event as any).callId as string || (event as any).toolCallId as string || '';
+            const result = (event as any).result ?? (event as any).output as string ?? '';
+            const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+            childStore.insertPart(this.sessionId, { type: 'tool-result', toolName, toolCallId, toolResult: resultStr, toolSuccess: true });
+          }
+        }
+
+        // Forward events to parent (for UI visibility)
         this.parentAgent.events.emit({
           type: 'subagent_event',
           subagentId: this.sessionId,
@@ -111,17 +135,29 @@ export class SmartSubAgent {
         });
       });
 
-      // Set timeout
       const timeoutId = setTimeout(() => {
         this.abortController.abort();
       }, this.timeout);
 
-      // Run the mission
       const result = await subAgent.sendMessage(this.instruction);
 
       clearTimeout(timeoutId);
 
-      // Track real token usage from sub-agent
+      // Persist all child session messages so the restore endpoint can replay them
+      if (childStore?.insertMessage) {
+        const messages = subAgent.getMessageHistory();
+        for (const msg of messages) {
+          if (msg.role === 'system') continue;
+          childStore.insertMessage({
+            sessionId: this.sessionId,
+            role: msg.role,
+            content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+            toolCalls: (msg as any).toolCalls,
+            tokenCount: (msg as any).tokenCount,
+          });
+        }
+      }
+
       const subTracker = (subAgent as unknown as { tokenTracker?: { inputTokenCount: number; outputTokenCount: number } }).tokenTracker;
       const tokenUsage = {
         input: subTracker?.inputTokenCount ?? 0,
@@ -151,7 +187,14 @@ export class SmartSubAgent {
   /**
    * Build a specialized system prompt for the sub-agent.
    */
+  private deriveAllowedTools(requestedTools: string[]): string[] {
+    // Sub-agents cannot spawn further sub-agents or manage todos/tasks
+    const deniedTools = new Set(['delegate_to_subagent', 'sub_agent_spawn', 'todowrite', 'todo_delete']);
+    return requestedTools.filter(t => !deniedTools.has(t));
+  }
+
   private buildSubAgentPrompt(): string {
+    const restrictedNote = `\nIMPORTANT: You are a child agent. You cannot delegate to sub-agents or manage tasks.`;
     return `[SUBAGENT_MISSION]
 You are a specialist sub-agent working on a specific mission. Focus ONLY on completing the assigned task.
 
@@ -161,6 +204,7 @@ Rules:
 3. If you encounter errors, try alternative approaches.
 4. Return a CONCISE summary of what you did and the final result.
 5. Do NOT mention that you are a sub-agent.
+${restrictedNote}
 
 ${this.allowedTools.length > 0 ? `Available tools: ${this.allowedTools.join(', ')}` : 'All tools available.'}
 [/SUBAGENT_MISSION]`;

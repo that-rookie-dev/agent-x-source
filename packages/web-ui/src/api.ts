@@ -504,6 +504,7 @@ export interface SessionInfo {
   createdAt: string;
   title?: string;
   scopePath?: string;
+  parentId?: string;
 }
 
 export interface SessionContext {

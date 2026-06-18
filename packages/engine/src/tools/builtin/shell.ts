@@ -12,6 +12,8 @@ function validateRedirects(command: string, scopePath: string): string | null {
     const target = m[1]!;
     // Skip fd targets (e.g. "1" or "2") and variables/heredocs
     if (/^\d+$/.test(target) || target.startsWith('$') || target.startsWith('{') || target.startsWith('<')) continue;
+    // Safe pseudo-files — allowed regardless of scope
+    if (target === '/dev/null' || target === '/dev/zero' || target.startsWith('/dev/fd/')) continue;
     const resolved = normalize(resolve(scopePath, target));
     if (!resolved.startsWith(scopePath)) {
       return `Redirect target "${target}" resolves to "${resolved}" which is outside scope (${scopePath})`;
