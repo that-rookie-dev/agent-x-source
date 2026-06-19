@@ -49,6 +49,7 @@ export interface PluginSystemConfig {
   autoEnable?: boolean;
   healthCheckIntervalMs?: number;
   maxErrorsBeforeDisable?: number;
+  db?: any;
 }
 
 export class PluginSystem {
@@ -61,12 +62,13 @@ export class PluginSystem {
 
   constructor(config: PluginSystemConfig = {}) {
     this.loader = new DefaultPluginLoader(config.scanDirs);
-    this.registry = new PluginRegistry();
+    this.registry = new PluginRegistry(config.db);
     this.config = {
       scanDirs: config.scanDirs ?? [],
       autoEnable: config.autoEnable ?? true,
       healthCheckIntervalMs: config.healthCheckIntervalMs ?? 60000,
       maxErrorsBeforeDisable: config.maxErrorsBeforeDisable ?? 5,
+      db: undefined as any,
     };
   }
 

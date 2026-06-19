@@ -11,7 +11,6 @@ describe('PromptComposer', () => {
   const makeSession = (overrides: Partial<Session> = {}): Session => ({
     id: 'sess-1',
     title: 'Test Session',
-    crewId: null,
     providerId: 'anthropic',
     modelId: 'claude-sonnet-4-20250514',
     scopePath: '/tmp/test',

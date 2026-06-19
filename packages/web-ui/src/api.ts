@@ -120,7 +120,7 @@ export const providers = {
   configured: () => request<{ active: string; providers: ConfiguredProvider[] }>('/providers').then(r => r.providers),
   active: () => request<{ active: string; providers: ConfiguredProvider[] }>('/providers').then(r => r.active),
   validate: (provider: string, apiKey?: string, baseUrl?: string) => request<{ valid: boolean; error?: string }>('/provider/validate', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) }),
-  configure: (provider: string, apiKey?: string, baseUrl?: string) => request<{ ok: boolean }>('/provider/configure', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) }),
+  configure: (provider: string, apiKey?: string, baseUrl?: string, profileName?: string) => request<{ ok: boolean }>('/provider/configure', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl, profileName }) }),
   models: (provider: string) => request<ModelInfo[]>('/provider/models?provider=' + provider),
   switch: (provider: string) => request<{ ok: boolean; provider: string; model: string }>('/provider/switch', { method: 'POST', body: JSON.stringify({ provider }) }),
   createProfile: (provider: string, label: string, apiKey: string, baseUrl?: string, setActive?: boolean) => request<{ ok: boolean; provider: string; profileId: string }>('/provider/profile', { method: 'POST', body: JSON.stringify({ provider, profileId: label, label, apiKey, baseUrl, setActive }) }),
@@ -402,7 +402,26 @@ export function connectSSE(
   };
 }
 
+// ─── Persona API ───
+export const personaApi = {
+  get: () => request<AgentPersonaConfig | Record<string, never>>('/agent/persona'),
+  save: (data: AgentPersonaConfig) =>
+    request<{ ok: boolean }>('/agent/persona', { method: 'PUT', body: JSON.stringify(data) }),
+};
+
 // ─── Types ───
+export type CommunicationStyle = 'formal' | 'casual' | 'direct' | 'empathetic';
+export type DecisionMakingStyle = 'conservative' | 'balanced' | 'aggressive';
+
+export interface AgentPersonaConfig {
+  name: string;
+  description: string;
+  communicationStyle: CommunicationStyle;
+  decisionMaking: DecisionMakingStyle;
+  domainContext: string;
+  traits: string[];
+}
+
 export interface AgentXConfig {
   provider: { activeProvider: string; activeModel: string; providers: Record<string, ProviderSettings> };
   ui: { theme: string; showTokenBar: boolean; showTimers: boolean; animationSpeed: string; disabledTools?: string[] };
@@ -454,6 +473,7 @@ export interface Crew {
   title?: string;
   callsign: string;
   systemPrompt: string;
+  description?: string;
   tone?: string;
   isDefault?: boolean;
   enabled?: boolean;
@@ -468,6 +488,7 @@ export interface CrewInput {
   title?: string;
   callsign: string;
   systemPrompt: string;
+  description?: string;
   tone?: string;
   expertise?: string[];
   traits?: string[];
@@ -658,10 +679,6 @@ export const gateway = {
   setFocus: (channel: string) => request<{ ok: boolean; focus: string }>('/gateway/focus', { method: 'POST', body: JSON.stringify({ channel }) }),
 };
 
-export const tuiActive = {
-  check: () => request<TuiActiveStatus>('/tui-active'),
-};
-
 // ─── Web-UI Active ───
 export interface WebuiActiveStatus {
   active: boolean;
@@ -676,6 +693,82 @@ export const webuiActive = {
     body: JSON.stringify({ pid: pid ?? Date.now() }) 
   }),
   unregister: () => request<{ ok: boolean }>('/webui-active', { method: 'DELETE' }),
+};
+
+// ─── Settings: Database ───
+export interface DbStatus {
+  backend: 'sqlite' | 'postgres';
+  connected: boolean;
+  stats: {
+    dbSizeBytes: number;
+    dbSizeFormatted: string;
+    tableCount: number;
+    tables: Record<string, number>;
+    walSizeBytes: number;
+  };
+  health: {
+    status: 'healthy' | 'degraded' | 'unhealthy';
+    checks: Array<{ table: string; rows: number; ok: boolean }>;
+  };
+  fileStorage: {
+    config: { path: string; sizeBytes: number; sizeFormatted: string };
+    data: { path: string; sizeBytes: number; sizeFormatted: string };
+    cache: { path: string; sizeBytes: number; sizeFormatted: string };
+  };
+  postgres: {
+    configured: boolean;
+    connectionString: string;
+  };
+}
+
+export const settings = {
+  db: {
+    get: () => request<DbStatus>('/settings/db'),
+    update: (config: { backend: string; postgres?: { connectionString: string } }) =>
+      request<{ ok: boolean; backend?: string; tablesCreated?: number }>('/settings/db', { method: 'PUT', body: JSON.stringify(config) }),
+    test: (connectionString: string) =>
+      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string }>(
+        '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh: undefined }) }
+      ),
+    testAdvanced: (connectionString: string, ssh?: { host: string; port: number; username: string; password?: string; privateKey?: string } | null) =>
+      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string }>(
+        '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh }) }
+      ),
+    migrate: () =>
+      request<{ ok: boolean; migrated?: Record<string, number>; durationMs?: number; error?: string }>(
+        '/settings/db/migrate', { method: 'POST' }
+      ),
+    health: () =>
+      request<{ status: 'healthy' | 'degraded' | 'unhealthy'; checks: Array<{ table: string; rows: number; ok: boolean }> }>('/settings/db/health'),
+    clear: () =>
+      request<{ ok: boolean }>('/settings/db/clear', { method: 'POST' }),
+    clearCache: () =>
+      request<{ ok: boolean; freedFormatted: string }>('/settings/db/clear-cache', { method: 'POST' }),
+  },
+};
+
+// ─── Agent Vitals ───
+export interface AgentVitals {
+  ageDays: number;
+  birthDate: string | null;
+  level: string;
+  wisdomScore: number;
+  totalExperiences: number;
+  totalInteractions: number;
+  totalCorrections: number;
+  avgConfidence: number;
+  currentMood: string;
+  moodIntensity: number;
+  memories: { total: number; categories: Record<string, number> };
+  diaryEntries: number;
+  brainSizeFormatted: string;
+  nextMilestoneAt: number | null;
+  capabilities: string[];
+  status: string;
+}
+
+export const agent = {
+  vitals: () => request<AgentVitals>('/agent/vitals'),
 };
 
 // ─── Factory Reset ───

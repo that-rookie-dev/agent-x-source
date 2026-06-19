@@ -21,7 +21,6 @@ import SlackIcon from '@mui/icons-material/Forum';
 import EmailIcon from '@mui/icons-material/Email';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
-import ComputerIcon from '@mui/icons-material/Computer';
 import PublicIcon from '@mui/icons-material/Public';
 import CircleIcon from '@mui/icons-material/Circle';
 import { bridges, gateway, type BridgeStatus } from '../api';
@@ -169,7 +168,6 @@ export function ChannelsPanel() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const FOCUS_CHANNELS = [
-    { id: 'tui', label: 'TUI', icon: ComputerIcon },
     { id: 'web', label: 'Web-UI', icon: PublicIcon },
     { id: 'telegram', label: 'Telegram', icon: TelegramIcon },
   ];

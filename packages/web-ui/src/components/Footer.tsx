@@ -1,8 +1,5 @@
 import { useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
-import IconButton from '@mui/material/IconButton';
-import Tooltip from '@mui/material/Tooltip';
-import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import { colors } from '../theme';
 import { health } from '../api';
 
@@ -22,10 +19,10 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
     <Box sx={{
       flexShrink: 0, borderTop: `1px solid ${colors.border.default}`,
       px: 3, py: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim,
+      fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim,
     }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <span>Made in India</span>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        <span>🇮🇳 Made in India</span>
         <span style={{ color: colors.border.default }}>/</span>
         <span>Powered by Slashpan Technologies Pvt Ltd</span>
         <span style={{ color: colors.border.default }}>/</span>
@@ -35,21 +32,23 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
           )
         </span>
       </Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
         {onToggleLogs && (
-          <Tooltip title={logsOpen ? 'Close logs' : 'Open logs'}>
-            <IconButton
+          <>
+            <Box
+              component="span"
               onClick={onToggleLogs}
-              size="small"
               sx={{
-                color: logsOpen ? colors.accent.blue : colors.text.muted,
-                '&:hover': { color: colors.accent.blue },
-                p: 0.25,
+                cursor: 'pointer', letterSpacing: '0.5px', userSelect: 'none',
+                color: logsOpen ? colors.accent.blue : colors.text.dim,
+                transition: 'color 0.15s',
+                '&:hover': { color: colors.text.secondary },
               }}
             >
-              <ArticleOutlinedIcon sx={{ fontSize: 13 }} />
-            </IconButton>
-          </Tooltip>
+              logger
+            </Box>
+            <span style={{ color: colors.border.default }}>/</span>
+          </>
         )}
         {version && <span>v{version}</span>}
       </Box>

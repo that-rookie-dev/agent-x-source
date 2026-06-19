@@ -61,7 +61,7 @@ export async function projectDetect(_args: Record<string, unknown>, context: Too
     if (allDeps['fastify']) info.framework.push('Fastify');
     if (allDeps['hono']) info.framework.push('Hono');
     if (allDeps['electron']) info.framework.push('Electron');
-    if (allDeps['ink']) info.framework.push('Ink (TUI)');
+    if (allDeps['ink']) info.framework.push('Ink');
     // Build tools
     if (allDeps['tsup']) info.buildTool = 'tsup';
     else if (allDeps['vite']) info.buildTool = 'Vite';

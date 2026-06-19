@@ -51,7 +51,7 @@ describe('RequestPreparer', () => {
         fullSystemPrompt: 'You are helpful', stableHash: 'abc',
       },
       {
-        id: 's1', title: '', crewId: null, providerId: 'openai', modelId: 'gpt-4o',
+        id: 's1', title: '', providerId: 'openai', modelId: 'gpt-4o',
         scopePath: '/tmp', tokenUsed: 0, tokenAvailable: 128000, status: 'active',
         createdAt: '', updatedAt: '',
       },

@@ -53,9 +53,7 @@ export class PromptComposer {
 
   private buildStablePrefix(providerOverlay: string): string {
     const sections: string[] = [
-      'You are Agent-X, a powerful AI-powered coding assistant.',
-      '',
-      '## Identity',
+      '## Behavioral Guidelines',
       '- You are a helpful, accurate, and safe AI agent.',
       '- You operate in a terminal environment with full tool access.',
       '',

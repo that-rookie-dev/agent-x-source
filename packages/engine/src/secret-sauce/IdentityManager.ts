@@ -1,17 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { getSecretSauceDir } from '../config/paths.js';
-
-interface IdentityState {
-  name: string;
-  personality: string;
-  traits: string[];
-  communicationStyle: string;
-  interactionCount: number;
-  evolutionLog: EvolutionEntry[];
-  createdAt: string;
-  updatedAt: string;
-}
+import type { AgentPersonaConfig } from '@agentx/shared';
 
 interface EvolutionEntry {
   date: string;
@@ -19,138 +9,151 @@ interface EvolutionEntry {
   trigger: string;
 }
 
-const DEFAULT_IDENTITY: IdentityState = {
-  name: 'Agent X',
-  personality: 'Helpful, precise, and slightly witty AI coding assistant',
-  traits: ['concise', 'technical', 'pragmatic', 'curious'],
-  communicationStyle: 'direct and efficient, with occasional personality',
+interface IdentityOverlay {
+  personality: string;
+  traits: string[];
+  communicationStyle: string;
+  interactionCount: number;
+  evolutionLog: EvolutionEntry[];
+}
+
+export interface MergedIdentity {
+  name: string;
+  description: string;
+  communicationStyle: string;
+  decisionMaking: string;
+  domainContext: string;
+  traits: string[];
+  interactionCount: number;
+  evolutionLog: string;
+}
+
+const DEFAULT_OVERLAY: IdentityOverlay = {
+  personality: '',
+  traits: [],
+  communicationStyle: '',
   interactionCount: 0,
   evolutionLog: [],
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
 };
 
-/**
- * Manages the agent's evolving identity/persona — per-crew.
- * Each crew maintains its own personality, traits, and communication style.
- */
 export class IdentityManager {
-  private identity: IdentityState;
-  private secretSauceDir: string;
-  private crewId: string;
+  private overlay: IdentityOverlay;
   private filePath: string;
 
   constructor(crewId = 'default') {
-    this.secretSauceDir = getSecretSauceDir();
-    this.crewId = crewId;
-    this.filePath = join(this.secretSauceDir, 'crews', crewId, 'identity.json');
-    this.identity = this.load();
+    const dir = join(getSecretSauceDir(), 'crews', crewId);
+    mkdirSync(dir, { recursive: true });
+    this.filePath = join(dir, 'identity.json');
+    this.overlay = this.load();
   }
 
-  private load(): IdentityState {
+  private load(): IdentityOverlay {
     if (existsSync(this.filePath)) {
       try {
-        return JSON.parse(readFileSync(this.filePath, 'utf-8')) as IdentityState;
+        const raw = JSON.parse(readFileSync(this.filePath, 'utf-8'));
+        return {
+          personality: raw.personality ?? '',
+          traits: Array.isArray(raw.traits) ? raw.traits : [],
+          communicationStyle: raw.communicationStyle ?? '',
+          interactionCount: raw.interactionCount ?? 0,
+          evolutionLog: Array.isArray(raw.evolutionLog) ? raw.evolutionLog : [],
+        };
       } catch {
-        return { ...DEFAULT_IDENTITY };
+        return { ...DEFAULT_OVERLAY };
       }
     }
-    return { ...DEFAULT_IDENTITY };
+    return { ...DEFAULT_OVERLAY };
   }
 
   private save(): void {
-    const dir = join(this.secretSauceDir, 'crews', this.crewId);
-    mkdirSync(dir, { recursive: true });
-    this.identity.updatedAt = new Date().toISOString();
-    writeFileSync(this.filePath, JSON.stringify(this.identity, null, 2));
+    writeFileSync(this.filePath, JSON.stringify(this.overlay, null, 2));
   }
 
-  /**
-   * Record an interaction — used to track engagement level.
-   */
-  recordInteraction(): void {
-    this.identity.interactionCount++;
+  /** Seed (or re-seed) with persona config on Agent init. */
+  seedFromPersona(persona: AgentPersonaConfig | null): void {
+    if (!persona) return;
+    const evolved: IdentityOverlay = {
+      ...this.overlay,
+      personality: this.overlay.personality || persona.description,
+      traits: this.overlay.traits.length > 0 ? this.overlay.traits : [...persona.traits],
+      communicationStyle: this.overlay.communicationStyle || persona.communicationStyle,
+    };
+    this.overlay = evolved;
     this.save();
   }
 
-  /**
-   * Evolve a trait based on feedback or pattern detection.
-   */
-  evolveTrait(oldTrait: string, newTrait: string, trigger: string): void {
-    const idx = this.identity.traits.indexOf(oldTrait);
-    if (idx >= 0) {
-      this.identity.traits[idx] = newTrait;
-    } else {
-      this.identity.traits.push(newTrait);
-    }
+  /** Merge persona config (base) with runtime evolution (overlay). */
+  getMergedIdentity(persona: AgentPersonaConfig | null): MergedIdentity {
+    const base = {
+      name: persona?.name ?? 'Agent-X',
+      description: persona?.description ?? '',
+      communicationStyle: persona?.communicationStyle ?? 'direct',
+      decisionMaking: persona?.decisionMaking ?? 'balanced',
+      domainContext: persona?.domainContext ?? '',
+      traits: persona?.traits ?? [],
+    };
 
-    this.identity.evolutionLog.push({
+    const merged: MergedIdentity = {
+      name: base.name,
+      description: this.overlay.personality || base.description,
+      communicationStyle: this.overlay.communicationStyle || base.communicationStyle,
+      decisionMaking: base.decisionMaking,
+      domainContext: base.domainContext,
+      traits: this.overlay.traits.length > 0 ? this.overlay.traits : base.traits,
+      interactionCount: this.overlay.interactionCount,
+      evolutionLog: this.formatEvolutionLog(),
+    };
+
+    return merged;
+  }
+
+  private formatEvolutionLog(): string {
+    const recent = this.overlay.evolutionLog.slice(-5);
+    if (recent.length === 0) return '';
+    const entries = recent.map((e) => `  - ${e.change} (${e.date.split('T')[0]})`);
+    return `Recent evolution:\n${entries.join('\n')}`;
+  }
+
+  recordInteraction(): void {
+    this.overlay.interactionCount++;
+    this.save();
+  }
+
+  evolveTrait(oldTrait: string, newTrait: string, trigger: string): void {
+    const idx = this.overlay.traits.indexOf(oldTrait);
+    if (idx >= 0) {
+      this.overlay.traits[idx] = newTrait;
+    } else {
+      this.overlay.traits.push(newTrait);
+    }
+    this.overlay.evolutionLog.push({
       date: new Date().toISOString(),
       change: `Trait evolved: "${oldTrait}" → "${newTrait}"`,
       trigger,
     });
-
-    // Keep evolution log manageable
-    if (this.identity.evolutionLog.length > 50) {
-      this.identity.evolutionLog = this.identity.evolutionLog.slice(-50);
+    if (this.overlay.evolutionLog.length > 50) {
+      this.overlay.evolutionLog = this.overlay.evolutionLog.slice(-50);
     }
-
     this.save();
   }
 
-  /**
-   * Update communication style based on user preferences.
-   */
   updateCommunicationStyle(style: string, trigger: string): void {
-    if (this.identity.communicationStyle !== style) {
-      this.identity.evolutionLog.push({
+    if (this.overlay.communicationStyle !== style) {
+      this.overlay.evolutionLog.push({
         date: new Date().toISOString(),
-        change: `Style: "${this.identity.communicationStyle}" → "${style}"`,
+        change: `Style: "${this.overlay.communicationStyle || 'default'}" → "${style}"`,
         trigger,
       });
-      this.identity.communicationStyle = style;
+      this.overlay.communicationStyle = style;
       this.save();
     }
   }
 
-  /**
-   * Set the agent's display name.
-   */
-  setName(name: string): void {
-    this.identity.name = name;
-    this.save();
+  getEvolutionLog(): EvolutionEntry[] {
+    return [...this.overlay.evolutionLog];
   }
 
-  /**
-   * Build identity context for the system prompt.
-   */
-  buildContext(): string {
-    const lines = [
-      '[IDENTITY]',
-      `Name: ${this.identity.name}`,
-      `Personality: ${this.identity.personality}`,
-      `Traits: ${this.identity.traits.join(', ')}`,
-      `Communication style: ${this.identity.communicationStyle}`,
-      `Total interactions: ${this.identity.interactionCount}`,
-    ];
-
-    // Add recent evolution for self-awareness
-    const recentEvolutions = this.identity.evolutionLog.slice(-3);
-    if (recentEvolutions.length > 0) {
-      lines.push('Recent evolution:');
-      for (const e of recentEvolutions) {
-        lines.push(`  - ${e.change} (${e.date.split('T')[0]})`);
-      }
-    }
-
-    lines.push('[/IDENTITY]');
-    return lines.join('\n');
-  }
-
-  /**
-   * Get the current identity state.
-   */
-  getState(): IdentityState {
-    return { ...this.identity };
+  getInteractionCount(): number {
+    return this.overlay.interactionCount;
   }
 }

@@ -50,14 +50,14 @@ export function Sidebar({ active, onNavigate }: Props) {
 
   return (
     <Box sx={{
-      width: 56, minWidth: 56, height: '100%', display: 'flex', flexDirection: 'column',
+      width: 48, minWidth: 48, height: '100%', display: 'flex', flexDirection: 'column',
       alignItems: 'center', py: 1.5, borderRight: `1px solid ${colors.border.default}`,
       bgcolor: colors.bg.secondary,
     }}>
       {/* Brand mark */}
       <Tooltip title="@agentx" placement="right">
         <Box sx={{ mb: 2, cursor: 'default' }}>
-          <img src="/logo.png" alt="Agent-X" style={{ width: 28, height: 28, objectFit: 'contain' }} />
+          <img src="/logo.png" alt="Agent-X" style={{ width: 24, height: 24, objectFit: 'contain' }} />
         </Box>
       </Tooltip>
 
@@ -67,23 +67,23 @@ export function Sidebar({ active, onNavigate }: Props) {
           <IconButton
             onClick={() => onNavigate(item.id)}
             sx={{
-              mb: 0.5, width: 40, height: 40, borderRadius: 1,
+              mb: 0.5, width: 34, height: 34, borderRadius: 1,
               color: active === item.id ? colors.text.primary : colors.text.dim,
               bgcolor: active === item.id ? colors.border.default : 'transparent',
               '&:hover': { bgcolor: colors.border.default, color: colors.text.primary },
             }}
           >
-            <item.icon sx={{ fontSize: 20 }} />
+            <item.icon sx={{ fontSize: 16 }} />
           </IconButton>
         </Tooltip>
       ))}
 
       <Box sx={{ flex: 1 }} />
-      <Divider sx={{ width: 30, mb: 1, borderColor: colors.border.default }} />
+      <Divider sx={{ width: 26, mb: 1, borderColor: colors.border.default }} />
 
       <Tooltip title="Logout" placement="right">
         <IconButton onClick={handleLogout} sx={{ color: colors.text.dim, '&:hover': { color: colors.accent.red } }}>
-          <LogoutIcon sx={{ fontSize: 18 }} />
+          <LogoutIcon sx={{ fontSize: 14 }} />
         </IconButton>
       </Tooltip>
     </Box>

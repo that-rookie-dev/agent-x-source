@@ -2,7 +2,6 @@ export interface Session {
   id: string;
   title: string;
   parentId?: string | null;
-  crewId: string | null;
   providerId: string;
   modelId: string;
   scopePath: string;
@@ -18,7 +17,6 @@ export interface Session {
 export type SessionStatus = 'active' | 'paused' | 'completed' | 'archived';
 
 export interface SessionCreateInput {
-  crewId?: string;
   providerId: string;
   modelId: string;
   scopePath: string;

@@ -6,6 +6,8 @@ import Tooltip from '@mui/material/Tooltip';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import ViewColumnIcon from '@mui/icons-material/ViewColumn';
+import ViewStreamIcon from '@mui/icons-material/ViewStream';
 import { colors } from '../theme';
 import { getAuthToken } from '../api';
 
@@ -33,11 +35,12 @@ const LEVEL_BG: Record<string, string> = {
 };
 
 export interface LogsPanelProps {
-  open: boolean;
-  onClose: () => void;
+  onClose?: () => void;
+  onTogglePosition?: () => void;
+  position?: 'bottom' | 'right';
 }
 
-export function LogsPanel({ open, onClose }: LogsPanelProps) {
+export function LogsPanel({ onClose, onTogglePosition, position }: LogsPanelProps) {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState<LevelFilter>('all');
   const [search, setSearch] = useState('');
@@ -46,6 +49,7 @@ export function LogsPanel({ open, onClose }: LogsPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   const filteredEntries = useMemo(() => {
     let results = entries;
@@ -110,25 +114,21 @@ export function LogsPanel({ open, onClose }: LogsPanelProps) {
   }, []);
 
   useEffect(() => {
-    if (open) {
-      fetch('/api/logs?limit=200', {
-        headers: { Authorization: `Bearer ${getAuthToken()}` },
+    fetch('/api/logs?limit=200', {
+      headers: { Authorization: `Bearer ${getAuthToken()}` },
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (Array.isArray(d.entries)) setEntries(d.entries);
       })
-        .then((r) => r.json())
-        .then((d) => {
-          if (Array.isArray(d.entries)) setEntries(d.entries);
-        })
-        .catch(() => {});
-      connectSSE();
-    } else {
+      .catch(() => {});
+    connectSSE();
+    return () => {
       esRef.current?.close();
       esRef.current = null;
       setConnected(false);
-    }
-    return () => {
-      esRef.current?.close();
     };
-  }, [open, connectSSE]);
+  }, [connectSSE]);
 
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
@@ -149,6 +149,13 @@ export function LogsPanel({ open, onClose }: LogsPanelProps) {
     navigator.clipboard.writeText(text).catch(() => {});
   }, [filteredEntries]);
 
+  const handleCopyEntry = useCallback((entry: LogEntry, index: number) => {
+    const text = `[${entry.timestamp}] [${entry.level.toUpperCase()}] [${entry.code}] ${entry.message}${entry.stack ? '\n' + entry.stack : ''}`;
+    navigator.clipboard.writeText(text).catch(() => {});
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  }, []);
+
   const handleClear = useCallback(async () => {
     try {
       await fetch('/api/logs', {
@@ -166,27 +173,14 @@ export function LogsPanel({ open, onClose }: LogsPanelProps) {
     return { error, warn, info, total: entries.length };
   }, [entries]);
 
-  if (!open) return null;
-
   return (
     <Box
       sx={{
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        height: '42vh',
-        borderTop: `1px solid ${colors.border.default}`,
-        bgcolor: colors.bg.secondary,
-        zIndex: 1200,
+        flex: 1,
         display: 'flex',
         flexDirection: 'column',
-        animation: 'slideUp 0.2s ease-out',
-        '@keyframes slideUp': {
-          from: { transform: 'translateY(100%)', opacity: 0 },
-          to: { transform: 'translateY(0)', opacity: 1 },
-        },
-        boxShadow: '0 -4px 24px rgba(0,0,0,0.4)',
+        bgcolor: colors.bg.secondary,
+        overflow: 'hidden',
       }}
     >
       {/* Header */}
@@ -194,12 +188,12 @@ export function LogsPanel({ open, onClose }: LogsPanelProps) {
         sx={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: 1,
           px: 2,
           py: 0.75,
           borderBottom: `1px solid ${colors.border.subtle}`,
           flexShrink: 0,
-          minHeight: 42,
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -220,7 +214,7 @@ export function LogsPanel({ open, onClose }: LogsPanelProps) {
           </span>
         </Box>
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', ml: 'auto' }}>
           {/* Level filter chips */}
           {(['all', 'error', 'warn', 'info'] as LevelFilter[]).map((level) => (
             <Chip
@@ -251,8 +245,6 @@ export function LogsPanel({ open, onClose }: LogsPanelProps) {
               }}
             />
           ))}
-
-          <Box sx={{ width: 8 }} />
 
           {/* Search */}
           <Box
@@ -286,6 +278,13 @@ export function LogsPanel({ open, onClose }: LogsPanelProps) {
               <DeleteSweepIcon sx={{ fontSize: 14 }} />
             </IconButton>
           </Tooltip>
+          {onTogglePosition && (
+            <Tooltip title={position === 'right' ? 'Move to bottom' : 'Move to right'}>
+              <IconButton size="small" onClick={onTogglePosition} sx={{ color: colors.text.tertiary }}>
+                {position === 'right' ? <ViewStreamIcon sx={{ fontSize: 14 }} /> : <ViewColumnIcon sx={{ fontSize: 14 }} />}
+              </IconButton>
+            </Tooltip>
+          )}
           <Tooltip title="Close">
             <IconButton size="small" onClick={onClose} sx={{ color: colors.text.tertiary }}>
               <KeyboardArrowDownIcon sx={{ fontSize: 18 }} />
@@ -351,6 +350,19 @@ export function LogsPanel({ open, onClose }: LogsPanelProps) {
                 }}
               >
                 {entry.message}
+                {!expandedIndex && (
+                  <Box
+                    component="span"
+                    onClick={(e) => { e.stopPropagation(); handleCopyEntry(entry, idx); }}
+                    sx={{ ml: 1, flexShrink: 0, display: 'inline-flex', alignItems: 'center', cursor: 'pointer', color: copiedIndex === idx ? colors.accent.green : colors.text.muted, '&:hover': { color: copiedIndex === idx ? colors.accent.green : colors.text.primary } }}
+                  >
+                    {copiedIndex === idx ? (
+                      <span style={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>copied</span>
+                    ) : (
+                      <ContentCopyIcon sx={{ fontSize: 10 }} />
+                    )}
+                  </Box>
+                )}
                 {entry.stack && expandedIndex === idx && (
                   <Box
                     component="pre"

@@ -151,9 +151,7 @@ export class DecisionEngine {
    * No tools, no RAG, just personality.
    */
   buildFastReplyPrompt(sauceIdentity: string): string {
-    return `You are a helpful AI assistant.
-${sauceIdentity ? `\n${sauceIdentity}` : ''}
-Keep responses friendly, concise, and natural. No tools, no code, no markdown unless needed.`;
+    return `${sauceIdentity ? `${sauceIdentity}\n\n` : ''}Keep responses friendly, concise, and natural. No tools, no code, no markdown unless needed.`;
   }
 
   private measureComplexity(lower: string, wordCount: number): number {

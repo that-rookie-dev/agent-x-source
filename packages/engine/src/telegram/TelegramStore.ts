@@ -1,5 +1,5 @@
-import { getConfigDir } from '../config/paths.js';
-import { SecureStore } from '../utils/SecureStore.js';
+import { encryptJSON, decryptJSON } from '@agentx/shared';
+import type { EncryptedData } from '@agentx/shared';
 
 interface TelegramStoredConfig {
   botToken: string;
@@ -7,36 +7,43 @@ interface TelegramStoredConfig {
   lastUpdateId?: number;
 }
 
-const CONFIG_FILE = 'telegram.json';
-
-/**
- * Persists Telegram bot configuration to disk with encryption.
- * Stored in ~/.config/agentx/telegram.json (encrypted)
- */
 export class TelegramStore {
-  private secureStore: SecureStore<TelegramStoredConfig>;
+  private db: any;
+  private dek: Buffer;
 
-  constructor() {
-    const dir = getConfigDir();
-    this.secureStore = new SecureStore<TelegramStoredConfig>(dir, CONFIG_FILE);
-    
-    // Migrate legacy plaintext configs to encrypted format
-    this.secureStore.migrateLegacy();
+  constructor(db: any, dek: Buffer) {
+    this.db = db;
+    this.dek = dek;
   }
 
   save(config: TelegramStoredConfig): void {
-    this.secureStore.save(config);
+    const encrypted = encryptJSON(config, this.dek);
+    this.db.prepare(
+      `INSERT OR REPLACE INTO bot_credentials (platform, config_enc, iv, tag, version, updated_at)
+       VALUES (?, ?, ?, ?, '1.0', datetime('now'))`
+    ).run('telegram', encrypted.ciphertext, encrypted.iv, encrypted.tag);
   }
 
   load(): TelegramStoredConfig | null {
-    return this.secureStore.load();
+    const row = this.db.prepare(
+      'SELECT config_enc, iv, tag FROM bot_credentials WHERE platform = ?'
+    ).get('telegram') as { config_enc: string; iv: string; tag: string } | undefined;
+
+    if (!row) return null;
+
+    const encrypted: EncryptedData = {
+      ciphertext: row.config_enc,
+      iv: row.iv,
+      tag: row.tag,
+    };
+    return decryptJSON<TelegramStoredConfig>(encrypted, this.dek);
   }
 
   isConfigured(): boolean {
-    return this.secureStore.isConfigured();
+    return this.load() !== null;
   }
 
   clear(): void {
-    this.secureStore.clear();
+    this.db.prepare('DELETE FROM bot_credentials WHERE platform = ?').run('telegram');
   }
 }

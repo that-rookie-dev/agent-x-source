@@ -87,41 +87,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install
 
-      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/tui --filter @agentx/web-api --filter @agentx/cli run build
+      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api run build
 
       - uses: actions/download-artifact@v4
         with:
           name: webui-dist
           path: packages/web-ui/dist
-
-      # --- CLI ---
-      - name: Package CLI
-        run: |
-          mkdir -p release-pkg
-          cp packages/cli/dist/index.js release-pkg/
-          cp packages/cli/dist/daemon.js release-pkg/
-          mkdir -p release-pkg/web-api/dist
-          cp -r packages/web-api/dist/* release-pkg/web-api/dist/ 2>/dev/null || true
-          mkdir -p release-pkg/web-ui/dist
-          cp -r packages/web-ui/dist/* release-pkg/web-ui/dist/ 2>/dev/null || true
-          cat > release-pkg/package.json << 'EOF'
-          {
-            "type": "module",
-            "dependencies": { "better-sqlite3": "^11.0.0" }
-          }
-          EOF
-          printf '#!/usr/bin/env bash\nexec node "$(dirname "$0")/index.js" "$@"\n' > release-pkg/agentx
-          chmod +x release-pkg/agentx
-          cd release-pkg && tar -czf ../agentx-darwin-arm64.tar.gz . && cd ..
-          rm -rf release-pkg/web-ui
-          cd release-pkg && tar -czf ../agentx-darwin-arm64-tui.tar.gz .
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agentx-darwin-arm64
-          path: |
-            agentx-darwin-arm64.tar.gz
-            agentx-darwin-arm64-tui.tar.gz
 
       # --- Desktop ---
       - uses: actions/cache@v4
@@ -191,41 +162,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install
 
-      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/tui --filter @agentx/web-api --filter @agentx/cli run build
+      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api run build
 
       - uses: actions/download-artifact@v4
         with:
           name: webui-dist
           path: packages/web-ui/dist
-
-      # --- CLI ---
-      - name: Package CLI
-        run: |
-          mkdir -p release-pkg
-          cp packages/cli/dist/index.js release-pkg/
-          cp packages/cli/dist/daemon.js release-pkg/
-          mkdir -p release-pkg/web-api/dist
-          cp -r packages/web-api/dist/* release-pkg/web-api/dist/ 2>/dev/null || true
-          mkdir -p release-pkg/web-ui/dist
-          cp -r packages/web-ui/dist/* release-pkg/web-ui/dist/ 2>/dev/null || true
-          cat > release-pkg/package.json << 'EOF'
-          {
-            "type": "module",
-            "dependencies": { "better-sqlite3": "^11.0.0" }
-          }
-          EOF
-          printf '#!/usr/bin/env bash\nexec node "$(dirname "$0")/index.js" "$@"\n' > release-pkg/agentx
-          chmod +x release-pkg/agentx
-          cd release-pkg && tar -czf ../agentx-${{ matrix.suffix }}.tar.gz . && cd ..
-          rm -rf release-pkg/web-ui
-          cd release-pkg && tar -czf ../agentx-${{ matrix.suffix }}-tui.tar.gz .
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agentx-${{ matrix.suffix }}
-          path: |
-            agentx-${{ matrix.suffix }}.tar.gz
-            agentx-${{ matrix.suffix }}-tui.tar.gz
 
       # --- Desktop ---
       - uses: actions/cache@v4
@@ -290,41 +232,12 @@ jobs:
         env:
           npm_config_msvs_version: 2022
 
-      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/tui --filter @agentx/web-api --filter @agentx/cli run build
+      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api run build
 
       - uses: actions/download-artifact@v4
         with:
           name: webui-dist
           path: packages/web-ui/dist
-
-      # --- CLI ---
-      - name: Package CLI
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path release-pkg
-          Copy-Item packages/cli/dist/index.js release-pkg/
-          Copy-Item packages/cli/dist/daemon.js release-pkg/
-          New-Item -ItemType Directory -Force -Path release-pkg/web-api/dist
-          Copy-Item -Path packages/web-api/dist/* -Destination release-pkg/web-api/dist/ -Recurse -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path release-pkg/web-ui/dist
-          Copy-Item -Path packages/web-ui/dist/* -Destination release-pkg/web-ui/dist/ -Recurse -ErrorAction SilentlyContinue
-          @'
-          {
-            "type": "module",
-            "dependencies": { "better-sqlite3": "^11.0.0" }
-          }
-          '@ | Out-File -Encoding utf8 release-pkg/package.json
-          '@echo off`r`nnode "%~dp0index.js" %*' | Out-File -Encoding ascii release-pkg/agentx.cmd
-          Compress-Archive -Path release-pkg/* -DestinationPath agentx-win-x64.zip
-          Remove-Item -Recurse -Force release-pkg/web-ui -ErrorAction SilentlyContinue
-          Compress-Archive -Path release-pkg/* -DestinationPath agentx-win-x64-tui.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agentx-win-x64
-          path: |
-            agentx-win-x64.zip
-            agentx-win-x64-tui.zip
 
       # --- Desktop ---
       - uses: actions/cache@v4
@@ -383,7 +296,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum agentx-*.tar.gz agentx-*.zip *.dmg *.AppImage *.deb *.exe install-desktop.sh 2>/dev/null > checksums.sha256 || true
+          sha256sum *.dmg *.AppImage *.deb *.exe install-desktop.sh 2>/dev/null > checksums.sha256 || true
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -405,26 +318,8 @@ jobs:
             | Linux (ARM64) | [Agent-X-${{ needs.check-version.outputs.version }}-arm64.AppImage](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-arm64.AppImage) |
             | Windows (x64) | [Agent-X Setup ${{ needs.check-version.outputs.version }}.exe](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X%20Setup%20${{ needs.check-version.outputs.version }}.exe) |
 
-            ### CLI / TUI
-            | Platform | Download |
-            |---|---|
-            | macOS (ARM) | [agentx-darwin-arm64.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-darwin-arm64.tar.gz) |
-            | Linux (x64) | [agentx-linux-x64.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-linux-x64.tar.gz) |
-            | Linux (ARM64) | [agentx-linux-arm64.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-linux-arm64.tar.gz) |
-            | Windows (x64) | [agentx-win-x64.zip](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-win-x64.zip) |
-
             ### Checksums
             See `checksums.sha256` in assets.
-
-            ### macOS Beta Install
-            If Gatekeeper blocks the app, use the install script:
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/${{ env.PUBLIC_REPO }}/main/install-desktop.sh | bash
-            ```
-            Or manually after copying to Applications:
-            ```bash
-            xattr -cr /Applications/Agent-X.app
-            ```
           files: |
             artifacts/*
             !artifacts/*.blockmap

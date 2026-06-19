@@ -15,6 +15,10 @@
     "@agentx/engine": "workspace:*",
     "@agentx/shared": "workspace:*",
     "better-sqlite3": "^12.10.0",
+    "pg": "^8.21.0",
+    "pg-connection-string": "^2.13.0",
+    "pg-pool": "^3.14.0",
+    "pg-protocol": "^1.14.0",
     "express": "^4.21.0",
     "multer": "^2.1.1",
     "ws": "^8.18.0"

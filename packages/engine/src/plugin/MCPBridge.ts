@@ -1,6 +1,4 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type {
   MCPBridgeConfig,
   MCPTransport,
@@ -11,7 +9,7 @@ import type {
   ToolRiskLevel,
 } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
-import { getConfigDir } from '../config/paths.js';
+import type { PluginRegistry, McpServerRegistryEntry } from './PluginRegistry.js';
 
 const logger = getLogger();
 
@@ -53,12 +51,15 @@ interface McpServerPool {
   nextConn: number;
 }
 
-const MCP_CONFIG_PATH = join(getConfigDir(), 'mcp.json');
-
 export class MCPBridge {
+  private registry: PluginRegistry | null;
   private servers: Map<string, McpServerPool> = new Map();
   private allowlist: Set<string> = new Set();
   private blocklist: Set<string> = new Set();
+
+  constructor(registry?: PluginRegistry) {
+    this.registry = registry ?? null;
+  }
 
   setAllowlist(names: string[]): void {
     this.allowlist = new Set(names);
@@ -150,13 +151,29 @@ export class MCPBridge {
   }
 
   updateServerConfig(name: string, config: Partial<MCPBridgeConfig>): void {
-    const configs = this.loadConfig();
-    if (!configs[name]) throw new Error(`MCP server "${name}" not found in config`);
-    configs[name] = { ...configs[name], ...config };
-    this.saveConfig(configs);
+    if (!this.registry) return;
+    const entry = this.registry.listMcpServers().find((s) => s.name === name);
+    if (!entry) throw new Error(`MCP server "${name}" not found in config`);
+
+    // Remove old and re-add with merged config
+    this.registry.removeMcpServer(entry.id);
+    this.registry.addMcpServer({
+      name: entry.name,
+      command: config.command ?? entry.command,
+      args: config.args ?? entry.args,
+      env: config.env !== undefined ? config.env : entry.env,
+      enabled: config.enabled ?? entry.enabled,
+      timeout: config.timeout !== undefined ? config.timeout : entry.timeout,
+      maxOutputSize: config.maxOutputSize !== undefined ? config.maxOutputSize : entry.maxOutputSize,
+      permissionLevel: config.permissionLevel ?? entry.permissionLevel,
+    });
   }
 
   getServerConfig(name: string): MCPBridgeConfig | undefined {
+    if (this.registry) {
+      const entry = this.registry.listMcpServers().find((s) => s.name === name);
+      if (entry) return this.entryToBridgeConfig(entry);
+    }
     const configs = this.loadConfig();
     return configs[name];
   }
@@ -202,63 +219,27 @@ export class MCPBridge {
   }
 
   private loadConfig(): Record<string, MCPBridgeConfig> {
-    if (!existsSync(MCP_CONFIG_PATH)) {
-      this.seedDefaultServers();
-    }
-    try {
-      const raw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (this.registry) {
+      const entries = this.registry.listMcpServers();
       const configs: Record<string, MCPBridgeConfig> = {};
-      for (const [key, val] of Object.entries(parsed)) {
-        if (key.startsWith('_')) {
-          if (key === '_allowlist') this.allowlist = new Set(val as string[]);
-          if (key === '_blocklist') this.blocklist = new Set(val as string[]);
-          continue;
-        }
-        configs[key] = val as MCPBridgeConfig;
+      for (const entry of entries) {
+        configs[entry.name] = this.entryToBridgeConfig(entry);
       }
       return configs;
-    } catch {
-      logger.error('MCP_CONFIG_PARSE_ERROR', { path: MCP_CONFIG_PATH });
-      return {};
     }
+    return {};
   }
 
-  protected saveConfig(configs: Record<string, MCPBridgeConfig>): void {
-    writeFileSync(MCP_CONFIG_PATH, JSON.stringify(configs, null, 2));
-  }
-
-  /**
-   * Seed default MCP servers on first run.
-   * User only needs to configure the command/args/env — everything else is ready.
-   */
-  private seedDefaultServers(): void {
-    const defaults: Record<string, MCPBridgeConfig> = {
-      'filesystem': { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/'], transport: 'stdio', env: {}, enabled: false },
-      'github': { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], transport: 'stdio', env: { GITHUB_PERSONAL_ACCESS_TOKEN: '' }, enabled: false },
-      'postgres': { command: 'npx', args: ['-y', '@anthropic/mcp-server-postgres'], transport: 'stdio', env: { DATABASE_URL: '' }, enabled: false },
-      'sqlite': { command: 'npx', args: ['-y', '@anthropic/mcp-server-sqlite'], transport: 'stdio', env: { SQLITE_PATH: '' }, enabled: false },
-      'brave-search': { command: 'npx', args: ['-y', '@anthropic/mcp-server-brave-search'], transport: 'stdio', env: { BRAVE_API_KEY: '' }, enabled: false },
-      'puppeteer': { command: 'npx', args: ['-y', '@anthropic/mcp-server-puppeteer'], transport: 'stdio', env: {}, enabled: false },
-      'memory': { command: 'npx', args: ['-y', '@anthropic/mcp-server-memory'], transport: 'stdio', env: {}, enabled: false },
-      'git': { command: 'npx', args: ['-y', '@anthropic/mcp-server-git'], transport: 'stdio', env: { GIT_ROOT: '.' }, enabled: false },
-      'google-maps': { command: 'npx', args: ['-y', '@anthropic/mcp-server-google-maps'], transport: 'stdio', env: { GOOGLE_MAPS_API_KEY: '' }, enabled: false },
-      'slack': { command: 'npx', args: ['-y', '@anthropic/mcp-server-slack'], transport: 'stdio', env: { SLACK_BOT_TOKEN: '' }, enabled: false },
-      'everart': { command: 'npx', args: ['-y', '@anthropic/mcp-server-everart'], transport: 'stdio', env: { EVERART_API_KEY: '' }, enabled: false },
-      'sequential-thinking': { command: 'npx', args: ['-y', '@anthropic/mcp-server-sequential-thinking'], transport: 'stdio', env: {}, enabled: false },
-      'exa-search': { command: 'npx', args: ['-y', '@anthropic/mcp-server-exa-search'], transport: 'stdio', env: { EXA_API_KEY: '' }, enabled: false },
-      'notion': { command: 'npx', args: ['-y', '@anthropic/mcp-server-notion'], transport: 'stdio', env: { NOTION_API_TOKEN: '' }, enabled: false },
-      'airtable': { command: 'npx', args: ['-y', '@anthropic/mcp-server-airtable'], transport: 'stdio', env: { AIRTABLE_API_KEY: '', AIRTABLE_BASE_ID: '', AIRTABLE_TABLE_ID: '' }, enabled: false },
-      'docker': { command: 'docker', args: ['run', '-i', '--rm', 'mcp/docker'], transport: 'stdio', env: {}, enabled: false },
-      'playwright': { command: 'npx', args: ['-y', '@anthropic/mcp-server-playwright'], transport: 'stdio', env: {}, enabled: false },
-      'fetch': { command: 'npx', args: ['-y', '@anthropic/mcp-server-fetch'], transport: 'stdio', env: {}, enabled: false },
-      'mysql': { command: 'npx', args: ['-y', '@anthropic/mcp-server-mysql'], transport: 'stdio', env: { MYSQL_URL: '' }, enabled: false },
-      'redis': { command: 'npx', args: ['-y', '@anthropic/mcp-server-redis'], transport: 'stdio', env: { REDIS_URL: '' }, enabled: false },
-      'elasticsearch': { command: 'npx', args: ['-y', '@anthropic/mcp-server-elasticsearch'], transport: 'stdio', env: { ELASTICSEARCH_URL: '' }, enabled: false },
-      'rag': { command: 'npx', args: ['-y', '@anthropic/mcp-server-rag'], transport: 'stdio', env: { OPENAI_API_KEY: '', CHROMA_URL: '' }, enabled: false },
+  private entryToBridgeConfig(entry: McpServerRegistryEntry): MCPBridgeConfig {
+    return {
+      command: entry.command,
+      args: entry.args,
+      env: entry.env,
+      enabled: entry.enabled,
+      timeout: entry.timeout,
+      maxOutputSize: entry.maxOutputSize,
+      permissionLevel: entry.permissionLevel,
     };
-    writeFileSync(MCP_CONFIG_PATH, JSON.stringify(defaults, null, 2));
-    logger.info('MCP', `Seeded ${Object.keys(defaults).length} default servers`);
   }
 
   private async startServer(name: string, config: MCPBridgeConfig): Promise<void> {

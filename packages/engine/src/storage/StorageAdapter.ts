@@ -17,7 +17,6 @@ export class DefaultStorageAdapter implements StorageAdapter {
   }
 
   connect(): void {
-    // SessionStore connects on construction
   }
 
   disconnect(): void {
@@ -31,19 +30,28 @@ export class DefaultStorageAdapter implements StorageAdapter {
   createSession(input: Omit<StorableSession, keyof RecordMeta>): StorableSession {
     const id = generateId();
     const now = new Date().toISOString();
-    const session: StorableSession = { id, ...input, createdAt: now };
+    const inputAny = input as Record<string, unknown>;
+    const session: StorableSession = {
+      id, ...input,
+      mode: (inputAny['mode'] as string) ?? 'plan',
+      parentId: (inputAny['parentId'] as string) ?? null,
+      hyperdrive: !!(inputAny['hyperdrive']),
+      createdAt: now, updatedAt: now,
+    };
     this.store.createSession({
-      id,
-      title: input.title,
-      status: input.status,
-      provider: input.providerId,
-      model: input.modelId,
-      crewId: input.crewId,
-      tokensUsed: input.tokenUsed,
-      tokenAvailable: input.tokenAvailable,
-      scopePath: input.scopePath,
-      createdAt: now,
-      updatedAt: now,
+      id: session.id,
+      title: session.title,
+      status: session.status,
+      provider: session.providerId,
+      model: session.modelId,
+      parentId: session.parentId,
+      scopePath: session.scopePath,
+      tokensUsed: session.tokenUsed,
+      tokenAvailable: session.tokenAvailable,
+      mode: session.mode,
+      hyperdrive: session.hyperdrive,
+      createdAt: session.createdAt!,
+      updatedAt: session.updatedAt!,
     });
     return session;
   }
@@ -57,8 +65,10 @@ export class DefaultStorageAdapter implements StorageAdapter {
       status: row['status'] as string,
       providerId: row['provider'] as string,
       modelId: row['model'] as string,
-      crewId: (row['crewId'] as string) ?? null,
       scopePath: row['scopePath'] as string,
+      mode: row['mode'] as string | undefined,
+      parentId: row['parentId'] as string | null | undefined,
+      hyperdrive: row['hyperdrive'] as boolean | undefined,
       tokenUsed: (row['tokensUsed'] as number) ?? 0,
       tokenAvailable: (row['tokenAvailable'] as number) ?? 128_000,
       createdAt: row['createdAt'] as string,
@@ -67,7 +77,7 @@ export class DefaultStorageAdapter implements StorageAdapter {
   }
 
   updateSession(id: string, updates: Partial<StorableSession>): void {
-    this.store.updateSession(id, updates as Record<string, unknown>);
+    this.store.updateSession(id, (updates as unknown) as Record<string, unknown>);
   }
 
   deleteSession(id: string): void {
@@ -82,8 +92,10 @@ export class DefaultStorageAdapter implements StorageAdapter {
       status: row['status'] as string,
       providerId: row['provider'] as string,
       modelId: row['model'] as string,
-      crewId: (row['crewId'] as string) ?? null,
       scopePath: row['scopePath'] as string,
+      mode: row['mode'] as string | undefined,
+      parentId: row['parentId'] as string | null | undefined,
+      hyperdrive: row['hyperdrive'] as boolean | undefined,
       tokenUsed: (row['tokensUsed'] as number) ?? 0,
       tokenAvailable: (row['tokenAvailable'] as number) ?? 128_000,
       createdAt: row['createdAt'] as string,

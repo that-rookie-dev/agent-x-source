@@ -1,6 +1,6 @@
 {
   "name": "@agentx/desktop",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "private": true,
   "description": "Agent-X — Your AI Wingman (Desktop)",
   "homepage": "https://github.com/SlashpanOrg/agent-x",
@@ -15,7 +15,7 @@
     "clean": "rm -rf dist",
     "pack": "electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --dir",
     "dist": "electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:mac": "npm run build && pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:win": "npm run build && electron-builder --win"
   },
@@ -26,7 +26,7 @@
       "output": "release",
       "buildResources": "build"
     },
-    "npmRebuild": false,
+    "npmRebuild": true,
     "buildDependenciesFromSource": false,
     "nodeGypRebuild": false,
     "afterPack": "scripts/afterpack.mjs",
@@ -45,6 +45,20 @@
       {
         "from": "../web-api/node_modules/better-sqlite3",
         "to": "web-api/node_modules/better-sqlite3",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../node_modules/.pnpm/bindings@1.5.0/node_modules/bindings",
+        "to": "web-api/node_modules/bindings",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../node_modules/.pnpm/file-uri-to-path@1.0.0/node_modules/file-uri-to-path",
+        "to": "web-api/node_modules/file-uri-to-path",
         "filter": [
           "**/*"
         ]
@@ -132,7 +146,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
-    "electron": "^33.0.0",
+    "electron": "^42.0.0",
     "electron-builder": "^25.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0"

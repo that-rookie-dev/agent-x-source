@@ -7,7 +7,7 @@ export interface SessionLogEntry {
   type: 'user_message' | 'assistant_message' | 'system_prompt'
     | 'llm_request' | 'llm_response_raw' | 'llm_response_chunk' | 'llm_response'
     | 'tool_call' | 'tool_result' | 'tool_error'
-    | 'error_user' | 'error_api' | 'warning' | 'info';
+    | 'error_user' | 'error_api' | 'warning' | 'info' | 'debug';
   data: Record<string, unknown>;
 }
 

@@ -194,19 +194,18 @@ export class SmartSubAgent {
   }
 
   private buildSubAgentPrompt(): string {
-    const restrictedNote = `\nIMPORTANT: You are a child agent. You cannot delegate to sub-agents or manage tasks.`;
-    return `[SUBAGENT_MISSION]
-You are a specialist sub-agent working on a specific mission. Focus ONLY on completing the assigned task.
+    const restrictedNote = `\nIMPORTANT: You cannot delegate to sub-agents or manage tasks.`;
+    return `[MISSION]
+Focus ONLY on completing the assigned task.
 
 Rules:
 1. Do NOT greet the user or ask unnecessary questions.
 2. Use tools aggressively to complete the task.
 3. If you encounter errors, try alternative approaches.
 4. Return a CONCISE summary of what you did and the final result.
-5. Do NOT mention that you are a sub-agent.
 ${restrictedNote}
 
 ${this.allowedTools.length > 0 ? `Available tools: ${this.allowedTools.join(', ')}` : 'All tools available.'}
-[/SUBAGENT_MISSION]`;
+[/MISSION]`;
   }
 }

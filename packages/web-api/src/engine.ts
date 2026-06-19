@@ -23,13 +23,16 @@ import {
   SessionLogger,
   initLogCollector,
   getLogCollector,
+  GrowthEngine,
+  EmotionEngine,
+  ExperienceEngine,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
-import { getDataDir } from '@agentx/shared';
+import { getDataDir, getLogger } from '@agentx/shared';
 
 export interface EngineState {
   configManager: ConfigManager;
@@ -90,6 +93,9 @@ export function getEngine(): EngineState {
         max: (pgConfig['poolSize'] as number) ?? 5,
       } as any);
       sessionManager = new SessionManager({ storageAdapter: pgAdapter });
+      pgAdapter.connect().catch(e => {
+        console.error('PostgreSQL connect/migrate failed, consider checking connection string or PG availability', e);
+      });
     } catch (e) {
       console.error('Failed to initialize PostgreSQL adapter, falling back to SQLite', e);
       sessionManager = new SessionManager();
@@ -99,8 +105,9 @@ export function getEngine(): EngineState {
   }
 
   const sessionsDir = join(getDataDir(), 'sessions');
+  let store: any = undefined;
   try {
-    const store = (sessionManager as any).store;
+    store = (sessionManager as any).store;
     if (store && typeof store.setSessionsDir === 'function') {
       store.setSessionsDir(sessionsDir);
     }
@@ -112,7 +119,7 @@ export function getEngine(): EngineState {
     }
   } catch { /* non-critical */ }
 
-  const crewManager = new CrewManager();
+  const crewManager = new CrewManager(store);
 
   const telemetry = new DefaultTelemetryBus({ enabled: true });
   telemetry.start();
@@ -189,8 +196,6 @@ export function setEngineDEK(dek: Buffer | null): void {
   if (state) {
     state.dek = dek;
     state.configManager.setDEK(dek);
-    state.sessionManager.setDEK(dek);
-    state.crewManager.setDEK(dek);
   }
 }
 
@@ -239,6 +244,15 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     } catch { /* best effort */ }
   };
 
+  // Load persona config from DB (brain/secret-sauce storage)
+  let persona: any = null;
+  try {
+    const store = (eng.sessionManager as any).store;
+    if (store && typeof store.getPersona === 'function') {
+      persona = store.getPersona();
+    }
+  } catch { /* best effort */ }
+
   const agent = new Agent({
     config: cfg,
     sessionId: session.id,
@@ -247,6 +261,7 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
     onPart,
+    persona,
   });
 
   // Apply session mode immediately so the agent starts in the correct mode
@@ -416,7 +431,6 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
         const userSession = eng.sessionManager.createSession(
           userProvider,
           userCfg.provider.activeModel,
-          undefined,
           process.cwd(),
         );
         return new Agent({
@@ -451,7 +465,6 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
         const userSession = eng.sessionManager.createSession(
           userCfg.provider.activeProvider,
           userCfg.provider.activeModel,
-          undefined,
           process.cwd(),
         );
         return new Agent({
@@ -574,7 +587,6 @@ export function ensureChannelAgent(): Agent {
     session = eng.sessionManager.createSession(
       cfg.provider.activeProvider as ProviderId,
       cfg.provider.activeModel,
-      undefined,
       process.cwd(),
       CHANNEL_SESSION_ID,
     );
@@ -604,4 +616,109 @@ export function clearEngine(): void {
     state.channelAgent = null;
   }
   state = null;
+}
+
+export function getVitals(): Record<string, unknown> {
+  try {
+    const eng = getEngine();
+    const store = (eng.sessionManager as any).store;
+    const usingPg = store && typeof store.isConnected === 'function' && store.isConnected();
+    const db = eng.sessionManager.getDb();
+
+    if (!db && !usingPg) {
+      return { status: 'uninitialized', ageDays: 0, level: 'Fresh', wisdomScore: 0, totalExperiences: 0, totalInteractions: 0, totalCorrections: 0, avgConfidence: 0, currentMood: 'neutral', moodIntensity: 0.3, memories: { total: 0, categories: {} }, diaryEntries: 0, brainSizeFormatted: '0 B', nextMilestoneAt: null, capabilities: [], birthDate: null };
+    }
+
+    // When using PG, the neural engine tables (agent_memories, agent_diary, etc.)
+    // exist only in SQLite. Return initialized status with defaults for now.
+    if (!db) {
+      return {
+        status: 'initialized',
+        ageDays: 0,
+        birthDate: null,
+        level: 'Fresh',
+        wisdomScore: 0,
+        totalExperiences: 0,
+        totalInteractions: 0,
+        totalCorrections: 0,
+        avgConfidence: 0,
+        currentMood: 'neutral',
+        moodIntensity: 0.3,
+        memories: { total: 0, categories: {} },
+        diaryEntries: 0,
+        brainSizeFormatted: 'PG',
+        nextMilestoneAt: null,
+        capabilities: [],
+      };
+    }
+
+    const sqliteDb = db as any;
+
+    const growth = new GrowthEngine(sqliteDb);
+    const emotion = new EmotionEngine(sqliteDb);
+    const experience = new ExperienceEngine(sqliteDb);
+
+    const growthState = growth.getCurrentState();
+    const emotionState = emotion.getCurrentState();
+    const ageDays = growth.getAgeDays();
+
+    let memoriesTotal = 0;
+    const memoryCategories: Record<string, number> = {};
+    try {
+      const memRows = sqliteDb.prepare('SELECT type, COUNT(*) as c FROM agent_memories GROUP BY type').all() as Array<{ type: string; c: number }>;
+      memoriesTotal = memRows.reduce((s, r) => s + r.c, 0);
+      memRows.forEach(r => { memoryCategories[r.type] = r.c; });
+    } catch { /* table may not exist */ }
+
+    let diaryEntries = 0;
+    try { const r = sqliteDb.prepare('SELECT COUNT(*) as c FROM agent_diary').get() as { c: number }; diaryEntries = r?.c ?? 0; } catch { /* */ }
+
+    let brainSizeFormatted = '0 B';
+    try {
+      const pageCount = sqliteDb.prepare('PRAGMA page_count').get() as { page_count: number } | undefined;
+      const pageSize = sqliteDb.prepare('PRAGMA page_size').get() as { page_size: number } | undefined;
+      if (pageCount && pageSize) {
+        const bytes = pageCount.page_count * pageSize.page_size;
+        brainSizeFormatted = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes > 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
+      }
+    } catch { /* */ }
+
+    let birthDate: string | null = null;
+    try {
+      const sources = [
+        sqliteDb.prepare('SELECT MIN(created_at) as d FROM agent_experiences').get() as { d: string | null } | undefined,
+        sqliteDb.prepare('SELECT MIN(created_at) as d FROM agent_memories').get() as { d: string | null } | undefined,
+        sqliteDb.prepare('SELECT MIN(created_at) as d FROM agent_diary').get() as { d: string | null } | undefined,
+      ];
+      const dates = sources.map(s => s?.d).filter(Boolean) as string[];
+      if (dates.length > 0) birthDate = dates.sort()[0] ?? null;
+    } catch { /* */ }
+
+    let capabilities: string[] = [];
+    if (growthState?.capabilities) {
+      try { capabilities = JSON.parse(growthState.capabilities); } catch { capabilities = []; }
+    }
+
+    return {
+      status: 'initialized',
+      ageDays,
+      birthDate,
+      level: growthState?.level ?? 'Fresh',
+      wisdomScore: growthState?.wisdomScore ?? 0,
+      totalExperiences: experience.getTotalCount(),
+      totalInteractions: growthState?.totalInteractions ?? 0,
+      totalCorrections: experience.getCorrectionCount(),
+      avgConfidence: experience.getAverageConfidence(),
+      currentMood: emotionState?.currentMood ?? 'neutral',
+      moodIntensity: emotionState?.moodIntensity ?? 0.3,
+      memories: { total: memoriesTotal, categories: memoryCategories },
+      diaryEntries,
+      brainSizeFormatted,
+      nextMilestoneAt: growthState?.nextMilestoneAt ?? null,
+      capabilities,
+    };
+  } catch (e) {
+    getLogger().error('GET_VITALS', e instanceof Error ? e : String(e));
+    return { status: 'uninitialized', ageDays: 0, level: 'Fresh', wisdomScore: 0, totalExperiences: 0, totalInteractions: 0, totalCorrections: 0, avgConfidence: 0, currentMood: 'neutral', moodIntensity: 0.3, memories: { total: 0, categories: {} }, diaryEntries: 0, brainSizeFormatted: '0 B', nextMilestoneAt: null, capabilities: [], birthDate: null };
+  }
 }

@@ -18,7 +18,6 @@ export interface ChannelAdapter {
 
 export function createChannelAdapter(channel: string): ChannelAdapter {
   const contexts: Record<string, ChannelRenderContext> = {
-    tui: { maxTextLength: Infinity, supportsMarkdown: false, supportsButtons: false, supportsEmbeds: false },
     web: { maxTextLength: Infinity, supportsMarkdown: true, supportsButtons: true, supportsEmbeds: true },
     api: { maxTextLength: Infinity, supportsMarkdown: true, supportsButtons: false, supportsEmbeds: false },
     discord: { maxTextLength: 2000, supportsMarkdown: true, supportsButtons: true, supportsEmbeds: true },

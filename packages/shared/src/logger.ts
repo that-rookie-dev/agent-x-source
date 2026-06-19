@@ -11,7 +11,7 @@ const MAX_ROTATED_FILES = 3;
 
 export interface LogEntry {
   timestamp: string;
-  level: 'error' | 'warn' | 'info';
+  level: 'error' | 'warn' | 'info' | 'debug';
   code: string;
   message: string;
   stack?: string;
@@ -51,6 +51,16 @@ export class Logger {
     this.write({
       timestamp: new Date().toISOString(),
       level: 'info',
+      code,
+      message,
+      context,
+    });
+  }
+
+  debug(code: string, message: string, context?: Record<string, unknown>): void {
+    this.write({
+      timestamp: new Date().toISOString(),
+      level: 'debug',
       code,
       message,
       context,

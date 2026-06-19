@@ -1,27 +1,24 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Crew, CrewEmotion, CrewCreateInput, CollaborationProtocol, CrewResourceQuota, PermissionRule } from '@agentx/shared';
-import { encrypt, decrypt, getLogger } from '@agentx/shared';
-import type { EncryptedData } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
 import { getSecretSauceDir } from '../config/paths.js';
+import type { SessionStore } from '../session/SessionStore.js';
 
 export class CrewManager {
   private crews: Crew[] = [];
   private secretSauceDir: string;
-  private dek: Buffer | null = null;
+  private store: SessionStore | null = null;
 
-  constructor() {
+  constructor(store?: SessionStore) {
     this.secretSauceDir = getSecretSauceDir();
+    this.store = store ?? null;
     this.loadCrews();
   }
 
-  setDEK(dek: Buffer | null): void {
-    const hadDEK = this.dek !== null;
-    this.dek = dek;
-    if (dek && !hadDEK) {
-      this.loadCrews();
-      this.save();
-    }
+  setStore(store: SessionStore): void {
+    this.store = store;
+    this.loadCrews();
   }
 
   refresh(): void {
@@ -29,25 +26,23 @@ export class CrewManager {
   }
 
   private loadCrews(): void {
+    if (this.store) {
+      try {
+        const dbCrews = this.store.listCrews();
+        if (dbCrews.length > 0) {
+          this.crews = dbCrews;
+          return;
+        }
+      } catch (e) {
+        getLogger().warn('CREW_MGR', `DB load failed, falling back to file: ${e instanceof Error ? e.message : e}`);
+      }
+    }
     const crewPath = join(this.secretSauceDir, 'crews.json');
     if (existsSync(crewPath)) {
       try {
         const raw = readFileSync(crewPath, 'utf-8');
-        let data: string;
-
-        const rawParsed = JSON.parse(raw);
-        if (rawParsed.__enc === true) {
-          if (!this.dek) {
-            getLogger().warn('CREW_MGR', 'Encrypted crews.json found but no DEK set. Call setDEK() to unlock.');
-            this.crews = [];
-            return;
-          }
-          data = decrypt(rawParsed as EncryptedData, this.dek);
-        } else {
-          data = raw;
-        }
-
-        const parsed = (typeof data === 'string' ? JSON.parse(data) : data) as { crews: Array<Record<string, unknown>>; activeId?: string | null };
+        const data = raw.startsWith('{') ? raw : raw;
+        const parsed = JSON.parse(data) as { crews: Array<Record<string, unknown>> };
         this.crews = parsed.crews.map((p) => ({
           id: p['id'] as string,
           name: p['name'] as string,
@@ -70,25 +65,32 @@ export class CrewManager {
           createdAt: (p['createdAt'] as string) ?? new Date().toISOString(),
           updatedAt: (p['updatedAt'] as string) ?? new Date().toISOString(),
         }));
+        if (this.store && this.crews.length > 0) {
+          for (const crew of this.crews) {
+            if (this.store.getCrew(crew.id)) {
+              this.store.updateCrew(crew.id, crew);
+            } else {
+              this.store.createCrew(crew);
+            }
+          }
+        }
       } catch {
         this.crews = [];
-        this.save();
       }
     } else {
       this.crews = [];
     }
   }
 
-  private save(): void {
-    mkdirSync(this.secretSauceDir, { recursive: true });
-    const crewPath = join(this.secretSauceDir, 'crews.json');
-    const payload = JSON.stringify({ crews: this.crews }, null, 2);
-
-    if (this.dek) {
-      const encrypted = encrypt(payload, this.dek);
-      writeFileSync(crewPath, JSON.stringify({ __enc: true, ...encrypted }));
-    } else {
-      writeFileSync(crewPath, payload);
+  private persist(): void {
+    if (this.store) {
+      for (const crew of this.crews) {
+        if (this.store.getCrew(crew.id)) {
+          this.store.updateCrew(crew.id, crew);
+        } else {
+          this.store.createCrew(crew);
+        }
+      }
     }
   }
 
@@ -109,7 +111,7 @@ export class CrewManager {
     if (!crew) return false;
     crew.enabled = true;
     crew.updatedAt = new Date().toISOString();
-    this.save();
+    this.persist();
     return true;
   }
 
@@ -118,7 +120,7 @@ export class CrewManager {
     if (!crew) return false;
     crew.enabled = false;
     crew.updatedAt = new Date().toISOString();
-    this.save();
+    this.persist();
     return true;
   }
 
@@ -153,7 +155,7 @@ export class CrewManager {
       updatedAt: new Date().toISOString(),
     };
     this.crews.push(crew);
-    this.save();
+    if (this.store) this.store.createCrew(crew);
     return crew;
   }
 
@@ -161,7 +163,7 @@ export class CrewManager {
     const idx = this.crews.findIndex((p) => p.id === id);
     if (idx < 0) return false;
     this.crews.splice(idx, 1);
-    this.save();
+    if (this.store) this.store.deleteCrew(id);
     return true;
   }
 
@@ -188,7 +190,7 @@ export class CrewManager {
     if (updates.icon !== undefined) crew.icon = updates.icon;
     crew.updatedAt = new Date().toISOString();
     this.crews[idx] = crew;
-    this.save();
+    if (this.store) this.store.updateCrew(id, crew);
     return crew;
   }
 
@@ -202,6 +204,6 @@ export class CrewManager {
       return `- **${description}** (@${c.callsign}): ${expertise}`;
     }).join('\n');
 
-    return `You are Agent-X, the master orchestrator. The following crew members are available in this session:\n\n${crewDescriptions}\n\n**Group Chat Rules:**\n- Users can @mention a specific crew member to get their expertise\n- If no crew is mentioned, you (Agent-X) respond as the primary assistant\n- You can delegate to crew members when their expertise is relevant\n- Crew members respond with their unique personalities and knowledge\n- Maintain context across the conversation - all participants see the full history`;
+    return `The following crew members are available in this session:\n\n${crewDescriptions}\n\n**Group Chat Rules:**\n- Users can @mention a specific crew member to get their expertise\n- If no crew is mentioned, you respond as the primary assistant\n- You can delegate to crew members when their expertise is relevant\n- Crew members respond with their unique personalities and knowledge\n- Maintain context across the conversation - all participants see the full history`;
   }
 }

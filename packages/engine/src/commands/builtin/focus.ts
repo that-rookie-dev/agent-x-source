@@ -2,9 +2,9 @@ import type { CommandInterface, CommandContext, CommandResult } from '../Command
 
 export const focusCommand: CommandInterface = {
   name: 'focus',
-  description: 'Show or set the active channel focus (tui, web, telegram)',
+  description: 'Show or set the active channel focus (web, telegram)',
   aliases: ['channel'],
-  usage: '/focus [tui|web|telegram]',
+  usage: '/focus [web|telegram]',
   async execute(args: string[], _context: CommandContext): Promise<CommandResult> {
     const target = args[0]?.toLowerCase();
 
@@ -12,7 +12,7 @@ export const focusCommand: CommandInterface = {
       return { success: true, action: 'focus', output: '' };
     }
 
-    const validChannels = ['tui', 'web', 'telegram'];
+    const validChannels = ['web', 'telegram'];
     if (!validChannels.includes(target)) {
       return {
         success: false,

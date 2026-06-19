@@ -9,8 +9,10 @@ export interface StorableSession extends RecordMeta {
   status: string;
   providerId: string;
   modelId: string;
-  crewId: string | null;
   scopePath: string;
+  mode?: string;
+  parentId?: string | null;
+  hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;
 }
@@ -54,10 +56,10 @@ export interface StorageAdapter {
   getMessageCount(sessionId: string): number;
 
   addTokenLog(sessionId: string, log: Omit<StorableTokenLog, 'id' | 'createdAt'>): void;
-  getTokenLogs(sessionId: string): StorableTokenLog[];
+  getTokenLogs(sessionId: string): StorableTokenLog[] | Promise<StorableTokenLog[]>;
 
   addPermission(sessionId: string, perm: Omit<StorablePermission, 'id' | 'createdAt'>): void;
-  getPermissions(sessionId: string): StorablePermission[];
+  getPermissions(sessionId: string): StorablePermission[] | Promise<StorablePermission[]>;
 
   clearAll(): void;
   close(): void;

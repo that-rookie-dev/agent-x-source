@@ -6,6 +6,18 @@ export interface UserConfig {
   callsign: string;
 }
 
+export type CommunicationStyle = 'formal' | 'casual' | 'direct' | 'empathetic';
+export type DecisionMakingStyle = 'conservative' | 'balanced' | 'aggressive';
+
+export interface AgentPersonaConfig {
+  name: string;
+  description: string;
+  communicationStyle: CommunicationStyle;
+  decisionMaking: DecisionMakingStyle;
+  domainContext: string;
+  traits: string[];
+}
+
 export interface AgentXConfig {
   provider: ProviderSettings;
   ui: UISettings;

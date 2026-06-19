@@ -1,5 +1,5 @@
 import type { CommandInterface, CommandContext, CommandResult } from '../CommandInterface.js';
-import { VERSION, APP_NAME, CLI_NAME } from '@agentx/shared';
+import { VERSION, APP_NAME } from '@agentx/shared';
 
 export const versionCommand: CommandInterface = {
   name: 'version',
@@ -7,7 +7,7 @@ export const versionCommand: CommandInterface = {
   aliases: ['v'],
   usage: '/version',
   async execute(_args: string[], context: CommandContext): Promise<CommandResult> {
-    const output = `${APP_NAME} v${VERSION} (${CLI_NAME})`;
+    const output = `${APP_NAME} v${VERSION}`;
     context.emit(output);
     return { success: true, output, action: 'none' };
   },

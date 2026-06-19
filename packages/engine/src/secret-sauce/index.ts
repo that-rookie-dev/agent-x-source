@@ -45,8 +45,7 @@ export class SecretSauceManager {
   buildSystemContext(): SecretSauceContext {
     const multiCrewCtx = this.crew.getMultiCrewSystemPrompt();
     const soulCtx = this.soul.buildContext();
-    const identityCtx = this.identity.buildContext();
-    const full = [multiCrewCtx, soulCtx, identityCtx].filter(Boolean).join('\n\n');
+    const full = [multiCrewCtx, soulCtx].filter(Boolean).join('\n\n');
     return { soul: soulCtx, crew: multiCrewCtx, memories: '', diary: '', full };
   }
 

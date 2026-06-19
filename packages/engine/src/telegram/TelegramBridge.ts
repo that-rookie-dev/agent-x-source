@@ -98,7 +98,7 @@ export class TelegramBridge {
     }
     this.botUsername = me.result.username;
     this.connected = true;
-    // Register as the globally active bridge for tool access from TUI/daemon
+    // Register as the globally active bridge for tool access
     _setActiveTelegramBridge(this);
 
     // Restore lastUpdateId from disk to prevent message replay on restart
@@ -209,13 +209,19 @@ export class TelegramBridge {
     return this.eventBus;
   }
 
+  private credentialStore: TelegramStore | null = null;
+
+  setCredentialStore(store: TelegramStore): void {
+    this.credentialStore = store;
+  }
+
   private persistLastUpdateId(): void {
     try {
-      const store = new TelegramStore();
-      const config = store.load();
+      if (!this.credentialStore) return;
+      const config = this.credentialStore.load();
       if (config) {
         config.lastUpdateId = this.lastUpdateId;
-        store.save(config);
+        this.credentialStore.save(config);
       }
     } catch {
       // Best effort — non-critical
@@ -224,8 +230,8 @@ export class TelegramBridge {
 
   private restoreLastUpdateId(): void {
     try {
-      const store = new TelegramStore();
-      const config = store.load();
+      if (!this.credentialStore) return;
+      const config = this.credentialStore.load();
       if (config?.lastUpdateId) {
         this.lastUpdateId = config.lastUpdateId;
       }

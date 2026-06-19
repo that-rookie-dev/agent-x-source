@@ -4,17 +4,12 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
-import Dialog from '@mui/material/Dialog';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContent from '@mui/material/DialogContent';
-import DialogActions from '@mui/material/DialogActions';
-import WarningIcon from '@mui/icons-material/Warning';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import { Footer } from '../components/Footer';
-import { tuiActive, webuiActive } from '../api';
+import { webuiActive, agent, type AgentVitals } from '../api';
 import type { HealthStatus } from '../api';
 
 function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'blank' | 'info' | 'success' | 'dim' | 'heading'; text: string }> {
@@ -48,8 +43,8 @@ function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'b
     { type: 'success', text: `  \u2713 Telegram     ${telegram}` },
     { type: 'blank', text: '' },
     { type: 'heading', text: '  CAPABILITIES' },
-    { type: 'dim', text: '  168 tools \u00B7 15 providers \u00B7 22 MCP servers' },
-    { type: 'dim', text: '  4 channels \u00B7 Multi-agent mesh \u00B7 Persistent memory' },
+    { type: 'dim', text: '  183 tools \u00B7 16 providers \u00B7 22 MCP servers' },
+    { type: 'dim', text: '  6 channels \u00B7 Multi-agent mesh \u00B7 Persistent memory' },
     { type: 'dim', text: '  AES-256-GCM encrypted storage \u00B7 Self-destruct tamper protection' },
     { type: 'blank', text: '' },
     { type: 'info', text: '  Ready to launch. All systems nominal.' },
@@ -62,8 +57,7 @@ export function DockingStation() {
   const [checking, setChecking] = useState(true);
   const [visibleLines, setVisibleLines] = useState(0);
   const [lines, setLines] = useState<ReturnType<typeof buildTerminalLines>>([]);
-  const [tuiConflict, setTuiConflict] = useState<{ pid: number } | null>(null);
-
+  const [vitals, setVitals] = useState<AgentVitals | null>(null);
   // Register Web-UI as active and keep it refreshed
   useEffect(() => {
     let intervalId: ReturnType<typeof setInterval>;
@@ -93,6 +87,13 @@ export function DockingStation() {
 
   useEffect(() => { recheckServer(); }, [recheckServer]);
 
+  // Fetch agent vitals
+  useEffect(() => {
+    agent.vitals().then(setVitals).catch(() => {});
+    const interval = setInterval(() => { agent.vitals().then(setVitals).catch(() => {}); }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Rebuild terminal lines when health data changes
   useEffect(() => {
     const built = buildTerminalLines(healthData);
@@ -100,26 +101,9 @@ export function DockingStation() {
     setVisibleLines(0); // restart animation
   }, [healthData]);
 
-  // Check for TUI conflict before launching
-  const handleLaunch = useCallback(async () => {
-    try {
-      const status = await tuiActive.check();
-      if (status.active && status.pid) {
-        setTuiConflict({ pid: status.pid });
-        return;
-      }
-    } catch { /* ignore */ }
+  const handleLaunch = useCallback(() => {
     navigate('/console/chat');
   }, [navigate]);
-
-  const handleTuiConflictProceed = () => {
-    setTuiConflict(null);
-    navigate('/console/chat');
-  };
-
-  const handleTuiConflictDismiss = () => {
-    setTuiConflict(null);
-  };
 
   // Typewriter animation
   useEffect(() => {
@@ -281,29 +265,28 @@ export function DockingStation() {
       </Box>
       </Box>
 
-      {/* TUI conflict dialog */}
-      <Dialog open={Boolean(tuiConflict)} onClose={handleTuiConflictDismiss} maxWidth="xs">
-        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem' }}>
-          <WarningIcon sx={{ color: '#FFA726' }} />
-          TUI is active
-        </DialogTitle>
-        <DialogContent>
-          <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: colors.text.secondary }}>
-            The Terminal UI (TUI) is currently running (PID {tuiConflict?.pid}). Running both TUI and Web-UI simultaneously can cause confusion with channel focus.
-          </Typography>
-          <Typography sx={{ mt: 1.5, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: colors.text.secondary }}>
-            Close the TUI first, or proceed anyway.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleTuiConflictDismiss} sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.dim }}>
-            Cancel
-          </Button>
-          <Button onClick={handleTuiConflictProceed} variant="contained" sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', bgcolor: '#FFA726', color: '#000', '&:hover': { bgcolor: '#FFB74D' } }}>
-            Proceed Anyway
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* Agent Vitals */}
+      {vitals && vitals.status !== 'uninitialized' && (
+        <Box sx={{
+          borderTop: `1px solid ${colors.border.default}`,
+          px: 3, py: 2, mx: 3, mb: 2,
+          bgcolor: colors.bg.secondary, borderRadius: 1,
+          border: `1px solid ${colors.border.default}`,
+        }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+            <VitalChip label="Age" value={`${vitals.ageDays}d`} />
+            <VitalChip label="Level" value={vitals.level} color={colors.accent.blue} />
+            <VitalChip label="Wisdom" value={`${Math.round(vitals.wisdomScore)}`} />
+            <VitalChip label="Experiences" value={String(vitals.totalExperiences)} />
+            <VitalChip label="Memories" value={String(vitals.memories.total)} />
+            <VitalChip label="Mood" value={vitals.currentMood} color={
+              vitals.currentMood === 'enthusiastic' || vitals.currentMood === 'confident' ? colors.accent.green :
+              vitals.currentMood === 'frustrated' || vitals.currentMood === 'anxious' ? colors.accent.orange :
+              colors.text.secondary
+            } />
+          </Box>
+        </Box>
+      )}
 
       <Footer />
     </Box>
@@ -340,4 +323,20 @@ function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
   return `${h}h ${m}m`;
+}
+
+function VitalChip({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+      <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim, letterSpacing: '0.5px' }}>
+        {label}
+      </Typography>
+      <Typography sx={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: '0.62rem', fontWeight: 700,
+        color: color || colors.text.primary,
+      }}>
+        {value}
+      </Typography>
+    </Box>
+  );
 }

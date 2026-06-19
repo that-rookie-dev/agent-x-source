@@ -59,7 +59,6 @@ import {
   SessionSearchModal,
   ReasoningBlock,
   CheckpointDrawer,
-  StreamingCursor,
   CrewMentionMenu,
   type PaletteAction,
 } from './ChatEnhancements';
@@ -173,6 +172,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [sessionList, setSessionList] = useState<SessionInfo[]>([]);
   const [currentSessionTitle, setCurrentSessionTitle] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [copiedSessionId, setCopiedSessionId] = useState(false);
   const [parentSessionId, setParentSessionId] = useState<string | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
 
@@ -190,6 +190,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const skipRestoreRef = useRef(false);
   const streamChunkRAFRef = useRef<number | null>(null);
   const streamChunkPendingRef = useRef<{ delta: string; fullContent: string } | null>(null);
+  const isInitialLoadRef = useRef(true);
 
   // Loading step indicator state
   const [loadingSteps, setLoadingSteps] = useState<Array<{ id: string; label: string; status: string }> | null>(null);
@@ -288,9 +289,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           setAgentMode(session.mode);
         }
         loadTodos();
+        isInitialLoadRef.current = false;
       }).catch((err) => {
         console.error('Failed to restore session on mount:', err);
         setWarnings([`Failed to restore session: ${err instanceof Error ? err.message : 'Unknown error'}`]);
+        isInitialLoadRef.current = false;
       });
     } else {
       setView('sessions');
@@ -349,6 +352,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Hyperdrive — full autonomous mode
   const [hyperdriveMode, setHyperdriveMode] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const hyperdrivePromptShownRef = useRef(false);   // show disclaimer once per session
+  const lastShiftRef = useRef(0);                    // double-Shift detection
+  const prevModeBeforeHyperdrive = useRef<AgentMode>('agent'); // restore on exit
 
   // Hyperdrive shimmer — random interval flash sweep across the chip
   const [hyperdriveShimmer, setHyperdriveShimmer] = useState(false);
@@ -402,13 +408,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const handleMentionSelect = useCallback((crew: Crew) => {
     mentionActiveRef.current = false;
     insertMentionRef.current?.(crew.callsign);
-    setShowCrewMention(false);
-    setMentionQuery(null);
-  }, []);
-
-  const handleMentionSelectAgent = useCallback(() => {
-    mentionActiveRef.current = false;
-    insertMentionRef.current?.('agentx');
     setShowCrewMention(false);
     setMentionQuery(null);
   }, []);
@@ -637,6 +636,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
         switch (ev.type) {
           case 'loading_start': {
+            // Ignore stale loading_start events replayed from telemetry buffer on page load
+            if (isInitialLoadRef.current) { return prev; }
             streamChunkPendingRef.current = null;
             if (streamChunkRAFRef.current !== null) {
               cancelAnimationFrame(streamChunkRAFRef.current);
@@ -673,7 +674,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'stream_chunk': {
             const delta = (ev.content as string) ?? '';
             const fullContent = (ev.fullContent as string) ?? '';
-            if (last?.role === 'assistant' && last.streaming) {
+            if (last?.role === 'assistant') {
               const pending = streamChunkPendingRef.current;
               streamChunkPendingRef.current = {
                 delta: pending ? pending.delta + delta : delta,
@@ -687,15 +688,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   streamChunkPendingRef.current = null;
                   setMessages(p => {
                     const l = p[p.length - 1];
-                    if (l?.role !== 'assistant' || !l.streaming) return p;
+                    if (l?.role !== 'assistant') return p;
                     const parts = l.parts || [];
                     const lastPart = parts[parts.length - 1];
                     if (lastPart?.type === 'text') {
                       const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: (lastPart.content || '') + chunk.delta }];
-                      return updateLastMessage(p, { content: chunk.fullContent, parts: updatedParts });
+                      return updateLastMessage(p, { content: chunk.fullContent, parts: updatedParts, streaming: true });
                     }
                     const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: chunk.delta };
-                    return updateLastMessage(p, { content: chunk.fullContent, parts: [...parts, textPart] });
+                    return updateLastMessage(p, { content: chunk.fullContent, parts: [...parts, textPart], streaming: true });
                   });
                 });
               }
@@ -959,7 +960,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
       setTokenInput(inputEst);
       setTokenOutput(outputEst);
-    }).catch(() => {});
+      isInitialLoadRef.current = false;
+    }).catch(() => {
+      isInitialLoadRef.current = false;
+    });
   }, [sessionId]);
 
   // Streaming timeout — tracks activity via SSE events.
@@ -1247,31 +1251,52 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   }, []);
 
   // ─── Hyperdrive toggle ───
-  const handleHyperdriveToggle = useCallback(async () => {
-    if (!hyperdriveMode) {
-      setShowDisclaimer(true);
-    } else {
+  const engageHyperdrive = useCallback(async (skipDisclaimer = false) => {
+    if (hyperdriveMode) {
+      // Deactivate hyperdrive — restore previous mode
       try {
         const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
         const data = await res.json();
         setHyperdriveMode(false);
         if (data.mode) setAgentMode(data.mode);
-      } catch { /* ignore */ }
+      } catch {}
+      return;
     }
-  }, [hyperdriveMode]);
-
-  const confirmHyperdrive = useCallback(async () => {
-    setShowDisclaimer(false);
+    // Activate hyperdrive
+    if (!skipDisclaimer && !hyperdrivePromptShownRef.current) {
+      setShowDisclaimer(true);
+      return;
+    }
+    // Skip disclaimer — directly engage
+    hyperdrivePromptShownRef.current = true;
     try {
       const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
       const data = await res.json();
+      prevModeBeforeHyperdrive.current = agentMode;
       setHyperdriveMode(true);
       if (data.mode) setAgentMode(data.mode);
-    } catch { /* ignore */ }
-  }, []);
+    } catch {}
+  }, [hyperdriveMode, agentMode]);
+
+  const handleHyperdriveToggle = useCallback(() => {
+    engageHyperdrive();
+  }, [engageHyperdrive]);
+
+  const confirmHyperdrive = useCallback(async () => {
+    setShowDisclaimer(false);
+    hyperdrivePromptShownRef.current = true;
+    try {
+      const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
+      const data = await res.json();
+      prevModeBeforeHyperdrive.current = agentMode;
+      setHyperdriveMode(true);
+      if (data.mode) setAgentMode(data.mode);
+    } catch {}
+  }, [agentMode]);
 
   // Check hyperdrive mode on mount
   useEffect(() => {
+    hyperdrivePromptShownRef.current = false; // reset on session change
     fetch('/api/mode/hyperdrive', { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.hyperdriveMode) setHyperdriveMode(true); })
@@ -1299,10 +1324,23 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const handler = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (e.key === 'Tab') {
-        // Block Tab in hyperdrive mode
-        if (hyperdriveMode) return;
+        // Hyperdrive active → TAB deactivates it, restores previous mode
+        if (hyperdriveMode) {
+          e.preventDefault();
+          engageHyperdrive(); // toggles off (hyperdriveMode is true → deactivates)
+          return;
+        }
         e.preventDefault();
         handleToggleMode();
+      } else if (e.key === 'Shift') {
+        // Double-Shift → engage/disengage hyperdrive
+        const now = Date.now();
+        if (now - lastShiftRef.current < 500) {
+          lastShiftRef.current = 0;
+          engageHyperdrive(); // toggles: off→on (with/without disclaimer), on→off
+        } else {
+          lastShiftRef.current = now;
+        }
       } else if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen(o => !o);
@@ -1330,7 +1368,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentSessionId, streaming, messages, handleResend, view, handleToggleMode, hyperdriveMode]);
+  }, [currentSessionId, streaming, messages, handleResend, view, handleToggleMode, hyperdriveMode, engageHyperdrive]);
 
   // ─── Command palette actions ───
   const paletteActions: PaletteAction[] = useMemo(() => [
@@ -1904,7 +1942,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 crewList={crewList}
                 onSelect={(crew: Crew) => handleMentionSelect(crew)}
                 onClose={() => setShowCrewMention(false)}
-                onSelectAgent={handleMentionSelectAgent}
               />
             )}
             {/* No provider/model warning — merged into unified warning band below */}
@@ -2467,9 +2504,24 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           {currentSessionId && (
             <Box sx={{ mt: 0.5, pt: 0.5, borderTop: `1px solid ${colors.border.subtle}` }}>
               <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, letterSpacing: '0.5px' }}>SESSION</Typography>
-              <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, mt: 0.25, wordBreak: 'break-all' }}>
-                {currentSessionId}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, wordBreak: 'break-all', flex: 1 }}>
+                  {currentSessionId}
+                </Typography>
+                <Tooltip title="Copy session ID">
+                  <Box onClick={() => {
+                    navigator.clipboard.writeText(currentSessionId).catch(() => {});
+                    setCopiedSessionId(true);
+                    setTimeout(() => setCopiedSessionId(false), 2000);
+                  }} sx={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: copiedSessionId ? colors.accent.green : colors.text.dim, '&:hover': { color: copiedSessionId ? colors.accent.green : colors.text.primary } }}>
+                    {copiedSessionId ? (
+                      <span style={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>copied</span>
+                    ) : (
+                      <ContentCopyIcon sx={{ fontSize: 11 }} />
+                    )}
+                  </Box>
+                </Tooltip>
+              </Box>
             </Box>
           )}
           </Box>
@@ -3177,16 +3229,12 @@ function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingS
           <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontStyle: 'italic' }}>{loadingSteps[0]?.label ?? 'Thinking...'}</Typography>
         </Box>
       )}
-      {message.streaming && message.content && <Box component="span" sx={{ display: 'inline' }}><StreamingCursor /></Box>}
       {!message.streaming && (
         <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75, opacity: 0.45 }}>
           {message.timestamp && <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Typography>}
           {message.turnTokens != null && <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{message.turnTokens.toLocaleString()} tok</Typography>}
           <Box onClick={() => { navigator.clipboard.writeText(message.content).catch(() => {}); }} sx={{ cursor: 'pointer', display: 'flex', '&:hover': { opacity: 1 }, opacity: 0.7 }}><ContentCopyIcon sx={{ fontSize: 11, color: colors.text.dim }} /></Box>
         </Box>
-      )}
-      {message.streaming && message.content && (
-        <Box sx={{ mt: 0.5, height: 2, borderRadius: 1, width: '50%', background: `linear-gradient(90deg, transparent, ${colors.accent.purple}50, transparent)`, backgroundSize: '200% 100%', animation: 'agentx-shimmer 1.5s infinite linear' }} />
       )}
     </Box>
   );

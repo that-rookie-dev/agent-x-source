@@ -111,14 +111,20 @@ export class LogCollector extends EventEmitter {
     const originalLog = sessionLogger.log.bind(sessionLogger);
     sessionLogger.log = (entry: Parameters<SessionLogger['log']>[0]) => {
       originalLog(entry);
-      const level = entry.type.startsWith('error') ? 'error' : entry.type === 'warning' ? 'warn' : 'info';
-      const msg = typeof entry.data === 'object' ? JSON.stringify(entry.data, null, 2) : String(entry.data);
+      const level: LogEntry['level'] =
+        entry.type.startsWith('error') ? 'error' :
+        entry.type === 'warning' ? 'warn' : 'info';
+
+      const msg = typeof entry.data['message'] === 'string' ? entry.data['message'] as string :
+                  typeof entry.data['content'] === 'string' ? (entry.data['content'] as string).slice(0, 500) :
+                  JSON.stringify(entry.data).slice(0, 500);
+
       this.push({
         timestamp: new Date().toISOString(),
-        level: level as 'error' | 'warn' | 'info',
+        level,
         code: entry.type,
         message: msg.length > 500 ? msg.slice(0, 500) + '...' : msg,
-        context: entry.data as Record<string, unknown>,
+        context: entry.data,
       });
     };
   }

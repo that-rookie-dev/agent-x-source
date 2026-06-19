@@ -138,7 +138,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
   },
   'opencode-zen': {
     id: 'opencode-zen',
-    name: 'OpenCode Zen (Free Models)',
+    name: 'OpenCode Zen',
     type: 'cloud',
     apiKeyRequired: true,
     baseUrlConfigurable: true,

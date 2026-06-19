@@ -57,7 +57,7 @@ export class ProviderFactory {
       case 'commandcode':
       case 'opencode':
       case 'opencode-zen':
-        return new OpenAICompatibleProvider(providerId, 'OpenCode Zen (Free Models)', apiKey ?? '', baseUrl ?? getDefaultBaseUrl(providerId));
+        return new OpenAICompatibleProvider(providerId, 'OpenCode Zen', apiKey ?? '', baseUrl ?? getDefaultBaseUrl(providerId));
       case 'azure':
         if (!apiKey) throw new Error('Azure OpenAI requires an API key');
         if (!baseUrl) throw new Error('Azure OpenAI requires a base URL (resource endpoint)');

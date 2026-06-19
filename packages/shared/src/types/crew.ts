@@ -27,6 +27,7 @@ export interface Crew {
   title?: string;
   callsign: string;
   systemPrompt: string;
+  description?: string;
   emotion?: CrewEmotion;
   isDefault: boolean;
   enabled: boolean;
@@ -53,6 +54,7 @@ export interface CrewCreateInput {
   title?: string;
   callsign: string;
   systemPrompt: string;
+  description?: string;
   emotion?: CrewEmotion;
   isDefault?: boolean;
   enabled?: boolean;

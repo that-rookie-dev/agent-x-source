@@ -212,10 +212,34 @@ export class CrewOrchestrator {
     _mainSystemPrompt: string,
     contextText?: string
   ): Promise<{ content: string; elapsed: number }> {
-    const sections: string[] = [
-      `You are ${member.crew.name}. ${member.crew.systemPrompt}
+    const roleLines: string[] = [
+      `[CREW_IDENTITY]`,
+      `You are ${member.crew.name}${member.crew.title ? `, ${member.crew.title}` : ''}.`,
+    ];
 
-Use file_read, folder_list, code_search, code_grep, file_find, and code_references tools to explore the workspace and gather information before answering. Be thorough — use glob patterns to find relevant files, read them, and base your analysis on real code.`,
+    if (member.crew.description) {
+      roleLines.push(`\n${member.crew.description}`);
+    }
+
+    roleLines.push(`\n${member.crew.systemPrompt}`);
+
+    if (member.crew.traits && member.crew.traits.length > 0) {
+      roleLines.push(`\nTraits: ${member.crew.traits.join(', ')}`);
+    }
+
+    if (member.expertise && member.expertise.length > 0) {
+      roleLines.push(`Expertise: ${[...new Set(member.expertise)].join(', ')}`);
+    }
+
+    if (member.crew.emotion) {
+      roleLines.push(`Tone: ${member.crew.emotion}`);
+    }
+
+    roleLines.push(`\nYour job is to EXECUTE, not just describe. Take action. Deliver complete results.`);
+    roleLines.push(`[/CREW_IDENTITY]`);
+
+    const sections: string[] = [
+      roleLines.join('\n'),
     ];
 
     const crewHistory = this.buildCrewContext(member, userMessage);
