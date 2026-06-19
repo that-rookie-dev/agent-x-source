@@ -7,6 +7,7 @@ import type {
   CompletionChunk,
   ProviderId,
   AgentXConfig,
+  AgentPersonaConfig,
   RemediationAction,
   Plan,
   PlanStep,
@@ -34,6 +35,7 @@ import { setCrewDelegator } from '../tools/builtin/delegate-to-crew.js';
 import { setToolRegistryInstance } from '../commands/builtin/tools.js';
 import { SecretSauceManager } from '../secret-sauce/index.js';
 import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSoulSection, createInstructionsSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
@@ -46,9 +48,7 @@ import { BackgroundQueue } from '../session/BackgroundQueue.js';
 import { FileWatcher } from '../session/FileWatcher.js';
 import { ModelRouter } from '../session/ModelRouter.js';
 import type { TaskType } from '../session/ModelRouter.js';
-import { setFileWatcherInstance } from '../commands/builtin/watch.js';
 import { setBackgroundQueueInstance } from '../commands/builtin/tasks.js';
-import { setModelRouterInstance } from '../commands/builtin/route.js';
 import { setRecipeEngineInstance } from '../commands/builtin/recipe.js';
 import { RecipeEngine } from '../session/RecipeEngine.js';
 import { setUserCommandRegistryInstance } from '../commands/builtin/commands.js';
@@ -70,7 +70,7 @@ import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
 import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 import { CrewOrchestrator, type CrewMember } from './CrewOrchestrator.js';
 import { ContextTracker } from './ContextTracker.js';
-import { computeContextEpoch } from './ContextEpoch.js';
+
 
 import { TodoManager } from './TodoManager.js';
 import type { SessionLogger } from '../session/SessionLogger.js';
@@ -109,6 +109,7 @@ export interface AgentOptions {
   gitAware?: boolean;
   eventBus?: AgentEventBus;
   onPart?: PartPersistFn;
+  persona?: AgentPersonaConfig | null;
 }
 
 export class Agent {
@@ -117,6 +118,7 @@ export class Agent {
   private tokenTracker: TokenTracker;
   private messages: CompletionMessage[] = [];
   private config: AgentXConfig;
+  private persona: AgentPersonaConfig | null = null;
   private sessionId: string;
   private scopePath: string;
   private isProcessing = false;
@@ -142,6 +144,82 @@ export class Agent {
   autoApproveTools = false;
   private _hyperdriveMode = false;
   private _preHyperdrivePlanMode = true;
+  private options: Readonly<AgentOptions>;
+  private promptAssembly: PromptAssembly;
+  private promptSnapshot: Record<string, SourceSnapshot> | null = null;
+
+  // ─── Execution Modes
+  private planMode: boolean = false;
+  private currentPlan: Plan | null = null;
+
+  // ─── Agent Management
+  private agentBus: AgentBus;
+  private currentAgent: AgentInfo;
+  private specialistRegistry: SpecialistRegistry;
+
+  // ─── Session & Infrastructure
+  private sessionRunner: SessionRunner;
+  private gitManager: GitManager | null = null;
+  private gitAutoCommit: boolean = false;
+
+  // ─── File Watcher (lazy-init)
+  private _fileWatcher: FileWatcher | null = null;
+  private _modelRouter: ModelRouter | null = null;
+
+  // ─── Prompt & Decision Engines
+  private promptEngine: PromptEngine;
+  private decisionEngine: DecisionEngine;
+  private currentDecision: DecisionResult | null = null;
+  private currentIntent: IntentResult | null = null;
+
+  // ─── RAG
+  private lastRagResults: Array<{ content: string; score?: number; metadata?: Record<string, unknown> }> = [];
+
+  // ─── Reflection & Learning (lazy-init)
+  private _reflectionLoop: ReflectionLoop | null = null;
+  private _skillGenerator: SkillGenerator | null = null;
+  private _skillRegistry: SkillRegistry | null = null;
+
+  // ─── Reasoners (lazy-init)
+  private _treeOfThoughts: TreeOfThoughts | null = null;
+  private researchEngine: ResearchEngine | null = null;
+
+  // ─── Tool Call Log
+  private toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
+
+  // ─── Model Selection
+  private cachedModels: Map<string, number> = new Map();
+  private cachedModelCapabilities: Map<string, unknown[]> = new Map();
+  private groundedModels: Set<string> = new Set();
+  private fallbackModel: string | null = null;
+
+  // ─── Clarification & Approval
+  private clarificationResolve: ((response: string) => void) | null = null;
+  private pendingPlanApproval: ((approved: boolean) => void) | null = null;
+  private pendingStepApproval: ((stepId: string, approved: boolean, description?: string) => void) | null = null;
+
+  // ─── Lazy-init getters ───
+
+  private get fileWatcher(): FileWatcher | null {
+    return this._fileWatcher;
+  }
+
+  private get modelRouter(): ModelRouter | null {
+    return this._modelRouter;
+  }
+
+  private get reflectionLoop(): ReflectionLoop {
+    if (!this._reflectionLoop) this._reflectionLoop = new ReflectionLoop();
+    return this._reflectionLoop;
+  }
+
+  private get skillGenerator(): SkillGenerator | null {
+    return this._skillGenerator;
+  }
+
+  private get skillRegistry(): SkillRegistry | null {
+    return this._skillRegistry;
+  }
 
   get hyperdriveMode(): boolean {
     return this._hyperdriveMode;
@@ -162,66 +240,9 @@ export class Agent {
         }
       }
     }
-    this.lastContextEpoch = null;
     this.rebuildSystemPrompt();
-    this.contextTracker.record('assistant',
-      this._hyperdriveMode
-        ? '[Hyperdrive ON — full autonomous acceleration, all permissions pre-granted]'
-        : '[Hyperdrive OFF — standard permission checks restored]');
-    this.emit({
-      type: this._hyperdriveMode ? 'hyperdrive_entered' : 'hyperdrive_exited',
-      mode: this.planMode ? 'plan' : 'agent',
-      wasPlan: this._preHyperdrivePlanMode,
-    } as unknown as EngineEvent);
     return this._hyperdriveMode;
   }
-  private lastContextEpoch: string | null = null;
-  private cachedModels: Map<string, number> = new Map(); // modelId -> contextWindow
-  private cachedModelCapabilities: Map<string, string[]> = new Map(); // modelId -> capabilities
-  private groundedModels: Set<string> = new Set(); // models that failed trial this session
-  currentAgent: AgentInfo;
-  private planMode = false;
-  private currentPlan: Plan | null = null;
-  private pendingPlanApproval: ((approved: boolean) => void) | null = null;
-  private pendingStepApproval: ((stepId: string, approved: boolean, description?: string) => void) | null = null;
-  private fallbackModel: string | null = null;
-  private gitAutoCommit = false;
-  private gitManager: GitManager | null = null;
-  private _fileWatcher: FileWatcher | null = null;
-  private get fileWatcher(): FileWatcher {
-    if (!this._fileWatcher) { this._fileWatcher = new FileWatcher(); setFileWatcherInstance(this._fileWatcher); this._fileWatcher.on('file_changed', (e, fp, c) => { this.emit({ type: 'watch_event', event: e, filePath: fp, command: c, timestamp: Date.now() }); }); }
-    return this._fileWatcher;
-  }
-  private _modelRouter: ModelRouter | null = null;
-  private get modelRouter(): ModelRouter {
-    if (!this._modelRouter) { this._modelRouter = new ModelRouter(); setModelRouterInstance(this._modelRouter); }
-    return this._modelRouter;
-  }
-  private promptEngine: PromptEngine;
-  private decisionEngine: DecisionEngine;
-  // IntentClassifier removed — DecisionEngine (heuristic) handles all routing
-  private _treeOfThoughts: TreeOfThoughts | null = null;
-  private currentIntent: IntentResult | null = null;
-  private currentDecision: DecisionResult | null = null;
-  private researchEngine: ResearchEngine | null = null;
-  private lastRagResults: Array<{ content: string; score?: number; metadata?: Record<string, unknown> }> = [];
-  private clarificationResolve: ((response: string) => void) | null = null;
-  private agentBus: AgentBus;
-  private specialistRegistry: SpecialistRegistry;
-  private _skillGenerator: SkillGenerator | null = null;
-  private get skillGenerator(): SkillGenerator { if (!this._skillGenerator) this._skillGenerator = new SkillGenerator(null as any); return this._skillGenerator; }
-  private _skillRegistry: SkillRegistry | null = null;
-  private get skillRegistry(): SkillRegistry {
-    if (!this._skillRegistry) {
-      const skillsDir = join(getConfigDir(), 'skills');
-      this._skillRegistry = new SkillRegistry(skillsDir);
-    }
-    return this._skillRegistry;
-  }
-  private _reflectionLoop: ReflectionLoop | null = null;
-  private get reflectionLoop(): ReflectionLoop { if (!this._reflectionLoop) this._reflectionLoop = new ReflectionLoop(); return this._reflectionLoop; }
-  private toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
-  private sessionRunner: SessionRunner;
 
   // Anti-duplicate: prevents double message_received within a single turn
   private _turnMessageEmitted = false;
@@ -274,7 +295,7 @@ export class Agent {
   }
   private maxSubAgents = 5;
   readonly serialLock: Mutex = new Mutex();
-  private sessionManager: { createSession: (providerId: string, modelId: string, crewId: string | undefined, scopePath: string | undefined, id: string | undefined, parentId: string | undefined) => { id: string } } | null = null;
+  private sessionManager: { createSession: (providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string) => { id: string } } | null = null;
   private enabledCrewSessionIds: Set<string> = new Set();
 
   setTelegramConnected(connected: boolean, chatId?: number | null): void {
@@ -293,7 +314,12 @@ export class Agent {
   }
 
   constructor(options: AgentOptions) {
+    this.options = options;
     this.config = options.config;
+    this.persona = options.persona ?? null;
+    if (this.persona) {
+      this.secretSauce.identity.seedFromPersona(this.persona);
+    }
     this.sessionId = options.sessionId;
     this.scopePath = normalize(resolve(options.scopePath!));
     this.contextTracker = new ContextTracker(null as any, this.sessionId);
@@ -313,7 +339,7 @@ export class Agent {
         m.crew.callsign.toLowerCase() === crewName.toLowerCase()
       );
       if (!member) return `Crew "${crewName}" not found. Available: ${members.map(m => `${m.crew.name} (@${m.crew.callsign})`).join(', ')}`;
-      const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'You are a capable AI assistant.';
+      const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'Available crew members: none configured.';
       const result = await this.crewOrchestrator!.processMessage(taskDescription, crewPrompt, [member]);
       return result.responses[0]?.content ?? `${member.crew.name} completed the task.`;
     });
@@ -550,158 +576,21 @@ export class Agent {
       this.trialModel(options.config.provider.activeModel).catch(() => {});
     }
 
-    // Build system prompt from Secret Sauce + user override
-    const sauceContext = this.secretSauce.buildSystemContext();
+    // Build system prompt using PromptAssembly (typed, diff-able sections)
+    this.promptAssembly = new PromptAssembly();
+    this.registerPromptSections(this.options.systemPrompt);
+    const initGen = this.promptAssembly.initializeSync();
+    this.promptSnapshot = initGen.snapshot;
 
-    // Build tool awareness section so the model knows its capabilities
-    const toolLines = this.toolRegistry.list().map((t) => `- ${t.id} (${t.name}): ${t.modelDescription}`);
-    const toolAwareness = [
-      `[TOOLS]`,
-      `You have the following tools available:`,
-      toolLines.join('\n'),
-      ``,
-      `[WORKING_DIRECTORY]`,
-      `Your working directory is: ${this.scopePath}`,
-      `ALL file operations and shell commands MUST operate within this directory.`,
-      `Use RELATIVE paths (e.g. "src/index.ts") — NOT absolute paths.`,
-      `For shell_exec: you are already IN this directory — do NOT cd to other absolute paths.`,
-      `The 'path' and 'file' arguments on all tools are relative to this directory.`,
-      `Creating a project named "myapp" means: mkdir myapp, cd myapp, write files there.`,
-      `[/WORKING_DIRECTORY]`,
-      ``,
-      `[MASTER_CONTROLLER]`,
-      `You are a MASTER agent controlling a fleet of sub-agents and tools. Your job: achieve the goal with MINIMUM tokens and MAXIMUM efficiency.`,
-      ``,
-      `Core Moto: Maximum output with minimum communication. Reach the goal faster. Be precise.`,
-      ``,
-      `AUTONOMOUS DECISIONS (decide yourself — NEVER ask permission):`,
-      `1. SPAWN SUB-AGENTS: When a task is complex or parallelizable, spawn specialists via delegate_to_subagent. Each sub-agent works independently on its piece. The master merges results.`,
-      `2. BUILD TODO LISTS: After receiving a multi-step task, auto-create a TODO list with clear items. Mark items in-progress/completed. Update as you work. Use the TODO tracking internally.`,
-      `3. INTERNET SEARCH: When you need current information, use web_search/web_scrape without asking.`,
-      `4. INTER-AGENT COMMUNICATION: When multiple sub-agents can share findings, use the agent bus to coordinate. Avoid redundant work.`,
-      `5. TOOL SELECTION: Pick the right tool for the job. Chain tools efficiently. Minimize tool calls — each call costs time.`,
-      `6. FILE OPERATIONS: Read files to understand before modifying. Use code_replace for targeted edits (cheaper than file_write of entire file).`,
-      ``,
-      `DELEGATION STRATEGY:`,
-      `- Simple task (1-3 steps) → do it yourself. Be quick.`,
-      `- Medium task (4-8 steps, multiple files) → spawn 2-3 specialists in parallel.`,
-      `- Complex task (8+ steps, multi-domain) → decompose into subtasks, spawn specialists, merge results with synthesis.`,
-      `- Research task → use web_search + web_scrape. For deep research, spawn researcher sub-agents.`,
-      `- Code task → coder + tester + reviewer in parallel for quality.`,
-      ``,
-      `OUTPUT RULES (CRITICAL — SAVE TOKENS):`,
-      `1. PRECISE RESPONSES: Respond with 1-3 sentences for most tasks. Never write paragraphs unless asked.`,
-      `2. CONFIRMATION FORMAT: Use "Done: [what you did]" NOT "I have successfully completed the task of..."`,
-      `3. ONLY ELABORATE when user explicitly says "explain more", "go deeper", "elaborate".`,
-      `4. CODE/TECHNICAL OUTPUT: Be as detailed as necessary. No length limit on code, configs, or structured data.`,
-      `5. NEVER REPEAT: Don't restate what the user said. Don't summarize your process. Just deliver the result.`,
-      `6. BULLET POINTS > PARAGRAPHS: When listing things, use bullets. Faster to read.`,
-      ``,
-      `EXECUTION PATTERNS:`,
-      `- New project → shell_exec (init) → file_write (configs, source) → shell_exec (install, build, test)`,
-      `- Bug fix → code_search → file_read → code_replace → test_run`,
-      `- Refactor → file_read → plan → code_replace/file_write → shell_exec (verify)`,
-      `- Research → web_search → web_scrape → synthesize → respond concisely`,
-      `[/MASTER_CONTROLLER]`,
-      ``,
-      `[DEVELOPER_EXECUTION]`,
-      `You are an expert-level software engineer. When the user asks you to build, create, or fix software:`,
-      ``,
-      `Architecture approach:`,
-      `1. PLAN FIRST — For multi-file tasks, mentally design the structure before writing. Know what files go where and why.`,
-      `2. SCAFFOLD → IMPLEMENT → VERIFY — Create directory structure, write files in dependency order (configs first, shared types, then implementation), then run builds/tests to verify.`,
-      `3. WRITE COMPLETE FILES — Never write partial code or placeholders like "// TODO: implement". Write full, production-ready implementations. If a function needs 200 lines, write all 200 lines.`,
-      `4. ITERATE ON ERRORS — After running builds/tests, if there are errors, read the output, fix the issues, and re-run. Repeat until clean.`,
-      `5. FULL-STACK AWARENESS — You can set up entire projects: package.json, tsconfig, Dockerfile, docker-compose, CI/CD configs, cloud infrastructure, databases, APIs, frontends — anything that can be expressed in files + commands.`,
-      ``,
-      `Execution patterns:`,
-      `- New project → shell_exec (mkdir, init commands) → file_write (configs, source files) → shell_exec (install deps, build, test)`,
-      `- Bug fix → code_search (find relevant code) → file_read (understand context) → code_replace or file_write (apply fix) → shell_exec (test)`,
-      `- Refactor → file_read (understand current state) → plan changes → code_replace/file_write (apply) → shell_exec (ensure builds pass)`,
-      `- Infrastructure → file_write (terraform/CDK/compose files) → shell_exec (cloud CLI commands: aws, gcloud, az, kubectl, docker)`,
-      `- Microservices → create each service directory, write all source files, shared configs, inter-service communication setup, then build and verify each service`,
-      ``,
-      `Critical rules:`,
-      `- NEVER say "you need to run X" — YOU run it with shell_exec.`,
-      `- NEVER say "create a file called X with this content" — YOU write it with file_write.`,
-      `- NEVER stop halfway. If you started setting up a project, finish it completely with all files, dependencies installed, and a successful build.`,
-      `- If a task is too large for one turn (10 tool calls), complete as much as possible, then continue in the next turn seamlessly.`,
-      `- Use shell_exec for: package managers (npm, pnpm, pip, cargo), build tools, test runners, linters, cloud CLIs, docker, git, and any other command-line tool.`,
-      `- Read existing code before modifying it — understand the patterns in use.`,
-      `- When creating projects, always include: dependency management, build config, and a working entry point at minimum.`,
-      `[/DEVELOPER_EXECUTION]`,
-      ``,
-      `[CURRENT_TIME]`,
-      `Now: ${new Date().toISOString()}`,
-      `User timezone: ${this.getUserTimezone()}`,
-      `Local time (user): ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: this.getUserTimezone() })}`,
-      `UTC offset: ${this.getUtcOffset()}`,
-      `[/CURRENT_TIME]`,
-      ``,
-      `[SCHEDULING]`,
-      `For reminders and recurring tasks, use the reminder_set tool:`,
-      `- "remind me in X" / "ping me in X" / "alert me after X" → one-time (delay_seconds)`,
-      `- "remind me at <time>" / "at 5pm" / "at 3:30 PM" → one-time (at_time in ISO 8601, e.g. "2026-05-25T17:04:00+05:30")`,
-      `- "remind me every X" / "check every X" / "repeat every X" → recurring (interval_minutes)`,
-      `- For absolute times: use [CURRENT_TIME] above to compute the ISO 8601 target. Include timezone offset.`,
-      `- Convert relative: "half an hour" = 1800s, "2 hours" = 7200s, "every day" = 1440 min`,
-      `- IMPORTANT: If user says a specific clock time, ALWAYS use at_time (not delay_seconds). This avoids calculation errors.`,
-      `- Confirm in plain language after setting: "Done! I'll ping you at 5:04 PM."`,
-      `[/SCHEDULING]`,
-      ``,
-      `[OUTPUT_FORMAT]`,
-      `ALWAYS respond in minimal, precise form. No fluff. Just the result.`,
-      `- Replies: 1-3 sentences max. Bullet points preferred over paragraphs.`,
-      `- Confirmations: "Done: [what]". Errors: "Failed: [why] — [fix]".`,
-      `- Technical output, code, configs: unlimited length. Be thorough.`,
-      `[/TOOLS]`,
-    ].join('\n');
-
-    // ─── UNIFIED: Inject ReflectionLoop learnings + SkillGenerator skills + SkillRegistry ───
-    const reflectionLearnings = this.reflectionLoop.getCumulativeLearnings();
-    const generatedSkills = this.skillGenerator.getAll();
-    const registrySkills = this.skillRegistry.list();
-    let augmentedPrompt = toolAwareness;
-
-    if (reflectionLearnings) {
-      augmentedPrompt += '\n\n[LEARNINGS]\n' + reflectionLearnings + '\n[/LEARNINGS]';
-    }
-    if (generatedSkills && generatedSkills.length > 0) {
-      augmentedPrompt += '\n\n[SKILLS]\n';
-      for (const skill of generatedSkills) {
-        augmentedPrompt += `- ${skill.name}: ${skill.description}\n`;
-      }
-      augmentedPrompt += '[/SKILLS]';
-    }
-    if (registrySkills.length > 0) {
-      augmentedPrompt += '\n\n[FORMAL_SKILLS]\n';
-      for (const skill of registrySkills) {
-        augmentedPrompt += `- ${skill.name}: ${skill.description} [trigger: ${skill.trigger}]\n`;
-      }
-      augmentedPrompt += '[/FORMAL_SKILLS]';
-    }
-
-    const systemPrompt = options.systemPrompt
-      ? `${sauceContext.full}\n\n${augmentedPrompt}\n\n${options.systemPrompt}`
-      : `${sauceContext.full}\n\n${augmentedPrompt}`;
-
-    // Inject user callsign so the agent knows who it's talking to
-    const callsign = this.config.user?.callsign;
-    const userSection = callsign
-      ? `\n\n[USER]\nThe user's name/callsign is "${callsign}". Address them by this name when appropriate.\n[/USER]`
-      : '';
-
-    const finalSystemPrompt = systemPrompt + userSection;
-
-    if (finalSystemPrompt) {
+    if (initGen.baseline) {
       this.messages.push({
         role: 'system',
-        content: finalSystemPrompt,
+        content: initGen.baseline,
       });
     }
 
     // Configure sub-agents with provider so they can make real LLM calls
-    this.subAgents.configure(this.provider, this.config, finalSystemPrompt ?? '');
+    this.subAgents.configure(this.provider, this.config, initGen.baseline);
 
     // When a scheduled job fires, emit it as a notification message (non-blocking).
     // Simple reminders don't need an LLM round-trip — just display the message.
@@ -1171,13 +1060,13 @@ Return ONLY valid JSON, no other text.`;
       reasoning: decision.reasoning,
     } as unknown as EngineEvent);
 
-    // ─── @MENTION ROUTING (with classifier context) ───
-    const mentionedCrewId = this.detectAtMention(cleanContent);
-    if (mentionedCrewId && this.crewOrchestrator) {
+    // ─── @MENTION ROUTING — supports multiple crews ───
+    const mentionedCrewIds = this.detectAtMentions(cleanContent);
+    if (mentionedCrewIds.length > 0 && this.crewOrchestrator) {
       const members = this.crewOrchestrator.getMembers();
-      const mentionedMember = members.find((m) => m.crew.id === mentionedCrewId);
-      if (mentionedMember) {
-        return await this.routeToCrew(mentionedMember, cleanContent, startTime, classificationContext);
+      const mentionedMembers = members.filter((m) => mentionedCrewIds.includes(m.crew.id));
+      if (mentionedMembers.length > 0) {
+        return await this.routeToCrews(mentionedMembers, cleanContent, startTime, classificationContext);
       }
     }
 
@@ -1186,7 +1075,7 @@ Return ONLY valid JSON, no other text.`;
       const members = this.crewOrchestrator.getMembers();
       const composed = this.crewOrchestrator.autoCompose(cleanContent, members);
       if (composed.length > 0 && composed[0]) {
-        return await this.routeToCrew(composed[0], cleanContent, startTime, classificationContext);
+        return await this.routeToCrews(composed, cleanContent, startTime, classificationContext);
       }
     }
 
@@ -1414,9 +1303,9 @@ Return ONLY valid JSON, no other text.`;
       this.extractMemories(content, assistantMessage.content);
 
       // Auto-generate skill if task was novel
-      if (this.skillGenerator.shouldGenerateSkill(content, this.toolCallLogForReflection)) {
+      if (this.skillGenerator?.shouldGenerateSkill(content, this.toolCallLogForReflection)) {
         const toolsForSkill = this.toolCallLogForReflection.map((t) => ({ name: t.name, args: {} as Record<string, unknown> }));
-        void this.skillGenerator.generateSkill(this, content, toolsForSkill, assistantMessage.content);
+        void this.skillGenerator?.generateSkill(this, content, toolsForSkill, assistantMessage.content);
       }
 
       // Run reflection loop for continuous improvement
@@ -1509,11 +1398,9 @@ Return ONLY valid JSON, no other text.`;
    * Uses minimal system prompt, no tools, no RAG — saves significant tokens.
    */
   private async runFastReply(content: string, startTime: number): Promise<Message> {
-    // Build minimal prompt — extract identity from existing system message (no I/O)
-    const existingSystemMsg = this.messages.find(m => m.role === 'system');
-    const soulMatch = existingSystemMsg?.content?.match(/\[SOUL\]([\s\S]*?)\[\/SOUL\]/);
-    const identity = soulMatch?.[1]?.trim() || '';
-    const fastPrompt = this.decisionEngine.buildFastReplyPrompt(identity);
+    const fastPrompt = this.decisionEngine.buildFastReplyPrompt(
+      this.buildIdentityBlock(),
+    );
 
     const callsign = this.config.user?.callsign;
     const userNote = callsign ? `\nThe user's name is "${callsign}".` : '';
@@ -1652,16 +1539,23 @@ Return ONLY valid JSON, no other text.`;
       content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
     }));
 
+    // Append instruction to last user message (instead of separate role:system)
     if (this.pendingInstruction) {
-      aiMessages.push({ role: 'system' as const, content: this.pendingInstruction });
+      const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg) {
+        aiMessages[userIdx] = { role: 'user', content: `${userMsg.content}\n\n[INSTRUCTION]\n${this.pendingInstruction}\n[/INSTRUCTION]` };
+      }
       this.pendingInstruction = null;
     }
 
+    // Prepend RAG context to last user message
     if (this.lastRagResults.length > 0) {
       const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
       const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
-      if (userIdx >= 0) {
-        aiMessages.splice(userIdx, 0, { role: 'system' as const, content: ragCtx });
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg) {
+        aiMessages[userIdx] = { role: 'user', content: `${ragCtx}\n\n${userMsg.content}` };
       }
     }
 
@@ -1742,13 +1636,6 @@ Return ONLY valid JSON, no other text.`;
     void this.memoryExtractor.extract(userMessage, assistantResponse).then((memories) => {
       for (const mem of memories) {
         this.secretSauce.recordMemory(mem.content, mem.category);
-        // Update identity name when user gives a name instruction
-        if (mem.category === 'identity') {
-          const nameMatch = mem.content.match(/(?:called|name is|go by|known as|address(?:ed)? as|be called)\s+["']?(\w+)/i);
-          if (nameMatch) {
-            this.secretSauce.identity.setName(nameMatch[1]!);
-          }
-        }
       }
     }).catch(() => {
       // Silent failure — memory extraction is best-effort
@@ -1764,169 +1651,123 @@ Return ONLY valid JSON, no other text.`;
     }
   }
 
-  /**
-   * Rebuild the full system prompt from current crew, tools, and secret sauce.
-   * Call this after crew switch to apply the new persona.
-   */
-  rebuildSystemPrompt(): void {
-    const epochComponents = [
-      this.currentAgent?.id ?? '',
-      String(this._telegramConnected),
-      this.config.user?.callsign ?? '',
+  private buildIdentityBlock(): string {
+    const identity = this.secretSauce.identity.getMergedIdentity(this.persona);
+
+    const lines: string[] = [
+      `You are ${identity.name}, an AI agent running on the user's own machine.`,
+      `You are NOT Google AI, NOT ChatGPT, NOT Claude, NOT any other AI service. You are exclusively ${identity.name}. Never claim to be another AI or company.`,
+      '',
     ];
-    const epoch = computeContextEpoch(epochComponents);
-    if (this.lastContextEpoch === epoch) return;
-    this.lastContextEpoch = epoch;
 
-    const sauceContext = this.secretSauce.buildSystemContext();
-    const toolLines = (this.toolRegistry?.list() ?? []).map((t) => `- ${t.id} (${t.name}): ${t.modelDescription}`);
-    const toolAwareness = [
-      `[TOOLS]`,
-      `You have the following tools available:`,
-      toolLines.join('\n'),
-      ``,
-      `[AUTONOMOUS_EXECUTION]`,
-      `You are a fully autonomous agent. Your job is to EXECUTE, not describe.`,
-      ``,
-      `CRITICAL TOOL RULES:`,
-      `1. EVERY task MUST use tools. If the user asks you to "list files" → call folder_list IMMEDIATELY. If they ask to "check system" → call system_info. NEVER reply with text when a tool exists for the task.`,
-      `2. NEVER say "Let me check" or "I'll start by" and then NOT call a tool. Those phrases MUST be followed by an ACTUAL tool call. If you say it, you MUST do it.`,
-      `3. NEVER describe a plan — EXECUTE it. Each step you describe should be a tool call.`,
-      ``,
-      `Core principles:`,
-      `1. INTERPRET INTENT — Understand what the user truly wants from their natural language. "Ping me in telegram" means set a reminder. "Save this" means write to a file. "Check my code" means read + analyze.`,
-      `2. ACT IMMEDIATELY — If you can determine what tools to use, use them. Do NOT ask the user which tool to use or how — that's YOUR job.`,
-      `3. CHAIN TOOLS — Complex tasks need multiple tools. Plan the sequence, then execute them one by one.`,
-      `4. INFER PARAMETERS — Derive tool parameters from context. Never ask for what you can infer.`,
-      `5. SELF-CORRECT — If a tool fails, try an alternative approach.`,
-      `6. MULTI-STEP AUTONOMY — You can call up to 10 tools in a single turn. Use as many as needed.`,
-      ``,
-      `Decision framework:`,
-      `- User mentions time/reminder/notify/ping → reminder_set`,
-      `- User mentions files/code/read/write/create → filesystem or code tools`,
-      `- User mentions run/execute/install/build → shell_exec`,
-      `- User mentions git/commit/push/branch → git tools`,
-      `- User mentions search/find/look for → code_search or folder_list`,
-      `- User mentions document/report/pdf/excel → document creation tools`,
-      `- Ambiguous request → ask ONE clarifying question, then act`,
-      `[/AUTONOMOUS_EXECUTION]`,
-      ``,
-      `[DEVELOPER_EXECUTION]`,
-      `You are an expert-level software engineer. When the user asks you to build, create, or fix software:`,
-      ``,
-      `Architecture approach:`,
-      `1. PLAN FIRST — For multi-file tasks, mentally design the structure before writing.`,
-      `2. SCAFFOLD → IMPLEMENT → VERIFY — Create dirs, write files in dependency order, then run builds/tests.`,
-      `3. WRITE COMPLETE FILES — Never write partial code or placeholders. Write full, production-ready implementations.`,
-      `4. ITERATE ON ERRORS — If builds/tests fail, read output, fix issues, re-run until clean.`,
-      `5. FULL-STACK AWARENESS — Set up entire projects: configs, infra, databases, APIs, frontends — anything expressible in files + commands.`,
-      ``,
-      `Critical rules:`,
-      `- NEVER say "you need to run X" — YOU run it with shell_exec.`,
-      `- NEVER say "create a file called X" — YOU write it with file_write.`,
-      `- NEVER stop halfway. Finish completely with all files, deps installed, and a successful build.`,
-      `- If too large for one turn, complete as much as possible, then continue next turn seamlessly.`,
-      `- Use shell_exec for: package managers, build tools, test runners, cloud CLIs, docker, git.`,
-      `- Read existing code before modifying — understand the patterns in use.`,
-      `[/DEVELOPER_EXECUTION]`,
-      ``,
-      `[CURRENT_TIME]`,
-      `Now: ${new Date().toISOString()}`,
-      `User timezone: ${this.getUserTimezone()}`,
-      `Local time (user): ${new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: this.getUserTimezone() })}`,
-      `UTC offset: ${this.getUtcOffset()}`,
-      `[/CURRENT_TIME]`,
-      ``,
-      `[SCHEDULING]`,
-      `For reminders and recurring tasks, use the reminder_set tool:`,
-      `- "remind me in X" / "ping me in X" / "alert me after X" → one-time (delay_seconds)`,
-      `- "remind me at <time>" / "at 5pm" / "at 3:30 PM" → one-time (at_time in ISO 8601, e.g. "2026-05-25T17:04:00+05:30")`,
-      `- "remind me every X" / "check every X" / "repeat every X" → recurring (interval_minutes)`,
-      `- For absolute times: use [CURRENT_TIME] above to compute the ISO 8601 target. Include timezone offset.`,
-      `- Convert relative: "half an hour" = 1800s, "2 hours" = 7200s, "every day" = 1440 min`,
-      `- IMPORTANT: If user says a specific clock time, ALWAYS use at_time (not delay_seconds). This avoids calculation errors.`,
-      `- Confirm in plain language after setting: "Done! I'll ping you at 5:04 PM."`,
-      `[/SCHEDULING]`,
-      ``,
-      `[OUTPUT_FORMAT]`,
-      `ALWAYS respond in minimal, precise form. No fluff. Just the result.`,
-      `- Replies: 1-3 sentences max. Bullet points preferred over paragraphs.`,
-      `- Confirmations: "Done: [what]". Errors: "Failed: [why] — [fix]".`,
-      `- Technical output, code, configs: unlimited length. Be thorough.`,
-      `[/OUTPUT_FORMAT]`,
-      ``,
-      `[/TOOLS]`,
-      ``,
-      ...(this._hyperdriveMode ? [
-        `[HYPERDRIVE]`,
-        `YOU ARE IN HYPERDRIVE MODE — FULL AUTONOMOUS ACCELERATION.`,
-        `- ALL tools are enabled and available. No tool is restricted or disabled.`,
-        `- ALL permissions are PRE-GRANTED. You DO NOT need to ask, confirm, or wait.`,
-        `- ALL shell commands, file operations, network access are AUTHORIZED.`,
-        `- You have MAXIMUM AGENCY. Execute tasks to completion without hesitation.`,
-        `- Every tool in your toolkit is fully operational. Use them AGGRESSIVELY.`,
-        `- Do NOT describe what you would do — DO IT.`,
-        `- Do NOT say "let me check" — RUN the check immediately.`,
-        `- Do NOT ask clarifying questions unless absolutely ambiguous — INFER and ACT.`,
-        `- If a tool fails, try the next approach without asking.`,
-        `- SPEED is paramount. Parallelize where possible.`,
-        `- COMPLETE the entire task in one turn if possible. Push through all steps.`,
-        `[/HYPERDRIVE]`,
-        ``,
-      ] : []),
-      `[CHANNEL_FOCUS]`,
-      `Messages can come from TUI, Web-UI, or Telegram. The active "focus" channel receives responses.`,
-      `Focus automatically switches to whichever channel the user last sent a message from.`,
-      ``,
-      `Telegram connection status: ${this._telegramConnected ? 'CONNECTED' : 'NOT CONNECTED'}`,
-      this._telegramConnected
-        ? `You can send Telegram updates using the telegram_send_message tool.`
-        : `Telegram is not running. Suggest the user run /telegram start <token> to set it up.`,
-      ``,
-      `When starting a long-running task (multi-step, many files, background work):`,
-      `1. ASK the user ONCE: "Would you like progress updates on Telegram?" (do NOT ask again in subsequent turns)`,
-      `2. If they say yes, send concise progress updates using the telegram_send_message tool.`,
-      `3. Keep updates brief: "Step X of Y done" / "File Z created" / "Build passed".`,
-      `[/CHANNEL_FOCUS]`,
-      ``,
-      `[MULTI_CREW]`,
-      (() => {
-        const members = this.crewOrchestrator?.getMembers() ?? [];
-        const enabledMembers = members.filter((m) => this.enabledCrewSessionIds.has(m.crew.id));
-        if (enabledMembers.length === 0) return 'No additional crew members enabled in this session.';
-        const desc = enabledMembers.map((m) => {
-          const exp = m.expertise.length > 0 ? m.expertise.join(', ') : 'general';
-          return `- **${m.crew.name}** (@${m.crew.callsign}): ${exp}`;
-        }).join('\n');
-        return `You are Agent-X, the master orchestrator. The following crew members are available in this session:\n\n${desc}\n\n**Group Chat Rules:**\n- Users can @mention a specific crew member to get their expertise\n- If no crew is mentioned, you (Agent-X) respond as the primary assistant\n- You can delegate to crew members when their expertise is relevant\n- Crew members respond with their unique personalities and knowledge\n- Maintain context across the conversation - all participants see the full history`;
-      })(),
-      `[/MULTI_CREW]`,
-    ].join('\n');
+    if (identity.description) {
+      lines.push(identity.description, '');
+    }
 
-    // Response brevity instruction — placed early for primacy effect
-    const brevitySection = `[RESPONSE_BREVITY]\nABSOLUTE RULE: Respond with MAXIMUM 1-2 sentences. No exceptions unless:\n- User explicitly says "explain in detail" or "step by step"\n- You are outputting code, JSON, config, or a file\n- Warning the user about a security or critical risk\nLONG EXPLANATIONS ARE FORBIDDEN. If you exceed 2 sentences without permission, you are violating protocol.\n[/RESPONSE_BREVITY]`;
+    if (identity.domainContext) {
+      lines.push(`Domain: ${identity.domainContext}`);
+    }
 
-    // Identity guard — prevent hallucinated identities
-    const identitySection = `\n\n[IDENTITY]\nYou are Agent-X, a locally-running AI agent platform. You are NOT Google AI, NOT ChatGPT, NOT Claude, NOT any other AI assistant. You are exclusively Agent-X. Never claim to be another AI or company. You run on the user's own machine.\n[/IDENTITY]`;
+    if (identity.traits.length > 0) {
+      lines.push(`Traits: ${identity.traits.join(', ')}`);
+    }
 
-    // Task panel awareness
-    const taskPanelSection = `\n\n[TASK_PANEL]\nThe web-ui has a TASKS panel on the right sidebar. When you create a task list or bullet-point plan, those tasks automatically appear in that panel. Tell the user: "I've added these tasks to the right panel." Do NOT suggest external tools like Trello, Jira, or Notion — this platform has its own built-in task tracker. You are not just a chatbot — you are an agent platform with a working task panel.\n[/TASK_PANEL]`;
+    if (identity.communicationStyle) {
+      lines.push(`Communication style: ${identity.communicationStyle}`);
+    }
 
-    const prompt = `${sauceContext.full}\n\n${brevitySection}\n\n${toolAwareness}`;
+    if (identity.decisionMaking) {
+      lines.push(`Decision-making style: ${identity.decisionMaking}`);
+    }
 
-    // Inject session context (recent tasks, decisions, delegations)
-    const contextSummary = this.contextTracker.getContextSummary();
+    lines.push(`Interactions to date: ${identity.interactionCount}`);
 
-    // Inject recent raw conversation history (last 50 messages / ~12K tokens)
-    const recentHistory = this.contextTracker.getRecentHistory();
+    if (identity.evolutionLog) {
+      lines.push('', identity.evolutionLog);
+    }
 
-    // Inject user callsign
-    const callsign = this.config.user?.callsign;
-    const userSection = callsign
-      ? `\n\n[USER]\nThe user's name/callsign is "${callsign}". Address them by this name when appropriate.\n[/USER]`
-      : '';
+    // No hardcoded role — the description above defines who the agent is
+    lines.push('', 'Your job is to EXECUTE, not just describe. Take action. Deliver complete results.');
 
-    this.setSystemPrompt(prompt + contextSummary + recentHistory + userSection + identitySection + taskPanelSection);
+    return lines.join('\n');
+  }
+
+  private createSectionContext(): SectionContext {
+    return {
+      getProviderId: () => this.config.provider.activeProvider,
+      getModelId: () => this.config.provider.activeModel,
+      buildIdentityBlock: () => this.buildIdentityBlock(),
+      scopePath: this.scopePath,
+      hyperdriveMode: this._hyperdriveMode,
+      telegramConnected: this._telegramConnected,
+      userCallsign: this.config.user?.callsign,
+      getUserTimezone: () => this.getUserTimezone(),
+      getUtcOffset: () => this.getUtcOffset(),
+      crewOrchestrator: this.crewOrchestrator ? {
+        getMembers: () => this.crewOrchestrator!.getMembers(),
+      } : null,
+      enabledCrewSessionIds: this.enabledCrewSessionIds,
+      reflectionLoop: this.reflectionLoop ? {
+        getCumulativeLearnings: () => this.reflectionLoop.getCumulativeLearnings(),
+      } : null,
+      skillGenerator: this.skillGenerator ? (() => { const sg = this.skillGenerator; return { getAll: () => sg!.getAll() }; })() : null,
+      skillRegistry: this.skillRegistry ? (() => { const sr = this.skillRegistry; return { list: () => sr!.list() }; })() : null,
+      contextTracker: this.contextTracker ? {
+        getContextSummary: () => this.contextTracker.getContextSummary(),
+        getRecentHistory: () => this.contextTracker.getRecentHistory(),
+      } : null,
+      soulManager: { buildContext: () => this.secretSauce.soul.buildContext() },
+      personaName: this.persona?.name || 'Agent-X',
+    };
+  }
+
+  private registerPromptSections(systemOverride?: string): void {
+    const ctx = this.createSectionContext();
+    this.promptAssembly
+      .register(createProviderPromptSection(ctx))
+      .register(createIdentitySection(ctx))
+      .register(createWorkingDirectorySection(ctx))
+      .register(createRulesSection())
+      .register(createCurrentTimeSection(ctx))
+      .register(createSchedulingSection())
+      .register(createLearningsSection(ctx))
+      .register(createSkillsSection(ctx))
+      .register(createFormalSkillsSection(ctx))
+      .register(createHyperdriveSection(ctx))
+      .register(createChannelFocusSection(ctx))
+      .register(createMultiCrewSection(ctx))
+      .register(createUserSection(ctx))
+      .register(createTaskPanelSection())
+      .register(createSoulSection(ctx))
+      .register(createInstructionsSection(ctx.scopePath));
+
+    if (systemOverride) {
+      this.promptAssembly.register(createSystemOverrideSection(systemOverride));
+    }
+  }
+
+  rebuildSystemPrompt(): void {
+    this.reconcileSystemPrompt().catch(() => {});
+  }
+
+  private async reconcileSystemPrompt(): Promise<void> {
+    if (!this.promptAssembly || !this.promptSnapshot) return;
+
+    const result = await this.promptAssembly.reconcile(this.promptSnapshot);
+
+    if (result.tag === 'unchanged') return;
+
+    if (result.tag === 'updated') {
+      this.promptSnapshot = result.update.snapshot;
+      this.messages.push({
+        role: 'system' as const,
+        content: result.update.text,
+      });
+    } else if (result.tag === 'replacement-needed') {
+      this.promptSnapshot = result.generation.snapshot;
+      this.setSystemPrompt(result.generation.baseline);
+    }
+    // replacement-blocked: skip, keep old snapshot
   }
 
   switchProvider(providerId: ProviderId, apiKey?: string, baseUrl?: string): void {
@@ -2400,7 +2241,7 @@ Only include specialists that are actually needed for this task.`;
 
   get agentBusInstance(): AgentBus { return this.agentBus; }
   get specialistRegistryInstance(): SpecialistRegistry { return this.specialistRegistry; }
-  get skillGeneratorInstance(): SkillGenerator { return this.skillGenerator; }
+  get skillGeneratorInstance(): SkillGenerator | null { return this.skillGenerator; }
   get reflectionLoopInstance(): ReflectionLoop { return this.reflectionLoop; }
 
   private async compactContext(): Promise<void> {
@@ -2703,23 +2544,25 @@ Only include specialists that are actually needed for this task.`;
   }
 
   /**
-   * Route a message to a specific crew member and return their response directly.
-   * Used for both explicit @mentions and auto-delegation.
+   * Route a message to specific crew members and return their response(s).
+   * Used for explicit @mentions (one or more crews) and auto-delegation.
    */
-  private async routeToCrew(member: CrewMember, cleanContent: string, startTime: number, _classificationContext?: string): Promise<Message> {
+  private async routeToCrews(members: CrewMember[], cleanContent: string, startTime: number, _classificationContext?: string): Promise<Message> {
     this.emit({ type: 'loading_start', stage: 'crew_routing' });
-    const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'You are a capable AI assistant.';
+    const crewPrompt = this.secretSauce.crew.getMultiCrewSystemPrompt() || 'Available crew members: none configured.';
 
     // Build concise session context so the crew knows what's happening
     const sessionContext = this.buildAgenticContext();
-    const result = await this.crewOrchestrator!.processMessage(cleanContent, crewPrompt, [member], sessionContext || undefined);
+    const result = await this.crewOrchestrator!.processMessage(cleanContent, crewPrompt, members, sessionContext || undefined);
 
-    this.emit({
-      type: 'intent_detected',
-      intent: `crew:${member.crew.callsign}`,
-      confidence: 1,
-      reasons: [`Explicitly mentioned @${member.crew.callsign}`],
-    });
+    for (const m of members) {
+      this.emit({
+        type: 'intent_detected',
+        intent: `crew:${m.crew.callsign}`,
+        confidence: 1,
+        reasons: [`Explicitly mentioned @${m.crew.callsign}`],
+      });
+    }
 
     // Emit each crew response as a separate message bubble (natural, no popups)
     let lastMessage: Message | null = null;
@@ -2727,7 +2570,8 @@ Only include specialists that are actually needed for this task.`;
       const responder = this.crewOrchestrator!.getMembers().find(
         (m) => m.crew.name === r.member,
       );
-      const crewMember = responder ?? member;
+      const crewMember = responder ?? members[0]!;
+      if (!crewMember) continue;
       const msg: Message = {
         id: generateMessageId(),
         sessionId: this.sessionId,
@@ -2746,7 +2590,7 @@ Only include specialists that are actually needed for this task.`;
           reasons: [`Explicitly mentioned @${crewMember.crew.callsign}`],
         },
       };
-      this.messages.push({ role: 'assistant', content: r.content });
+      this.messages.push({ role: 'assistant', content: `[Response from ${crewMember.crew.name} (@${crewMember.crew.callsign})]:\n${r.content}` });
       this.contextTracker.record('crew', r.content, r.member);
       this.emit({ type: 'message_received', message: msg, elapsed: Date.now() - startTime });
       lastMessage = msg;
@@ -2804,7 +2648,7 @@ Only include specialists that are actually needed for this task.`;
     this.maxSubAgents = Math.max(1, Math.min(20, limit));
   }
 
-  setSessionManager(sm: { createSession: (providerId: string, modelId: string, crewId: string | undefined, scopePath: string | undefined, id: string | undefined, parentId: string | undefined) => { id: string } }): void {
+  setSessionManager(sm: { createSession: (providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string) => { id: string } }): void {
     this.sessionManager = sm;
   }
 
@@ -2813,22 +2657,26 @@ Only include specialists that are actually needed for this task.`;
     this.sessionManager.createSession(
       this.config.provider.activeProvider,
       this.config.provider.activeModel,
-      undefined,
       this.scopePath,
       childId,
       this.sessionId,
     );
   }
 
-  private detectAtMention(content: string): string | null {
-    const match = content.match(/@(\w+)/);
-    if (!match) return null;
-    const mentioned = match[1]!.toLowerCase();
+  private detectAtMentions(content: string): string[] {
+    const matches = content.matchAll(/@(\w+)/g);
+    const mentioned: string[] = [];
     const members = this.getCrewMembers();
-    const found = members.find(
-      (m) => m.crew.callsign.toLowerCase() === mentioned || m.crew.name.toLowerCase() === mentioned || m.crew.id.toLowerCase() === mentioned
-    );
-    return found?.crew.id ?? null;
+    for (const match of matches) {
+      const name = match[1]!.toLowerCase();
+      const found = members.find(
+        (m) => m.crew.callsign.toLowerCase() === name || m.crew.name.toLowerCase() === name || m.crew.id.toLowerCase() === name
+      );
+      if (found && !mentioned.includes(found.crew.id)) {
+        mentioned.push(found.crew.id);
+      }
+    }
+    return mentioned;
   }
 
   /**

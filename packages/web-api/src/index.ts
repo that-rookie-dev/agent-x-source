@@ -195,6 +195,59 @@ app.put('/api/config', (req, res) => {
   }
 });
 
+// ───── Agent Persona ─────
+app.get('/api/agent/persona', (_req, res) => {
+  const eng = getEngine();
+  try {
+    const store = (eng.sessionManager as any).store;
+    if (store && typeof store.getPersona === 'function') {
+      const persona = store.getPersona();
+      res.json(persona ?? {});
+    } else {
+      res.json({});
+    }
+  } catch {
+    res.json({});
+  }
+});
+
+app.put('/api/agent/persona', (req, res) => {
+  const eng = getEngine();
+  try {
+    const store = (eng.sessionManager as any).store;
+    if (store && typeof store.setPersona === 'function') {
+      store.setPersona({
+        name: req.body.name ?? 'Agent-X',
+        description: req.body.description ?? '',
+        communicationStyle: req.body.communicationStyle ?? 'direct',
+        decisionMaking: req.body.decisionMaking ?? 'balanced',
+        domainContext: req.body.domainContext ?? 'general',
+        traits: req.body.traits ?? [],
+      });
+    }
+    // If there's a running agent, update its persona in-memory
+    if (eng.agent) {
+      const personaData = {
+        name: req.body.name ?? 'Agent-X',
+        description: req.body.description ?? '',
+        communicationStyle: req.body.communicationStyle ?? 'direct',
+        decisionMaking: req.body.decisionMaking ?? 'balanced',
+        domainContext: req.body.domainContext ?? 'general',
+        traits: req.body.traits ?? [],
+      };
+      (eng.agent as any).persona = personaData;
+      // Re-seed identity manager so evolution overlay is in sync
+      try { (eng.agent as any).secretSauce?.identity?.seedFromPersona(personaData); } catch {}
+      // Force a system prompt rebuild on next turn
+      (eng.agent as any).lastContextEpoch = -1;
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    getLogger().error('PUT_API_AGENT_PERSONA', err instanceof Error ? err : String(err));
+    res.status(500).json({ ok: false, error: 'Failed to save persona.' });
+  }
+});
+
 // ───── Providers ─────
 const AVAILABLE_PROVIDERS = [
   { id: 'openai', name: 'OpenAI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.openai.com/v1' },
@@ -443,8 +496,9 @@ app.post('/api/model/switch', (req, res) => {
     } else {
       config.provider.activeModel = modelId;
       eng.configManager.save(config);
-      const agent = eng.agent ?? getOrCreateAgent();
-      agent.switchModel(modelId, contextWindow);
+      if (eng.agent) {
+        eng.agent.switchModel(modelId, contextWindow);
+      }
     }
 
     res.json({ ok: true, model: modelId, provider: providerId ?? config.provider.activeProvider });
@@ -456,9 +510,24 @@ app.post('/api/model/switch', (req, res) => {
 app.post('/api/model/trial', async (req, res) => {
   try {
     const { modelId } = req.body as { modelId: string };
-    const agent = getOrCreateAgent();
-    const ok = await agent.trialModel(modelId);
-    res.json({ ok, model: modelId });
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+    const providerCfg = cfg.provider.providers?.[cfg.provider.activeProvider];
+    const provider = ProviderFactory.create(
+      cfg.provider.activeProvider,
+      providerCfg?.apiKey,
+      providerCfg?.baseUrl,
+    );
+    const request = {
+      model: modelId,
+      messages: [{ role: 'user' as const, content: 'hi' }],
+      maxTokens: 1,
+      temperature: 0,
+    };
+    for await (const _chunk of provider.complete(request)) {
+      break;
+    }
+    res.json({ ok: true, model: modelId });
   } catch (e: unknown) {
     getLogger().error('POST_API_MODEL_TRIAL', e instanceof Error ? e : String(e));    res.status(400).json({ ok: false, error: e instanceof Error ? e.message : 'trial-failed' });
   }
@@ -1249,8 +1318,19 @@ app.get('/api/sessions/db-status', (_req, res) => {
 });
 
 // ───── Settings DB ─────
-function buildDbStatus(eng: ReturnType<typeof getEngine>): Record<string, unknown> {
+function formatSize(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  let s = bytes;
+  while (s >= 1024 && i < units.length - 1) { s /= 1024; i++; }
+  return `${s.toFixed(1)} ${units[i]}`;
+}
+
+async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<string, unknown>> {
   const store = (eng.sessionManager as any)?.store;
+  const storeIsPg = store && typeof store.isConnected === 'function' && !store.getDb;
+  const pgConnected = store && typeof store.isConnected === 'function' && store.isConnected();
+  const usingPg = storeIsPg || (store && typeof store.isConnected === 'function' && store.isConnected());
   const db = store?.getDb?.() ?? null;
   let dbSizeBytes = 0;
   let walSizeBytes = 0;
@@ -1259,7 +1339,35 @@ function buildDbStatus(eng: ReturnType<typeof getEngine>): Record<string, unknow
   let healthStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
   const checks: Array<{ table: string; rows: number; ok: boolean }> = [];
 
-  if (db) {
+  if (usingPg) {
+    try {
+      const pgPool: any = (store as any).pool;
+      if (pgPool && typeof pgPool.query === 'function') {
+        const tabRows = await pgPool.query(
+          "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+        );
+        tableCount = tabRows.rows.length;
+        for (const r of tabRows.rows) {
+          try {
+            const cnt = await pgPool.query(`SELECT COUNT(*)::int as cnt FROM "${r.tablename}"`);
+            tables[r.tablename] = cnt.rows[0].cnt;
+            checks.push({ table: r.tablename, rows: cnt.rows[0].cnt, ok: true });
+          } catch {
+            tables[r.tablename] = -1;
+            checks.push({ table: r.tablename, rows: -1, ok: false });
+            healthStatus = 'degraded';
+          }
+        }
+        try {
+          const sizeRes = await pgPool.query("SELECT pg_database_size(current_database()) as size");
+          dbSizeBytes = sizeRes.rows[0].size;
+        } catch { /* db size not available */ }
+        if (tableCount > 0) healthStatus = 'healthy';
+      }
+    } catch {
+      healthStatus = 'unhealthy';
+    }
+  } else if (db) {
     try {
       dbSizeBytes = statSync(db.name).size;
     } catch { dbSizeBytes = 0; }
@@ -1314,16 +1422,24 @@ function buildDbStatus(eng: ReturnType<typeof getEngine>): Record<string, unknow
   const pgConfig = pgPlugin?.config ?? {};
   const pgActive = !!(pgPlugin?.enabled && pgConfig['connectionString']);
 
-  if (!pgActive && db) {
+  if (!pgActive && !usingPg && db) {
     healthStatus = 'healthy';
-  } else if (!pgActive) {
+  } else if (!pgActive && !usingPg && !db) {
     healthStatus = 'unhealthy';
   }
 
   return {
-    backend: pgActive ? 'postgres' : 'sqlite',
-    connected: pgActive ? true : !!db,
-    stats: {
+    backend: usingPg ? 'postgres' : 'sqlite',
+    connected: usingPg ? pgConnected : !!db,
+    stats: usingPg ? {
+      dbSizeBytes,
+      dbSizeFormatted: dbSizeBytes > 0
+        ? formatSize(dbSizeBytes)
+        : `${tableCount} tables`,
+      tableCount,
+      tables,
+      walSizeBytes: 0,
+    } : {
       dbSizeBytes,
       dbSizeFormatted: dirInfo(dataDir).sizeFormatted,
       tableCount,
@@ -1337,16 +1453,16 @@ function buildDbStatus(eng: ReturnType<typeof getEngine>): Record<string, unknow
       cache: dirInfo(cacheDir),
     },
     postgres: {
-      configured: pgActive,
+      configured: pgActive || usingPg,
       connectionString: pgConfig['connectionString'] || '',
     },
   };
 }
 
-app.get('/api/settings/db', (req, res) => {
+app.get('/api/settings/db', async (req, res) => {
   try {
     const eng = getEngine();
-    res.json(buildDbStatus(eng));
+    res.json(await buildDbStatus(eng));
   } catch (e: unknown) {
     getLogger().error('GET_API_SETTINGS_DB', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'settings-db-failed' });
@@ -1440,10 +1556,10 @@ app.post('/api/settings/db/migrate', async (req, res) => {
   }
 });
 
-app.get('/api/settings/db/health', (req, res) => {
+app.get('/api/settings/db/health', async (req, res) => {
   try {
     const eng = getEngine();
-    const status = buildDbStatus(eng);
+    const status = await buildDbStatus(eng);
     res.json(status.health);
   } catch (e: unknown) {
     getLogger().error('GET_API_SETTINGS_DB_HEALTH', e instanceof Error ? e : String(e));
@@ -1637,7 +1753,6 @@ app.post('/api/sessions', (req, res) => {
     const session = eng.sessionManager.createSession(
       cfg.provider.activeProvider as any,
       cfg.provider.activeModel,
-      undefined,
       resolve(body.scopePath),
     );
     // Ensure new sessions start in Plan mode
@@ -2201,7 +2316,6 @@ app.post('/api/discord/start', async (req, res) => {
       const userSession = eng.sessionManager.createSession(
         userProvider,
         userCfg.provider.activeModel,
-        undefined,
         process.cwd(),
       );
       return new Agent({
@@ -2268,7 +2382,6 @@ app.post('/api/slack/start', async (req, res) => {
       const session = eng.sessionManager.createSession(
         cfg.provider.activeProvider,
         cfg.provider.activeModel,
-        undefined,
         process.cwd(),
       );
       return new Agent({
@@ -2684,7 +2797,6 @@ app.post('/api/scheduler/parse-cron', async (req, res) => {
   }
   try {
     const eng = getEngine();
-    getOrCreateAgent();
     const prompt = `Convert the following natural language schedule to a standard 5-field cron expression (minute hour day-of-month month day-of-week).
 
 Examples:

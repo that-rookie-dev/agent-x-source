@@ -140,34 +140,6 @@ export class ConfigManager {
       if (!this.config.timezone) {
         this.config.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       }
-      // Migrate legacy single-key provider credentials into profiles
-      try {
-        let migrated = false;
-        const providers = this.config.provider?.providers ?? {};
-        for (const creds of Object.values(providers)) {
-          // If the provider doesn't have an explicit profiles map, but has apiKey/baseUrl,
-          // convert into a default profile for multi-profile support.
-          // Note: keep top-level apiKey/baseUrl for backwards compatibility.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const c = creds as any;
-          if ((c.profiles === undefined || c.profiles === null) && (c.apiKey || c.baseUrl)) {
-            const profileId = 'default';
-            const profile: ProviderProfile = {
-              label: 'Default',
-              apiKey: c.apiKey,
-              baseUrl: c.baseUrl,
-              createdAt: new Date().toISOString(),
-            };
-            c.profiles = { [profileId]: profile };
-            c.activeProfile = profileId;
-            migrated = true;
-          }
-        }
-        if (migrated) {
-          // persist migration
-          this.save(this.config);
-        }
-      } catch { /* non-critical migration failure */ }
       return this.config;
     } catch (err) {
       // Config corrupted — try backup

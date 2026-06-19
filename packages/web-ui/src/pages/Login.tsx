@@ -3,13 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
-import { auth, setAuthToken } from '../api';
+import { auth, setAuthToken, config } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { colors } from '../theme';
 
 export function Login() {
-  const { setAuthenticated } = useApp();
+  const { setAuthenticated, setAuthState } = useApp();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -79,8 +79,16 @@ export function Login() {
     try {
       const res = await auth.login(username, password);
       setAuthToken(res.token);
-      setAuthenticated(true, res.username);
-      navigate('/');
+
+      // Check if setup wizard was completed before redirecting
+      const setupStatus = await config.getSetupStatus();
+      if (!setupStatus.setupComplete) {
+        setAuthState('needs-setup');
+        navigate('/setup/wizard');
+      } else {
+        setAuthenticated(true, res.username);
+        navigate('/');
+      }
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Authentication failed');
     } finally {

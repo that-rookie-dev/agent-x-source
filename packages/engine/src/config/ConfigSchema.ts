@@ -39,6 +39,15 @@ export const userConfigSchema = z.object({
   callsign: z.string().min(1).max(30),
 }).optional();
 
+export const agentPersonaConfigSchema = z.object({
+  name: z.string().default('Agent-X'),
+  description: z.string().default('A proactive, autonomous AI assistant'),
+  communicationStyle: z.enum(['formal', 'casual', 'direct', 'empathetic']).default('direct'),
+  decisionMaking: z.enum(['conservative', 'balanced', 'aggressive']).default('balanced'),
+  domainContext: z.string().default('general'),
+  traits: z.array(z.string()).default([]),
+}).optional();
+
 export const ragConfigSchema = z.object({
   enabled: z.boolean().default(false),
   embeddingModel: z.string().default('text-embedding-3-small'),

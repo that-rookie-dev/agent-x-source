@@ -402,7 +402,26 @@ export function connectSSE(
   };
 }
 
+// ─── Persona API ───
+export const personaApi = {
+  get: () => request<AgentPersonaConfig | Record<string, never>>('/agent/persona'),
+  save: (data: AgentPersonaConfig) =>
+    request<{ ok: boolean }>('/agent/persona', { method: 'PUT', body: JSON.stringify(data) }),
+};
+
 // ─── Types ───
+export type CommunicationStyle = 'formal' | 'casual' | 'direct' | 'empathetic';
+export type DecisionMakingStyle = 'conservative' | 'balanced' | 'aggressive';
+
+export interface AgentPersonaConfig {
+  name: string;
+  description: string;
+  communicationStyle: CommunicationStyle;
+  decisionMaking: DecisionMakingStyle;
+  domainContext: string;
+  traits: string[];
+}
+
 export interface AgentXConfig {
   provider: { activeProvider: string; activeModel: string; providers: Record<string, ProviderSettings> };
   ui: { theme: string; showTokenBar: boolean; showTimers: boolean; animationSpeed: string; disabledTools?: string[] };
@@ -454,6 +473,7 @@ export interface Crew {
   title?: string;
   callsign: string;
   systemPrompt: string;
+  description?: string;
   tone?: string;
   isDefault?: boolean;
   enabled?: boolean;
@@ -468,6 +488,7 @@ export interface CrewInput {
   title?: string;
   callsign: string;
   systemPrompt: string;
+  description?: string;
   tone?: string;
   expertise?: string[];
   traits?: string[];

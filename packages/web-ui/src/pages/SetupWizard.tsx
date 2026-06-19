@@ -26,13 +26,14 @@ import HomeIcon from '@mui/icons-material/Home';
 import BuildIcon from '@mui/icons-material/Build';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
-import { providers as provApi, models as modelsApi, config, settings } from '../api';
+import { providers as provApi, models as modelsApi, config, settings, personaApi } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { colors } from '../theme';
-import type { ProviderInfo, ModelInfo } from '../api';
+import { PersonaConfigPanel } from '../components/settings/PersonaConfigPanel';
+import type { ProviderInfo, ModelInfo, AgentPersonaConfig } from '../api';
 
-const STEPS = ['Storage', 'Provider', 'Profile', 'Model', 'Callsign', 'Complete'];
+const STEPS = ['Storage', 'Provider', 'Profile', 'Model', 'Callsign', 'Persona', 'Complete'];
 const STORAGE_KEY = 'agentx_wizard_progress';
 
 interface WizardProgress {
@@ -41,6 +42,7 @@ interface WizardProgress {
   selectedModel: string;
   callsign: string;
   selectedBackend: string;
+  persona?: AgentPersonaConfig;
 }
 
 function saveProgress(data: WizardProgress) {
@@ -73,6 +75,7 @@ export function SetupWizard() {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
   const [callsign, setCallsign] = useState('');
+  const [persona, setPersona] = useState<AgentPersonaConfig>({ name: 'JARVIS', description: 'A sophisticated AI assistant that combines British precision with unwavering loyalty. Expert in data analysis, system management, and predictive modeling. Communicates with refined eloquence while maintaining strict operational efficiency.', communicationStyle: 'formal', decisionMaking: 'balanced', domainContext: 'Intelligent system management, data analysis, predictive modeling, and personal assistance with a focus on precision, security, and real-time situational awareness.', traits: ['Loyal', 'Precise', 'Analytical', 'Proactive', 'Witty', 'Calm under pressure'] });
   const [profileName, setProfileName] = useState('');
   const [showCustomConfig, setShowCustomConfig] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -119,6 +122,7 @@ export function SetupWizard() {
       setSelectedModel(saved.selectedModel);
       setCallsign(saved.callsign || '');
       if (saved.selectedBackend) setSelectedBackend(saved.selectedBackend as 'sqlite' | 'postgres');
+      if (saved.persona) setPersona(saved.persona);
       if (saved.selectedProvider) {
         setModelsLoading(true);
         provApi.models(saved.selectedProvider).then(m => { setAvailableModels(m); setModelsLoading(false); }).catch(() => setModelsLoading(false));
@@ -135,8 +139,8 @@ export function SetupWizard() {
   }, []);
 
   const persistProgress = useCallback(() => {
-    if (step >= 1) saveProgress({ step, selectedProvider, selectedModel, callsign, selectedBackend });
-  }, [step, selectedProvider, selectedModel, callsign, selectedBackend]);
+    if (step >= 1) saveProgress({ step, selectedProvider, selectedModel, callsign, selectedBackend, persona });
+  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, persona]);
   useEffect(() => { persistProgress(); }, [persistProgress]);
 
   const next = () => { clearError(); setStep(s => s + 1); };
@@ -206,6 +210,7 @@ export function SetupWizard() {
         const connStr = buildPgConnStr();
         if (connStr) { try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {} }
       }
+      try { await personaApi.save(persona); } catch {}
       const r = await config.update({ setupComplete: true, user: { callsign } });
       if (!r.ok) { showError('Failed to save setup.'); setLoading(false); return; }
       const cfg = await config.get(); setConfig(cfg); setAuthState('authenticated'); clearProgress(); navigate('/');
@@ -413,7 +418,7 @@ export function SetupWizard() {
             </Box>
           )}
 
-          {/* ─── Step 1-5: Provider, API Key, Model, Callsign, Complete ── */}
+          {/* ─── Step 1-6: Provider, API Key, Model, Callsign, Persona, Complete ── */}
           {step >= 1 && (
             <Box>
               {step === 1 && (
@@ -534,6 +539,14 @@ export function SetupWizard() {
               )}
 
               {step === 5 && (
+                <Box>
+                  <Typography variant="h6" sx={{ mb: 0.5, textAlign: 'center' }}>Agent Persona</Typography>
+                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2, textAlign: 'center' }}>Define how Agent-X presents itself — identity, communication style, and traits.</Typography>
+                  <PersonaConfigPanel value={persona} onChange={p => { if (p) setPersona(p); }} />
+                </Box>
+              )}
+
+              {step === 6 && (
                 <Box sx={{ textAlign: 'center' }}>
                   <CheckCircleIcon sx={{ fontSize: 64, color: colors.accent.green, mb: 2 }} />
                   <Typography variant="h5" sx={{ mb: 1 }}>Setup Complete!</Typography>
@@ -543,6 +556,7 @@ export function SetupWizard() {
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Provider: {selectedProvider}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Model: {selectedModel}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Callsign: {callsign || '(not set)'}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Persona: {persona.name || '(none)'}</Typography>
                   </Box>
                 </Box>
               )}
@@ -554,11 +568,12 @@ export function SetupWizard() {
 
       {/* Bottom Nav */}
       <Box sx={{ flexShrink: 0, borderTop: `1px solid ${colors.border.default}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
-        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 5 ? 'center' : 'space-between' }}>
+        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 6 ? 'center' : 'space-between' }}>
           {step === 1 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 2 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 3 && <Button onClick={handleBackToCredentials} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 4 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 5 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 0 && !showRelayConfig && (
             <Button variant="contained" onClick={handleStorageNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>
               {selectedBackend === 'postgres' ? 'Configure Relay →' : 'Next →'}
@@ -574,7 +589,11 @@ export function SetupWizard() {
           {step === 2 && <Button variant="contained" onClick={handleProfileNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>{loading ? 'Validating...' : 'Validate & Next'}</Button>}
           {step === 3 && <Button variant="contained" onClick={handleModelNext} disabled={!selectedModel} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
           {step === 4 && <Button variant="contained" onClick={handleCallsignNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>{callsign.trim() ? 'Next' : 'Skip & Next'}</Button>}
-          {step === 5 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
+          {step === 5 && <Button variant="contained" onClick={() => {
+            if (!persona.description.trim()) { showError('Persona description is required'); return; }
+            next();
+          }} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
+          {step === 6 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
         </Box>
       </Box>
 

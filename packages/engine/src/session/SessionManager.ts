@@ -46,13 +46,16 @@ export class SessionManager {
   private createSessionRecord(session: Session): void {
     if (this.usingStorageAdapter) {
       const adapter = this.store as StorageAdapter;
-      adapter.createSession({
+      (adapter as any).createSession({
+        id: session.id,
         title: session.title,
         status: session.status,
         providerId: session.providerId,
         modelId: session.modelId,
-        crewId: session.crewId,
         scopePath: session.scopePath,
+        mode: session.mode,
+        parentId: session.parentId,
+        hyperdrive: session.hyperdrive,
         tokenUsed: session.tokenUsed,
         tokenAvailable: session.tokenAvailable,
       });
@@ -63,7 +66,6 @@ export class SessionManager {
         status: session.status,
         provider: session.providerId,
         model: session.modelId,
-        crewId: session.crewId,
         parentId: session.parentId,
         scopePath: session.scopePath,
         tokensUsed: session.tokenUsed,
@@ -97,7 +99,7 @@ export class SessionManager {
     return this.getSessionStore().listSessions(limit) as unknown as Session[];
   }
 
-  createSession(providerId: string, modelId: string, crewId?: string, scopePath?: string, id?: string, parentId?: string): Session {
+  createSession(providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string): Session {
     const contextWindow = 128_000;
     const session: Session = {
       id: id ?? generateSessionId(),
@@ -106,7 +108,6 @@ export class SessionManager {
       parentId: parentId ?? null,
       providerId,
       modelId,
-      crewId: crewId ?? null,
       scopePath: scopePath!,
       mode: 'plan',
       tokenUsed: 0,
@@ -174,6 +175,18 @@ export class SessionManager {
 
   replayEvents(sessionId: string, sinceSequence?: number): Generator<SessionEvent, void, undefined> {
     if (this.usingStorageAdapter) {
+      const adapter = this.store as any;
+      if (typeof adapter.getSessionEvents === 'function') {
+        const events = adapter.getSessionEvents(sessionId, sinceSequence) as SessionEvent[];
+        let idx = 0;
+        return {
+          next: () => {
+            if (idx >= events.length) return { value: undefined, done: true };
+            return { value: events[idx++], done: false };
+          },
+          [Symbol.iterator]() { return this; },
+        } as Generator<SessionEvent, void, undefined>;
+      }
       return {
         next: () => ({ value: undefined, done: true }),
         [Symbol.iterator]() { return this; },
@@ -183,25 +196,49 @@ export class SessionManager {
   }
 
   getSessionEvents(sessionId: string, sinceSequence?: number): SessionEvent[] {
-    if (this.usingStorageAdapter) return [];
+    if (this.usingStorageAdapter) {
+      const adapter = this.store as any;
+      if (typeof adapter.getSessionEvents === 'function') {
+        return adapter.getSessionEvents(sessionId, sinceSequence) as SessionEvent[];
+      }
+      return [];
+    }
     return this.getSessionStore().getSessionEvents(sessionId, sinceSequence);
   }
 
   saveCrewState(crewId: string, enabled: boolean, messageCount?: number): void {
-    if (!this.activeSession || this.usingStorageAdapter) return;
+    if (!this.activeSession) return;
     
-    this.getSessionStore().saveCrewState({
+    const state = {
       id: generateId(),
       sessionId: this.activeSession.id,
       crewId,
       enabled,
       lastActive: new Date().toISOString(),
       messageCount: messageCount ?? 0,
-    });
+    };
+    
+    if (this.usingStorageAdapter) {
+      const adapter = this.store as any;
+      if (typeof adapter.saveCrewState === 'function') {
+        adapter.saveCrewState(state);
+      }
+      return;
+    }
+    
+    this.getSessionStore().saveCrewState(state);
   }
 
   getCrewStates(): Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }> {
-    if (!this.activeSession || this.usingStorageAdapter) return [];
+    if (!this.activeSession) return [];
+    
+    if (this.usingStorageAdapter) {
+      const adapter = this.store as any;
+      if (typeof adapter.loadCrewStates === 'function') {
+        return adapter.loadCrewStates(this.activeSession.id) as Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }>;
+      }
+      return [];
+    }
     
     const rows = this.getSessionStore().getCrewStates(this.activeSession.id);
     return rows.map((row) => ({
@@ -213,7 +250,13 @@ export class SessionManager {
   }
 
   loadCrewStates(sessionId: string): Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }> {
-    if (this.usingStorageAdapter) return [];
+    if (this.usingStorageAdapter) {
+      const adapter = this.store as any;
+      if (typeof adapter.loadCrewStates === 'function') {
+        return adapter.loadCrewStates(sessionId) as Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }>;
+      }
+      return [];
+    }
     const rows = this.getSessionStore().getCrewStates(sessionId);
     return rows.map((row) => ({
       crewId: row['crew_id'] as string,
@@ -224,7 +267,7 @@ export class SessionManager {
   }
 
   restoreCrewStates(): Array<{ crewId: string; enabled: boolean }> {
-    if (!this.activeSession || this.usingStorageAdapter) return [];
+    if (!this.activeSession) return [];
     return this.loadCrewStates(this.activeSession.id).map((s) => ({
       crewId: s.crewId,
       enabled: s.enabled,
@@ -260,7 +303,13 @@ export class SessionManager {
     success: boolean;
     elapsedMs: number;
   }): void {
-    if (this.usingStorageAdapter) return;
+    if (this.usingStorageAdapter) {
+      const adapter = this.store as any;
+      if (typeof adapter.addToolExecution === 'function') {
+        adapter.addToolExecution(exec);
+      }
+      return;
+    }
     this.getSessionStore().addToolExecution(exec);
   }
 

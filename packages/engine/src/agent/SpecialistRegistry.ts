@@ -69,7 +69,7 @@ export class SpecialistRegistry {
       specialty: 'coder',
       description: 'Writes, refactors, and fixes code',
       preferredTools: ['file_read', 'file_write', 'code_replace', 'code_search', 'code_definitions', 'shell_exec', 'git_add', 'git_commit'],
-      systemPrompt: 'You are a code specialist. Write clean, production-ready code. Follow existing patterns. Write complete implementations with no placeholders.',
+      systemPrompt: 'Write clean, production-ready code. Follow existing patterns. Write complete implementations with no placeholders.',
     });
 
     this.register({
@@ -78,7 +78,7 @@ export class SpecialistRegistry {
       specialty: 'reviewer',
       description: 'Reviews code for bugs, security, and style',
       preferredTools: ['file_read', 'code_search', 'code_definitions', 'code_lint', 'security_audit'],
-      systemPrompt: 'You are a code reviewer. Find bugs, security issues, style violations, and suggest improvements. Be thorough but concise.',
+      systemPrompt: 'Review code for bugs, security issues, style violations, and suggest improvements. Be thorough but concise.',
     });
 
     this.register({
@@ -87,7 +87,7 @@ export class SpecialistRegistry {
       specialty: 'tester',
       description: 'Writes and runs tests',
       preferredTools: ['file_read', 'file_write', 'code_search', 'test_run', 'test_create', 'test_coverage'],
-      systemPrompt: 'You are a test specialist. Write comprehensive tests covering edge cases. Verify test execution. Report coverage.',
+      systemPrompt: 'Write comprehensive tests covering edge cases. Verify test execution. Report coverage.',
     });
 
     this.register({
@@ -96,7 +96,7 @@ export class SpecialistRegistry {
       specialty: 'researcher',
       description: 'Searches web, code, and docs for information',
       preferredTools: ['web_search', 'web_scrape', 'code_search', 'file_read', 'folder_list'],
-      systemPrompt: 'You are a research specialist. Find information across web, code, and documents. Synthesize findings into clear summaries.',
+      systemPrompt: 'Find information across web, code, and documents. Synthesize findings into clear summaries.',
     });
 
     this.register({
@@ -105,7 +105,7 @@ export class SpecialistRegistry {
       specialty: 'devops',
       description: 'Manages containers, infrastructure, and deployments',
       preferredTools: ['shell_exec', 'container_list', 'container_run', 'docker_build', 'file_write', 'system_info'],
-      systemPrompt: 'You are a devops specialist. Manage containers, deployments, and infrastructure. Automate where possible.',
+      systemPrompt: 'Manage containers, deployments, and infrastructure. Automate where possible.',
     });
 
     this.register({
@@ -114,7 +114,7 @@ export class SpecialistRegistry {
       specialty: 'docs_writer',
       description: 'Writes and maintains documentation',
       preferredTools: ['file_read', 'file_write', 'code_definitions', 'doc_markdown', 'doc_html'],
-      systemPrompt: 'You are a documentation specialist. Write clear, concise docs. Include examples and API references where relevant.',
+      systemPrompt: 'Write clear, concise docs. Include examples and API references where relevant.',
     });
 
     this.register({
@@ -123,7 +123,7 @@ export class SpecialistRegistry {
       specialty: 'architect',
       description: 'Designs system architecture and technical decisions',
       preferredTools: ['file_write', 'code_search', 'doc_diagram', 'file_read', 'shell_exec'],
-      systemPrompt: 'You are a software architect. Design clean architectures, evaluate tradeoffs, and document decisions. Think at the system level.',
+      systemPrompt: 'Design clean architectures, evaluate tradeoffs, and document decisions. Think at the system level.',
     });
 
     this.register({
@@ -132,7 +132,7 @@ export class SpecialistRegistry {
       specialty: 'debugger',
       description: 'Finds and fixes bugs systematically',
       preferredTools: ['file_read', 'code_search', 'code_definitions', 'shell_exec', 'test_run', 'git_blame', 'git_log'],
-      systemPrompt: 'You are a debugger specialist. Systematically isolate bugs, find root causes, and apply fixes. Verify fixes with tests.',
+      systemPrompt: 'Systematically isolate bugs, find root causes, and apply fixes. Verify fixes with tests.',
     });
   }
 }

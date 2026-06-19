@@ -51,18 +51,20 @@ interface FormState {
   name: string;
   title: string;
   callsign: string;
+  description: string;
   systemPrompt: string;
   tone: string;
   expertise: string[];
   traits: string[];
 }
 
-const EMPTY_FORM: FormState = { name: '', title: '', callsign: '', systemPrompt: '', tone: 'professional', expertise: [], traits: [] };
+const EMPTY_FORM: FormState = { name: '', title: '', callsign: '', description: '', systemPrompt: '', tone: 'professional', expertise: [], traits: [] };
 
 interface PrebuiltCrew {
   name: string;
   title: string;
   callsign: string;
+  description?: string;
   systemPrompt: string;
   tone: string;
   expertise: string[];
@@ -396,7 +398,7 @@ export function CrewsPanel() {
   };
 
   const openEdit = (c: Crew) => {
-    setForm({ name: c.name, title: c.title ?? '', callsign: c.callsign, systemPrompt: c.systemPrompt, tone: c.tone ?? 'professional', expertise: c.expertise ?? [], traits: c.traits ?? [] });
+    setForm({ name: c.name, title: c.title ?? '', callsign: c.callsign, description: c.description ?? '', systemPrompt: c.systemPrompt, tone: c.tone ?? 'professional', expertise: c.expertise ?? [], traits: c.traits ?? [] });
     setIsEditing(true);
     setDialogOpen(true);
     setExpertiseInput('');
@@ -446,7 +448,7 @@ export function CrewsPanel() {
     setError('');
     try {
       const callsign = form.callsign.trim() || toCallsign(form.name);
-      const payload: CrewInput = { name: form.name.trim(), title: form.title.trim() || undefined, callsign, systemPrompt: form.systemPrompt.trim(), tone: form.tone, expertise: form.expertise, traits: form.traits };
+      const payload: CrewInput = { name: form.name.trim(), title: form.title.trim() || undefined, callsign, systemPrompt: form.systemPrompt.trim(), description: form.description.trim() || undefined, tone: form.tone, expertise: form.expertise, traits: form.traits };
       if (isEditing) {
         const existing = crews.find(c => c.id === detailCrew?.id);
         if (existing) await crewsApi.update(existing.id, payload);
@@ -471,7 +473,7 @@ export function CrewsPanel() {
   const handleImportCrew = async (crew: PrebuiltCrew) => {
     setImportLoading(crew.callsign);
     try {
-      await crewsApi.create({ name: crew.name, title: crew.title, callsign: crew.callsign, systemPrompt: crew.systemPrompt, tone: crew.tone, expertise: crew.expertise, traits: crew.traits });
+      await crewsApi.create({ name: crew.name, title: crew.title, callsign: crew.callsign, systemPrompt: crew.systemPrompt, description: crew.description || undefined, tone: crew.tone, expertise: crew.expertise, traits: crew.traits });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Import failed');
@@ -752,6 +754,17 @@ export function CrewsPanel() {
               fullWidth placeholder="e.g. backend_architect" />
             <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, mt: 0.5 }}>
               Auto-generated from name. Unique handle for <Typography component="span" sx={{ fontSize: '0.55rem', color: colors.accent.blue, fontFamily: "'JetBrains Mono', monospace" }}>@mentions</Typography> — no spaces.
+            </Typography>
+          </Box>
+
+          <Box>
+            <TextField size="small" label="Description" value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              fullWidth multiline rows={2}
+              placeholder="A short description of this crew member's character and purpose"
+              slotProps={{ input: { sx: { fontSize: '0.75rem', lineHeight: 1.5 } } }} />
+            <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, mt: 0.5 }}>
+              Optional. Concise identity summary for the crew member.
             </Typography>
           </Box>
 

@@ -9,8 +9,10 @@ export interface StorableSession extends RecordMeta {
   status: string;
   providerId: string;
   modelId: string;
-  crewId: string | null;
   scopePath: string;
+  mode?: string;
+  parentId?: string | null;
+  hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;
 }

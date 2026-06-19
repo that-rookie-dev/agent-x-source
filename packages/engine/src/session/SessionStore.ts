@@ -15,7 +15,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 13;
+const CURRENT_SCHEMA_VERSION = 14;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS _schema (
 CREATE TABLE IF NOT EXISTS sessions (
     id          TEXT PRIMARY KEY,
     title       TEXT NOT NULL DEFAULT 'New Session',
-    crew_id     TEXT,
     provider_id TEXT NOT NULL,
     model_id    TEXT NOT NULL,
     scope_path  TEXT NOT NULL,
@@ -198,6 +197,17 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 );
 
 CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON checkpoints(session_id);
+
+CREATE TABLE IF NOT EXISTS agent_persona (
+    id      TEXT PRIMARY KEY DEFAULT 'default',
+    name    TEXT NOT NULL DEFAULT 'Agent-X',
+    description TEXT NOT NULL DEFAULT 'A proactive, autonomous AI assistant',
+    communication_style TEXT NOT NULL DEFAULT 'direct',
+    decision_making     TEXT NOT NULL DEFAULT 'balanced',
+    domain_context      TEXT NOT NULL DEFAULT 'general',
+    traits  TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) => void }> = [
@@ -351,6 +361,24 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
       try { db.exec(`ALTER TABLE crews ADD COLUMN metadata TEXT`); } catch { /* column may already exist */ }
     },
   },
+  {
+    version: 14,
+    description: 'Add agent_persona table for user-defined Agent-X persona config',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS agent_persona (
+          id      TEXT PRIMARY KEY DEFAULT 'default',
+          name    TEXT NOT NULL DEFAULT 'Agent-X',
+          description TEXT NOT NULL DEFAULT 'A proactive, autonomous AI assistant',
+          communication_style TEXT NOT NULL DEFAULT 'direct',
+          decision_making     TEXT NOT NULL DEFAULT 'balanced',
+          domain_context      TEXT NOT NULL DEFAULT 'general',
+          traits  TEXT NOT NULL DEFAULT '[]',
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
 
 export class SessionStore {
@@ -367,6 +395,7 @@ export class SessionStore {
   private memPermissionRules: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCrewFeedback: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCheckpoints: Map<string, Array<Record<string, unknown>>> = new Map();
+  private memPersona: Record<string, unknown> | null = null;
   private sessionsDir: string | null = null;
   private filesystemRecovered = 0;
 
@@ -473,8 +502,8 @@ export class SessionStore {
           const now = new Date().toISOString();
 
           this.db.prepare(`
-            INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, token_used, token_available, scope_path, mode, created_at, updated_at)
-            VALUES (?, ?, 'active', '', '', NULL, 0, 128000, ?, 'plan', ?, ?)
+            INSERT INTO sessions (id, title, status, provider_id, model_id, token_used, token_available, scope_path, mode, created_at, updated_at)
+            VALUES (?, ?, 'active', '', '', 0, 128000, ?, 'plan', ?, ?)
           `).run(entry.name, title, scopePath, now, now);
 
           recovered++;
@@ -561,7 +590,6 @@ export class SessionStore {
             status: 'active',
             provider: '',
             model: '',
-            crewId: null,
             tokensUsed: 0,
             tokenAvailable: 128000,
             scopePath,
@@ -596,7 +624,6 @@ export class SessionStore {
     status: string;
     provider: string;
     model: string;
-    crewId?: string | null;
     parentId?: string | null;
     tokensUsed?: number;
     tokenAvailable?: number;
@@ -613,7 +640,6 @@ export class SessionStore {
         status: session.status,
         provider: session.provider,
         model: session.model,
-        crewId: session.crewId ?? null,
         parentId: session.parentId ?? null,
         tokensUsed: session.tokensUsed ?? 0,
         tokenAvailable: session.tokenAvailable ?? 128000,
@@ -627,8 +653,8 @@ export class SessionStore {
     }
 
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, title, status, provider_id, model_id, crew_id, parent_id, token_used, token_available, scope_path, mode, hyperdrive, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, status, provider_id, model_id, parent_id, token_used, token_available, scope_path, mode, hyperdrive, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       session.id,
@@ -636,7 +662,6 @@ export class SessionStore {
       session.status,
       session.provider,
       session.model,
-      session.crewId ?? null,
       session.parentId ?? null,
       session.tokensUsed ?? 0,
       session.tokenAvailable ?? 128000,
@@ -663,7 +688,6 @@ export class SessionStore {
       status: row['status'],
       provider: row['provider_id'],
       model: row['model_id'],
-      crewId: row['crew_id'],
       parentId: row['parent_id'] ?? null,
       tokensUsed: row['token_used'],
       scopePath: row['scope_path'],
@@ -694,7 +718,6 @@ export class SessionStore {
       status: 'status',
       provider: 'provider_id',
       model: 'model_id',
-      crewId: 'crew_id',
       mode: 'mode',
       hyperdrive: 'hyperdrive',
       tokensUsed: 'token_used',
@@ -736,7 +759,6 @@ export class SessionStore {
       status: row['status'],
       provider: row['provider_id'],
       model: row['model_id'],
-      crewId: row['crew_id'],
       parentId: row['parent_id'] ?? null,
       tokensUsed: row['token_used'],
       scopePath: row['scope_path'],
@@ -1325,6 +1347,47 @@ export class SessionStore {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   }
 
+  getPersona(): { name: string; description: string; communicationStyle: string; decisionMaking: string; domainContext: string; traits: string[] } | null {
+    if (this.memMode) {
+      return this.memPersona as any ?? null;
+    }
+    try {
+      const row = this.db!.prepare('SELECT * FROM agent_persona WHERE id = ?').get('default') as any;
+      if (!row) return null;
+      return {
+        name: row.name,
+        description: row.description,
+        communicationStyle: row.communication_style,
+        decisionMaking: row.decision_making,
+        domainContext: row.domain_context,
+        traits: JSON.parse(row.traits || '[]'),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  setPersona(persona: { name: string; description: string; communicationStyle: string; decisionMaking: string; domainContext: string; traits: string[] }): void {
+    if (this.memMode) {
+      this.memPersona = persona as any;
+      return;
+    }
+    try {
+      this.db!.prepare(`
+        INSERT INTO agent_persona (id, name, description, communication_style, decision_making, domain_context, traits, updated_at)
+        VALUES ('default', ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          description = excluded.description,
+          communication_style = excluded.communication_style,
+          decision_making = excluded.decision_making,
+          domain_context = excluded.domain_context,
+          traits = excluded.traits,
+          updated_at = datetime('now')
+      `).run(persona.name, persona.description, persona.communicationStyle, persona.decisionMaking, persona.domainContext, JSON.stringify(persona.traits));
+    } catch { /* table may not exist yet */ }
+  }
+
   clearAll(): void {
     if (this.memMode) {
       this.memSessions.clear();
@@ -1333,6 +1396,7 @@ export class SessionStore {
       this.memPermissions.clear();
       this.memPermissionRules.clear();
       this.memSessionEvents.clear();
+      this.memPersona = null;
       if (this.memCrewStates) this.memCrewStates.clear();
       return;
     }

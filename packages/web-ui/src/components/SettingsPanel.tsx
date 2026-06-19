@@ -6,16 +6,19 @@ import Button from '@mui/material/Button';
 import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
 import StorageIcon from '@mui/icons-material/Storage';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import { config, type AgentXConfig } from '../api';
+import { config, personaApi, type AgentXConfig, type AgentPersonaConfig } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import { PersistenceTab } from './settings/PersistenceTab';
+import { PersonaConfigPanel } from './settings/PersonaConfigPanel';
 
-type SettingsTab = 'general' | 'persistence';
+type SettingsTab = 'general' | 'persistence' | 'persona';
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'general', label: 'General', icon: <PersonIcon sx={{ fontSize: 16 }} /> },
+  { id: 'persona', label: 'Agent Persona', icon: <SmartToyIcon sx={{ fontSize: 16 }} /> },
   { id: 'persistence', label: 'Persistence', icon: <StorageIcon sx={{ fontSize: 16 }} /> },
 ];
 
@@ -38,17 +41,41 @@ export function SettingsPanel() {
   const { config: appConfig, setConfig } = useApp();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [cfg, setCfg] = useState<AgentXConfig | null>(appConfig);
+  const [persona, setPersona] = useState<AgentPersonaConfig | null>(null);
+  const [personaLoading, setPersonaLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
   useEffect(() => { config.get().then(setCfg).catch(() => {}); }, []);
 
+  useEffect(() => {
+    if (activeTab === 'persona' && !persona) {
+      setPersonaLoading(true);
+      personaApi.get().then((p) => {
+        if (p && 'name' in p) setPersona(p as AgentPersonaConfig);
+        setPersonaLoading(false);
+      }).catch(() => setPersonaLoading(false));
+    }
+  }, [activeTab, persona]);
+
   const handleSave = async () => {
     if (!cfg) return;
+    if (persona && !persona.description?.trim()) {
+      setMessage('description_required');
+      return;
+    }
     setSaving(true); setMessage('');
-    try { await config.update(cfg); setConfig(cfg); setMessage('saved'); setTimeout(() => setMessage(''), 2500); }
-    catch { setMessage('error'); }
-    finally { setSaving(false); }
+    try {
+      await config.update(cfg);
+      setConfig(cfg);
+      if (persona) await personaApi.save(persona);
+      setMessage('saved');
+      setTimeout(() => setMessage(''), 2500);
+    } catch {
+      setMessage('error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!cfg) {
@@ -97,6 +124,13 @@ export function SettingsPanel() {
             </Box>
           </Box>
         )}
+        {activeTab === 'persona' && (
+          personaLoading ? (
+            <Typography sx={{ fontSize: '0.75rem', color: colors.text.dim, p: 4 }}>Loading persona...</Typography>
+          ) : (
+            <PersonaConfigPanel value={persona} onChange={setPersona} />
+          )
+        )}
         {activeTab === 'persistence' && <PersistenceTab />}
       </Box>
 
@@ -109,6 +143,7 @@ export function SettingsPanel() {
           </Box>
         )}
         {message === 'error' && <Typography sx={{ fontSize: '0.75rem', color: colors.accent.red }}>Save failed — try again</Typography>}
+        {message === 'description_required' && <Typography sx={{ fontSize: '0.75rem', color: colors.accent.red }}>Persona description is required</Typography>}
         <Button variant="contained" onClick={handleSave} disabled={saving}
           sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, fontSize: '0.8rem', fontWeight: 600, textTransform: 'none', px: 3.5, py: 1, minWidth: 120,
             '&:hover': { bgcolor: colors.text.secondary } }}>

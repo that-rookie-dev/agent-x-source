@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DESKTOP_DIR="$ROOT_DIR/packages/desktop"
+
+echo "=== Clean Install: Agent-X ==="
+
+# 1. Kill running app
+echo ">>> Killing Agent-X if running..."
+pkill -9 -f "Agent-X" 2>/dev/null || true
+sleep 1
+
+# 2. Remove from /Applications
+echo ">>> Removing /Applications/Agent-X.app..."
+sudo rm -rf /Applications/Agent-X.app 2>/dev/null || true
+
+# 3. Clear cache only (preserve config, data, and databases)
+echo ">>> Clearing cache..."
+rm -rf "$HOME/.cache/agentx"
+rm -rf "$HOME/Library/Application Support/@agentx"
+
+# 4. Clean previous build artifacts
+echo ">>> Cleaning previous desktop build artifacts..."
+cd "$DESKTOP_DIR"
+rm -rf dist release
+
+# 5. Build dependencies
+echo ">>> Building shared, engine, web-api, and web-ui..."
+pnpm --filter @agentx/shared run build
+pnpm --filter @agentx/engine run build
+pnpm --filter @agentx/web-api run build
+pnpm --filter @agentx/web-ui run build
+
+# 6. Build desktop app (unpacked .app)
+echo ">>> Building desktop app..."
+npm run build
+pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api
+npx electron-builder --mac --dir
+
+# 7. Copy to /Applications
+echo ">>> Installing to /Applications (password prompt may appear)..."
+osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && cp -R '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/\" with administrator privileges"
+
+# 8. Launch
+echo ">>> Launching Agent-X..."
+open /Applications/Agent-X.app
+
+echo "=== Clean install done! ==="

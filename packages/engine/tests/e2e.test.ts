@@ -141,7 +141,7 @@ describe('DefaultStorageAdapter', () => {
   it('creates and retrieves a session', () => {
     const session = adapter.createSession({
       title: 'Test Session', status: 'active', providerId: 'openai',
-      modelId: 'gpt-4', crewId: null, scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
+      modelId: 'gpt-4', scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
     });
     expect(session.id).toBeDefined();
     const retrieved = adapter.getSession(session.id);
@@ -152,7 +152,7 @@ describe('DefaultStorageAdapter', () => {
   it('adds and retrieves messages', () => {
     const session = adapter.createSession({
       title: 'Msg Session', status: 'active', providerId: 'openai',
-      modelId: 'gpt-4', crewId: null, scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
+      modelId: 'gpt-4', scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
     });
     const msg = adapter.addMessage(session.id, {
       sessionId: session.id, role: 'user', content: 'Hello!', tokenCount: 5,
@@ -172,7 +172,7 @@ describe('DefaultStorageAdapter', () => {
   it('handles permissions', () => {
     const session = adapter.createSession({
       title: 'Perm Session', status: 'active', providerId: 'openai',
-      modelId: 'gpt-4', crewId: null, scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
+      modelId: 'gpt-4', scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
     });
     adapter.addPermission(session.id, { sessionId: session.id, toolName: 'file_read', targetPath: '/tmp', decision: 'allow' });
     const perms = adapter.getPermissions(session.id);
@@ -183,7 +183,7 @@ describe('DefaultStorageAdapter', () => {
   it('deletes messages', () => {
     const session = adapter.createSession({
       title: 'Del Session', status: 'active', providerId: 'openai',
-      modelId: 'gpt-4', crewId: null, scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
+      modelId: 'gpt-4', scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
     });
     adapter.addMessage(session.id, { sessionId: session.id, role: 'user', content: 'x', tokenCount: 1 });
     adapter.deleteMessages(session.id);
@@ -206,7 +206,7 @@ describe('PostgresStorageAdapter', () => {
 
     const session = adapter.createSession({
       title: 'PG Test', status: 'active', providerId: 'openai',
-      modelId: 'gpt-4', crewId: null, scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
+      modelId: 'gpt-4', scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
     });
     expect(session.id).toBeDefined();
     expect(adapter.getSession(session.id)).not.toBeNull();
@@ -381,7 +381,7 @@ describe('Cross-module integration', () => {
     const adapter = new DefaultStorageAdapter(store);
     const session = adapter.createSession({
       title: 'Integration Test', status: 'active', providerId: 'openai',
-      modelId: 'gpt-4', crewId: null, scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
+      modelId: 'gpt-4', scopePath: '/', tokenUsed: 0, tokenAvailable: 128000,
     });
     expect(session.id).toBeDefined();
     expect(adapter.getSession(session.id)).not.toBeNull();
