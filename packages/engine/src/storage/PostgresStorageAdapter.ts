@@ -200,11 +200,21 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   addTokenLog(sessionId: string, log: Omit<StorableTokenLog, 'id' | 'createdAt'>): void {
-    this.write('INSERT INTO token_logs (id,session_id,provider_id,model_id,input_tokens,output_tokens) VALUES ($1,$2,$3,$4,$5,$6)', [generateId(), sessionId, 'unknown', log.model, log.inputTokens, log.outputTokens]);
+    this.write('INSERT INTO token_logs (id,session_id,provider_id,model_id,input_tokens,output_tokens) VALUES ($1,$2,$3,$4,$5,$6)', [generateId(), sessionId, (log as any).providerId || 'unknown', log.model, log.inputTokens, log.outputTokens]);
   }
 
   getTokenLogs(_sessionId: string): StorableTokenLog[] {
-    return [];
+    return [];  // PG adapter is async; use getTokenLogsAsync
+  }
+
+  async getTokenLogsAsync(sessionId: string): Promise<StorableTokenLog[]> {
+    try {
+      const result = await this.pool.query(
+        `SELECT id,session_id as "sessionId",provider_id,model_id as "model",input_tokens as "inputTokens",output_tokens as "outputTokens",created_at as "createdAt"
+         FROM token_logs WHERE session_id = $1 ORDER BY created_at ASC`, [sessionId]
+      );
+      return result.rows as StorableTokenLog[];
+    } catch { return []; }
   }
 
   addPermission(sessionId: string, perm: Omit<StorablePermission, 'id' | 'createdAt'>): void {
@@ -212,7 +222,17 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   getPermissions(_sessionId: string): StorablePermission[] {
-    return [];
+    return [];  // PG adapter is async; use getPermissionsAsync
+  }
+
+  async getPermissionsAsync(sessionId: string): Promise<StorablePermission[]> {
+    try {
+      const result = await this.pool.query(
+        `SELECT id,session_id as "sessionId",tool_name as "toolName",target_path as "targetPath",decision,created_at as "createdAt"
+         FROM permissions WHERE session_id = $1 ORDER BY created_at ASC`, [sessionId]
+      );
+      return result.rows as StorablePermission[];
+    } catch { return []; }
   }
 
   clearAll(): void {

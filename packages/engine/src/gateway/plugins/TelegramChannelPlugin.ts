@@ -429,7 +429,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       }
 
       case 'focus':
-        return `🎯 Current focus is on *Telegram*. Use TUI or Web-UI to switch focus.`;
+        return `🎯 Current focus is on *Telegram*. Use Web-UI or Desktop to switch focus.`;
 
       case 'timezone':
       case 'tz': {

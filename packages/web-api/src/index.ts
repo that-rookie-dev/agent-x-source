@@ -6,10 +6,10 @@ import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent } from './engine.js';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals } from './engine.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
@@ -57,6 +57,9 @@ function atomicWriteFileSync(filePath: string, content: string): void {
 
 const app: Express = express();
 app.use(express.json({ limit: '50mb' }));
+
+// Hook the shared logger into the in-memory LogCollector so /api/logs shows everything
+initLogCollector();
 
 const upload = multer({
   dest: UPLOADS_DIR,
@@ -154,7 +157,7 @@ app.get('/api/setup/status', (_req, res) => {
       reason: complete ? undefined : 'Config exists but is encrypted. Login with the same credentials used during initial setup (TUI or Web-UI) to unlock.',
     });
   } catch (err) {
-    res.status(500).json({
+    getLogger().error('GET_API_SETUP_STATUS', err instanceof Error ? err : String(err));    res.status(500).json({
       setupComplete: false,
       configured: false,
       reason: `Config read error: ${err instanceof Error ? err.message : String(err)}`,
@@ -166,8 +169,8 @@ app.get('/api/config', (_req, res) => {
   const eng = getEngine();
   try {
     res.json(eng.configManager.load());
-  } catch {
-    res.status(400).json({ error: 'Agent-X is not configured. Configure a provider and model first.' });
+  } catch (e) {
+    getLogger().error('GET_API_CONFIG', e instanceof Error ? e : String(e));    res.status(400).json({ error: 'Agent-X is not configured. Configure a provider and model first.' });
   }
 });
 
@@ -184,7 +187,7 @@ app.put('/api/config', (req, res) => {
       eng.configManager.save(req.body);
       res.json({ ok: true });
     } catch (saveErr) {
-      res.status(500).json({
+      getLogger().error('PUT_API_CONFIG', err instanceof Error ? err : String(err));      res.status(500).json({
         ok: false,
         error: 'Failed to save config. Auth and config DEK may be out of sync. Re-create root user or ensure auth.json is shared between host and container.',
       });
@@ -209,7 +212,7 @@ const AVAILABLE_PROVIDERS = [
   { id: 'cohere', name: 'Cohere', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.cohere.com/compatibility/v1' },
   { id: 'commandcode', name: 'CommandCode', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.commandcode.ai/provider/v1' },
   { id: 'opencode', name: 'OpenCode Go', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://opencode.ai/zen/go/v1' },
-  { id: 'opencode-zen', name: 'OpenCode Zen (Free Models)', type: 'cloud', requiresApiKey: false, defaultBaseUrl: 'https://opencode.ai/zen/v1' },
+  { id: 'opencode-zen', name: 'OpenCode Zen', type: 'cloud', requiresApiKey: false, defaultBaseUrl: 'https://opencode.ai/zen/v1' },
   { id: 'ollama', name: 'Ollama', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:11434' },
   { id: 'lmstudio', name: 'LM Studio', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:1234/v1' },
 ];
@@ -229,7 +232,7 @@ app.post('/api/provider/validate', async (req, res) => {
       res.status(400).json({ valid: false, error: 'provider-unreachable' });
     }
   } catch (e: unknown) {
-    res.status(400).json({ valid: false, error: e instanceof Error ? e.message : 'unknown-error' });
+    getLogger().error('POST_API_PROVIDER_VALIDATE', e instanceof Error ? e : String(e));    res.status(400).json({ valid: false, error: e instanceof Error ? e.message : 'unknown-error' });
   }
 });
 
@@ -259,7 +262,7 @@ app.get('/api/provider/models', async (req, res) => {
     const models = await prov.listModels();
     res.json(models);
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'failed-to-list-models' });
+    getLogger().error('GET_API_PROVIDER_MODELS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'failed-to-list-models' });
   }
 });
 
@@ -308,7 +311,7 @@ app.post('/api/provider/configure', (req, res) => {
 
     res.json({ ok: true, provider, profileId });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
+    getLogger().error('POST_API_PROVIDER_CONFIGURE', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
   }
 });
 
@@ -359,7 +362,7 @@ app.post('/api/provider/profile', (req, res) => {
     }
     res.json({ ok: true, provider, profileId });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'profile-add-failed' });
+    getLogger().error('POST_API_PROVIDER_PROFILE', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'profile-add-failed' });
   }
 });
 
@@ -386,7 +389,7 @@ app.post('/api/provider/profile/switch', (req, res) => {
     if (sess) createAgent(undefined, sess);
     res.json({ ok: true, provider: targetProvider, profileId });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
+    getLogger().error('POST_API_PROVIDER_PROFILE_SWITCH', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
   }
 });
 
@@ -399,7 +402,7 @@ app.post('/api/provider/profile/rename', (req, res) => {
     eng.configManager.renameProviderProfile(provider, profileId, label);
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'rename-failed' });
+    getLogger().error('POST_API_PROVIDER_PROFILE_RENAME', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'rename-failed' });
   }
 });
 
@@ -416,7 +419,7 @@ app.post('/api/provider/switch', (req, res) => {
     destroyAgent();
     res.json({ ok: true, provider, model: '' });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
+    getLogger().error('POST_API_PROVIDER_SWITCH', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
   }
 });
 
@@ -446,7 +449,7 @@ app.post('/api/model/switch', (req, res) => {
 
     res.json({ ok: true, model: modelId, provider: providerId ?? config.provider.activeProvider });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
+    getLogger().error('POST_API_MODEL_SWITCH', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
   }
 });
 
@@ -457,7 +460,7 @@ app.post('/api/model/trial', async (req, res) => {
     const ok = await agent.trialModel(modelId);
     res.json({ ok, model: modelId });
   } catch (e: unknown) {
-    res.status(400).json({ ok: false, error: e instanceof Error ? e.message : 'trial-failed' });
+    getLogger().error('POST_API_MODEL_TRIAL', e instanceof Error ? e : String(e));    res.status(400).json({ ok: false, error: e instanceof Error ? e.message : 'trial-failed' });
   }
 });
 
@@ -472,7 +475,7 @@ app.get('/api/models', async (_req, res) => {
     const activeProfile = config.provider.providers[config.provider.activeProvider]?.activeProfile;
     res.json({ model: config.provider.activeModel, provider: config.provider.activeProvider, activeProfile, currentModel: config.provider.activeModel });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'failed' });
+    getLogger().error('GET_API_MODELS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'failed' });
   }
 });
 
@@ -507,7 +510,7 @@ app.post('/api/cwd', (req, res) => {
     if (agent && typeof agent.setScopePath === 'function') agent.setScopePath(resolved);
     res.json({ cwd: resolved });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'scope-update-failed' });
+    getLogger().error('POST_API_CWD', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'scope-update-failed' });
   }
 });
 
@@ -525,7 +528,7 @@ app.get('/api/filesystem/dirs', (req, res) => {
     const hasParent = absPath !== parent && absPath !== '/';
     res.json({ current: absPath, parent: hasParent ? parent : null, dirs });
   } catch {
-    res.status(500).json({ error: 'dir-read-failed' });
+    getLogger().error('GET_API_FILESYSTEM_DIRS', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'dir-read-failed' });
   }
 });
 
@@ -592,6 +595,17 @@ app.get('/api/agent/state', (_req, res) => {
   });
 });
 
+// ───── Agent Vitals (Age, Level, Wisdom, Mood, etc.) ─────
+app.get('/api/agent/vitals', (_req, res) => {
+  try {
+    const vitals = getVitals();
+    res.json(vitals);
+  } catch (e) {
+    getLogger().error('GET_API_AGENT_VITALS', e instanceof Error ? e : String(e));
+    res.status(500).json({ status: 'uninitialized', error: e instanceof Error ? e.message : 'vitals-error' });
+  }
+});
+
 // ───── Crews ─────
 app.get('/api/crews', (_req, res) => {
   const eng = getEngine();
@@ -624,7 +638,7 @@ app.post('/api/crew/toggle', (req, res) => {
     
     res.json({ ok: true, crewId, enabled });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'toggle-failed' });
+    getLogger().error('POST_API_CREW_TOGGLE', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'toggle-failed' });
   }
 });
 
@@ -653,7 +667,7 @@ app.post('/api/crews', (req, res) => {
     }
     res.json(crew);
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'create-failed' });
+    getLogger().error('POST_API_CREWS', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'create-failed' });
   }
 });
 
@@ -673,7 +687,7 @@ app.put('/api/crews/:id', (req, res) => {
     }
     res.json(crew);
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'update-failed' });
+    getLogger().error('PUT_API_CREWS_ID', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'update-failed' });
   }
 });
 
@@ -688,7 +702,7 @@ app.delete('/api/crews/:id', (req, res) => {
     }
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'delete-failed' });
+    getLogger().error('DELETE_API_CREWS_ID', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'delete-failed' });
   }
 });
 
@@ -724,7 +738,7 @@ app.post('/api/crew/:id/chat', async (req, res) => {
     const synthesized = result.synthesized ?? response;
     res.json({ ok: true, response: synthesized, responses: result.responses });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'crew-chat-failed' });
+    getLogger().error('POST_API_CREW_ID_CHAT', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'crew-chat-failed' });
   }
 });
 
@@ -759,7 +773,7 @@ app.post('/api/crew/:id/feedback', (req, res) => {
       res.status(500).json({ error: 'store-unavailable' });
     }
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'feedback-failed' });
+    getLogger().error('POST_API_CREW_ID_FEEDBACK', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'feedback-failed' });
   }
 });
 
@@ -919,7 +933,7 @@ app.post('/api/chat/cancel', (_req, res) => {
     agent.cancel();
     res.json({ ok: true });
   } catch {
-    res.status(500).json({ error: 'cancel-failed' });
+    getLogger().error('POST_API_CHAT_CANCEL', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'cancel-failed' });
   }
 });
 
@@ -942,7 +956,7 @@ app.post('/api/chat/queue', (req, res) => {
     messageQueue.push({ text, attachments });
     res.json({ ok: true, queueLength: messageQueue.length });
   } catch {
-    res.status(500).json({ error: 'queue-failed' });
+    getLogger().error('POST_API_CHAT_QUEUE', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'queue-failed' });
   }
 });
 
@@ -980,7 +994,7 @@ app.post('/api/chat/steer', async (req, res) => {
     }
     res.json({ ok: true, message });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'steer-failed' });
+    getLogger().error('POST_API_CHAT_STEER', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'steer-failed' });
   }
 });
 
@@ -1012,7 +1026,7 @@ app.post('/api/chat/stop-and-send', async (req, res) => {
     }
     res.json({ ok: true, message });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'stop-and-send-failed' });
+    getLogger().error('POST_API_CHAT_STOP_AND_SEND', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'stop-and-send-failed' });
   }
 });
 
@@ -1043,7 +1057,7 @@ app.post('/api/chat/clear', (_req, res) => {
     agent.clearHistory();
     res.json({ ok: true });
   } catch {
-    res.status(500).json({ error: 'clear-failed' });
+    getLogger().error('POST_API_CHAT_CLEAR', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
   }
 });
 
@@ -1112,7 +1126,7 @@ app.get('/api/logs', (req, res) => {
     const entries = collector.query({ level, code, search, limit, since });
     res.json({ count: collector.count, entries });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'logs-failed' });
+    getLogger().error('GET_API_LOGS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'logs-failed' });
   }
 });
 
@@ -1151,7 +1165,7 @@ app.delete('/api/logs', (_req, res) => {
     getLogCollector().clear();
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'clear-failed' });
+    getLogger().error('DELETE_API_LOGS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'clear-failed' });
   }
 });
 
@@ -1165,7 +1179,7 @@ app.post('/api/permission/respond', (req, res) => {
     agent.respondToPermission(requestId, choice);
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'respond-failed' });
+    getLogger().error('POST_API_PERMISSION_RESPOND', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'respond-failed' });
   }
 });
 
@@ -1178,7 +1192,7 @@ app.post('/api/permission/respond-batch', (req, res) => {
     agent.respondToPermissionBatch(choice);
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'respond-batch-failed' });
+    getLogger().error('POST_API_PERMISSION_RESPOND_BATCH', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'respond-batch-failed' });
   }
 });
 
@@ -1231,6 +1245,254 @@ app.get('/api/sessions/db-status', (_req, res) => {
     res.json(info);
   } catch {
     res.json({ dbMode: 'error', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 });
+  }
+});
+
+// ───── Settings DB ─────
+function buildDbStatus(eng: ReturnType<typeof getEngine>): Record<string, unknown> {
+  const store = (eng.sessionManager as any)?.store;
+  const db = store?.getDb?.() ?? null;
+  let dbSizeBytes = 0;
+  let walSizeBytes = 0;
+  let tableCount = 0;
+  const tables: Record<string, number> = {};
+  let healthStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
+  const checks: Array<{ table: string; rows: number; ok: boolean }> = [];
+
+  if (db) {
+    try {
+      dbSizeBytes = statSync(db.name).size;
+    } catch { dbSizeBytes = 0; }
+    try {
+      const walPath = db.name + '-wal';
+      if (existsSync(walPath)) walSizeBytes = statSync(walPath).size;
+    } catch { walSizeBytes = 0; }
+    try {
+      const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_schema' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>;
+      tableCount = rows.length;
+      for (const r of rows) {
+        try {
+          const c = db.prepare(`SELECT COUNT(*) as cnt FROM "${r.name}"`).get() as { cnt: number };
+          tables[r.name] = c.cnt;
+          checks.push({ table: r.name, rows: c.cnt, ok: true });
+        } catch {
+          tables[r.name] = -1;
+          checks.push({ table: r.name, rows: -1, ok: false });
+          healthStatus = 'degraded';
+        }
+      }
+    } catch {
+      tableCount = 0;
+      healthStatus = 'unhealthy';
+    }
+  } else {
+    healthStatus = 'unhealthy';
+  }
+
+  const dataDir = getDataDir();
+  const configDir = getConfigDir();
+  const cacheDir = getCacheDir();
+
+  function dirInfo(dir: string): { path: string; sizeBytes: number; sizeFormatted: string } {
+    let sizeBytes = 0;
+    try {
+      if (existsSync(dir)) {
+        for (const f of readdirSync(dir, { withFileTypes: true })) {
+          const fp = join(dir, f.name);
+          try { if (f.isFile()) sizeBytes += statSync(fp).size; } catch { /* skip */ }
+        }
+      }
+    } catch { /* skip */ }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let s = sizeBytes;
+    while (s >= 1024 && i < units.length - 1) { s /= 1024; i++; }
+    return { path: dir, sizeBytes, sizeFormatted: `${s.toFixed(1)} ${units[i]}` };
+  }
+
+  const pgPlugin = eng.pluginRegistry.getPlugin('postgresql');
+  const pgConfig = pgPlugin?.config ?? {};
+  const pgActive = !!(pgPlugin?.enabled && pgConfig['connectionString']);
+
+  if (!pgActive && db) {
+    healthStatus = 'healthy';
+  } else if (!pgActive) {
+    healthStatus = 'unhealthy';
+  }
+
+  return {
+    backend: pgActive ? 'postgres' : 'sqlite',
+    connected: pgActive ? true : !!db,
+    stats: {
+      dbSizeBytes,
+      dbSizeFormatted: dirInfo(dataDir).sizeFormatted,
+      tableCount,
+      tables,
+      walSizeBytes,
+    },
+    health: { status: healthStatus, checks },
+    fileStorage: {
+      config: dirInfo(configDir),
+      data: dirInfo(dataDir),
+      cache: dirInfo(cacheDir),
+    },
+    postgres: {
+      configured: pgActive,
+      connectionString: pgConfig['connectionString'] || '',
+    },
+  };
+}
+
+app.get('/api/settings/db', (req, res) => {
+  try {
+    const eng = getEngine();
+    res.json(buildDbStatus(eng));
+  } catch (e: unknown) {
+    getLogger().error('GET_API_SETTINGS_DB', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'settings-db-failed' });
+  }
+});
+
+app.put('/api/settings/db', async (req, res) => {
+  try {
+    const { backend, postgres } = req.body || {};
+    getLogger().info('SETTINGS_DB_UPDATE', `Backend switch requested: ${backend}`);
+
+    if (backend === 'postgres' && postgres?.connectionString) {
+      const eng = getEngine();
+      const { getBuiltinPlugin, PostgresStorageAdapter } = await import('@agentx/engine');
+
+      if (!eng.pluginRegistry.isInstalled('postgresql')) {
+        const entry = getBuiltinPlugin('postgresql');
+        if (entry) eng.pluginRegistry.install(entry);
+      }
+      if (!eng.pluginRegistry.isEnabled('postgresql')) {
+        eng.pluginRegistry.enable('postgresql');
+      }
+      eng.pluginRegistry.updateConfig('postgresql', {
+        connectionString: postgres.connectionString,
+        autoMigrate: true,
+        poolSize: 5,
+      });
+
+      const adapter = new PostgresStorageAdapter({
+        connectionString: postgres.connectionString,
+        max: 1,
+      } as any);
+      await adapter.connect();
+      await adapter.disconnect();
+
+      clearEngine();
+    }
+
+    res.json({ ok: true, backend: backend || 'sqlite' });
+  } catch (e: unknown) {
+    getLogger().error('PUT_API_SETTINGS_DB', e instanceof Error ? e : String(e));
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-update-failed' });
+  }
+});
+
+app.post('/api/settings/db/test', async (req, res) => {
+  try {
+    const { connectionString } = req.body || {};
+    if (!connectionString) {
+      res.json({ ok: false, error: 'No connection string provided' });
+      return;
+    }
+    const { Pool } = await import('pg');
+    const pool = new Pool({ connectionString, max: 1 });
+    const client = await pool.connect();
+    const result = await client.query('SELECT version() as version');
+    const pgVersion = result.rows[0]?.['version'] as string;
+    client.release();
+    await pool.end();
+    getLogger().info('SETTINGS_DB_TEST', `PostgreSQL connection successful: ${pgVersion}`);
+    res.json({ ok: true, version: pgVersion || 'connected' });
+  } catch (e: unknown) {
+    getLogger().error('POST_API_SETTINGS_DB_TEST', e instanceof Error ? e : String(e));
+    res.status(400).json({ ok: false, error: e instanceof Error ? e.message : 'connection-failed' });
+  }
+});
+
+app.post('/api/settings/db/migrate', async (req, res) => {
+  try {
+    const eng = getEngine();
+    const pgPlugin = eng.pluginRegistry.getPlugin('postgresql');
+    const pgConfig = pgPlugin?.config ?? {};
+    if (pgPlugin?.enabled && pgConfig['connectionString']) {
+      const { PostgresStorageAdapter } = await import('@agentx/engine');
+      const adapter = new PostgresStorageAdapter({
+        connectionString: pgConfig['connectionString'] as string,
+        max: (pgConfig['poolSize'] as number) ?? 5,
+      } as any);
+      const started = Date.now();
+      await adapter.connect();
+      const durationMs = Date.now() - started;
+      await adapter.disconnect();
+      res.json({ ok: true, migrated: {}, durationMs });
+    } else {
+      getLogger().info('SETTINGS_DB_MIGRATE', 'Migration already up to date in SQLite mode');
+      res.json({ ok: true, migrated: {}, durationMs: 0 });
+    }
+  } catch (e: unknown) {
+    getLogger().error('POST_API_SETTINGS_DB_MIGRATE', e instanceof Error ? e : String(e));
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-migrate-failed' });
+  }
+});
+
+app.get('/api/settings/db/health', (req, res) => {
+  try {
+    const eng = getEngine();
+    const status = buildDbStatus(eng);
+    res.json(status.health);
+  } catch (e: unknown) {
+    getLogger().error('GET_API_SETTINGS_DB_HEALTH', e instanceof Error ? e : String(e));
+    res.status(500).json({ status: 'unhealthy', checks: [] });
+  }
+});
+
+app.post('/api/settings/db/clear', (req, res) => {
+  try {
+    const eng = getEngine();
+    const store = (eng.sessionManager as any)?.store;
+    if (store?.deleteMessages) {
+      const sessions = eng.sessionManager.listSessions(9999) as unknown as Array<{ id: string }>;
+      for (const s of sessions) {
+        if (s.id === '__channel__') continue;
+        try { store.deleteMessages(s.id); } catch { /* continue */ }
+      }
+    }
+    getLogger().info('SETTINGS_DB_CLEAR', 'All session data cleared');
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    getLogger().error('POST_API_SETTINGS_DB_CLEAR', e instanceof Error ? e : String(e));
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-clear-failed' });
+  }
+});
+
+app.post('/api/settings/db/clear-cache', (req, res) => {
+  try {
+    const cacheDir = getCacheDir();
+    let freed = 0;
+    if (existsSync(cacheDir)) {
+      for (const f of readdirSync(cacheDir)) {
+        const fp = join(cacheDir, f);
+        try {
+          const s = statSync(fp);
+          if (s.isFile()) { freed += s.size; rmSync(fp); }
+        } catch { /* skip */ }
+      }
+    }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let v = freed;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    const freedFormatted = `${v.toFixed(1)} ${units[i]}`;
+    getLogger().info('SETTINGS_DB_CLEAR_CACHE', `Cache cleared: ${freedFormatted}`);
+    res.json({ ok: true, freedFormatted });
+  } catch (e: unknown) {
+    getLogger().error('POST_API_SETTINGS_DB_CLEAR_CACHE', e instanceof Error ? e : String(e));
+    res.status(500).json({ ok: false, freedFormatted: '0 B', error: e instanceof Error ? e.message : 'settings-db-clear-cache-failed' });
   }
 });
 
@@ -1300,7 +1562,7 @@ app.get('/api/sessions/search', (req, res) => {
     results.sort((a, b) => b.matchCount - a.matchCount);
     res.json({ results: results.slice(0, 50) });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'search-failed' });
+    getLogger().error('GET_API_SESSIONS_SEARCH', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'search-failed' });
   }
 });
 
@@ -1312,7 +1574,7 @@ app.post('/api/config/reload', (_req, res) => {
     const config = eng.configManager.load();
     res.json({ ok: true, setupComplete: config.setupComplete });
   } catch (err) {
-    res.status(500).json({
+    getLogger().error('POST_API_CONFIG_RELOAD', err instanceof Error ? err : String(err));    res.status(500).json({
       ok: false,
       error: `Failed to reload config: ${err instanceof Error ? err.message : String(err)}`,
     });
@@ -1358,7 +1620,7 @@ app.get('/api/sessions/:id/export', (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.send(JSON.stringify(exportData, null, 2));
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'export-failed' });
+    getLogger().error('GET_API_SESSIONS_ID_EXPORT', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'export-failed' });
   }
 });
 
@@ -1384,7 +1646,7 @@ app.post('/api/sessions', (req, res) => {
     ensureSubscribed();
     res.json({ sessionId: session.id });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'create-failed' });
+    getLogger().error('POST_API_SESSIONS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'create-failed' });
   }
 });
 
@@ -1407,7 +1669,7 @@ app.delete('/api/sessions/:id', (req, res) => {
     }
     res.json({ ok: true });
   } catch {
-    res.status(500).json({ error: 'delete-failed' });
+    getLogger().error('DELETE_API_SESSIONS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'delete-failed' });
   }
 });
 
@@ -1451,7 +1713,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       if (store?.getParts) {
         parts = store.getParts(req.params['id']!) as Array<Record<string, unknown>>;
       }
-    } catch { /* fall through */ }
+    } catch (e) { getLogger().warn('RESTORE_MESSAGES', e instanceof Error ? e.message : String(e)); }
 
     // Merge parts into messages so the frontend gets chronological parts arrays
     for (const msg of messages) {
@@ -1507,7 +1769,7 @@ app.post('/api/sessions/:id/context/rebuild', (_req, res) => {
     const count = agent.rebuildContext();
     res.json({ ok: true, rebuilt: count });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'rebuild-failed' });
+    getLogger().error('POST_API_SESSIONS_ID_CONTEXT_REBUILD', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'rebuild-failed' });
   }
 });
 
@@ -1523,7 +1785,7 @@ app.get('/api/sessions/:id/context', (req, res) => {
     }
     res.json(result);
   } catch {
-    res.status(500).json({ error: 'context-read-failed' });
+    getLogger().error('GET_API_SESSIONS_ID_CONTEXT', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'context-read-failed' });
   }
 });
 
@@ -1539,7 +1801,7 @@ app.post('/api/sessions/:id/context/write', (req, res) => {
     }
     res.json({ ok: true });
   } catch {
-    res.status(500).json({ error: 'context-write-failed' });
+    getLogger().error('POST_API_SESSIONS_ID_CONTEXT_WRITE', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'context-write-failed' });
   }
 });
 
@@ -1595,7 +1857,7 @@ app.post('/api/sessions/:id/compact', async (req, res) => {
 
     res.json({ ok: true, summary });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'compact-failed' });
+    getLogger().error('POST_API_SESSIONS_ID_COMPACT', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'compact-failed' });
   }
 });
 
@@ -1610,7 +1872,7 @@ app.post('/api/sessions/:id/checkpoint', (req, res) => {
     if (!result) { res.status(400).json({ error: 'no-messages' }); return; }
     res.json({ checkpointId: result.id, label });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'checkpoint-failed' });
+    getLogger().error('POST_API_SESSIONS_ID_CHECKPOINT', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'checkpoint-failed' });
   }
 });
 
@@ -1622,7 +1884,7 @@ app.get('/api/sessions/:id/checkpoints', (req, res) => {
     const checkpoints = store.listCheckpoints(req.params['id']!);
     res.json({ checkpoints });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'list-failed' });
+    getLogger().error('GET_API_SESSIONS_ID_CHECKPOINTS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'list-failed' });
   }
 });
 
@@ -1635,7 +1897,7 @@ app.post('/api/sessions/:id/checkpoint/:checkpointId/restore', (req, res) => {
     if (!ok) { res.status(404).json({ error: 'checkpoint-not-found' }); return; }
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
+    getLogger().error('POST_API_SESSIONS_ID_CHECKPOINT_CHECKPOINTID_RESTO', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
   }
 });
 
@@ -1648,7 +1910,7 @@ app.delete('/api/sessions/:id/checkpoint/:checkpointId', (req, res) => {
     if (!ok) { res.status(404).json({ error: 'checkpoint-not-found' }); return; }
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'delete-failed' });
+    getLogger().error('DELETE_API_SESSIONS_ID_CHECKPOINT_CHECKPOINTID', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'delete-failed' });
   }
 });
 
@@ -1678,7 +1940,7 @@ app.post('/api/sessions/:id/compact', async (req, res) => {
 
     res.json({ ok: true, summary });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'compact-failed' });
+    getLogger().error('POST_API_SESSIONS_ID_COMPACT', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'compact-failed' });
   }
 });
 
@@ -1691,7 +1953,7 @@ app.get('/api/todos', (req, res) => {
     const todos = existsSync(todoPath) ? JSON.parse(readFileSync(todoPath, 'utf-8') || '[]') : [];
     res.json({ todos });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'list-failed' });
+    getLogger().error('GET_API_TODOS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'list-failed' });
   }
 });
 
@@ -1704,7 +1966,7 @@ app.post('/api/todos', (req, res) => {
     atomicWriteFileSync(todoPath, JSON.stringify(todos || [], null, 2));
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'save-failed' });
+    getLogger().error('POST_API_TODOS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'save-failed' });
   }
 });
 
@@ -1724,7 +1986,7 @@ app.put('/api/todos/:itemId', (req, res) => {
     atomicWriteFileSync(todoPath, JSON.stringify(todos, null, 2));
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'update-failed' });
+    getLogger().error('PUT_API_TODOS_ITEMID', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'update-failed' });
   }
 });
 
@@ -1769,7 +2031,7 @@ app.post('/api/telegram/start', async (req, res) => {
     }
     res.json({ ok: true, message: 'Token saved. Telegram plugin configured and enabled.' });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
+    getLogger().error('POST_API_TELEGRAM_START', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
   }
 });
 
@@ -1790,7 +2052,7 @@ app.post('/api/telegram/stop', (_req, res) => {
     }
     res.json({ ok: true, message: 'Telegram bot stopped. Config preserved for next launch.' });
   } catch {
-    res.status(500).json({ error: 'clear-failed' });
+    getLogger().error('POST_API_TELEGRAM_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
   }
 });
 
@@ -1850,7 +2112,7 @@ app.post('/api/webui-active', (req, res) => {
     writeFileSync(WEBUI_ACTIVE_PATH, JSON.stringify({ pid, timestamp: Date.now() }));
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    getLogger().error('POST_API_WEBUI_ACTIVE', err instanceof Error ? err : String(err));    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -1861,7 +2123,7 @@ app.delete('/api/webui-active', (_req, res) => {
     }
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    getLogger().error('DELETE_API_WEBUI_ACTIVE', err instanceof Error ? err : String(err));    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -1955,7 +2217,7 @@ app.post('/api/discord/start', async (req, res) => {
 
     res.json({ ok: true, message: 'Discord bot connected.', status: bridge.getStatus() });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
+    getLogger().error('POST_API_DISCORD_START', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
   }
 });
 
@@ -1973,7 +2235,7 @@ app.post('/api/discord/stop', (_req, res) => {
     store.clear();
     res.json({ ok: true });
   } catch {
-    res.status(500).json({ error: 'clear-failed' });
+    getLogger().error('POST_API_DISCORD_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
   }
 });
 
@@ -2022,7 +2284,7 @@ app.post('/api/slack/start', async (req, res) => {
     new SlackStore().save({ botToken, appToken });
     res.json({ ok: true, message: 'Slack bridge started.', status: bridge.getStatus() });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'start-failed' });
+    getLogger().error('POST_API_SLACK_START', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'start-failed' });
   }
 });
 
@@ -2036,7 +2298,7 @@ app.post('/api/slack/stop', (_req, res) => {
     new SlackStore().clear();
     res.json({ ok: true });
   } catch {
-    res.status(500).json({ error: 'stop-failed' });
+    getLogger().error('POST_API_SLACK_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'stop-failed' });
   }
 });
 
@@ -2111,7 +2373,7 @@ app.post('/api/email/start', async (req, res) => {
 
     res.json({ ok: true, message: 'Email bridge configured and started.' });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
+    getLogger().error('POST_API_EMAIL_START', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'save-failed' });
   }
 });
 
@@ -2127,7 +2389,7 @@ app.post('/api/email/stop', (_req, res) => {
     }
     res.json({ ok: true });
   } catch {
-    res.status(500).json({ error: 'clear-failed' });
+    getLogger().error('POST_API_EMAIL_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
   }
 });
 
@@ -2191,7 +2453,7 @@ app.post('/api/tools/bulk-toggle', (req, res) => {
     eng.configManager.save(cfg);
     res.json({ ok: true, toggled: targetIds.length, enabled });
   } catch {
-    res.status(500).json({ error: 'bulk-toggle-failed' });
+    getLogger().error('POST_API_TOOLS_BULK_TOGGLE', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'bulk-toggle-failed' });
   }
 });
 
@@ -2234,7 +2496,7 @@ app.put('/api/tools/:id', (req, res) => {
     eng.configManager.save(cfg);
     res.json({ id: tool.id, enabled });
   } catch {
-    res.status(500).json({ error: 'tool-update-failed' });
+    getLogger().error('PUT_API_TOOLS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'tool-update-failed' });
   }
 });
 
@@ -2267,7 +2529,7 @@ app.post('/api/rag/index', async (req, res) => {
     const docId = await eng.rag.indexDocument({ id, content, metadata });
     res.json({ docId });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'index-failed' });
+    getLogger().error('POST_API_RAG_INDEX', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'index-failed' });
   }
 });
 
@@ -2286,7 +2548,7 @@ app.post('/api/rag/search', async (req, res) => {
     const results = await eng.rag.search(query, topK);
     res.json({ results });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'search-failed' });
+    getLogger().error('POST_API_RAG_SEARCH', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'search-failed' });
   }
 });
 
@@ -2300,7 +2562,7 @@ app.delete('/api/rag/documents/:id', async (req, res) => {
     await eng.rag.deleteDocument(req.params['id']!);
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'delete-failed' });
+    getLogger().error('DELETE_API_RAG_DOCUMENTS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'delete-failed' });
   }
 });
 
@@ -2314,7 +2576,7 @@ app.post('/api/rag/clear', async (_req, res) => {
     await eng.rag.clearAll();
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'clear-failed' });
+    getLogger().error('POST_API_RAG_CLEAR', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'clear-failed' });
   }
 });
 
@@ -2370,7 +2632,7 @@ app.get('/api/files', (_req, res) => {
       .filter((f): f is NonNullable<typeof f> => f !== null);
     res.json({ files });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'list-files-failed' });
+    getLogger().error('GET_API_FILES', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'list-files-failed' });
   }
 });
 
@@ -2409,7 +2671,7 @@ app.delete('/api/files/:id', (req, res) => {
     if (existsSync(metaPath)) rmSync(metaPath);
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'delete-failed' });
+    getLogger().error('DELETE_API_FILES_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'delete-failed' });
   }
 });
 
@@ -2459,7 +2721,7 @@ Return ONLY the cron expression, nothing else.`;
       res.status(400).json({ error: 'Could not parse schedule', attempted: cronExpr });
     }
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'parse-failed' });
+    getLogger().error('POST_API_SCHEDULER_PARSE_CRON', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'parse-failed' });
   }
 });
 
@@ -2474,7 +2736,7 @@ app.get('/api/scheduler/jobs', (_req, res) => {
     const jobs = eng.agent.cron.getJobs();
     res.json({ jobs });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'list-jobs-failed' });
+    getLogger().error('GET_API_SCHEDULER_JOBS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'list-jobs-failed' });
   }
 });
 
@@ -2493,7 +2755,7 @@ app.post('/api/scheduler/jobs', (req, res) => {
     const job = eng.agent.cron.addJob(name, cron, instruction);
     res.json({ job });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'add-job-failed' });
+    getLogger().error('POST_API_SCHEDULER_JOBS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'add-job-failed' });
   }
 });
 
@@ -2507,7 +2769,7 @@ app.delete('/api/scheduler/jobs/:id', (req, res) => {
     eng.agent.cron.removeJob(req.params['id']!);
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'remove-job-failed' });
+    getLogger().error('DELETE_API_SCHEDULER_JOBS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'remove-job-failed' });
   }
 });
 
@@ -2519,7 +2781,7 @@ app.post('/api/scheduler/jobs/:id/run', (req, res) => {
     if (!ok) { res.status(404).json({ error: 'job-not-found' }); return; }
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'run-job-failed' });
+    getLogger().error('POST_API_SCHEDULER_JOBS_ID_RUN', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'run-job-failed' });
   }
 });
 
@@ -2556,7 +2818,7 @@ app.get('/api/secret-sauce/:file', (req, res) => {
     const content = readFileSync(p, 'utf-8');
     res.json({ content, exists: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'read-failed' });
+    getLogger().error('GET_API_SECRET_SAUCE_FILE', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'read-failed' });
   }
 });
 
@@ -2571,7 +2833,7 @@ app.put('/api/secret-sauce/:file', (req, res) => {
     writeFileSync(p, content, 'utf-8');
     res.json({ ok: true, size: content.length });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'write-failed' });
+    getLogger().error('PUT_API_SECRET_SAUCE_FILE', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'write-failed' });
   }
 });
 
@@ -2606,7 +2868,7 @@ app.post('/api/orchestrator/plan', async (req, res) => {
 
     res.json({ plan: { id: plan.id, goal: plan.goal, steps: plan.steps, status: plan.status, createdAt: plan.createdAt } });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'create-plan-failed' });
+    getLogger().error('POST_API_ORCHESTRATOR_PLAN', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'create-plan-failed' });
   }
 });
 
@@ -2648,7 +2910,7 @@ app.post('/api/orchestrator/plan/:id/execute', async (req, res) => {
     const result = await orchestrator.execute(plan.id);
     res.json({ plan: result });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'execute-plan-failed' });
+    getLogger().error('POST_API_ORCHESTRATOR_PLAN_ID_EXECUTE', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'execute-plan-failed' });
   }
 });
 
@@ -2692,7 +2954,7 @@ app.post('/api/plugins/:id/install', async (req, res) => {
     const plugin = eng.pluginRegistry.install(entry);
     res.json({ plugin });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'install-failed' });
+    getLogger().error('POST_API_PLUGINS_ID_INSTALL', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'install-failed' });
   }
 });
 
@@ -2702,7 +2964,7 @@ app.post('/api/plugins/:id/uninstall', (req, res) => {
     eng.pluginRegistry.uninstall(req.params['id']!);
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'uninstall-failed' });
+    getLogger().error('POST_API_PLUGINS_ID_UNINSTALL', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'uninstall-failed' });
   }
 });
 
@@ -2712,7 +2974,7 @@ app.post('/api/plugins/:id/toggle', (req, res) => {
     const enabled = eng.pluginRegistry.toggle(req.params['id']!);
     res.json({ enabled });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'toggle-failed' });
+    getLogger().error('POST_API_PLUGINS_ID_TOGGLE', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'toggle-failed' });
   }
 });
 
@@ -2737,7 +2999,7 @@ app.put('/api/plugins/:id/config', (req, res) => {
     const plugin = eng.pluginRegistry.updateConfig(req.params['id']!, config);
     res.json({ plugin });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'config-failed' });
+    getLogger().error('PUT_API_PLUGINS_ID_CONFIG', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'config-failed' });
   }
 });
 
@@ -2761,7 +3023,7 @@ app.post('/api/plugins/postgresql/test-connection', async (req, res) => {
     await pool.end();
     res.json({ ok: true, version: pgVersion || 'connected' });
   } catch (e: unknown) {
-    res.status(400).json({ error: e instanceof Error ? e.message : 'connection-failed' });
+    getLogger().error('POST_API_PLUGINS_POSTGRESQL_TEST_CONNECTION', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'connection-failed' });
   }
 });
 
@@ -2825,7 +3087,7 @@ app.get('/api/mcp/servers', (_req, res) => {
     const servers = eng.mcpBridge.getServerStatus();
     res.json({ servers });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-list-failed' });
+    getLogger().error('GET_API_MCP_SERVERS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-list-failed' });
   }
 });
 
@@ -2851,7 +3113,7 @@ app.post('/api/mcp/servers', (req, res) => {
     });
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-add-failed' });
+    getLogger().error('POST_API_MCP_SERVERS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-add-failed' });
   }
 });
 
@@ -2863,7 +3125,7 @@ app.post('/api/mcp/servers/:id/restart', async (req, res) => {
     await eng.mcpBridge.load(manifest);
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-restart-failed' });
+    getLogger().error('POST_API_MCP_SERVERS_ID_RESTART', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-restart-failed' });
   }
 });
 
@@ -2878,7 +3140,7 @@ app.get('/api/mcp/servers/:id/status', (req, res) => {
     }
     res.json({ server });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-status-failed' });
+    getLogger().error('GET_API_MCP_SERVERS_ID_STATUS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-status-failed' });
   }
 });
 
@@ -2893,7 +3155,7 @@ app.get('/api/mcp/servers/:id/tools', (req, res) => {
     }
     res.json({ tools: server.toolCount });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-tools-failed' });
+    getLogger().error('GET_API_MCP_SERVERS_ID_TOOLS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-tools-failed' });
   }
 });
 
@@ -2903,7 +3165,7 @@ app.delete('/api/mcp/servers/:id', (req, res) => {
     eng.mcpBridge.unload(req.params.id).catch(() => {});
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-delete-failed' });
+    getLogger().error('DELETE_API_MCP_SERVERS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-delete-failed' });
   }
 });
 
@@ -2915,7 +3177,7 @@ app.delete('/api/sessions', (_req, res) => {
     store.clearAll();
     res.json({ ok: true });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'clear-failed' });
+    getLogger().error('DELETE_API_SESSIONS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'clear-failed' });
   }
 });
 
@@ -2970,7 +3232,7 @@ app.post('/api/reset', (_req, res) => {
 
     res.json({ ok: true, message: 'All data deleted. You will be redirected to setup.' });
   } catch (e: unknown) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'reset-failed' });
+    getLogger().error('POST_API_RESET', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'reset-failed' });
   }
 });
 
@@ -2992,7 +3254,7 @@ app.get('*', async (req, res, next) => {
       res.writeHead(upstreamRes.status, headers);
       res.end(buf);
     } catch {
-      res.status(502).json({ error: 'ui-proxy-failed' });
+      getLogger().error('GET_', e instanceof Error ? e : String(e));      res.status(502).json({ error: 'ui-proxy-failed' });
     }
     return;
   }

@@ -2,8 +2,8 @@ import { mkdirSync, readdirSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'module';
 import { getDbPath } from '../config/paths.js';
-import { encrypt, decrypt, getLogger } from '@agentx/shared';
-import type { EncryptedData, SessionEvent } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
+import type { SessionEvent, Crew, CrewCreateInput } from '@agentx/shared';
 
 // Try to load better-sqlite3, but don't crash if native bindings are missing.
 let BetterSqlite3: any = null;
@@ -15,7 +15,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 10;
+const CURRENT_SCHEMA_VERSION = 13;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
@@ -92,18 +92,19 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
 );
 
 CREATE TABLE IF NOT EXISTS crews (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL,
-    system_prompt TEXT NOT NULL,
-    expertise   TEXT,
-    traits      TEXT,
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL DEFAULT '',
+    description     TEXT NOT NULL DEFAULT '',
+    system_prompt   TEXT NOT NULL DEFAULT '',
+    expertise       TEXT,
+    traits          TEXT,
     tool_preferences TEXT,
-    enabled_tools TEXT,
-    disabled_tools TEXT,
-    is_default  INTEGER DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    enabled_tools   TEXT,
+    disabled_tools  TEXT,
+    is_default      INTEGER DEFAULT 0,
+    metadata        TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS session_crew_states (
@@ -233,7 +234,7 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
     version: 3,
     description: 'Add plan column to messages table for plan persistence',
     run: (db: any) => {
-      db.exec(`ALTER TABLE messages ADD COLUMN plan TEXT`);
+      try { db.exec(`ALTER TABLE messages ADD COLUMN plan TEXT`); } catch { /* column may already exist */ }
     },
   },
   {
@@ -309,7 +310,7 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
     version: 9,
     description: 'Add mode column to sessions table for plan/agent mode persistence',
     run: (db: any) => {
-      db.exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'plan'`);
+      try { db.exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'plan'`); } catch { /* column may already exist */ }
     },
   },
   {
@@ -343,6 +344,13 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
       `);
     },
   },
+  {
+    version: 13,
+    description: 'Add metadata column to crews table for flexible crew field storage',
+    run: (db: any) => {
+      try { db.exec(`ALTER TABLE crews ADD COLUMN metadata TEXT`); } catch { /* column may already exist */ }
+    },
+  },
 ];
 
 export class SessionStore {
@@ -359,7 +367,6 @@ export class SessionStore {
   private memPermissionRules: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCrewFeedback: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCheckpoints: Map<string, Array<Record<string, unknown>>> = new Map();
-  private dek: Buffer | null = null;
   private sessionsDir: string | null = null;
   private filesystemRecovered = 0;
 
@@ -387,68 +394,6 @@ export class SessionStore {
     if (this.memMode && this.sessionsDir) {
       this.loadFromFilesystem();
     }
-  }
-
-  /**
-   * Set the Data Encryption Key for encrypting/decrypting sensitive fields.
-   * When set, message content, tool I/O, and crew prompts are encrypted at rest.
-   * If the DEK is lost (auth.json tampered), all encrypted data becomes irrecoverable.
-   */
-  setDEK(dek: Buffer | null): void {
-    this.dek = dek;
-  }
-
-  /**
-   * Encrypt a string value if DEK is available.
-   * Returns a JSON-serialized EncryptedData envelope, or the plaintext if no DEK.
-   * Throws an error if DEK is unavailable (fail-loud instead of silent plaintext).
-   */
-  private encryptField(value: string): string {
-    if (!value) return value;
-    if (!this.dek) {
-      getLogger().warn('ENCRYPTION', 'DEK unavailable, storing field in plaintext');
-      return value;
-    }
-    const encrypted = encrypt(value, this.dek);
-    return JSON.stringify({ __enc: true, ...encrypted });
-  }
-
-  /**
-   * Decrypt a field value. Detects encrypted envelope vs plaintext automatically.
-   * This allows transparent migration: old plaintext data reads fine, new data is encrypted.
-   * Throws an error if encrypted data cannot be decrypted (instead of returning sentinel strings).
-   * @param value - The value to decrypt
-   * @param context - Optional context for AAD verification (must match encryption context)
-   */
-  private decryptField(value: string | null, context?: { sessionId?: string; messageId?: string; fieldName?: string }): string | null {
-    if (!value) return value;
-    // Check if it's an encrypted envelope
-    if (value.startsWith('{"__enc":true,')) {
-      if (!this.dek) {
-        throw new Error('Decryption failed: DEK unavailable for encrypted data');
-      }
-      try {
-        const envelope = JSON.parse(value) as { __enc: boolean } & EncryptedData;
-        const aad = context ? this.buildAAD(context) : undefined;
-        return decrypt(envelope, this.dek, aad);
-      } catch (err) {
-        throw new Error(`Decryption failed: ${err instanceof Error ? err.message : 'integrity check failed'}`);
-      }
-    }
-    // Plaintext (legacy data before encryption was enabled)
-    return value;
-  }
-
-  /**
-   * Build AAD (Additional Authenticated Data) buffer from context.
-   * This binds ciphertext to specific context to prevent swapping attacks.
-   */
-  private buildAAD(context: { sessionId?: string; messageId?: string; fieldName?: string }): Buffer {
-    const parts: string[] = [];
-    if (context.sessionId) parts.push(`session:${context.sessionId}`);
-    if (context.messageId) parts.push(`message:${context.messageId}`);
-    if (context.fieldName) parts.push(`field:${context.fieldName}`);
-    return Buffer.from(parts.join('|'), 'utf-8');
   }
 
   private initialize(): void {
@@ -811,18 +756,15 @@ export class SessionStore {
     toolCalls?: string;
     createdAt: string;
   }): void {
-    const encContent = this.encryptField(message.content);
-    const encToolCalls = message.toolCalls ? this.encryptField(message.toolCalls ?? '') : null;
-
     if (this.memMode) {
       const arr = this.memMessages.get(message.sessionId) ?? [];
       arr.push({
         id: message.id,
         session_id: message.sessionId,
         role: message.role,
-        content: encContent,
+        content: message.content,
         token_count: message.tokenCount ?? 0,
-        tool_calls: encToolCalls,
+        tool_calls: message.toolCalls ?? null,
         created_at: message.createdAt,
       });
       this.memMessages.set(message.sessionId, arr);
@@ -837,45 +779,22 @@ export class SessionStore {
       message.id,
       message.sessionId,
       message.role,
-      encContent,
+      message.content,
       message.tokenCount ?? 0,
-      encToolCalls,
+      message.toolCalls ?? null,
       message.createdAt,
     );
   }
 
   getMessages(sessionId: string): Array<Record<string, unknown>> {
     if (this.memMode) {
-      const msgs = (this.memMessages.get(sessionId) ?? []) as Array<Record<string, unknown>>;
-      return msgs.map((m) => ({
-        ...m,
-        content: this.decryptField(m.content as string | null, {
-          sessionId: sessionId,
-          messageId: m.id as string,
-          fieldName: 'content',
-        }),
-        tool_calls: this.decryptField(m.tool_calls as string | null, {
-          sessionId: sessionId,
-          messageId: m.id as string,
-          fieldName: 'toolCalls',
-        }),
-      }));
+      return (this.memMessages.get(sessionId) ?? []) as Array<Record<string, unknown>>;
     }
 
     const stmt = this.db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC');
     const rows = stmt.all(sessionId) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       ...row,
-      content: this.decryptField(row['content'] as string | null, {
-        sessionId: sessionId,
-        messageId: row['id'] as string,
-        fieldName: 'content',
-      }),
-      tool_calls: this.decryptField(row['tool_calls'] as string | null, {
-        sessionId: sessionId,
-        messageId: row['id'] as string,
-        fieldName: 'toolCalls',
-      }),
       metadata: row['metadata'] ? JSON.parse(row['metadata'] as string) : undefined,
     }));
   }
@@ -905,8 +824,8 @@ export class SessionStore {
         crypto.randomUUID(),
         msg.sessionId,
         msg.role,
-        this.encryptField(msg.content),
-        msg.toolCalls ? this.encryptField(JSON.stringify(msg.toolCalls)) : null,
+        msg.content,
+        msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
         msg.tokenCount ?? 0,
         msg.plan || null,
         msg.metadata ? JSON.stringify(msg.metadata) : null,
@@ -1184,9 +1103,6 @@ export class SessionStore {
       return;
     }
 
-    const encInput = this.encryptField(exec.input);
-    const encOutput = exec.output ? this.encryptField(exec.output ?? '') : null;
-
     const stmt = this.db.prepare(`
       INSERT INTO tool_executions (id, session_id, agent_task_id, tool_name, input, output, success, elapsed_ms)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -1196,8 +1112,8 @@ export class SessionStore {
       exec.sessionId,
       exec.agentTaskId ?? null,
       exec.toolName,
-      encInput,
-      encOutput,
+      exec.input,
+      exec.output ?? null,
       exec.success != null ? (exec.success ? 1 : 0) : null,
       exec.elapsedMs ?? null,
     );
@@ -1478,6 +1394,152 @@ export class SessionStore {
     for (const event of events) {
       yield event;
     }
+  }
+
+  // ─── Crew CRUD ──────────────────────────────────────────────────────
+
+  private crewFromRow(row: Record<string, unknown>): Crew {
+    const metadata = row['metadata'] ? JSON.parse(row['metadata'] as string) as Partial<Crew> : {};
+    return {
+      id: row['id'] as string,
+      name: row['name'] as string,
+      title: metadata.title,
+      callsign: metadata.callsign ?? (row['id'] as string),
+      systemPrompt: row['system_prompt'] as string ?? metadata.systemPrompt ?? '',
+      emotion: metadata.emotion,
+      isDefault: !!(row['is_default'] ?? metadata.isDefault),
+      enabled: metadata.enabled ?? true,
+      expertise: metadata.expertise ?? (row['expertise'] ? (row['expertise'] as string).split(',') : undefined),
+      traits: metadata.traits ?? (row['traits'] ? (row['traits'] as string).split(',') : undefined),
+      toolPreferences: metadata.toolPreferences,
+      tools: metadata.tools,
+      permissions: metadata.permissions,
+      model: metadata.model,
+      protocol: metadata.protocol,
+      quotas: metadata.quotas,
+      color: metadata.color,
+      icon: metadata.icon,
+      createdAt: row['created_at'] as string ?? metadata.createdAt ?? new Date().toISOString(),
+      updatedAt: row['updated_at'] as string ?? metadata.updatedAt ?? new Date().toISOString(),
+    };
+  }
+
+  listCrews(): Crew[] {
+    if (this.memMode) return [];
+    if (!this.db) return [];
+    try {
+      const rows = this.db.prepare('SELECT * FROM crews ORDER BY created_at ASC').all() as Array<Record<string, unknown>>;
+      return rows.map(row => this.crewFromRow(row));
+    } catch (e) {
+      getLogger().warn('STORE', `listCrews failed: ${e instanceof Error ? e.message : e}`);
+      return [];
+    }
+  }
+
+  getCrew(id: string): Crew | undefined {
+    if (this.memMode || !this.db) return undefined;
+    try {
+      const row = this.db.prepare('SELECT * FROM crews WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+      return row ? this.crewFromRow(row) : undefined;
+    } catch { return undefined; }
+  }
+
+  createCrew(input: CrewCreateInput): Crew {
+    const now = new Date().toISOString();
+    const crew: Crew = {
+      id: input.id,
+      name: input.name,
+      title: input.title,
+      callsign: input.callsign || input.name.replace(/\s+/g, '').toLowerCase(),
+      systemPrompt: input.systemPrompt ?? '',
+      emotion: input.emotion,
+      isDefault: input.isDefault ?? false,
+      enabled: input.enabled ?? true,
+      expertise: input.expertise,
+      traits: input.traits,
+      toolPreferences: input.toolPreferences,
+      tools: input.tools,
+      permissions: input.permissions,
+      model: input.model,
+      protocol: input.protocol,
+      quotas: input.quotas,
+      color: input.color,
+      icon: input.icon,
+      createdAt: now,
+      updatedAt: now,
+    };
+    if (this.memMode || !this.db) return crew;
+    try {
+      this.db.prepare(`
+        INSERT INTO crews (id, name, description, system_prompt, expertise, traits, tool_preferences, enabled_tools, disabled_tools, is_default, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        crew.id,
+        crew.name,
+        '',
+        crew.systemPrompt,
+        crew.expertise?.join(',') ?? null,
+        crew.traits?.join(',') ?? null,
+        crew.toolPreferences?.enabled?.join(',') ?? null,
+        crew.toolPreferences?.enabled?.join(',') ?? null,
+        crew.toolPreferences?.disabled?.join(',') ?? null,
+        crew.isDefault ? 1 : 0,
+        JSON.stringify(crew),
+        now,
+        now,
+      );
+    } catch (e) {
+      getLogger().warn('STORE', `createCrew failed: ${e instanceof Error ? e.message : e}`);
+    }
+    return crew;
+  }
+
+  updateCrew(id: string, updates: Partial<Crew>): Crew | null {
+    if (this.memMode || !this.db) return null;
+    try {
+      const existing = this.db.prepare('SELECT * FROM crews WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+      if (!existing) return null;
+      const crew = this.crewFromRow(existing);
+      Object.assign(crew, updates, { id: crew.id, createdAt: crew.createdAt });
+      crew.updatedAt = new Date().toISOString();
+      this.db.prepare(`
+        UPDATE crews SET name=?, description=?, system_prompt=?, expertise=?, traits=?, tool_preferences=?, enabled_tools=?, disabled_tools=?, is_default=?, metadata=?, updated_at=?
+        WHERE id=?
+      `).run(
+        crew.name,
+        '',
+        crew.systemPrompt,
+        crew.expertise?.join(',') ?? null,
+        crew.traits?.join(',') ?? null,
+        crew.toolPreferences?.enabled?.join(',') ?? null,
+        crew.toolPreferences?.enabled?.join(',') ?? null,
+        crew.toolPreferences?.disabled?.join(',') ?? null,
+        crew.isDefault ? 1 : 0,
+        JSON.stringify(crew),
+        crew.updatedAt,
+        id,
+      );
+      return crew;
+    } catch (e) {
+      getLogger().warn('STORE', `updateCrew failed: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+  }
+
+  deleteCrew(id: string): boolean {
+    if (this.memMode || !this.db) return false;
+    try {
+      const result = this.db.prepare('DELETE FROM crews WHERE id = ?').run(id);
+      return result.changes > 0;
+    } catch { return false; }
+  }
+
+  getDefaultCrew(): Crew | undefined {
+    if (this.memMode || !this.db) return undefined;
+    try {
+      const row = this.db.prepare('SELECT * FROM crews WHERE is_default = 1 LIMIT 1').get() as Record<string, unknown> | undefined;
+      return row ? this.crewFromRow(row) : undefined;
+    } catch { return undefined; }
   }
 
   close(): void {

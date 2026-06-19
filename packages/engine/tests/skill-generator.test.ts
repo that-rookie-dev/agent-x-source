@@ -1,8 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { SkillGenerator } from '../src/agent/SkillGenerator.js';
 
+function mockDb(): any {
+  return {
+    prepare: () => ({
+      all: () => [],
+      get: () => null,
+      run: () => ({ changes: 0 }),
+    }),
+  };
+}
+
 describe('SkillGenerator', () => {
-  const generator = new SkillGenerator();
+  const generator = new SkillGenerator(mockDb());
 
   it('detects novel skill patterns (2+ unique tool categories)', () => {
     const result = generator.shouldGenerateSkill('Build a React component with tests', [

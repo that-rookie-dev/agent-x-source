@@ -349,6 +349,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Hyperdrive — full autonomous mode
   const [hyperdriveMode, setHyperdriveMode] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const hyperdrivePromptShownRef = useRef(false);   // show disclaimer once per session
+  const lastShiftRef = useRef(0);                    // double-Shift detection
+  const prevModeBeforeHyperdrive = useRef<AgentMode>('agent'); // restore on exit
 
   // Hyperdrive shimmer — random interval flash sweep across the chip
   const [hyperdriveShimmer, setHyperdriveShimmer] = useState(false);
@@ -673,7 +676,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'stream_chunk': {
             const delta = (ev.content as string) ?? '';
             const fullContent = (ev.fullContent as string) ?? '';
-            if (last?.role === 'assistant' && last.streaming) {
+            if (last?.role === 'assistant') {
               const pending = streamChunkPendingRef.current;
               streamChunkPendingRef.current = {
                 delta: pending ? pending.delta + delta : delta,
@@ -687,15 +690,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   streamChunkPendingRef.current = null;
                   setMessages(p => {
                     const l = p[p.length - 1];
-                    if (l?.role !== 'assistant' || !l.streaming) return p;
+                    if (l?.role !== 'assistant') return p;
                     const parts = l.parts || [];
                     const lastPart = parts[parts.length - 1];
                     if (lastPart?.type === 'text') {
                       const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: (lastPart.content || '') + chunk.delta }];
-                      return updateLastMessage(p, { content: chunk.fullContent, parts: updatedParts });
+                      return updateLastMessage(p, { content: chunk.fullContent, parts: updatedParts, streaming: true });
                     }
                     const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: chunk.delta };
-                    return updateLastMessage(p, { content: chunk.fullContent, parts: [...parts, textPart] });
+                    return updateLastMessage(p, { content: chunk.fullContent, parts: [...parts, textPart], streaming: true });
                   });
                 });
               }
@@ -1247,31 +1250,52 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   }, []);
 
   // ─── Hyperdrive toggle ───
-  const handleHyperdriveToggle = useCallback(async () => {
-    if (!hyperdriveMode) {
-      setShowDisclaimer(true);
-    } else {
+  const engageHyperdrive = useCallback(async (skipDisclaimer = false) => {
+    if (hyperdriveMode) {
+      // Deactivate hyperdrive — restore previous mode
       try {
         const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
         const data = await res.json();
         setHyperdriveMode(false);
         if (data.mode) setAgentMode(data.mode);
-      } catch { /* ignore */ }
+      } catch {}
+      return;
     }
-  }, [hyperdriveMode]);
-
-  const confirmHyperdrive = useCallback(async () => {
-    setShowDisclaimer(false);
+    // Activate hyperdrive
+    if (!skipDisclaimer && !hyperdrivePromptShownRef.current) {
+      setShowDisclaimer(true);
+      return;
+    }
+    // Skip disclaimer — directly engage
+    hyperdrivePromptShownRef.current = true;
     try {
       const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
       const data = await res.json();
+      prevModeBeforeHyperdrive.current = agentMode;
       setHyperdriveMode(true);
       if (data.mode) setAgentMode(data.mode);
-    } catch { /* ignore */ }
-  }, []);
+    } catch {}
+  }, [hyperdriveMode, agentMode]);
+
+  const handleHyperdriveToggle = useCallback(() => {
+    engageHyperdrive();
+  }, [engageHyperdrive]);
+
+  const confirmHyperdrive = useCallback(async () => {
+    setShowDisclaimer(false);
+    hyperdrivePromptShownRef.current = true;
+    try {
+      const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
+      const data = await res.json();
+      prevModeBeforeHyperdrive.current = agentMode;
+      setHyperdriveMode(true);
+      if (data.mode) setAgentMode(data.mode);
+    } catch {}
+  }, [agentMode]);
 
   // Check hyperdrive mode on mount
   useEffect(() => {
+    hyperdrivePromptShownRef.current = false; // reset on session change
     fetch('/api/mode/hyperdrive', { credentials: 'include' })
       .then(r => r.json())
       .then(d => { if (d.hyperdriveMode) setHyperdriveMode(true); })
@@ -1299,10 +1323,23 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const handler = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (e.key === 'Tab') {
-        // Block Tab in hyperdrive mode
-        if (hyperdriveMode) return;
+        // Hyperdrive active → TAB deactivates it, restores previous mode
+        if (hyperdriveMode) {
+          e.preventDefault();
+          engageHyperdrive(); // toggles off (hyperdriveMode is true → deactivates)
+          return;
+        }
         e.preventDefault();
         handleToggleMode();
+      } else if (e.key === 'Shift') {
+        // Double-Shift → engage/disengage hyperdrive
+        const now = Date.now();
+        if (now - lastShiftRef.current < 500) {
+          lastShiftRef.current = 0;
+          engageHyperdrive(); // toggles: off→on (with/without disclaimer), on→off
+        } else {
+          lastShiftRef.current = now;
+        }
       } else if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen(o => !o);
@@ -1330,7 +1367,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentSessionId, streaming, messages, handleResend, view, handleToggleMode, hyperdriveMode]);
+  }, [currentSessionId, streaming, messages, handleResend, view, handleToggleMode, hyperdriveMode, engageHyperdrive]);
 
   // ─── Command palette actions ───
   const paletteActions: PaletteAction[] = useMemo(() => [

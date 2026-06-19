@@ -6,7 +6,7 @@
 
 // === INGRESS CONTRACTS ===
 
-export type ChannelKind = 'web' | 'tui' | 'api' | 'discord' | 'telegram';
+export type ChannelKind = 'web' | 'api' | 'discord' | 'telegram';
 
 export interface InternalUserTurn {
   turnId: string;

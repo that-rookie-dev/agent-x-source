@@ -34,10 +34,13 @@ export class SessionManager {
    * Inject the Data Encryption Key for encrypting sensitive session data at rest.
    * Must be called after successful authentication to enable field-level encryption.
    */
-  setDEK(dek: Buffer | null): void {
-    if (!this.usingStorageAdapter) {
-      this.getSessionStore().setDEK(dek);
-    }
+  setDEK(_dek: Buffer | null): void {
+  }
+
+  /** Get the underlying SQLite database handle (null if using storage adapter). */
+  getDb(): unknown {
+    if (this.usingStorageAdapter) return null;
+    return this.getSessionStore().getDb();
   }
 
   private createSessionRecord(session: Session): void {

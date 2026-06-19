@@ -164,7 +164,7 @@ export class Agent {
     }
     this.lastContextEpoch = null;
     this.rebuildSystemPrompt();
-    this.contextTracker.record(this.sessionId, 'assistant',
+    this.contextTracker.record('assistant',
       this._hyperdriveMode
         ? '[Hyperdrive ON — full autonomous acceleration, all permissions pre-granted]'
         : '[Hyperdrive OFF — standard permission checks restored]');
@@ -209,7 +209,7 @@ export class Agent {
   private agentBus: AgentBus;
   private specialistRegistry: SpecialistRegistry;
   private _skillGenerator: SkillGenerator | null = null;
-  private get skillGenerator(): SkillGenerator { if (!this._skillGenerator) this._skillGenerator = new SkillGenerator(); return this._skillGenerator; }
+  private get skillGenerator(): SkillGenerator { if (!this._skillGenerator) this._skillGenerator = new SkillGenerator(null as any); return this._skillGenerator; }
   private _skillRegistry: SkillRegistry | null = null;
   private get skillRegistry(): SkillRegistry {
     if (!this._skillRegistry) {
@@ -263,14 +263,14 @@ export class Agent {
     }
     return this._crewOrchestrator;
   }
-  private contextTracker = new ContextTracker();
+  private contextTracker!: ContextTracker;
   private compactionMarkerIndices: number[] = [];
   sessionLogger: SessionLogger | null = null;
   onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number; crewId?: string }) => void) | null = null;
   onSessionEvent: ((event: SessionEvent) => void) | null = null;
 
-  setContextPersistDir(dir: string, scopePath?: string): void {
-    this.contextTracker.setSessionDir(dir, scopePath);
+  setContextPersistDir(_dir: string, scopePath?: string): void {
+    if (scopePath) this.contextTracker.setScopePath(scopePath);
   }
   private maxSubAgents = 5;
   readonly serialLock: Mutex = new Mutex();
@@ -296,6 +296,7 @@ export class Agent {
     this.config = options.config;
     this.sessionId = options.sessionId;
     this.scopePath = normalize(resolve(options.scopePath!));
+    this.contextTracker = new ContextTracker(null as any, this.sessionId);
     this.eventBus = options.eventBus ?? new AgentEventBus();
     this._onPart = options.onPart;
     this.tokenTracker = new TokenTracker(this.getContextWindow());
@@ -855,12 +856,12 @@ export class Agent {
     if (enabled === this.planMode) return;
     if (enabled) {
       this.switchAgent('plan');
-      this.contextTracker.record(this.sessionId, 'assistant', '[Mode switched to Plan — read/analysis tools only, no writes or execution]');
+      this.contextTracker.record('assistant', '[Mode switched to Plan — read/analysis tools only, no writes or execution]');
       this.emit({ type: 'plan_mode_entered' });
     } else {
       this.currentPlan = null;
       this.switchAgent('build');
-      this.contextTracker.record(this.sessionId, 'assistant', '[Mode switched to Agent — full tool access and execution enabled]');
+      this.contextTracker.record('assistant', '[Mode switched to Agent — full tool access and execution enabled]');
       this.emit({ type: 'plan_mode_exited' });
     }
   }
@@ -1117,7 +1118,7 @@ Return ONLY valid JSON, no other text.`;
     }
 
     // Record in context tracker
-    this.contextTracker.record(this.sessionId, 'user', cleanContent);
+    this.contextTracker.record('user', cleanContent);
 
     const userMessage: Message = {
       id: generateMessageId(),
@@ -1404,7 +1405,7 @@ Return ONLY valid JSON, no other text.`;
       }
 
       // Record assistant response in context tracker
-      this.contextTracker.record(this.sessionId, 'assistant', assistantMessage.content);
+      this.contextTracker.record('assistant', assistantMessage.content);
 
       // Extract bulleted tasks from response and push to task panel
       this.extractTasksFromResponse(assistantMessage.content);
@@ -1588,7 +1589,7 @@ Return ONLY valid JSON, no other text.`;
     const costUsd = this.tokenTracker.totalCost - (this._turnStartCost ?? 0);
     this.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.getContextWindow(), turnTokens, costUsd, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, inputPrice: this.tokenTracker.inputPrice, outputPrice: this.tokenTracker.outputPrice } as unknown as EngineEvent);
     this.onTokenLog?.({ inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, costUsd });
-    this.contextTracker.record(this.sessionId, 'assistant', fullContent);
+    this.contextTracker.record('assistant', fullContent);
 
     // Note: isProcessing and scope are cleaned up by sendMessage's finally block
     return assistantMessage;
@@ -1914,10 +1915,10 @@ Return ONLY valid JSON, no other text.`;
     const prompt = `${sauceContext.full}\n\n${brevitySection}\n\n${toolAwareness}`;
 
     // Inject session context (recent tasks, decisions, delegations)
-    const contextSummary = this.contextTracker.getContextSummary(this.sessionId);
+    const contextSummary = this.contextTracker.getContextSummary();
 
     // Inject recent raw conversation history (last 50 messages / ~12K tokens)
-    const recentHistory = this.contextTracker.getRecentHistory(this.sessionId);
+    const recentHistory = this.contextTracker.getRecentHistory();
 
     // Inject user callsign
     const callsign = this.config.user?.callsign;
@@ -2120,7 +2121,7 @@ Return ONLY valid JSON, no other text.`;
    * Rebuild session context from conversation.json.
    */
   rebuildContext(): number {
-    return this.contextTracker.rebuildFromMessages(this.sessionId, this.messages as Array<{ role: string; content: string }>);
+    return this.contextTracker.rebuildFromMessages(this.messages as Array<{ role: string; content: string }>);
   }
 
   /**
@@ -2128,7 +2129,7 @@ Return ONLY valid JSON, no other text.`;
    */
   addToHistory(msg: { role: 'user' | 'assistant'; content: string }): void {
     this.messages.push({ role: msg.role, content: msg.content });
-    this.contextTracker.record(this.sessionId, msg.role, msg.content);
+    this.contextTracker.record(msg.role, msg.content);
   }
 
   clearHistory(): void {
@@ -2201,7 +2202,7 @@ Return ONLY valid JSON, no other text.`;
    */
   endSession(): void {
     try {
-      this.contextTracker.clear(this.sessionId);
+      this.contextTracker.clear();
       // Record interaction count
       this.secretSauce.identity.recordInteraction();
 
@@ -2746,7 +2747,7 @@ Only include specialists that are actually needed for this task.`;
         },
       };
       this.messages.push({ role: 'assistant', content: r.content });
-      this.contextTracker.record(this.sessionId, 'crew', r.content, r.member);
+      this.contextTracker.record('crew', r.content, r.member);
       this.emit({ type: 'message_received', message: msg, elapsed: Date.now() - startTime });
       lastMessage = msg;
     }

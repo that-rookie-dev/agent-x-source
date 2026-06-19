@@ -1,7 +1,7 @@
 import type { EngineEvent, TodoItem } from './types/events.js';
 
 /**
- * Unified AgentClient interface used by all UI surfaces (TUI, Web, VS Code).
+ * Unified AgentClient interface used by all UI surfaces (Desktop, Web).
  * Abstracts direct Agent, WebSocket+SSE, and postMessage-based communication
  * behind a single contract.
  */

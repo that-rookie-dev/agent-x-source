@@ -1,8 +1,6 @@
 import { execSync } from 'child_process';
-import { existsSync, writeFileSync, cpSync } from 'fs';
-import { join, dirname } from 'path';
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+import { existsSync, writeFileSync } from 'fs';
+import { join } from 'path';
 
 export default async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
@@ -16,24 +14,6 @@ export default async function afterPack(context) {
   if (existsSync(webApiDir)) {
     writeFileSync(join(webApiDir, 'package.json'), JSON.stringify({ type: 'module' }), 'utf-8');
     console.log('afterPack: created web-api/package.json (type: module)');
-  }
-
-  // Copy better-sqlite3's runtime dependencies into the app bundle.
-  // pnpm hoists these to the root node_modules, and electron-builder only
-  // copies the explicitly listed extraResources — not transitive deps.
-  const webApiNodeModules = join(webApiDir, 'node_modules');
-  const neededDeps = ['bindings', 'file-uri-to-path'];
-  for (const dep of neededDeps) {
-    try {
-      const src = dirname(require.resolve(`${dep}/package.json`));
-      const dest = join(webApiNodeModules, dep);
-      if (!existsSync(dest)) {
-        cpSync(src, dest, { recursive: true, force: true });
-        console.log(`afterPack: copied dependency ${dep} → ${dest}`);
-      }
-    } catch {
-      console.warn(`afterPack: could not resolve dependency ${dep}`);
-    }
   }
 
   // If developer credentials are available (CSC_LINK is set), electron-builder

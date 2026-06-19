@@ -525,7 +525,7 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('python_rpc', pythonRpcHandler);
 
   // ═══ Telegram ═══
-  // Uses global TelegramBridge instance if active (set by TUI or daemon on bridge creation)
+  // Uses global TelegramBridge instance if active (set by daemon on bridge creation)
   // Falls back to NOT_AVAILABLE if no bridge is running
   executor.registerHandler('telegram_send_message', async (args) => {
     const { getActiveTelegramBridge } = await import('../telegram/index.js');
@@ -533,7 +533,7 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
     if (!bridge || !bridge.isRunning()) {
       return {
         success: false,
-        output: 'Telegram is not active. Start it with /telegram start in TUI or daemon mode.',
+        output: 'Telegram is not active. Start it with /telegram start in daemon mode.',
         error: 'NOT_AVAILABLE',
       };
     }
@@ -557,7 +557,7 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
     if (!bridge || !bridge.isRunning()) {
       return {
         success: false,
-        output: 'Telegram is not active. Start it with /telegram start in TUI or daemon mode.',
+        output: 'Telegram is not active. Start it with /telegram start in daemon mode.',
         error: 'NOT_AVAILABLE',
       };
     }

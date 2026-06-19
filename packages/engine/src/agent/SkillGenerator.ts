@@ -1,8 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { getLogger, getConfigDir } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
 import type { Agent } from './Agent.js';
-import { findBundledSkill, getBundledSkills } from './BundledSkills.js';
+import { findBundledSkill, getBundledSkills, BUNDLED_SKILLS } from './BundledSkills.js';
 
 const logger = getLogger();
 
@@ -17,39 +15,82 @@ export interface GeneratedSkill {
   usageCount: number;
 }
 
+interface SkillRow {
+  id: string;
+  name: string;
+  description: string;
+  trigger_patterns_json: string;
+  prompt: string;
+  tools_json: string;
+  is_bundled: number;
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 /**
  * Automatically generates reusable skills when the agent
  * solves a novel problem successfully.
+ *
+ * Skills are persisted in the `skills` database table.
  */
 export class SkillGenerator {
-  private skillsDir: string;
+  private db: any;
   private skills: Map<string, GeneratedSkill> = new Map();
 
-  constructor() {
-    this.skillsDir = join(getConfigDir(), 'skills');
-    this.ensureDir();
-    this.loadSkills();
+  constructor(db: any) {
+    this.db = db;
+    this.loadAll();
   }
 
-  private ensureDir(): void {
-    if (!existsSync(this.skillsDir)) {
-      mkdirSync(this.skillsDir, { recursive: true });
-    }
-  }
-
-  private loadSkills(): void {
+  private loadAll(): void {
     try {
-      const files = readdirSync(this.skillsDir).filter((f) => f.endsWith('.json'));
-      for (const file of files) {
-        try {
-          const content = JSON.parse(readFileSync(join(this.skillsDir, file), 'utf-8')) as GeneratedSkill;
-          this.skills.set(content.id, content);
-        } catch { /* skip malformed */ }
+      const rows = this.db.prepare('SELECT * FROM skills').all() as SkillRow[];
+      for (const row of rows) {
+        const skill: GeneratedSkill = {
+          id: row.id,
+          name: row.name,
+          description: row.description,
+          triggerPatterns: JSON.parse(row.trigger_patterns_json || '[]'),
+          prompt: row.prompt,
+          tools: JSON.parse(row.tools_json || '[]'),
+          createdAt: row.created_at,
+          usageCount: row.usage_count,
+        };
+        this.skills.set(skill.id, skill);
       }
-      logger.info('SKILL_GEN', `Loaded ${this.skills.size} skills from disk`);
     } catch {
-      // directory doesn't exist yet
+      // table may not exist yet
     }
+
+    // If empty, seed bundled skills into DB
+    if (this.skills.size === 0) {
+      try {
+        const insert = this.db.prepare(
+          `INSERT OR IGNORE INTO skills (id, name, description, trigger_patterns_json, prompt, tools_json, is_bundled, usage_count, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+        );
+        const now = new Date().toISOString();
+        for (const skill of BUNDLED_SKILLS) {
+          insert.run(
+            skill.id,
+            skill.name,
+            skill.description,
+            JSON.stringify(skill.triggerPatterns),
+            skill.prompt,
+            JSON.stringify(skill.tools),
+            now,
+            now,
+          );
+          this.skills.set(skill.id, { ...skill, usageCount: 0 });
+        }
+        logger.info('SKILL_GEN', `Seeded ${BUNDLED_SKILLS.length} bundled skills`);
+      } catch {
+        // table may not exist yet — bundled skills will be served from memory via getAll()
+      }
+    }
+
+    logger.info('SKILL_GEN', `Loaded ${this.skills.size} skills from DB`);
   }
 
   /**
@@ -155,9 +196,20 @@ Description:`;
         usageCount: 0,
       };
 
-      // Save to disk
-      const filePath = join(this.skillsDir, `${id}.json`);
-      writeFileSync(filePath, JSON.stringify(skill, null, 2));
+      // Write to DB
+      this.db.prepare(
+        `INSERT OR REPLACE INTO skills (id, name, description, trigger_patterns_json, prompt, tools_json, is_bundled, usage_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+      ).run(
+        skill.id,
+        skill.name,
+        skill.description,
+        JSON.stringify(skill.triggerPatterns),
+        skill.prompt,
+        JSON.stringify(skill.tools),
+        skill.createdAt,
+        new Date().toISOString(),
+      );
       this.skills.set(id, skill);
 
       logger.info('SKILL_GEN', `Generated skill: ${skillName} (${id})`);
@@ -219,8 +271,12 @@ Description:`;
     const skill = this.skills.get(skillId);
     if (skill) {
       skill.usageCount++;
-      const filePath = join(this.skillsDir, `${skillId}.json`);
-      try { writeFileSync(filePath, JSON.stringify(skill, null, 2)); } catch { /* ignore */ }
+      try {
+        this.db.prepare('UPDATE skills SET usage_count = ?, updated_at = ? WHERE id = ?')
+          .run(skill.usageCount, new Date().toISOString(), skillId);
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -274,4 +330,51 @@ Apply this pattern when the user requests similar work. Follow the same sequence
 
     return matchCount / Math.max(wordsA.size, wordsB.size);
   }
+}
+
+/**
+ * Migration helper: reads old `skills/*.json` files from disk and inserts them into
+ * the `skills` database table. Skips entries whose IDs already exist in the DB.
+ *
+ * @param db      The database connection (better-sqlite3 style).
+ * @param skillsDir  Path to the old skills directory (e.g. `~/.config/agentx/skills/`).
+ * @returns The number of skills migrated.
+ */
+export function migrateSkillsFromDisk(db: any, skillsDir: string): number {
+  const { existsSync, readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
+  const { join } = require('node:path') as typeof import('node:path');
+
+  if (!existsSync(skillsDir)) return 0;
+
+  const files = readdirSync(skillsDir).filter((f) => f.endsWith('.json'));
+  if (files.length === 0) return 0;
+
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO skills (id, name, description, trigger_patterns_json, prompt, tools_json, is_bundled, usage_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+  );
+
+  let count = 0;
+  for (const file of files) {
+    try {
+      const skill = JSON.parse(readFileSync(join(skillsDir, file), 'utf-8')) as GeneratedSkill;
+      const result = insert.run(
+        skill.id,
+        skill.name,
+        skill.description,
+        JSON.stringify(skill.triggerPatterns ?? []),
+        skill.prompt,
+        JSON.stringify(skill.tools ?? []),
+        skill.usageCount ?? 0,
+        skill.createdAt ?? new Date().toISOString(),
+        new Date().toISOString(),
+      );
+      if (result.changes > 0) count++;
+    } catch {
+      /* skip malformed */
+    }
+  }
+
+  logger.info('SKILL_GEN', `Migrated ${count} skills from ${skillsDir} to DB`);
+  return count;
 }

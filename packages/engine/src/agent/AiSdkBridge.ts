@@ -3,6 +3,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAzure } from '@ai-sdk/azure';
+import { getLogger } from '@agentx/shared';
 import { createGroq } from '@ai-sdk/groq';
 import { createCohere } from '@ai-sdk/cohere';
 import { createMistral } from '@ai-sdk/mistral';
@@ -360,10 +361,10 @@ export async function* aiSdkStream(
       }
     }
     if (chunkCount === 0) {
-      console.warn(`[AiSdkBridge] streamText produced ZERO fullStream chunks. Model: ${config.provider.activeModel}, Provider: ${config.provider.activeProvider}`);
+      getLogger().warn('AI_SDK', `streamText produced ZERO fullStream chunks. Model: ${config.provider.activeModel}, Provider: ${config.provider.activeProvider}`);
     }
     if (textChunkCount === 0 && chunkCount > 0) {
-      console.warn(`[AiSdkBridge] streamText produced ${chunkCount} chunks but ZERO text-delta chunks`);
+      getLogger().warn('AI_SDK', `streamText produced ${chunkCount} chunks but ZERO text-delta chunks`);
     }
   } finally {
     // no cleanup needed — AI SDK handles its own lifecycle

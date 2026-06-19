@@ -9,7 +9,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import { Footer } from '../components/Footer';
-import { webuiActive } from '../api';
+import { webuiActive, agent, type AgentVitals } from '../api';
 import type { HealthStatus } from '../api';
 
 function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'blank' | 'info' | 'success' | 'dim' | 'heading'; text: string }> {
@@ -57,6 +57,7 @@ export function DockingStation() {
   const [checking, setChecking] = useState(true);
   const [visibleLines, setVisibleLines] = useState(0);
   const [lines, setLines] = useState<ReturnType<typeof buildTerminalLines>>([]);
+  const [vitals, setVitals] = useState<AgentVitals | null>(null);
   // Register Web-UI as active and keep it refreshed
   useEffect(() => {
     let intervalId: ReturnType<typeof setInterval>;
@@ -85,6 +86,13 @@ export function DockingStation() {
   }, [refreshHealth]);
 
   useEffect(() => { recheckServer(); }, [recheckServer]);
+
+  // Fetch agent vitals
+  useEffect(() => {
+    agent.vitals().then(setVitals).catch(() => {});
+    const interval = setInterval(() => { agent.vitals().then(setVitals).catch(() => {}); }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Rebuild terminal lines when health data changes
   useEffect(() => {
@@ -257,6 +265,29 @@ export function DockingStation() {
       </Box>
       </Box>
 
+      {/* Agent Vitals */}
+      {vitals && vitals.status !== 'uninitialized' && (
+        <Box sx={{
+          borderTop: `1px solid ${colors.border.default}`,
+          px: 3, py: 2, mx: 3, mb: 2,
+          bgcolor: colors.bg.secondary, borderRadius: 1,
+          border: `1px solid ${colors.border.default}`,
+        }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+            <VitalChip label="Age" value={`${vitals.ageDays}d`} />
+            <VitalChip label="Level" value={vitals.level} color={colors.accent.blue} />
+            <VitalChip label="Wisdom" value={`${Math.round(vitals.wisdomScore)}`} />
+            <VitalChip label="Experiences" value={String(vitals.totalExperiences)} />
+            <VitalChip label="Memories" value={String(vitals.memories.total)} />
+            <VitalChip label="Mood" value={vitals.currentMood} color={
+              vitals.currentMood === 'enthusiastic' || vitals.currentMood === 'confident' ? colors.accent.green :
+              vitals.currentMood === 'frustrated' || vitals.currentMood === 'anxious' ? colors.accent.orange :
+              colors.text.secondary
+            } />
+          </Box>
+        </Box>
+      )}
+
       <Footer />
     </Box>
   );
@@ -292,4 +323,20 @@ function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
   return `${h}h ${m}m`;
+}
+
+function VitalChip({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+      <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim, letterSpacing: '0.5px' }}>
+        {label}
+      </Typography>
+      <Typography sx={{
+        fontFamily: "'JetBrains Mono', monospace", fontSize: '0.62rem', fontWeight: 700,
+        color: color || colors.text.primary,
+      }}>
+        {value}
+      </Typography>
+    </Box>
+  );
 }

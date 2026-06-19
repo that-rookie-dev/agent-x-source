@@ -118,6 +118,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   // Public paths that don't require authentication
   const publicPaths = [
     '/api/health',
+    '/api/agent/vitals',
     '/api/auth/setup',
     '/api/auth/login',
     '/api/auth/status',
