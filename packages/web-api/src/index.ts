@@ -91,7 +91,7 @@ app.get('/api/health', (_req, res) => {
   let eng: ReturnType<typeof getEngine> | null = null;
   try {
     eng = getEngine();
-  } catch { /* engine init may fail before setup — still report healthy */ }
+  } catch (e) { /* engine init may fail before setup — still report healthy */ }
   let sessionCount = 0;
   let crewCount = 0;
   let agentActive = false;
@@ -102,20 +102,20 @@ app.get('/api/health', (_req, res) => {
     try {
       const sessions = eng.sessionManager.listSessions(9999);
       sessionCount = sessions.length;
-    } catch { /* ignore */ }
+    } catch (e) { /* ignore */ }
     try {
       const crews = eng.crewManager.list();
       crewCount = crews.length;
-    } catch { /* ignore */ }
+    } catch (e) { /* ignore */ }
     try {
       const cfg = eng.configManager.load();
       configInfo = { provider: cfg.provider.activeProvider, model: cfg.provider.activeModel, user: cfg.user?.callsign || null };
-    } catch { /* ignore */ }
+    } catch (e) { /* ignore */ }
     agentActive = !!eng.agent;
     try {
       const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
       telegramConnected = !!tgPlugin?.enabled && !!tgPlugin?.config?.['botToken'] && !!eng.telegramBridge?.isRunning();
-    } catch { /* ignore */ }
+    } catch (e) { /* ignore */ }
     telegramBot = eng.telegramBridge?.isRunning() ? eng.telegramBridge.getStatus().botUsername ?? null : null;
   }
   res.json({
@@ -206,7 +206,7 @@ app.get('/api/agent/persona', (_req, res) => {
     } else {
       res.json({});
     }
-  } catch {
+  } catch (e) {
     res.json({});
   }
 });
@@ -237,7 +237,7 @@ app.put('/api/agent/persona', (req, res) => {
       };
       (eng.agent as any).persona = personaData;
       // Re-seed identity manager so evolution overlay is in sync
-      try { (eng.agent as any).secretSauce?.identity?.seedFromPersona(personaData); } catch {}
+      try { (eng.agent as any).secretSauce?.identity?.seedFromPersona(personaData); } catch (e) {}
       // Force a system prompt rebuild on next turn
       (eng.agent as any).lastContextEpoch = -1;
     }
@@ -309,7 +309,7 @@ app.get('/api/provider/models', async (req, res) => {
         // Fallback: use flat apiKey/baseUrl on the provider creds if no profile matched
         if (!apiKey && creds?.apiKey) apiKey = creds.apiKey;
         if (!baseUrl && creds?.baseUrl) baseUrl = creds.baseUrl;
-      } catch { /* use provided values */ }
+      } catch (e) { /* use provided values */ }
     }
     const prov = ProviderFactory.create(providerId as ProviderId, apiKey, baseUrl);
     const models = await prov.listModels();
@@ -333,7 +333,7 @@ app.post('/api/provider/configure', (req, res) => {
     let config: AgentXConfig;
     try {
       config = eng.configManager.load();
-    } catch {
+    } catch (e) {
       config = { provider: { activeProvider: provider as ProviderId, activeModel: '', providers: {} }, ui: { theme: 'dark', showTokenBar: true, showTimers: true, animationSpeed: 'normal' }, organization: null, telemetry: false };
     }
 
@@ -386,7 +386,7 @@ app.get('/api/providers', (_req, res) => {
       }
     }
     res.json({ active: config.provider.activeProvider, providers: configured });
-  } catch {
+  } catch (e) {
     res.json({ active: '', providers: [] });
   }
 });
@@ -539,7 +539,7 @@ app.get('/api/models', async (_req, res) => {
     const config = eng.configManager.load();
     // Try to list models via agent if it exists, but don't fail if no agent
     if (eng.agent) {
-      try { await eng.agent.listModels(); } catch { /* ignore */ }
+      try { await eng.agent.listModels(); } catch (e) { /* ignore */ }
     }
     const activeProfile = config.provider.providers[config.provider.activeProvider]?.activeProfile;
     res.json({ model: config.provider.activeModel, provider: config.provider.activeProvider, activeProfile, currentModel: config.provider.activeModel });
@@ -573,7 +573,7 @@ app.post('/api/cwd', (req, res) => {
         ctx['scopePath'] = resolved;
         mkdirSync(dirname(ctxPath), { recursive: true });
         writeFileSync(ctxPath, JSON.stringify(ctx, null, 2));
-      } catch { /* best-effort */ }
+      } catch (e) { /* best-effort */ }
     }
     const agent = (eng as any).agent;
     if (agent && typeof agent.setScopePath === 'function') agent.setScopePath(resolved);
@@ -596,7 +596,7 @@ app.get('/api/filesystem/dirs', (req, res) => {
     const parent = dirname(absPath);
     const hasParent = absPath !== parent && absPath !== '/';
     res.json({ current: absPath, parent: hasParent ? parent : null, dirs });
-  } catch {
+  } catch (e) {
     getLogger().error('GET_API_FILESYSTEM_DIRS', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'dir-read-failed' });
   }
 });
@@ -628,14 +628,14 @@ app.post('/api/session/mode', (req, res) => {
     // Sync mode to toolkit executor for Plan mode tool restriction
     try {
       (eng as any).toolkit?.executor?.setMode?.(mode);
-    } catch { /* best-effort */ }
+    } catch (e) { /* best-effort */ }
     // Persist mode to session store so it survives restores
     try {
       const sess = eng.sessionManager.getActiveSession();
       if (sess) {
         eng.sessionManager.updateSession({ mode } as any);
       }
-    } catch { /* best-effort */ }
+    } catch (e) { /* best-effort */ }
     res.json({ ok: true, mode });
   } catch (e: unknown) {
     getLogger().error('SESSION_MODE', e instanceof Error ? e : String(e));
@@ -921,7 +921,7 @@ app.post('/api/chat/message', async (req, res) => {
 
     // ─── Safety: reset stuck agent if processing flag leaked from previous call ───
     if (agent.processing) {
-      try { agent.cancel(); } catch { /* ignore */ }
+      try { agent.cancel(); } catch (e) { /* ignore */ }
       await new Promise(r => setTimeout(r, 100));
       if (agent.processing) {
         res.status(503).json({ error: 'Agent is busy. Please try again in a moment.' });
@@ -940,7 +940,7 @@ app.post('/api/chat/message', async (req, res) => {
           const sid = (agent as unknown as { sessionId: string }).sessionId;
           if (sid) store.deleteLastMessages(sid, 2, ['user', 'assistant']);
         }
-      } catch { /* best-effort */ }
+      } catch (e) { /* best-effort */ }
     }
 
     // Build the full message content with attachments if provided
@@ -966,7 +966,7 @@ app.post('/api/chat/message', async (req, res) => {
           store.createCheckpoint(sid, label);
         }
       }
-    } catch { /* checkpoint failure shouldn't block the message */ }
+    } catch (e) { /* checkpoint failure shouldn't block the message */ }
 
     const message = await Promise.race([
       agent.sendMessage(fullText, { ...(instruction ? { instruction } : {}), ...(retry ? { retry: true } : {}) }),
@@ -989,7 +989,7 @@ app.post('/api/chat/message', async (req, res) => {
           persistMessageDirect(sid, 'user', (req.body as any).text || '');
         }
       }
-    } catch { /* best-effort */ }
+    } catch (e) { /* best-effort */ }
     res.status(500).json({ error: e instanceof Error ? e.message : 'chat-failed' });
   }
 });
@@ -1001,7 +1001,7 @@ app.post('/api/chat/cancel', (_req, res) => {
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     agent.cancel();
     res.json({ ok: true });
-  } catch {
+  } catch (e) {
     getLogger().error('POST_API_CHAT_CANCEL', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'cancel-failed' });
   }
 });
@@ -1024,7 +1024,7 @@ app.post('/api/chat/queue', (req, res) => {
     if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
     messageQueue.push({ text, attachments });
     res.json({ ok: true, queueLength: messageQueue.length });
-  } catch {
+  } catch (e) {
     getLogger().error('POST_API_CHAT_QUEUE', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'queue-failed' });
   }
 });
@@ -1113,7 +1113,7 @@ app.get('/api/chat/history', (_req, res) => {
       tokenCount: Math.ceil((m.content?.length ?? 0) / 4),
     }));
     res.json(formatted);
-  } catch {
+  } catch (e) {
     res.json([]);
   }
 });
@@ -1125,7 +1125,7 @@ app.post('/api/chat/clear', (_req, res) => {
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     agent.clearHistory();
     res.json({ ok: true });
-  } catch {
+  } catch (e) {
     getLogger().error('POST_API_CHAT_CLEAR', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
   }
 });
@@ -1142,7 +1142,7 @@ app.get('/api/chat/stream', (req, res) => {
   });
 
   const sendEvent = (event: string, data: unknown) => {
-    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* connection closed */ }
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) { /* connection closed */ }
   };
 
   sendEvent('connected', { timestamp: new Date().toISOString() });
@@ -1214,13 +1214,13 @@ app.get('/api/logs/stream', (req, res) => {
   const onEntry = (evt: { entry: Record<string, unknown>; index: number }) => {
     try {
       res.write(`event: log\ndata: ${JSON.stringify(evt)}\n\n`);
-    } catch { /* client disconnected */ }
+    } catch (e) { /* client disconnected */ }
   };
 
   collector.on('entry', onEntry);
 
   const heartbeat = setInterval(() => {
-    try { res.write(':heartbeat\n\n'); } catch { clearInterval(heartbeat); }
+    try { res.write(':heartbeat\n\n'); } catch (e) { clearInterval(heartbeat); }
   }, 25000);
 
   req.on('close', () => {
@@ -1286,7 +1286,7 @@ app.post('/api/mode/hyperdrive', (_req, res) => {
       if (sess) {
         eng.sessionManager.updateSession({ hyperdrive: enabled } as any);
       }
-    } catch { /* best-effort */ }
+    } catch (e) { /* best-effort */ }
     res.json({ ok: true, hyperdriveMode: enabled, mode: sessionSettings.mode });
   } catch (e: unknown) {
     getLogger().error('HYPERDRIVE_TOGGLE', e instanceof Error ? e : String(e));
@@ -1300,7 +1300,7 @@ app.get('/api/mode/hyperdrive', (_req, res) => {
     const agent = eng.agent;
     if (!agent) { res.json({ hyperdriveMode: false }); return; }
     res.json({ hyperdriveMode: agent.hyperdriveMode });
-  } catch {
+  } catch (e) {
     res.json({ hyperdriveMode: false });
   }
 });
@@ -1312,7 +1312,7 @@ app.get('/api/sessions/db-status', (_req, res) => {
     const store = (eng.sessionManager as unknown as { store: { getInfo?: () => { dbMode: string; sessionCount: number; filesystemRecovered: number; schemaVersion: number } } }).store;
     const info = store?.getInfo?.() ?? { dbMode: 'unknown', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 };
     res.json(info);
-  } catch {
+  } catch (e) {
     res.json({ dbMode: 'error', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 });
   }
 });
@@ -1352,7 +1352,7 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
             const cnt = await pgPool.query(`SELECT COUNT(*)::int as cnt FROM "${r.tablename}"`);
             tables[r.tablename] = cnt.rows[0].cnt;
             checks.push({ table: r.tablename, rows: cnt.rows[0].cnt, ok: true });
-          } catch {
+          } catch (e) {
             tables[r.tablename] = -1;
             checks.push({ table: r.tablename, rows: -1, ok: false });
             healthStatus = 'degraded';
@@ -1361,20 +1361,20 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
         try {
           const sizeRes = await pgPool.query("SELECT pg_database_size(current_database()) as size");
           dbSizeBytes = sizeRes.rows[0].size;
-        } catch { /* db size not available */ }
+        } catch (e) { /* db size not available */ }
         if (tableCount > 0) healthStatus = 'healthy';
       }
-    } catch {
+    } catch (e) {
       healthStatus = 'unhealthy';
     }
   } else if (db) {
     try {
       dbSizeBytes = statSync(db.name).size;
-    } catch { dbSizeBytes = 0; }
+    } catch (e) { dbSizeBytes = 0; }
     try {
       const walPath = db.name + '-wal';
       if (existsSync(walPath)) walSizeBytes = statSync(walPath).size;
-    } catch { walSizeBytes = 0; }
+    } catch (e) { walSizeBytes = 0; }
     try {
       const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_schema' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>;
       tableCount = rows.length;
@@ -1383,13 +1383,13 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
           const c = db.prepare(`SELECT COUNT(*) as cnt FROM "${r.name}"`).get() as { cnt: number };
           tables[r.name] = c.cnt;
           checks.push({ table: r.name, rows: c.cnt, ok: true });
-        } catch {
+        } catch (e) {
           tables[r.name] = -1;
           checks.push({ table: r.name, rows: -1, ok: false });
           healthStatus = 'degraded';
         }
       }
-    } catch {
+    } catch (e) {
       tableCount = 0;
       healthStatus = 'unhealthy';
     }
@@ -1407,10 +1407,10 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
       if (existsSync(dir)) {
         for (const f of readdirSync(dir, { withFileTypes: true })) {
           const fp = join(dir, f.name);
-          try { if (f.isFile()) sizeBytes += statSync(fp).size; } catch { /* skip */ }
+          try { if (f.isFile()) sizeBytes += statSync(fp).size; } catch (e) { /* skip */ }
         }
       }
-    } catch { /* skip */ }
+    } catch (e) { /* skip */ }
     const units = ['B', 'KB', 'MB', 'GB'];
     let i = 0;
     let s = sizeBytes;
@@ -1459,7 +1459,7 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
   };
 }
 
-app.get('/api/settings/db', async (req, res) => {
+app.get('/api/settings/db', async (_req, res) => {
   try {
     const eng = getEngine();
     res.json(await buildDbStatus(eng));
@@ -1530,7 +1530,7 @@ app.post('/api/settings/db/test', async (req, res) => {
   }
 });
 
-app.post('/api/settings/db/migrate', async (req, res) => {
+app.post('/api/settings/db/migrate', async (_req, res) => {
   try {
     const eng = getEngine();
     const pgPlugin = eng.pluginRegistry.getPlugin('postgresql');
@@ -1556,7 +1556,7 @@ app.post('/api/settings/db/migrate', async (req, res) => {
   }
 });
 
-app.get('/api/settings/db/health', async (req, res) => {
+app.get('/api/settings/db/health', async (_req, res) => {
   try {
     const eng = getEngine();
     const status = await buildDbStatus(eng);
@@ -1567,7 +1567,7 @@ app.get('/api/settings/db/health', async (req, res) => {
   }
 });
 
-app.post('/api/settings/db/clear', (req, res) => {
+app.post('/api/settings/db/clear', (_req, res) => {
   try {
     const eng = getEngine();
     const store = (eng.sessionManager as any)?.store;
@@ -1575,7 +1575,7 @@ app.post('/api/settings/db/clear', (req, res) => {
       const sessions = eng.sessionManager.listSessions(9999) as unknown as Array<{ id: string }>;
       for (const s of sessions) {
         if (s.id === '__channel__') continue;
-        try { store.deleteMessages(s.id); } catch { /* continue */ }
+        try { store.deleteMessages(s.id); } catch (e) { /* continue */ }
       }
     }
     getLogger().info('SETTINGS_DB_CLEAR', 'All session data cleared');
@@ -1586,7 +1586,7 @@ app.post('/api/settings/db/clear', (req, res) => {
   }
 });
 
-app.post('/api/settings/db/clear-cache', (req, res) => {
+app.post('/api/settings/db/clear-cache', (_req, res) => {
   try {
     const cacheDir = getCacheDir();
     let freed = 0;
@@ -1596,7 +1596,7 @@ app.post('/api/settings/db/clear-cache', (req, res) => {
         try {
           const s = statSync(fp);
           if (s.isFile()) { freed += s.size; rmSync(fp); }
-        } catch { /* skip */ }
+        } catch (e) { /* skip */ }
       }
     }
     const units = ['B', 'KB', 'MB', 'GB'];
@@ -1624,7 +1624,7 @@ app.get('/api/sessions', (_req, res) => {
       } else {
         s['messageCount'] = 0;
       }
-    } catch { s['messageCount'] = 0; }
+    } catch (e) { s['messageCount'] = 0; }
   }
   res.json(sessions);
 });
@@ -1648,7 +1648,7 @@ app.get('/api/sessions/search', (req, res) => {
         if (store?.getMessages) {
           messages = store.getMessages(sid) as Array<{ role?: string; content?: string }>;
         }
-      } catch { continue; }
+      } catch (e) { continue; }
 
       let matchCount = 0;
       let snippet = '';
@@ -1710,11 +1710,11 @@ app.get('/api/sessions/:id/export', (req, res) => {
       if (store?.getMessages) {
         messages = store.getMessages(sid) as unknown[];
       }
-    } catch { /* empty */ }
+    } catch (e) { /* empty */ }
     const ctxFiles = ['context.txt', 'memories.txt', 'pending.txt', 'completed.txt', 'suggestions.txt'];
     const contextFiles: Record<string, string> = {};
     for (const f of ctxFiles) {
-      try { contextFiles[f.replace('.txt', '')] = readFileSync(join(dir, f), 'utf-8'); } catch { /* skip */ }
+      try { contextFiles[f.replace('.txt', '')] = readFileSync(join(dir, f), 'utf-8'); } catch (e) { /* skip */ }
     }
     const checkpoints: Array<{ id: string; label?: string; createdAt?: string; messageCount?: number }> = [];
     try {
@@ -1722,7 +1722,7 @@ app.get('/api/sessions/:id/export', (req, res) => {
       if (store?.listCheckpoints) {
         checkpoints.push(...(store.listCheckpoints(sid) as Array<{ id: string; label: string; createdAt: string; messageCount: number }>));
       }
-    } catch { /* skip */ }
+    } catch (e) { /* skip */ }
     const exportData = {
       sessionId: sid,
       exportedAt: new Date().toISOString(),
@@ -1780,10 +1780,10 @@ app.delete('/api/sessions/:id', (req, res) => {
     // Clean up session folder on disk
     const dir = getSessionDir(req.params['id']!);
     if (existsSync(dir)) {
-      try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      try { rmSync(dir, { recursive: true, force: true }); } catch (e) { /* best-effort */ }
     }
     res.json({ ok: true });
-  } catch {
+  } catch (e) {
     getLogger().error('DELETE_API_SESSIONS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'delete-failed' });
   }
 });
@@ -1806,7 +1806,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
         if (agent?.toggleHyperdriveMode && !agent.hyperdriveMode) {
           agent.toggleHyperdriveMode();
         }
-      } catch { /* best-effort */ }
+      } catch (e) { /* best-effort */ }
     }
     ensureSubscribed();
     // Restore crew states from session store
@@ -1835,7 +1835,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       if (msg['role'] !== 'assistant') continue;
       const msgTools = (msg['tool_calls'] as string | null);
       const parsedTools: Array<{ id?: string; name?: string; callId?: string; toolCallId?: string }> = msgTools
-        ? (() => { try { return JSON.parse(msgTools); } catch { return []; } })()
+        ? (() => { try { return JSON.parse(msgTools); } catch (e) { return []; } })()
         : [];
       const toolIds = new Set(parsedTools.map((t: any) => t.id || t.callId || t.toolCallId).filter(Boolean));
       const msgParts: Array<Record<string, unknown>> = [];
@@ -1859,7 +1859,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
             id: tid,
             toolName: t.name || 'unknown',
             toolCallId: tid,
-            toolArgs: matchedPart?.['tool_args'] ? (() => { try { return JSON.parse(matchedPart['tool_args'] as string); } catch { return matchedPart['tool_args']; } })() : undefined,
+            toolArgs: matchedPart?.['tool_args'] ? (() => { try { return JSON.parse(matchedPart['tool_args'] as string); } catch (e) { return matchedPart['tool_args']; } })() : undefined,
             toolResult: matchedPart?.['tool_result'] as string | undefined,
             toolSuccess: matchedPart?.['tool_success'] as number | undefined,
           });
@@ -1896,10 +1896,10 @@ app.get('/api/sessions/:id/context', (req, res) => {
     const result: Record<string, string> = {};
     for (const f of files) {
       const fp = join(dir, f);
-      try { result[f.replace('.txt', '')] = readFileSync(fp, 'utf-8'); } catch { result[f.replace('.txt', '')] = ''; }
+      try { result[f.replace('.txt', '')] = readFileSync(fp, 'utf-8'); } catch (e) { result[f.replace('.txt', '')] = ''; }
     }
     res.json(result);
-  } catch {
+  } catch (e) {
     getLogger().error('GET_API_SESSIONS_ID_CONTEXT', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'context-read-failed' });
   }
 });
@@ -1915,7 +1915,7 @@ app.post('/api/sessions/:id/context/write', (req, res) => {
       }
     }
     res.json({ ok: true });
-  } catch {
+  } catch (e) {
     getLogger().error('POST_API_SESSIONS_ID_CONTEXT_WRITE', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'context-write-failed' });
   }
 });
@@ -1955,7 +1955,7 @@ app.post('/api/sessions/:id/compact', async (req, res) => {
         } else {
           summary = `[provider ${providerId} not fully configured]`;
         }
-      } catch {
+      } catch (e) {
         summary = `[automatic compaction unavailable — content was ${existingContent.length} chars]`;
       }
     }
@@ -1968,7 +1968,7 @@ app.post('/api/sessions/:id/compact', async (req, res) => {
       const existing = JSON.parse(readFileSync(convPath, 'utf-8') || '[]') as unknown[];
       existing.push({ timestamp: new Date().toISOString(), type: 'compaction', snapshot: existingContent });
       atomicWriteFileSync(convPath, JSON.stringify(existing, null, 2));
-    } catch { /* ignore */ }
+    } catch (e) { /* ignore */ }
 
     res.json({ ok: true, summary });
   } catch (e: unknown) {
@@ -2035,7 +2035,7 @@ app.post('/api/sessions/:id/compact', async (req, res) => {
     const dir = getSessionDir(req.params['id']!);
     const contextPath = join(dir, 'context.txt');
     let existingContent = '';
-    try { existingContent = readFileSync(contextPath, 'utf-8'); } catch { /* no context */ }
+    try { existingContent = readFileSync(contextPath, 'utf-8'); } catch (e) { /* no context */ }
 
     // Ask the agent to summarize current context
     let summary = '';
@@ -2043,7 +2043,7 @@ app.post('/api/sessions/:id/compact', async (req, res) => {
     if (eng.agent) {
       try {
         summary = await (eng.agent as any).compactContext?.() || '';
-      } catch { /* agent may not support compaction */ }
+      } catch (e) { /* agent may not support compaction */ }
     }
 
     if (!summary && existingContent) {
@@ -2127,7 +2127,7 @@ app.post('/api/telegram/start', async (req, res) => {
     if (!eng.telegramBridge && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
       // If gateway exists but bridge is dead, clean up stale state
       if (eng.gateway) {
-        try { eng.gateway.stopChannel('telegram'); } catch { /* ignore */ }
+        try { eng.gateway.stopChannel('telegram'); } catch (e) { /* ignore */ }
         eng.gateway = null;
       }
       const { Gateway } = await import('@agentx/engine');
@@ -2155,18 +2155,18 @@ app.post('/api/telegram/stop', (_req, res) => {
     const eng = getEngine();
     // Stop running bridge
     if (eng.telegramBridge) {
-      try { eng.telegramBridge.stop(); } catch { /* ignore */ }
+      try { eng.telegramBridge.stop(); } catch (e) { /* ignore */ }
       eng.telegramBridge = null;
     }
     if (eng.gateway) {
-      try { eng.gateway.stopChannel('telegram'); } catch { /* ignore */ }
+      try { eng.gateway.stopChannel('telegram'); } catch (e) { /* ignore */ }
     }
     // Disable plugin but keep config so it auto-starts on next launch
     if (eng.pluginRegistry.isInstalled('telegram')) {
       eng.pluginRegistry.disable('telegram');
     }
     res.json({ ok: true, message: 'Telegram bot stopped. Config preserved for next launch.' });
-  } catch {
+  } catch (e) {
     getLogger().error('POST_API_TELEGRAM_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
   }
 });
@@ -2187,9 +2187,9 @@ app.get('/api/tui-active', (_req, res) => {
     try {
       const pid = parseInt(readFileSync(TUI_ACTIVE_PATH, 'utf-8').trim(), 10);
       // Verify process is still alive
-      try { process.kill(pid, 0); } catch { unlinkSync(TUI_ACTIVE_PATH); res.json({ active: false }); return; }
+      try { process.kill(pid, 0); } catch (e) { unlinkSync(TUI_ACTIVE_PATH); res.json({ active: false }); return; }
       res.json({ active: true, pid });
-    } catch {
+    } catch (e) {
       res.json({ active: false });
     }
   } else {
@@ -2213,7 +2213,7 @@ app.get('/api/webui-active', (_req, res) => {
         return;
       }
       res.json({ active: true, pid, timestamp });
-    } catch {
+    } catch (e) {
       res.json({ active: false });
     }
   } else {
@@ -2299,7 +2299,7 @@ app.post('/api/discord/start', async (req, res) => {
     }
 
     // Persist to disk
-    const store = new DiscordStore();
+    const store = new DiscordStore(eng.sessionManager.getDb(), eng.dek!);
     store.save({ botToken: token, channelId });
 
     // Stop existing bridge if any
@@ -2345,10 +2345,10 @@ app.post('/api/discord/stop', (_req, res) => {
     if (eng.pluginRegistry.isInstalled('discord')) {
       eng.pluginRegistry.uninstall('discord');
     }
-    const store = new DiscordStore();
+    const store = new DiscordStore(eng.sessionManager.getDb(), eng.dek!);
     store.clear();
     res.json({ ok: true });
-  } catch {
+  } catch (e) {
     getLogger().error('POST_API_DISCORD_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
   }
 });
@@ -2394,7 +2394,7 @@ app.post('/api/slack/start', async (req, res) => {
     });
     await bridge.start();
     eng.slackBridge = bridge;
-    new SlackStore().save({ botToken, appToken });
+    new SlackStore(eng.sessionManager.getDb(), eng.dek!).save({ botToken, appToken });
     res.json({ ok: true, message: 'Slack bridge started.', status: bridge.getStatus() });
   } catch (e: unknown) {
     getLogger().error('POST_API_SLACK_START', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'start-failed' });
@@ -2408,18 +2408,18 @@ app.post('/api/slack/stop', (_req, res) => {
       eng.slackBridge.stop();
       eng.slackBridge = null;
     }
-    new SlackStore().clear();
+    new SlackStore(eng.sessionManager.getDb(), eng.dek!).clear();
     res.json({ ok: true });
-  } catch {
+  } catch (e) {
     getLogger().error('POST_API_SLACK_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'stop-failed' });
   }
 });
 
 app.get('/api/slack/status', (_req, res) => {
   try {
-    const store = new SlackStore();
-    const cfg = store.load();
     const eng = getEngine();
+    const store = new SlackStore(eng.sessionManager.getDb(), eng.dek!);
+    const cfg = store.load();
     const bridge = eng.slackBridge;
     const configured = !!cfg?.botToken && !!cfg?.appToken;
     const status = bridge?.getStatus();
@@ -2428,7 +2428,7 @@ app.get('/api/slack/status', (_req, res) => {
       connected: status?.connected ?? false,
       team: status?.team ?? '',
     });
-  } catch {
+  } catch (e) {
     res.json({ configured: false, connected: false, team: '' });
   }
 });
@@ -2501,7 +2501,7 @@ app.post('/api/email/stop', (_req, res) => {
       eng.pluginRegistry.uninstall('email');
     }
     res.json({ ok: true });
-  } catch {
+  } catch (e) {
     getLogger().error('POST_API_EMAIL_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
   }
 });
@@ -2518,7 +2518,7 @@ app.get('/api/email/status', (_req, res) => {
       connected: status?.connected ?? false,
       unreadCount: status?.unreadCount ?? 0,
     });
-  } catch {
+  } catch (e) {
     res.json({ configured: false, connected: false, unreadCount: 0 });
   }
 });
@@ -2565,7 +2565,7 @@ app.post('/api/tools/bulk-toggle', (req, res) => {
     cfg.ui.disabledTools = [...disabledSet];
     eng.configManager.save(cfg);
     res.json({ ok: true, toggled: targetIds.length, enabled });
-  } catch {
+  } catch (e) {
     getLogger().error('POST_API_TOOLS_BULK_TOGGLE', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'bulk-toggle-failed' });
   }
 });
@@ -2608,7 +2608,7 @@ app.put('/api/tools/:id', (req, res) => {
     cfg.ui.disabledTools = [...disabled];
     eng.configManager.save(cfg);
     res.json({ id: tool.id, enabled });
-  } catch {
+  } catch (e) {
     getLogger().error('PUT_API_TOOLS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'tool-update-failed' });
   }
 });
@@ -2732,7 +2732,7 @@ app.get('/api/files', (_req, res) => {
           const metaPath = fullPath + '.meta.json';
           let meta: Record<string, unknown> = {};
           if (existsSync(metaPath)) {
-            try { meta = JSON.parse(readFileSync(metaPath, 'utf-8')); } catch { /* skip */ }
+            try { meta = JSON.parse(readFileSync(metaPath, 'utf-8')); } catch (e) { /* skip */ }
           }
           return {
             id: e.replace(/\.[^.]+$/, ''),
@@ -2740,7 +2740,7 @@ app.get('/api/files', (_req, res) => {
             size: st.size,
             createdAt: st.birthtime.toISOString(),
           };
-        } catch { return null; }
+        } catch (e) { return null; }
       })
       .filter((f): f is NonNullable<typeof f> => f !== null);
     res.json({ files });
@@ -2914,7 +2914,7 @@ app.get('/api/secret-sauce', (_req, res) => {
       try {
         const stat = readFileSync(p, 'utf-8');
         files.push({ file: f, size: stat.length, exists: true });
-      } catch { files.push({ file: f, size: 0, exists: true }); }
+      } catch (e) { files.push({ file: f, size: 0, exists: true }); }
     } else {
       files.push({ file: f, size: 0, exists: false });
     }
@@ -3001,12 +3001,12 @@ app.post('/api/orchestrator/plan/:id/execute', async (req, res) => {
         const orches = stored as any;
         const result = await orches.execute(req.params['id']!);
         // Cleanup stored orchestrator for this plan id now that execution finished
-        try { planOrchestratorById.delete(req.params['id']!); } catch { /* ignore */ }
+        try { planOrchestratorById.delete(req.params['id']!); } catch (e) { /* ignore */ }
         res.json({ plan: result });
         return;
       } catch (e) {
         // If stored orchestrator failed, continue to fallback creation
-        try { planOrchestratorById.delete(req.params['id']!); } catch { /* ignore */ }
+        try { planOrchestratorById.delete(req.params['id']!); } catch (e) { /* ignore */ }
       }
     }
 
@@ -3302,26 +3302,26 @@ app.post('/api/reset', (_req, res) => {
     try {
       const eng = getEngine();
       if (eng.telegramBridge) {
-        try { eng.telegramBridge.stop(); } catch { /* ignore */ }
+        try { eng.telegramBridge.stop(); } catch (e) { /* ignore */ }
         eng.telegramBridge = null;
       }
       if (eng.gateway) {
-        try { eng.gateway.stopAll(); } catch { /* ignore */ }
+        try { eng.gateway.stopAll(); } catch (e) { /* ignore */ }
         eng.gateway = null;
       }
       if (eng.discordBridge) {
-        try { eng.discordBridge.stop(); } catch { /* ignore */ }
+        try { eng.discordBridge.stop(); } catch (e) { /* ignore */ }
         eng.discordBridge = null;
       }
       if (eng.slackBridge) {
-        try { eng.slackBridge.stop(); } catch { /* ignore */ }
+        try { eng.slackBridge.stop(); } catch (e) { /* ignore */ }
         eng.slackBridge = null;
       }
       if (eng.emailBridge) {
-        try { eng.emailBridge.stop(); } catch { /* ignore */ }
+        try { eng.emailBridge.stop(); } catch (e) { /* ignore */ }
         eng.emailBridge = null;
       }
-    } catch { /* engine not initialized */ }
+    } catch (e) { /* engine not initialized */ }
 
     // 3. Delete all data on disk
     const configDir = getConfigDir();
@@ -3330,7 +3330,7 @@ app.post('/api/reset', (_req, res) => {
 
     const dirs = [configDir, dataDir, cacheDir];
     for (const dir of dirs) {
-      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ok */ }
+      try { rmSync(dir, { recursive: true, force: true }); } catch (e) { /* ok */ }
     }
 
     // 4. Purge all auth sessions (in-memory + file)
@@ -3365,7 +3365,7 @@ app.get('*', async (req, res, next) => {
       delete headers['transfer-encoding'];
       res.writeHead(upstreamRes.status, headers);
       res.end(buf);
-    } catch {
+    } catch (e) {
       getLogger().error('GET_', e instanceof Error ? e : String(e));      res.status(502).json({ error: 'ui-proxy-failed' });
     }
     return;
@@ -3384,7 +3384,7 @@ app.get('*', async (req, res, next) => {
         const entry = JSON.parse(body);
         writeFileSync(join(DEBUG_DIR, `frontend_${ts}.json`), JSON.stringify(entry, null, 2));
         res.json({ ok: true });
-      } catch {
+      } catch (e) {
         res.status(400).json({ error: 'invalid-log-entry' });
       }
     });
@@ -3425,7 +3425,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
     try {
       const eng = getEngine();
       eng?.sessionManager?.close();
-    } catch { /* best-effort */ }
+    } catch (e) { /* best-effort */ }
     server.close();
   };
   process.on('SIGTERM', shutdown);
