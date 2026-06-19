@@ -64,7 +64,7 @@ importers:
         specifier: ^4.0.4
         version: 4.0.4
       electron:
-        specifier: '>=39.8.5'
+        specifier: ^42.0.0
         version: 42.3.3
       electron-builder:
         specifier: ^25.0.0
