@@ -1,6 +1,8 @@
 import { getLogger } from '@agentx/shared';
 import type { Agent } from './Agent.js';
 import { findBundledSkill, getBundledSkills, BUNDLED_SKILLS } from './BundledSkills.js';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const logger = getLogger();
 
@@ -341,9 +343,6 @@ Apply this pattern when the user requests similar work. Follow the same sequence
  * @returns The number of skills migrated.
  */
 export function migrateSkillsFromDisk(db: any, skillsDir: string): number {
-  const { existsSync, readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
-  const { join } = require('node:path') as typeof import('node:path');
-
   if (!existsSync(skillsDir)) return 0;
 
   const files = readdirSync(skillsDir).filter((f) => f.endsWith('.json'));

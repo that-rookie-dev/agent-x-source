@@ -663,7 +663,7 @@ export function getVitals(): Record<string, unknown> {
     const ageDays = growth.getAgeDays();
 
     let memoriesTotal = 0;
-    let memoryCategories: Record<string, number> = {};
+    const memoryCategories: Record<string, number> = {};
     try {
       const memRows = sqliteDb.prepare('SELECT type, COUNT(*) as c FROM agent_memories GROUP BY type').all() as Array<{ type: string; c: number }>;
       memoriesTotal = memRows.reduce((s, r) => s + r.c, 0);
