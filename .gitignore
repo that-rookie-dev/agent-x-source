@@ -16,3 +16,4 @@ packages/desktop/release/
 packages/desktop/renderer/xterm/
 packages/desktop/build/Tray.png
 packages/desktop/build/TrayWin.png
+packages/desktop/python/

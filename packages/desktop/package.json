@@ -77,6 +77,13 @@
           "*.png",
           "*.plist"
         ]
+      },
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {

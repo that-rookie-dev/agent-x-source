@@ -246,6 +246,33 @@ async function checkForUpdates(manual = false): Promise<boolean> {
 
 // ==================== Server ====================
 
+function getPythonPath(): string {
+  if (isDev) {
+    return process.env['AGENTX_PYTHON_PATH'] || 'python3';
+  }
+  if (process.platform === 'win32') {
+    return join(process.resourcesPath, 'python', 'python.exe');
+  }
+  return join(process.resourcesPath, 'python', 'bin', 'python3');
+}
+
+function setupPythonEnv(): void {
+  const pythonPath = getPythonPath();
+  const pythonDir = process.platform === 'win32'
+    ? join(process.resourcesPath, 'python')
+    : join(process.resourcesPath, 'python', 'bin');
+
+  if (existsSync(pythonPath)) {
+    process.env['AGENTX_PYTHON_PATH'] = pythonPath;
+    process.env['PATH'] = pythonDir + (process.platform === 'win32' ? ';' : ':') + (process.env['PATH'] || '');
+    console.log(`Bundled Python: ${pythonPath}`);
+  } else if (isDev) {
+    console.log('Development mode: using system Python');
+  } else {
+    console.warn('Bundled Python not found at', pythonPath);
+  }
+}
+
 function getWebApiPath(): string {
   if (isDev) return join(__dirname, '..', '..', 'web-api', 'dist', 'index.js');
   return join(process.resourcesPath, 'web-api', 'index.js');
@@ -384,6 +411,7 @@ ipcMain.handle('dialog:openFolder', async () => {
 app.whenReady().then(async () => {
   try {
     createTray();
+    setupPythonEnv();
     await startServer();
     tray?.setToolTip(`Agent-X — Running on port ${PORT}`);
     createWindow();

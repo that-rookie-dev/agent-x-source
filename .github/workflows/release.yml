@@ -95,6 +95,9 @@ jobs:
           path: packages/web-ui/dist
 
       # --- Desktop ---
+      - name: Setup bundled Python
+        run: node packages/desktop/scripts/setup-python.mjs
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -170,6 +173,9 @@ jobs:
           path: packages/web-ui/dist
 
       # --- Desktop ---
+      - name: Setup bundled Python
+        run: node packages/desktop/scripts/setup-python.mjs
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -241,6 +247,9 @@ jobs:
           path: packages/web-ui/dist
 
       # --- Desktop ---
+      - name: Setup bundled Python
+        run: node packages/desktop/scripts/setup-python.mjs
+
       - uses: actions/cache@v4
         with:
           path: |
