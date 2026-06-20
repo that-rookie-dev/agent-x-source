@@ -2,7 +2,7 @@ import { spawn, execSync } from 'node:child_process';
 import { existsSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { Sandbox, SandboxResult, SandboxOptions } from '@agentx/shared';
 
 interface ContainerProcess {
@@ -146,7 +146,7 @@ export class DockerSandbox implements Sandbox {
   }
 
   private generateId(): string {
-    return `agentx-${randomBytes(8).toString('hex')}`;
+    return randomUUID();
   }
 
   private prepareWorkDir(_options?: SandboxOptions): string {

@@ -23,6 +23,8 @@ export interface StorableMessage extends RecordMeta {
   content: string;
   toolCalls?: string;
   tokenCount: number;
+  parts?: Array<Record<string, unknown>>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface StorableTokenLog extends RecordMeta {

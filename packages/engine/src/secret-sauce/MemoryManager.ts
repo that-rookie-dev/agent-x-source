@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { getSecretSauceDir } from '../config/paths.js';
 
 interface MemoryEntry {
@@ -72,7 +73,7 @@ export class MemoryManager {
 
   addMemory(content: string, category: string): void {
     const entry: MemoryEntry = {
-      id: `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: randomUUID(),
       content,
       category,
       timestamp: new Date().toISOString(),

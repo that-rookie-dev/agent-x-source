@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ToolResult } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 
@@ -273,7 +274,7 @@ export class SafetyAuditor {
       for (const pattern of PROMPT_INJECTION_PATTERNS) {
         if (pattern.test(text)) {
           return {
-            id: `si_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            id: randomUUID(),
             timestamp: Date.now(),
             toolId,
             args,
@@ -296,7 +297,7 @@ export class SafetyAuditor {
         for (const pattern of PATH_TRAVERSAL_PATTERNS) {
           if (pattern.test(value)) {
             return {
-              id: `pt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              id: randomUUID(),
               timestamp: Date.now(),
               toolId,
               args,
@@ -324,7 +325,7 @@ export class SafetyAuditor {
         if (pattern.test(text)) {
           const block = ['shell'].includes(category);
           return {
-            id: `dc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            id: randomUUID(),
             timestamp: Date.now(),
             toolId,
             args,
@@ -341,7 +342,7 @@ export class SafetyAuditor {
         for (const pattern of DANGEROUS_COMMAND_PATTERNS['shell'] ?? []) {
           if (pattern.test(text)) {
             return {
-              id: `dc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              id: randomUUID(),
               timestamp: Date.now(),
               toolId,
               args,
@@ -359,7 +360,7 @@ export class SafetyAuditor {
         for (const pattern of DANGEROUS_COMMAND_PATTERNS['filesystem'] ?? []) {
           if (pattern.test(text)) {
             return {
-              id: `dc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              id: randomUUID(),
               timestamp: Date.now(),
               toolId,
               args,
@@ -387,7 +388,7 @@ export class SafetyAuditor {
         for (const pattern of INFO_LEAKAGE_PATTERNS) {
           if (pattern.test(value)) {
             return {
-              id: `il_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              id: randomUUID(),
               timestamp: Date.now(),
               toolId,
               args,
@@ -409,7 +410,7 @@ export class SafetyAuditor {
       for (const pattern of SUSPICIOUS_ENCODING_PATTERNS) {
         if (pattern.test(text)) {
           return {
-            id: `se_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            id: randomUUID(),
             timestamp: Date.now(),
             toolId,
             args,

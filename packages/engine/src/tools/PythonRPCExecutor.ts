@@ -2,6 +2,7 @@ import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { getLogger } from '@agentx/shared';
 
 const logger = getLogger();
@@ -214,7 +215,7 @@ export class PythonRPCExecutor {
   }
 
   private createWorkDir(): string {
-    const dir = join(tmpdir(), `agentx-python-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+    const dir = join(tmpdir(), `agentx-python-${randomUUID()}`);
     mkdirSync(dir, { recursive: true });
     this.tempDirs.push(dir);
     if (this.tempDirs.length > 20) {

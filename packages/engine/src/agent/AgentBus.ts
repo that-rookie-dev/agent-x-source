@@ -1,6 +1,7 @@
 import type { EngineEvent } from '@agentx/shared';
 import type { AgentEventBus } from '../EventBus.js';
 import { getLogger } from '@agentx/shared';
+import { randomUUID } from 'node:crypto';
 
 const logger = getLogger();
 
@@ -82,7 +83,7 @@ export class AgentBus {
     replyTo?: string,
   ): Promise<AgentMessage> {
     const msg: AgentMessage = {
-      id: `amsg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: randomUUID(),
       from,
       to,
       topic,

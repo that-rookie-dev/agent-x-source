@@ -289,9 +289,8 @@ export function CrewMentionMenu({
     setActive(0);
   }, [query]);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (filtered.length === 0) return;
+  const handleKeyboard = useCallback((e: KeyboardEvent) => {
+    if (filtered.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setActive(i => Math.min(filtered.length - 1, i + 1));
@@ -304,16 +303,20 @@ export function CrewMentionMenu({
           e.preventDefault();
           onSelect(crew);
         }
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
       }
-    };
-    window.addEventListener('keydown', handler, true);
-    return () => window.removeEventListener('keydown', handler, true);
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
   }, [filtered, active, onSelect, onClose]);
 
-  if (filtered.length === 0) return null;
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyboard, true);
+    return () => window.removeEventListener('keydown', handleKeyboard, true);
+  }, [handleKeyboard]);
+
+  const isEmpty = crewList.length === 0;
 
   return (
     <Box
@@ -341,36 +344,49 @@ export function CrewMentionMenu({
         <Box sx={{ flex: 1 }} />
         <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>↑↓ · ⏎ select · esc</Typography>
       </Box>
-      {filtered.map((crew, i) => (
-        <Box
-          key={crew.id}
-          onClick={() => onSelect(crew)}
-          onMouseEnter={() => setActive(i)}
-          sx={{
-            px: 1.25, py: 0.6,
-            display: 'flex', alignItems: 'center', gap: 0.75,
-            cursor: 'pointer',
-            bgcolor: i === active ? colors.accent.blue + '15' : 'transparent',
-            borderLeft: i === active ? `2px solid ${colors.accent.blue}` : '2px solid transparent',
-          }}
-        >
-          <Box sx={{ flex: 1 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
-                @{crew.callsign}
-              </Typography>
-              {crew.title && (
-                <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim }}>
-                  — {crew.title}
+      {filtered.length > 0 ? (
+        filtered.map((crew, i) => (
+          <Box
+            key={crew.id}
+            onClick={() => onSelect(crew)}
+            onMouseEnter={() => setActive(i)}
+            sx={{
+              px: 1.25, py: 0.6,
+              display: 'flex', alignItems: 'center', gap: 0.75,
+              cursor: 'pointer',
+              bgcolor: i === active ? colors.accent.blue + '15' : 'transparent',
+              borderLeft: i === active ? `2px solid ${colors.accent.blue}` : '2px solid transparent',
+            }}
+          >
+            <Box sx={{ flex: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
+                  @{crew.callsign}
                 </Typography>
-              )}
+                {crew.title && (
+                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim }}>
+                    — {crew.title}
+                  </Typography>
+                )}
+              </Box>
+              <Typography sx={{ fontSize: '0.6rem', color: colors.text.secondary }}>
+                {crew.name}
+              </Typography>
             </Box>
-            <Typography sx={{ fontSize: '0.6rem', color: colors.text.secondary }}>
-              {crew.name}
-            </Typography>
           </Box>
+        ))
+      ) : (
+        <Box sx={{ px: 1.25, py: 1.5, textAlign: 'center' }}>
+          <Typography sx={{ fontSize: '0.65rem', color: colors.text.dim }}>
+            {isEmpty ? 'No crews available' : 'No matching crews'}
+          </Typography>
+          {isEmpty && (
+            <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, mt: 0.25 }}>
+              Add crews from the Crews panel to @mention them
+            </Typography>
+          )}
         </Box>
-      ))}
+      )}
     </Box>
   );
 }

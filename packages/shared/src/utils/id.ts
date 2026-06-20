@@ -1,8 +1,7 @@
-import { nanoid } from 'nanoid';
 import { randomUUID } from 'node:crypto';
 
 export function generateId(prefix?: string): string {
-  const id = nanoid(21);
+  const id = randomUUID();
   return prefix ? `${prefix}_${id}` : id;
 }
 

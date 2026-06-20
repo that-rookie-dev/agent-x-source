@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { getSecretSauceDir, getLogger } from '@agentx/shared';
 
 /**
@@ -42,7 +43,7 @@ export function migrateSecretSauceToDb(db: any): number {
         );
         for (const m of memories) {
           insert.run(
-            m.id || `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            m.id || randomUUID(),
             m.category || 'context',
             m.content,
             m.relevance ?? 1.0,

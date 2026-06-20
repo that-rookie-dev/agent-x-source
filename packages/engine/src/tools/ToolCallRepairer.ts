@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { NormalizedToolCall } from '@agentx/shared';
 import { ToolCallStatus } from '@agentx/shared';
 
@@ -137,6 +138,6 @@ export class ToolCallRepairer {
   }
 
   private generateId(): string {
-    return `tc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    return randomUUID();
   }
 }

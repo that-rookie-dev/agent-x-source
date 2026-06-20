@@ -130,7 +130,7 @@ export const providers = {
 // ─── Models ───
 export const models = {
   switch: (modelId: string) => request<{ ok: boolean }>('/model/switch', { method: 'POST', body: JSON.stringify({ modelId }) }),
-  current: () => request<{ model: string; provider: string; activeProfile?: string }>('/models'),
+  current: () => request<{ model: string; provider: string; providerId?: string; activeProfile?: string }>('/models'),
 };
 
 // ─── Crews ───
@@ -140,7 +140,7 @@ export const crews = {
   update: (id: string, data: Partial<CrewInput>) => request<{ ok: boolean }>(`/crews/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: string) => request<{ ok: boolean }>(`/crews/${id}`, { method: 'DELETE' }),
   toggle: (id: string, enabled: boolean) => request<{ ok: boolean }>('/crew/toggle', { method: 'POST', body: JSON.stringify({ crewId: id, enabled }) }),
-  generateMetadata: (systemPrompt: string, title?: string) => request<{ expertise: string[]; traits: string[]; revisedPrompt: string }>('/crew/generate-metadata', { method: 'POST', body: JSON.stringify({ systemPrompt, title }) }),
+  generateMetadata: (systemPrompt?: string, title?: string, name?: string, description?: string) => request<{ expertise: string[]; traits: string[]; revisedPrompt: string }>('/crew/generate-metadata', { method: 'POST', body: JSON.stringify({ systemPrompt, title, name, description }) }),
 };
 
 // ─── Chat ───

@@ -42,7 +42,7 @@ export class OrchestrationPlanner {
     }
 
     const basic = tasks.map((t) => ({
-      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+      id: crypto.randomUUID(),
       description: t.description,
       skills: t.skills,
       assignedCrew: undefined as { crewId: string; name: string; callsign: string } | undefined,

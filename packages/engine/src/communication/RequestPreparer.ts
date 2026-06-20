@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   PromptBundle,
   ProviderPlan,
@@ -105,6 +106,6 @@ export class RequestPreparer {
   }
 
   private generateId(): string {
-    return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    return randomUUID();
   }
 }

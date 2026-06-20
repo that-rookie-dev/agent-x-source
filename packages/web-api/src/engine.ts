@@ -93,9 +93,13 @@ export function getEngine(): EngineState {
         max: (pgConfig['poolSize'] as number) ?? 5,
       } as any);
       sessionManager = new SessionManager({ storageAdapter: pgAdapter });
-      pgAdapter.connect().catch(e => {
-        console.error('PostgreSQL connect/migrate failed, consider checking connection string or PG availability', e);
-      });
+      pgAdapter.connect()
+        .then(() => {
+          if (state) state.crewManager.refresh();
+        })
+        .catch(e => {
+          console.error('PostgreSQL connect/migrate failed, consider checking connection string or PG availability', e);
+        });
     } catch (e) {
       console.error('Failed to initialize PostgreSQL adapter, falling back to SQLite', e);
       sessionManager = new SessionManager();

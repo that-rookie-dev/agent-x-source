@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   CompletionRequest,
   CompletionChunk,
@@ -124,7 +125,7 @@ export class OllamaProvider implements ProviderInterface {
                   yield {
                     type: 'tool_call_delta',
                     toolCall: {
-                      id: `ollama-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                      id: randomUUID(),
                       type: 'function',
                       function: {
                         name: tc.function.name ?? '',

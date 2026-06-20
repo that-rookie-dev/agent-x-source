@@ -291,13 +291,22 @@ app.post('/api/provider/validate', async (req, res) => {
 
 app.get('/api/provider/models', async (req, res) => {
   try {
-    const providerId = (req.query['provider'] as string) || '';
+    let providerId = (req.query['provider'] as string) || '';
     let apiKey = (req.query['apiKey'] as string) || undefined;
     let baseUrl = (req.query['baseUrl'] as string) || undefined;
     if (!apiKey && !baseUrl) {
       try {
         const eng = getEngine();
         const cfg = eng.configManager.load();
+        // Resolve profile label → actual provider type (e.g. "OCZ-Personal" → "openai")
+        if (!cfg.provider.providers[providerId]) {
+          for (const [pid, pcfg] of Object.entries(cfg.provider.providers)) {
+            if (pcfg.profiles?.[providerId] || pcfg.activeProfile === providerId) {
+              providerId = pid;
+              break;
+            }
+          }
+        }
         const creds = cfg.provider.providers[providerId];
         if (creds?.activeProfile && creds.profiles?.[creds.activeProfile]) {
           const active = creds.profiles[creds.activeProfile] as { apiKey?: string; baseUrl?: string } | undefined;
@@ -542,7 +551,7 @@ app.get('/api/models', async (_req, res) => {
       try { await eng.agent.listModels(); } catch (e) { /* ignore */ }
     }
     const activeProfile = config.provider.providers[config.provider.activeProvider]?.activeProfile;
-    res.json({ model: config.provider.activeModel, provider: config.provider.activeProvider, activeProfile, currentModel: config.provider.activeModel });
+    res.json({ model: config.provider.activeModel, provider: config.provider.activeProvider, providerId: config.provider.activeProvider, activeProfile, currentModel: config.provider.activeModel });
   } catch (e: unknown) {
     getLogger().error('GET_API_MODELS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'failed' });
   }
@@ -713,16 +722,17 @@ app.post('/api/crew/toggle', (req, res) => {
 
 app.post('/api/crews', (req, res) => {
   try {
-    const { id, name, title, callsign, systemPrompt, emotion, isDefault, expertise, traits, color, icon } = req.body as {
-      id: string; name: string; title?: string; callsign?: string; systemPrompt: string; emotion?: string; isDefault?: boolean; expertise?: string[]; traits?: string[]; color?: string; icon?: string;
+    const { id, name, title, callsign, systemPrompt, description, emotion, isDefault, expertise, traits, color, icon } = req.body as {
+      id: string; name: string; title?: string; callsign?: string; systemPrompt: string; description?: string; emotion?: string; isDefault?: boolean; expertise?: string[]; traits?: string[]; color?: string; icon?: string;
     };
     const eng = getEngine();
     const crew = eng.crewManager.create({
-      id: id || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+      id: id || crypto.randomUUID(),
       name,
       title,
-      callsign: callsign || id || name,
+      callsign: callsign || name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''),
       systemPrompt,
+      description,
       emotion: emotion as 'professional' | 'friendly' | 'witty' | 'kind' | 'funny' | 'arrogant' | 'flirty' | 'happy' | 'sad' | 'sarcastic' | undefined,
       isDefault,
       expertise,
@@ -830,7 +840,7 @@ app.post('/api/crew/:id/feedback', (req, res) => {
     const store = (eng.sessionManager as any)?.store ?? (eng.sessionManager as any)?.['_store'];
     if (store && typeof store.addCrewFeedback === 'function') {
       store.addCrewFeedback({
-        id: `fb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: crypto.randomUUID(),
         sessionId: (eng.agent as any)?.sessionId ?? 'unknown',
         crewId,
         positive,
@@ -848,12 +858,12 @@ app.post('/api/crew/:id/feedback', (req, res) => {
 
 app.post('/api/crew/generate-metadata', async (req, res) => {
   try {
-    const { systemPrompt, title } = req.body as { systemPrompt: string; title?: string };
-    if (!systemPrompt) { res.status(400).json({ error: 'systemPrompt required' }); return; }
+    const { systemPrompt, title, name, description } = req.body as { systemPrompt?: string; title?: string; name?: string; description?: string };
 
     const eng = getEngine();
     const cfg = eng.configManager.load();
     const providerId = cfg.provider.activeProvider;
+    if (!providerId) { res.json({ expertise: [], traits: [], revisedPrompt: '' }); return; }
     const providerCfg = cfg.provider.providers[providerId];
     const apiKey = providerCfg?.apiKey || providerCfg?.profiles?.[providerCfg?.activeProfile ?? '']?.apiKey;
 
@@ -862,21 +872,20 @@ app.post('/api/crew/generate-metadata', async (req, res) => {
     const { ProviderFactory } = await import('@agentx/engine');
     const provider = ProviderFactory.create(providerId as any, apiKey, providerCfg?.baseUrl);
 
-    const titleContext = title ? `\nRole/Title: ${title}` : '';
-
-    const genPrompt = `Analyze this AI crew member's role and system prompt.${titleContext}
-
-System prompt:
+    const genPrompt = systemPrompt
+      ? `Analyze this AI crew member's role and improve it.${title ? `\nRole/Title: ${title}` : ''}
+System prompt to improve:
 """
 ${systemPrompt}
 """
-
-Return ONLY valid JSON with:
-- "revisedPrompt": an improved, more structured version of the system prompt (keep the core persona but make it clearer, more specific, and better organized)
-- "expertise": 4-8 specific technical/domain skills (e.g. "React", "API Design", "Security Auditing")
-- "traits": 3-6 personality/behavioral traits (e.g. "concise", "practical", "pragmatic", "analytical")
-
-Format: {"revisedPrompt":"...", "expertise":["skill1","skill2"], "traits":["trait1","trait2"]}`;
+Return ONLY this exact JSON format (no markdown, no explanation):
+{"revisedPrompt":"improved concise system prompt","expertise":["skill1","skill2","skill3","skill4","skill5"],"traits":["trait1","trait2","trait3"]}`
+      : `Create an AI crew member profile from this info:
+Name: ${name || 'Assistant'}
+Title: ${title || 'General Assistant'}
+Description: ${description || 'A helpful AI crew member'}
+Return ONLY this exact JSON format (no markdown, no explanation):
+{"revisedPrompt":"a detailed 2-3 paragraph system prompt defining personality, behavior, domain expertise, communication style, and working methods","expertise":["skill1","skill2","skill3","skill4","skill5"],"traits":["trait1","trait2","trait3"]}`;
 
     const chunks: string[] = [];
     const modelId = cfg.provider.activeModel || 'gpt-4o-mini';
@@ -884,17 +893,20 @@ Format: {"revisedPrompt":"...", "expertise":["skill1","skill2"], "traits":["trai
       messages: [{ role: 'user', content: genPrompt }],
       model: modelId,
       stream: true,
-      maxTokens: 500,
+      maxTokens: 2000,
       temperature: 0.3,
     })) {
       if (chunk.type === 'text_delta' && chunk.content) chunks.push(chunk.content);
     }
 
     const text = chunks.join('');
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) { res.json({ expertise: [], traits: [], revisedPrompt: '' }); return; }
+    let jsonText = text.match(/\{[\s\S]*\}/)?.[0] || '';
+    // Strip markdown code fences if present
+    jsonText = jsonText.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '');
+    jsonText = (jsonText.match(/\{[\s\S]*\}/) || [''])[0] || '';
+    if (!jsonText) { res.json({ expertise: [], traits: [], revisedPrompt: '' }); return; }
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonText);
     res.json({
       revisedPrompt: typeof parsed.revisedPrompt === 'string' ? parsed.revisedPrompt : '',
       expertise: Array.isArray(parsed.expertise) ? parsed.expertise.slice(0, 8) : [],
@@ -1613,20 +1625,25 @@ app.post('/api/settings/db/clear-cache', (_req, res) => {
 });
 
 app.get('/api/sessions', (_req, res) => {
-  const eng = getEngine();
-  const all = eng.sessionManager.listSessions(50) as unknown as Array<Record<string, unknown>>;
-  const sessions = all.filter(s => s.id !== '__channel__');
-  for (const s of sessions) {
-    try {
-      const store = (eng.sessionManager as any).store;
-      if (store?.getMessageCount) {
-        s['messageCount'] = store.getMessageCount(s.id as string) as number;
-      } else {
-        s['messageCount'] = 0;
-      }
-    } catch (e) { s['messageCount'] = 0; }
+  try {
+    const eng = getEngine();
+    const all = eng.sessionManager.listSessions(50) as unknown as Array<Record<string, unknown>>;
+    const sessions = all.filter(s => s['id'] !== '__channel__');
+    for (const s of sessions) {
+      try {
+        const store = (eng.sessionManager as any).store;
+        if (store && typeof store.getMessageCount === 'function') {
+          s['messageCount'] = store.getMessageCount(s['id'] as string) as number;
+        } else {
+          s['messageCount'] = 0;
+        }
+      } catch (e) { s['messageCount'] = 0; }
+    }
+    res.json(sessions);
+  } catch (e: unknown) {
+    getLogger().error('GET_API_SESSIONS', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'failed-to-list-sessions' });
   }
-  res.json(sessions);
 });
 
 // Cross-session full-text search. Queries the messages table via SQLite.
@@ -1831,40 +1848,99 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     } catch (e) { getLogger().warn('RESTORE_MESSAGES', e instanceof Error ? e.message : String(e)); }
 
     // Merge parts into messages so the frontend gets chronological parts arrays
-    for (const msg of messages) {
+    // Use pre-stored parts from messages table if available, otherwise reconstruct
+    const hasStoredParts = messages.some((m) => Array.isArray(m['parts']) && (m['parts'] as any[]).length > 0);
+
+    if (!hasStoredParts) {
+    // Build chronological parts arrays using message_parts table ordering
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i]!;
       if (msg['role'] !== 'assistant') continue;
-      const msgTools = (msg['tool_calls'] as string | null);
-      const parsedTools: Array<{ id?: string; name?: string; callId?: string; toolCallId?: string }> = msgTools
-        ? (() => { try { return JSON.parse(msgTools); } catch (e) { return []; } })()
+      const rawTools = (msg['tool_calls'] ?? msg['toolCalls']) as string | null;
+      const parsedTools: Array<{ id?: string; name?: string; callId?: string; toolCallId?: string }> = rawTools
+        ? (() => { try { return typeof rawTools === 'string' ? JSON.parse(rawTools) : rawTools; } catch (e) { return []; } })()
         : [];
       const toolIds = new Set(parsedTools.map((t: any) => t.id || t.callId || t.toolCallId).filter(Boolean));
-      const msgParts: Array<Record<string, unknown>> = [];
-      for (const p of parts) {
-        const partCallId = (p['tool_call_id'] as string) || '';
-        if (partCallId && toolIds.has(partCallId)) {
-          msgParts.push(p);
+      if (toolIds.size === 0) continue;
+
+      const msgCreatedAt = msg['created_at'] as string;
+      const nextMsgCreatedAt = (i + 1 < messages.length) ? messages[i + 1]!['created_at'] as string : undefined;
+
+      const msgParts = parts.filter((p) => {
+        const pcid = (p['tool_call_id'] as string) || '';
+        if (!pcid || !toolIds.has(pcid)) return false;
+        const pca = p['created_at'] as string;
+        if (pca < (msgCreatedAt || '')) return false;
+        if (nextMsgCreatedAt && pca >= nextMsgCreatedAt) return false;
+        return true;
+      });
+
+      if (msgParts.length > 0) {
+        const built: Array<{ type: string; id: string; content?: string; tool?: { id: string; name: string; args?: unknown; result?: string; status: string } }> = [];
+        for (const p of msgParts) {
+          const partType = (p['type'] as string) || '';
+          if (partType === 'text-delta' && p['content']) {
+            built.push({ type: 'text', id: crypto.randomUUID(), content: p['content'] as string });
+          } else if (partType === 'tool-call' || partType === 'tool-result') {
+            const tid = (p['tool_call_id'] as string) || crypto.randomUUID();
+            const existing = built.findIndex(b => b.type === 'tool' && b.tool?.id === tid);
+            if (existing >= 0) {
+              if (partType === 'tool-result') {
+                built[existing] = {
+                  ...built[existing]!,
+                  tool: {
+                    ...built[existing]!.tool!,
+                    result: p['tool_result'] as string | undefined,
+                    status: (p['tool_success'] as number) === 1 ? 'done' as const : 'error' as const,
+                  },
+                };
+              }
+            } else if (partType === 'tool-call') {
+              built.push({
+                type: 'tool',
+                id: tid,
+                tool: {
+                  id: tid,
+                  name: (p['tool_name'] as string) || 'unknown',
+                  args: p['tool_args'] ? (() => { try { return JSON.parse(p['tool_args'] as string); } catch { return p['tool_args']; } })() : undefined,
+                  status: 'done',
+                },
+              });
+            }
+          }
         }
-      }
-      if (msgParts.length > 0 || parsedTools.length > 0) {
-        // Build chronological parts: text part for content, then tool parts
-        const built: Array<{ type: string; id: string; content?: string; toolName?: string; toolCallId?: string; toolArgs?: unknown; toolResult?: string; toolSuccess?: number }> = [];
         if (msg['content']) {
-          built.push({ type: 'text', id: crypto.randomUUID(), content: msg['content'] as string });
-        }
-        for (const t of parsedTools) {
-          const tid = t.id || t.callId || t.toolCallId || crypto.randomUUID();
-          const matchedPart = msgParts.find((p) => (p['tool_call_id'] as string) === tid);
-          built.push({
-            type: 'tool',
-            id: tid,
-            toolName: t.name || 'unknown',
-            toolCallId: tid,
-            toolArgs: matchedPart?.['tool_args'] ? (() => { try { return JSON.parse(matchedPart['tool_args'] as string); } catch (e) { return matchedPart['tool_args']; } })() : undefined,
-            toolResult: matchedPart?.['tool_result'] as string | undefined,
-            toolSuccess: matchedPart?.['tool_success'] as number | undefined,
-          });
+          const hasText = built.some(b => b.type === 'text');
+          if (!hasText) {
+            built.unshift({ type: 'text', id: crypto.randomUUID(), content: msg['content'] as string });
+          }
         }
         (msg as any)['parts'] = built;
+      }
+    }
+    } // end if !hasStoredParts
+
+    // Normalize toolCalls from JSON strings to arrays for the frontend
+    for (const msg of messages) {
+      if (msg['tool_calls'] != null && typeof msg['tool_calls'] === 'string') {
+        try { msg['tool_calls'] = JSON.parse(msg['tool_calls'] as string); } catch { msg['tool_calls'] = undefined; }
+      }
+      if (msg['toolCalls'] != null && typeof msg['toolCalls'] === 'string') {
+        try { msg['toolCalls'] = JSON.parse(msg['toolCalls'] as string); } catch { msg['toolCalls'] = undefined; }
+      }
+      // Transform metadata.crewId/crewName/callsign into crew object for frontend
+      if (msg['metadata'] && !msg['crew']) {
+        const meta = msg['metadata'] as Record<string, unknown>;
+        if (meta['crewId']) {
+          const crewMember = eng.crewManager.get(meta['crewId'] as string);
+          msg['crew'] = {
+            crewId: meta['crewId'],
+            name: (meta['crewName'] as string) || crewMember?.name || '',
+            callsign: (meta['callsign'] as string) || crewMember?.callsign || '',
+            color: crewMember?.color,
+            icon: crewMember?.icon,
+          };
+        }
       }
     }
 
@@ -3348,6 +3424,21 @@ app.post('/api/reset', (_req, res) => {
   }
 });
 
+// ─── Debug Log Endpoint ────────────────────────────────────────────
+// Accept frontend-side parse errors so developers can see raw API output
+app.post('/api/debug/log', (req, res) => {
+  try {
+    const DATA_DIR = getDataDir();
+    const DEBUG_DIR = join(DATA_DIR, 'debug-logs');
+    if (!existsSync(DEBUG_DIR)) mkdirSync(DEBUG_DIR, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    writeFileSync(join(DEBUG_DIR, `frontend_${ts}.json`), JSON.stringify(req.body, null, 2));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: 'invalid-log-entry' });
+  }
+});
+
 // ───── Static file serve ─────
 const UI_PROXY_URL = process.env['AGENTX_UI_PROXY_URL'] || 'http://localhost:5173';
 
@@ -3368,26 +3459,6 @@ app.get('*', async (req, res, next) => {
     } catch (e) {
       getLogger().error('GET_', e instanceof Error ? e : String(e));      res.status(502).json({ error: 'ui-proxy-failed' });
     }
-    return;
-  }
-
-  // ─── Debug Log Endpoint ────────────────────────────────────────────
-  // Accept frontend-side parse errors so developers can see raw API output
-  if (req.path === '/api/debug/log' && req.method === 'POST') {
-    let body = '';
-    req.on('data', (chunk: string) => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const DEBUG_DIR = join(DATA_DIR, 'debug-logs');
-        if (!existsSync(DEBUG_DIR)) mkdirSync(DEBUG_DIR, { recursive: true });
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        const entry = JSON.parse(body);
-        writeFileSync(join(DEBUG_DIR, `frontend_${ts}.json`), JSON.stringify(entry, null, 2));
-        res.json({ ok: true });
-      } catch (e) {
-        res.status(400).json({ error: 'invalid-log-entry' });
-      }
-    });
     return;
   }
 
