@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { getLogger } from '@agentx/shared';
 import { getConfigDir } from '../config/paths.js';
 
@@ -202,7 +203,7 @@ export class PolicyEngine {
   logAudit(entry: Omit<AuditEntry, 'id' | 'timestamp'>): void {
     const audit: AuditEntry = {
       ...entry,
-      id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: randomUUID(),
       timestamp: Date.now(),
     };
     this.auditLog.push(audit);

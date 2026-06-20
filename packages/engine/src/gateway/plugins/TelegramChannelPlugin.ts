@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ChannelPlugin } from '../types.js';
 import type { FocusState, FocusManager } from '../FocusManager.js';
 import { getDataDir, type VisualUpdate, type AgentXConfig } from '@agentx/shared';
@@ -125,7 +126,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       async (toolId: string, path: string, riskLevel: string) => {
         if (!this.activeChatId) return 'deny' as const;
 
-        const permId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const permId = randomUUID();
         const riskEmoji = riskLevel === 'high' ? '🔴' : riskLevel === 'medium' ? '🟡' : '🟢';
 
         await this.bridge.sendWithButtons(

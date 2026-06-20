@@ -17,9 +17,9 @@ sudo rm -rf /Applications/Agent-X.app 2>/dev/null || true
 
 # 3. Remove SQLite DB files first, then data directories
 echo ">>> Removing agentx config/data/cache..."
-rm -f "$HOME/.local/share/agentx/agentx.db" 2>/dev/null || true
-rm -f "$HOME/.local/share/agentx/agentx.db-wal" 2>/dev/null || true
-rm -f "$HOME/.local/share/agentx/agentx.db-shm" 2>/dev/null || true
+rm -f "$HOME/.local/share/agentx/db/agentx.db" 2>/dev/null || true
+rm -f "$HOME/.local/share/agentx/db/agentx.db-wal" 2>/dev/null || true
+rm -f "$HOME/.local/share/agentx/db/agentx.db-shm" 2>/dev/null || true
 rm -rf "$HOME/.config/agentx"
 rm -rf "$HOME/.local/share/agentx"
 rm -rf "$HOME/.cache/agentx"

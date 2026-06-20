@@ -1,6 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import type { PluginHubEntry, PluginCategory, InstalledPlugin } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
@@ -298,57 +297,9 @@ export class PluginRegistry {
     return server;
   }
 
-  private seedDefaultMcpServers(): void {
-    const scripts: Array<{ name: string; level: 'low' | 'medium' | 'high' | 'critical'; enabled: boolean }> = [
-      { name: 'filesystem', level: 'medium', enabled: true },
-      { name: 'database', level: 'medium', enabled: true },
-      { name: 'browser', level: 'medium', enabled: true },
-      { name: 'search', level: 'low', enabled: true },
-      { name: 'shell', level: 'critical', enabled: true },
-      { name: 'git', level: 'medium', enabled: true },
-      { name: 'json', level: 'low', enabled: true },
-      { name: 'math', level: 'low', enabled: true },
-      { name: 'uuid', level: 'low', enabled: true },
-      { name: 'crypto', level: 'low', enabled: true },
-      { name: 'datetime', level: 'low', enabled: true },
-      { name: 'encoding', level: 'low', enabled: true },
-      { name: 'http', level: 'medium', enabled: true },
-      { name: 'fs-diff', level: 'medium', enabled: true },
-      { name: 'template', level: 'low', enabled: true },
-    ];
-
-    // Path relative to the engine package: packages/engine/ -> packages/mcp-servers/
-    const engineRoot = join(dirname(dirname(fileURLToPath(import.meta.url))), '..');
-    const mcpServersDist = join(engineRoot, 'mcp-servers', 'dist', 'servers');
-
-    if (!existsSync(mcpServersDist)) {
-      logger.warn('MCP_CONFIG_SEED_SKIPPED', `@agentx/mcp-servers dist not found at ${mcpServersDist}`);
-      return;
-    }
-
-    const configs: Record<string, unknown> = {};
-    for (const s of scripts) {
-      configs[s.name] = {
-        command: 'node',
-        args: [join(mcpServersDist, `${s.name}.js`)],
-        enabled: s.enabled,
-        transport: 'stdio',
-        permissionLevel: s.level,
-      };
-    }
-
-    const dir = dirname(this.mcpConfigPath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(this.mcpConfigPath, JSON.stringify(configs, null, 2), 'utf-8');
-    logger.info('MCP_CONFIG_SEEDED', `Seeded ${scripts.length} default MCP servers`);
-  }
-
   private loadMcpServers(): void {
     try {
-      if (!existsSync(this.mcpConfigPath)) {
-        this.seedDefaultMcpServers();
-        if (!existsSync(this.mcpConfigPath)) return;
-      }
+      if (!existsSync(this.mcpConfigPath)) return;
       const raw = readFileSync(this.mcpConfigPath, 'utf-8');
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       for (const [key, val] of Object.entries(parsed)) {

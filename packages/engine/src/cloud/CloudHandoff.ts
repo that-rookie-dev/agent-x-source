@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { getLogger } from '@agentx/shared';
 import { getConfigDir } from '../config/paths.js';
 
@@ -186,7 +187,7 @@ export class CloudHandoff {
     if (!token) throw new Error('Not authenticated to cloud. Run `agentx cloud login` first.');
 
     const session: CloudSession = {
-      id: `cloud_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: randomUUID(),
       status: 'pending',
       createdAt: Date.now(),
       updatedAt: Date.now(),

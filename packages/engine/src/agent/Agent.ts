@@ -557,14 +557,14 @@ export class Agent {
     this.agentBus = getAgentBus();
     this.agentBus.attachEventBus(this.eventBus);
     this.specialistRegistry = new SpecialistRegistry(this.agentBus);
-    this.specialistRegistry.registerDefaults();
     // skillGenerator and reflectionLoop are lazy-init (created on first access)
 
     // Initialize current agent from built-in build agent
     this.currentAgent = BUILTIN_AGENTS.find(a => a.id === 'build')!;
 
-    // Register this agent on the bus
-    this.agentBus.registerAgent(this.sessionId, ['main', 'orchestrator']);
+    // Register this agent on the bus with persona identity
+    const identity = this.persona?.name || 'Agent-X';
+    this.agentBus.registerAgent(this.sessionId, [identity]);
 
     // ─── LAZY PIPELINE — components created on first access via getters ───
     const apiKey = this.getApiKey() ?? '';
@@ -1515,7 +1515,6 @@ Return ONLY valid JSON, no other text.`;
         const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
         return subAgent.execute();
       },
-      this._abortSignalController,
     );
 
     const model = createAiSdkModel(this.config, this.getApiKey());
@@ -2178,14 +2177,18 @@ Only include specialists that are actually needed for this task.`;
     }
 
     if (subtasks.length === 0) {
-      subtasks.push({ specialist: 'coder' as SpecialistType, instruction: task });
+      getLogger().warn('DECOMPOSE', 'No matching specialist found for task decomposition. Skipping sub-agent spawn.');
+      this.emit({ type: 'decomposition_ready', subtaskCount: 0 });
+      return { subResults: [], synthesized: '', totalElapsed: Date.now() - start };
     }
 
     this.emit({ type: 'decomposition_ready', subtaskCount: subtasks.length });
 
     // Spawn parallel sub-agents
     const subPromises = subtasks.map(async ({ specialist, instruction }) => {
-      const spec = this.specialistRegistry.getByType(specialist)!;
+      const spec = this.specialistRegistry.getByType(specialist);
+      if (!spec) return null;
+
       const sub = new SmartSubAgent({
         parentAgent: this,
         instruction: `[SPECIALIST: ${spec.name}]\n${instruction}`,
@@ -2203,7 +2206,8 @@ Only include specialists that are actually needed for this task.`;
       return { specialist, output: result.output, elapsed: result.elapsed };
     });
 
-    const subResults = await Promise.all(subPromises);
+    const rawResults = await Promise.all(subPromises);
+    const subResults = rawResults.filter((r): r is { specialist: SpecialistType; output: string; elapsed: number } => r !== null);
 
     // Synthesize results
     const parts = subResults.map((r) =>
@@ -2438,7 +2442,6 @@ Only include specialists that are actually needed for this task.`;
           const subAgent = new SmartSubAgent({ parentAgent: this, instruction, tools: toolsList, timeout });
           return subAgent.execute();
         },
-        toolsAbortController,
       );
     }
 

@@ -32,7 +32,7 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import CloseIcon from '@mui/icons-material/Close';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import { CheckCircle } from './CheckCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import QueueIcon from '@mui/icons-material/PlaylistAdd';
@@ -260,6 +260,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setCurrentSessionId(sessionId);
       setShowJumpPill(false);
       setUnreadCount(0);
+      prevRealCountRef.current = 0;
+      isAtBottomRef.current = true;
+      setInitialScrollDone(false);
       sessions.restore(sessionId).then(({ messages: historyMsgs, session, scopePath }) => {
         const resolvedScope = scopePath || session.scopePath;
         const visible = historyMsgs.filter((m: any) => m.role !== 'part');
@@ -337,6 +340,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Model/Provider state
   const [currentModel, setCurrentModel] = useState('');
   const [currentProvider, setCurrentProvider] = useState('');
+  const [currentProviderId, setCurrentProviderId] = useState('');
   const [providerList, setProviderList] = useState<Array<{ id: string; label: string; providerId: string }>>([]);
   const [modelList, setModelList] = useState<ModelInfo[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -438,6 +442,18 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return () => el.removeEventListener('scroll', onScroll);
   }, [view]);
 
+  // Auto-scroll to bottom on session load/restore
+  const [initialScrollDone, setInitialScrollDone] = useState(false);
+  useEffect(() => {
+    if (!initialScrollDone && messages.length > 0) {
+      const timer = setTimeout(() => {
+        bottomRef.current?.scrollIntoView();
+        setInitialScrollDone(true);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [messages.length, initialScrollDone]);
+
   // Auto-scroll only when user is at bottom — only count user/assistant messages
   const prevRealCountRef = useRef(0);
   useEffect(() => {
@@ -471,12 +487,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   useEffect(() => {
     // Get current model/provider - fallback to providers endpoint if models fails
     models.current()
-      .then((r) => { setCurrentModel(r.model || ''); setCurrentProvider(r.activeProfile || r.provider || ''); })
+      .then((r) => { setCurrentModel(r.model || ''); setCurrentProvider(r.activeProfile || r.provider || ''); setCurrentProviderId(r.providerId || r.provider || ''); })
       .catch(() => {
         // Fallback: get active provider from /providers endpoint
         fetch('/api/providers', { credentials: 'include' })
           .then(r => r.json())
-          .then((data: { active?: string }) => { if (data.active) setCurrentProvider(data.active); })
+          .then((data: { active?: string }) => { if (data.active) { setCurrentProvider(data.active); setCurrentProviderId(data.active); } })
           .catch(() => {});
       })
       .finally(() => { setConfigLoaded(true); });
@@ -850,6 +866,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               timestamp: new Date().toISOString(),
               isModeChange: { from: 'Plan', to: 'Agent' },
             }];
+
+          case 'mode_restricted': {
+            setAgentMode('agent');
+            sessionSettings.setMode('agent').catch(() => {});
+            return [...prev, {
+              id: crypto.randomUUID(), role: 'system' as const, content: '',
+              timestamp: new Date().toISOString(),
+              isModeChange: { from: 'Plan', to: 'Agent' },
+            }];
+          }
 
           case 'hyperdrive_entered':
             setAgentMode('agent');
@@ -2341,7 +2367,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                       setCurrentModel(m.id);
                       if (m.contextWindow) setTokenTotal(m.contextWindow);
                       const profile = providerList.find(p => p.id === currentProvider);
-                      const providerId = profile?.providerId || currentProvider;
+    const providerId = profile?.providerId || currentProviderId || currentProvider;
                       if (m.providerId && m.providerId !== providerId) {
                         setCurrentProvider(m.providerId);
                         providers.switch(m.providerId).then(() => {
@@ -2547,7 +2573,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
           {todoItems.map((item) => (
             <Box key={item.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.3 }}>
-              {item.status === 'completed' && <CheckCircleIcon sx={{ fontSize: 10, color: colors.accent.green }} />}
+              {item.status === 'completed' && <CheckCircle size={10} color={colors.accent.green} />}
               {item.status === 'in-progress' && <PlayCircleIcon sx={{ fontSize: 10, color: colors.accent.orange }} />}
               {item.status === 'not-started' && <RadioButtonUncheckedIcon sx={{ fontSize: 10, color: colors.text.dim }} />}
               <Typography sx={{

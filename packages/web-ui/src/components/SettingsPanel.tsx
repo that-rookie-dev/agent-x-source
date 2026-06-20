@@ -7,7 +7,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
 import StorageIcon from '@mui/icons-material/Storage';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import { CheckCircle } from './CheckCircle';
 import { config, personaApi, type AgentXConfig, type AgentPersonaConfig } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
@@ -138,7 +138,7 @@ export function SettingsPanel() {
         display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 2 }}>
         {message === 'saved' && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-            <CheckCircleIcon sx={{ fontSize: 16, color: colors.accent.green }} />
+            <CheckCircle size={16} color={colors.accent.green} />
             <Typography sx={{ fontSize: '0.75rem', color: colors.accent.green }}>Settings saved</Typography>
           </Box>
         )}

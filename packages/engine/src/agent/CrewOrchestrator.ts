@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, PermissionRule } from '@agentx/shared';
 import { generateMessageId, CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
@@ -116,12 +117,11 @@ export class CrewOrchestrator {
     return [...this.conversation];
   }
 
-  getCrewHistory(crewId: string): Array<Record<string, unknown>> {
+  getCrewHistory(_crewId: string): Array<Record<string, unknown>> {
     if (!this.sessionManager) return [];
     const store = (this.sessionManager as any).store;
     if (!store || typeof store.getMessages !== 'function') return [];
-    const childSessionId = `${this.sessionId}:crew:${crewId}`;
-    return store.getMessages(childSessionId);
+    return store.getMessages(this.sessionId);
   }
 
   routeMessage(userMessage: string): CrewMember[] {
@@ -156,21 +156,16 @@ export class CrewOrchestrator {
     return [scored[0]!.member];
   }
 
-  private getCrewChildSessionId(crewId: string): string {
-    return `${this.sessionId}:crew:${crewId}`;
-  }
-
-  private persistCrewMessage(crewId: string, crewName: string, role: string, content: string): void {
+  private persistCrewMessage(crewId: string, crewName: string, callsign: string, role: string, content: string): void {
     if (!this.sessionManager) return;
     const store = (this.sessionManager as any).store;
     if (!store || typeof store.insertMessage !== 'function') return;
-    const childSessionId = this.getCrewChildSessionId(crewId);
     try {
       store.insertMessage({
-        sessionId: childSessionId,
+        sessionId: this.sessionId,
         role,
         content,
-        metadata: { crewId, crewName, childSessionId },
+        metadata: { crewId, crewName, callsign },
       });
     } catch {
       // best-effort persistence
@@ -411,10 +406,20 @@ export class CrewOrchestrator {
 
     const allTools = { ...tools, crew_message: interCrewTool, crew_response: crewResponseTool };
 
+    const crewSystemPrompt = `${systemPrompt}
+
+## TOOL USAGE RULES
+You have access to filesystem and code tools. Use them ONLY when:
+- The user explicitly asks you to read, write, or analyze files
+- The user asks you to create documents, notes, PDFs, or other file-based output
+- Another crew member delegates a task requiring file access
+
+Do NOT proactively scan folders, list files, or read code unless instructed. If a question can be answered from your knowledge alone, do that first.`;
+
     const result = streamText({
       model,
       messages: [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: crewSystemPrompt },
         { role: 'user', content: userMessage },
       ],
       tools: allTools,
@@ -599,7 +604,7 @@ export class CrewOrchestrator {
               timestamp: new Date().toISOString(),
             });
 
-            this.persistCrewMessage(responder.crew.id, responder.crew.name, 'assistant', content);
+            this.persistCrewMessage(responder.crew.id, responder.crew.name, responder.crew.callsign, 'assistant', content);
 
             return { member: responder.crew.name, content };
           } catch (err) {
@@ -685,9 +690,10 @@ export class CrewOrchestrator {
         content: r.content,
         timestamp: new Date().toISOString(),
       });
+      const p = participants.find(p => p.crew.name === r.member);
       this.persistCrewMessage(
-        participants.find(p => p.crew.name === r.member)?.crew.id ?? 'unknown',
-        r.member, 'assistant', r.content,
+        p?.crew.id ?? 'unknown',
+        r.member, p?.crew.callsign ?? '', 'assistant', r.content,
       );
     }
 
@@ -755,7 +761,7 @@ export class CrewOrchestrator {
           timestamp: new Date().toISOString(),
         });
 
-        this.persistCrewMessage(member.crew.id, member.crew.name, 'assistant', content);
+        this.persistCrewMessage(member.crew.id, member.crew.name, member.crew.callsign, 'assistant', content);
 
         responses.push({ member: member.crew.name, content });
         currentInput = `Continue the work. Previous output from ${member.crew.name}:\n${content.slice(0, 1000)}`;
@@ -794,32 +800,16 @@ export class CrewOrchestrator {
         content: firstOutput,
         timestamp: new Date().toISOString(),
       });
-      this.persistCrewMessage(first.crew.id, first.crew.name, 'assistant', firstOutput);
-      responses.push({ member: first.crew.name, content: firstOutput });
+      this.persistCrewMessage(first.crew.id, first.crew.name, first.crew.callsign, 'assistant', firstOutput);
 
-      // Remaining handlers refine in sequence
-      for (let i = 1; i < handlers.length; i++) {
-        const handler = handlers[i]!;
-        const qErr = this.checkQuota(handler);
-        if (qErr) {
-          responses.push({ member: handler.crew.name, content: `[${qErr}]` });
-          continue;
-        }
-
-        this.emit({ type: 'tool_executing', tool: 'crew_member', description: `${handler.crew.name} is refining...` });
-
-        const handoffMessage = `Refine and improve the following work produced by ${responses[responses.length - 1]!.member}:\n\n${responses[responses.length - 1]!.content}\n\nYour improved version:`;
-
+      for (const handler of handlers) {
         try {
-          const { content: refined } = await this.callCrew(handler, handoffMessage, mainSystemPrompt);
-          this.conversation.push({
-            id: generateMessageId(),
-            from: handler.crew.name,
-            content: refined,
-            timestamp: new Date().toISOString(),
-          });
-          this.persistCrewMessage(handler.crew.id, handler.crew.name, 'assistant', refined);
-          responses.push({ member: handler.crew.name, content: refined });
+          const refinePrompt = `Refine and improve this response from ${first.crew.name}. Add your perspective as ${handler.crew.title || handler.crew.name}. Original response:\n\n${firstOutput}`;
+          const { content: refined } = await this.callCrew(handler, refinePrompt, mainSystemPrompt);
+          if (refined) {
+            this.persistCrewMessage(handler.crew.id, handler.crew.name, handler.crew.callsign, 'assistant', refined);
+            responses.push({ member: handler.crew.name, content: refined });
+          }
         } catch (err) {
           responses.push({ member: handler.crew.name, content: `[Error: ${err instanceof Error ? err.message : 'failed'}]` });
         }
@@ -984,7 +974,7 @@ The user is asking about code review which matches Sam's expertise in code quali
     if (!store || typeof store.addCrewFeedback !== 'function') return;
     try {
       store.addCrewFeedback({
-        id: `fb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: randomUUID(),
         sessionId: this.sessionId,
         crewId,
         positive: thumbsUp,

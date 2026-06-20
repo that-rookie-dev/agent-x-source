@@ -12,7 +12,7 @@ import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import { CheckCircle } from '../components/CheckCircle';
 import BadgeIcon from '@mui/icons-material/Badge';
 import StorageIcon from '@mui/icons-material/Storage';
 import CloudIcon from '@mui/icons-material/Cloud';
@@ -548,7 +548,7 @@ export function SetupWizard() {
 
               {step === 6 && (
                 <Box sx={{ textAlign: 'center' }}>
-                  <CheckCircleIcon sx={{ fontSize: 64, color: colors.accent.green, mb: 2 }} />
+                  <CheckCircle size={64} color={colors.accent.green} sx={{ mb: 2 }} />
                   <Typography variant="h5" sx={{ mb: 1 }}>Setup Complete!</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 3 }}>Your Agent-X instance is ready.</Typography>
                   <Box sx={{ textAlign: 'left', p: 2, border: `1px solid ${colors.border.default}`, borderRadius: 1, mb: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem' }}>

@@ -48,31 +48,22 @@ function appendContextFile(
 ): void {
   if (!sessionId || !content) return;
 
-  // Primary: SQLite messages table
+  // Skip DB insert for crew messages — already persisted by CrewOrchestrator
+  if (crew) return;
+
+  // Primary: messages table
   try {
     const eng = getEngine();
     const store = (eng.sessionManager as any).store;
     if (store?.insertMessage) {
-      const metadata: Record<string, unknown> = {};
-      if (crew) {
-        metadata.crewId = crew.crewId;
-        metadata.crewName = crew.name;
-        metadata.callsign = crew.callsign;
-        if (crew.color) metadata.color = crew.color;
-        if (crew.icon) metadata.icon = crew.icon;
-        if (crew.confidence) metadata.confidence = crew.confidence;
-        if (crew.reasons) metadata.reasons = crew.reasons;
-      }
       store.insertMessage({
         sessionId,
         role,
         content,
         toolCalls: extra?.toolCalls,
         tokenCount: extra?.tokenCount,
-        crew,
         thinking: extra?.thinking,
         plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
-        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       });
     }
   } catch { /* best-effort */ }

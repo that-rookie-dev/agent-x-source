@@ -15,7 +15,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 14;
+const CURRENT_SCHEMA_VERSION = 15;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content     TEXT NOT NULL,
     tool_calls  TEXT,
     plan        TEXT,
+    parts       TEXT,
     token_count INTEGER DEFAULT 0,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (session_id) REFERENCES sessions(id)
@@ -93,6 +94,7 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
 CREATE TABLE IF NOT EXISTS crews (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL DEFAULT '',
+    title           TEXT,
     description     TEXT NOT NULL DEFAULT '',
     system_prompt   TEXT NOT NULL DEFAULT '',
     expertise       TEXT,
@@ -199,12 +201,12 @@ CREATE TABLE IF NOT EXISTS checkpoints (
 CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON checkpoints(session_id);
 
 CREATE TABLE IF NOT EXISTS agent_persona (
-    id      TEXT PRIMARY KEY DEFAULT 'default',
-    name    TEXT NOT NULL DEFAULT 'Agent-X',
-    description TEXT NOT NULL DEFAULT 'A proactive, autonomous AI assistant',
+    id      TEXT PRIMARY KEY,
+    name    TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
     communication_style TEXT NOT NULL DEFAULT 'direct',
     decision_making     TEXT NOT NULL DEFAULT 'balanced',
-    domain_context      TEXT NOT NULL DEFAULT 'general',
+    domain_context      TEXT NOT NULL DEFAULT '',
     traits  TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -367,16 +369,23 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
     run: (db: any) => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS agent_persona (
-          id      TEXT PRIMARY KEY DEFAULT 'default',
-          name    TEXT NOT NULL DEFAULT 'Agent-X',
-          description TEXT NOT NULL DEFAULT 'A proactive, autonomous AI assistant',
+          id      TEXT PRIMARY KEY,
+          name    TEXT NOT NULL DEFAULT '',
+          description TEXT NOT NULL DEFAULT '',
           communication_style TEXT NOT NULL DEFAULT 'direct',
           decision_making     TEXT NOT NULL DEFAULT 'balanced',
-          domain_context      TEXT NOT NULL DEFAULT 'general',
+          domain_context      TEXT NOT NULL DEFAULT '',
           traits  TEXT NOT NULL DEFAULT '[]',
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
       `);
+    },
+  },
+  {
+    version: 15,
+    description: 'Add parts column to messages table for chronological tool ordering on restore',
+    run: (db: any) => {
+      try { db.exec(`ALTER TABLE messages ADD COLUMN parts TEXT`); } catch { /* column may already exist */ }
     },
   },
 ];
@@ -817,6 +826,7 @@ export class SessionStore {
     const rows = stmt.all(sessionId) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       ...row,
+      parts: row['parts'] ? (() => { try { return JSON.parse(row['parts'] as string); } catch { return undefined; } })() : undefined,
       metadata: row['metadata'] ? JSON.parse(row['metadata'] as string) : undefined,
     }));
   }
@@ -830,6 +840,7 @@ export class SessionStore {
     crew?: unknown;
     thinking?: string;
     plan?: string;
+    parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
   }): void {
     if (this.memMode) {
@@ -840,8 +851,8 @@ export class SessionStore {
     }
     try {
       this.db!.prepare(`
-        INSERT INTO messages (id, session_id, role, content, tool_calls, token_count, plan, metadata, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        INSERT INTO messages (id, session_id, role, content, tool_calls, token_count, plan, parts, metadata, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `).run(
         crypto.randomUUID(),
         msg.sessionId,
@@ -850,6 +861,7 @@ export class SessionStore {
         msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
         msg.tokenCount ?? 0,
         msg.plan || null,
+        msg.parts ? JSON.stringify(msg.parts) : null,
         msg.metadata ? JSON.stringify(msg.metadata) : null,
       );
     } catch (e) {
@@ -1352,7 +1364,7 @@ export class SessionStore {
       return this.memPersona as any ?? null;
     }
     try {
-      const row = this.db!.prepare('SELECT * FROM agent_persona WHERE id = ?').get('default') as any;
+      const row = this.db!.prepare('SELECT * FROM agent_persona WHERE id = ?').get('00000000-0000-0000-0000-000000000001') as any;
       if (!row) return null;
       return {
         name: row.name,
@@ -1375,7 +1387,7 @@ export class SessionStore {
     try {
       this.db!.prepare(`
         INSERT INTO agent_persona (id, name, description, communication_style, decision_making, domain_context, traits, updated_at)
-        VALUES ('default', ?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES ('00000000-0000-0000-0000-000000000001', ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           description = excluded.description,
@@ -1467,9 +1479,10 @@ export class SessionStore {
     return {
       id: row['id'] as string,
       name: row['name'] as string,
-      title: metadata.title,
+      title: (row['title'] as string) || metadata.title,
       callsign: metadata.callsign ?? (row['id'] as string),
       systemPrompt: row['system_prompt'] as string ?? metadata.systemPrompt ?? '',
+      description: row['description'] as string || metadata.description || '',
       emotion: metadata.emotion,
       isDefault: !!(row['is_default'] ?? metadata.isDefault),
       enabled: metadata.enabled ?? true,
@@ -1535,12 +1548,13 @@ export class SessionStore {
     if (this.memMode || !this.db) return crew;
     try {
       this.db.prepare(`
-        INSERT INTO crews (id, name, description, system_prompt, expertise, traits, tool_preferences, enabled_tools, disabled_tools, is_default, metadata, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO crews (id, name, title, description, system_prompt, expertise, traits, tool_preferences, enabled_tools, disabled_tools, is_default, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         crew.id,
         crew.name,
-        '',
+        crew.title || null,
+        crew.description || '',
         crew.systemPrompt,
         crew.expertise?.join(',') ?? null,
         crew.traits?.join(',') ?? null,
@@ -1567,11 +1581,12 @@ export class SessionStore {
       Object.assign(crew, updates, { id: crew.id, createdAt: crew.createdAt });
       crew.updatedAt = new Date().toISOString();
       this.db.prepare(`
-        UPDATE crews SET name=?, description=?, system_prompt=?, expertise=?, traits=?, tool_preferences=?, enabled_tools=?, disabled_tools=?, is_default=?, metadata=?, updated_at=?
+        UPDATE crews SET name=?, title=?, description=?, system_prompt=?, expertise=?, traits=?, tool_preferences=?, enabled_tools=?, disabled_tools=?, is_default=?, metadata=?, updated_at=?
         WHERE id=?
       `).run(
         crew.name,
-        '',
+        crew.title || null,
+        crew.description || '',
         crew.systemPrompt,
         crew.expertise?.join(',') ?? null,
         crew.traits?.join(',') ?? null,

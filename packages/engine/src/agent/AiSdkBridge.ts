@@ -125,7 +125,6 @@ export function createAiSdkTools(
   emit: (event: EngineEvent) => void,
   waitForClarification: (question: string, options: string[], allowFreeform: boolean) => Promise<string>,
   runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number }>,
-  abortController?: AbortController | null,
 ): ToolSet {
   const allTools = toolRegistry.list();
   const tools: ToolSet = {};
@@ -267,9 +266,8 @@ export function createAiSdkTools(
 
             if (!result.success) {
               if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
-                abortController?.abort();
-                const modeName = result.error === 'MODE_RESTRICTED' ? 'Plan mode' : 'your current permissions';
-                return `[${result.error}] "${toolDef.id}" is not available in ${modeName}. ${result.output}\n\nIMPORTANT: You are in a restricted mode. Do NOT fabricate or hallucinate any output for this tool. Do NOT pretend the tool ran. Instead, tell the user exactly which tool was blocked and suggest switching to Agent mode if execution is needed.`;
+                emit({ type: 'mode_restricted', tool: toolDef.id, error: result.error, message: result.output } as any);
+                return `[${result.error}] "${toolDef.id}" is blocked in your current mode. ${result.output}\n\nTell the user this tool requires Agent mode. Ask them to switch modes or press Enter to switch now. Do NOT fabricate any output.`;
               }
               return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
             }

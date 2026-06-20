@@ -67,9 +67,11 @@ export class CrewManager {
         }));
         if (this.store && this.crews.length > 0) {
           for (const crew of this.crews) {
-            if (this.store.getCrew(crew.id)) {
-              this.store.updateCrew(crew.id, crew);
-            } else {
+            if (typeof this.store.getCrew === 'function' && this.store.getCrew(crew.id)) {
+              if (typeof this.store.updateCrew === 'function') {
+                this.store.updateCrew(crew.id, crew);
+              }
+            } else if (typeof this.store.createCrew === 'function') {
               this.store.createCrew(crew);
             }
           }
@@ -85,9 +87,11 @@ export class CrewManager {
   private persist(): void {
     if (this.store) {
       for (const crew of this.crews) {
-        if (this.store.getCrew(crew.id)) {
-          this.store.updateCrew(crew.id, crew);
-        } else {
+        if (typeof this.store.getCrew === 'function' && this.store.getCrew(crew.id)) {
+          if (typeof this.store.updateCrew === 'function') {
+            this.store.updateCrew(crew.id, crew);
+          }
+        } else if (typeof this.store.createCrew === 'function') {
           this.store.createCrew(crew);
         }
       }
@@ -138,6 +142,7 @@ export class CrewManager {
       title: input.title,
       callsign,
       systemPrompt: input.systemPrompt,
+      description: input.description,
       emotion: input.emotion,
       isDefault: input.isDefault ?? false,
       enabled: input.enabled ?? true,
@@ -155,7 +160,9 @@ export class CrewManager {
       updatedAt: new Date().toISOString(),
     };
     this.crews.push(crew);
-    if (this.store) this.store.createCrew(crew);
+    if (this.store && typeof this.store.createCrew === 'function') {
+      this.store.createCrew(crew);
+    }
     return crew;
   }
 
@@ -163,11 +170,13 @@ export class CrewManager {
     const idx = this.crews.findIndex((p) => p.id === id);
     if (idx < 0) return false;
     this.crews.splice(idx, 1);
-    if (this.store) this.store.deleteCrew(id);
+    if (this.store && typeof this.store.deleteCrew === 'function') {
+      this.store.deleteCrew(id);
+    }
     return true;
   }
 
-  update(id: string, updates: { name?: string; title?: string; callsign?: string; systemPrompt?: string; emotion?: CrewEmotion; expertise?: string[]; traits?: string[]; toolPreferences?: { enabled?: string[]; disabled?: string[] }; protocol?: CollaborationProtocol; quotas?: CrewResourceQuota; color?: string; icon?: string }): Crew | null {
+  update(id: string, updates: { name?: string; title?: string; callsign?: string; systemPrompt?: string; description?: string; emotion?: CrewEmotion; expertise?: string[]; traits?: string[]; toolPreferences?: { enabled?: string[]; disabled?: string[] }; protocol?: CollaborationProtocol; quotas?: CrewResourceQuota; color?: string; icon?: string }): Crew | null {
     const idx = this.crews.findIndex((p) => p.id === id);
     if (idx < 0) return null;
     const crew = this.crews[idx]!;
@@ -180,6 +189,7 @@ export class CrewManager {
       crew.callsign = cs;
     }
     if (updates.systemPrompt !== undefined) crew.systemPrompt = updates.systemPrompt;
+    if (updates.description !== undefined) crew.description = updates.description;
     if (updates.emotion !== undefined) crew.emotion = updates.emotion;
     if (updates.expertise !== undefined) crew.expertise = updates.expertise;
     if (updates.traits !== undefined) crew.traits = updates.traits;
@@ -190,7 +200,9 @@ export class CrewManager {
     if (updates.icon !== undefined) crew.icon = updates.icon;
     crew.updatedAt = new Date().toISOString();
     this.crews[idx] = crew;
-    if (this.store) this.store.updateCrew(id, crew);
+    if (this.store && typeof this.store.updateCrew === 'function') {
+      this.store.updateCrew(id, crew);
+    }
     return crew;
   }
 

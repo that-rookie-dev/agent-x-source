@@ -279,18 +279,19 @@ export class SessionManager {
   }
 
   addTokenLog(opts: { sessionId: string; inputTokens: number; outputTokens: number; model: string; costUsd: number; providerId: string; crewId?: string }): void {
-    const log = {
+    const log: Record<string, unknown> = {
       sessionId: opts.sessionId,
       model: opts.model,
       inputTokens: opts.inputTokens,
       outputTokens: opts.outputTokens,
       costUsd: opts.costUsd,
       providerId: opts.providerId,
+      crewId: opts.crewId || null,
     };
     if (this.usingStorageAdapter) {
-      (this.store as StorageAdapter).addTokenLog(opts.sessionId, log);
+      (this.store as StorageAdapter).addTokenLog(opts.sessionId, log as any);
     } else {
-      this.getSessionStore().addTokenLog({ id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`, sessionId: opts.sessionId, providerId: opts.providerId, modelId: opts.model, inputTokens: opts.inputTokens, outputTokens: opts.outputTokens, costUsd: opts.costUsd, crewId: opts.crewId });
+      this.getSessionStore().addTokenLog({ id: crypto.randomUUID(), sessionId: opts.sessionId, providerId: opts.providerId, modelId: opts.model, inputTokens: opts.inputTokens, outputTokens: opts.outputTokens, costUsd: opts.costUsd, crewId: opts.crewId });
     }
   }
 
