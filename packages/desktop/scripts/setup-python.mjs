@@ -7,15 +7,15 @@ import { execSync } from 'child_process';
 const __dirname = dirname(new URL(import.meta.url).pathname);
 const OUT_DIR = join(__dirname, '..', 'python');
 
-const PBS_RELEASE = '20250414';
-const PY_VER = '3.12.12';
+const PBS_RELEASE = '20260610';
+const PY_VER = '3.12.13';
 
 const PBS_URLS = {
-  'darwin-arm64': `https://github.com/indygreg/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-aarch64-apple-darwin-install_only.tar.gz`,
-  'darwin-x64':  `https://github.com/indygreg/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-x86_64-apple-darwin-install_only.tar.gz`,
-  'linux-x64':   `https://github.com/indygreg/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-x86_64-unknown-linux-gnu-install_only.tar.gz`,
-  'linux-arm64': `https://github.com/indygreg/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-aarch64-unknown-linux-gnu-install_only.tar.gz`,
-  'win32-x64':   `https://github.com/indygreg/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-x86_64-pc-windows-msvc-install_only.tar.gz`,
+  'darwin-arm64': `https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-aarch64-apple-darwin-install_only.tar.gz`,
+  'darwin-x64':  `https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-x86_64-apple-darwin-install_only.tar.gz`,
+  'linux-x64':   `https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-x86_64-unknown-linux-gnu-install_only.tar.gz`,
+  'linux-arm64': `https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-aarch64-unknown-linux-gnu-install_only.tar.gz`,
+  'win32-x64':   `https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/cpython-${PY_VER}+${PBS_RELEASE}-x86_64-pc-windows-msvc-install_only.tar.gz`,
 };
 
 const key = `${platform()}-${arch()}`;
