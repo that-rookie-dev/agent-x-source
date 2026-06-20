@@ -29,7 +29,7 @@
     "npmRebuild": true,
     "buildDependenciesFromSource": false,
     "nodeGypRebuild": false,
-    "afterPack": "scripts/afterpack.mjs",
+    "afterPack": "scripts/afterpack.cjs",
     "files": [
       "dist/**/*",
       "package.json"
