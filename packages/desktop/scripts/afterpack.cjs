@@ -1,12 +1,12 @@
-import { execSync } from 'child_process';
-import { existsSync, writeFileSync } from 'fs';
-import { join } from 'path';
+const { execSync } = require('child_process');
+const { existsSync, writeFileSync } = require('fs');
+const { join } = require('path');
 
-export default async function afterPack(context) {
+module.exports = async function afterPack(context) {
   // Ensure web-api resources have a package.json with "type": "module" so that
   // Electron's Node.js runtime can load the ESM web-api bundle correctly.
   // This is needed on all platforms, not just macOS.
-  let webApiDir: string;
+  let webApiDir;
   if (context.electronPlatformName === 'darwin') {
     const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
     if (!existsSync(appPath)) return;
@@ -44,4 +44,4 @@ export default async function afterPack(context) {
   } catch (err) {
     console.error('afterPack: ad-hoc codesign failed —', err.message);
   }
-}
+};
