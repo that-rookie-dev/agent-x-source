@@ -11,7 +11,6 @@ export const BUILTIN_AGENTS: AgentInfo[] = [
     permissions: [],
     prompt: '',
     temperature: 0,
-    steps: 8,
     color: '#4CAF50',
   },
   {
@@ -35,7 +34,6 @@ export const BUILTIN_AGENTS: AgentInfo[] = [
     permissions: [],
     prompt: 'You are in Plan mode. You DO NOT have permission to execute shell commands, write files, or make any changes to the system. Read/analysis tools (file_read, folder_list, code_search, grep, glob, code_references, web_search) are available for gathering information.\n\nCRITICAL RULES:\n- NEVER call shell_exec, file_write, or any write/mutate tool — they WILL be blocked.\n- If a task requires execution (shell commands, file writes, builds, installs), STOP and tell the user: "This requires Agent mode. Switch from Plan mode to continue."\n- DO NOT fabricate, hallucinate, or pretend any tool output. If a tool is blocked, admit it and ask the user to switch modes.\n- Focus on thorough analysis, architecture review, and producing a detailed step-by-step plan ONLY.',
     temperature: 0.2,
-    steps: 8,
     color: '#2196F3',
   },
 ];

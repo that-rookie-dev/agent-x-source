@@ -984,6 +984,10 @@ app.post('/api/chat/message', async (req, res) => {
       agent.sendMessage(fullText, { ...(instruction ? { instruction } : {}), ...(retry ? { retry: true } : {}) }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('The operation was aborted due to timeout')), 180000)),
     ]);
+
+    // Update session timestamp immediately so it sorts to top
+    try { eng.sessionManager.updateSession({ updatedAt: new Date().toISOString() } as any); } catch { /* best-effort */ }
+
     if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
       res.json({ ok: true, clarification: true });
       return;
@@ -1628,7 +1632,9 @@ app.get('/api/sessions', (_req, res) => {
   try {
     const eng = getEngine();
     const all = eng.sessionManager.listSessions(50) as unknown as Array<Record<string, unknown>>;
-    const sessions = all.filter(s => s['id'] !== '__channel__');
+    const sessions = all
+      .filter(s => s['id'] !== '__channel__')
+      .sort((a, b) => String(b['updatedAt'] ?? b['updated_at'] ?? '').localeCompare(String(a['updatedAt'] ?? a['updated_at'] ?? '')));
     for (const s of sessions) {
       try {
         const store = (eng.sessionManager as any).store;
@@ -1643,6 +1649,58 @@ app.get('/api/sessions', (_req, res) => {
   } catch (e: unknown) {
     getLogger().error('GET_API_SESSIONS', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'failed-to-list-sessions' });
+  }
+});
+
+app.post('/api/sessions/:id/generate-title', async (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+    const providerId = cfg.provider.activeProvider;
+    if (!providerId) { res.json({ title: '' }); return; }
+    const providerCfg = cfg.provider.providers[providerId];
+    const apiKey = providerCfg?.apiKey || providerCfg?.profiles?.[providerCfg?.activeProfile ?? '']?.apiKey;
+    if (!apiKey) { res.json({ title: '' }); return; }
+
+    const store = (eng.sessionManager as any).store;
+    if (!store?.getMessages) { res.json({ title: '' }); return; }
+    const messages = store.getMessages(sessionId) as Array<{ role: string; content: string }>;
+    const firstUser = messages.find((m) => m.role === 'user');
+    if (!firstUser) { res.json({ title: '' }); return; }
+
+    const { ProviderFactory } = await import('@agentx/engine');
+    const provider = ProviderFactory.create(providerId as any, apiKey, providerCfg?.baseUrl);
+    const modelId = cfg.provider.activeModel || 'gpt-4o-mini';
+
+    const titlePrompt = `Generate a brief, natural title for this conversation based on the user's first message. Rules:
+- ≤60 characters
+- Grammatically correct, no word salad
+- Focus on the main topic or question
+- Use the same language as the user
+- No tool names, no "analyzing" or "generating" prefixes
+- Output ONLY the title, nothing else
+
+User message: "${firstUser.content.slice(0, 500)}"`;
+
+    const chunks: string[] = [];
+    for await (const chunk of provider.complete({
+      messages: [{ role: 'user', content: titlePrompt }],
+      model: modelId,
+      stream: true,
+      maxTokens: 50,
+      temperature: 0.5,
+    })) {
+      if (chunk.type === 'text_delta' && chunk.content) chunks.push(chunk.content);
+    }
+    const title = chunks.join('').trim().replace(/^["']|["']$/g, '').slice(0, 60);
+
+    if (title) {
+      eng.sessionManager.updateSession({ title } as any);
+    }
+    res.json({ title });
+  } catch {
+    res.json({ title: '' });
   }
 });
 

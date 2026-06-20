@@ -74,7 +74,8 @@ import { ContextTracker } from './ContextTracker.js';
 
 import { TodoManager } from './TodoManager.js';
 import type { SessionLogger } from '../session/SessionLogger.js';
-import { COMPACTION_PROMPT } from './compaction-prompt.js';
+import { COMPACTION_PROMPT, COMPACTION_UPDATE_PROMPT } from './compaction-prompt.js';
+import { getTokenThresholds, isTokenOverflow, estimateTokens, estimateMessagesTokens } from '@agentx/shared';
 
 // ─── UNIFIED PIPELINE IMPORTS (Phase 1-11 integration) ───
 import { InputNormalizer } from '../communication/InputNormalizer.js';
@@ -88,9 +89,8 @@ import { IdleTimeoutBreaker } from '../communication/IdleTimeoutBreaker.js';
 import { createAiSdkModel, createAiSdkTools, aiSdkStream } from './AiSdkBridge.js';
 import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
 import type { PartPersistFn } from './AiSdkStreamHandler.js';
-import { streamText, stepCountIs, type ToolSet } from 'ai';
+import { streamText, type ToolSet } from 'ai';
 import { SessionRunner } from '../session/SessionRunner.js';
-import type { AgentInfo } from './AgentInfo.js';
 import { BUILTIN_AGENTS } from './agent-configs.js';
 // IntentClassifier import removed — DecisionEngine (heuristic) handles all routing
 function getLoadingSteps(_intent: string): Array<{ id: string; label: string; status: 'active' | 'completed' | 'pending' }> {
@@ -154,7 +154,6 @@ export class Agent {
 
   // ─── Agent Management
   private agentBus: AgentBus;
-  private currentAgent: AgentInfo;
   private specialistRegistry: SpecialistRegistry;
 
   // ─── Session & Infrastructure
@@ -559,9 +558,6 @@ export class Agent {
     this.specialistRegistry = new SpecialistRegistry(this.agentBus);
     // skillGenerator and reflectionLoop are lazy-init (created on first access)
 
-    // Initialize current agent from built-in build agent
-    this.currentAgent = BUILTIN_AGENTS.find(a => a.id === 'build')!;
-
     // Register this agent on the bus with persona identity
     const identity = this.persona?.name || 'Agent-X';
     this.agentBus.registerAgent(this.sessionId, [identity]);
@@ -758,7 +754,6 @@ export class Agent {
   switchAgent(agentId: string): boolean {
     const agent = BUILTIN_AGENTS.find(a => a.id === agentId);
     if (!agent) return false;
-    this.currentAgent = agent;
     this.planMode = agent.mode === 'plan';
     this.toolExecutor?.setMode(agent.mode);
     this.toolExecutor?.setAgent(agent);
@@ -1566,7 +1561,6 @@ Return ONLY valid JSON, no other text.`;
         messages: aiMessages,
         tools,
         temperature: 0,
-        stopWhen: stepCountIs(this.currentAgent.steps ?? 5),
         abortSignal: this.abortSignal,
         maxRetries: 0,
       });
@@ -2248,11 +2242,14 @@ Only include specialists that are actually needed for this task.`;
   get skillGeneratorInstance(): SkillGenerator | null { return this.skillGenerator; }
   get reflectionLoopInstance(): ReflectionLoop { return this.reflectionLoop; }
 
+  // Store the last compaction summary for iterative updates
+  private lastCompactionSummary: string | null = null;
+
   private async compactContext(): Promise<void> {
-    const maxTokens = this.getContextWindow();
+    const contextWindow = this.getContextWindow();
+    const thresholds = getTokenThresholds(contextWindow);
     const usedTokens = this.tokenTracker.tokensUsed;
-    const percentage = (usedTokens / maxTokens) * 100;
-    if (percentage < 85) return;
+    if (!isTokenOverflow(usedTokens, thresholds)) return;
 
     const lastMarkerIdx: number = this.compactionMarkerIndices.length > 0
       ? this.compactionMarkerIndices[this.compactionMarkerIndices.length - 1]!
@@ -2263,15 +2260,20 @@ Only include specialists that are actually needed for this task.`;
       .join('\n\n');
     if (!recentMessages.trim()) return;
 
-    this.emit({ type: 'compaction_start', currentTokens: usedTokens, threshold: 85 } as EngineEvent);
+    this.emit({ type: 'compaction_start', currentTokens: usedTokens, threshold: contextWindow } as EngineEvent);
 
     let summary = '';
     try {
-      summary = await this.simpleComplete(COMPACTION_PROMPT + '\n\n' + recentMessages);
+      const prompt = this.lastCompactionSummary
+        ? COMPACTION_UPDATE_PROMPT.replace('{previousSummary}', this.lastCompactionSummary) + '\n\n' + recentMessages
+        : COMPACTION_PROMPT + '\n\n' + recentMessages;
+      summary = await this.simpleComplete(prompt);
     } catch {
       return;
     }
     if (!summary.trim()) return;
+
+    this.lastCompactionSummary = summary;
 
     const insertIdx = this.messages.length;
     this.messages.push({ role: 'system', content: `[COMPACTION SUMMARY — ${new Date().toISOString()}]\n${summary}` });
@@ -2289,6 +2291,15 @@ Only include specialists that are actually needed for this task.`;
     }
 
     const saved = pruneEnd - pruneStart;
+    if (saved > 0) {
+      // Estimate tokens removed and adjust the tracker downward
+      const compactedMessages = this.messages.slice(pruneStart, pruneStart + (pruneEnd - pruneStart) || 0);
+      const prunedTokens = estimateMessagesTokens(compactedMessages as any);
+      const summaryTokens = estimateTokens(summary);
+      const netSavings = Math.max(0, prunedTokens - summaryTokens);
+      this.tokenTracker.addUsage(-netSavings);
+      getLogger().info('COMPACTION', `Compacted ${saved} messages (${estimateTokens(summary)} token summary, saved ~${netSavings} tokens, ${usedTokens} → ${this.tokenTracker.tokensUsed})`);
+    }
     this.emit({ type: 'compaction_complete', saved } as EngineEvent);
   }
 

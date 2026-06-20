@@ -40,6 +40,7 @@ function appendContextFile(
     thinkingDoneAt?: number;
     toolCalls?: ToolCallRecord[];
     subAgents?: SubAgentRecord[];
+    parts?: Array<Record<string, unknown>>;
     plan?: string[];
     turnTokens?: number;
     turnCostUsd?: number;
@@ -64,6 +65,7 @@ function appendContextFile(
         tokenCount: extra?.tokenCount,
         thinking: extra?.thinking,
         plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
+        parts: extra?.parts,
       });
     }
   } catch { /* best-effort */ }
@@ -231,6 +233,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
   let currentPlan: string[] | null = null;
   let perTurnTokens: number | undefined;
   let perTurnCostUsd: number | undefined;
+  const accumulatedParts: Array<{ type: string; content?: string; toolName?: string; toolCallId?: string; toolArgs?: unknown; toolResult?: string }> = [];
 
   function resetAccumulators(): void {
     accumulatedThinking = '';
@@ -240,6 +243,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     currentPlan = null;
     perTurnTokens = undefined;
     perTurnCostUsd = undefined;
+    accumulatedParts.length = 0;
   }
 
   function buildExtra(thinkingText?: string): {
@@ -248,6 +252,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     thinkingDoneAt?: number;
     toolCalls?: ToolCallRecord[];
     subAgents?: SubAgentRecord[];
+    parts?: Array<Record<string, unknown>>;
     plan?: string[];
     turnTokens?: number;
     turnCostUsd?: number;
@@ -255,12 +260,14 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
   } {
     const toolCalls = Array.from(toolCallMap.values());
     const subAgents = Array.from(subAgentMap.values());
+    const parts = accumulatedParts.length > 0 ? [...accumulatedParts] : undefined;
     const extra: ReturnType<typeof buildExtra> = {};
     if (thinkingText) extra.thinking = thinkingText;
     if (thinkingStartedAt != null) extra.thinkingStartedAt = thinkingStartedAt;
     if (thinkingText) extra.thinkingDoneAt = Date.now();
     if (toolCalls.length > 0) extra.toolCalls = toolCalls;
     if (subAgents.length > 0) extra.subAgents = subAgents;
+    if (parts) extra.parts = parts;
     if (currentPlan && currentPlan.length > 0) extra.plan = currentPlan;
     if (perTurnTokens != null) { extra.turnTokens = perTurnTokens; extra.tokenCount = perTurnTokens; }
     if (perTurnCostUsd != null) extra.turnCostUsd = perTurnCostUsd;

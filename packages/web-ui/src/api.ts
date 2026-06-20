@@ -184,6 +184,7 @@ export const sessions = {
   checkpoints: (id: string) => request<{ checkpoints: Checkpoint[] }>(`/sessions/${id}/checkpoints`).then(r => r.checkpoints ?? []),
   restoreCheckpoint: (id: string, checkpointId: string) => request<{ ok: boolean; label: string; messageCount: number }>(`/sessions/${id}/checkpoint/${checkpointId}/restore`, { method: 'POST' }),
   deleteCheckpoint: (id: string, checkpointId: string) => request<{ ok: boolean }>(`/sessions/${id}/checkpoint/${checkpointId}`, { method: 'DELETE' }),
+  generateTitle: (id: string) => request<{ title: string }>(`/sessions/${id}/generate-title`, { method: 'POST' }),
   // Trigger a browser download of the full trajectory JSON
   exportTrajectory: (id: string): void => {
     const a = document.createElement('a');

@@ -277,6 +277,12 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
 
   agent.setSessionManager(eng.sessionManager);
 
+  // Restore accumulated token count from session
+  const smTracker = eng.sessionManager.getTokenTracker();
+  if (smTracker) {
+    (agent.tokens as any).used = smTracker.tokensUsed;
+  }
+
   (agent.sauce as { crew: CrewManager }).crew = eng.crewManager;
   agent.sauce.crew.refresh();
 
