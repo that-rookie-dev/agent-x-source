@@ -1,10 +1,11 @@
 import { createWriteStream, existsSync, mkdirSync, rmSync, readdirSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { pipeline } from 'stream/promises';
 import { platform, arch } from 'os';
 import { execSync } from 'child_process';
 
-const __dirname = dirname(new URL(import.meta.url).pathname);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dirname, '..', 'python');
 
 const PBS_RELEASE = '20260610';
