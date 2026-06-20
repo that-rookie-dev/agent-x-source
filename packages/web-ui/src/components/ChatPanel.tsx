@@ -263,6 +263,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       prevRealCountRef.current = 0;
       isAtBottomRef.current = true;
       setInitialScrollDone(false);
+      titleGeneratedRef.current = false;
       sessions.restore(sessionId).then(({ messages: historyMsgs, session, scopePath }) => {
         const resolvedScope = scopePath || session.scopePath;
         const visible = historyMsgs.filter((m: any) => m.role !== 'part');
@@ -279,6 +280,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           };
         }) as unknown as UIMessage[]);
         setCurrentSessionTitle(session.title ?? `Session ${sessionId.slice(0, 8)}`);
+        if (!session.title || session.title === 'New Session' || session.title === 'Child Session') {
+          generateTitle(sessionId, visible);
+        }
         setParentSessionId(session.parentId ?? null);
         const totalUsed = (session as any).tokenUsed ?? session.tokensUsed ?? 0;
         setTokenUsed(totalUsed);
@@ -454,15 +458,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }
   }, [messages.length, initialScrollDone]);
 
-  // Auto-scroll only when user is at bottom — only count user/assistant messages
+  // Auto-scroll only when user is at bottom — also on streaming content updates
   const prevRealCountRef = useRef(0);
   useEffect(() => {
     const realMsgs = messages.filter(m => m.role === 'user' || m.role === 'assistant');
-    if (realMsgs.length <= prevRealCountRef.current) return;
-    prevRealCountRef.current = realMsgs.length;
+    const countChanged = realMsgs.length > prevRealCountRef.current;
+    if (countChanged) prevRealCountRef.current = realMsgs.length;
+    if (!countChanged && !streaming) return;
     if (isAtBottomRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    } else {
+      bottomRef.current?.scrollIntoView({ behavior: countChanged ? 'smooth' : 'instant' });
+    } else if (countChanged) {
       setShowJumpPill(true);
       setUnreadCount(c => c + 1);
     }
@@ -472,6 +477,21 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const loadSessions = useCallback(() => {
     sessions.list().then(setSessionList).catch(() => {});
   }, []);
+
+  const titleGeneratedRef = useRef(false);
+  const generateTitle = async (sid: string, msgs: any[]) => {
+    if (titleGeneratedRef.current) return;
+    const firstUser = msgs.find((m: any) => m.role === 'user');
+    if (!firstUser) return;
+    titleGeneratedRef.current = true;
+    try {
+      const { title } = await sessions.generateTitle(sid);
+      if (title) {
+        setCurrentSessionTitle(title);
+        loadSessions();
+      }
+    } catch { /* best-effort */ }
+  };
 
   // Load sessions on mount and when view becomes 'sessions'
   useEffect(() => {
@@ -2531,8 +2551,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             <Box sx={{ mt: 0.5, pt: 0.5, borderTop: `1px solid ${colors.border.subtle}` }}>
               <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, letterSpacing: '0.5px' }}>SESSION</Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
-                <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, wordBreak: 'break-all', flex: 1 }}>
-                  {currentSessionId}
+                <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, wordBreak: 'break-all', flex: 1, opacity: copiedSessionId ? 0 : 1, transition: 'opacity 0.15s' }}>
+                  {copiedSessionId ? '' : currentSessionId}
                 </Typography>
                 <Tooltip title="Copy session ID">
                   <Box onClick={() => {

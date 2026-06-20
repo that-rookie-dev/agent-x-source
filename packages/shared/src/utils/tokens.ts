@@ -1,19 +1,45 @@
 /**
  * Rough token count estimation.
  * Uses ~4 characters per token approximation for English text.
- * For precise counting, use tiktoken in the engine layer.
  */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+export function estimateMessagesTokens(
+  messages: Array<{ content: string; toolCalls?: unknown; metadata?: Record<string, unknown> }>,
+): number {
+  let total = 0;
+  for (const msg of messages) {
+    total += estimateTokens(msg.content || '');
+    if (msg.toolCalls) total += estimateTokens(JSON.stringify(msg.toolCalls));
+    if (msg.metadata) total += estimateTokens(JSON.stringify(msg.metadata));
+  }
+  return total;
+}
+
+export interface TokenThresholds {
+  contextWindow: number;
+  outputReserve: number;
+  compactionTrigger: number;
+}
+
+export function getTokenThresholds(contextWindow: number): TokenThresholds {
+  const outputReserve = Math.min(20000, Math.round(contextWindow * 0.15));
+  return {
+    contextWindow,
+    outputReserve,
+    compactionTrigger: contextWindow - outputReserve,
+  };
+}
+
+export function isTokenOverflow(usedTokens: number, thresholds: TokenThresholds): boolean {
+  return usedTokens >= thresholds.compactionTrigger;
+}
+
 export function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) {
-    return `${(count / 1_000_000).toFixed(1)}M`;
-  }
-  if (count >= 1_000) {
-    return `${(count / 1_000).toFixed(1)}K`;
-  }
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
   return String(count);
 }
 

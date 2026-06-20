@@ -16,8 +16,8 @@
     "pack": "electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --dir",
     "dist": "electron-builder",
     "dist:mac": "npm run build && pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
-    "dist:linux": "npm run build && electron-builder --linux",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist:linux": "npm run build && pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --linux",
+    "dist:win": "npm run build && pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --win"
   },
   "build": {
     "appId": "com.agentx.desktop",

@@ -491,8 +491,8 @@ export function createInstructionsSection(scopePath: string): PromptSection<Inst
       dir = parent;
     }
 
-    // Check root for AGENTS.md first, then CLAUDE.md, then CONTEXT.md
-    const candidates = ['AGENTS.md', 'CLAUDE.md', 'CONTEXT.md'];
+    // Check root for AGENTX.md first, then CONTEXT.md
+    const candidates = ['AGENTX.md', 'CONTEXT.md'];
     for (const name of candidates) {
       const candidatePath = join(root, name);
       if (existsSync(candidatePath)) {
@@ -508,12 +508,11 @@ export function createInstructionsSection(scopePath: string): PromptSection<Inst
       }
     }
 
-    // Also check global config dir
+    // Also check global config dir for AGENTX.md
     const home = process.env['HOME'] || process.env['USERPROFILE'] || '';
     if (home) {
       const globalCandidates = [
-        join(home, '.config', 'agent-x', 'AGENTS.md'),
-        join(home, '.claude', 'CLAUDE.md'),
+        join(home, '.config', 'agent-x', 'AGENTX.md'),
       ];
       for (const candidatePath of globalCandidates) {
         if (existsSync(candidatePath) && !files.some(f => f.path === candidatePath)) {

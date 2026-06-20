@@ -1,4 +1,4 @@
-import { tool, jsonSchema, streamText, stepCountIs, type ToolSet, type LanguageModel } from 'ai';
+import { tool, jsonSchema, streamText, type ToolSet, type LanguageModel } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -12,7 +12,6 @@ import { createPerplexity } from '@ai-sdk/perplexity';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall } from '@agentx/shared';
-import { FiberSet } from '../concurrency/FiberSet.js';
 
 const DEFAULT_BASE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
@@ -148,16 +147,11 @@ export function createAiSdkTools(
         description: toolDef.modelDescription,
         inputSchema: jsonSchema(schema),
         async execute(args) {
-          const fiberSet = new FiberSet();
-          fiberSet.run('ask_clarification', async () => {
-            const question = (args as any).question || 'I need more information.';
-            const options = Array.isArray((args as any).options) ? (args as any).options : [];
-            const allowFreeform = (args as any).allowFreeform !== false;
-            const response = await waitForClarification(question, options, allowFreeform);
-            return `User response: ${response}`;
-          });
-          const [result] = await fiberSet.joinAll<string>();
-          return result;
+          const question = (args as any).question || 'I need more information.';
+          const options = Array.isArray((args as any).options) ? (args as any).options : [];
+          const allowFreeform = (args as any).allowFreeform !== false;
+          const response = await waitForClarification(question, options, allowFreeform);
+          return `User response: ${response}`;
         },
       });
       continue;
@@ -168,80 +162,48 @@ export function createAiSdkTools(
         description: toolDef.modelDescription,
         inputSchema: jsonSchema(schema),
         async execute(args) {
-          const fiberSet = new FiberSet();
-          fiberSet.run('delegate_to_subagent', async () => {
-            const mission = (args as any).mission || '';
-            const items = Array.isArray((args as any).items) ? (args as any).items as string[] : undefined;
-            const toolsList = Array.isArray((args as any).tools) ? (args as any).tools : undefined;
-            const timeout = typeof (args as any).timeout === 'number' ? (args as any).timeout : 120_000;
-            const background = (args as any).background === true;
-            const batchSize = Math.max(1, Math.min(typeof (args as any).batchSize === 'number' ? (args as any).batchSize : 10, 50));
+          const mission = (args as any).mission || '';
+          const items = Array.isArray((args as any).items) ? (args as any).items as string[] : undefined;
+          const toolsList = Array.isArray((args as any).tools) ? (args as any).tools : undefined;
+          const timeout = typeof (args as any).timeout === 'number' ? (args as any).timeout : 120_000;
+          const background = (args as any).background === true;
+          const batchSize = Math.max(1, Math.min(typeof (args as any).batchSize === 'number' ? (args as any).batchSize : 10, 50));
 
-            // Batch mode: auto-parallelize items across sub-agents
-            if (items && items.length > 0) {
-              const chunks: string[][] = [];
-              for (let i = 0; i < items.length; i += batchSize) {
-                chunks.push(items.slice(i, i + batchSize));
-              }
-
-              emit({
-                type: 'tool_executing',
-                tool: 'delegate_to_subagent',
-                description: `Dispatching ${items.length} items across ${chunks.length} sub-agents (batch size ${batchSize})`,
-                startTime: Date.now(),
-                args: args as Record<string, unknown>,
-                callId: 'subagent',
-              });
-
-              const batchResults: string[] = [];
-              let totalElapsed = 0;
-
-              // Spawn each chunk as a sub-agent and wait for all
-              const pending = chunks.map((chunk) =>
-                runSubAgent(
-                  `Process these items:\n${chunk.map((item, i) => `${i + 1}. ${item}`).join('\n')}\n\nReturn a summary of processing results for each item.`,
-                  toolsList,
-                  timeout,
-                  false,
-                ),
-              );
-
-              const resolved = await Promise.all(pending);
-              for (const r of resolved) {
-                totalElapsed += r.elapsed;
-                batchResults.push(r.success ? r.output : `[FAILED] ${r.output}`);
-              }
-
-              const output = [
-                `=== BATCH RESULT ===`,
-                `${items.length} items processed across ${chunks.length} sub-agents`,
-                `Total elapsed: ${totalElapsed}ms`,
-                ``,
-                ...batchResults,
-              ].join('\n');
-
-              emit({
-                type: 'tool_complete',
-                tool: 'delegate_to_subagent',
-                result: { success: true, output },
-                elapsed: totalElapsed,
-                args: args as Record<string, unknown>,
-                callId: 'subagent',
-              });
-              return output;
+          if (items && items.length > 0) {
+            const chunks: string[][] = [];
+            for (let i = 0; i < items.length; i += batchSize) {
+              chunks.push(items.slice(i, i + batchSize));
             }
-
-            // Single mode
-            emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${mission}`, startTime: Date.now(), args: args as Record<string, unknown>, callId: 'subagent' });
-            const result2 = await runSubAgent(mission, toolsList, timeout, background);
-            const output = result2.success
-              ? `[Sub-agent completed in ${result2.elapsed}ms]\n${result2.output}`
-              : `[Sub-agent failed: ${result2.output}]`;
-            emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: result2.success, output }, elapsed: result2.elapsed, args: args as Record<string, unknown>, callId: 'subagent' });
+            emit({
+              type: 'tool_executing',
+              tool: 'delegate_to_subagent',
+              description: `Dispatching ${items.length} items across ${chunks.length} sub-agents`,
+              startTime: Date.now(),
+              args: args as Record<string, unknown>,
+              callId: 'subagent',
+            });
+            const pending = chunks.map((chunk) =>
+              runSubAgent(`Process:\n${chunk.map((item, i) => `${i + 1}. ${item}`).join('\n')}`, toolsList, timeout, false),
+            );
+            const resolved = await Promise.all(pending);
+            let totalElapsed = 0;
+            const batchResults: string[] = [];
+            for (const r of resolved) {
+              totalElapsed += r.elapsed;
+              batchResults.push(r.success ? r.output : `[FAILED] ${r.output}`);
+            }
+            const output = [`=== BATCH RESULT ===`, `${items.length} items processed`, `Total elapsed: ${totalElapsed}ms`, '', ...batchResults].join('\n');
+            emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: true, output }, elapsed: totalElapsed, args: args as Record<string, unknown>, callId: 'subagent' });
             return output;
-          });
-          const [result] = await fiberSet.joinAll<string>();
-          return result;
+          }
+
+          emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${mission}`, startTime: Date.now(), args: args as Record<string, unknown>, callId: 'subagent' });
+          const result2 = await runSubAgent(mission, toolsList, timeout, background);
+          const output = result2.success
+            ? `[Sub-agent completed in ${result2.elapsed}ms]\n${result2.output}`
+            : `[Sub-agent failed: ${result2.output}]`;
+          emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: result2.success, output }, elapsed: result2.elapsed, args: args as Record<string, unknown>, callId: 'subagent' });
+          return output;
         },
       });
       continue;
@@ -250,9 +212,7 @@ export function createAiSdkTools(
     tools[toolDef.id] = tool({
       description: toolDef.modelDescription,
       inputSchema: jsonSchema(schema),
-      async execute(args, options) {
-        const fiberSet = new FiberSet();
-        fiberSet.run(toolDef.id, async () => {
+        async execute(args, options) {
           const startTime = Date.now();
           const callId = options?.toolCallId || `tc-${toolDef.id}-${startTime}`;
           activeOutputCalls.set(callId, toolDef.id);
@@ -267,7 +227,7 @@ export function createAiSdkTools(
             if (!result.success) {
               if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
                 emit({ type: 'mode_restricted', tool: toolDef.id, error: result.error, message: result.output } as any);
-                return `[${result.error}] "${toolDef.id}" is blocked in your current mode. ${result.output}\n\nTell the user this tool requires Agent mode. Ask them to switch modes or press Enter to switch now. Do NOT fabricate any output.`;
+                return `[${result.error}] "${toolDef.id}" is blocked in your current mode. ${result.output}\n\nTell the user this tool requires Agent mode. Ask them to switch modes. Do NOT fabricate any output.`;
               }
               return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
             }
@@ -279,10 +239,7 @@ export function createAiSdkTools(
             emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output: errorMsg }, elapsed, args: args as Record<string, unknown>, callId });
             return `[TOOL ERROR] ${errorMsg}`;
           }
-        });
-        const results = await fiberSet.joinAll<string>();
-        return results[0];
-      },
+        },
     });
   }
 
@@ -313,7 +270,6 @@ export async function* aiSdkStream(
       })),
       ...(tools ? { tools } : {}),
       temperature: 0,
-      stopWhen: stepCountIs(5),
       abortSignal,
     });
 
