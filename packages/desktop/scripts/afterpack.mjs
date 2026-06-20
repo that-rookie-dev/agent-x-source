@@ -3,18 +3,28 @@ import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 export default async function afterPack(context) {
-  if (context.electronPlatformName !== 'darwin') return;
-
-  const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
-  if (!existsSync(appPath)) return;
-
   // Ensure web-api resources have a package.json with "type": "module" so that
   // Electron's Node.js runtime can load the ESM web-api bundle correctly.
-  const webApiDir = join(appPath, 'Contents', 'Resources', 'web-api');
+  // This is needed on all platforms, not just macOS.
+  let webApiDir: string;
+  if (context.electronPlatformName === 'darwin') {
+    const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+    if (!existsSync(appPath)) return;
+    webApiDir = join(appPath, 'Contents', 'Resources', 'web-api');
+  } else {
+    webApiDir = join(context.appOutDir, 'resources', 'web-api');
+  }
+
   if (existsSync(webApiDir)) {
     writeFileSync(join(webApiDir, 'package.json'), JSON.stringify({ type: 'module' }), 'utf-8');
     console.log('afterPack: created web-api/package.json (type: module)');
   }
+
+  // macOS-only: ad-hoc codesigning
+  if (context.electronPlatformName !== 'darwin') return;
+
+  const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+  if (!existsSync(appPath)) return;
 
   // If developer credentials are available (CSC_LINK is set), electron-builder
   // handles signing automatically with the Developer ID certificate.

@@ -195,6 +195,7 @@ jobs:
           cd packages/desktop
           retry npm install
           retry npm run build
+          retry pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api
           retry npx electron-builder --linux ${{ matrix.desktop_targets }}
         env:
           ARCH: ${{ matrix.arch }}
