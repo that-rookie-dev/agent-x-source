@@ -2678,7 +2678,7 @@ Only include specialists that are actually needed for this task.`;
   }
 
   private detectAtMentions(content: string): string[] {
-    const matches = content.matchAll(/@(\w+)/g);
+    const matches = content.matchAll(/(?<!\w)@(\w+)/g);
     const mentioned: string[] = [];
     const members = this.getCrewMembers();
     for (const match of matches) {

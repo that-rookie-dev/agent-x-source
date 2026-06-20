@@ -993,8 +993,11 @@ The user is asking about code review which matches Sam's expertise in code quali
       const best = this.findBestMatchForRole(role, availableMembers);
       if (best) composed.push(best);
     }
-    if (composed.length === 0 && availableMembers.length > 0) {
-      composed.push(availableMembers[0]!);
+    if (composed.length === 0) {
+      const first = availableMembers[0];
+      if (first && this.findBestMatchForRole(task, [first])) {
+        composed.push(first);
+      }
     }
     return composed;
   }

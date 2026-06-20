@@ -22,11 +22,47 @@ function validateRedirects(command: string, scopePath: string): string | null {
   return null;
 }
 
+function validateCommandScope(command: string, scopePath: string): string | null {
+  const tokens = tokenizeShell(command);
+  for (const token of tokens) {
+    const raw = token.replace(/[;,|&()]+$/, '');
+    if (!raw.startsWith('/') && !(IS_WINDOWS && /^[A-Z]:[\\/]/i.test(raw))) continue;
+    if (raw === '/dev/null' || raw === '/dev/zero' || raw.startsWith('/dev/fd/')) continue;
+    if (raw.startsWith('/proc/')) continue;
+    const resolved = normalize(resolve(scopePath, raw));
+    if (!resolved.startsWith(scopePath)) {
+      return `Path "${raw}" in command is outside scope (${scopePath})`;
+    }
+  }
+  return null;
+}
+
+function tokenizeShell(command: string): string[] {
+  const tokens: string[] = [];
+  let token = '';
+  let inSingle = false;
+  let inDouble = false;
+  for (const c of command) {
+    if (c === '\'' && !inDouble) { inSingle = !inSingle; continue; }
+    if (c === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (inSingle || inDouble) { token += c; continue; }
+    if (/\s/.test(c) || ';|&()'.includes(c)) {
+      if (token) { tokens.push(token); token = ''; }
+      continue;
+    }
+    token += c;
+  }
+  if (token) tokens.push(token);
+  return tokens;
+}
+
 export async function shellExec(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const command = args['command'] as string;
   if (!command) return { success: false, output: 'No command provided', error: 'EXEC_ERROR' };
   const redirectErr = validateRedirects(command, context.scopePath);
   if (redirectErr) return { success: false, output: redirectErr, error: 'SCOPE_VIOLATION' };
+  const scopeErr = validateCommandScope(command, context.scopePath);
+  if (scopeErr) return { success: false, output: scopeErr, error: 'SCOPE_VIOLATION' };
   const cwd = args['cwd'] ? resolve(context.scopePath, args['cwd'] as string) : context.scopePath;
   const timeout = (args['timeout'] as number) ?? 30000;
   const maxLength = (args['maxLength'] as number) ?? 30000;
@@ -62,6 +98,8 @@ export async function shellBackground(args: Record<string, unknown>, context: To
   if (!command) return { success: false, output: 'No command provided', error: 'EXEC_ERROR' };
   const redirectErr = validateRedirects(command, context.scopePath);
   if (redirectErr) return { success: false, output: redirectErr, error: 'SCOPE_VIOLATION' };
+  const scopeErr = validateCommandScope(command, context.scopePath);
+  if (scopeErr) return { success: false, output: scopeErr, error: 'SCOPE_VIOLATION' };
   const cwd = args['cwd'] ? resolve(context.scopePath, args['cwd'] as string) : context.scopePath;
 
   try {
@@ -118,6 +156,8 @@ export async function shellExecStreaming(args: Record<string, unknown>, context:
   if (!command) return { success: false, output: 'No command provided', error: 'EXEC_ERROR' };
   const redirectErr = validateRedirects(command, context.scopePath);
   if (redirectErr) return { success: false, output: redirectErr, error: 'SCOPE_VIOLATION' };
+  const scopeErr = validateCommandScope(command, context.scopePath);
+  if (scopeErr) return { success: false, output: scopeErr, error: 'SCOPE_VIOLATION' };
   const cwd = args['cwd'] ? resolve(context.scopePath, args['cwd'] as string) : context.scopePath;
   const maxLength = (args['maxLength'] as number) ?? 30000;
   const shell = getShellCommand(command);
