@@ -371,7 +371,7 @@ export class TaskExecutor {
         const i = plan.steps.indexOf(step);
         plan.currentStepIndex = i;
         step.status = 'in_progress';
-        let rePlanAttempts = 0;
+        const rePlanAttempts = 0;
 
         this.emitProgress(plan, i, 'step_started');
         getLogger().info('TASK_EXECUTOR', `Executing step ${i + 1}/${plan.steps.length}: ${step.description.slice(0, 60)}`);
@@ -1169,7 +1169,7 @@ If no violations, return { "violations": [] }.`,
       { check: 'tsc', file: 'tsconfig.json', cmd: 'npx tsc --noEmit 2>&1', timeout: 60000 },
     ];
 
-    let applicableCommands: Array<{ cmd: string; timeout: number }> = [];
+    const applicableCommands: Array<{ cmd: string; timeout: number }> = [];
     for (const tc of testCommands) {
       const exists = await tryShellExec(this.agent, `test -f "${tc.file}" && echo "y" || echo "n"`);
       if (exists.trim() === 'y') applicableCommands.push({ cmd: tc.cmd, timeout: tc.timeout });
@@ -1934,7 +1934,7 @@ Preserve all functionality from both sides.`,
 
     if (imageRefs.length === 0 && !hasGenericRef) return null;
 
-    let descriptions: string[] = [];
+    const descriptions: string[] = [];
 
     for (const ref of imageRefs) {
       const exists = await tryShellExec(this.agent, `test -f "${ref}" && echo "exists" || echo "not found"`);
