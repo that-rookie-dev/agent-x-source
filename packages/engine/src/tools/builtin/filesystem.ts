@@ -186,9 +186,10 @@ export async function fileFind(args: Record<string, unknown>, context: ToolExecu
   const cwd = resolve(context.scopePath, searchPath);
 
   try {
+    const escaped = pattern.replace(/"/g, '\\"');
     const cmd = IS_WINDOWS
-      ? `dir /s /b "${pattern}" 2>nul | findstr /v node_modules | findstr /v .git | findstr /v dist`
-      : `find . -name "${pattern.replace(/"/g, '\\"')}" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | head -100`;
+      ? `dir /s /b "${escaped}" 2>nul | findstr /v node_modules | findstr /v .git | findstr /v dist`
+      : `find . -iname "${escaped}" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | head -100`;
     const output = execSync(cmd, { cwd, encoding: 'utf-8', timeout: 10000 });
     const files = output.trim().split('\n').filter(Boolean);
     if (files.length === 0) {

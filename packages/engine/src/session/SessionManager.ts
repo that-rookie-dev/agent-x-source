@@ -3,6 +3,8 @@ import type { StorageAdapter } from '@agentx/shared';
 import { generateSessionId, generateId } from '@agentx/shared';
 import { SessionStore } from './SessionStore.js';
 import { TokenTracker } from './TokenTracker.js';
+import { normalizeSessionUpdates, EMPTY_SESSION_KPIS } from './session-field-utils.js';
+import type { SessionListKpis } from './session-field-utils.js';
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -77,10 +79,11 @@ export class SessionManager {
   }
 
   private updateSessionRecord(id: string, updates: Partial<Session>): void {
+    const normalized = normalizeSessionUpdates(updates as Record<string, unknown>);
     if (this.usingStorageAdapter) {
-      (this.store as StorageAdapter).updateSession(id, updates as Record<string, unknown>);
+      (this.store as StorageAdapter).updateSession(id, normalized as Partial<Session>);
     } else {
-      this.getSessionStore().updateSession(id, updates);
+      this.getSessionStore().updateSession(id, normalized);
     }
   }
 
@@ -100,10 +103,71 @@ export class SessionManager {
   }
 
   createSession(providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string): Session {
+    const session = this.buildSessionRecord(providerId, modelId, scopePath, id, parentId);
+    this.createSessionRecord(session);
+    this.activeSession = session;
+    this.tokenTracker = new TokenTracker(session.tokenAvailable || 128_000);
+    this.startAutoSave();
+    return session;
+  }
+
+  /** Register a child session without switching the active parent session. */
+  createChildSessionRecord(
+    childId: string,
+    parentId: string,
+    providerId: string,
+    modelId: string,
+    scopePath?: string,
+    meta?: { kind?: string; label?: string },
+  ): Session {
+    const session = this.buildSessionRecord(
+      providerId,
+      modelId,
+      scopePath,
+      childId,
+      parentId,
+      meta?.label ?? 'Background work',
+    );
+    this.createSessionRecord(session);
+    this.registerChildSessionEntry({
+      id: childId,
+      parentSessionId: parentId,
+      kind: meta?.kind ?? 'sub_agent',
+      label: meta?.label,
+    });
+    return session;
+  }
+
+  private registerChildSessionEntry(entry: {
+    id: string;
+    parentSessionId: string;
+    kind: string;
+    label?: string;
+    status?: string;
+  }): void {
+    if (this.usingStorageAdapter) {
+      const adapter = this.store as StorageAdapter;
+      adapter.registerChildSession?.(entry);
+      return;
+    }
+    const store = this.getSessionStore();
+    if (typeof store.registerChildSession === 'function') {
+      store.registerChildSession(entry);
+    }
+  }
+
+  private buildSessionRecord(
+    providerId: string,
+    modelId: string,
+    scopePath?: string,
+    id?: string,
+    parentId?: string,
+    title?: string,
+  ): Session {
     const contextWindow = 128_000;
-    const session: Session = {
+    return {
       id: id ?? generateSessionId(),
-      title: parentId ? 'Child Session' : 'New Session',
+      title: title ?? (parentId ? 'Background work' : 'New Session'),
       status: 'active' as SessionStatus,
       parentId: parentId ?? null,
       providerId,
@@ -115,20 +179,51 @@ export class SessionManager {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-
-    this.createSessionRecord(session);
-    this.activeSession = session;
-    this.tokenTracker = new TokenTracker(contextWindow);
-
-    // Auto-save every 30 seconds
-    this.startAutoSave();
-
-    return session;
   }
 
   getChildSessions(parentId: string): Session[] {
+    if (this.usingStorageAdapter) {
+      const adapter = this.store as StorageAdapter;
+      if (adapter.listChildSessions) {
+        return adapter.listChildSessions(parentId) as unknown as Session[];
+      }
+    }
+    const store = this.getSessionStore();
+    if (typeof store.listChildSessions === 'function') {
+      return store.listChildSessions(parentId) as unknown as Session[];
+    }
     const all = this.listSessions(9999);
     return all.filter(s => s.parentId === parentId);
+  }
+
+  getSessionListKpis(sessionId: string, base?: Record<string, unknown>): SessionListKpis {
+    if (this.usingStorageAdapter) {
+      const adapter = this.store as StorageAdapter;
+      if (adapter.getSessionListKpis) {
+        return adapter.getSessionListKpis(sessionId, base) as unknown as SessionListKpis;
+      }
+    } else {
+      const store = this.getSessionStore();
+      if (typeof store.getSessionListKpis === 'function') {
+        return store.getSessionListKpis(sessionId, base) as unknown as SessionListKpis;
+      }
+    }
+    return { ...EMPTY_SESSION_KPIS };
+  }
+
+  persistSessionFields(sessionId: string, updates: Record<string, unknown>): void {
+    this.updateSessionRecord(sessionId, updates as Partial<Session>);
+  }
+
+  listRootSessions(limit = 20): Session[] {
+    if (this.usingStorageAdapter) {
+      const adapter = this.store as StorageAdapter;
+      if (adapter.listRootSessions) {
+        return adapter.listRootSessions(limit) as unknown as Session[];
+      }
+      return adapter.listSessions(limit).filter((s) => !s.parentId) as unknown as Session[];
+    }
+    return this.getSessionStore().listRootSessions(limit) as unknown as Session[];
   }
 
   getSessionTree(): Session[] {
@@ -318,16 +413,10 @@ export class SessionManager {
     this.stopAutoSave();
     this.autoSaveInterval = setInterval(() => {
       if (this.activeSession && this.tokenTracker) {
-        if (this.usingStorageAdapter) {
-          (this.store as StorageAdapter).updateSession(this.activeSession.id, {
-            tokenUsed: this.tokenTracker.tokensUsed,
-          } as Partial<Session>);
-        } else {
-          this.getSessionStore().updateSession(this.activeSession.id, {
-            tokensUsed: this.tokenTracker.tokensUsed,
-            updatedAt: new Date().toISOString(),
-          });
-        }
+        this.updateSessionRecord(this.activeSession.id, {
+          tokensUsed: this.tokenTracker.tokensUsed,
+          updatedAt: new Date().toISOString(),
+        } as Partial<Session>);
       }
     }, 30_000);
   }

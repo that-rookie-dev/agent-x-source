@@ -13,19 +13,48 @@ import { colors } from '../theme';
 const ACTION_KEYWORDS = [
   'generate', 'create', 'build', 'write', 'fix', 'deploy', 'implement',
   'make', 'develop', 'construct', 'compose', 'draft', 'produce', 'render',
-  'convert', 'transform', 'edit', 'modify', 'update', 'add', 'remove',
+  'edit', 'modify', 'update', 'add', 'remove',
   'delete', 'refactor', 'restructure', 'migrate', 'install', 'configure',
   'set up', 'setup', 'compile', 'bundle', 'package', 'upload', 'download',
   'send', 'execute', 'run', 'start', 'stop', 'restart', 'launch',
-  'scrape', 'crawl', 'fetch', 'push', 'pull', 'clone', 'init', 'commit',
+  'scrape', 'crawl', 'push', 'pull', 'clone', 'init', 'commit',
 ];
 
+const RESEARCH_QUESTION_RE =
+  /\b(which|what|who|where|when|how|why|best|recommend|compare|versus|vs\.?|difference|suggest|opinion|advice|should i|options?|alternatives?)\b/i;
+
+const INFORMATIONAL_CONVERT_RE =
+  /\b(convert|transform|translate)\b.{0,40}\b(to|into|from)\b/i;
+
 const DISMISS_KEY = 'agentx_mode_suggest_dismissed';
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasKeyword(lower: string, kw: string): boolean {
+  if (kw.includes(' ')) return lower.includes(kw);
+  return new RegExp(`\\b${escapeRegExp(kw)}\\b`, 'i').test(lower);
+}
+
+/** True when the message is asking for information rather than requesting execution. */
+function isInformationalQuery(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  const isQuestion = /\?$/.test(lower) || RESEARCH_QUESTION_RE.test(lower);
+  if (isQuestion && RESEARCH_QUESTION_RE.test(lower)) return true;
+  if (/\b(which|what)\b/i.test(lower) && /\b(best|recommend|compare|options?)\b/i.test(lower)) return true;
+  if (INFORMATIONAL_CONVERT_RE.test(lower) && isQuestion) return true;
+  if (/\b(how (do|can|should) i|explain|describe|overview|list)\b/i.test(lower) && !/\b(now|please|for me)\b/i.test(lower)) {
+    return true;
+  }
+  return false;
+}
 
 function shouldSuggestMode(text: string): boolean {
   const lower = text.toLowerCase();
   if (lower.length < 20) return false;
-  return ACTION_KEYWORDS.some(kw => lower.includes(kw));
+  if (isInformationalQuery(text)) return false;
+  return ACTION_KEYWORDS.some((kw) => hasKeyword(lower, kw));
 }
 
 interface ModeSuggestionModalProps {
@@ -88,4 +117,4 @@ export default function ModeSuggestionModal({ open, onSwitch, onStay, onClose }:
   );
 }
 
-export { ACTION_KEYWORDS, DISMISS_KEY, shouldSuggestMode };
+export { ACTION_KEYWORDS, DISMISS_KEY, shouldSuggestMode, isInformationalQuery };

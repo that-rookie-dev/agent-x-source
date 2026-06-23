@@ -17,9 +17,11 @@ import { OrchestratorPanel } from '../components/OrchestratorPanel';
 import { CrewsPanel } from '../components/CrewsPanel';
 import { SoulPanel } from '../components/SoulPanel';
 import { ProvidersPanel } from '../components/ProvidersPanel';
+import { HealthPanel } from '../components/HealthPanel';
+import { NotificationToast } from '../components/NotificationToast';
 import { colors } from '../theme';
 
-export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'knowledge' | 'orchestrator' | 'crews' | 'soul' | 'providers';
+export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'knowledge' | 'orchestrator' | 'crews' | 'soul' | 'providers' | 'health';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -149,6 +151,7 @@ export function Console() {
               {activePanel === 'crews' && <CrewsPanel />}
               {activePanel === 'soul' && <SoulPanel />}
               {activePanel === 'providers' && <ProvidersPanel />}
+              {activePanel === 'health' && <HealthPanel />}
             </PanelErrorBoundary>
           </Box>
           {isVertical && logsContent}
@@ -159,6 +162,7 @@ export function Console() {
       {!isVertical && logsContent}
 
       <Footer onToggleLogs={toggleLogs} logsOpen={logsOpen} />
+      <NotificationToast />
     </Box>
   );
 }

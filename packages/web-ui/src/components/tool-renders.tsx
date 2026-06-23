@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { colors } from '../theme';
@@ -10,7 +10,9 @@ export function ShellRender({ tool }: { tool: InlineToolData }) {
   const args = tool.args;
   const command = typeof args === 'object' && args !== null
     ? String((args as Record<string, unknown>).command || (args as Record<string, unknown>).description || '')
-    : '';
+    : String(tool.metadata?.command || '');
+  const liveStdout = tool.metadata?.stdout as string | undefined;
+  const liveStderr = tool.metadata?.stderr as string | undefined;
   return (
     <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.green}15` }}>
       {command && (
@@ -26,16 +28,17 @@ export function ShellRender({ tool }: { tool: InlineToolData }) {
           </Box>
         </>
       )}
-      {tool.result && (
+      {(liveStdout || liveStderr || tool.result) && (
         <>
-          <Label>Output</Label>
+          <Label>{liveStderr && !liveStdout ? 'Stderr' : 'Output'}</Label>
           <Box sx={{
             bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
-            color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+            color: liveStderr && !liveStdout ? colors.accent.purple : colors.text.secondary,
+            lineHeight: 1.5, whiteSpace: 'pre-wrap',
             maxHeight: 300, overflow: 'auto', wordBreak: 'break-word',
           }}>
-            {cleanResult(tool.result).slice(0, 4000)}
+            {(liveStdout || liveStderr || cleanResult(tool.result)).slice(0, 4000)}
           </Box>
         </>
       )}
@@ -47,8 +50,9 @@ export function ReadRender({ tool }: { tool: InlineToolData }) {
   const args = tool.args;
   const path = typeof args === 'object' && args !== null
     ? String((args as Record<string, unknown>).path || (args as Record<string, unknown>).filePath || '')
-    : '';
-  const result = cleanResult(tool.result);
+    : String(tool.metadata?.filePath || '');
+  const preview = tool.metadata?.content as string | undefined;
+  const result = preview || cleanResult(tool.result);
   return (
     <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.blue}15` }}>
       {path && <Label>File</Label>}
@@ -85,28 +89,42 @@ export function EditRender({ tool }: { tool: InlineToolData }) {
     ? String((args as Record<string, unknown>).path || (args as Record<string, unknown>).filePath || '')
     : '';
   const result = cleanResult(tool.result);
-  const isDiff = result.includes('---') && result.includes('+++');
+  const metaDiff = tool.metadata?.diff as string | undefined;
+  const diffText = metaDiff || (result.includes('---') && result.includes('+++') ? result : '');
+  const isDiff = !!diffText;
+
   return (
     <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.orange}15` }}>
       {path && <Label>File</Label>}
       {path && (
         <Box sx={{
-          bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75, mb: result ? 0.5 : 0,
+          bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75, mb: diffText || result ? 0.5 : 0,
           fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
-          color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
+          color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
         }}>
           {path}
         </Box>
       )}
-      {result && (
+      {isDiff && (
         <>
-          <Label>{isDiff ? 'Diff' : 'Result'}</Label>
+          <Label>Diff</Label>
           <Box sx={{
-            bgcolor: isDiff ? '#1a0a00' : '#0a0a0a', borderRadius: 0.5, p: 0.75,
+            bgcolor: '#1a0a00', borderRadius: 0.5, p: 0.75,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
-            color: isDiff ? colors.accent.orange : colors.text.secondary,
-            lineHeight: 1.5, whiteSpace: 'pre-wrap',
+            color: colors.accent.orange, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+            maxHeight: 400, overflow: 'auto', wordBreak: 'break-word',
+          }}>
+            {diffText.slice(0, 8000)}
+          </Box>
+        </>
+      )}
+      {!isDiff && result && (
+        <>
+          <Label>Result</Label>
+          <Box sx={{
+            bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75,
+            fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
+            color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
             maxHeight: 300, overflow: 'auto', wordBreak: 'break-word',
           }}>
             {result.slice(0, 4000)}
@@ -121,9 +139,12 @@ export function GlobRender({ tool }: { tool: InlineToolData }) {
   const args = tool.args;
   const pattern = typeof args === 'object' && args !== null
     ? String((args as Record<string, unknown>).pattern || '')
-    : '';
+    : String(tool.metadata?.pattern || '');
   const result = cleanResult(tool.result);
-  const files = result ? result.split('\n').filter(Boolean) : [];
+  const metaMatches = tool.metadata?.matches;
+  const files = Array.isArray(metaMatches)
+    ? metaMatches.map((m) => String(m))
+    : result ? result.split('\n').filter(Boolean) : [];
   return (
     <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.purple}15` }}>
       {pattern && <Label>Pattern</Label>}
@@ -167,9 +188,12 @@ export function GrepRender({ tool }: { tool: InlineToolData }) {
   const args = tool.args;
   const pattern = typeof args === 'object' && args !== null
     ? String((args as Record<string, unknown>).pattern || '')
-    : '';
+    : String(tool.metadata?.pattern || '');
   const result = cleanResult(tool.result);
-  const lines = result ? result.split('\n').filter(Boolean) : [];
+  const metaMatches = tool.metadata?.matches;
+  const lines = Array.isArray(metaMatches)
+    ? metaMatches.map((m) => String(m))
+    : result ? result.split('\n').filter(Boolean) : [];
   return (
     <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.cyan}15` }}>
       {pattern && <Label>Pattern</Label>}

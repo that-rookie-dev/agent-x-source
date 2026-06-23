@@ -47,3 +47,36 @@ export function tokenPercentage(used: number, available: number): number {
   if (available === 0) return 0;
   return Math.round((used / available) * 100);
 }
+
+/** Tokens reserved for the next model response (compaction trigger uses this). */
+export function getOutputReserve(contextWindow: number): number {
+  return getTokenThresholds(contextWindow).outputReserve;
+}
+
+/** Display total: committed in/out + in-flight output estimate + output reserve. */
+export function buildDisplayTokenUsage(opts: {
+  inputTokens: number;
+  outputTokens: number;
+  streamingTokens?: number;
+  contextWindow: number;
+  includeReserve?: boolean;
+}): {
+  inputTokens: number;
+  outputTokens: number;
+  streamingTokens: number;
+  reservedTokens: number;
+  displayTotal: number;
+  contextWindow: number;
+} {
+  const streamingTokens = opts.streamingTokens ?? 0;
+  const reservedTokens = opts.includeReserve === false ? 0 : getOutputReserve(opts.contextWindow);
+  const displayTotal = opts.inputTokens + opts.outputTokens + streamingTokens + reservedTokens;
+  return {
+    inputTokens: opts.inputTokens,
+    outputTokens: opts.outputTokens,
+    streamingTokens,
+    reservedTokens,
+    displayTotal,
+    contextWindow: opts.contextWindow,
+  };
+}

@@ -1,6 +1,6 @@
 import type { ToolResult } from '@agentx/shared';
 
-let crewDelegator: ((crewName: string, taskDescription: string) => Promise<string>) | null = null;
+let crewDelegator: ((crewName: string, taskDescription: string) => Promise<{ success: boolean; output: string }>) | null = null;
 
 export function setCrewDelegator(fn: NonNullable<typeof crewDelegator>): void {
   crewDelegator = fn;
@@ -22,7 +22,7 @@ export async function delegateToCrew(
 
   try {
     const result = await crewDelegator(crewName, task);
-    return { success: true, output: result };
+    return { success: result.success, output: result.output };
   } catch (err) {
     return { success: false, output: `Crew delegation failed: ${err instanceof Error ? err.message : String(err)}`, error: 'CREW_ERROR' };
   }

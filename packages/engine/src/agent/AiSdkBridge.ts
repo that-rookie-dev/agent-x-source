@@ -1,4 +1,4 @@
-import { tool, jsonSchema, streamText, type ToolSet, type LanguageModel } from 'ai';
+import { tool, jsonSchema, streamText, stepCountIs, type ToolSet, type LanguageModel } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -11,7 +11,8 @@ import { createXai } from '@ai-sdk/xai';
 import { createPerplexity } from '@ai-sdk/perplexity';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
-import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall } from '@agentx/shared';
+import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, ClarificationRequestMeta } from '@agentx/shared';
+import { isToolAllowedInPlanMode } from './plan-mode-utils.js';
 
 const DEFAULT_BASE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
@@ -122,11 +123,19 @@ export function createAiSdkTools(
   toolExecutor: { execute: (toolId: string, args: Record<string, unknown>, sessionId: string) => Promise<ToolResult>; setToolOutputHandler?: (handler: (output: string) => void) => void },
   sessionId: string,
   emit: (event: EngineEvent) => void,
-  waitForClarification: (question: string, options: string[], allowFreeform: boolean) => Promise<string>,
-  runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number }>,
+  waitForClarification: (question: string, options: string[], allowFreeform: boolean, meta?: ClarificationRequestMeta) => Promise<string>,
+  runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }>,
+  planMode: boolean = false,
+  waitForModeEscalation?: (toolId: string, reason: string) => Promise<boolean>,
+  onToolExecuted?: (toolId: string, success: boolean, output: string, elapsed: number, args?: Record<string, unknown>) => void,
 ): ToolSet {
   const allTools = toolRegistry.list();
   const tools: ToolSet = {};
+
+  // ─── Plan Mode: strict allowlist — read/explore only; plans stay in chat ───
+  const filteredTools = planMode
+    ? allTools.filter((t) => isToolAllowedInPlanMode(t.id))
+    : allTools;
 
   // Wire real-time tool output streaming
   const activeOutputCalls = new Map<string, string>(); // callId -> tool name
@@ -139,7 +148,7 @@ export function createAiSdkTools(
     });
   }
 
-  for (const toolDef of allTools) {
+   for (const toolDef of filteredTools) {
     const schema = convertToJsonSchema(toolDef.schema);
 
     if (toolDef.id === 'ask_clarification') {
@@ -150,7 +159,17 @@ export function createAiSdkTools(
           const question = (args as any).question || 'I need more information.';
           const options = Array.isArray((args as any).options) ? (args as any).options : [];
           const allowFreeform = (args as any).allowFreeform !== false;
-          const response = await waitForClarification(question, options, allowFreeform);
+          const multiple = (args as any).multiple === true;
+          const fields = Array.isArray((args as any).fields)
+            ? (args as any).fields.filter((f: unknown) => f && typeof f === 'object')
+            : undefined;
+          const recommended = typeof (args as any).recommended === 'string' ? (args as any).recommended : undefined;
+          const meta: ClarificationRequestMeta = {
+            selectionMode: fields?.length ? undefined : multiple ? 'multiple' : options.length > 0 ? 'single' : undefined,
+            fields,
+            recommended,
+          };
+          const response = await waitForClarification(question, options, allowFreeform, meta);
           return `User response: ${response}`;
         },
       });
@@ -199,10 +218,11 @@ export function createAiSdkTools(
 
           emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${mission}`, startTime: Date.now(), args: args as Record<string, unknown>, callId: 'subagent' });
           const result2 = await runSubAgent(mission, toolsList, timeout, background);
+          const callId = result2.agentId ?? 'subagent';
           const output = result2.success
             ? `[Sub-agent completed in ${result2.elapsed}ms]\n${result2.output}`
             : `[Sub-agent failed: ${result2.output}]`;
-          emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: result2.success, output }, elapsed: result2.elapsed, args: args as Record<string, unknown>, callId: 'subagent' });
+          emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: result2.success, output }, elapsed: result2.elapsed, args: args as Record<string, unknown>, callId });
           return output;
         },
       });
@@ -213,35 +233,113 @@ export function createAiSdkTools(
       description: toolDef.modelDescription,
       inputSchema: jsonSchema(schema),
         async execute(args, options) {
-          const startTime = Date.now();
-          const callId = options?.toolCallId || `tc-${toolDef.id}-${startTime}`;
-          activeOutputCalls.set(callId, toolDef.id);
-          emit({ type: 'tool_executing', tool: toolDef.id, description: `Executing ${toolDef.name}`, startTime, args: args as Record<string, unknown>, callId });
+           const startTime = Date.now();
+           const callId = options?.toolCallId || `tc-${toolDef.id}-${startTime}`;
+           activeOutputCalls.set(callId, toolDef.id);
+           const argsStr = JSON.stringify(args).slice(0, 100);
+           emit({ 
+             type: 'tool_executing', 
+             tool: toolDef.id, 
+             description: `Executing ${toolDef.name} with args: ${argsStr}`,
+             startTime, 
+             args: args as Record<string, unknown>, 
+             callId,
+             message: `⏳ Running ${toolDef.name}...`
+           });
 
-          try {
-            const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
-            const elapsed = Date.now() - startTime;
-            activeOutputCalls.delete(callId);
-            emit({ type: 'tool_complete', tool: toolDef.id, result: { success: result.success, output: result.output }, elapsed, args: args as Record<string, unknown>, callId });
+           try {
+             const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
+             const elapsed = Date.now() - startTime;
+             activeOutputCalls.delete(callId);
+             onToolExecuted?.(toolDef.id, result.success, result.output, elapsed, args as Record<string, unknown>);
+              emit({ 
+               type: 'tool_complete', 
+               tool: toolDef.id, 
+               result: { success: result.success, output: result.output }, 
+               elapsed, 
+               args: args as Record<string, unknown>, 
+               callId,
+               message: result.success ? `✅ ${toolDef.name} completed in ${elapsed}ms` : `❌ ${toolDef.name} failed`
+             });
 
-            if (!result.success) {
-              if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
-                emit({ type: 'mode_restricted', tool: toolDef.id, error: result.error, message: result.output } as any);
-                return `[${result.error}] "${toolDef.id}" is blocked in your current mode. ${result.output}\n\nTell the user this tool requires Agent mode. Ask them to switch modes. Do NOT fabricate any output.`;
-              }
-              return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
-            }
-            return result.output;
-          } catch (err) {
-            activeOutputCalls.delete(callId);
-            const elapsed = Date.now() - startTime;
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output: errorMsg }, elapsed, args: args as Record<string, unknown>, callId });
-            return `[TOOL ERROR] ${errorMsg}`;
-          }
-        },
+               if (!result.success) {
+                 if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
+                   emit({ type: 'mode_restricted', tool: toolDef.id, error: result.error, message: result.output });
+
+                   if (result.error === 'MODE_RESTRICTED' && waitForModeEscalation) {
+                     emit({
+                       type: 'mode_escalation_required',
+                       tool: toolDef.id,
+                       reason: result.output,
+                       pendingAction: `${toolDef.id}(${argsStr})`,
+                     });
+                     const accepted = await waitForModeEscalation(toolDef.id, result.output);
+                     if (accepted) {
+                       emit({ type: 'mode_escalation_accepted', tool: toolDef.id });
+                       const retryResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
+                       const retryElapsed = Date.now() - startTime;
+                       onToolExecuted?.(toolDef.id, retryResult.success, retryResult.output, retryElapsed, args as Record<string, unknown>);
+                       emit({
+                         type: 'tool_complete',
+                         tool: toolDef.id,
+                         result: { success: retryResult.success, output: retryResult.output },
+                         elapsed: retryElapsed,
+                         args: args as Record<string, unknown>,
+                         callId,
+                         message: retryResult.success ? `✅ ${toolDef.name} completed after mode switch` : `❌ ${toolDef.name} still failed`,
+                       });
+                       if (retryResult.success) return retryResult.output;
+                       return `[TOOL ERROR: ${retryResult.error || 'Unknown'}] ${retryResult.output}`;
+                     }
+                     emit({ type: 'mode_escalation_declined', tool: toolDef.id });
+                     throw new Error('MODE_ESCALATION_DECLINED');
+                   }
+
+                   const modeNeeded = result.error === 'MODE_RESTRICTED' ? 'Agent Mode' : 'higher permissions';
+                   const instructions = `🚨 CRITICAL RESTRICTION 🚨
+
+The "${toolDef.id}" tool FAILED with error: MODE_RESTRICTED
+
+The user is in Plan Mode (read-only). The "${toolDef.id}" tool requires ${modeNeeded} and CANNOT be executed right now.
+
+YOUR RESPONSE MUST:
+1. ❌ NEVER claim you created/edited/deleted/executed anything. The action FAILED.
+2. ❌ NEVER show fake code or fake output. It didn't actually run.
+3. ✅ TELL the user the action failed and why: you're in Plan Mode and need ${modeNeeded}
+4. ✅ EXPLAIN which specific action you tried to perform and why it failed
+5. ✅ SUGGEST the user click the Agent Mode button in the UI to switch modes
+6. ✅ TELL them what you'll do once they switch modes
+
+This is NOT a suggestion - it's an instruction. If you claim the tool succeeded when it failed, you're deceiving the user.
+
+ERROR MESSAGE FROM SYSTEM: ${result.output}`;
+                   return instructions;
+                 }
+                 return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
+               }
+             return result.output;
+           } catch (err) {
+             activeOutputCalls.delete(callId);
+             const elapsed = Date.now() - startTime;
+             const errorMsg = err instanceof Error ? err.message : String(err);
+             emit({ 
+               type: 'tool_complete', 
+               tool: toolDef.id, 
+               result: { success: false, output: errorMsg }, 
+               elapsed, 
+               args: args as Record<string, unknown>, 
+               callId,
+               message: `❌ ${toolDef.name} errored: ${errorMsg}`
+             });
+             return `[TOOL ERROR] ${errorMsg}`;
+           }
+         },
     });
   }
+
+  // Log tool count for debugging
+  const toolCount = Object.keys(tools).length;
+  getLogger().info('AI_SDK_TOOLS', `Created ${toolCount} AI SDK tools from ${allTools.length} registered tools`);
 
   return tools;
 }
@@ -268,7 +366,7 @@ export async function* aiSdkStream(
         role: m.role as 'system' | 'user' | 'assistant',
         content: m.content,
       })),
-      ...(tools ? { tools } : {}),
+      ...(tools ? { tools, stopWhen: stepCountIs(100), toolChoice: 'auto' as const } : {}),
       temperature: 0,
       abortSignal,
     });

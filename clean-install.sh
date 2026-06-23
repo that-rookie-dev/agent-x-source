@@ -20,29 +20,36 @@ echo ">>> Clearing cache..."
 rm -rf "$HOME/.cache/agentx"
 rm -rf "$HOME/Library/Application Support/@agentx"
 
-# 4. Clean previous build artifacts
+# 4. Ensure dependencies are installed (repairs corrupted node_modules links)
+echo ">>> Installing/updating dependencies..."
+cd "$ROOT_DIR"
+pnpm install
+
+# 5. Clean previous build artifacts
 echo ">>> Cleaning previous desktop build artifacts..."
 cd "$DESKTOP_DIR"
 rm -rf dist release
 
-# 5. Build dependencies
+# 6. Build dependencies
 echo ">>> Building shared, engine, web-api, and web-ui..."
+cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
 
-# 6. Build desktop app (unpacked .app)
+# 7. Build desktop app (unpacked .app)
 echo ">>> Building desktop app..."
-npm run build
+cd "$DESKTOP_DIR"
+pnpm run build
 pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api
-npx electron-builder --mac --dir
+pnpm exec electron-builder --mac --dir
 
-# 7. Copy to /Applications
+# 8. Copy to /Applications
 echo ">>> Installing to /Applications (password prompt may appear)..."
 osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && cp -R '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/\" with administrator privileges"
 
-# 8. Launch
+# 9. Launch
 echo ">>> Launching Agent-X..."
 open /Applications/Agent-X.app
 

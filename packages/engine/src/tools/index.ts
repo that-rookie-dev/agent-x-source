@@ -24,7 +24,7 @@ export {
 } from './builtin/filesystem.js';
 
 // Shell tools
-export { shellExec, shellBackground, processKill, processList } from './builtin/shell.js';
+export { shellExec, shellBackground, processKill, processList, setShellSandbox } from './builtin/shell.js';
 
 // Git tools
 export {

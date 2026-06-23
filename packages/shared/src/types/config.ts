@@ -28,6 +28,16 @@ export interface AgentXConfig {
   setupComplete?: boolean; // true after Mission Control wizard finishes
   rag?: RAGConfig;
   maxSubAgents?: number; // Maximum number of concurrent sub-agents (default: 5, max: 20)
+
+  /** Maximum autonomous LLM↔tool cycles per turn (default: 20, increase for complex tasks) */
+  maxSteps?: number;
+  /** Maximum LLM retries on transient failures (default: 2, 0 = no retry) */
+  maxRetries?: number;
+  /** Maximum output tokens per LLM response (default: 8192, range: 256-32768) */
+  maxOutputTokens?: number;
+  /** Run shell commands in Docker sandbox for isolation (default: false) */
+  useSandbox?: boolean;
+
   permissions?: Record<string, 'allow' | 'deny' | 'ask'>;
   agents?: Record<string, {
     model?: string;

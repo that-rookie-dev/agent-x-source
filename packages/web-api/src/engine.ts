@@ -5,6 +5,8 @@ import {
   ProviderFactory,
   CrewManager,
   createDefaultToolkit,
+  DockerSandbox,
+  setShellSandbox,
   DefaultTelemetryBus,
   MemoryVectorStore,
   LLMEmbeddingProvider,
@@ -46,6 +48,7 @@ export interface EngineState {
   rag: RAGEngine | null;
   pluginRegistry: PluginRegistry;
   gateway: Gateway | null;
+  pgPool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> } | null;
   telegramBridge: TelegramBridge | null;
   discordBridge: DiscordBridge | null;
   slackBridge: SlackBridge | null;
@@ -86,9 +89,10 @@ export function getEngine(): EngineState {
   const pgPlugin = pluginRegistry.getPlugin('postgresql');
   const pgConfig = pgPlugin?.config ?? {};
   let sessionManager: SessionManager;
+  let pgAdapter: PostgresStorageAdapter | null = null;
   if (pgPlugin?.enabled && pgConfig['connectionString']) {
     try {
-      const pgAdapter = new PostgresStorageAdapter({
+      pgAdapter = new PostgresStorageAdapter({
         connectionString: pgConfig['connectionString'] as string,
         max: (pgConfig['poolSize'] as number) ?? 5,
       } as any);
@@ -157,6 +161,7 @@ export function getEngine(): EngineState {
     rag,
     pluginRegistry,
     gateway: null,
+    pgPool: pgAdapter?.getPool() ?? null,
     telegramBridge: null,
     discordBridge: null,
     slackBridge: null,
@@ -266,6 +271,7 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     toolRegistry: eng.toolkit.registry,
     onPart,
     persona,
+    pgPool: state?.pgPool ?? null,
   });
 
   // Apply session mode immediately so the agent starts in the correct mode
@@ -275,7 +281,52 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     agent.setPlanMode(false);
   }
 
+  const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
+  const sessionCtx = Number((session as { tokenAvailable?: number }).tokenAvailable ?? 0);
+  if (activeModelId && sessionCtx > 0) {
+    agent.switchModel(activeModelId, sessionCtx);
+  } else {
+    agent.listModels().catch(() => {});
+  }
+
   agent.setSessionManager(eng.sessionManager);
+
+  // Initialize Docker sandbox if enabled in config
+  if (cfg.useSandbox) {
+    try {
+      const sandbox = new DockerSandbox();
+      try { sandbox.setProjectDir(session.scopePath); } catch { /* best-effort */ }
+      setShellSandbox(sandbox);
+      getLogger().info('SANDBOX', `Docker sandbox initialized (available: ${sandbox.available}, project-dir: ${session.scopePath})`);
+    } catch (e) {
+      getLogger().warn('SANDBOX', `Failed to initialize Docker sandbox: ${e instanceof Error ? e.message : e}`);
+      setShellSandbox(null);
+    }
+  } else {
+    setShellSandbox(null);
+  }
+
+  // Watchdog: auto-resume interrupted task on startup
+  try {
+    const store = (eng.sessionManager as any).store;
+    if (store && typeof store.getTaskSnapshot === 'function') {
+      const snapshot = store.getTaskSnapshot(session.id) as Record<string, unknown> | null;
+      if (snapshot) {
+        const goal = (snapshot.goal as string) || '';
+        const ageMs = Date.now() - new Date((snapshot.created_at as string) || Date.now()).getTime();
+        const maxIdle = 300; // 5 min default idle threshold for auto-resume
+        if (goal && ageMs < maxIdle * 1000) {
+          getLogger().info('WATCHDOG', `Auto-resuming interrupted task: "${goal.slice(0, 60)}..." (idle: ${Math.round(ageMs / 1000)}s)`);
+          agent.sendMessage(goal).catch((e: unknown) => {
+            getLogger().warn('WATCHDOG', `Auto-resume failed: ${e instanceof Error ? e.message : e}`);
+          });
+        } else {
+          getLogger().info('WATCHDOG', `Stale task snapshot found (${Math.round(ageMs / 1000)}s idle) — not auto-resuming`);
+          store.deleteTaskSnapshot(session.id);
+        }
+      }
+    }
+  } catch { /* best-effort */ }
 
   // Restore accumulated token count from session
   const smTracker = eng.sessionManager.getTokenTracker();
@@ -345,11 +396,14 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     const store = (eng.sessionManager as any).store;
     if (store?.getMessages) {
       const msgs = store.getMessages(session.id) as Array<{ role: string; content: string }>;
-      const userAssistant = msgs.filter((m) => m.role === 'user' || m.role === 'assistant');
-      const recent = userAssistant.slice(-20);
+      const restorable = msgs.filter((m) =>
+        m.role === 'user' || m.role === 'assistant' ||
+        (m.role === 'system' && m.content?.includes('[TURN TOOL LEDGER]')),
+      );
+      const recent = restorable.slice(-24);
       for (const msg of recent) {
         if (msg.content) {
-          agent.addToHistory({ role: msg.role as 'user' | 'assistant', content: msg.content });
+          agent.addToHistory({ role: msg.role as 'user' | 'assistant' | 'system', content: msg.content });
         }
       }
     }
@@ -375,7 +429,12 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
       const inputTokens = (ev['inputTokens'] as number) ?? 0;
       const outputTokens = (ev['outputTokens'] as number) ?? 0;
       const costUsd = (ev['costUsd'] as number) ?? 0;
-      (eng.sessionManager as any).store.updateSession(session.id, { tokensUsed: totalTokens });
+      const contextWindow = (ev['contextWindow'] as number) ?? undefined;
+      const committedUsed = inputTokens + outputTokens > 0 ? inputTokens + outputTokens : totalTokens;
+      eng.sessionManager.persistSessionFields(session.id, {
+        tokensUsed: committedUsed,
+        ...(contextWindow ? { tokenAvailable: contextWindow } : {}),
+      });
       const smTracker = (eng.sessionManager as any).tokenTracker;
       if (smTracker?.setUsed) smTracker.setUsed(totalTokens);
       if (inputTokens > 0 || outputTokens > 0) {
@@ -730,5 +789,115 @@ export function getVitals(): Record<string, unknown> {
   } catch (e) {
     getLogger().error('GET_VITALS', e instanceof Error ? e : String(e));
     return { status: 'uninitialized', ageDays: 0, level: 'Fresh', wisdomScore: 0, totalExperiences: 0, totalInteractions: 0, totalCorrections: 0, avgConfidence: 0, currentMood: 'neutral', moodIntensity: 0.3, memories: { total: 0, categories: {} }, diaryEntries: 0, brainSizeFormatted: '0 B', nextMilestoneAt: null, capabilities: [], birthDate: null };
+  }
+}
+
+/**
+ * Aggregate autonomy status for the Health panel observability.
+ * Combines circuit breaker status, neural context, memory-driven suggestions,
+ * escalation state, hallucination guardrail, offline fallback, and compaction details.
+ */
+export function getAutonomyStatus(): Record<string, unknown> {
+  try {
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) return { available: false };
+
+    const health = agent.getHealth();
+
+    // Circuit breaker details
+    const executor = agent.getToolExecutor();
+    let circuitBreakers: Array<{ tool: string; failures: number; blacklisted: boolean; remainingMs: number }> = [];
+    if (executor && typeof (executor as any).getCircuitBreakerStatus === 'function') {
+      circuitBreakers = (executor as any).getCircuitBreakerStatus();
+    }
+
+    // Neural context
+    let provenContext = '';
+    let cautionContext = '';
+    let growthContext = '';
+    try {
+      const expEngine = (agent as any).experienceEngineInstance;
+      if (expEngine) {
+        provenContext = expEngine.getProvenContext?.() ?? '';
+        cautionContext = expEngine.getCautionContext?.() ?? '';
+      }
+      const growEngine = (agent as any).growthEngineInstance;
+      if (growEngine) {
+        growthContext = growEngine.getGrowthContext?.() ?? '';
+      }
+    } catch { /* */ }
+
+    // Memory-driven approach
+    let memoryDrivenContext = '';
+    try {
+      const rl = (agent as any).reflectionLoopInstance;
+      if (rl && typeof rl.getBestApproach === 'function') {
+        memoryDrivenContext = rl.getBestApproach?.('current task') ?? '';
+      }
+    } catch { /* */ }
+
+    // Escalation state — active checkpoints
+    let activeCheckpoints = 0;
+    let checkpointDetails: Array<{ description: string; checkpointId: string }> = [];
+    try {
+      const pendingCkp = (agent as any)._pendingCheckpoint;
+      if (pendingCkp) {
+        activeCheckpoints = 1;
+        checkpointDetails = [{ description: 'Active checkpoint awaiting user input', checkpointId: pendingCkp.checkpointId }];
+      }
+      const ckpCounts = (agent as any)._checkpointCounts as Map<string, number> | undefined;
+      if (ckpCounts && ckpCounts.size > 0) {
+        for (const [stepKey, count] of ckpCounts) {
+          if (count >= 2) {
+            checkpointDetails.push({ description: `Stuck: "${stepKey.slice(0, 60)}" (${count} failures)`, checkpointId: 'escalated' });
+          }
+        }
+      }
+    } catch { /* */ }
+
+    // Offline fallback status
+    let offlineFallback = { available: false, provider: '', model: '' };
+    try {
+      const fb = (agent as any)._fallbackProvider;
+      if (fb) {
+        offlineFallback = { available: fb.available, provider: fb.id ?? '', model: fb.model ?? '' };
+      }
+    } catch { /* */ }
+
+    // DB backend mode
+    let dbMode = 'sqlite';
+    try {
+      const store = (eng.sessionManager as any).store;
+      if (store && typeof store.isConnected === 'function' && store.isConnected()) {
+        dbMode = 'postgres';
+      }
+    } catch { /* */ }
+
+    // Compaction stats
+    const compactionCount = health.compactionCount;
+    const tokenUsagePct = health.contextWindow > 0 ? Math.round((health.contextTokens / health.contextWindow) * 100) : 0;
+
+    return {
+      available: true,
+      health,
+      circuitBreakers,
+      neural: { proven: provenContext, caution: cautionContext, growth: growthContext },
+      memoryDriven: memoryDrivenContext,
+      escalation: {
+        activeCheckpoints,
+        checkpointDetails,
+      },
+      offlineFallback,
+      dbMode,
+      compaction: {
+        count: compactionCount,
+        contextTokens: health.contextTokens,
+        contextWindow: health.contextWindow,
+        tokenUsagePct,
+      },
+    };
+  } catch {
+    return { available: false };
   }
 }

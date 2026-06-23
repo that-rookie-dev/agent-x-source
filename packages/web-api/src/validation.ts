@@ -1,0 +1,110 @@
+import { z } from 'zod';
+import type { Request, Response, NextFunction } from 'express';
+
+/**
+ * Express middleware factory: validates req.body against a Zod schema.
+ * On success, replaces req.body with the parsed (and typed) result.
+ * On failure, returns a 422 with structured error details.
+ */
+export function validate(schema: z.ZodSchema) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      res.status(422).json({
+        status: 'error',
+        code: 'VALIDATION_ERROR',
+        details: result.error.flatten(),
+      });
+      return;
+    }
+    req.body = result.data;
+    next();
+  };
+}
+
+// ─── Chat schemas ─────────────────────────────────────────────
+
+export const chatMessageSchema = z.object({
+  text: z.string().min(1, 'text is required'),
+  attachments: z.array(z.object({
+    name: z.string(),
+    content: z.string(),
+  })).optional(),
+  retry: z.boolean().optional(),
+});
+
+export const chatSteerSchema = z.object({
+  text: z.string().min(1, 'text is required'),
+  attachments: z.array(z.object({
+    name: z.string(),
+    content: z.string(),
+  })).optional(),
+});
+
+export const permissionRespondSchema = z.object({
+  requestId: z.string().min(1),
+  choice: z.enum(['allow_once', 'allow_always', 'deny']),
+});
+
+export const permissionRespondBatchSchema = z.object({
+  choice: z.enum(['allow_once', 'allow_always', 'deny']),
+});
+
+export const createSessionSchema = z.object({
+  scopePath: z.string().optional(),
+  parentId: z.string().optional(),
+  mode: z.enum(['agent', 'plan']).optional(),
+});
+
+export const createCheckpointSchema = z.object({
+  label: z.string().min(1, 'label is required'),
+});
+
+export const generateTitleSchema = z.object({
+  message: z.string().min(1),
+});
+
+export const updateSessionSchema = z.object({
+  title: z.string().optional(),
+  mode: z.enum(['agent', 'plan']).optional(),
+});
+
+export const providerValidateSchema = z.object({
+  provider: z.string().min(1),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+});
+
+export const updatePersonaSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().optional(),
+  communicationStyle: z.enum(['formal', 'casual', 'direct', 'empathetic']).optional(),
+  decisionMaking: z.enum(['conservative', 'balanced', 'aggressive']).optional(),
+  domainContext: z.string().optional(),
+  traits: z.array(z.string()).optional(),
+});
+
+export const authSetupSchema = z.object({
+  username: z.string().min(3, 'Username must be at least 3 characters'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+});
+
+export const authLoginSchema = z.object({
+  username: z.string().min(1),
+  password: z.string().min(1),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+});
+
+export const mcpServerSchema = z.object({
+  name: z.string().min(1),
+  command: z.string().min(1),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string()).optional(),
+  timeout: z.number().positive().optional(),
+  permissionLevel: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  maxOutputSize: z.number().positive().optional(),
+});

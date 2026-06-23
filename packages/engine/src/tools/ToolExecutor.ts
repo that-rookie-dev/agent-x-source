@@ -6,6 +6,7 @@ import { ToolRegistry } from './ToolRegistry.js';
 import type { SafetyAuditor } from '../safety/SafetyAuditor.js';
 import type { PolicyEngine } from '../enterprise/PolicyEngine.js';
 import type { AgentInfo } from '../agent/AgentInfo.js';
+import { isPlanDeniedTool } from '../agent/plan-mode-utils.js';
 
 
 export type PermissionRequestHandler = (
@@ -95,6 +96,32 @@ export class ToolExecutor {
     this.permissionRequestHandler = handler;
   }
 
+  /** Copy permission policy, mode, and hooks from another executor (e.g. parent → crew worker). */
+  copyExecutionPolicyFrom(source: ToolExecutor): void {
+    const src = source as unknown as {
+      permissionRequestHandler?: PermissionRequestHandler;
+      mode: 'agent' | 'plan';
+      sessionRules: PermissionRule[];
+      agentPermissions: PermissionRule[];
+      userConfigRules: PermissionRule[];
+      currentAgent: AgentInfo | null;
+      beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null;
+      safetyAuditor: SafetyAuditor | null;
+      policyEngine: PolicyEngine | null;
+    };
+    if (src.permissionRequestHandler) {
+      this.setPermissionRequestHandler(src.permissionRequestHandler);
+    }
+    this.setMode(src.mode);
+    this.setSessionRules([...src.sessionRules]);
+    this.setAgentPermissions([...src.agentPermissions]);
+    this.setUserConfigRules([...src.userConfigRules]);
+    if (src.currentAgent) this.setAgent(src.currentAgent);
+    if (src.beforeToolHook) this.setBeforeToolHook(src.beforeToolHook);
+    if (src.safetyAuditor) this.setSafetyAuditor(src.safetyAuditor);
+    if (src.policyEngine) this.setPolicyEngine(src.policyEngine);
+  }
+
   setToolOutputHandler(handler: (output: string) => void): void {
     this.onToolOutput = handler;
   }
@@ -173,9 +200,14 @@ export class ToolExecutor {
       }
     }
 
-    // Plan mode: block denied tools
-    if (this.mode === 'plan' && this.currentAgent?.deniedTools?.includes(toolId)) {
-      return { success: false, output: `"${toolId}" is not available in Plan mode. Switch to Agent mode to use this tool.`, error: 'MODE_RESTRICTED' };
+    // Plan mode: strict allowlist — block any tool not explicitly read-only
+    if (this.mode === 'plan' && isPlanDeniedTool(toolId)) {
+      const modeLabel = this.currentAgent?.name ?? 'Plan';
+      return {
+        success: false,
+        output: `The "${toolId}" tool cannot be executed in ${modeLabel} mode (read-only). This tool requires Agent Mode or Hyperdrive with full write/execute permissions. Please ask the user to switch modes using the control panel.`,
+        error: 'MODE_RESTRICTED',
+      };
     }
 
     // Evaluate permission rules (agent rules → session rules → user config rules)
@@ -201,7 +233,8 @@ export class ToolExecutor {
           return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
         }
         if (response === 'allow_always') {
-          this.permissionManager.grant(toolId, 'allow_always', scopePathForHook ?? undefined);
+          // Session "always allow" applies to the whole tool, not just one path.
+          this.permissionManager.grant(toolId, 'allow_always');
         }
       }
     }

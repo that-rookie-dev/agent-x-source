@@ -15,6 +15,7 @@ export interface StorableSession extends RecordMeta {
   hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;
+  compactionCount?: number;
 }
 
 export interface StorableMessage extends RecordMeta {
@@ -51,6 +52,16 @@ export interface StorageAdapter {
   updateSession(id: string, updates: Partial<StorableSession>): void;
   deleteSession(id: string): void;
   listSessions(limit?: number): StorableSession[];
+  listRootSessions?(limit?: number): StorableSession[];
+  listChildSessions?(parentSessionId: string): StorableSession[];
+  registerChildSession?(entry: {
+    id: string;
+    parentSessionId: string;
+    kind: string;
+    label?: string;
+    status?: string;
+  }): void;
+  getSessionListKpis?(sessionId: string, base?: Record<string, unknown>): Record<string, unknown>;
 
   addMessage(sessionId: string, message: Omit<StorableMessage, 'id' | 'createdAt'>): StorableMessage;
   getMessages(sessionId: string): StorableMessage[];

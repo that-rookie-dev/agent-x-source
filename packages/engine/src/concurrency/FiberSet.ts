@@ -1,5 +1,8 @@
 import { Fiber } from './Fiber.js';
 import { Scope } from './Scope.js';
+import { getLogger } from '@agentx/shared';
+
+const logger = getLogger();
 
 export class FiberSet {
   private fibers: Fiber[] = [];
@@ -18,9 +21,15 @@ export class FiberSet {
   async joinAll<T>(): Promise<T[]> {
     const results = await Promise.allSettled(this.fibers.map(f => f.join()));
     this.fibers = [];
-    return results
-      .filter((r): r is PromiseFulfilledResult<T> => r.status === 'fulfilled')
-      .map(r => r.value);
+    const values: T[] = [];
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        values.push(r.value as T);
+      } else {
+        logger.error('FIBER_SET', r.reason instanceof Error ? r.reason.message : String(r.reason));
+      }
+    }
+    return values;
   }
 
   get pending(): number { return this.fibers.length; }

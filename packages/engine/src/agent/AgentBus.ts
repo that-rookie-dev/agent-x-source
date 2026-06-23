@@ -151,6 +151,24 @@ export class AgentBus {
     if (topic) return this.messageLog.filter((m) => m.topic === topic);
     return [...this.messageLog];
   }
+
+  /**
+   * Remove subscriptions for agents that are no longer registered.
+   * Call periodically to prevent stale subscription leaks.
+   */
+  pruneStaleSubscriptions(): number {
+    const before = this.subscriptions.length;
+    this.subscriptions = this.subscriptions.filter((s) => this.agentCapabilities.has(s.agentId));
+    const removed = before - this.subscriptions.length;
+    if (removed > 0) {
+      logger.info('AGENT_BUS', `Pruned ${removed} stale subscription(s)`);
+    }
+    return removed;
+  }
+
+  get subscriptionCount(): number {
+    return this.subscriptions.length;
+  }
 }
 
 /** Singleton agent bus instance */

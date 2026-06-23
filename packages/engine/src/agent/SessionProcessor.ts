@@ -2,7 +2,7 @@ import type {
   AgentXStreamEvent,
   NormalizedToolCall,
 } from '@agentx/shared';
-import { ToolCallStatus } from '@agentx/shared';
+import { ToolCallStatus, appendStreamText } from '@agentx/shared';
 import type { EventBus } from '@agentx/shared';
 import { LiveProjector } from '../communication/LiveProjector.js';
 import { EventBroadcaster } from '../communication/EventBroadcaster.js';
@@ -43,7 +43,7 @@ export class SessionProcessor {
         break;
 
       case 'text.delta': {
-        this.accumulatedText += event.delta;
+        this.accumulatedText = appendStreamText(this.accumulatedText, event.delta);
         const projected = this.ctx.projector.project(this.accumulatedText);
         this.ctx.eventBus.emit({
           type: 'stream_chunk',

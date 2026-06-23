@@ -1,16 +1,28 @@
 import express from 'express';
-import type { Express } from 'express';
+import type { Express, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
+import helmet from 'helmet';
 import { createServer } from 'node:http';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals } from './engine.js';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi } from '@agentx/shared';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus } from './engine.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
+import { turnRegistry } from './turn-registry.js';
+import {
+  sessionSettings,
+  applySessionModeToAgent,
+  buildFullText,
+  buildInstructionForMode,
+  runAgentTurnAsync,
+} from './chat-helpers.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
+import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
+import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema } from './validation.js';
 import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
+import crypto from 'node:crypto';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -61,11 +73,213 @@ app.use(express.json({ limit: '50mb' }));
 // Hook the shared logger into the in-memory LogCollector so /api/logs shows everything
 initLogCollector();
 
+// ─── Startup Configuration Validation ───
+const startupErrors: string[] = [];
+
+// Validate critical data directories
+if (!DATA_DIR) {
+  startupErrors.push('DATA_DIR is empty or undefined. Check filesystem permissions and XDG_DATA_HOME.');
+}
+try {
+  if (!existsSync(DATA_DIR)) {
+    mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (e) {
+  startupErrors.push(`Cannot create data directory (${DATA_DIR}): ${e instanceof Error ? e.message : String(e)}`);
+}
+
+// Validate uploads directory
+try {
+  if (!existsSync(UPLOADS_DIR)) {
+    mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+} catch (e) {
+  startupErrors.push(`Cannot create uploads directory (${UPLOADS_DIR}): ${e instanceof Error ? e.message : String(e)}`);
+}
+
+// Validate sessions directory
+try {
+  if (!existsSync(SESSIONS_DIR)) {
+    mkdirSync(SESSIONS_DIR, { recursive: true });
+  }
+} catch (e) {
+  startupErrors.push(`Cannot create sessions directory (${SESSIONS_DIR}): ${e instanceof Error ? e.message : String(e)}`);
+}
+
+// Validate UI dist directory (non-fatal warning only)
+if (!existsSync(UI_DIST)) {
+  startupErrors.push(`UI dist directory not found at ${UI_DIST}. The web UI will not be served. Set AGENTX_UI_DIR or build the web-ui package.`);
+}
+
+// Validate port availability
+if (PORT < 1 || PORT > 65535) {
+  startupErrors.push(`Invalid port ${PORT}. Must be between 1 and 65535.`);
+}
+
+// Validate json body size limit
+if (!isNaN(Number(process.env['AGENTX_MAX_BODY_SIZE']))) {
+  const customLimit = Number(process.env['AGENTX_MAX_BODY_SIZE']);
+  if (customLimit < 1024) {
+    startupErrors.push(`AGENTX_MAX_BODY_SIZE (${customLimit}) is too small. Minimum is 1024 bytes.`);
+  }
+}
+
+// Log all startup errors
+if (startupErrors.length > 0) {
+  for (const err of startupErrors) {
+    if (err.includes('UI dist')) {
+      getLogger().warn('STARTUP', err);
+    } else {
+      getLogger().error('STARTUP', err);
+    }
+  }
+  // Fatal errors prevent startup
+  const fatalErrors = startupErrors.filter(e => !e.includes('UI dist'));
+  if (fatalErrors.length > 0) {
+    console.error('\n\u274c Fatal startup errors:');
+    for (const err of fatalErrors) {
+      console.error('   -', err);
+    }
+    console.error('\nAgent-X cannot start. Please fix the above errors and restart.\n');
+    process.exit(1);
+  }
+} else {
+  getLogger().info('STARTUP', `All startup checks passed. Port: ${PORT}, Data: ${DATA_DIR}`);
+}
+// ─── End Startup Validation ───
+
+// ─── Runtime Config Validation ───
+// Validate config file against Zod schema when loaded — catches corruption early.
+export function validateConfig(config: unknown): { valid: boolean; errors: string[] } {
+  const result = agentXConfigSchema.safeParse(config);
+  if (!result.success) {
+    const errors = result.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join('.')}: ${i.message}`);
+    return { valid: false, errors };
+  }
+  return { valid: true, errors: [] };
+}
+// ─── End Config Validation ───
+
+/**
+ * Content-based file type detection.
+ * Reads the first bytes of a file to determine its actual MIME type,
+ * preventing MIME-type spoofing attacks from user-supplied Content-Type headers.
+ */
+const FILE_MAGIC_BYTES: Record<string, { offset: number; bytes: number[]; mime: string }[]> = {
+  'image': [
+    { offset: 0, bytes: [0xFF, 0xD8, 0xFF], mime: 'image/jpeg' },
+    { offset: 0, bytes: [0x89, 0x50, 0x4E, 0x47], mime: 'image/png' },
+    { offset: 0, bytes: [0x47, 0x49, 0x46], mime: 'image/gif' },
+    { offset: 0, bytes: [0x52, 0x49, 0x46, 0x46], mime: 'image/webp' },
+    { offset: 0, bytes: [0x42, 0x4D], mime: 'image/bmp' },
+  ],
+  'document': [
+    { offset: 0, bytes: [0x25, 0x50, 0x44, 0x46], mime: 'application/pdf' },
+    { offset: 0, bytes: [0x50, 0x4B, 0x03, 0x04], mime: 'application/zip' },
+    { offset: 0, bytes: [0x7B, 0x5C, 0x72, 0x74], mime: 'application/rtf' },
+  ],
+  'text': [
+    { offset: 0, bytes: [0xEF, 0xBB, 0xBF], mime: 'text/plain; charset=utf-8-bom' },
+  ],
+};
+
+function detectFileType(filePath: string): string {
+  try {
+    const fd = readFileSync(filePath);
+    if (fd.length === 0) return 'application/octet-stream';
+
+    // Check all known magic byte signatures
+    for (const [, sigs] of Object.entries(FILE_MAGIC_BYTES)) {
+      for (const sig of sigs) {
+        if (fd.length < sig.offset + sig.bytes.length) continue;
+        const matches = sig.bytes.every((b, i) => fd[sig.offset + i] === b);
+        if (matches) return sig.mime;
+      }
+    }
+
+    // Check if it's valid UTF-8 text
+    try {
+      const text = fd.toString('utf-8');
+      // If >90% printable ASCII, treat as text
+      const printable = Array.from(text).filter(c => c >= ' ' || c === '\n' || c === '\r' || c === '\t').length;
+      if (printable > text.length * 0.9 && text.length > 0) {
+        return 'text/plain';
+      }
+    } catch {
+      // Binary
+    }
+
+    return 'application/octet-stream';
+  } catch {
+    return 'application/octet-stream';
+  }
+}
+
+/**
+ * Allowed MIME types for upload. Block executable formats, scripts, etc.
+ */
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp',
+  'application/pdf', 'application/zip',
+  'text/plain', 'text/csv', 'text/markdown', 'text/html',
+  'application/json', 'application/xml',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+]);
+
+const BLOCKED_MIME_TYPES = new Set([
+  'application/x-executable', 'application/x-sharedlib', 'application/x-dosexec',
+  'application/x-msdownload', 'application/x-msdos-program',
+  'application/java-archive', 'application/x-java-applet',
+  'application/x-sh', 'application/x-csh', 'application/x-bash',
+  'text/x-script.python', 'text/x-python',
+  'application/x-httpd-php',
+]);
+
+/**
+ * Validate uploaded file: check magic bytes, enforce allow list, block executables.
+ */
+function validateUploadedFile(filePath: string, originalName: string): { valid: boolean; detectedType: string; error?: string } {
+  const detectedType = detectFileType(filePath);
+
+  // Block known dangerous types
+  if (BLOCKED_MIME_TYPES.has(detectedType)) {
+    return { valid: false, detectedType, error: `File type '${detectedType}' is not allowed (executable/script detected)` };
+  }
+
+  // Allow known safe types
+  if (ALLOWED_MIME_TYPES.has(detectedType)) {
+    return { valid: true, detectedType };
+  }
+
+  // For unknown types, allow only if they're clearly binary (not executable)
+  if (detectedType === 'application/octet-stream') {
+    // Check file extension for additional safety
+    const ext = originalName.split('.').pop()?.toLowerCase() ?? '';
+    const dangerousExtensions = new Set(['exe', 'bat', 'cmd', 'com', 'msi', 'scr', 'jar', 'class', 'wasm', 'dll', 'so', 'dylib', 'app', 'deb', 'rpm']);
+    if (dangerousExtensions.has(ext)) {
+      return { valid: false, detectedType, error: `File extension '.${ext}' is not allowed` };
+    }
+    return { valid: true, detectedType };
+  }
+
+  return { valid: true, detectedType };
+}
+
 const upload = multer({
   dest: UPLOADS_DIR,
   limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    // Quick extension-based pre-filter for obviously dangerous types
+    const ext = file.originalname.split('.').pop()?.toLowerCase() ?? '';
+    const blockedExtensions = new Set(['exe', 'bat', 'cmd', 'com', 'msi', 'scr', 'jar', 'wasm', 'dll', 'so', 'dylib']);
+    if (blockedExtensions.has(ext)) {
+      cb(new Error(`File extension '.${ext}' is not allowed`));
+      return;
+    }
+    cb(null, true);
+  },
 });
-if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true });
 
 // Auth routes (must be before auth middleware)
 // Mount under /api so endpoints are /api/auth/*, matching web-ui calls
@@ -74,11 +288,25 @@ app.use('/api', createAuthRouter());
 // Auth middleware — protects all /api/* routes except auth endpoints
 app.use(authMiddleware);
 
+// Security headers (content-type sniffing, XSS, clickjacking protection)
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: false,
+}));
+
+// Request ID — attach a unique ID to every request for log correlation
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const requestId = crypto.randomUUID().slice(0, 8);
+  (req as any).requestId = requestId;
+  res.setHeader('X-Request-Id', requestId);
+  next();
+});
+
 // CORS + cache prevention
 app.use((_req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Content-Disposition');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Content-Disposition, X-Request-Id');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
@@ -138,6 +366,7 @@ app.get('/api/health', (_req, res) => {
       focus: eng.gateway.focus.getFocus(),
       channels: eng.gateway.registry.listChannels(),
     } : null,
+    agentHealth: eng?.agent?.getHealth() ?? null,
   });
 });
 
@@ -612,9 +841,7 @@ app.get('/api/filesystem/dirs', (req, res) => {
 
 // ───── Session Mode & Approval ─────
 // Agent: full autonomy with tool execution; Plan: generates plans, no write access
-const sessionSettings: { mode: 'agent' | 'plan' } = {
-  mode: 'plan',
-};
+// sessionSettings lives in chat-helpers.ts (synced from per-session DB record)
 
 app.get('/api/session/settings', (_req, res) => {
   res.json(sessionSettings);
@@ -629,8 +856,12 @@ app.post('/api/session/mode', (req, res) => {
       res.json({ ok: true, mode });
       return;
     }
-    sessionSettings.mode = mode;
     const eng = getEngine();
+    if (eng.agent?.hyperdriveMode && mode === 'plan') {
+      res.status(409).json({ error: 'hyperdrive-active', message: 'Exit Hyperdrive before switching to Plan mode' });
+      return;
+    }
+    sessionSettings.mode = mode;
     if (eng.agent) {
       eng.agent.setPlanMode(mode === 'plan');
     }
@@ -650,6 +881,81 @@ app.post('/api/session/mode', (req, res) => {
     getLogger().error('SESSION_MODE', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'mode-failed' });
   }
+});
+
+app.post('/api/plan/respond', (req, res) => {
+  try {
+    const { approved } = req.body as { approved: boolean };
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    (agent as unknown as { respondToPlan: (a: boolean) => void }).respondToPlan(!!approved);
+    res.json({ ok: true, approved: !!approved });
+  } catch (e) {
+    getLogger().error('PLAN_RESPOND', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: 'plan-respond-failed' });
+  }
+});
+
+app.post('/api/clarification/respond', (req, res) => {
+  try {
+    const { response } = req.body as { response?: string };
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    if (!response?.trim()) { res.status(400).json({ error: 'empty-response' }); return; }
+    (agent as unknown as { respondToClarification: (r: string) => void }).respondToClarification(response.trim());
+    res.json({ ok: true });
+  } catch (e) {
+    getLogger().error('CLARIFICATION_RESPOND', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: 'clarification-respond-failed' });
+  }
+});
+
+app.post('/api/agent/mode-escalation', (req, res) => {
+  try {
+    const { accepted } = req.body as { accepted: boolean };
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    (agent as unknown as { respondToModeEscalation: (a: boolean) => void }).respondToModeEscalation(!!accepted);
+    res.json({ ok: true, accepted: !!accepted });
+  } catch (e) {
+    getLogger().error('MODE_ESCALATION', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: 'mode-escalation-failed' });
+  }
+});
+
+app.post('/api/agent/step-cap/respond', (req, res) => {
+  try {
+    const { continueRun } = req.body as { continueRun: boolean };
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    (agent as unknown as { respondToStepCap: (c: boolean) => void }).respondToStepCap(!!continueRun);
+    res.json({ ok: true, continueRun: !!continueRun });
+  } catch (e) {
+    getLogger().error('STEP_CAP', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: 'step-cap-failed' });
+  }
+});
+
+app.get('/api/agent/turn-state', (_req, res) => {
+  try {
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.json({ phase: 'idle' }); return; }
+    const snap = (agent as unknown as { getTurnStateSnapshot?: () => unknown }).getTurnStateSnapshot?.();
+    res.json(snap ?? { phase: 'idle' });
+  } catch (e) {
+    res.status(500).json({ error: 'turn-state-failed' });
+  }
+});
+
+app.get('/api/chat/turn/:turnId', (req, res) => {
+  const record = turnRegistry.get(req.params.turnId);
+  if (!record) { res.status(404).json({ error: 'turn-not-found' }); return; }
+  res.json(record);
 });
 
 // ───── Agent State Sync (for Web-UI reconnect) ─────
@@ -684,10 +990,67 @@ app.get('/api/agent/vitals', (_req, res) => {
   }
 });
 
+app.get('/api/agent/autonomy-status', (_req, res) => {
+  try {
+    const status = getAutonomyStatus();
+    res.json(status);
+  } catch (e) {
+    getLogger().error('GET_API_AUTONOMY_STATUS', e instanceof Error ? e : String(e));
+    res.status(500).json({ available: false, error: e instanceof Error ? e.message : 'autonomy-error' });
+  }
+});
+
+app.post('/api/agent/circuit-breaker/reset', (req, res) => {
+  try {
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'No active agent' }); return; }
+    const executor = agent.getToolExecutor();
+    const toolName = req.body?.tool;
+    if (toolName && executor && typeof (executor as any).resetCircuitBreaker === 'function') {
+      (executor as any).resetCircuitBreaker(toolName);
+      res.json({ ok: true, tool: toolName });
+    } else if (!toolName && executor && typeof (executor as any).resetAllCircuitBreakers === 'function') {
+      (executor as any).resetAllCircuitBreakers();
+      res.json({ ok: true, all: true });
+    } else {
+      res.status(400).json({ error: 'Missing tool name or executor unavailable' });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'reset-failed' });
+  }
+});
+
+app.get('/api/sessions/analytics', (_req, res) => {
+  try {
+    const eng = getEngine();
+    const sessions = eng.sessionManager.listSessions(100);
+    const total = sessions.length;
+    const active = sessions.filter((s: any) => s.status === 'active').length;
+    const tokens = sessions.reduce((sum: number, s: any) => sum + (s.tokenUsed || 0), 0);
+    const byProvider: Record<string, number> = {};
+    for (const s of sessions) {
+      const p = (s as any).providerId || 'unknown';
+      byProvider[p] = (byProvider[p] || 0) + 1;
+    }
+    res.json({
+      total, active, totalTokens: tokens,
+      avgTokens: total > 0 ? Math.round(tokens / total) : 0,
+      byProvider,
+      recent: sessions.slice(0, 5).map((s: any) => ({
+        id: s.id, title: s.title, tokenUsed: s.tokenUsed, createdAt: s.createdAt,
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : 'analytics-failed' });
+  }
+});
+
 // ───── Crews ─────
 app.get('/api/crews', (_req, res) => {
   const eng = getEngine();
-  res.json({ crews: eng.crewManager.list() });
+  const crews = eng.crewManager.list().map((c) => ({ ...c, tone: c.emotion }));
+  res.json({ crews });
 });
 
 
@@ -722,9 +1085,13 @@ app.post('/api/crew/toggle', (req, res) => {
 
 app.post('/api/crews', (req, res) => {
   try {
-    const { id, name, title, callsign, systemPrompt, description, emotion, isDefault, expertise, traits, color, icon } = req.body as {
-      id: string; name: string; title?: string; callsign?: string; systemPrompt: string; description?: string; emotion?: string; isDefault?: boolean; expertise?: string[]; traits?: string[]; color?: string; icon?: string;
+    const body = req.body as {
+      id: string; name: string; title?: string; callsign?: string; systemPrompt: string; description?: string;
+      emotion?: string; tone?: string; isDefault?: boolean; expertise?: string[]; traits?: string[]; tools?: string[];
+      color?: string; icon?: string;
     };
+    const emotion = body.emotion ?? body.tone;
+    const { id, name, title, callsign, systemPrompt, description, isDefault, expertise, traits, tools, color, icon } = body;
     const eng = getEngine();
     const crew = eng.crewManager.create({
       id: id || crypto.randomUUID(),
@@ -737,6 +1104,7 @@ app.post('/api/crews', (req, res) => {
       isDefault,
       expertise,
       traits,
+      tools,
       color,
       icon,
     });
@@ -753,7 +1121,13 @@ app.post('/api/crews', (req, res) => {
 app.put('/api/crews/:id', (req, res) => {
   try {
     const eng = getEngine();
-    const crew = eng.crewManager.update(req.params['id']!, req.body);
+    const body = req.body as Record<string, unknown>;
+    const updates = {
+      ...body,
+      emotion: (body['emotion'] ?? body['tone']) as string | undefined,
+    };
+    delete (updates as Record<string, unknown>)['tone'];
+    const crew = eng.crewManager.update(req.params['id']!, updates as Parameters<typeof eng.crewManager.update>[1]);
     if (!crew) { res.status(404).json({ error: 'crew-not-found' }); return; }
     if (eng.agent) {
       eng.agent.removeCrewMember(crew.id);
@@ -801,21 +1175,22 @@ app.post('/api/crew/:id/chat', async (req, res) => {
     const crew = eng.crewManager.list().find(c => c.id === crewId);
     if (!crew) { res.status(404).json({ error: 'Crew not found' }); return; }
     if (!eng.agent) { res.status(400).json({ error: 'no-session' }); return; }
-    const orch = (eng.agent as any).crewOrchestrator;
-    if (!orch) { res.status(400).json({ error: 'no-orchestrator' }); return; }
+    const agent = eng.agent;
+    const orch = (agent as unknown as { crewOrchestrator?: { getMembers: () => Array<{ crew: { id: string } }>; addMember: (c: typeof crew) => void } }).crewOrchestrator;
+    const missionOrch = (agent as unknown as { crewMissionOrchestrator?: { runMission: (opts: unknown) => Promise<{ success: boolean; synthesized: string; responses: Array<{ content: string }> }> }; buildCrewMissionOptions: (members: unknown[], msg: string) => unknown }).crewMissionOrchestrator;
+    if (!orch || !missionOrch) { res.status(400).json({ error: 'no-orchestrator' }); return; }
     const members = orch.getMembers();
-    const member = members.find((m: any) => m.crew.id === crewId);
+    let member = members.find((m) => m.crew.id === crewId);
     if (!member) {
       orch.addMember(crew);
+      member = orch.getMembers().find((m) => m.crew.id === crewId);
     }
-    const freshMembers = orch.getMembers();
-    const freshMember = freshMembers.find((m: any) => m.crew.id === crewId);
-    if (!freshMember) { res.status(400).json({ error: 'crew-not-found-in-orchestrator' }); return; }
-    const crewPrompt = (eng as any).secretSauce?.crew?.getMultiCrewSystemPrompt?.() || 'You are a capable AI assistant.';
-    const result = await orch.processMessage(text, crewPrompt, [freshMember]);
-    const response = result.responses[0]?.content ?? '';
-    const synthesized = result.synthesized ?? response;
-    res.json({ ok: true, response: synthesized, responses: result.responses });
+    if (!member) { res.status(400).json({ error: 'crew-not-found-in-orchestrator' }); return; }
+    const result = await missionOrch.runMission(
+      agent.buildCrewMissionOptions([member as never], text),
+    );
+    const response = result.synthesized || result.responses[0]?.content || '';
+    res.json({ ok: true, response, success: result.success, responses: result.responses });
   } catch (e: unknown) {
     getLogger().error('POST_API_CREW_ID_CHAT', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'crew-chat-failed' });
   }
@@ -918,10 +1293,144 @@ Return ONLY this exact JSON format (no markdown, no explanation):
 });
 
 // ───── Chat ─────
-app.post('/api/chat/message', async (req, res) => {
+const chatRateLimiter = createRateLimiter({ prefix: 'CHAT', label: 'Chat' });
+app.use('/api/chat', chatRateLimiter.middleware);
+
+// NEW: Streaming SSE endpoint for real-time progress visualization
+app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, res) => {
   try {
     const { text, attachments, retry } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean };
-    if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
+    const eng = getEngine();
+    
+    // Auto-create agent if none exists
+    if (!eng.agent) {
+      getOrCreateAgent();
+    }
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    ensureSubscribed();
+
+    // ─── Safety: reset stuck agent ───
+    if (agent.processing) {
+      try { agent.cancel(); } catch (e) { /* ignore */ }
+      await new Promise(r => setTimeout(r, 100));
+      if (agent.processing) {
+        res.status(503).json({ error: 'Agent is busy. Please try again in a moment.' });
+        return;
+      }
+    }
+
+    // Setup SSE response headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    let eventId = 0;
+    const sendEvent = (event: string, data: unknown) => {
+      try {
+        res.write(`id: ${eventId}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        eventId++;
+      } catch (e) { /* connection closed */ }
+    };
+
+    // Send initial "connected" event
+    sendEvent('connected', { timestamp: new Date().toISOString() });
+
+    // Apply session mode from active session record
+    const mode = applySessionModeToAgent(agent);
+
+    // ─── Retry: remove last exchange ───
+    if (retry) {
+      try {
+        const store = (eng.sessionManager as any).store;
+        if (store?.deleteLastMessages) {
+          const sid = (agent as unknown as { sessionId: string }).sessionId;
+          if (sid) store.deleteLastMessages(sid, 2, ['user', 'assistant']);
+        }
+      } catch (e) { /* best-effort */ }
+    }
+
+    const fullText = buildFullText(text, attachments);
+    const instruction = buildInstructionForMode(mode);
+
+    // Auto-checkpoint
+    try {
+      const store = (eng.sessionManager as any).store;
+      if (store?.createCheckpoint) {
+        const sid = (agent as unknown as { sessionId: string }).sessionId;
+        if (sid) {
+          const label = `Auto · ${new Date().toLocaleTimeString()}`;
+          store.createCheckpoint(sid, label);
+        }
+      }
+    } catch (e) { /* best-effort */ }
+
+    const unsub = eng.telemetry.onEvent((ev) => {
+      sendEvent('progress', ev);
+    });
+
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(':heartbeat\n\n');
+      } catch {
+        clearInterval(heartbeat);
+        unsub();
+      }
+    }, 25000);
+
+    const sid = (agent as unknown as { sessionId: string }).sessionId;
+    const turn = turnRegistry.create(sid);
+    let finished = false;
+
+    const poll = setInterval(() => {
+      if (finished) return;
+      const record = turnRegistry.get(turn.turnId);
+      if (!record) return;
+      if (record.status === 'complete') {
+        finished = true;
+        clearInterval(poll);
+        if ((record.message as Record<string, unknown> | undefined)?.id === '__clarify__') {
+          sendEvent('clarification', { ok: true });
+        } else {
+          sendEvent('complete', { ok: true, message: record.message, turnId: turn.turnId });
+        }
+        clearInterval(heartbeat);
+        unsub();
+        res.end();
+      } else if (record.status === 'error' || record.status === 'cancelled') {
+        finished = true;
+        clearInterval(poll);
+        sendEvent('error', { error: record.error ?? 'chat-failed', code: 'PROCESSING_FAILED', partialContent: record.partialContent });
+        clearInterval(heartbeat);
+        unsub();
+        res.end();
+      }
+    }, 500);
+
+    req.on('close', () => {
+      finished = true;
+      clearInterval(poll);
+      clearInterval(heartbeat);
+      unsub();
+      try { agent.cancel(); } catch { /* ignore */ }
+    });
+
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid);
+    sendEvent('started', { turnId: turn.turnId, async: true });
+    return;
+  } catch (e: unknown) {
+    getLogger().error('CHAT_MESSAGE_STREAM_SETUP', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'stream-setup-failed' });
+  }
+});
+
+// LEGACY: Keep old endpoint for backward compatibility (redirects to streaming)
+app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
+  try {
+    const { text, attachments, retry } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean };
     const eng = getEngine();
     // Auto-create agent if none exists (first message in session)
     if (!eng.agent) {
@@ -941,8 +1450,7 @@ app.post('/api/chat/message', async (req, res) => {
       }
     }
 
-    // Apply session mode to agent
-    agent.setPlanMode(sessionSettings.mode === 'plan');
+    const mode = applySessionModeToAgent(agent);
 
     // ─── Retry: remove last exchange from DB to avoid duplicates ───
     if (retry) {
@@ -955,18 +1463,8 @@ app.post('/api/chat/message', async (req, res) => {
       } catch (e) { /* best-effort */ }
     }
 
-    // Build the full message content with attachments if provided
-    let fullText = text;
-    if (attachments && attachments.length > 0) {
-      const attachmentSection = attachments.map(a => `\n\n--- File: ${a.name} ---\n${a.content}`).join('');
-      fullText = text + attachmentSection;
-    }
-
-    // Build instruction based on mode (kept separate from user content)
-    let instruction: string | undefined;
-    if (sessionSettings.mode === 'plan') {
-      instruction = 'You are in PLAN MODE. You have READ-ONLY access — you can read, search, and analyze files, but you CANNOT write, edit, delete, execute commands, or modify the filesystem in any way. If the user asks you to build, create, write, generate, or modify files: tell them to switch to Agent mode first. You can create a plan for how you would do it, but you cannot execute it until the user switches to Agent mode.';
-    }
+    const fullText = buildFullText(text, attachments);
+    const instruction = buildInstructionForMode(mode);
 
     // Auto-checkpoint before each user turn — enables /undo to roll back this turn
     try {
@@ -980,22 +1478,13 @@ app.post('/api/chat/message', async (req, res) => {
       }
     } catch (e) { /* checkpoint failure shouldn't block the message */ }
 
-    const message = await Promise.race([
-      agent.sendMessage(fullText, { ...(instruction ? { instruction } : {}), ...(retry ? { retry: true } : {}) }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('The operation was aborted due to timeout')), 180000)),
-    ]);
+    const sid = (agent as unknown as { sessionId: string }).sessionId;
+    const turn = turnRegistry.create(sid);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid);
 
-    // Update session timestamp immediately so it sorts to top
-    try { eng.sessionManager.updateSession({ updatedAt: new Date().toISOString() } as any); } catch { /* best-effort */ }
-
-    if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
-      res.json({ ok: true, clarification: true });
-      return;
-    }
-    res.json({ ok: true, message });
+    res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
     getLogger().error('CHAT_MESSAGE', e instanceof Error ? e : String(e));
-    // On error, make sure the user message was still persisted to DB
     try {
       const eng = getEngine();
       const agent = eng.agent;
@@ -1034,10 +1523,9 @@ async function waitForIdle(agent: { processing: boolean }, maxWait = 3000): Prom
 
 const messageQueue: Array<{ text: string; attachments?: { name: string; content: string }[] }> = [];
 
-app.post('/api/chat/queue', (req, res) => {
+app.post('/api/chat/queue', validate(chatMessageSchema), (req, res) => {
   try {
     const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
-    if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
     messageQueue.push({ text, attachments });
     res.json({ ok: true, queueLength: messageQueue.length });
   } catch (e) {
@@ -1055,61 +1543,64 @@ app.delete('/api/chat/queue', (_req, res) => {
 });
 
 // Steer: cancel current task, then immediately send a new message
-app.post('/api/chat/steer', async (req, res) => {
+app.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
   try {
     const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
-    if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
-    // Cancel current execution and wait for it to finish
     agent.cancel();
     await waitForIdle(agent);
-    // Send the steer message
-    let fullText = text;
-    if (attachments && attachments.length > 0) {
-      const attachmentSection = attachments.map(a => `\n\n--- File: ${a.name} ---\n${a.content}`).join('');
-      fullText = text + attachmentSection;
-    }
-    const instruction = undefined;
-    const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
-    if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
-      res.json({ ok: true, clarification: true });
-      return;
-    }
-    res.json({ ok: true, message });
+    ensureSubscribed();
+    const mode = applySessionModeToAgent(agent);
+    const fullText = buildFullText(text, attachments);
+    const instruction = buildInstructionForMode(mode);
+    const sid = (agent as unknown as { sessionId: string }).sessionId;
+    const turn = turnRegistry.create(sid);
+    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid);
+    res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
     getLogger().error('POST_API_CHAT_STEER', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'steer-failed' });
   }
 });
 
 // Stop and Send: cancel current task, then send a new message fresh
-app.post('/api/chat/stop-and-send', async (req, res) => {
+app.post('/api/chat/checkpoint-respond', async (req, res) => {
   try {
-    const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
-    if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
+    const { checkpointId, action } = req.body as { checkpointId: string; action: string };
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
-    // Cancel current execution and wait for it to finish
+    const resolved = agent.resolveCheckpoint(checkpointId, action);
+    if (!resolved) {
+      res.status(404).json({ error: 'checkpoint-not-found' });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    getLogger().error('CHECKPOINT_RESPOND', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: 'checkpoint-respond-failed' });
+  }
+});
+
+app.post('/api/chat/stop-and-send', validate(chatSteerSchema), async (req, res) => {
+  try {
+    const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     agent.cancel();
     await waitForIdle(agent);
     ensureSubscribed();
-    agent.setPlanMode(sessionSettings.mode === 'plan');
-    let fullText = text;
-    if (attachments && attachments.length > 0) {
-      const attachmentSection = attachments.map(a => `\n\n--- File: ${a.name} ---\n${a.content}`).join('');
-      fullText = text + attachmentSection;
-    }
-    const instruction = sessionSettings.mode === 'plan'
+    const mode = applySessionModeToAgent(agent);
+    const fullText = buildFullText(text, attachments);
+    const instruction = mode === 'plan'
       ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
-      : undefined;
-    const message = await agent.sendMessage(fullText, instruction ? { instruction } : undefined);
-    if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
-      res.json({ ok: true, clarification: true });
-      return;
-    }
-    res.json({ ok: true, message });
+      : buildInstructionForMode(mode);
+    const sid = (agent as unknown as { sessionId: string }).sessionId;
+    const turn = turnRegistry.create(sid);
+    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid);
+    res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
     getLogger().error('POST_API_CHAT_STOP_AND_SEND', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'stop-and-send-failed' });
   }
@@ -1149,6 +1640,7 @@ app.post('/api/chat/clear', (_req, res) => {
 // ───── SSE Chat Stream ─────
 app.get('/api/chat/stream', (req, res) => {
   const eng = getEngine();
+  let eventId = 0;
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -1157,8 +1649,14 @@ app.get('/api/chat/stream', (req, res) => {
     'X-Accel-Buffering': 'no',
   });
 
+  // Tell the client to retry connection after 3 seconds on drop
+  res.write('retry: 3000\n\n');
+
   const sendEvent = (event: string, data: unknown) => {
-    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) { /* connection closed */ }
+    try {
+      res.write(`id: ${eventId}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      eventId++;
+    } catch (e) { /* connection closed */ }
   };
 
   sendEvent('connected', { timestamp: new Date().toISOString() });
@@ -1255,7 +1753,7 @@ app.delete('/api/logs', (_req, res) => {
 });
 
 // ───── Permissions ─────
-app.post('/api/permission/respond', (req, res) => {
+app.post('/api/permission/respond', validate(permissionRespondSchema), (req, res) => {
   try {
     const { requestId, choice } = req.body as { requestId: string; choice: 'allow_once' | 'allow_always' | 'deny' };
     const eng = getEngine();
@@ -1268,7 +1766,7 @@ app.post('/api/permission/respond', (req, res) => {
   }
 });
 
-app.post('/api/permission/respond-batch', (req, res) => {
+app.post('/api/permission/respond-batch', validate(permissionRespondBatchSchema), (req, res) => {
   try {
     const { choice } = req.body as { choice: 'allow_once' | 'allow_always' | 'deny' };
     const eng = getEngine();
@@ -1314,10 +1812,10 @@ app.get('/api/mode/hyperdrive', (_req, res) => {
   try {
     const eng = getEngine();
     const agent = eng.agent;
-    if (!agent) { res.json({ hyperdriveMode: false }); return; }
-    res.json({ hyperdriveMode: agent.hyperdriveMode });
+    if (!agent) { res.json({ hyperdriveMode: false, mode: sessionSettings.mode }); return; }
+    res.json({ hyperdriveMode: agent.hyperdriveMode, mode: sessionSettings.mode });
   } catch (e) {
-    res.json({ hyperdriveMode: false });
+    res.json({ hyperdriveMode: false, mode: sessionSettings.mode });
   }
 });
 
@@ -1631,28 +2129,115 @@ app.post('/api/settings/db/clear-cache', (_req, res) => {
 app.get('/api/sessions', (_req, res) => {
   try {
     const eng = getEngine();
-    const all = eng.sessionManager.listSessions(50) as unknown as Array<Record<string, unknown>>;
-    const sessions = all
-      .filter(s => s['id'] !== '__channel__')
-      .sort((a, b) => String(b['updatedAt'] ?? b['updated_at'] ?? '').localeCompare(String(a['updatedAt'] ?? a['updated_at'] ?? '')));
-    for (const s of sessions) {
+    const listFn = (eng.sessionManager as { listRootSessions?: (n: number) => unknown[] }).listRootSessions;
+    const all = (listFn ? listFn.call(eng.sessionManager, 100) : eng.sessionManager.listSessions(100)) as unknown as Array<Record<string, unknown>>;
+    const sessions = all.filter(s => s['id'] !== '__channel__' && !s['parentId']);
+    const store = (eng.sessionManager as unknown as { store?: { getSessionListKpis?: (id: string, base?: Record<string, unknown>) => Record<string, unknown>; getMessageCount?: (id: string) => number } }).store;
+    const getKpis = (eng.sessionManager as unknown as { getSessionListKpis?: (id: string, base?: Record<string, unknown>) => Record<string, unknown> }).getSessionListKpis;
+    const crewManager = eng.crewManager as { get?: (id: string) => { callsign?: string; name?: string } | undefined };
+
+    const enriched = sessions.map((s) => {
+      const id = s['id'] as string;
+      let kpis: Record<string, unknown> = {};
       try {
-        const store = (eng.sessionManager as any).store;
-        if (store && typeof store.getMessageCount === 'function') {
-          s['messageCount'] = store.getMessageCount(s['id'] as string) as number;
-        } else {
-          s['messageCount'] = 0;
+        if (getKpis) {
+          kpis = getKpis.call(eng.sessionManager, id, s);
+        } else if (store?.getSessionListKpis) {
+          kpis = store.getSessionListKpis(id, s);
+        } else if (store?.getMessageCount) {
+          kpis = { messageCount: store.getMessageCount(id) };
         }
-      } catch (e) { s['messageCount'] = 0; }
-    }
-    res.json(sessions);
+      } catch { kpis = { messageCount: 0 }; }
+
+      const rawCallsigns = (kpis['crewCallsigns'] as string[] | undefined) ?? [];
+      const crewCallsigns = rawCallsigns.map((crewId) => {
+        const crew = crewManager?.get?.(crewId);
+        return crew?.callsign ?? crew?.name ?? crewId;
+      });
+
+      const tokensUsed = Number(kpis['tokensUsed'] ?? s['tokensUsed'] ?? s['tokenUsed'] ?? 0);
+      const tokenAvailable = Number(kpis['tokenAvailable'] ?? s['tokenAvailable'] ?? s['token_available'] ?? 128_000);
+
+      return {
+        id: s['id'],
+        title: s['title'],
+        status: s['status'],
+        provider: s['provider'] ?? s['providerId'],
+        model: s['model'] ?? s['modelId'],
+        mode: s['mode'] ?? 'plan',
+        scopePath: s['scopePath'],
+        hyperdrive: !!s['hyperdrive'],
+        parentId: s['parentId'] ?? null,
+        createdAt: s['createdAt'] ?? s['created_at'],
+        updatedAt: s['updatedAt'] ?? s['updated_at'],
+        tokensUsed,
+        tokenAvailable,
+        tokenUsagePct: kpis['tokenUsagePct'] ?? (tokenAvailable > 0 ? Math.min(100, Math.round((tokensUsed / tokenAvailable) * 100)) : 0),
+        messageCount: kpis['messageCount'] ?? 0,
+        childSessionCount: kpis['childSessionCount'] ?? 0,
+        crewCount: crewCallsigns.length,
+        crewCallsigns,
+        totalCostUsd: kpis['totalCostUsd'] ?? 0,
+        compactionCount: kpis['compactionCount'] ?? 0,
+      };
+    });
+
+    enriched.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+    res.json(enriched);
   } catch (e: unknown) {
     getLogger().error('GET_API_SESSIONS', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'failed-to-list-sessions' });
   }
 });
 
-app.post('/api/sessions/:id/generate-title', async (req, res) => {
+app.get('/api/sessions/:id/children', (req, res) => {
+  try {
+    const eng = getEngine();
+    const parentId = req.params['id']!;
+    const mgr = eng.sessionManager as unknown as { getChildSessions?: (id: string) => Array<Record<string, unknown>> };
+    const children = mgr.getChildSessions?.(parentId) ?? [];
+    res.json({ children });
+  } catch (e: unknown) {
+    getLogger().error('GET_API_SESSION_CHILDREN', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'failed-to-list-children' });
+  }
+});
+
+app.get('/api/sessions/:id/preview', (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const eng = getEngine();
+    const store = (eng.sessionManager as unknown as { store?: { getMessages?: (id: string) => unknown[]; getParts?: (id: string) => unknown[] } }).store;
+    if (!store?.getMessages) {
+      res.status(404).json({ error: 'not-found' });
+      return;
+    }
+    const rawMessages = store.getMessages(sessionId) as Array<Record<string, unknown>>;
+    const messages = rawMessages
+      .filter((m) => m['role'] !== 'part' && m['role'] !== 'system')
+      .map((msg) => {
+        const normalized = normalizeMessageForUi(msg, []);
+        return {
+          id: msg['id'],
+          role: msg['role'],
+          content: normalized.content,
+          parts: normalized.parts,
+          createdAt: msg['created_at'] ?? msg['createdAt'],
+        };
+      });
+    const session = eng.sessionManager.listSessions(9999).find((s) => s.id === sessionId);
+    res.json({
+      session: session ?? { id: sessionId, title: 'Background work', parentId: null },
+      messages,
+      parts: [],
+    });
+  } catch (e: unknown) {
+    getLogger().error('GET_API_SESSION_PREVIEW', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'preview-failed' });
+  }
+});
+
+app.post('/api/sessions/:id/generate-title', validate(generateTitleSchema), async (req, res) => {
   try {
     const sessionId = req.params['id']!;
     const eng = getEngine();
@@ -1711,7 +2296,10 @@ app.get('/api/sessions/search', (req, res) => {
     if (!q) { res.json({ results: [] }); return; }
     const needle = q.toLowerCase();
     const eng = getEngine();
-    const sessions = eng.sessionManager.listSessions(200);
+    const listFn = (eng.sessionManager as { listRootSessions?: (n: number) => unknown[] }).listRootSessions;
+    const sessions = listFn
+      ? listFn.call(eng.sessionManager, 200)
+      : eng.sessionManager.listSessions(200).filter((s: { parentId?: string | null }) => !s.parentId);
     const store = (eng.sessionManager as any).store;
     const results: Array<{ sessionId: string; title?: string; createdAt?: string; snippet: string; matchCount: number }> = [];
     for (const s of sessions) {
@@ -1815,7 +2403,7 @@ app.get('/api/sessions/:id/export', (req, res) => {
   }
 });
 
-app.post('/api/sessions', (req, res) => {
+app.post('/api/sessions', validate(createSessionSchema), (req, res) => {
   try {
     const body = req.body as { scopePath?: string } | undefined;
     if (!body?.scopePath) {
@@ -1874,9 +2462,11 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     // Restore saved session mode (defaults to 'plan')
     sessionSettings.mode = session.mode || 'plan';
     createAgent(undefined, session);
-    // Restore hyperdrive state from DB
+    // Restore hyperdrive overlay from DB (persists build agent + auto-approve while engaged)
     if (session.hyperdrive) {
       try {
+        _preHyperdriveMode = session.mode || 'plan';
+        sessionSettings.mode = 'agent';
         const agent = (eng as unknown as { agent?: { hyperdriveMode?: boolean; toggleHyperdriveMode?: () => boolean } }).agent;
         if (agent?.toggleHyperdriveMode && !agent.hyperdriveMode) {
           agent.toggleHyperdriveMode();
@@ -1884,6 +2474,37 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       } catch (e) { /* best-effort */ }
     }
     ensureSubscribed();
+    // Check for interrupted task (task_started without task_completed)
+    let interruptedTask: Record<string, unknown> | null = null;
+    try {
+      const store = (eng.sessionManager as any).store;
+      if (store?.getSessionEvents) {
+        const events = store.getSessionEvents(sessionId) as Array<Record<string, unknown>>;
+        let lastTaskStarted: Record<string, unknown> | null = null;
+        let taskCompleted = false;
+        for (const ev of events) {
+          if (ev['type'] === 'task_started') lastTaskStarted = ev;
+          if (ev['type'] === 'task_completed' && lastTaskStarted && (ev as any).payload?.taskId === (lastTaskStarted as any).payload?.taskId) {
+            taskCompleted = true;
+          }
+        }
+        if (lastTaskStarted && !taskCompleted) {
+          getLogger().info('RESTORE', `Session ${sessionId.slice(0, 12)} has interrupted task: ${(lastTaskStarted as any).payload?.goal?.slice(0, 60)}`);
+          // Also check for persisted task snapshot
+          try {
+            const snapshot = store.getTaskSnapshot?.(sessionId);
+            if (snapshot) {
+              interruptedTask = {
+                goal: (lastTaskStarted as any).payload?.goal || snapshot.goal,
+                taskId: snapshot.task_id,
+                stepIndex: snapshot.step_index,
+                hasPersistedState: true,
+              };
+            }
+          } catch { /* best-effort */ }
+        }
+      }
+    } catch { /* best-effort */ }
     // Restore crew states from session store
     const crewStates = eng.sessionManager.getCrewStates();
     for (const state of crewStates) {
@@ -1906,77 +2527,31 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     } catch (e) { getLogger().warn('RESTORE_MESSAGES', e instanceof Error ? e.message : String(e)); }
 
     // Merge parts into messages so the frontend gets chronological parts arrays
-    // Use pre-stored parts from messages table if available, otherwise reconstruct
-    const hasStoredParts = messages.some((m) => Array.isArray(m['parts']) && (m['parts'] as any[]).length > 0);
-
-    if (!hasStoredParts) {
-    // Build chronological parts arrays using message_parts table ordering
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i]!;
       if (msg['role'] !== 'assistant') continue;
-      const rawTools = (msg['tool_calls'] ?? msg['toolCalls']) as string | null;
-      const parsedTools: Array<{ id?: string; name?: string; callId?: string; toolCallId?: string }> = rawTools
-        ? (() => { try { return typeof rawTools === 'string' ? JSON.parse(rawTools) : rawTools; } catch (e) { return []; } })()
-        : [];
-      const toolIds = new Set(parsedTools.map((t: any) => t.id || t.callId || t.toolCallId).filter(Boolean));
-      if (toolIds.size === 0) continue;
 
-      const msgCreatedAt = msg['created_at'] as string;
-      const nextMsgCreatedAt = (i + 1 < messages.length) ? messages[i + 1]!['created_at'] as string : undefined;
+      const msgCreatedAt = (msg['created_at'] as string) || '';
+      const nextMsgCreatedAt = (i + 1 < messages.length) ? (messages[i + 1]!['created_at'] as string) : undefined;
 
-      const msgParts = parts.filter((p) => {
-        const pcid = (p['tool_call_id'] as string) || '';
-        if (!pcid || !toolIds.has(pcid)) return false;
-        const pca = p['created_at'] as string;
-        if (pca < (msgCreatedAt || '')) return false;
+      const msgPartRows = parts.filter((p) => {
+        const pca = (p['created_at'] as string) || '';
+        if (msgCreatedAt && pca < msgCreatedAt) return false;
         if (nextMsgCreatedAt && pca >= nextMsgCreatedAt) return false;
         return true;
       });
 
-      if (msgParts.length > 0) {
-        const built: Array<{ type: string; id: string; content?: string; tool?: { id: string; name: string; args?: unknown; result?: string; status: string } }> = [];
-        for (const p of msgParts) {
-          const partType = (p['type'] as string) || '';
-          if (partType === 'text-delta' && p['content']) {
-            built.push({ type: 'text', id: crypto.randomUUID(), content: p['content'] as string });
-          } else if (partType === 'tool-call' || partType === 'tool-result') {
-            const tid = (p['tool_call_id'] as string) || crypto.randomUUID();
-            const existing = built.findIndex(b => b.type === 'tool' && b.tool?.id === tid);
-            if (existing >= 0) {
-              if (partType === 'tool-result') {
-                built[existing] = {
-                  ...built[existing]!,
-                  tool: {
-                    ...built[existing]!.tool!,
-                    result: p['tool_result'] as string | undefined,
-                    status: (p['tool_success'] as number) === 1 ? 'done' as const : 'error' as const,
-                  },
-                };
-              }
-            } else if (partType === 'tool-call') {
-              built.push({
-                type: 'tool',
-                id: tid,
-                tool: {
-                  id: tid,
-                  name: (p['tool_name'] as string) || 'unknown',
-                  args: p['tool_args'] ? (() => { try { return JSON.parse(p['tool_args'] as string); } catch { return p['tool_args']; } })() : undefined,
-                  status: 'done',
-                },
-              });
-            }
-          }
-        }
-        if (msg['content']) {
-          const hasText = built.some(b => b.type === 'text');
-          if (!hasText) {
-            built.unshift({ type: 'text', id: crypto.randomUUID(), content: msg['content'] as string });
-          }
-        }
-        (msg as any)['parts'] = built;
+      const normalized = normalizeMessageForUi(msg, msgPartRows);
+      if (normalized.parts?.length) {
+        (msg as Record<string, unknown>)['parts'] = normalized.parts;
+      }
+      if (normalized.content) {
+        msg['content'] = normalized.content;
+      }
+      if (normalized.toolCalls) {
+        msg['toolCalls'] = normalized.toolCalls;
       }
     }
-    } // end if !hasStoredParts
 
     // Normalize toolCalls from JSON strings to arrays for the frontend
     for (const msg of messages) {
@@ -1988,7 +2563,9 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       }
       // Transform metadata.crewId/crewName/callsign into crew object for frontend
       if (msg['metadata'] && !msg['crew']) {
-        const meta = msg['metadata'] as Record<string, unknown>;
+        const meta = typeof msg['metadata'] === 'string'
+          ? (() => { try { return JSON.parse(msg['metadata'] as string) as Record<string, unknown>; } catch { return {}; } })()
+          : msg['metadata'] as Record<string, unknown>;
         if (meta['crewId']) {
           const crewMember = eng.crewManager.get(meta['crewId'] as string);
           msg['crew'] = {
@@ -2002,7 +2579,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       }
     }
 
-    res.json({ session, messages, parts: [], crewStates, scopePath: session.scopePath });
+    res.json({ session, messages, parts: [], crewStates, scopePath: session.scopePath, interruptedTask });
   } catch (e: unknown) {
     getLogger().error('RESTORE_SESSION', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
@@ -2024,13 +2601,31 @@ app.post('/api/sessions/:id/context/rebuild', (_req, res) => {
 
 app.get('/api/sessions/:id/context', (req, res) => {
   try {
-    const dir = getSessionDir(req.params['id']!);
-    if (!existsSync(dir)) { res.json({ context: '', memories: '', pending: '', completed: '', suggestions: '' }); return; }
-    const files = ['context.txt', 'memories.txt', 'pending.txt', 'completed.txt', 'suggestions.txt'];
-    const result: Record<string, string> = {};
-    for (const f of files) {
-      const fp = join(dir, f);
-      try { result[f.replace('.txt', '')] = readFileSync(fp, 'utf-8'); } catch (e) { result[f.replace('.txt', '')] = ''; }
+    const sessionId = req.params['id']!;
+    const dir = getSessionDir(sessionId);
+    const result: Record<string, string> = { context: '', memories: '', pending: '', completed: '', suggestions: '', compaction: '' };
+    if (existsSync(dir)) {
+      const files = ['context.txt', 'memories.txt', 'pending.txt', 'completed.txt', 'suggestions.txt'];
+      for (const f of files) {
+        const fp = join(dir, f);
+        try { result[f.replace('.txt', '')] = readFileSync(fp, 'utf-8'); } catch { result[f.replace('.txt', '')] = ''; }
+      }
+    }
+    const eng = getEngine();
+    const store = (eng.sessionManager as unknown as { store?: { getMessages?: (id: string) => Array<{ role?: string; content?: string }> } }).store;
+    if (store?.getMessages) {
+      const msgs = store.getMessages(sessionId);
+      const compactionMsgs = msgs.filter((m) => m.role === 'system' && String(m.content ?? '').includes('[COMPACTION SUMMARY'));
+      const compactionText = compactionMsgs.map((m) => String(m.content ?? '').trim()).filter(Boolean).join('\n\n---\n\n');
+      if (compactionText) result['compaction'] = compactionText;
+
+      if (!result['context']) {
+        const conversation = msgs
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m) => `[${m.role}]\n${m.content ?? ''}`)
+          .join('\n\n');
+        result['context'] = conversation;
+      }
     }
     res.json(result);
   } catch (e) {
@@ -2111,7 +2706,7 @@ app.post('/api/sessions/:id/compact', async (req, res) => {
 });
 
 // ───── Checkpoints (Message Branching) ─────
-app.post('/api/sessions/:id/checkpoint', (req, res) => {
+app.post('/api/sessions/:id/checkpoint', validate(createCheckpointSchema), (req, res) => {
   try {
     const eng = getEngine();
     const store = (eng.sessionManager as any).store;
@@ -2458,6 +3053,7 @@ app.post('/api/discord/start', async (req, res) => {
         systemPrompt: '',
         toolExecutor: eng.toolkit.executor,
         toolRegistry: eng.toolkit.registry,
+        pgPool: eng.pgPool ?? undefined,
       });
     });
     await bridge.start(token, channelId);
@@ -2524,6 +3120,7 @@ app.post('/api/slack/start', async (req, res) => {
         systemPrompt: '',
         toolExecutor: eng.toolkit.executor,
         toolRegistry: eng.toolkit.registry,
+        pgPool: eng.pgPool ?? undefined,
       });
     });
     await bridge.start();
@@ -2833,6 +3430,17 @@ app.post('/api/files/upload', upload.single('file'), (req, res) => {
     res.status(400).json({ error: 'No file uploaded' });
     return;
   }
+
+  // Content-based file type validation (magic bytes, not user-supplied mime)
+  const validation = validateUploadedFile(req.file.path, req.file.originalname);
+  if (!validation.valid) {
+    // Clean up the rejected file
+    try { unlinkSync(req.file.path); } catch { /* ignore */ }
+    getLogger().warn('FILE_UPLOAD', `Rejected file '${req.file.originalname}': ${validation.error}`);
+    res.status(400).json({ error: validation.error, detectedType: validation.detectedType });
+    return;
+  }
+
   const fileId = generateId('file_');
   const ext = basename(req.file.originalname).split('.').pop() ?? '';
   const destName = `${fileId}.${ext}`;
@@ -2840,11 +3448,21 @@ app.post('/api/files/upload', upload.single('file'), (req, res) => {
   if (existsSync(req.file.path)) {
     renameSync(req.file.path, destPath);
   }
+  // Save metadata including detected MIME type
+  try {
+    writeFileSync(destPath + '.meta.json', JSON.stringify({
+      originalName: req.file.originalname,
+      mimeType: validation.detectedType,
+      userMimeType: req.file.mimetype,
+      size: req.file.size,
+      uploadedAt: new Date().toISOString(),
+    }), 'utf-8');
+  } catch { /* best-effort */ }
   res.json({
     id: fileId,
     originalName: req.file.originalname,
     size: req.file.size,
-    mimeType: req.file.mimetype,
+    mimeType: validation.detectedType,
     path: `/api/files/${fileId}`,
   });
 });
@@ -3482,6 +4100,21 @@ app.post('/api/reset', (_req, res) => {
   }
 });
 
+// ───── Global Error Handler ─────
+// Must be registered after all routes. Catches any unhandled errors from API routes
+// and returns a consistent JSON error envelope instead of an HTML 500.
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  const requestId = (req as any).requestId ?? 'unknown';
+  getLogger().error('UNHANDLED_ERROR', err, { requestId, path: req.path, method: req.method });
+  // Don't send error details in production to avoid leaking internals
+  res.status(500).json({
+    status: 'error',
+    code: 'INTERNAL_ERROR',
+    message: process.env['NODE_ENV'] === 'production' ? 'An unexpected error occurred' : err.message,
+    requestId,
+  });
+});
+
 // ─── Debug Log Endpoint ────────────────────────────────────────────
 // Accept frontend-side parse errors so developers can see raw API output
 app.post('/api/debug/log', (req, res) => {
@@ -3550,16 +4183,57 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
       console.error('Server error:', err.message);
     }
   });
-  const shutdown = () => {
+
+  let shuttingDown = false;
+
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const log = getLogger();
+    log.info('SHUTDOWN', `Received ${signal}. Starting graceful shutdown...`);
+
+    // 1. Stop accepting new connections immediately
+    server.close(() => {
+      log.info('SHUTDOWN', 'HTTP server closed.');
+    });
+
+    // 2. Drain active SSE and WebSocket connections with timeout
+    const forceExit = setTimeout(() => {
+      log.warn('SHUTDOWN', 'Forced exit after drain timeout (30s).');
+      closeLogger();
+      process.exit(1);
+    }, 30000);
+    forceExit.unref();
+
+    // 3. Close session manager (flushes DB, checkpoints WAL)
     try {
       const eng = getEngine();
-      eng?.sessionManager?.close();
+      if (eng?.sessionManager) {
+        eng.sessionManager.close();
+        log.info('SHUTDOWN', 'Session manager closed.');
+      }
+      // Stop bridge connections
+      if (eng?.telegramBridge) { try { eng.telegramBridge.stop(); } catch {} }
+      if (eng?.discordBridge) { try { eng.discordBridge.stop(); } catch {} }
+      if (eng?.slackBridge) { try { eng.slackBridge.stop(); } catch {} }
+      if (eng?.emailBridge) { try { eng.emailBridge.stop(); } catch {} }
+      log.info('SHUTDOWN', 'Bridges stopped.');
     } catch (e) { /* best-effort */ }
-    server.close();
+
+    // 4. Flush log buffer and exit
+    stopGlobalRateLimitCleanup();
+    closeLogger();
+    clearTimeout(forceExit);
+    process.exit(0);
   };
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
-  process.on('SIGQUIT', shutdown);
+
+  // Start periodic cleanup of rate limit stores
+  startGlobalRateLimitCleanup();
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGQUIT', () => shutdown('SIGQUIT'));
+
   return server.listen(port, () => {
     console.log(`Agent-X web API listening on http://localhost:${port}`);
   });

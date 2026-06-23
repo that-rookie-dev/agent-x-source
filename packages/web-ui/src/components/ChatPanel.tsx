@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo, Fragment } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -7,10 +7,6 @@ import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 
-import List from '@mui/material/List';
-import ListItemButton from '@mui/material/ListItemButton';
-import ListItemIcon from '@mui/material/ListItemIcon';
-import ListItemText from '@mui/material/ListItemText';
 import LinearProgress from '@mui/material/LinearProgress';
 import MenuItem from '@mui/material/MenuItem';
 import Menu from '@mui/material/Menu';
@@ -19,23 +15,17 @@ import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
-import SendIcon from '@mui/icons-material/Send';
-import StopIcon from '@mui/icons-material/Stop';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ArticleIcon from '@mui/icons-material/Article';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import ChecklistIcon from '@mui/icons-material/Checklist';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import AddIcon from '@mui/icons-material/Add';
-import DeleteIcon from '@mui/icons-material/Delete';
 import CloseIcon from '@mui/icons-material/Close';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import { CheckCircle } from './CheckCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
-import QueueIcon from '@mui/icons-material/PlaylistAdd';
 import BoltIcon from '@mui/icons-material/Bolt';
 
 import ReplayIcon from '@mui/icons-material/Replay';
@@ -45,27 +35,32 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import HistoryIcon from '@mui/icons-material/History';
 import DownloadIcon from '@mui/icons-material/Download';
 
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState } from '../api';
-import { colors } from '../theme';
-
 import {
   ConnectionHealthDot,
   ScrollToBottomPill,
   CommandPalette,
   SessionSearchModal,
-  ReasoningBlock,
   CheckpointDrawer,
-  CrewMentionMenu,
   type PaletteAction,
 } from './ChatEnhancements';
-import { MentionInput } from './MentionInput';
+import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, agent, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState } from '../api';
+import { colors } from '../theme';
+import PlanApprovalModal from './PlanApprovalModal';
+import ModeEscalationModal from './ModeEscalationModal';
+import StepCapModal from './StepCapModal';
+import ModeSuggestionModal, { DISMISS_KEY, shouldSuggestMode } from './ModeSuggestionModal';
+import { ChatInputBar } from './ChatInputBar';
+import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
+import { ChatMessageList } from '../chat/ChatMessageList';
+import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
+import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
+import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches } from '../chat/utils';
+import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
+import { CrewMissionCard, type CrewInterMessage } from './CrewMissionCard';
+import type { CrewWorkerState } from './CrewWorkerPanel';
+import { SessionGridCard } from './SessionGridCard';
 import { FolderPickerModal } from './FolderPickerModal';
-import { InlineToolCall } from './InlineToolCall';
-import { StyledTableWrapper, StyledUl, StyledOl, StyledLi } from './StructuredViews';
+import { ClarificationPrompt, type ClarificationData } from './ClarificationPrompt';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -144,6 +139,7 @@ interface ToolCall {
   streamOutput?: string;
   status: 'running' | 'done' | 'error';
   elapsed?: number;
+  metadata?: Record<string, unknown>;
 }
 
 interface SubAgent {
@@ -171,14 +167,21 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [view, setView] = useState<ChatView>(sessionId ? 'chat' : 'sessions');
   const [sessionList, setSessionList] = useState<SessionInfo[]>([]);
   const [currentSessionTitle, setCurrentSessionTitle] = useState<string | null>(null);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId ?? null);
   const [copiedSessionId, setCopiedSessionId] = useState(false);
   const [parentSessionId, setParentSessionId] = useState<string | null>(null);
-  const currentSessionIdRef = useRef<string | null>(null);
+  const [childSessionDrawer, setChildSessionDrawer] = useState<ChildSessionDrawerState | null>(null);
+  const currentSessionIdRef = useRef<string | null>(sessionId ?? null);
 
   // Chat state
   const [messages, setMessages] = useState<UIMessage[]>([]);
-  const [input, setInput] = useState('');
+  const [inputClearSignal] = useState(0);
+  const [crewWorkers, setCrewWorkers] = useState<CrewWorkerState[]>([]);
+  const [crewMissionActive, setCrewMissionActive] = useState(false);
+  const [crewMissionId, setCrewMissionId] = useState<string | null>(null);
+  const [crewInterMessages, setCrewInterMessages] = useState<CrewInterMessage[]>([]);
+  const [crewMissionSessionId, setCrewMissionSessionId] = useState<string | null>(null);
+  const crewMissionSessionIdRef = useRef<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [permissionPrompt, setPermissionPrompt] = useState<{ requestId: string; tool: string; path: string; riskLevel: string } | null>(null);
   const [pendingPermissionCount, setPendingPermissionCount] = useState(0);
@@ -189,7 +192,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const disconnectRef = useRef<(() => void) | null>(null);
   const skipRestoreRef = useRef(false);
   const streamChunkRAFRef = useRef<number | null>(null);
-  const streamChunkPendingRef = useRef<{ delta: string; fullContent: string } | null>(null);
+  const streamChunkPendingRef = useRef<string | null>(null);
   const isInitialLoadRef = useRef(true);
 
   // Loading step indicator state
@@ -198,11 +201,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // Provider error band state — array of messages for unified warning band
   const [warnings, setWarnings] = useState<string[]>([]);
 
-  // Clarification suggestions state
-  const [clarification, setClarification] = useState<{ question: string; options: string[]; recommended?: string; allowChooseAll?: boolean } | null>(null);
-  const [clarifySelectedIdx, setClarifySelectedIdx] = useState(0);
-  const [clarifyCustomText, setClarifyCustomText] = useState('');
-  const clarifyCustomRef = useRef<HTMLInputElement>(null);
+  // Clarification prompt — only shown while agent is actively waiting (streaming)
+  const [clarification, setClarification] = useState<ClarificationData | null>(null);
   const providerErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rateLimitSeenRef = useRef(false);
 
@@ -259,37 +259,65 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setView('chat');
       setCurrentSessionId(sessionId);
       setShowJumpPill(false);
-      setUnreadCount(0);
       prevRealCountRef.current = 0;
       isAtBottomRef.current = true;
       setInitialScrollDone(false);
       titleGeneratedRef.current = false;
-      sessions.restore(sessionId).then(({ messages: historyMsgs, session, scopePath }) => {
+      sessions.restore(sessionId).then(async ({ messages: historyMsgs, session, scopePath }) => {
+        if (session.parentId) {
+          setChildSessionDrawer({
+            childSessionId: sessionId,
+            label: session.title ?? 'Background work',
+            kind: sessionId.startsWith('crew-worker') ? 'crew_worker' : 'sub_agent',
+          });
+          navigate(`/console/chat/${session.parentId}`, { replace: true });
+          return;
+        }
         const resolvedScope = scopePath || session.scopePath;
         const visible = historyMsgs.filter((m: any) => m.role !== 'part');
-        setMessages(visible.map((m: any) => {
+        const mapped = visible.map((m: any) => {
           const modeChange = parseModeChange(m.content);
+          const content = repairStreamTextGlitches(stripToolNoise(m.content || ''));
+          const parts = Array.isArray(m.parts)
+            ? m.parts.map((p: any) => (p.type === 'text' && p.content
+              ? { ...p, content: repairStreamTextGlitches(stripToolNoise(p.content, { trim: false })) }
+              : p))
+            : undefined;
           return {
             ...m,
             id: m.id || crypto.randomUUID(),
+            content,
             streaming: false,
+            parts,
             toolCalls: m.toolCalls?.map((tc: any) => ({ ...tc, status: 'done' as const })),
             subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
             plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
             ...(modeChange ? { isModeChange: modeChange } : {}),
           };
-        }) as unknown as UIMessage[]);
+        }) as unknown as UIMessage[];
+        const hydrated = await hydrateCrewDeliverables(sessionId, mapped, crewList);
+        setMessages(hydrated.messages);
+        if (hydrated.crewWorkers.length > 0) {
+          setCrewWorkers(hydrated.crewWorkers);
+          setCrewMissionSessionId(sessionId);
+          crewMissionSessionIdRef.current = sessionId;
+        }
         setCurrentSessionTitle(session.title ?? `Session ${sessionId.slice(0, 8)}`);
         if (!session.title || session.title === 'New Session' || session.title === 'Child Session') {
           generateTitle(sessionId, visible);
         }
         setParentSessionId(session.parentId ?? null);
-        const totalUsed = (session as any).tokenUsed ?? session.tokensUsed ?? 0;
-        setTokenUsed(totalUsed);
         const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
         const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+        const persistedUsed = (session as any).tokenUsed ?? session.tokensUsed ?? 0;
+        const tokenAvail = Number((session as any).tokenAvailable ?? (session as any).token_available ?? 0);
+        if (tokenAvail > 0) setTokenTotal(tokenAvail);
+        setTokenUsed(persistedUsed > 0 ? persistedUsed : inputEst + outputEst);
+        setCompactionCount((session as any).compactionCount ?? 0);
         setTokenInput(inputEst);
         setTokenOutput(outputEst);
+        tokenInputRef.current = inputEst;
+        tokenOutputRef.current = outputEst;
         if (resolvedScope) setCwd(resolvedScope);
         // Restore saved session mode from DB (do not re-send to server)
         if (session.mode === 'plan' || session.mode === 'agent') {
@@ -312,10 +340,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [tokenUsed, setTokenUsed] = useState(0);
   const [tokenInput, setTokenInput] = useState(0);
   const [tokenOutput, setTokenOutput] = useState(0);
+  const [tokenReserved, setTokenReserved] = useState(0);
+  const [tokenStreaming, setTokenStreaming] = useState(0);
   const [tokenInputPrice, setTokenInputPrice] = useState(0);
   const [tokenOutputPrice, setTokenOutputPrice] = useState(0);
   const [tokenTotal, setTokenTotal] = useState(128000);
   const [compactionCount, setCompactionCount] = useState(0);
+  const tokenInputRef = useRef(0);
+  const tokenOutputRef = useRef(0);
+  const tokenReservedRef = useRef(0);
 
   // Collapsible sidebar sections
   const [contextExpanded, setContextExpanded] = useState(false);
@@ -324,22 +357,34 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [contextData, setContextData] = useState('');
   const [rebuildingContext, setRebuildingContext] = useState(false);
 
+  const applyContextPayload = useCallback((d: { context?: string; compaction?: string }) => {
+    const parts: string[] = [];
+    if (d.compaction?.trim()) parts.push(`[Compaction summaries]\n${d.compaction.trim()}`);
+    if (d.context?.trim()) parts.push(`[Conversation]\n${d.context.trim()}`);
+    setContextData(parts.length > 0 ? parts.join('\n\n') : '');
+  }, []);
+
+  const refreshContext = useCallback(() => {
+    if (!currentSessionId) return;
+    fetch(`/api/sessions/${currentSessionId}/context`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(applyContextPayload)
+      .catch(() => {});
+  }, [currentSessionId, applyContextPayload]);
+
+  const refreshContextRef = useRef(refreshContext);
+  useEffect(() => { refreshContextRef.current = refreshContext; }, [refreshContext]);
+
   const handleRebuildContext = useCallback(async () => {
     if (!currentSessionId || rebuildingContext) return;
     setRebuildingContext(true);
     try {
       const r = await fetch(`/api/sessions/${currentSessionId}/context/rebuild`, { method: 'POST', credentials: 'include' });
       const d = await r.json();
-      if (d.ok) {
-        // Refresh context data after rebuild
-        fetch(`/api/sessions/${currentSessionId}/context`, { credentials: 'include' })
-          .then(r2 => r2.json())
-          .then(d2 => { if (d2.context) setContextData(d2.context); })
-          .catch(() => {});
-      }
+      if (d.ok) refreshContext();
     } catch { /* ignore */ }
     setRebuildingContext(false);
-  }, [currentSessionId, rebuildingContext]);
+  }, [currentSessionId, rebuildingContext, refreshContext]);
 
   // Model/Provider state
   const [currentModel, setCurrentModel] = useState('');
@@ -381,14 +426,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // CWD
   const [cwd, setCwd] = useState('');
+  const cwdRef = useRef('');
 
   // Dropdown anchors
   const [modeMenuAnchor, setModeMenuAnchor] = useState<null | HTMLElement>(null);
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<null | HTMLElement>(null);
   const [modelMenuAnchor, setModelMenuAnchor] = useState<null | HTMLElement>(null);
 
-  // Send action menu (stop & send / queue / steer)
-  const [sendMenuAnchor, setSendMenuAnchor] = useState<null | HTMLElement>(null);
+  // Send action menu moved to ChatInputBar
 
   // New session dialog
   // ─── Enhancements: connection health, palette, slash, search, checkpoints ───
@@ -402,29 +447,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [folderConsentOpen, setFolderConsentOpen] = useState(false);
   const [folderPickerLoading, setFolderPickerLoading] = useState(false);
   const pendingFolderActionRef = useRef<'newSession' | 'changeCwd' | null>(null);
-  // @-mention detection
-  const [showCrewMention, setShowCrewMention] = useState(false);
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-  const insertMentionRef = useRef<((callsign: string) => void) | null>(null);
-  const mentionActiveRef = useRef(false);
-  useEffect(() => {
-    const active = mentionQuery !== null;
-    mentionActiveRef.current = active;
-    setShowCrewMention(active);
-  }, [mentionQuery]);
 
-  const handleMentionSelect = useCallback((crew: Crew) => {
-    mentionActiveRef.current = false;
-    insertMentionRef.current?.(crew.callsign);
-    setShowCrewMention(false);
-    setMentionQuery(null);
-  }, []);
+  // Agent gate modals (plan approval, mode escalation, step cap)
+  const [planApproval, setPlanApproval] = useState<{ title: string; steps: { id: string; description: string }[] } | null>(null);
+  const [modeEscalation, setModeEscalation] = useState<{ tool: string; reason: string } | null>(null);
+  const [stepCapPrompt, setStepCapPrompt] = useState<{ currentSteps: number; maxSteps: number } | null>(null);
+  const [turnActivity, setTurnActivity] = useState<{ stage: string; step: number; elapsedMs: number } | null>(null);
+  const activeTurnIdRef = useRef<string | null>(null);
+  const resendInProgressRef = useRef(false);
+  const lastActivityRef = useRef<number>(Date.now());
+  const isTimeoutWarning = (msg: string) => /timeout|timed out|aborted due to timeout/i.test(msg);
+  const clearTimeoutWarnings = useCallback((prev: string[]) => prev.filter(w => !isTimeoutWarning(w)), []);
+  const isAgentRecentlyActive = useCallback((withinMs = 45000) => Date.now() - lastActivityRef.current < withinMs, []);
+  const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
+  const pendingSendTextRef = useRef<string | null>(null);
 
   // Smart auto-scroll state
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef<boolean>(true);
+  const jumpSuppressScrollTopRef = useRef<number | null>(null);
   const [showJumpPill, setShowJumpPill] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
 
   // RAF-batched tool event accumulator (prevents render storm on long-running tasks)
   const toolBatchRef = useRef<TelemetryEvent[]>([]);
@@ -435,11 +477,24 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const el = messagesContainerRef.current;
     if (!el) return;
     const onScroll = () => {
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const atBottom = distanceFromBottom < 80;
       isAtBottomRef.current = atBottom;
       if (atBottom) {
+        jumpSuppressScrollTopRef.current = null;
         setShowJumpPill(false);
-        setUnreadCount(0);
+        return;
+      }
+      if (jumpSuppressScrollTopRef.current !== null) {
+        const scrolledUpEnough = el.scrollTop < jumpSuppressScrollTopRef.current - 100;
+        if (!scrolledUpEnough) {
+          setShowJumpPill(false);
+          return;
+        }
+        jumpSuppressScrollTopRef.current = null;
+      }
+      if (distanceFromBottom > 120) {
+        setShowJumpPill(true);
       }
     };
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -469,13 +524,24 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       bottomRef.current?.scrollIntoView({ behavior: countChanged ? 'smooth' : 'instant' });
     } else if (countChanged) {
       setShowJumpPill(true);
-      setUnreadCount(c => c + 1);
     }
   }, [messages, streaming]);
 
   // Load sessions
   const loadSessions = useCallback(() => {
-    sessions.list().then(setSessionList).catch(() => {});
+    sessions.list().then((list) => setSessionList(list.filter((s) => !s.parentId))).catch(() => {});
+  }, []);
+
+  const openChildSession = useCallback((props: {
+    childSessionId: string;
+    label: string;
+    kind: 'sub_agent' | 'crew_worker';
+  }) => {
+    setChildSessionDrawer({
+      childSessionId: props.childSessionId,
+      label: props.label,
+      kind: props.kind,
+    });
   }, []);
 
   const titleGeneratedRef = useRef(false);
@@ -554,16 +620,52 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   useEffect(() => {
     if (!currentModel || modelList.length === 0) return;
     const match = modelList.find(m => m.id === currentModel);
-    if (match?.contextWindow) setTokenTotal(match.contextWindow);
+    if (match?.contextWindow) {
+      setTokenTotal(match.contextWindow);
+      const reserve = Math.min(20000, Math.round(match.contextWindow * 0.15));
+      setTokenReserved(reserve);
+      tokenReservedRef.current = reserve;
+    }
   }, [currentModel, modelList]);
 
   // Helper to immutably update the last assistant message (avoids React mutation anti-pattern).
-  // Defined at component level so other effects (streaming timeout, SSE handler) can share it.
   const updateLastMessage = (msgs: UIMessage[], updates: Partial<UIMessage>): UIMessage[] => {
     if (msgs.length === 0) return msgs;
     const last = msgs[msgs.length - 1];
     if (last?.role !== 'assistant') return msgs;
     return [...msgs.slice(0, -1), { ...last, ...updates }];
+  };
+
+  const attachChildSessionToAssistant = (
+    prev: UIMessage[],
+    childSessionId: string,
+    label: string,
+    kind: 'sub_agent' | 'crew_worker',
+    task = '',
+  ): UIMessage[] => {
+    const last = prev[prev.length - 1];
+    if (last?.role !== 'assistant') return prev;
+    const existing = last.subAgents ?? [];
+    if (existing.some((a) => a.id === childSessionId)) return prev;
+    const upgraded = existing.map((a) =>
+      (a.id === 'subagent' || a.id === childSessionId)
+        ? { ...a, id: childSessionId, name: label, kind, task: task || a.task, status: 'running' as const }
+        : a,
+    );
+    const hasMatch = upgraded.some((a) => a.id === childSessionId);
+    const subAgents = hasMatch
+      ? upgraded
+      : [...existing, { id: childSessionId, name: label, task, status: 'running' as const, kind }];
+    const parts = (last.parts ?? []).map((p) =>
+      p.type === 'subagent' && (p.agent?.id === 'subagent' || p.agent?.id === childSessionId)
+        ? { ...p, id: childSessionId, agent: { ...p.agent!, id: childSessionId, name: label, kind, task: task || p.agent!.task, status: 'running' as const } }
+        : p,
+    );
+    const hasPart = parts.some((p) => p.type === 'subagent' && p.agent?.id === childSessionId);
+    const nextParts = hasPart
+      ? parts
+      : [...(last.parts ?? []), { type: 'subagent' as const, id: childSessionId, agent: { id: childSessionId, name: label, task, status: 'running' as const, kind } }];
+    return updateLastMessage(prev, { subAgents, parts: nextParts });
   };
 
   // Connect SSE for streaming events
@@ -581,6 +683,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           const eventArgs = (ev.args as Record<string, unknown> | string | undefined) ?? desc;
           const callId = (ev.callId as string) ?? crypto.randomUUID();
           if (toolName === 'delegate_to_subagent') {
+            if ((last.subAgents ?? []).some((a) => a.id === callId)) return prev;
             const sa: SubAgent = { id: callId, name: 'Sub-Agent', task: desc, status: 'running' };
             const saPart: PartEntry = { type: 'subagent', id: callId, agent: sa };
             return updateLastMessage(prev, {
@@ -588,9 +691,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               parts: [...(last.parts || []), saPart],
             });
           }
+          const existingParts = last.parts || [];
+          if (existingParts.some((p) => p.type === 'tool' && p.tool?.id === callId)) return prev;
+          if (!last.streaming && existingParts.some((p) => p.type === 'tool' && p.tool?.name === toolName && p.tool.status === 'done')) {
+            return prev;
+          }
           const tc: ToolCall = { id: callId, name: toolName, args: eventArgs, status: 'running' };
           const toolPart: PartEntry = { type: 'tool', id: callId, tool: tc };
-          return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts: [...(last.parts || []), toolPart] });
+          return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts: [...existingParts, toolPart] });
         }
         case 'tool_output': {
           const outputCallId = (ev.callId as string) ?? '';
@@ -633,8 +741,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return p;
           });
           const resObj = typeof (ev as any).result === 'object' && (ev as any).result !== null ? (ev as any).result as Record<string, unknown> : null;
+          const meta = (ev as any).metadata as Record<string, unknown> | undefined;
           if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') setToolEnablePrompt({ toolId: toolName, toolName });
-          return updateLastMessage(prev, { toolCalls: newToolCalls, parts: newParts });
+          const withMeta = (t: ToolCall) => (meta ? { ...t, metadata: { ...t.metadata, ...meta } } : t);
+          return updateLastMessage(prev, {
+            toolCalls: newToolCalls.map(withMeta),
+            parts: newParts.map((p) => (p.type === 'tool' && p.tool ? { ...p, tool: withMeta(p.tool) } : p)),
+          });
         }
         default:
           return prev;
@@ -648,6 +761,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
       // RAF-batch high-frequency tool events to prevent render storm on long-running tasks
       if (ev.type === 'tool_executing' || ev.type === 'tool_output' || ev.type === 'tool_complete') {
+        // Ignore stale tool events replayed from telemetry buffer on page load
+        if (isInitialLoadRef.current) return;
         toolBatchRef.current.push(ev);
         if (toolFlushRef.current === null) {
           toolFlushRef.current = requestAnimationFrame(() => {
@@ -680,12 +795,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               streamChunkRAFRef.current = null;
             }
             setLoadingSteps(null);
+            const loadingStage = (ev as { stage?: string }).stage;
+            // Crew missions stream crew-attributed messages — no Agent-X placeholder bubble
+            if (loadingStage === 'crew_mission') {
+              setStreaming(true);
+              return prev;
+            }
             // Only create a placeholder when a user message just arrived (new turn).
             // If the last message is a completed assistant (race with handleSend),
             // let stream_chunk or message_received handle the placeholder instead.
             if (last?.role === 'user') {
               setStreaming(true);
               return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
+            }
+            if (last?.role === 'assistant' && (last.streaming || resendInProgressRef.current)) {
+              setStreaming(true);
+              return prev;
             }
             if (!last) {
               setStreaming(true);
@@ -708,68 +833,106 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return prev;
 
           case 'stream_chunk': {
-            const delta = (ev.content as string) ?? '';
-            const fullContent = (ev.fullContent as string) ?? '';
+            // Ignore stale stream chunks replayed from telemetry buffer on page load
+            if (isInitialLoadRef.current) return prev;
+            const rawDelta = (ev.content as string) ?? '';
+            if (/Calling:|✅ Result:|\[STEP \d+\]/.test(rawDelta)) return prev;
+            const rawFull = (ev.fullContent as string) ?? '';
+            if (!rawFull && !rawDelta) return prev;
             if (last?.role === 'assistant') {
-              const pending = streamChunkPendingRef.current;
-              streamChunkPendingRef.current = {
-                delta: pending ? pending.delta + delta : delta,
-                fullContent,
-              };
+              streamChunkPendingRef.current = rawFull || null;
               if (streamChunkRAFRef.current === null) {
                 streamChunkRAFRef.current = requestAnimationFrame(() => {
                   streamChunkRAFRef.current = null;
-                  const chunk = streamChunkPendingRef.current;
-                  if (!chunk) return;
+                  const fullContent = streamChunkPendingRef.current ?? '';
                   streamChunkPendingRef.current = null;
+                  if (!fullContent) return;
                   setMessages(p => {
                     const l = p[p.length - 1];
                     if (l?.role !== 'assistant') return p;
                     const parts = l.parts || [];
                     const lastPart = parts[parts.length - 1];
-                    if (lastPart?.type === 'text') {
-                      const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: (lastPart.content || '') + chunk.delta }];
-                      return updateLastMessage(p, { content: chunk.fullContent, parts: updatedParts, streaming: true });
+                    const prefixEnd = lastPart?.type === 'text' ? parts.length - 1 : parts.length;
+                    let prefixLen = 0;
+                    for (let i = 0; i < prefixEnd; i++) {
+                      const part = parts[i];
+                      if (part?.type === 'text' && part.content) prefixLen += part.content.length;
                     }
-                    const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: chunk.delta };
-                    return updateLastMessage(p, { content: chunk.fullContent, parts: [...parts, textPart], streaming: true });
+                    const segmentText = fullContent.slice(prefixLen);
+                    if (lastPart?.type === 'text') {
+                      const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: segmentText }];
+                      return updateLastMessage(p, { content: fullContent, parts: updatedParts, streaming: true });
+                    }
+                    const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: segmentText };
+                    return updateLastMessage(p, { content: fullContent, parts: [...parts, textPart], streaming: true });
                   });
+                  const streamingEst = Math.ceil(fullContent.length / 4);
+                  setTokenStreaming(streamingEst);
+                  setTokenUsed(tokenInputRef.current + tokenOutputRef.current + streamingEst + tokenReservedRef.current);
                 });
               }
               return prev;
             }
             setStreaming(true);
-            const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: delta };
-            return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: delta, streaming: true, parts: [textPart] }];
+            const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: rawFull || rawDelta };
+            return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: rawFull || rawDelta, streaming: true, parts: [textPart] }];
           }
 
           case 'loading_end':
             setLoadingSteps(null);
-            setStreaming(false);
+            setCrewWorkers((cw) => {
+              if (cw.length > 0 && cw.every((x) => x.status === 'done' || x.status === 'error')) {
+                setCrewMissionActive(false);
+              }
+              return cw;
+            });
+            // Keep streaming true until message_received — background work may still be running
             return prev;
 
           case 'message_received': {
-            const msg = ev.message as { id?: string; content?: string; role?: string; parts?: PartEntry[]; toolCalls?: ToolCall[]; crew?: { crewId: string; name: string; callsign: string }; tokenCount?: number } | undefined;
+            // Ignore stale message_received events replayed from telemetry buffer on page load
+            if (isInitialLoadRef.current) return prev;
+            setTurnActivity(null);
+            activeTurnIdRef.current = null;
+            resendInProgressRef.current = false;
+            setClarification(null);
+            setTokenStreaming(0);
+            const msg = ev.message as { id?: string; content?: string; role?: string; parts?: PartEntry[]; toolCalls?: ToolCall[]; crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] }; tokenCount?: number } | undefined;
             const crew = msg?.crew;
             setStreaming(false);
             if (!msg || msg.role === 'system') return prev;
-            const text = msg.content ?? '';
+            const text = repairStreamTextGlitches(stripToolNoise(msg.content ?? ''));
             if (last?.role === 'assistant') {
-              if (last.streaming) {
-                // Merge final content from server (may be more complete than streamed content)
-                const mergedText = text.length > (last.content || '').length ? text : (last.content || '');
-                return updateLastMessage(prev, { content: mergedText, streaming: false, ...(crew ? { crew } : {}) });
+              const incomingCrewId = crew?.crewId;
+              const lastCrewId = last.crew?.crewId;
+              const sameSpeaker = incomingCrewId
+                ? incomingCrewId === lastCrewId
+                : !lastCrewId;
+              const shouldMerge = sameSpeaker && (last.streaming || (!text && !!last.content));
+              if (shouldMerge) {
+                const mergedParts = (last.parts && last.parts.length > 0) ? last.parts : msg.parts;
+                return updateLastMessage(prev, {
+                  id: msg.id || last.id,
+                  content: text || stripToolNoise(last.content || ''),
+                  parts: mergedParts,
+                  toolCalls: last.toolCalls?.length ? last.toolCalls : msg.toolCalls,
+                  streaming: false,
+                  ...(crew ? { crew } : {}),
+                });
               }
-              return updateLastMessage(prev, { streaming: false, ...(crew ? { crew } : {}) });
             }
-            if (msg.role === 'assistant' && text) {
-              const parts = msg.parts || (last?.parts) || [{ type: 'text' as const, id: crypto.randomUUID(), content: text }];
-              return [...prev, { id: msg.id || crypto.randomUUID(), role: 'assistant' as const, content: text, streaming: false, parts, ...(crew ? { crew } : {}) } as UIMessage];
+            if (msg.role === 'assistant' && (text || msg.parts?.length)) {
+              const msgId = msg.id || crypto.randomUUID();
+              if (prev.some((m) => m.id === msgId)) return prev;
+              const parts = msg.parts || [{ type: 'text' as const, id: crypto.randomUUID(), content: text }];
+              return [...prev, { id: msgId, role: 'assistant' as const, content: text, streaming: false, parts, ...(crew ? { crew } : {}) } as UIMessage];
             }
             return prev;
           }
 
           case 'permission_required':
+            // Ignore stale permission prompts replayed from telemetry buffer on page load
+            if (isInitialLoadRef.current) { return prev; }
             setPendingPermissionCount((prev) => prev + 1);
             setPermissionPrompt({
               requestId: (ev.requestId as string) ?? `${ev.tool}-${Date.now()}`,
@@ -780,14 +943,27 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return prev;
 
           case 'token_usage': {
-            const used = ev.totalTokens as number | undefined;
-            if (used != null) setTokenUsed(prev => Math.max(prev, used));
             const cw = ev.contextWindow as number | undefined;
             if (cw != null && cw > 0) setTokenTotal(cw);
             const inp = ev.inputTokens as number | undefined;
-            if (inp != null) setTokenInput(prev => Math.max(prev, inp));
             const out = ev.outputTokens as number | undefined;
-            if (out != null) setTokenOutput(prev => Math.max(prev, out));
+            const reserved = ev.reservedTokens as number | undefined;
+            const streaming = ev.streamingTokens as number | undefined;
+            if (inp != null) {
+              setTokenInput(inp);
+              tokenInputRef.current = inp;
+            }
+            if (out != null) {
+              setTokenOutput(out);
+              tokenOutputRef.current = out;
+            }
+            if (reserved != null) {
+              setTokenReserved(reserved);
+              tokenReservedRef.current = reserved;
+            }
+            if (streaming != null) setTokenStreaming(streaming);
+            const used = ev.totalTokens as number | undefined;
+            if (used != null) setTokenUsed(used);
             const ip = ev.inputPrice as number | undefined;
             if (ip !== undefined) setTokenInputPrice(ip);
             const op = ev.outputPrice as number | undefined;
@@ -801,8 +977,18 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return Object.keys(updates).length > 0 ? updateLastMessage(prev, updates) : prev;
           }
 
+          case 'command_action': {
+            const action = ev.action as string | undefined;
+            if (action === 'model_switched') {
+              const cw = ev.contextWindow as number | undefined;
+              if (cw != null && cw > 0) setTokenTotal(cw);
+            }
+            return prev;
+          }
+
           case 'compaction_complete':
             setCompactionCount(c => c + 1);
+            refreshContextRef.current();
             return prev;
 
           case 'reasoning_delta':
@@ -845,13 +1031,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
 
           case 'clarification_required': {
+            setStreaming(true);
             setClarification({
               question: (ev.question as string) ?? 'Could you clarify?',
               options: (ev.options as string[]) ?? [],
               recommended: (ev.recommended as string) ?? undefined,
               allowChooseAll: (ev.allowChooseAll as boolean) ?? false,
+              allowFreeform: (ev.allowFreeform as boolean) ?? true,
+              selectionMode: (ev as { selectionMode?: 'single' | 'multiple' }).selectionMode,
+              fields: (ev as { fields?: ClarificationData['fields'] }).fields,
             });
-            setClarifySelectedIdx(0);
             return prev;
           }
 
@@ -862,6 +1051,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               return prev;
             }
             const errorText = (ev.message as string) ?? (ev.error as string) ?? 'Unknown error';
+            // Ignore stale timeout errors while the agent is still actively working
+            if (isTimeoutWarning(errorText) && isAgentRecentlyActive()) {
+              return prev;
+            }
             // Route to warning band — errors should not pollute the chat bubble
             setWarnings(prev => replaceWarning(prev, errorText));
             setStreaming(false);
@@ -887,15 +1080,78 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               isModeChange: { from: 'Plan', to: 'Agent' },
             }];
 
-          case 'mode_restricted': {
+          case 'plan_mode_violation': {
+            const rolledBack = (ev as { rolledBack?: boolean }).rolledBack;
+            const count = ((ev as { violations?: unknown[] }).violations ?? []).length;
+            setWarnings(prev => replaceWarning(prev, rolledBack
+              ? `Plan mode violation: ${count} write operation(s) detected — session rolled back to checkpoint.`
+              : `Plan mode violation: ${count} write operation(s) detected.`));
+            return prev;
+          }
+
+          case 'mode_restricted':
+            // Do not auto-switch — ModeEscalationModal handles user choice
+            return prev;
+
+          case 'plan_approval_required': {
+            const plan = (ev as { plan?: { title?: string; steps?: { id: string; description: string }[] } }).plan;
+            if (plan?.steps) {
+              setPlanApproval({ title: plan.title ?? 'Plan', steps: plan.steps });
+            }
+            return prev;
+          }
+
+          case 'mode_escalation_required': {
+            const tool = (ev as { tool?: string }).tool ?? 'tool';
+            const reason = (ev as { reason?: string }).reason ?? 'Plan mode blocks this operation.';
+            setModeEscalation({ tool, reason });
+            return prev;
+          }
+
+          case 'mode_escalation_accepted':
             setAgentMode('agent');
             sessionSettings.setMode('agent').catch(() => {});
+            setModeEscalation(null);
             return [...prev, {
               id: crypto.randomUUID(), role: 'system' as const, content: '',
               timestamp: new Date().toISOString(),
               isModeChange: { from: 'Plan', to: 'Agent' },
             }];
+
+          case 'mode_escalation_declined':
+            setModeEscalation(null);
+            setStreaming(false);
+            return prev;
+
+          case 'step_cap_reached': {
+            const currentSteps = (ev as { currentSteps?: number }).currentSteps ?? 25;
+            const maxSteps = (ev as { maxSteps?: number }).maxSteps ?? 25;
+            setStepCapPrompt({ currentSteps, maxSteps });
+            return prev;
           }
+
+          case 'turn_heartbeat': {
+            setTurnActivity({
+              stage: (ev as { stage?: string }).stage ?? 'working',
+              step: (ev as { step?: number }).step ?? 0,
+              elapsedMs: (ev as { elapsedMs?: number }).elapsedMs ?? 0,
+            });
+            setWarnings(clearTimeoutWarnings);
+            return prev;
+          }
+
+          case 'operation_file_edited':
+          case 'operation_file_created':
+          case 'operation_file_read':
+          case 'operation_search_glob':
+          case 'operation_search_grep':
+          case 'operation_list_files':
+          case 'operation_command_executed':
+            return applyOperationEventToAssistant(prev, ev as Record<string, unknown> & { type: string });
+
+          case 'agent_thinking':
+          case 'step_indicator':
+            return prev;
 
           case 'hyperdrive_entered':
             setAgentMode('agent');
@@ -912,6 +1168,106 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               timestamp: new Date().toISOString(),
               isModeChange: { from: 'Hyperdrive', to: (ev as any).wasPlan ? 'Plan' : 'Agent' },
             }];
+
+          case 'crew_mission_start': {
+            const sid = currentSessionIdRef.current;
+            if (!sid) return prev;
+            crewMissionSessionIdRef.current = sid;
+            setCrewMissionSessionId(sid);
+            setCrewMissionActive(true);
+            setCrewWorkers([]);
+            setCrewInterMessages([]);
+            setCrewMissionId((ev as unknown as { missionId?: string }).missionId ?? null);
+            return prev;
+          }
+
+          case 'crew_mission_complete':
+            if (!isCrewEventForCurrentSession()) return prev;
+            setCrewMissionActive(false);
+            setCrewWorkers((cw) => cw.map((x) =>
+              (x.status === 'running' || x.status === 'verifying' || x.status === 'retrying')
+                ? { ...x, status: 'done' as const, message: 'Complete' }
+                : x,
+            ));
+            return prev;
+
+          case 'crew_inter_message': {
+            if (!isCrewEventForCurrentSession()) return prev;
+            const m = ev as unknown as { from: string; to: string; content: string };
+            setCrewInterMessages((msgs) => [...msgs, {
+              id: crypto.randomUUID(),
+              from: m.from,
+              to: m.to,
+              content: m.content,
+              timestamp: new Date().toISOString(),
+            }]);
+            return prev;
+          }
+
+          case 'crew_mission_retry':
+            if (!isCrewEventForCurrentSession()) return prev;
+            setCrewWorkers((cw) => cw.map((x) => ({ ...x, status: 'retrying' as const, message: 'Retrying…' })));
+            return prev;
+
+          case 'crew_worker_spawned': {
+            if (!isCrewEventForCurrentSession()) return prev;
+            const w = ev as unknown as { workerId: string; crewId: string; crewName: string; callsign: string };
+            const color = crewList.find((c) => c.id === w.crewId)?.color;
+            setCrewWorkers((cw) => [...cw.filter((x) => x.workerId !== w.workerId), {
+              workerId: w.workerId,
+              crewId: w.crewId,
+              crewName: w.crewName,
+              callsign: w.callsign,
+              color,
+              status: 'running',
+              message: 'Starting…',
+            }]);
+            return prev;
+          }
+
+          case 'crew_worker_progress': {
+            if (!isCrewEventForCurrentSession()) return prev;
+            const w = ev as unknown as { workerId: string; status: CrewWorkerState['status']; message?: string };
+            setCrewWorkers((cw) => cw.map((x) =>
+              x.workerId === w.workerId ? { ...x, status: w.status, message: w.message ?? x.message } : x,
+            ));
+            return prev;
+          }
+
+          case 'crew_worker_complete': {
+            if (!isCrewEventForCurrentSession()) return prev;
+            const w = ev as unknown as { workerId: string; success: boolean; elapsed: number; output?: string };
+            setCrewWorkers((cw) => {
+              const updated = cw.map((x) =>
+                x.workerId === w.workerId
+                  ? {
+                    ...x,
+                    status: w.success ? 'done' as const : 'error' as const,
+                    elapsed: w.elapsed,
+                    message: w.success ? 'Complete' : 'Failed',
+                  }
+                  : x,
+              );
+              if (updated.length > 0 && updated.every((x) => x.status === 'done' || x.status === 'error')) {
+                setCrewMissionActive(false);
+              }
+              return updated;
+            });
+            return prev;
+          }
+
+          case 'child_session_started': {
+            const c = ev as unknown as { childSessionId: string; label: string; kind: 'sub_agent' | 'crew_worker' };
+            if (!c.childSessionId) return prev;
+            return attachChildSessionToAssistant(prev, c.childSessionId, c.label || 'Background work', c.kind ?? 'sub_agent');
+          }
+
+          case 'agent_spawned': {
+            const agentId = ev.agentId as string;
+            const task = (ev.task as string) ?? '';
+            if (!agentId) return prev;
+            return attachChildSessionToAssistant(prev, agentId, 'Sub-Agent', 'sub_agent', task.slice(0, 200));
+          }
 
           case 'subagent_event': {
             const subagentId = (ev as any).subagentId as string;
@@ -1017,7 +1373,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // - After 2 minutes of inactivity, tries to recover the response from the API.
   // - Retries recovery every tick until streaming ends or a complete response is found.
   // - Never force-closes streaming — the agent may be processing tools for minutes.
-  const lastActivityRef = useRef<number>(Date.now());
   useEffect(() => {
     if (!streaming) return;
     lastActivityRef.current = Date.now();
@@ -1055,106 +1410,136 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return () => clearInterval(timer);
   }, [streaming]);
 
+  // Poll async turn status when SSE may miss completion/error
+  useEffect(() => {
+    const turnId = activeTurnIdRef.current;
+    if (!turnId || !streaming) return;
+    const poll = setInterval(() => {
+      chat.getTurn(turnId).then((record) => {
+        if (record.status === 'error') {
+          const err = record.error ?? 'Turn failed';
+          // Turn registry may mark timeout while SSE still shows live activity
+          if (isTimeoutWarning(err) && isAgentRecentlyActive()) return;
+          setWarnings(prev => replaceWarning(prev, err));
+          if (record.partialContent) {
+            setMessages(p => {
+              const last = p[p.length - 1];
+              if (last?.role === 'assistant') {
+                return updateLastMessage(p, { content: record.partialContent!, streaming: false });
+              }
+              return p;
+            });
+          }
+          setStreaming(false);
+          activeTurnIdRef.current = null;
+        } else if (record.status === 'complete' || record.status === 'cancelled') {
+          activeTurnIdRef.current = null;
+        }
+      }).catch(() => {});
+    }, 5000);
+    return () => clearInterval(poll);
+  }, [streaming]);
+
   // Compute whether send is blocked due to missing provider/model
   const sendBlocked = !currentProvider || !currentModel;
   const sendBlockedReason = !currentProvider ? 'Select a provider before sending' : !currentModel ? 'Select a model before sending' : '';
 
-  // Keep a ref in sync so callbacks (handleSend, ensureSession) never
-  // capture a stale currentSessionId from a useCallback closure.
+  // Keep refs in sync so send handlers never capture stale session/cwd from closures.
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
+  useEffect(() => { cwdRef.current = cwd; }, [cwd]);
 
-  // Lazy session creation: create session only when first message is sent
-  const ensureSession = async (): Promise<string | null> => {
+  const ensureSession = useCallback(async (): Promise<string | null> => {
     if (currentSessionIdRef.current) return currentSessionIdRef.current;
-    if (!cwd) {
-      setWarnings(['Please select a working folder before starting a session.']);
+    const scopePath = cwdRef.current;
+    if (!scopePath) {
+      pendingFolderActionRef.current = 'newSession';
+      setFolderConsentOpen(true);
       return null;
     }
     try {
-      const result = await sessions.create(cwd);
+      const result = await sessions.create(scopePath);
       const newId = result?.sessionId;
       if (newId) {
         setCurrentSessionId(newId);
+        currentSessionIdRef.current = newId;
         skipRestoreRef.current = true;
         navigate(`/console/chat/${newId}`);
         return newId;
       }
-    } catch { /* ignore */ }
+      setWarnings(['Failed to create session. Please try again.']);
+    } catch (e) {
+      setWarnings([`Failed to create session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
+    }
     return null;
-  };
+  }, [navigate]);
 
-  const handleSend = useCallback(async (overrideText?: string) => {
-    const text = typeof overrideText === 'string' ? overrideText.trim() : input.trim();
-    if ((!text && attachments.length === 0)) return;
+  const executeSend = useCallback(async (text: string) => {
+    const trimmed = sanitizeForJson(text.trim());
+    if ((!trimmed && attachments.length === 0)) return;
     if (!currentProvider || !currentModel) return;
     rateLimitSeenRef.current = false;
-
-    // Create session lazily on first message
     if (!(await ensureSession())) return;
 
-    setInput('');
     setStreaming(true);
-
     const userMsg: UIMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      content: text,
+      content: trimmed,
       streaming: false,
       attachments: attachments.map((a) => ({ name: a.name })),
     };
-    // Add user message — SSE (loading_start) will create the assistant placeholder
     setMessages((prev) => [...prev, userMsg]);
 
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
 
     try {
-      const result = await chat.send(text, fileRefs);
-      // Fallback: if SSE didn't deliver the response (e.g., connection dropped during streaming),
-      // display the response from the API call directly. SSE should have already delivered the
-      // content via message_received, but this handles edge cases where the event was lost.
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === 'assistant' && last.streaming) {
-          const fullContent = result?.message?.content || '';
-          if (fullContent) {
-            // Prefer the API response — it's guaranteed complete
-            return [...prev.slice(0, -1), { ...result.message, streaming: false }];
+      const result = await chat.send(trimmed, fileRefs);
+      if (result?.turnId) activeTurnIdRef.current = result.turnId;
+      if (result?.async) return;
+      if (result?.message) {
+        const msg = result.message;
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'assistant' && last.streaming) {
+            const fullContent = msg.content || '';
+            if (fullContent) return [...prev.slice(0, -1), { ...last, ...msg, streaming: false } as UIMessage];
+            return prev.slice(0, -1);
           }
-          // Empty content: clarification or no-op, remove the stale placeholder
-          return prev.slice(0, -1);
-        }
-        return prev;
-      });
+          return prev;
+        });
+      }
       setStreaming(false);
     } catch (err) {
-      // Show actual error in the placeholder message
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
-      // Show provider error band for quota/auth errors (not in chat)
       const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired|insufficient|credits|balance|dunning|deny/i.test(errorMsg);
       if (isProviderErr) {
-        const msg = extractProviderError(errorMsg);
-        setWarnings(prev => replaceWarning(prev, msg));
-        if (providerErrorTimerRef.current) clearTimeout(providerErrorTimerRef.current);
-        // Clear server-side agent processing state so next message isn't blocked
+        setWarnings(prev => replaceWarning(prev, extractProviderError(errorMsg)));
         chat.cancel().catch(() => {});
       } else {
-        // Non-provider errors (e.g., "Agent is busy") — also show in warning band
         setWarnings(prev => replaceWarning(prev, displayError));
         chat.cancel().catch(() => {});
       }
       setMessages((prev) => {
         const last = prev[prev.length - 1];
-        if (last?.role === 'assistant' && last.streaming) {
-          // Remove the empty streaming placeholder — errors go to warning band, not chat
-          return prev.slice(0, -1);
-        }
+        if (last?.role === 'assistant' && last.streaming) return prev.slice(0, -1);
         return prev;
       });
       setStreaming(false);
     }
-  }, [input, streaming, attachments, currentProvider, currentModel, agentMode]);
+  }, [attachments, currentProvider, currentModel, agentMode, ensureSession]);
+
+  const handleSend = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if ((!trimmed && attachments.length === 0)) return;
+    if (agentMode === 'plan' && shouldSuggestMode(trimmed) && !localStorage.getItem(DISMISS_KEY)) {
+      pendingSendTextRef.current = trimmed;
+      setModeSuggestOpen(true);
+      return;
+    }
+    await executeSend(trimmed);
+  }, [attachments.length, agentMode, executeSend]);
 
   // Retry last user message — re-sends without duplicating the user message,
   // replaces the existing assistant response on success.
@@ -1162,16 +1547,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     if (!text || streaming || !currentProvider || !currentModel) return;
     if (!(await ensureSession())) return;
 
+    resendInProgressRef.current = true;
     setStreaming(true);
 
-    // Remove the old assistant response — SSE (loading_start) will create the placeholder
+    // Remove the old assistant response — SSE will update the placeholder
     setMessages(prev => {
       const last = prev[prev.length - 1];
       return last?.role === 'assistant' ? prev.slice(0, -1) : prev;
     });
 
     try {
-      const result = await chat.send(text, undefined, true);
+      const result = await chat.send(sanitizeForJson(text), undefined, true);
+      if (result?.turnId) activeTurnIdRef.current = result.turnId;
+      if (result?.async) return;
       setMessages(prev => {
         const last = prev[prev.length - 1];
         if (last?.role === 'assistant' && last.streaming) {
@@ -1204,86 +1592,43 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       });
       setStreaming(false);
     }
-  }, [streaming, currentProvider, currentModel]);
+  }, [streaming, currentProvider, currentModel, ensureSession]);
 
-  // --- Clarification keyboard navigation & submission ---
-  const clearClarification = useCallback(() => {
+  // --- Clarification response ---
+  const handleClarifyRespond = useCallback(async (response: string) => {
     setClarification(null);
-    setClarifySelectedIdx(0);
-    setClarifyCustomText('');
+    try {
+      await agent.respondToClarification(response);
+      setStreaming(true);
+    } catch {
+      setWarnings((prev) => replaceWarning(prev, 'Failed to send clarification response'));
+    }
   }, []);
 
-  const clarifySelectCount = useMemo(() => {
-    if (!clarification) return 0;
-    let count = clarification.options.length;
-    if (clarification.allowChooseAll) count += 1;  // "Choose all"
-    count += 1; // "Skip"
-    return count;
-  }, [clarification]);
+  const resetCrewMissionState = useCallback(() => {
+    setCrewWorkers([]);
+    setCrewMissionActive(false);
+    setCrewMissionId(null);
+    setCrewInterMessages([]);
+    setCrewMissionSessionId(null);
+    crewMissionSessionIdRef.current = null;
+  }, []);
 
-  const handleClarifySubmit = useCallback(async (overrideText?: string) => {
-    if (!clarification) return;
-    const text = overrideText?.trim();
-    clearClarification();
-    setInput('');
-    if (text) {
-      await handleSend(text);
-    }
-  }, [clarification, clearClarification, handleSend]);
+  const isCrewEventForCurrentSession = useCallback(() => {
+    const bound = crewMissionSessionIdRef.current;
+    const current = currentSessionIdRef.current;
+    return bound != null && current != null && bound === current;
+  }, []);
 
-  const handleClarifyKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (!clarification) return;
-    const maxIdx = clarifySelectCount - 1;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setClarifySelectedIdx((prev) => Math.min(prev + 1, maxIdx));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setClarifySelectedIdx((prev) => Math.max(prev - 1, 0));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      const isChooseAll = clarification.allowChooseAll && clarifySelectedIdx === clarification.options.length;
-      const isSkip = clarifySelectedIdx === maxIdx;
-      if (isSkip) {
-        clearClarification();
-      } else if (isChooseAll) {
-        handleClarifySubmit(`All: ${clarification.options.join(', ')}`);
-      } else if (clarifySelectedIdx < clarification.options.length) {
-        handleClarifySubmit(clarification.options[clarifySelectedIdx]);
-      }
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      clearClarification();
-    } else if (e.key === 'Tab') {
-      e.preventDefault();
-      if (clarifyCustomRef.current) {
-        clarifyCustomRef.current.focus();
-        clarifyCustomRef.current.select();
-      }
-    }
-  }, [clarification, clarifySelectedIdx, clarifySelectCount, clearClarification, handleClarifySubmit]);
+  useEffect(() => { setClarification(null); }, [currentSessionId]);
+  useEffect(() => { resetCrewMissionState(); }, [currentSessionId, resetCrewMissionState]);
+  useEffect(() => { if (!streaming) setClarification(null); }, [streaming]);
 
-  const handleClarifyCustomKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (clarifyCustomText.trim()) {
-        handleClarifySubmit(clarifyCustomText);
-      }
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      clearClarification();
-    } else if (e.key === 'Tab') {
-      e.preventDefault();
-      setClarifySelectedIdx(0);
-      // Focus back to the list container
-      (e.currentTarget.closest('[data-clarify-list]') as HTMLElement | null)?.focus();
-    }
-  }, [clarifyCustomText, handleClarifySubmit, clearClarification]);
-
-  const handleCancel = async () => {
+  const handleCancel = useCallback(async () => {
     try { await chat.cancel(); } catch { /* ignore */ }
+    setClarification(null);
     setStreaming(false);
-  };
+  }, []);
 
   // ─── Slash command handler ───
   // ─── Global keyboard shortcuts ───
@@ -1305,6 +1650,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         const data = await res.json();
         setHyperdriveMode(false);
         if (data.mode) setAgentMode(data.mode);
+        else setAgentMode(prevModeBeforeHyperdrive.current);
       } catch {}
       return;
     }
@@ -1345,23 +1691,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     hyperdrivePromptShownRef.current = false; // reset on session change
     fetch('/api/mode/hyperdrive', { credentials: 'include' })
       .then(r => r.json())
-      .then(d => { if (d.hyperdriveMode) setHyperdriveMode(true); })
+      .then(d => {
+        if (d.hyperdriveMode) {
+          setHyperdriveMode(true);
+          if (d.mode) setAgentMode(d.mode);
+        }
+      })
       .catch(() => {});
   }, [currentSessionId]);
 
   // Refresh context data when session loads or changes
   useEffect(() => {
     if (!currentSessionId) return;
-    const fetchContext = () => {
-      fetch(`/api/sessions/${currentSessionId}/context`, { credentials: 'include' })
-        .then(r => r.json())
-        .then(d => { if (d.context) setContextData(d.context); })
-        .catch(() => {});
-    };
-    fetchContext();
-    const interval = setInterval(fetchContext, 15000);
+    refreshContext();
+    const interval = setInterval(refreshContext, 15000);
     return () => clearInterval(interval);
-  }, [currentSessionId]);
+  }, [currentSessionId, refreshContext]);
 
   // Double-Esc ref for cancel
   const lastEscRef = useRef(0);
@@ -1426,73 +1771,67 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     { id: 'mode-plan', label: 'Switch mode → Plan', icon: <RouteIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('plan'); sessionSettings.setMode('plan').catch(() => {}); } },
   ], []);
 
-  const handleStopAndSend = async () => {
-    const text = input.trim();
-    if (!text && attachments.length === 0) return;
+  const handleStopAndSend = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed && attachments.length === 0) return;
     if (!(await ensureSession())) return;
-    setInput('');
-    setSendMenuAnchor(null);
     setStreaming(true);
-    const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: text, streaming: false, attachments: attachments.map((a) => ({ name: a.name })) };
+    const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: trimmed, streaming: false, attachments: attachments.map((a) => ({ name: a.name })) };
     setMessages((prev) => [...prev, userMsg, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }]);
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
     try {
-      const result = await chat.stopAndSend(text, fileRefs);
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === 'assistant' && last.streaming && !last.content) {
-          return [...prev.slice(0, -1), { ...result.message, streaming: false }];
-        }
-        return prev;
-      });
+      const result = await chat.stopAndSend(trimmed, fileRefs);
+      if (result?.turnId) activeTurnIdRef.current = result.turnId;
+      if (result?.async) return;
+      if (result?.message) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'assistant' && last.streaming && !last.content) {
+            return [...prev.slice(0, -1), { ...result.message!, streaming: false }];
+          }
+          return prev;
+        });
+      }
     } catch { /* handled by SSE */ }
     setStreaming(false);
-  };
+  }, [attachments, ensureSession]);
 
-  const handleAddToQueue = async () => {
-    const text = input.trim();
-    if (!text && attachments.length === 0) return;
+  const handleAddToQueue = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed && attachments.length === 0) return;
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
-    try { await chat.queue(text, fileRefs); } catch { /* ignore */ }
-    setInput('');
+    try { await chat.queue(trimmed, fileRefs); } catch { /* ignore */ }
     setAttachments([]);
-    setSendMenuAnchor(null);
-  };
+  }, [attachments]);
 
-  const handleSteer = async () => {
-    const text = input.trim();
-    if (!text && attachments.length === 0) return;
+  const handleSteer = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed && attachments.length === 0) return;
     if (!(await ensureSession())) return;
-    setInput('');
-    setSendMenuAnchor(null);
-    const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: `↑ ${text}`, streaming: false };
+    setStreaming(true);
+    const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: `↑ ${trimmed}`, streaming: false };
     setMessages((prev) => [...prev, userMsg, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }]);
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
     try {
-      const result = await chat.steer(text, fileRefs);
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === 'assistant' && last.streaming && !last.content) {
-          return [...prev.slice(0, -1), { ...result.message, streaming: false }];
-        }
-        return prev;
-      });
+      const result = await chat.steer(trimmed, fileRefs);
+      if (result?.turnId) activeTurnIdRef.current = result.turnId;
+      if (result?.async) return;
+      if (result?.message) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'assistant' && last.streaming && !last.content) {
+            return [...prev.slice(0, -1), { ...result.message!, streaming: false }];
+          }
+          return prev;
+        });
+      }
     } catch { /* handled by SSE */ }
     setStreaming(false);
-  };
+  }, [attachments, ensureSession]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (mentionActiveRef.current) { e.preventDefault(); return; }
-      e.preventDefault();
-      handleSend();
-    }
-    // Shift+Enter → let the textarea insert the newline (don't prevent default)
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
     Array.from(files).forEach((file) => {
@@ -1503,7 +1842,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       reader.readAsText(file);
     });
     e.target.value = '';
-  };
+  }, []);
 
   const handleRemoveAttachment = (idx: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
@@ -1521,26 +1860,56 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setStreaming(false);
     try {
       const { messages: historyMsgs, session, scopePath } = await sessions.restore(s.id);
+      if (session?.parentId || s.parentId) {
+        const parentId = session?.parentId ?? s.parentId!;
+        setChildSessionDrawer({
+          childSessionId: s.id,
+          label: s.title ?? 'Background work',
+          kind: s.id.startsWith('crew-worker') ? 'crew_worker' : 'sub_agent',
+        });
+        navigate(`/console/chat/${parentId}`);
+        return;
+      }
       const visible = historyMsgs.filter((m: any) => m.role !== 'part');
-      setMessages(visible.map((m: any) => {
+      const mapped = visible.map((m: any) => {
         const modeChange = parseModeChange(m.content);
+        const content = repairStreamTextGlitches(stripToolNoise(m.content || ''));
+        const parts = Array.isArray(m.parts)
+          ? m.parts.map((p: any) => (p.type === 'text' && p.content
+            ? { ...p, content: repairStreamTextGlitches(stripToolNoise(p.content, { trim: false })) }
+            : p))
+          : undefined;
         return {
-          ...m, id: m.id || crypto.randomUUID(), streaming: false,
+          ...m, id: m.id || crypto.randomUUID(), streaming: false, content, parts,
           toolCalls: m.toolCalls?.map((tc: any) => ({ ...tc, status: 'done' as const })),
           subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
           plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
           ...(modeChange ? { isModeChange: modeChange } : {}),
         };
-      }) as unknown as UIMessage[]);
+      }) as unknown as UIMessage[];
+      const hydrated = await hydrateCrewDeliverables(s.id, mapped, crewList);
+      setMessages(hydrated.messages);
+      if (hydrated.crewWorkers.length > 0) {
+        setCrewWorkers(hydrated.crewWorkers);
+        setCrewMissionSessionId(s.id);
+        crewMissionSessionIdRef.current = s.id;
+      }
       setCurrentSessionTitle(s.title ?? `Session ${s.id.slice(0, 8)}`);
+      setParentSessionId(session?.parentId ?? s.parentId ?? null);
       setCurrentSessionId(s.id);
       setShowJumpPill(false);
-      setUnreadCount(0);
-      setTokenUsed(s.tokensUsed ?? 0);
+      jumpSuppressScrollTopRef.current = null;
       const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
       const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
+      const persistedUsed = (s as any).tokenUsed ?? s.tokensUsed ?? 0;
+      const tokenAvail = Number((s as any).tokenAvailable ?? (s as any).token_available ?? 0);
+      if (tokenAvail > 0) setTokenTotal(tokenAvail);
+      setTokenUsed(persistedUsed > 0 ? persistedUsed : inputEst + outputEst);
+      setCompactionCount((s as any).compactionCount ?? s.compactionCount ?? 0);
       setTokenInput(inputEst);
       setTokenOutput(outputEst);
+      tokenInputRef.current = inputEst;
+      tokenOutputRef.current = outputEst;
       const restoredCwd = scopePath || session?.scopePath || '';
       if (restoredCwd) setCwd(restoredCwd);
       // Restore saved session mode from DB (do not re-send to server)
@@ -1564,26 +1933,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setStreaming(false);
     setMessages([]);
     setCurrentSessionTitle(null);
-    setCurrentSessionId(null);
     setTokenUsed(0);
     setTokenInput(0);
     setTokenOutput(0);
     setCompactionCount(0);
     setTodoItems([]);
     setShowJumpPill(false);
-    setUnreadCount(0);
     setCwd(folder);
+    cwdRef.current = folder;
     try {
       await system.setCwd(folder);
-    } catch {
-      setWarnings(['Failed to set working directory. Please try a different folder.']);
-      return;
-    }
-    setView('chat');
-    if (location.pathname === '/console/chat') {
-      navigate('/console/chat', { replace: true });
-    } else {
-      navigate('/console/chat');
+      const { sessionId: newSessionId } = await sessions.create(folder);
+      setCurrentSessionId(newSessionId);
+      currentSessionIdRef.current = newSessionId;
+      skipRestoreRef.current = true;
+      setView('chat');
+      navigate(`/console/chat/${newSessionId}`);
+    } catch (e) {
+      setCurrentSessionId(null);
+      currentSessionIdRef.current = null;
+      setWarnings([`Failed to start session: ${e instanceof Error ? e.message : 'Please try a different folder.'}`]);
     }
   };
 
@@ -1615,11 +1984,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const tokenPercent = tokenTotal > 0 ? Math.min((tokenUsed / tokenTotal) * 100, 100) : 0;
 
   // ─── Chat view ───
-  const visibleMessages = messages.filter((m) => {
-    if (m.role === 'system' && !m.isModeChange) return false;
-    if (m.role === 'assistant' && !m.content && !m.thinking && (!m.toolCalls || m.toolCalls.length === 0) && (!m.subAgents || m.subAgents.length === 0) && (!m.parts || m.parts.length === 0)) return false;
-    return true;
-  });
+  // Memoized visibleMessages + isLastUser flags to avoid O(n²) computation on every render
+  const visibleMessagesWithFlags = useMemo(() => {
+    const visible = messages.filter((m) => {
+      if (m.role === 'system' && !m.isModeChange) return false;
+      if (m.role === 'assistant' && !m.content && !m.thinking && (!m.toolCalls || m.toolCalls.length === 0) && (!m.subAgents || m.subAgents.length === 0) && (!m.parts || m.parts.length === 0)) return false;
+      return true;
+    });
+    
+    // Pre-compute isLastUser flag for each message to avoid O(n²) slice/every on render
+    return visible.map((msg, idx) => ({
+      msg,
+      isLastUser: msg.role === 'user' && visible.slice(idx + 1).every(m => m.role !== 'user'),
+    }));
+  }, [messages]);
+  
+  const visibleMessages = visibleMessagesWithFlags.map(item => item.msg);
 
   return (
     <Box sx={{ height: '100%', display: 'flex' }}>
@@ -1697,60 +2077,20 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 </Button>
               </Box>
             ) : (
-              <List disablePadding>
-                {sessionList.map((s) => {
-                  const date = new Date(s.createdAt);
-                  const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-                  const dateStr = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' });
-                  return (
-                    <ListItemButton
-                      key={s.id}
-                      onClick={() => handleSelectSession(s)}
-                      sx={{
-                        borderRadius: '6px', mb: 1,
-                        border: `1px solid ${colors.border.subtle}`,
-                        borderLeft: `3px solid ${colors.accent.blue}40`,
-                        px: 2, py: 1.5,
-                        bgcolor: colors.bg.secondary,
-                        transition: 'all 0.2s ease',
-                        '&:hover': {
-                          bgcolor: colors.bg.tertiary,
-                          borderLeftColor: colors.accent.blue,
-                          transform: 'translateX(2px)',
-                          boxShadow: `0 2px 12px ${colors.accent.blue}10`,
-                        },
-                      }}
-                    >
-                      <ListItemIcon sx={{ minWidth: 28 }}>
-                        <SmartToyIcon sx={{ fontSize: 16, color: s.status === 'active' ? colors.accent.green : colors.text.dim }} />
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={s.title}
-                        secondary={<span style={{ fontSize: '0.6rem', color: colors.text.dim }}>{dateStr} {timeStr}</span>}
-                        primaryTypographyProps={{ sx: { fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }}
-                        secondaryTypographyProps={{ sx: { fontSize: '0.6rem', mt: 0.25 } }}
-                      />
-                      {s.status === 'active' && (
-                        <Box sx={{
-                          ml: 1, px: 0.6, py: 0.15, borderRadius: '4px', fontSize: '0.45rem',
-                          fontFamily: "'JetBrains Mono', monospace", fontWeight: 700,
-                          bgcolor: colors.accent.green + '15', color: colors.accent.green,
-                          border: `1px solid ${colors.accent.green}30`,
-                        }}>
-                          ACTIVE
-                        </Box>
-                      )}
-                      <IconButton
-                        size="small"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
-                        sx={{ ml: 0.5, color: colors.text.dim, opacity: 0.4, '&:hover': { color: colors.accent.red, opacity: 1 } }}
-                      >
-                        <DeleteIcon sx={{ fontSize: 14 }} />
-                      </IconButton>
-                    </ListItemButton>
-                  );
-                })}
-              </List>
+              <Box sx={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+                gap: 1.25,
+              }}>
+                {sessionList.map((s) => (
+                  <SessionGridCard
+                    key={s.id}
+                    session={s}
+                    onOpen={handleSelectSession}
+                    onDelete={handleDeleteSession}
+                  />
+                ))}
+              </Box>
             )}
           </Box>
         </Box>
@@ -1849,8 +2189,20 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         </Box>
 
         {/* Messages */}
-        <Box ref={messagesContainerRef} sx={{ flex: 1, overflow: 'auto', px: 2, py: 1.5, position: 'relative' }}>
-          {visibleMessages.length === 0 && !streaming && (
+        <Box
+          ref={messagesContainerRef}
+          sx={{
+            flex: 1,
+            overflow: 'auto',
+            px: 2,
+            py: 1.5,
+            position: 'relative',
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
+            '&::-webkit-scrollbar': { display: 'none' },
+          }}
+        >
+          {visibleMessagesWithFlags.length === 0 && !streaming && (
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <Box sx={{ textAlign: 'center', maxWidth: 300 }}>
                 <SmartToyIcon sx={{ fontSize: 36, color: colors.border.strong, mb: 1 }} />
@@ -1862,26 +2214,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             </Box>
           )}
 
-          {visibleMessages.map((msg, idx) => {
-            const isLastUser = msg.role === 'user' && visibleMessages.slice(idx + 1).every(m => m.role !== 'user');
-             return (
-               <Box key={msg.id}>
-                  <MessageBubble
-                    message={msg}
-                    loadingSteps={idx === visibleMessages.length - 1 && msg.streaming && !msg.content ? loadingSteps : null}
-                  />
-                  {isLastUser && msg.content && (
-                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: -1, mb: 0.5, mr: 5 }}>
-                     <IconButton size="small" onClick={() => handleResend(msg.content)}
-                       sx={{ p: 0.3, opacity: 0.4, '&:hover': { opacity: 1, bgcolor: 'transparent' } }}>
-                       <ReplayIcon sx={{ fontSize: 13 }} />
-                     </IconButton>
-                   </Box>
-                 )}
-               </Box>
-            );
-          })}
-           {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
+          <ChatMessageList
+            items={visibleMessagesWithFlags}
+            loadingSteps={loadingSteps}
+            onResend={handleResend}
+            bottomRef={bottomRef}
+            onOpenChildSession={openChildSession}
+          />
+
+          {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
             <ThinkingIndicator label={loadingSteps?.[0]?.label} />
           )}
 
@@ -1889,11 +2230,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             <ToolEnableBanner toolId={toolEnablePrompt.toolId} toolName={toolEnablePrompt.toolName} onRespond={() => setToolEnablePrompt(null)} />
           )}
 
-          <div ref={bottomRef} />
           <ScrollToBottomPill
             visible={showJumpPill}
-            unread={unreadCount}
-            onClick={() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); setShowJumpPill(false); setUnreadCount(0); }}
+            onClick={() => {
+              const el = messagesContainerRef.current;
+              if (el) jumpSuppressScrollTopRef.current = el.scrollTop;
+              setShowJumpPill(false);
+              bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }}
           />
         </Box>
 
@@ -1970,6 +2314,29 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             </Box>
           )}
 
+          {/* Crew mission status — scoped to the session that started it */}
+          {crewMissionSessionId === currentSessionId && (
+          <CrewMissionCard
+            workers={crewWorkers}
+            missionActive={crewMissionActive}
+            missionId={crewMissionId}
+            interMessages={crewInterMessages}
+            placement="standalone"
+            onViewWorker={(workerId, crewName) => openChildSession({
+              childSessionId: workerId,
+              label: crewName,
+              kind: 'crew_worker',
+            })}
+          />
+          )}
+
+          {clarification && streaming && (
+            <ClarificationPrompt
+              data={clarification}
+              onRespond={handleClarifyRespond}
+            />
+          )}
+
           {/* Single unified box: input + toolbar — border tinted by mode */}
           <Box sx={{
             position: 'relative',
@@ -1981,180 +2348,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             transition: 'border-color 0.2s, background-color 0.2s',
             '&:focus-within': { borderColor: hyperdriveMode ? '#ff00ff90' : agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
           }}>
-            {/* @-mention crew autocomplete */}
-            {showCrewMention && (
-              <CrewMentionMenu
-                query={mentionQuery ?? ''}
-                crewList={crewList}
-                onSelect={(crew: Crew) => handleMentionSelect(crew)}
-                onClose={() => setShowCrewMention(false)}
-              />
-            )}
-            {/* No provider/model warning — merged into unified warning band below */}
-            {/* Clarification panel: vertical list with keyboard navigation */}
-            {clarification && (
-              <Box
-                data-clarify-list
-                tabIndex={0}
-                onKeyDown={handleClarifyKeyDown}
-                sx={{
-                  mx: 1.25, my: 0.5, py: 1, px: 1.5,
-                  border: `1px solid ${colors.border.default}`,
-                  borderRadius: 2,
-                  bgcolor: colors.bg.secondary,
-                  outline: 'none',
-                  cursor: 'default',
-                }}
-              >
-                {/* Question */}
-                <Typography sx={{ fontSize: '0.75rem', color: colors.text.dim, mb: 1 }}>
-                  {clarification.question}
-                </Typography>
-
-                {/* Option items */}
-                {clarification.options.map((opt, idx) => {
-                  const isSelected = clarifySelectedIdx === idx;
-                  const isRecommended = clarification.recommended === opt;
-                  return (
-                    <Box
-                      key={idx}
-                      onClick={() => { setClarifySelectedIdx(idx); handleClarifySubmit(opt); }}
-                      onMouseEnter={() => setClarifySelectedIdx(idx)}
-                      sx={{
-                        display: 'flex', alignItems: 'center', gap: 1,
-                        py: 0.75, px: 1, borderRadius: 1.5,
-                        bgcolor: isSelected ? colors.bg.hover : 'transparent',
-                        border: isSelected ? `1px solid ${colors.accent.blue}` : '1px solid transparent',
-                        cursor: 'pointer',
-                        transition: 'background 0.1s',
-                        mb: 0.25,
-                      }}
-                    >
-                      <Box sx={{
-                        width: 18, height: 18, borderRadius: '50%',
-                        border: `2px solid ${isSelected ? colors.accent.blue : colors.border.default}`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        flexShrink: 0,
-                      }}>
-                        {isSelected && <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.accent.blue }} />}
-                      </Box>
-                      <Typography sx={{
-                        fontSize: '0.725rem',
-                        color: isSelected ? colors.text.primary : colors.text.dim,
-                        fontWeight: isSelected ? 600 : 400,
-                        flex: 1,
-                      }}>
-                        {opt}
-                      </Typography>
-                      {isRecommended && (
-                        <Typography sx={{
-                          fontSize: '0.55rem',
-                          color: colors.accent.blue,
-                          fontWeight: 700,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          bgcolor: '#58a6ff18',
-                          px: 0.75, py: 0.15,
-                          borderRadius: 0.75,
-                          flexShrink: 0,
-                        }}>
-                          Recommended
-                        </Typography>
-                      )}
-                    </Box>
-                  );
-                })}
-
-                {/* Choose All (if allowed) */}
-                {clarification.allowChooseAll && (
-                  <Box
-                    onClick={() => {
-                      handleClarifySubmit(`All: ${clarification.options.join(', ')}`);
-                    }}
-                    onMouseEnter={() => setClarifySelectedIdx(clarification.options.length)}
-                    sx={{
-                      display: 'flex', alignItems: 'center', gap: 1,
-                      py: 0.75, px: 1, borderRadius: 1.5,
-                      bgcolor: clarifySelectedIdx === clarification.options.length ? colors.bg.hover : 'transparent',
-                      border: clarifySelectedIdx === clarification.options.length ? `1px solid ${colors.accent.blue}` : '1px solid transparent',
-                      cursor: 'pointer',
-                      transition: 'background 0.1s',
-                      mb: 0.25, mt: 0.25,
-                      borderTop: `1px solid ${colors.border.default}`,
-                    }}
-                  >
-                    <Typography sx={{
-                      fontSize: '0.725rem',
-                      color: clarifySelectedIdx === clarification.options.length ? colors.text.primary : colors.text.dim,
-                      fontWeight: clarifySelectedIdx === clarification.options.length ? 600 : 400,
-                    }}>
-                      Choose all
-                    </Typography>
-                  </Box>
-                )}
-
-                {/* Custom answer input */}
-                <Box sx={{
-                  display: 'flex', gap: 1, mt: 0.5, mb: 0.5,
-                  borderTop: `1px solid ${colors.border.default}`,
-                  pt: 0.75,
-                }}>
-                  <input
-                    ref={clarifyCustomRef}
-                    type="text"
-                    value={clarifyCustomText}
-                    onChange={(e) => setClarifyCustomText(e.target.value)}
-                    onKeyDown={handleClarifyCustomKeyDown}
-                    placeholder="Type a custom answer..."
-                    style={{
-                      flex: 1,
-                      background: 'transparent',
-                      border: `1px solid ${colors.border.default}`,
-                      borderRadius: 6,
-                      padding: '6px 10px',
-                      fontSize: '0.7rem',
-                      color: colors.text.primary,
-                      outline: 'none',
-                    }}
-                  />
-                  <Button
-                    size="small"
-                    disabled={!clarifyCustomText.trim()}
-                    onClick={() => handleClarifySubmit(clarifyCustomText)}
-                    sx={{
-                      minWidth: 0, px: 1.5,
-                      fontSize: '0.6rem', textTransform: 'none',
-                      bgcolor: clarifyCustomText.trim() ? colors.accent.blue : colors.bg.tertiary,
-                      color: clarifyCustomText.trim() ? colors.bg.primary : colors.text.dim,
-                      '&:hover': { bgcolor: clarifyCustomText.trim() ? '#58a6ffcc' : colors.bg.hover },
-                    }}
-                  >
-                    Send
-                  </Button>
-                </Box>
-
-                {/* Skip / footer */}
-                <Box sx={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  borderTop: `1px solid ${colors.border.default}`,
-                  pt: 0.5, mt: 0.25,
-                }}>
-                  <Button
-                    size="small"
-                    onClick={clearClarification}
-                    onMouseEnter={() => setClarifySelectedIdx(clarifySelectCount - 1)}
-                    sx={{
-                      fontSize: '0.6rem', textTransform: 'none',
-                      color: colors.text.dim, minWidth: 0, px: 1,
-                      '&:hover': { color: colors.text.primary, bgcolor: 'transparent' },
-                    }}
-                  >
-                    Skip / Cancel
-                  </Button>
-                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim }}>
-                    ↑↓ Navigate · Enter to select · Esc to cancel
-                  </Typography>
-                </Box>
+            {streaming && (
+              <Box sx={{ px: 1.25, pt: 0.75, pb: 0.25 }}>
+                <ExecutionStatusChip
+                  stage={turnActivity?.stage}
+                  step={turnActivity?.step}
+                  elapsedMs={turnActivity?.elapsedMs}
+                />
               </Box>
             )}
             {/* Permission banner above input */}
@@ -2168,76 +2368,20 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 />
               </Box>
             )}
-            {/* Input row */}
-            <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 0.5, px: 1.25, py: 0.5 }}>
-              <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
-
-              <MentionInput
-                value={input}
-                onChange={setInput}
-                onKeyDown={handleKeyDown}
-                onMentionQuery={(q: string | null) => setMentionQuery(q)}
-                onInsertReady={(fn) => { insertMentionRef.current = fn; }}
-                placeholder="@agentx — message your AI wingman..."
-                crewList={crewList}
-              />
-
-              {streaming ? (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
-                  <IconButton size="small" onClick={handleCancel} sx={{ color: colors.accent.red, p: 0.5 }}>
-                    <StopIcon sx={{ fontSize: 20 }} />
-                  </IconButton>
-                  {input.trim() && (
-                    <IconButton size="small" onClick={(e) => setSendMenuAnchor(e.currentTarget)} sx={{ color: colors.text.dim, p: 0.25 }}>
-                      <ExpandMoreIcon sx={{ fontSize: 14 }} />
-                    </IconButton>
-                  )}
-                </Box>
-              ) : (
-                <Tooltip title={sendBlocked ? sendBlockedReason : ''} arrow disableHoverListener={!sendBlocked}>
-                  <span>
-                    <IconButton
-                      size="small"
-                      onClick={() => handleSend()}
-                      disabled={sendBlocked || (!input.trim() && attachments.length === 0)}
-                      sx={{ color: sendBlocked ? colors.accent.red : colors.accent.blue, p: 0.5, '&.Mui-disabled': { color: sendBlocked ? colors.accent.red + '80' : colors.text.dim } }}
-                    >
-                      <SendIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              )}
-
-              {/* Send action menu (shown during streaming when user types) */}
-              <Menu anchorEl={sendMenuAnchor} open={Boolean(sendMenuAnchor)} onClose={() => setSendMenuAnchor(null)}
-                anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-                transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-                PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 200 } }}>
-                <MenuItem onClick={handleStopAndSend} sx={{ fontSize: '0.7rem', py: 0.75 }}>
-                  <StopIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.red }} />
-                  <Box>
-                    <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Stop and Send</Typography>
-                    <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>Cancel current task, send this message</Typography>
-                  </Box>
-                </MenuItem>
-                <MenuItem onClick={handleAddToQueue} sx={{ fontSize: '0.7rem', py: 0.75 }}>
-                  <QueueIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.blue }} />
-                  <Box>
-                    <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Add to Queue</Typography>
-                    <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>Send after current task completes</Typography>
-                  </Box>
-                  <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, ml: 'auto', pl: 1 }}>⌥Enter</Typography>
-                </MenuItem>
-                <MenuItem onClick={handleSteer} sx={{ fontSize: '0.7rem', py: 0.75 }}>
-                  <RouteIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.orange }} />
-                  <Box>
-                    <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Steer with Message</Typography>
-                    <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>Redirect agent mid-task</Typography>
-                  </Box>
-                  <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, ml: 'auto', pl: 1 }}>Enter</Typography>
-                </MenuItem>
-              </Menu>
-            </Box>
+            <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
+            <ChatInputBar
+              streaming={streaming}
+              sendBlocked={sendBlocked}
+              sendBlockedReason={sendBlockedReason}
+              hasAttachments={attachments.length > 0}
+              crewList={crewList}
+              onSend={handleSend}
+              onCancel={handleCancel}
+              onStopAndSend={handleStopAndSend}
+              onAddToQueue={handleAddToQueue}
+              onSteer={handleSteer}
+              clearSignal={inputClearSignal}
+            />
 
             {/* Toolbar row */}
             <Box sx={{
@@ -2385,16 +2529,20 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                     return (
                     <MenuItem key={m.id} onClick={() => {
                       setCurrentModel(m.id);
-                      if (m.contextWindow) setTokenTotal(m.contextWindow);
+                      if (m.contextWindow) {
+                        setTokenTotal(m.contextWindow);
+                        tokenReservedRef.current = Math.min(20000, Math.round(m.contextWindow * 0.15));
+                        setTokenReserved(tokenReservedRef.current);
+                      }
                       const profile = providerList.find(p => p.id === currentProvider);
     const providerId = profile?.providerId || currentProviderId || currentProvider;
                       if (m.providerId && m.providerId !== providerId) {
                         setCurrentProvider(m.providerId);
                         providers.switch(m.providerId).then(() => {
-                          models.switch(m.id).catch(() => {});
+                          models.switch(m.id, { contextWindow: m.contextWindow, providerId: m.providerId }).catch(() => {});
                         }).catch(() => {});
                       } else {
-                        models.switch(m.id).catch(() => {});
+                        models.switch(m.id, { contextWindow: m.contextWindow, providerId }).catch(() => {});
                       }
                       setModelMenuAnchor(null);
                     }} selected={m.id === currentModel} sx={{ fontSize: '0.65rem' }}>
@@ -2435,6 +2583,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             </Box>
           </Box>
         </Box>
+
+        <ChildSessionDrawer
+          open={!!childSessionDrawer}
+          state={childSessionDrawer}
+          parentSessionTitle={currentSessionTitle ?? undefined}
+          onClose={() => setChildSessionDrawer(null)}
+        />
       </Box>
 
       {/* ─── Right sidebar ─── */}
@@ -2493,6 +2648,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: tokenPercent > 80 ? colors.accent.red : colors.text.secondary }}>
               {Math.round(tokenPercent)}%
             </Typography>
+            <Typography sx={{ fontSize: '0.45rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim }}>
+              · {compactionCount} compact
+            </Typography>
           </Box>
           {tokenExpanded && (
           <Box sx={{ px: 1.5, pb: 1.5 }}>
@@ -2508,12 +2666,27 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             variant="determinate"
             value={tokenPercent}
             sx={{
-              height: 3, borderRadius: 2, bgcolor: colors.bg.tertiary,
+              height: 4, borderRadius: 2, bgcolor: colors.bg.tertiary,
               '& .MuiLinearProgress-bar': {
+                transition: 'transform 0.12s linear',
                 bgcolor: tokenPercent > 80 ? colors.accent.red : tokenPercent > 50 ? colors.accent.orange : colors.accent.blue,
               },
             }}
           />
+          <Box sx={{ mt: 0.5, display: 'flex', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>Context limit</Typography>
+            <Typography sx={{ fontSize: '0.45rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary }}>
+              {tokenTotal.toLocaleString()}
+            </Typography>
+          </Box>
+          {(tokenStreaming > 0 || tokenReserved > 0) && (
+          <Box sx={{ mt: 0.25, display: 'flex', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>Stream / Reserved</Typography>
+            <Typography sx={{ fontSize: '0.45rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary }}>
+              {tokenStreaming.toLocaleString()} / {tokenReserved.toLocaleString()}
+            </Typography>
+          </Box>
+          )}
           <Box sx={{ mt: 0.75, display: 'flex', justifyContent: 'space-between' }}>
             <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>In / Out</Typography>
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary }}>
@@ -2651,6 +2824,71 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }}
         onCancel={() => { setFolderPickerOpen(false); setFolderPickerCallback(null); }}
       />
+      <PlanApprovalModal
+        open={!!planApproval}
+        title={planApproval?.title ?? 'Plan'}
+        steps={planApproval?.steps ?? []}
+        onApprove={() => {
+          agent.respondToPlan(true).catch(() => {});
+          setPlanApproval(null);
+        }}
+        onReject={() => {
+          agent.respondToPlan(false).catch(() => {});
+          setPlanApproval(null);
+        }}
+      />
+      <ModeEscalationModal
+        open={!!modeEscalation}
+        tool={modeEscalation?.tool ?? ''}
+        reason={modeEscalation?.reason ?? ''}
+        onSwitch={() => {
+          agent.respondToModeEscalation(true).then(() => {
+            setAgentMode('agent');
+            sessionSettings.setMode('agent').catch(() => {});
+          }).catch(() => {});
+          setModeEscalation(null);
+        }}
+        onSkip={() => {
+          agent.respondToModeEscalation(false).catch(() => {});
+          setModeEscalation(null);
+          setStreaming(false);
+        }}
+      />
+      <ModeSuggestionModal
+        open={modeSuggestOpen}
+        onSwitch={() => {
+          setModeSuggestOpen(false);
+          setAgentMode('agent');
+          sessionSettings.setMode('agent').catch(() => {});
+          const text = pendingSendTextRef.current;
+          pendingSendTextRef.current = null;
+          if (text) void executeSend(text);
+        }}
+        onStay={() => {
+          setModeSuggestOpen(false);
+          const text = pendingSendTextRef.current;
+          pendingSendTextRef.current = null;
+          if (text) void executeSend(text);
+        }}
+        onClose={() => {
+          setModeSuggestOpen(false);
+          pendingSendTextRef.current = null;
+        }}
+      />
+      <StepCapModal
+        open={!!stepCapPrompt}
+        currentSteps={stepCapPrompt?.currentSteps ?? 25}
+        maxSteps={stepCapPrompt?.maxSteps ?? 25}
+        onContinue={() => {
+          agent.respondToStepCap(true).catch(() => {});
+          setStepCapPrompt(null);
+        }}
+        onStop={() => {
+          agent.respondToStepCap(false).catch(() => {});
+          setStepCapPrompt(null);
+          setStreaming(false);
+        }}
+      />
       {/* Hyperdrive Disclaimer */}
       <Dialog
         open={showDisclaimer}
@@ -2784,571 +3022,6 @@ function ThinkingIndicator({ label }: { label?: string }) {
           </>
         )}
       </Box>
-    </Box>
-  );
-}
-
-// ─── Message Bubble ───
-
-// ─── Crew section rendering helpers ───
-const CREW_PALETTE_WEB = [
-  '#5B9BD5', '#70AD47', '#ED7D31', '#9B59B6',
-  '#E74C3C', '#1ABC9C', '#F39C12', '#3498DB',
-];
-
-function getWebCrewColor(callsign: string): string {
-  let hash = 0;
-  for (let i = 0; i < callsign.length; i++) {
-    hash = ((hash << 5) - hash) + callsign.charCodeAt(i);
-    hash |= 0;
-  }
-  return CREW_PALETTE_WEB[Math.abs(hash) % CREW_PALETTE_WEB.length];
-}
-
-interface ContentSegment {
-  type: 'normal' | 'crew';
-  text: string;
-  name?: string;
-  callsign?: string;
-}
-
-function parseWebContentSegments(content: string): ContentSegment[] {
-  const segments: ContentSegment[] = [];
-  const headerRegex = /\n\n---\n\n(\*\*([^*]+)\*\*\s*\(@(\w+)\):\s*)/g;
-  let lastEnd = 0;
-  let match;
-
-  while ((match = headerRegex.exec(content)) !== null) {
-    if (match.index > lastEnd) {
-      segments.push({ type: 'normal', text: content.slice(lastEnd, match.index) });
-    }
-    const headerEnd = match.index + match[0].length;
-    const nextSep = content.indexOf('\n\n---\n\n', headerEnd);
-    const crewText = nextSep >= 0 ? content.slice(headerEnd, nextSep) : content.slice(headerEnd);
-    segments.push({ type: 'crew', text: crewText, name: match[2], callsign: match[3] });
-    lastEnd = nextSep >= 0 ? nextSep : headerEnd + crewText.length;
-  }
-
-  if (lastEnd < content.length) {
-    segments.push({ type: 'normal', text: content.slice(lastEnd) });
-  }
-
-  return segments;
-}
-
-const MARKDOWN_BASE_SX = {
-  '& p': { m: 0, mb: 0.5, fontSize: '0.8rem', lineHeight: 1.6 },
-  '& p:last-child': { mb: 0 },
-  '& pre': { m: 0 },
-  '& code': { fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem' },
-  '& ul, & ol': { pl: 2.5, my: 0.5, fontSize: '0.8rem' },
-  '& li': { mb: 0.25 },
-  '& blockquote': { borderLeft: `3px solid ${colors.border.strong}`, pl: 1.5, ml: 0, my: 0.5, color: colors.text.secondary },
-  '& a': { color: colors.accent.blue, textDecoration: 'none', '&:hover': { textDecoration: 'underline' } },
-};
-
-const MAX_CODE_LINES = 30;
-
-// Box-drawing and tree characters used in ASCII structural art (folder trees, diagrams)
-const STRUCTURAL_CHARS = new Set([
-  '├', '─', '│', '└', '┌', '┐', '┘', '┃', '┏', '┓', '┗', '┛',
-  '╋', '╂', '┊', '┆', '═', '║', '╟', '╠', '╢', '╣', '╩', '╦',
-  '╬', '▌', '▐', '▀', '▄', '█', '░', '▒', '▓',
-]);
-
-function isStructuralArt(text: string): boolean {
-  const lines = text.split('\n');
-  if (lines.length < 2) return false;
-  const treeLineRe = /^[\s│├└┌┐┘┃┏┓┗┛╋╂╟╠╢╣╩╦╬+|\-`].*[─│└├┌┐┘║]/;
-  let structuralCount = 0;
-  for (const line of lines) {
-    const trimmed = line.trimEnd();
-    if (!trimmed) continue;
-    // Check if line contains box-drawing chars
-    let hasStructural = false;
-    for (const ch of trimmed) {
-      if (STRUCTURAL_CHARS.has(ch)) { hasStructural = true; break; }
-    }
-    // Also check common ASCII tree/diagram patterns
-    if (!hasStructural && treeLineRe.test(trimmed)) hasStructural = true;
-    // Check for indentation-heavy content (code-like)
-    if (!hasStructural && /^[ \t]{2,}[\w\/\-.]/.test(trimmed)) hasStructural = true;
-    if (hasStructural) structuralCount++;
-  }
-  // At least half the non-empty lines should look structural
-  const nonEmpty = lines.filter(l => l.trim().length > 0).length;
-  return nonEmpty >= 2 && structuralCount >= Math.ceil(nonEmpty / 2);
-}
-
-const CONTENT_TYPE: Record<string, { type: string; label: string }> = {
-  ts: { type: 'Code', label: 'TypeScript' },
-  tsx: { type: 'Code', label: 'TSX' },
-  js: { type: 'Code', label: 'JavaScript' },
-  jsx: { type: 'Code', label: 'JSX' },
-  py: { type: 'Code', label: 'Python' },
-  rs: { type: 'Code', label: 'Rust' },
-  go: { type: 'Code', label: 'Go' },
-  java: { type: 'Code', label: 'Java' },
-  rb: { type: 'Code', label: 'Ruby' },
-  php: { type: 'Code', label: 'PHP' },
-  scala: { type: 'Code', label: 'Scala' },
-  kt: { type: 'Code', label: 'Kotlin' },
-  swift: { type: 'Code', label: 'Swift' },
-  c: { type: 'Code', label: 'C' },
-  cpp: { type: 'Code', label: 'C++' },
-  cs: { type: 'Code', label: 'C#' },
-  html: { type: 'Code', label: 'HTML' },
-  css: { type: 'Code', label: 'CSS' },
-  scss: { type: 'Code', label: 'SCSS' },
-  less: { type: 'Code', label: 'Less' },
-  json: { type: 'Config', label: 'JSON' },
-  yaml: { type: 'Config', label: 'YAML' },
-  yml: { type: 'Config', label: 'YAML' },
-  toml: { type: 'Config', label: 'TOML' },
-  xml: { type: 'Config', label: 'XML' },
-  csv: { type: 'Config', label: 'CSV' },
-  ini: { type: 'Config', label: 'INI' },
-  env: { type: 'Config', label: '.env' },
-  sh: { type: 'Shell', label: 'Shell' },
-  bash: { type: 'Shell', label: 'Shell' },
-  zsh: { type: 'Shell', label: 'Shell' },
-  shell: { type: 'Shell', label: 'Shell' },
-  powershell: { type: 'Shell', label: 'PowerShell' },
-  ps1: { type: 'Shell', label: 'PowerShell' },
-  sql: { type: 'SQL', label: 'SQL' },
-  prompt: { type: 'Prompt', label: 'Prompt' },
-  md: { type: 'Markdown', label: 'Markdown' },
-  markdown: { type: 'Markdown', label: 'Markdown' },
-  mdx: { type: 'Markdown', label: 'MDX' },
-  diff: { type: 'Diff', label: 'Diff' },
-  patch: { type: 'Diff', label: 'Patch' },
-  graphql: { type: 'Code', label: 'GraphQL' },
-  gql: { type: 'Code', label: 'GraphQL' },
-  dockerfile: { type: 'Code', label: 'Dockerfile' },
-  docker: { type: 'Code', label: 'Dockerfile' },
-  makefile: { type: 'Code', label: 'Makefile' },
-  cmake: { type: 'Code', label: 'CMake' },
-  r: { type: 'Code', label: 'R' },
-  dart: { type: 'Code', label: 'Dart' },
-  lua: { type: 'Code', label: 'Lua' },
-  elixir: { type: 'Code', label: 'Elixir' },
-  erlang: { type: 'Code', label: 'Erlang' },
-  haskell: { type: 'Code', label: 'Haskell' },
-  clojure: { type: 'Code', label: 'Clojure' },
-  solidity: { type: 'Code', label: 'Solidity' },
-  nix: { type: 'Config', label: 'Nix' },
-  terraform: { type: 'Config', label: 'Terraform' },
-  tf: { type: 'Config', label: 'Terraform' },
-  hcl: { type: 'Config', label: 'HCL' },
-  text: { type: 'Text', label: 'Text' },
-  plain: { type: 'Text', label: 'Text' },
-};
-
-function CodeBlockWithCopy({ code, language }: { code: string; language?: string }) {
-  const [copied, setCopied] = useState(false);
-  const meta = (language ? CONTENT_TYPE[language.toLowerCase()] : null) || { type: 'Code', label: language || 'Text' };
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
-  return (
-    <Box sx={{ my: 1, border: `1px solid ${colors.border.default}`, borderRadius: 1, overflow: 'hidden' }}>
-      <Box sx={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        px: 1.25, py: 0.45,
-        bgcolor: colors.bg.secondary,
-        borderBottom: `1px solid ${colors.border.default}`,
-      }}>
-        <Typography sx={{
-          fontSize: '0.55rem', fontWeight: 700,
-          color: colors.accent.blue,
-          fontFamily: "'JetBrains Mono', monospace",
-          letterSpacing: '0.4px',
-        }}>
-          {meta.type}{meta.label !== meta.type.toLowerCase() ? ` · ${meta.label}` : ''}
-        </Typography>
-        <Box component="button" onClick={handleCopy}
-          sx={{
-            display: 'flex', alignItems: 'center', gap: 0.4,
-            bgcolor: 'transparent', border: `1px solid ${colors.border.subtle}`, borderRadius: '4px',
-            cursor: 'pointer', px: 0.75, py: 0.15,
-            color: copied ? colors.accent.green : colors.text.dim,
-            fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace",
-            transition: 'all 0.15s',
-            '&:hover': {
-              color: copied ? colors.accent.green : colors.text.secondary,
-              borderColor: colors.text.dim,
-            },
-          }}>
-          {copied ? '✓ Copied' : 'Copy'}
-        </Box>
-      </Box>
-      <SyntaxHighlighter style={oneDark} language={language || 'text'} PreTag="div"
-        customStyle={{ borderRadius: 0, fontSize: '0.7rem', margin: 0, padding: '10px 12px' }}>
-        {code}
-      </SyntaxHighlighter>
-    </Box>
-  );
-}
-
-function extractParagraphText(children: React.ReactNode): string {
-  return React.Children.toArray(children).map(c => (typeof c === 'string' ? c : '')).join('');
-}
-
-const MARKDOWN_COMPONENTS = {
-  code({ className, children, ...props }: any) {
-    const match = /language-(\w+)/.exec(className ?? '');
-    let code = String(children).replace(/\n$/, '');
-    const lines = code.split('\n');
-    const truncated = lines.length > MAX_CODE_LINES;
-    if (truncated) {
-      code = lines.slice(0, MAX_CODE_LINES).join('\n') + `\n// … ${lines.length - MAX_CODE_LINES} more line${lines.length - MAX_CODE_LINES === 1 ? '' : 's'} truncated`;
-    }
-    if (match) {
-      return <CodeBlockWithCopy code={code} language={match[1]} />;
-    }
-    if (truncated) {
-      return <pre style={{ maxHeight: 200, overflow: 'auto', background: colors.bg.tertiary, borderRadius: 4, padding: '6px 10px', margin: '4px 0' }}><code className={className} style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{code}</code></pre>;
-    }
-    return <code className={className} style={{ background: colors.bg.tertiary, padding: '1px 5px', borderRadius: 3, fontSize: '0.72rem' }} {...props}>{children}</code>;
-  },
-  p({ children, ...props }: any) {
-    const text = extractParagraphText(children);
-    if (isStructuralArt(text)) {
-      return <CodeBlockWithCopy code={text} />;
-    }
-    return <p {...props}>{children}</p>;
-  },
-  table({ children }: any) {
-    return <StyledTableWrapper>{children}</StyledTableWrapper>;
-  },
-  ul({ children }: any) {
-    return <StyledUl>{children}</StyledUl>;
-  },
-  ol({ children }: any) {
-    return <StyledOl>{children}</StyledOl>;
-  },
-  li({ children }: any) {
-    return <StyledLi>{children}</StyledLi>;
-  },
-};
-
-function UserMentionText({ content }: { content: string }) {
-  const parts = content.split(/(@\w+)/g);
-  return (
-    <Typography sx={{ fontSize: '0.8rem', color: colors.text.primary, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-      {parts.map((part, i) => {
-        if (part.startsWith('@') && part.length > 1) {
-          const callsign = part.slice(1);
-          const color = callsign === 'agentx' ? colors.accent.blue : getWebCrewColor(callsign);
-          return <Box key={i} component="span" sx={{ color, fontWeight: 600 }}>{part}</Box>;
-        }
-        return <Fragment key={i}>{part}</Fragment>;
-      })}
-    </Typography>
-  );
-}
-
-
-
-function CrewAwareMarkdown({ content }: { content: string }) {
-  const segments = parseWebContentSegments(content);
-  const hasCrew = segments.some(s => s.type === 'crew');
-
-  const cardSx = {
-    bgcolor: colors.bg.elevated,
-    border: `1px solid ${colors.border.subtle}`,
-    borderRadius: 1.5,
-    p: 1.75,
-    my: 0.5,
-    ...MARKDOWN_BASE_SX,
-    '& p': {
-      ...MARKDOWN_BASE_SX['& p'],
-      color: colors.text.primary,
-      fontSize: '0.75rem',
-      lineHeight: 1.7,
-    },
-    '& hr': {
-      border: 'none',
-      height: 1,
-      my: 1.5,
-      bgcolor: colors.border.subtle,
-      opacity: 0.4,
-    },
-    '& ul, & ol': {
-      m: 0,
-      pl: 0,
-      fontSize: '0.75rem',
-      lineHeight: 1.7,
-    },
-    '& li': {
-      mb: 0.35,
-      color: colors.text.primary,
-      listStyle: 'none',
-    },
-    '& li:last-child': { mb: 0 },
-    '& input[type="checkbox"]': {
-      accentColor: colors.accent.blue,
-    },
-  };
-
-  if (!hasCrew) {
-    return (
-      <Box sx={cardSx}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{content}</ReactMarkdown>
-      </Box>
-    );
-  }
-
-  return (
-    <Box>
-      {segments.map((seg, i) => {
-        if (seg.type === 'crew' && seg.name && seg.callsign) {
-          const cc = getWebCrewColor(seg.callsign);
-          return (
-            <Box key={i} sx={{ mt: 1.5 }}>
-              <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, color: cc, mb: 0.25, letterSpacing: 0.3 }}>
-                ◆ {seg.name} (@{seg.callsign})
-              </Typography>
-              <Box sx={{ ...cardSx, '& p': { ...cardSx['& p'], color: cc } } as any}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{seg.text}</ReactMarkdown>
-              </Box>
-            </Box>
-          );
-        }
-        return (
-          <Box key={i} sx={cardSx}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{seg.text}</ReactMarkdown>
-          </Box>
-        );
-      })}
-    </Box>
-  );
-}
-
-function MessageBubble({ message, loadingSteps }: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null }) {
-  const isUser = message.role === 'user';
-  const crewInfo = message.crew;
-  const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
-  const [whyOpen, setWhyOpen] = useState(false);
-
-  if (message.isModeChange) {
-    const { from, to } = message.isModeChange;
-    const isHyperdrive = to === 'Hyperdrive';
-    const chipColor = isHyperdrive ? '#ff00ff' : to === 'Plan' ? '#2196F3' : colors.accent.orange;
-
-    return (
-      <Box sx={{
-        display: 'flex', justifyContent: 'center', my: 1.5, animation: 'agentx-fadeIn 0.25s ease-out',
-      }}>
-        <Chip
-          size="small"
-          label={`${from} → ${to}`}
-          sx={{
-            fontSize: '0.55rem', height: 20, fontFamily: "'JetBrains Mono', monospace",
-            bgcolor: `${chipColor}12`,
-            border: `1px solid ${chipColor}30`,
-            borderRadius: '10px',
-            color: chipColor,
-            cursor: 'default',
-            '& .MuiChip-label': { px: 1.25 },
-          }}
-        />
-      </Box>
-    );
-  }
-
-  if (message.role === 'system') return null;
-
-  // User messages: right-aligned subtle card
-  if (isUser) {
-    return (
-      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'flex-end', animation: 'agentx-fadeIn 0.25s ease-out' }}>
-        <Box sx={{ maxWidth: '72%', px: 1.5, py: 1, border: `1px solid ${colors.border.strong}`, borderRadius: 1.5, bgcolor: colors.bg.elevated }}>
-          {message.attachments && message.attachments.length > 0 && (
-            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
-              {message.attachments.map((a, i) => (<Chip key={i} size="small" icon={<InsertDriveFileIcon sx={{ fontSize: '11px !important' }} />} label={a.name} sx={{ fontSize: '0.5rem', height: 18, bgcolor: colors.accent.blue + '08', border: `1px solid ${colors.accent.blue}20` }} />))}
-            </Box>
-          )}
-          <UserMentionText content={message.content} />
-        </Box>
-      </Box>
-    );
-  }
-
-  // Assistant: flat chronological document — no bubble, no avatar
-  return (
-    <Box sx={{ mb: 3, animation: 'agentx-fadeIn 0.25s ease-out' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
-        {crewInfo && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            {crewInfo.icon && (
-              <Typography sx={{ fontSize: '0.85rem', lineHeight: 1 }}>{crewInfo.icon}</Typography>
-            )}
-            <Box sx={{
-              width: 8, height: 8, borderRadius: '50%',
-              bgcolor: displayColor,
-              boxShadow: `0 0 6px ${displayColor}80`,
-              flexShrink: 0,
-            }} />
-          </Box>
-        )}
-        <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: displayColor, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.5px' }}>
-          {crewInfo ? crewInfo.name : 'Agent-X'}
-        </Typography>
-        {crewInfo && (crewInfo.confidence || crewInfo.reasons) && (
-          <Tooltip
-            open={whyOpen}
-            onOpen={() => setWhyOpen(true)}
-            onClose={() => setWhyOpen(false)}
-            title={
-              <Box>
-                <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, mb: 0.25 }}>
-                  Match: {crewInfo.confidence ?? 'N/A'}
-                </Typography>
-                {crewInfo.reasons?.map((r, i) => (
-                  <Typography key={i} sx={{ fontSize: '0.55rem', opacity: 0.8 }}>• {r}</Typography>
-                ))}
-              </Box>
-            }
-            arrow
-            placement="top"
-          >
-            <Typography
-              onClick={() => setWhyOpen(!whyOpen)}
-              sx={{
-                fontSize: '0.5rem', cursor: 'pointer', color: colors.text.dim,
-                fontFamily: "'JetBrains Mono', monospace", opacity: 0.5,
-                '&:hover': { opacity: 1, color: displayColor },
-                lineHeight: 1,
-              }}
-            >
-              Why?
-            </Typography>
-          </Tooltip>
-        )}
-      </Box>
-      {message.thinking && (<ReasoningBlock text={message.thinking} streaming={message.streaming && !message.thinkingDoneAt} durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined} />)}
-      {message.todos && message.todos.length > 0 && (<InlineTodoList items={message.todos} />)}
-
-      {/* Chronological parts: text + tools interleaved in order of appearance */}
-      {message.parts && message.parts.length > 0 ? (
-        message.parts.filter((p) => {
-          if (p.type === 'text') return !!p.content;
-          if (p.type === 'tool') return !!p.tool;
-          if (p.type === 'subagent') return !!p.agent;
-          return false;
-        }).map((part) => {
-          switch (part.type) {
-            case 'text':
-              return part.content ? <CrewAwareMarkdown key={part.id} content={part.content} /> : null;
-            case 'tool':
-              return part.tool ? <InlineToolCall key={part.id} tool={part.tool as any} /> : null;
-            case 'subagent':
-              return part.agent ? (
-                <Box key={part.id} sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                  <SubAgentChip agent={part.agent as any} />
-                </Box>
-              ) : null;
-            default:
-              return null;
-          }
-        })
-      ) : (
-        // Fallback: render content + toolCalls the old way (for restored messages without parts)
-        <>
-          {message.content && <CrewAwareMarkdown content={message.content} />}
-          {message.toolCalls && message.toolCalls.length > 0 && (<Box sx={{ mt: 0.5 }}>{message.toolCalls.map((t: any) => <InlineToolCall key={t.id} tool={t} />)}</Box>)}
-          {message.subAgents && message.subAgents.length > 0 && (<Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>{message.subAgents.map((sa) => (<SubAgentChip key={sa.id} agent={sa as any} />))}</Box>)}
-        </>
-      )}
-
-      {message.streaming && !message.content && !loadingSteps && (
-        <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>{[0, 1, 2].map(i => (<Box key={i} sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.2}s` }} />))}</Box>
-      )}
-      {message.streaming && !message.content && loadingSteps && (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.5 }}>
-          <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite' }} />
-          <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontStyle: 'italic' }}>{loadingSteps[0]?.label ?? 'Thinking...'}</Typography>
-        </Box>
-      )}
-      {!message.streaming && (
-        <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75, opacity: 0.45 }}>
-          {message.timestamp && <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Typography>}
-          {message.turnTokens != null && <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{message.turnTokens.toLocaleString()} tok</Typography>}
-          <Box onClick={() => { navigator.clipboard.writeText(message.content).catch(() => {}); }} sx={{ cursor: 'pointer', display: 'flex', '&:hover': { opacity: 1 }, opacity: 0.7 }}><ContentCopyIcon sx={{ fontSize: 11, color: colors.text.dim }} /></Box>
-        </Box>
-      )}
-    </Box>
-  );
-}
-
-
-
-// ─── Sub-Agent Chip ───
-
-function SubAgentChip({ agent }: { agent: SubAgent }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasToolCalls = agent.toolCalls && agent.toolCalls.length > 0;
-  const navigate = useNavigate();
-
-  const handleClick = (e: React.MouseEvent) => {
-    if (agent.status !== 'running') {
-      // Left-click navigates to child session, expand/collapse on tool call toggle
-      if (hasToolCalls && (e.target as HTMLElement).closest('[data-expand-area]')) {
-        setExpanded(!expanded);
-      } else {
-        navigate(`/console/chat/${agent.id}`);
-      }
-    }
-  };
-
-  return (
-    <Box>
-      <Chip size="small"
-        icon={agent.status === 'running' ? <CircularProgress size={10} sx={{ color: 'inherit' }} /> : <AccountTreeIcon sx={{ fontSize: 11 }} />}
-        label={`${agent.name}: ${agent.task.slice(0, 35)}${agent.task.length > 35 ? '…' : ''}${hasToolCalls ? ` (${agent.toolCalls!.length})` : ''}`}
-        onClick={handleClick}
-        sx={{
-          fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", height: 20,
-          bgcolor: agent.status === 'running' ? colors.accent.purple + '10' : colors.accent.green + '10',
-          border: `1px solid ${agent.status === 'running' ? colors.accent.purple : colors.accent.green}20`,
-          color: agent.status === 'running' ? colors.accent.purple : colors.accent.green,
-          cursor: 'pointer',
-          '&:hover': { filter: 'brightness(1.2)' },
-        }}
-      />
-      {expanded && agent.toolCalls && (
-        <Box data-expand-area sx={{ mt: 0.75, ml: 0.5, borderLeft: `2px solid ${colors.border.subtle}`, pl: 1.5 }}>
-          {agent.toolCalls.map((tc) => (
-            <InlineToolCall key={tc.id} tool={tc} />
-          ))}
-        </Box>
-      )}
-    </Box>
-  );
-}
-
-// ─── Inline Todo List ───
-
-function InlineTodoList({ items }: { items: TodoItem[] }) {
-  return (
-    <Box sx={{ mb: 0.75, p: 1, borderRadius: 1, border: `1px solid ${colors.border.default}`, bgcolor: colors.bg.tertiary }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
-        <ChecklistIcon sx={{ fontSize: 12, color: colors.accent.blue }} />
-        <Typography sx={{ fontSize: '0.55rem', fontWeight: 600, color: colors.accent.blue }}>Tasks</Typography>
-      </Box>
-      {items.map((item) => (
-        <Box key={item.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.2 }}>
-          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: item.status === 'completed' ? colors.accent.green : item.status === 'in-progress' ? colors.accent.orange : colors.text.dim, flexShrink: 0 }} />
-          <Typography sx={{ fontSize: '0.55rem', color: item.status === 'completed' ? colors.text.dim : colors.text.secondary, textDecoration: item.status === 'completed' ? 'line-through' : 'none' }}>
-            {item.title}
-          </Typography>
-        </Box>
-      ))}
     </Box>
   );
 }

@@ -54,5 +54,5 @@ You operate in AUTONOMOUS MODE by default. When given a task:
 
 ## PARALLEL EXECUTION
 For independent sub-tasks, use parallel tool calls to execute multiple things at once.
-Use delegate_to_crew for sub-tasks that require specialized domain expertise.
+Use delegate_to_crew only when a sub-task clearly requires a crew specialist's documented expertise — not for general questions you can handle yourself.
 `;
