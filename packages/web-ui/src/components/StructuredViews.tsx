@@ -93,32 +93,90 @@ const tableInnerSx = {
 
 const listBaseSx = {
   m: 0,
-  pl: 2,
-  fontSize: '0.7rem',
-  lineHeight: 1.7,
+  pl: 0,
+  fontSize: '0.78rem',
+  lineHeight: 1.65,
   color: colors.text.primary,
+} as const;
+
+/** Vertical center of the first text line (matches li line-height). */
+const firstLineCenter = 'calc(0.78rem * 1.65 / 2)';
+
+const liContentSx = {
+  mb: 0.45,
+  color: colors.text.secondary,
+  fontSize: '0.78rem',
+  lineHeight: 1.65,
+  fontFamily: "'Inter', sans-serif",
+  '& strong': { color: colors.text.primary, fontWeight: 600, lineHeight: 'inherit' },
+  '& em': { lineHeight: 'inherit', fontStyle: 'italic' },
+  // react-markdown wraps li text in <p> — keep inline so markers align to first line
+  '& p': {
+    m: 0,
+    display: 'inline',
+    lineHeight: 'inherit',
+    fontSize: 'inherit',
+    color: 'inherit',
+  },
+  '& p + p': {
+    display: 'block',
+    mt: 0.5,
+  },
+  '&:last-child': { mb: 0 },
 } as const;
 
 const ulSx = {
   ...listBaseSx,
-  '& li::marker': {
-    color: colors.accent.blue,
-    content: '"▸ "' as any,
+  listStyle: 'none',
+  '& > li': {
+    position: 'relative',
+    pl: 1.5,
+    ...liContentSx,
+    '&::before': {
+      content: '""',
+      position: 'absolute',
+      left: 0,
+      top: firstLineCenter,
+      transform: 'translateY(-50%)',
+      width: 5,
+      height: 5,
+      borderRadius: '50%',
+      bgcolor: colors.accent.blue,
+    },
   },
 } as const;
 
 const olSx = {
   ...listBaseSx,
-  '& li::marker': {
-    color: colors.text.dim,
-    fontWeight: 600,
+  counterReset: 'agentx-ol',
+  listStyle: 'none',
+  '& > li': {
+    position: 'relative',
+    pl: 2.5,
+    counterIncrement: 'agentx-ol',
+    ...liContentSx,
+    '&::before': {
+      content: 'counter(agentx-ol)',
+      position: 'absolute',
+      left: 0,
+      top: firstLineCenter,
+      transform: 'translateY(-50%)',
+      width: 14,
+      height: 14,
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: '50%',
+      bgcolor: `${colors.accent.blue}18`,
+      color: colors.accent.blue,
+      fontSize: '0.4375rem',
+      fontWeight: 700,
+      lineHeight: 1,
+      fontFamily: "'JetBrains Mono', monospace",
+    },
   },
 } as const;
 
 const liSx = {
-  mb: 0.3,
-  color: colors.text.primary,
-  fontSize: '0.7rem',
-  lineHeight: 1.6,
-  '&:last-child': { mb: 0 },
+  ...liContentSx,
 } as const;

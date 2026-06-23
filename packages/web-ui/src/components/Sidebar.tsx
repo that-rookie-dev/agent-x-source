@@ -8,6 +8,7 @@ import ChatIcon from '@mui/icons-material/Chat';
 // import HubIcon from '@mui/icons-material/Hub';
 // import CellTowerIcon from '@mui/icons-material/CellTower';
 import SettingsIcon from '@mui/icons-material/Settings';
+import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 // import StorageIcon from '@mui/icons-material/Storage';
 import GroupsIcon from '@mui/icons-material/Groups';
 // import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
@@ -26,6 +27,7 @@ interface Props {
 
 const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
   { id: 'chat', icon: ChatIcon, label: 'Chat' },
+  { id: 'health', icon: MonitorHeartIcon, label: 'Health' },
   { id: 'providers', icon: DnsIcon, label: 'Providers' },
   { id: 'crews', icon: GroupsIcon, label: 'Crews' },
   { id: 'settings', icon: SettingsIcon, label: 'Settings' },

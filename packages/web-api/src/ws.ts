@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'http';
 import { getEngine } from './engine.js';
+import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart } from '@agentx/shared';
 
 interface PartRecord {
   type: string;
@@ -76,6 +77,13 @@ function appendContextFile(
  */
 export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[] }): void {
   appendContextFile(sessionId, role, content, undefined, extra);
+  try {
+    const eng = getEngine();
+    const store = (eng.sessionManager as any).store;
+    if (store?.insertMessage && content) {
+      store.insertMessage({ sessionId, role, content, toolCalls: extra?.toolCalls });
+    }
+  } catch { /* best-effort */ }
 }
 
 let wss: WebSocketServer | null = null;
@@ -96,15 +104,73 @@ export function setupWebSocket(server: Server): void {
     console.error('WebSocket error:', (err as Error).message);
   });
 
+  // Enable built-in ping/pong on the WebSocket server
+  // No custom headers needed
+
+  // Heartbeat interval — ping every 30s, close if no pong within 10s
+  const HEARTBEAT_INTERVAL_MS = 30000;
+  const HEARTBEAT_TIMEOUT_MS = 10000;
+
   wss.on('connection', (ws: WebSocket) => {
+    let isAlive = true;
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let heartbeatTimeout: ReturnType<typeof setTimeout> | null = null;
+
     ws.send(JSON.stringify({ type: 'connected' }));
 
+    // Start heartbeat for this connection
+    heartbeatTimer = setInterval(() => {
+      if (!isAlive) {
+        // No pong received since last ping — terminate
+        ws.terminate();
+        return;
+      }
+      isAlive = false;
+      try {
+        ws.ping();
+      } catch {
+        // Connection may already be closed
+        clearInterval(heartbeatTimer!);
+      }
+      // Timeout: if no pong within the window, terminate
+      heartbeatTimeout = setTimeout(() => {
+        if (!isAlive) {
+          ws.terminate();
+        }
+      }, HEARTBEAT_TIMEOUT_MS);
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // Handle pong responses
+    ws.on('pong', () => {
+      isAlive = true;
+      if (heartbeatTimeout) {
+        clearTimeout(heartbeatTimeout);
+        heartbeatTimeout = null;
+      }
+    });
+
     ws.on('close', () => {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+      if (heartbeatTimeout) {
+        clearTimeout(heartbeatTimeout);
+        heartbeatTimeout = null;
+      }
       const unsub = sessionEventSubscribers.get(ws);
       if (unsub) {
         unsub();
         sessionEventSubscribers.delete(ws);
       }
+      // Check if agent was processing when client disconnected
+      try {
+        const eng = getEngine();
+        const agent = eng.agent;
+        if (agent && typeof (agent as any).lifecycle?.isProcessing === 'function' && (agent as any).lifecycle.isProcessing()) {
+          getLogger().info('WS', `Client disconnected while agent was ${(agent as any).lifecycle.getState()}. Events will be persisted for replay.`);
+        }
+      } catch { /* best-effort */ }
     });
 
     ws.on('message', (data) => {
@@ -169,6 +235,19 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
       if (agent && response) agent.respondToClarification(response);
       break;
     }
+    case 'checkpoint_response': {
+      const eng = getEngine();
+      const agent = eng.agent;
+      const checkpointId = msg.checkpointId as string;
+      const action = msg.action as string;
+      if (agent && checkpointId && action) {
+        const resolved = agent.resolveCheckpoint(checkpointId, action);
+        if (!resolved) {
+          getLogger().warn('WS', `Checkpoint ${checkpointId.slice(0, 12)} not found on agent`);
+        }
+      }
+      break;
+    }
     case 'subscribe': {
       const sessionId = msg.sessionId as string;
       if (!sessionId) break;
@@ -190,6 +269,15 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
             }
           });
           sessionEventSubscribers.set(ws, unsub);
+        }
+        // Send current session state (agent processing status) so client knows if tasks are running
+        if (agent && typeof (agent as any).lifecycle?.isProcessing === 'function') {
+          ws.send(JSON.stringify({
+            type: 'session_state',
+            sessionId,
+            processing: (agent as any).lifecycle.isProcessing(),
+            state: (agent as any).lifecycle.getState(),
+          }));
         }
       } catch {
         // best-effort
@@ -233,7 +321,21 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
   let currentPlan: string[] | null = null;
   let perTurnTokens: number | undefined;
   let perTurnCostUsd: number | undefined;
-  const accumulatedParts: Array<{ type: string; content?: string; toolName?: string; toolCallId?: string; toolArgs?: unknown; toolResult?: string }> = [];
+  const accumulatedParts: MessagePart[] = [];
+  let textBuffer = '';
+
+  function flushTextBuffer(): void {
+    const clean = stripToolNoise(textBuffer);
+    if (clean) {
+      const last = accumulatedParts[accumulatedParts.length - 1];
+      if (last?.type === 'text') {
+        last.content = (last.content || '') + (last.content ? '\n' : '') + clean;
+      } else {
+        accumulatedParts.push({ type: 'text', id: crypto.randomUUID(), content: clean });
+      }
+    }
+    textBuffer = '';
+  }
 
   function resetAccumulators(): void {
     accumulatedThinking = '';
@@ -244,6 +346,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     perTurnTokens = undefined;
     perTurnCostUsd = undefined;
     accumulatedParts.length = 0;
+    textBuffer = '';
   }
 
   function buildExtra(thinkingText?: string): {
@@ -313,8 +416,19 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
       if (c != null) perTurnCostUsd = c;
     }
 
+    if (evType === 'stream_chunk') {
+      const delta = ((event as any).content as string) ?? '';
+      if (delta && !/Calling:|✅ Result:|\[STEP \d+\]/.test(delta)) {
+        textBuffer = appendStreamText(textBuffer, delta);
+        if (currentSessionId) {
+          persistPart(currentSessionId, { type: 'text-delta', content: delta, timestamp: Date.now() });
+        }
+      }
+    }
+
     // Accumulate tool calls and sub-agents
     if (evType === 'tool_executing') {
+      flushTextBuffer();
       const toolName = ((event as any).tool as string) ?? 'unknown';
       const description = ((event as any).description as string) ?? '';
       const eventArgs = ((event as any).args as Record<string, unknown> | undefined) ?? description;
@@ -324,6 +438,11 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
       } else {
         const id = (event as any).callId as string || (event as any).toolCallId as string || (event as any).id as string || `tool-${Date.now()}-${toolCallMap.size}`;
         toolCallMap.set(id, { id, name: toolName, args: eventArgs, status: 'running' });
+        accumulatedParts.push({
+          type: 'tool',
+          id,
+          tool: { id, name: toolName, args: eventArgs, status: 'running' },
+        });
         // Persist part to SQLite immediately
         persistPart(currentSessionId, { type: 'tool-call', toolName, toolCallId: id, toolArgs: typeof eventArgs === 'object' ? eventArgs as Record<string, unknown> : undefined, timestamp: Date.now() });
       }
@@ -349,6 +468,19 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
           tc.result = resultStr;
           tc.elapsed = elapsed;
           if (metadata) tc.metadata = metadata as ToolCallRecord['metadata'];
+          const partIdx = accumulatedParts.findIndex((p) => p.type === 'tool' && p.tool?.id === id);
+          if (partIdx >= 0 && accumulatedParts[partIdx]?.tool) {
+            accumulatedParts[partIdx] = {
+              ...accumulatedParts[partIdx]!,
+              tool: {
+                ...accumulatedParts[partIdx]!.tool!,
+                status: 'done',
+                result: resultStr,
+                elapsed,
+                metadata: metadata as ToolCallRecord['metadata'],
+              },
+            };
+          }
         }
       }
 
@@ -407,8 +539,9 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
 
       // Persist assistant messages with ALL accumulated rich metadata
       if (evType === 'message_received') {
+        flushTextBuffer();
         const msg: any = (event as any).message;
-        const text = (msg?.content as string) || (event as any).content as string || '';
+        const text = repairStreamTextGlitches(stripToolNoise((msg?.content as string) || (event as any).content as string || ''));
         const crew = msg?.crew as CrewInfo | undefined;
         if (sessionId && text) {
           const thinkingText = accumulatedThinking || undefined;
@@ -433,6 +566,13 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
         if (sessionId && tool) {
           const snippet = result.length > 500 ? result.slice(0, 500) + '...' : result;
           appendContextFile(sessionId, 'system', `[tool] ${tool} completed (${elapsed}ms)\n${snippet}`);
+        }
+      }
+
+      if (evType === 'compaction_complete') {
+        const summary = (event as any).summary as string | undefined;
+        if (sessionId && summary?.trim()) {
+          appendContextFile(sessionId, 'system', `[COMPACTION SUMMARY — ${new Date().toISOString()}]\n${summary.trim()}`);
         }
       }
     } catch {

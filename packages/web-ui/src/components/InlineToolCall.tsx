@@ -12,6 +12,7 @@ export interface InlineToolData {
   result?: string;
   status: 'running' | 'done' | 'error';
   elapsed?: number;
+  metadata?: Record<string, unknown>;
 }
 
 function getColor(status: string): string {
@@ -19,6 +20,8 @@ function getColor(status: string): string {
   if (status === 'error') return colors.accent.purple;
   return colors.accent.green;
 }
+
+const EDIT_TOOLS = new Set(['file_write', 'file_patch', 'code_replace', 'code_insert']);
 
 function getToolRenderer(tool: InlineToolData): ((props: { tool: InlineToolData }) => JSX.Element) | null {
   const SHELL_TOOLS = new Set(['shell_exec', 'shell_exec_streaming', 'shell_background']);
@@ -38,7 +41,12 @@ function getToolRenderer(tool: InlineToolData): ((props: { tool: InlineToolData 
 }
 
 export function InlineToolCall({ tool }: { tool: InlineToolData }) {
-  const [expanded, setExpanded] = useState(false);
+  const isEditTool = EDIT_TOOLS.has(tool.name);
+  const hasDiff = !!(tool.metadata?.diff || (tool.result && tool.result.includes('---') && tool.result.includes('+++')));
+  const [expanded, setExpanded] = useState(isEditTool && hasDiff);
+  useEffect(() => {
+    if (isEditTool && hasDiff) setExpanded(true);
+  }, [isEditTool, hasDiff, tool.metadata?.diff, tool.result]);
   const cc = getColor(tool.status);
   const display = getToolDisplay(tool.name, tool.args);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -124,11 +132,11 @@ export function InlineToolCall({ tool }: { tool: InlineToolData }) {
         )}
       </Box>
 
-      {expanded && tool.status !== 'running' && SpecializedRender && (
+      {expanded && SpecializedRender && (
         <SpecializedRender tool={tool} />
       )}
 
-      {expanded && tool.status !== 'running' && !SpecializedRender && (
+      {expanded && !SpecializedRender && (
         <DefaultDetailsPanel tool={tool} cc={cc} />
       )}
     </Box>

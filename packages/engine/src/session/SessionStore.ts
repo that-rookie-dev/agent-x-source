@@ -3,7 +3,9 @@ import { dirname, join } from 'node:path';
 import { createRequire } from 'module';
 import { getDbPath } from '../config/paths.js';
 import { getLogger } from '@agentx/shared';
-import type { SessionEvent, Crew, CrewCreateInput } from '@agentx/shared';
+import type { SessionEvent, Crew, CrewCreateInput, CrewEmotion } from '@agentx/shared';
+import { normalizeSessionUpdates } from './session-field-utils.js';
+import { estimateTokensFromMessages } from './session-token-utils.js';
 
 // Try to load better-sqlite3, but don't crash if native bindings are missing.
 let BetterSqlite3: any = null;
@@ -15,7 +17,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 15;
+const CURRENT_SCHEMA_VERSION = 18;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
@@ -388,6 +390,58 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
       try { db.exec(`ALTER TABLE messages ADD COLUMN parts TEXT`); } catch { /* column may already exist */ }
     },
   },
+  {
+    version: 16,
+    description: 'Add task_snapshots table for TaskExecutor state persistence',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS task_snapshots (
+          id              TEXT PRIMARY KEY,
+          session_id      TEXT NOT NULL,
+          task_id         TEXT NOT NULL,
+          step_index      INTEGER NOT NULL,
+          goal            TEXT NOT NULL,
+          plan_state      TEXT NOT NULL,
+          failure_history TEXT NOT NULL DEFAULT '[]',
+          created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (session_id) REFERENCES sessions(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_snapshots_session ON task_snapshots(session_id);
+      `);
+    },
+  },
+  {
+    version: 17,
+    description: 'Add child_sessions index table and parent_id index',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS child_sessions (
+          id                TEXT PRIMARY KEY,
+          parent_session_id TEXT NOT NULL,
+          kind              TEXT NOT NULL DEFAULT 'sub_agent',
+          label             TEXT,
+          status            TEXT NOT NULL DEFAULT 'active',
+          created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (id) REFERENCES sessions(id) ON DELETE CASCADE,
+          FOREIGN KEY (parent_session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_child_sessions_parent ON child_sessions(parent_session_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id);
+        INSERT OR IGNORE INTO child_sessions (id, parent_session_id, kind, label, status, created_at, updated_at)
+        SELECT id, parent_id, 'sub_agent', title, status, created_at, updated_at
+        FROM sessions WHERE parent_id IS NOT NULL;
+      `);
+    },
+  },
+  {
+    version: 18,
+    description: 'Add compaction_count to sessions for list KPIs',
+    run: (db: any) => {
+      try { db.exec(`ALTER TABLE sessions ADD COLUMN compaction_count INTEGER NOT NULL DEFAULT 0`); } catch { /* column may already exist */ }
+      try { db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at DESC)`); } catch { /* best-effort */ }
+    },
+  },
 ];
 
 export class SessionStore {
@@ -404,6 +458,7 @@ export class SessionStore {
   private memPermissionRules: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCrewFeedback: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCheckpoints: Map<string, Array<Record<string, unknown>>> = new Map();
+  private memTaskSnapshots: Map<string, Record<string, unknown>> = new Map();
   private memPersona: Record<string, unknown> | null = null;
   private sessionsDir: string | null = null;
   private filesystemRecovered = 0;
@@ -420,6 +475,18 @@ export class SessionStore {
       try {
         this.db = new BetterSqlite3(path);
         this.db.pragma('journal_mode = WAL');
+        // Busy timeout: wait up to 5s before throwing SQLITE_BUSY
+        this.db.pragma('busy_timeout = 5000');
+        // Synchronous NORMAL: safe with WAL, avoids fsync on every transaction
+        this.db.pragma('synchronous = NORMAL');
+        // Cache size: 64MB page cache for faster queries
+        this.db.pragma('cache_size = -64000');
+        // mmap size: memory-map up to 30GB for zero-copy reads
+        this.db.pragma('mmap_size = 30000000000');
+        // WAL file size cap: auto-truncate checkpointed WAL to 64MB
+        this.db.pragma('journal_size_limit = 67108864');
+        // Temp store: keep temporary tables/indexes in memory, not disk
+        this.db.pragma('temp_store = MEMORY');
         this.db.pragma('foreign_keys = ON');
         this.initialize();
       } catch (e) {
@@ -439,6 +506,8 @@ export class SessionStore {
     this.db.exec(SCHEMA_SQL);
 
     // Schema versioning: get current version and run pending migrations
+    // Each migration runs inside an exclusive transaction so failure rolls back
+    // the partial migration rather than leaving the schema in an inconsistent state.
     try {
       const row = this.db.prepare('SELECT COALESCE(MAX(version), 0) as v FROM _schema').get() as { v: number } | undefined;
       const currentVersion = row?.v ?? 0;
@@ -447,18 +516,27 @@ export class SessionStore {
         getLogger().info('SCHEMA', `DB schema at version ${currentVersion}, target ${CURRENT_SCHEMA_VERSION}. Running migrations...`);
         for (const m of MIGRATIONS) {
           if (m.version > currentVersion && m.version <= CURRENT_SCHEMA_VERSION) {
-            try {
+            // Wrap each migration in a transaction — if it fails, roll back and halt
+            const migrate = this.db.transaction(() => {
               m.run(this.db);
               this.db.prepare('INSERT INTO _schema (version) VALUES (?)').run(m.version);
+            });
+            try {
+              migrate();
               getLogger().info('SCHEMA', `Migration v${m.version} applied: ${m.description}`);
             } catch (e) {
-              getLogger().warn('SCHEMA', `Migration v${m.version} failed (non-fatal): ${e instanceof Error ? e.message : e}`);
+              getLogger().error('SCHEMA', `Migration v${m.version} FAILED: ${e instanceof Error ? e.message : e}`, { description: m.description });
+              getLogger().error('SCHEMA', 'Halting startup due to migration failure. Fix the issue and restart.');
+              throw e; // Re-throw to halt initialization
             }
           }
         }
         getLogger().info('SCHEMA', `Schema updated to v${CURRENT_SCHEMA_VERSION}`);
       }
     } catch (e) {
+      if (e instanceof Error && e.message.includes('Migration')) {
+        throw e; // Re-throw migration failures
+      }
       getLogger().warn('SCHEMA', `Schema version check failed (non-fatal): ${e instanceof Error ? e.message : e}`);
     }
   }
@@ -699,6 +777,8 @@ export class SessionStore {
       model: row['model_id'],
       parentId: row['parent_id'] ?? null,
       tokensUsed: row['token_used'],
+      tokenAvailable: row['token_available'] ?? 128_000,
+      compactionCount: row['compaction_count'] ?? 0,
       scopePath: row['scope_path'],
       mode: row['mode'] ?? 'plan',
       hyperdrive: !!row['hyperdrive'],
@@ -708,10 +788,11 @@ export class SessionStore {
   }
 
   updateSession(sessionId: string, updates: Record<string, unknown>): void {
+    const normalized = normalizeSessionUpdates(updates);
     if (this.memMode) {
       const s = this.memSessions.get(sessionId);
       if (!s) return;
-      for (const [k, v] of Object.entries(updates)) {
+      for (const [k, v] of Object.entries(normalized)) {
         if (k === 'updatedAt') s.updatedAt = v as string;
         else s[k] = v as unknown;
       }
@@ -730,14 +811,16 @@ export class SessionStore {
       mode: 'mode',
       hyperdrive: 'hyperdrive',
       tokensUsed: 'token_used',
+      tokenAvailable: 'token_available',
+      compactionCount: 'compaction_count',
       scopePath: 'scope_path',
       updatedAt: 'updated_at',
     };
 
     for (const [key, col] of Object.entries(columnMap)) {
-      if (key in updates) {
+      if (key in normalized) {
         fields.push(`${col} = ?`);
-        values.push(updates[key]);
+        values.push(normalized[key]);
       }
     }
 
@@ -749,20 +832,97 @@ export class SessionStore {
   }
 
   listSessions(limit = 20): Array<Record<string, unknown>> {
+    return this.listSessionsInternal(limit, false);
+  }
+
+  listRootSessions(limit = 20): Array<Record<string, unknown>> {
+    return this.listSessionsInternal(limit, true);
+  }
+
+  private listSessionsInternal(limit: number, rootsOnly: boolean): Array<Record<string, unknown>> {
     if (this.memMode) {
-      const all = Array.from(this.memSessions.values());
-      // sort by updatedAt desc if present
+      const all = Array.from(this.memSessions.values()).filter((s: any) =>
+        !rootsOnly || !s.parentId,
+      );
       all.sort((a: any, b: any) => {
-        const ta = a.updatedAt ?? '';
-        const tb = b.updatedAt ?? '';
+        const ta = a.createdAt ?? '';
+        const tb = b.createdAt ?? '';
         return tb.localeCompare(ta);
       });
       return all.slice(0, limit) as Array<Record<string, unknown>>;
     }
 
-    const stmt = this.db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?');
+    const stmt = rootsOnly
+      ? this.db.prepare('SELECT * FROM sessions WHERE parent_id IS NULL ORDER BY created_at DESC LIMIT ?')
+      : this.db.prepare('SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?');
     const rows = stmt.all(limit) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({
+    return rows.map((row) => this.sessionRowToRecord(row));
+  }
+
+  listChildSessions(parentSessionId: string): Array<Record<string, unknown>> {
+    if (this.memMode) {
+      return Array.from(this.memSessions.values())
+        .filter((s: any) => s.parentId === parentSessionId)
+        .map((s: any) => ({
+          id: s.id,
+          title: s.title,
+          parentId: s.parentId,
+          status: s.status,
+          createdAt: s.createdAt,
+          updatedAt: s.updatedAt,
+        }));
+    }
+    if (!this.db) return [];
+    try {
+      const stmt = this.db.prepare(`
+        SELECT s.id, s.title, s.status, s.parent_id, s.created_at, s.updated_at,
+               c.kind, c.label
+        FROM child_sessions c
+        JOIN sessions s ON s.id = c.id
+        WHERE c.parent_session_id = ?
+        ORDER BY c.created_at ASC
+      `);
+      return (stmt.all(parentSessionId) as Array<Record<string, unknown>>).map((row) => ({
+        id: row['id'],
+        title: row['label'] || row['title'],
+        status: row['status'],
+        parentId: row['parent_id'],
+        kind: row['kind'],
+        label: row['label'],
+        createdAt: row['created_at'],
+        updatedAt: row['updated_at'],
+      }));
+    } catch {
+      const stmt = this.db.prepare('SELECT * FROM sessions WHERE parent_id = ? ORDER BY created_at ASC');
+      return (stmt.all(parentSessionId) as Array<Record<string, unknown>>).map((row) => this.sessionRowToRecord(row));
+    }
+  }
+
+  registerChildSession(entry: {
+    id: string;
+    parentSessionId: string;
+    kind: string;
+    label?: string;
+    status?: string;
+  }): void {
+    if (this.memMode) return;
+    if (!this.db) return;
+    try {
+      this.db.prepare(`
+        INSERT OR REPLACE INTO child_sessions (id, parent_session_id, kind, label, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      `).run(
+        entry.id,
+        entry.parentSessionId,
+        entry.kind,
+        entry.label ?? null,
+        entry.status ?? 'active',
+      );
+    } catch { /* best-effort */ }
+  }
+
+  private sessionRowToRecord(row: Record<string, unknown>): Record<string, unknown> {
+    return {
       id: row['id'],
       title: row['title'],
       status: row['status'],
@@ -770,12 +930,14 @@ export class SessionStore {
       model: row['model_id'],
       parentId: row['parent_id'] ?? null,
       tokensUsed: row['token_used'],
+      tokenAvailable: row['token_available'] ?? 128_000,
+      compactionCount: row['compaction_count'] ?? 0,
       scopePath: row['scope_path'],
       mode: row['mode'] ?? 'plan',
       hyperdrive: !!row['hyperdrive'],
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
-    }));
+    };
   }
 
   addMessage(message: {
@@ -967,6 +1129,69 @@ export class SessionStore {
     return row?.count ?? 0;
   }
 
+  getSessionListKpis(sessionId: string, base?: Record<string, unknown>): Record<string, unknown> {
+    const messageCount = this.getMessageCount(sessionId);
+    let childSessionCount = 0;
+    let crewCallsigns: string[] = [];
+    let totalCostUsd = 0;
+    let compactionCount = Number(base?.['compactionCount'] ?? base?.['compaction_count'] ?? 0);
+
+    try {
+      childSessionCount = this.listChildSessions(sessionId).length;
+    } catch { /* best-effort */ }
+
+    try {
+      const states = this.getCrewStates(sessionId);
+      crewCallsigns = states
+        .filter((s) => s['enabled'] !== 0 && s['enabled'] !== false)
+        .map((s) => String(s['crew_id'] ?? s['crewId'] ?? ''))
+        .filter(Boolean);
+    } catch { /* best-effort */ }
+
+    let tokenLogs: Array<Record<string, unknown>> = [];
+    try {
+      tokenLogs = this.getTokenLogs(sessionId);
+      totalCostUsd = tokenLogs.reduce((sum, l) => sum + (Number(l['cost_usd'] ?? l['costUsd']) || 0), 0);
+    } catch { /* best-effort */ }
+
+    if (compactionCount === 0) {
+      try {
+        const msgs = this.getMessages(sessionId);
+        compactionCount = msgs.filter((m) => String(m['content'] ?? '').includes('[COMPACTION SUMMARY')).length;
+      } catch { /* best-effort */ }
+    }
+
+    let tokensUsed = Number(base?.['tokensUsed'] ?? base?.['tokenUsed'] ?? 0);
+    const tokenAvailable = Number(base?.['tokenAvailable'] ?? base?.['token_available'] ?? 128_000);
+
+    if (tokensUsed === 0) {
+      const logSum = tokenLogs.reduce(
+        (sum, l) => sum + (Number(l['input_tokens'] ?? l['inputTokens']) || 0) + (Number(l['output_tokens'] ?? l['outputTokens']) || 0),
+        0,
+      );
+      if (logSum > 0) {
+        tokensUsed = logSum;
+      } else {
+        try {
+          const msgs = this.getMessages(sessionId);
+          tokensUsed = estimateTokensFromMessages(msgs as Array<{ role?: string; content?: string; tokenCount?: number }>).total;
+        } catch { /* best-effort */ }
+      }
+    }
+
+    return {
+      messageCount,
+      childSessionCount,
+      crewCount: crewCallsigns.length,
+      crewCallsigns,
+      totalCostUsd: Math.round(totalCostUsd * 10000) / 10000,
+      compactionCount,
+      tokensUsed,
+      tokenAvailable,
+      tokenUsagePct: tokenAvailable > 0 ? Math.min(100, Math.round((tokensUsed / tokenAvailable) * 100)) : 0,
+    };
+  }
+
   createCheckpoint(sessionId: string, label: string): { id: string } | null {
     const msgs = this.getMessages(sessionId);
     if (!msgs || msgs.length === 0) return null;
@@ -1051,6 +1276,66 @@ export class SessionStore {
 
     const result = this.db.prepare('DELETE FROM checkpoints WHERE id = ? AND session_id = ?').run(checkpointId, sessionId);
     return result.changes > 0;
+  }
+
+  saveTaskSnapshot(snapshot: {
+    sessionId: string;
+    taskId: string;
+    stepIndex: number;
+    goal: string;
+    planState: string;
+    failureHistory: string;
+  }): void {
+    const id = crypto.randomUUID();
+
+    if (this.memMode) {
+      const existing = Array.from(this.memTaskSnapshots.entries())
+        .filter(([_, v]) => v.session_id === snapshot.sessionId)
+        .sort((a, b) => (b[1].created_at as string).localeCompare(a[1].created_at as string));
+      // Keep only the most recent per session
+      for (const [k] of existing.slice(1)) this.memTaskSnapshots.delete(k);
+      this.memTaskSnapshots.set(id, {
+        id,
+        session_id: snapshot.sessionId,
+        task_id: snapshot.taskId,
+        step_index: snapshot.stepIndex,
+        goal: snapshot.goal,
+        plan_state: snapshot.planState,
+        failure_history: snapshot.failureHistory,
+        created_at: new Date().toISOString(),
+      });
+      return;
+    }
+
+    // Replace any existing snapshot for this session (keep only the latest)
+    this.db.prepare('DELETE FROM task_snapshots WHERE session_id = ?').run(snapshot.sessionId);
+    this.db.prepare(`
+      INSERT INTO task_snapshots (id, session_id, task_id, step_index, goal, plan_state, failure_history, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(id, snapshot.sessionId, snapshot.taskId, snapshot.stepIndex, snapshot.goal, snapshot.planState, snapshot.failureHistory);
+  }
+
+  getTaskSnapshot(sessionId: string): Record<string, unknown> | null {
+    if (this.memMode) {
+      const entries = Array.from(this.memTaskSnapshots.entries())
+        .filter(([_, v]) => v.session_id === sessionId)
+        .sort((a, b) => (b[1].created_at as string).localeCompare(a[1].created_at as string));
+      const first = entries[0];
+      return first ? { ...first[1] } : null;
+    }
+
+    const row = this.db.prepare('SELECT * FROM task_snapshots WHERE session_id = ? ORDER BY created_at DESC LIMIT 1').get(sessionId) as Record<string, unknown> | undefined;
+    return row ?? null;
+  }
+
+  deleteTaskSnapshot(sessionId: string): void {
+    if (this.memMode) {
+      const keys = Array.from(this.memTaskSnapshots.keys())
+        .filter(k => this.memTaskSnapshots.get(k)?.session_id === sessionId);
+      for (const k of keys) this.memTaskSnapshots.delete(k);
+      return;
+    }
+    this.db.prepare('DELETE FROM task_snapshots WHERE session_id = ?').run(sessionId);
   }
 
   addTokenLog(log: {
@@ -1483,7 +1768,7 @@ export class SessionStore {
       callsign: metadata.callsign ?? (row['id'] as string),
       systemPrompt: row['system_prompt'] as string ?? metadata.systemPrompt ?? '',
       description: row['description'] as string || metadata.description || '',
-      emotion: metadata.emotion,
+      emotion: metadata.emotion ?? (metadata as { tone?: CrewEmotion }).tone,
       isDefault: !!(row['is_default'] ?? metadata.isDefault),
       enabled: metadata.enabled ?? true,
       expertise: metadata.expertise ?? (row['expertise'] ? (row['expertise'] as string).split(',') : undefined),

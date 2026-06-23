@@ -203,7 +203,8 @@ export class PromptEngine {
 
   /**
    * Compact conversation history when approaching token limit.
-   * Returns a summary message to prepend, and the truncated recent messages.
+   * Uses structured compression: groups messages by topic cluster,
+   * keeps key decisions/files/facts, and produces a structured summary.
    */
   compactConversation(
     messages: CompletionMessage[],
@@ -218,23 +219,112 @@ export class PromptEngine {
       return { messages };
     }
 
-    // Keep system message and last 6 messages, summarize the rest
     const systemMessages = messages.filter((m) => m.role === 'system');
     const nonSystem = messages.filter((m) => m.role !== 'system');
 
-    if (nonSystem.length <= 6) {
-      return { messages }; // Too short to compact
+    if (nonSystem.length <= 8) {
+      return { messages };
     }
 
-    const recent = nonSystem.slice(-6);
-    const older = nonSystem.slice(0, -6);
+    // Keep last 8 messages for immediate context
+    const recent = nonSystem.slice(-8);
+    const older = nonSystem.slice(0, -8);
 
-    const olderText = older.map((m) => `${m.role}: ${m.content}`).join('\n');
-    const summary = `[CONVERSATION_SUMMARY]\n${olderText.slice(0, 2000)}\n... (earlier messages summarized)\n[/CONVERSATION_SUMMARY]`;
+    // Structured summary extraction: group by topic signals
+    const clusters: Array<{ topic: string; facts: string[]; decisions: string[]; files: string[] }> = [];
+    let currentCluster: { topic: string; facts: string[]; decisions: string[]; files: string[] } | null = null;
+
+    for (const msg of older) {
+      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      if (!content.trim()) continue;
+
+      // Detect topic transitions (code blocks, file paths, decision keywords)
+      const topicSignals = content.match(/### .+|## .+|^# .+|^(Project|Architecture|Design|Implementation|Task|Goal|Plan):/m);
+      const mentionedFiles = content.match(/[\w./-]+\.(?:ts|js|tsx|jsx|py|rs|go|json|md|css|scss|html|vue|svelte)\b/g);
+      const hasDecision = /^(approved|rejected|decided|chosen|selected|going with|will use)/im.test(content.trim()) ||
+        /(?:we|I|let's)\s+(?:use|pick|choose|go with|implement|adopt)/i.test(content);
+
+      if (topicSignals || !currentCluster) {
+        if (currentCluster) clusters.push(currentCluster);
+        currentCluster = {
+          topic: topicSignals ? topicSignals[1] || content.slice(0, 60) : content.slice(0, 60),
+          facts: [],
+          decisions: [],
+          files: [],
+        };
+      }
+
+      if (hasDecision) {
+        const decisionText = content.match(/(?:we|I|let's)\s+(?:use|pick|choose|go with|implement|adopt)[^.]*\./i);
+        if (decisionText && currentCluster) currentCluster.decisions.push(decisionText[0]);
+      }
+
+      if (mentionedFiles && currentCluster) {
+        for (const f of mentionedFiles) {
+          if (!currentCluster.files.includes(f)) currentCluster.files.push(f);
+        }
+      }
+
+      if (currentCluster) {
+        const keyInfo = this.extractKeyFacts(content);
+        currentCluster.facts.push(...keyInfo);
+      }
+    }
+
+    if (currentCluster) clusters.push(currentCluster);
+
+    // Build structured summary
+    const summaryParts: string[] = ['[CONVERSATION_SUMMARY]'];
+    for (const cluster of clusters) {
+      const uniqueFacts = [...new Set(cluster.facts)].slice(0, 5);
+      const uniqueDecisions = [...new Set(cluster.decisions)].slice(0, 3);
+      const uniqueFiles = [...new Set(cluster.files)].slice(0, 10);
+
+      if (uniqueFacts.length === 0 && uniqueDecisions.length === 0 && uniqueFiles.length === 0) continue;
+
+      summaryParts.push(`\n## ${cluster.topic.slice(0, 80)}`);
+      if (uniqueFacts.length > 0) {
+        summaryParts.push(`Facts: ${uniqueFacts.join('; ')}`);
+      }
+      if (uniqueDecisions.length > 0) {
+        summaryParts.push(`Decisions: ${uniqueDecisions.join('; ')}`);
+      }
+      if (uniqueFiles.length > 0) {
+        summaryParts.push(`Files: ${uniqueFiles.join(', ')}`);
+      }
+    }
+    summaryParts.push('[/CONVERSATION_SUMMARY]');
+
+    const summary = summaryParts.join('\n');
 
     return {
       summary,
       messages: [...systemMessages, { role: 'system' as const, content: summary }, ...recent],
     };
+  }
+
+  /**
+   * Extract key facts from a message using lightweight heuristics.
+   */
+  private extractKeyFacts(content: string): string[] {
+    const facts: string[] = [];
+
+    // Extract file creation/modification facts
+    const fileOps = content.match(/(?:created|modified|wrote|updated|added|generated|deleted|renamed)\s+["']?([\w./-]+)["']?/gi);
+    if (fileOps) facts.push(...fileOps.slice(0, 5));
+
+    // Extract dependency/import decisions
+    const deps = content.match(/(?:installed|added|using|imported)\s+(?:package|module|library|dependency)\s+["']?([\w@/-]+)["']?/gi);
+    if (deps) facts.push(...deps.slice(0, 3));
+
+    // Extract version/path/URL facts
+    const urls = content.match(/https?:\/\/[^\s,)]+/g);
+    if (urls) facts.push(`Referenced: ${urls.slice(0, 3).join(', ')}`);
+
+    // Extract errors encountered
+    const errors = content.match(/(?:Error|Failed|Exception|Timeout|Crash):\s*[^\n]{10,100}/g);
+    if (errors) facts.push(...errors.slice(0, 3).map(e => `Error: ${e.slice(0, 80)}`));
+
+    return facts.map(f => f.trim()).filter(f => f.length > 5);
   }
 }

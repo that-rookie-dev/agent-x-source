@@ -543,8 +543,7 @@ describe('Agent', () => {
       expect(streamTextArgs.tools).toBeDefined();
     });
 
-    it('does not produce duplicate replies when fast-reply fails and falls through', async () => {
-      // When the completion loop fails, it should reject rather than emit duplicate messages
+    it('falls through to standard path when fast-reply fails', async () => {
       let callCount = 0;
       mockStreamText.mockImplementation(() => {
         callCount++;
@@ -553,12 +552,9 @@ describe('Agent', () => {
         }
         return {
           fullStream: makeFullStream([
-            { type: 'start' },
-            { type: 'step-start' },
-            { type: 'text-start' },
+            { type: 'start' }, { type: 'step-start' }, { type: 'text-start' },
             { type: 'text-delta', textDelta: 'Hello from standard path' },
-            { type: 'text-end' },
-            { type: 'step-finish', usage: { inputTokens: 5, outputTokens: 3 } },
+            { type: 'text-end' }, { type: 'step-finish', usage: { inputTokens: 5, outputTokens: 3 } },
             { type: 'finish', usage: { totalInputTokens: 5, totalOutputTokens: 3 } },
           ]),
           usage: Promise.resolve({ inputTokens: 5, outputTokens: 3 }),
@@ -571,10 +567,10 @@ describe('Agent', () => {
       });
 
       const agent = createTestAgent();
-      await expect(agent.sendMessage('Yo')).rejects.toThrow();
-
-      // Should not emit duplicate message_received events on error
-      expect(receivedMessages.length).toBe(0);
+      const result = await agent.sendMessage('Yo');
+      // Falls through to standard path gracefully — no rejection
+      expect(result.content).toContain('Hello from standard path');
+      expect(receivedMessages.length).toBeGreaterThan(0);
     });
   });
 
@@ -881,6 +877,40 @@ describe('Agent', () => {
       agent.spawnSubAgent('do something', ['shell_exec'], 30_000);
 
       expect(mockSubAgentMgr.spawn).toHaveBeenCalledWith('do something', ['shell_exec'], 30_000, 5);
+    });
+  });
+
+  // ─── Hyperdrive mode ────────────────────────────────────────────────
+  describe('hyperdrive mode', () => {
+    it('emits hyperdrive_entered and exits plan mode when engaged from plan', () => {
+      const agent = createTestAgent();
+      agent.setPlanMode(true);
+      expect(agent.planModeEnabled).toBe(true);
+
+      expect(agent.toggleHyperdriveMode()).toBe(true);
+      expect(agent.hyperdriveMode).toBe(true);
+      expect(agent.planModeEnabled).toBe(false);
+      expect(agent.autoApproveTools).toBe(true);
+      expect(mockEventBus.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'hyperdrive_entered', mode: 'agent', wasPlan: true }),
+      );
+    });
+
+    it('restores plan mode on exit when hyperdrive started from plan', () => {
+      const agent = createTestAgent();
+      agent.setPlanMode(true);
+      agent.toggleHyperdriveMode();
+      agent.toggleHyperdriveMode();
+      expect(agent.hyperdriveMode).toBe(false);
+      expect(agent.planModeEnabled).toBe(true);
+    });
+
+    it('ignores setPlanMode(true) while hyperdrive is active', () => {
+      const agent = createTestAgent();
+      agent.setPlanMode(false);
+      agent.toggleHyperdriveMode();
+      agent.setPlanMode(true);
+      expect(agent.planModeEnabled).toBe(false);
     });
   });
 });

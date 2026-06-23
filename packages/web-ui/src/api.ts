@@ -110,6 +110,7 @@ export const config = {
 };
 
 // ─── Health ───
+
 export const health = {
   check: () => request<HealthStatus>('/health'),
 };
@@ -129,7 +130,11 @@ export const providers = {
 
 // ─── Models ───
 export const models = {
-  switch: (modelId: string) => request<{ ok: boolean }>('/model/switch', { method: 'POST', body: JSON.stringify({ modelId }) }),
+  switch: (modelId: string, opts?: { contextWindow?: number; providerId?: string }) =>
+    request<{ ok: boolean }>('/model/switch', {
+      method: 'POST',
+      body: JSON.stringify({ modelId, contextWindow: opts?.contextWindow, providerId: opts?.providerId }),
+    }),
   current: () => request<{ model: string; provider: string; providerId?: string; activeProfile?: string }>('/models'),
 };
 
@@ -144,16 +149,118 @@ export const crews = {
 };
 
 // ─── Chat ───
+async function postChatAsync(path: string, body: Record<string, unknown>) {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  const response = await fetch(`${BASE}${path}`, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
+  if (response.status === 401) { onUnauthorized?.(); throw new Error('Unauthorized'); }
+  const data = await response.json().catch(() => ({})) as { ok?: boolean; message?: ChatMessage; turnId?: string; async?: boolean; error?: string; clarification?: boolean };
+  if (!response.ok && response.status !== 202) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+
 export const chat = {
-  send: (text: string, attachments?: { name: string; content: string }[], retry?: boolean) => request<{ ok: boolean; message: ChatMessage }>('/chat/message', { method: 'POST', body: JSON.stringify({ text, attachments, retry }) }),
+  send: (text: string, attachments?: { name: string; content: string }[], retry?: boolean) =>
+    postChatAsync('/chat/message', { text, attachments, retry }),
+
+  getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
+  
+  // NEW: Streaming version with real-time progress events
+  sendStream: async (
+    text: string,
+    onProgress: (event: { type: string; data: unknown }) => void,
+    attachments?: { name: string; content: string }[],
+    retry?: boolean
+  ): Promise<{ ok: boolean; message?: ChatMessage; clarification?: boolean; error?: string }> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+
+    try {
+      const response = await fetch(`${BASE}/chat/message-stream`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ text, attachments, retry }),
+      });
+
+      if (response.status === 401) {
+        onUnauthorized?.();
+        throw new Error('Unauthorized');
+      }
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error((error as any).error || `HTTP ${response.status}`);
+      }
+
+      // Handle Server-Sent Events
+      if (!response.body) throw new Error('No response body');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        let currentEvent = { id: '', event: '', data: '' };
+
+        for (const line of lines) {
+          if (line.startsWith('id: ')) {
+            currentEvent.id = line.slice(4);
+          } else if (line.startsWith('event: ')) {
+            currentEvent.event = line.slice(7);
+          } else if (line.startsWith('data: ')) {
+            currentEvent.data = line.slice(6);
+          } else if (line === '' && currentEvent.event) {
+            // Parse event
+            try {
+              const data = currentEvent.data ? JSON.parse(currentEvent.data) : null;
+              onProgress({ type: currentEvent.event, data });
+
+              // Handle completion events
+              if (currentEvent.event === 'complete') {
+                return { ok: true, message: data?.message };
+              } else if (currentEvent.event === 'clarification') {
+                return { ok: true, clarification: true };
+              } else if (currentEvent.event === 'error') {
+                return { ok: false, error: data?.error };
+              }
+            } catch (e) {
+              // Ignore parse errors
+            }
+            currentEvent = { id: '', event: '', data: '' };
+          } else if (line.startsWith(':')) {
+            // Heartbeat comment, ignore
+          }
+        }
+      }
+
+      return { ok: false, error: 'Stream ended unexpectedly' };
+    } catch (error) {
+      throw error;
+    }
+  },
+  
   cancel: () => request<{ ok: boolean }>('/chat/cancel', { method: 'POST' }),
   history: () => request<ChatMessage[]>('/chat/history'),
   clear: () => request<{ ok: boolean }>('/chat/clear', { method: 'POST' }),
   queue: (text: string, attachments?: { name: string; content: string }[]) => request<{ ok: boolean; queueLength: number }>('/chat/queue', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
   getQueue: () => request<{ queue: Array<{ text: string }>; length: number }>('/chat/queue'),
   clearQueue: () => request<{ ok: boolean }>('/chat/queue', { method: 'DELETE' }),
-  steer: (text: string, attachments?: { name: string; content: string }[]) => request<{ ok: boolean; message: ChatMessage }>('/chat/steer', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
-  stopAndSend: (text: string, attachments?: { name: string; content: string }[]) => request<{ ok: boolean; message: ChatMessage }>('/chat/stop-and-send', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
+  steer: (text: string, attachments?: { name: string; content: string }[]) =>
+    postChatAsync('/chat/steer', { text, attachments }),
+  stopAndSend: (text: string, attachments?: { name: string; content: string }[]) =>
+    postChatAsync('/chat/stop-and-send', { text, attachments }),
 };
 
 // ─── Sessions ───
@@ -174,6 +281,8 @@ export interface DbStatus {
 export const sessions = {
   dbStatus: () => request<DbStatus>('/sessions/db-status'),
   list: () => request<SessionInfo[]>('/sessions'),
+  children: (parentId: string) => request<{ children: ChildSessionInfo[] }>(`/sessions/${parentId}/children`).then((r) => r.children ?? []),
+  preview: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[] }>(`/sessions/${id}/preview`),
   create: (scopePath?: string) => request<{ sessionId: string }>('/sessions', { method: 'POST', body: scopePath ? JSON.stringify({ scopePath }) : undefined }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
@@ -480,6 +589,7 @@ export interface Crew {
   enabled?: boolean;
   expertise?: string[];
   traits?: string[];
+  tools?: string[];
   color?: string;
   icon?: string;
 }
@@ -493,6 +603,7 @@ export interface CrewInput {
   tone?: string;
   expertise?: string[];
   traits?: string[];
+  tools?: string[];
   color?: string;
   icon?: string;
 }
@@ -523,10 +634,30 @@ export interface SessionInfo {
   messageCount: number;
   status?: string;
   tokensUsed: number;
+  tokenAvailable?: number;
+  tokenUsagePct?: number;
+  compactionCount?: number;
+  childSessionCount?: number;
+  crewCount?: number;
+  crewCallsigns?: string[];
+  totalCostUsd?: number;
+  hyperdrive?: boolean;
   createdAt: string;
+  updatedAt?: string;
   title?: string;
   scopePath?: string;
   parentId?: string;
+}
+
+export interface ChildSessionInfo {
+  id: string;
+  title?: string;
+  label?: string;
+  kind?: 'sub_agent' | 'crew_worker' | string;
+  status?: string;
+  parentId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SessionContext {
@@ -640,14 +771,60 @@ export interface TodoItem {
 export interface HealthStatus {
   status: string;
   version: string;
+  pid?: number;
+  node?: string;
+  platform?: string;
   uptime: number;
   sessionCount: number;
   crewCount: number;
+  sessions?: number;
+  crews?: number;
   agentActive: boolean;
   telegramConnected: boolean;
   telegramBot?: string | null;
-  memory: { rss: number; heapUsed: number };
+  memory: { rss: number; heapUsed: number; heapTotal?: number; external?: number };
   config?: { provider?: string; model?: string; user?: string };
+  gateway?: {
+    focus?: string | null;
+    channels?: string[];
+  } | null;
+  agentHealth?: {
+    sessionId: string;
+    uptimeMs: number;
+    llmCalls: number;
+    toolExecs: number;
+    errors: number;
+    avgResponseMs: number;
+    totalCost: number;
+    budgetLimit: number;
+    budgetPct: number;
+    circuitBreakers: number;
+    model: string;
+    provider: string;
+    activeSubAgents: number;
+    contextTokens: number;
+    contextWindow: number;
+    compactionCount: number;
+    planMode: boolean;
+    hyperdriveMode: boolean;
+    neuralConfidenceAvg: number;
+    costHistory?: Array<{ ts: number; cost: number; errors: number }>;
+  } | null;
+}
+
+export interface AutonomyStatus {
+  available: boolean;
+  health?: HealthStatus['agentHealth'];
+  circuitBreakers?: Array<{ tool: string; failures: number; blacklisted: boolean; remainingMs: number }>;
+  neural?: { proven: string; caution: string; growth: string };
+  memoryDriven?: string;
+  escalation?: {
+    activeCheckpoints: number;
+    checkpointDetails: Array<{ description: string; checkpointId: string }>;
+  };
+  offlineFallback?: { available: boolean; provider: string; model: string };
+  dbMode?: string;
+  compaction?: { count: number; contextTokens: number; contextWindow: number; tokenUsagePct: number };
 }
 
 export interface TelemetryEvent {
@@ -770,6 +947,18 @@ export interface AgentVitals {
 
 export const agent = {
   vitals: () => request<AgentVitals>('/agent/vitals'),
+  autonomyStatus: () => request<AutonomyStatus>('/agent/autonomy-status'),
+  resetCircuitBreaker: (tool?: string) =>
+    request<{ ok: boolean }>('/agent/circuit-breaker/reset', { method: 'POST', body: JSON.stringify(tool ? { tool } : {}) }),
+  respondToPlan: (approved: boolean) =>
+    request<{ ok: boolean }>('/plan/respond', { method: 'POST', body: JSON.stringify({ approved }) }),
+  respondToClarification: (response: string) =>
+    request<{ ok: boolean }>('/clarification/respond', { method: 'POST', body: JSON.stringify({ response }) }),
+  respondToModeEscalation: (accepted: boolean) =>
+    request<{ ok: boolean }>('/agent/mode-escalation', { method: 'POST', body: JSON.stringify({ accepted }) }),
+  respondToStepCap: (continueRun: boolean) =>
+    request<{ ok: boolean }>('/agent/step-cap/respond', { method: 'POST', body: JSON.stringify({ continueRun }) }),
+  getTurnState: () => request<{ phase: string; stage?: string; step?: number }>('/agent/turn-state'),
 };
 
 // ─── Factory Reset ───

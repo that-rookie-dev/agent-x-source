@@ -20,6 +20,7 @@ export class DockerSandbox implements Sandbox {
   private nextPid = 1000;
   private workDir: string;
   private tempDirs: Set<string> = new Set();
+  private projectDir: string | null = null;
 
   constructor(baseImage = 'node:20-slim') {
     this.baseImage = baseImage;
@@ -28,6 +29,13 @@ export class DockerSandbox implements Sandbox {
       mkdirSync(this.workDir, { recursive: true });
     }
     this.available = this.checkDocker();
+  }
+
+  /** Set a project directory to bind-mount instead of using isolated temp dirs */
+  setProjectDir(dir: string): void {
+    if (existsSync(dir)) {
+      this.projectDir = dir;
+    }
   }
 
   async exec(command: string, options?: SandboxOptions): Promise<SandboxResult> {
@@ -191,7 +199,15 @@ export class DockerSandbox implements Sandbox {
   }
 
   private buildVolumeMounts(workDir: string): string[] {
-    return ['-v', `${workDir}:/workspace`];
+    const mounts: string[] = [];
+    if (this.projectDir) {
+      // Bind-mount project directory for persistent file access
+      mounts.push('-v', `${this.projectDir}:/workspace`);
+    } else {
+      // Isolated temp dir for sandboxed execution
+      mounts.push('-v', `${workDir}:/workspace`);
+    }
+    return mounts;
   }
 
   private sandboxPath(path: string): string {

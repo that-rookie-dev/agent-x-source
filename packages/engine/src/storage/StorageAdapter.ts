@@ -71,6 +71,7 @@ export class DefaultStorageAdapter implements StorageAdapter {
       hyperdrive: row['hyperdrive'] as boolean | undefined,
       tokenUsed: (row['tokensUsed'] as number) ?? 0,
       tokenAvailable: (row['tokenAvailable'] as number) ?? 128_000,
+      compactionCount: (row['compactionCount'] as number) ?? 0,
       createdAt: row['createdAt'] as string,
       updatedAt: row['updatedAt'] as string,
     };
@@ -86,7 +87,50 @@ export class DefaultStorageAdapter implements StorageAdapter {
 
   listSessions(limit?: number): StorableSession[] {
     const rows = this.store.listSessions(limit);
-    return rows.map((row) => ({
+    return rows.map((row) => this.mapSessionRow(row));
+  }
+
+  listRootSessions(limit?: number): StorableSession[] {
+    const listFn = (this.store as { listRootSessions?: (n?: number) => Array<Record<string, unknown>> }).listRootSessions;
+    const rows = listFn ? listFn.call(this.store, limit) : this.store.listSessions(limit).filter((r) => !r['parentId']);
+    return rows.map((row) => this.mapSessionRow(row));
+  }
+
+  listChildSessions(parentSessionId: string): StorableSession[] {
+    const listFn = (this.store as { listChildSessions?: (id: string) => Array<Record<string, unknown>> }).listChildSessions;
+    const rows = listFn ? listFn.call(this.store, parentSessionId) : this.store.listSessions(9999).filter((r) => r['parentId'] === parentSessionId);
+    return rows.map((row) => this.mapSessionRow(row));
+  }
+
+  registerChildSession(entry: {
+    id: string;
+    parentSessionId: string;
+    kind: string;
+    label?: string;
+    status?: string;
+  }): void {
+    const registerFn = (this.store as { registerChildSession?: (e: typeof entry) => void }).registerChildSession;
+    if (registerFn) registerFn.call(this.store, entry);
+  }
+
+  getSessionListKpis(sessionId: string, base?: Record<string, unknown>): Record<string, unknown> {
+    const kpisFn = (this.store as { getSessionListKpis?: (id: string, b?: Record<string, unknown>) => Record<string, unknown> }).getSessionListKpis;
+    if (kpisFn) return kpisFn.call(this.store, sessionId, base);
+    return {
+      messageCount: this.getMessageCount(sessionId),
+      childSessionCount: this.listChildSessions(sessionId).length,
+      crewCount: 0,
+      crewCallsigns: [],
+      totalCostUsd: 0,
+      compactionCount: Number(base?.['compactionCount'] ?? 0),
+      tokensUsed: Number(base?.['tokensUsed'] ?? base?.['tokenUsed'] ?? 0),
+      tokenAvailable: Number(base?.['tokenAvailable'] ?? 128_000),
+      tokenUsagePct: 0,
+    };
+  }
+
+  private mapSessionRow(row: Record<string, unknown>): StorableSession {
+    return {
       id: row['id'] as string,
       title: row['title'] as string,
       status: row['status'] as string,
@@ -98,9 +142,10 @@ export class DefaultStorageAdapter implements StorageAdapter {
       hyperdrive: row['hyperdrive'] as boolean | undefined,
       tokenUsed: (row['tokensUsed'] as number) ?? 0,
       tokenAvailable: (row['tokenAvailable'] as number) ?? 128_000,
+      compactionCount: (row['compactionCount'] as number) ?? 0,
       createdAt: row['createdAt'] as string,
       updatedAt: row['updatedAt'] as string,
-    }));
+    };
   }
 
   addMessage(_sessionId: string, message: Omit<StorableMessage, 'id' | 'createdAt'>): StorableMessage {
@@ -138,6 +183,28 @@ export class DefaultStorageAdapter implements StorageAdapter {
 
   getMessageCount(sessionId: string): number {
     return this.store.getMessageCount(sessionId);
+  }
+
+  saveTaskSnapshot(snapshot: {
+    sessionId: string;
+    taskId: string;
+    stepIndex: number;
+    goal: string;
+    planState: string;
+    failureHistory: string;
+  }): void {
+    const fn = (this.store as { saveTaskSnapshot?: (s: typeof snapshot) => void }).saveTaskSnapshot;
+    if (fn) fn.call(this.store, snapshot);
+  }
+
+  getTaskSnapshot(sessionId: string): Record<string, unknown> | null {
+    const fn = (this.store as { getTaskSnapshot?: (id: string) => Record<string, unknown> | null }).getTaskSnapshot;
+    return fn ? fn.call(this.store, sessionId) : null;
+  }
+
+  deleteTaskSnapshot(sessionId: string): void {
+    const fn = (this.store as { deleteTaskSnapshot?: (id: string) => void }).deleteTaskSnapshot;
+    if (fn) fn.call(this.store, sessionId);
   }
 
   addTokenLog(sessionId: string, log: Omit<StorableTokenLog, 'id' | 'createdAt'>): void {

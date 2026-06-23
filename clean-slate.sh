@@ -32,10 +32,12 @@ node -e "
   const { Pool } = require('pg');
   const pool = new Pool({ connectionString: 'postgresql://admin:admin@localhost:5432/agentx' });
   pool.query(\`
+    DROP TABLE IF EXISTS _schema CASCADE;
     DROP TABLE IF EXISTS agent_persona CASCADE;
     DROP TABLE IF EXISTS crew_feedback CASCADE;
     DROP TABLE IF EXISTS session_crew_states CASCADE;
     DROP TABLE IF EXISTS agent_tasks CASCADE;
+    DROP TABLE IF EXISTS task_snapshots CASCADE;
     DROP TABLE IF EXISTS permission_rules CASCADE;
     DROP TABLE IF EXISTS session_events CASCADE;
     DROP TABLE IF EXISTS tool_executions CASCADE;
@@ -44,10 +46,24 @@ node -e "
     DROP TABLE IF EXISTS token_logs CASCADE;
     DROP TABLE IF EXISTS message_parts CASCADE;
     DROP TABLE IF EXISTS messages CASCADE;
+    DROP TABLE IF EXISTS tool_registry CASCADE;
+    DROP TABLE IF EXISTS commands CASCADE;
     DROP TABLE IF EXISTS crews CASCADE;
     DROP TABLE IF EXISTS sessions CASCADE;
+    DROP TABLE IF EXISTS agent_experiences CASCADE;
+    DROP TABLE IF EXISTS agent_growth_state CASCADE;
+    DROP TABLE IF EXISTS agent_emotions CASCADE;
+    DROP TABLE IF EXISTS agent_memories CASCADE;
+    DROP TABLE IF EXISTS agent_diary CASCADE;
+    DROP TABLE IF EXISTS agent_identity CASCADE;
   \`).then(() => { console.log('PG tables cleared'); process.exit(0); }).catch(e => { console.error('PG clear failed:', e.message); process.exit(1); });
 " || true
+
+# 3c. Clear neural SQLite database
+echo ">>> Clearing neural SQLite database..."
+rm -f "$HOME/.config/agentx/neural.db" 2>/dev/null || true
+rm -f "$HOME/.config/agentx/neural.db-wal" 2>/dev/null || true
+rm -f "$HOME/.config/agentx/neural.db-shm" 2>/dev/null || true
 
 # 4. Clean previous release artifacts
 echo ">>> Cleaning previous desktop build artifacts..."

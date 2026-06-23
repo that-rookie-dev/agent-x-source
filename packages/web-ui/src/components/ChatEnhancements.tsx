@@ -94,16 +94,15 @@ function formatAgo(ms: number): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. ScrollToBottomPill — appears when user scrolls up; pulses on new content
+// 2. ScrollToBottomPill — grey circle, bottom-right; shows when scrolled up
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function ScrollToBottomPill({
   visible,
-  unread,
   onClick,
 }: {
   visible: boolean;
-  unread: number;
+  unread?: number;
   onClick: () => void;
 }) {
   if (!visible) return null;
@@ -112,27 +111,24 @@ export function ScrollToBottomPill({
       onClick={onClick}
       sx={{
         position: 'absolute',
-        bottom: 12,
-        left: '50%',
-        transform: 'translateX(-50%)',
+        bottom: 16,
+        right: 16,
         zIndex: 10,
+        width: 32,
+        height: 32,
+        borderRadius: '50%',
         bgcolor: colors.bg.tertiary,
-        border: `1px solid ${colors.accent.blue}50`,
-        borderRadius: 12,
-        px: 1.25, py: 0.5,
+        border: `1px solid ${colors.border.default}`,
         display: 'flex',
         alignItems: 'center',
-        gap: 0.5,
+        justifyContent: 'center',
         cursor: 'pointer',
-        boxShadow: `0 4px 12px ${colors.accent.blue}30`,
-        animation: 'agentx-fadeIn 0.2s ease-out',
-        '&:hover': { bgcolor: colors.bg.secondary, borderColor: colors.accent.blue },
+        boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+        animation: 'agentx-fadeIn 0.15s ease-out',
+        '&:hover': { bgcolor: colors.bg.secondary, borderColor: colors.border.strong },
       }}
     >
-      <KeyboardArrowDownIcon sx={{ fontSize: 14, color: colors.accent.blue }} />
-      <Typography sx={{ fontSize: '0.6rem', color: colors.accent.blue, fontWeight: 500 }}>
-        {unread > 0 ? `${unread} new` : 'Jump to bottom'}
-      </Typography>
+      <KeyboardArrowDownIcon sx={{ fontSize: 18, color: colors.text.secondary }} />
     </Box>
   );
 }

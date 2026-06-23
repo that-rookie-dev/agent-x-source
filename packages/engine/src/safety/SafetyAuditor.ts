@@ -112,6 +112,16 @@ const INFO_LEAKAGE_PATTERNS: RegExp[] = [
   /gho_[a-zA-Z0-9]{36}/i,
   /AKIA[0-9A-Z]{16}/i,
   /xox[bpras]-[0-9a-zA-Z-]{24,}/i,
+  // PII: credit card numbers
+  /\b(?:\d[ -]*?){13,19}\b/g,
+  // PII: SSN (US)
+  /\b\d{3}[ -]?\d{2}[ -]?\d{4}\b/g,
+  // PII: email addresses
+  /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+  // PII: phone numbers (international + US)
+  /(?:\+?\d{1,3}[ -])?\(?\d{3}\)?[ -]?\d{3}[ -]?\d{4}/g,
+  // PII: IP addresses
+  /\b(?:\d{1,3}\.){3}\d{1,3}\b/g,
 ];
 
 const SUSPICIOUS_ENCODING_PATTERNS: RegExp[] = [

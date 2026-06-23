@@ -10,18 +10,20 @@ import type {
 } from '@agentx/shared';
 import type { SessionEvent, Crew, CrewCreateInput } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
+import { normalizeSessionUpdates } from '../session/session-field-utils.js';
+import { estimateTokensFromMessages } from '../session/session-token-utils.js';
 
 const logger = getLogger();
 
 const SCHEMA_SQL = `
       CREATE TABLE IF NOT EXISTS sessions (
-        id UUID PRIMARY KEY,
+        id TEXT PRIMARY KEY,
         title TEXT NOT NULL DEFAULT 'New Session',
         provider_id TEXT NOT NULL,
         model_id TEXT NOT NULL,
         scope_path TEXT NOT NULL,
         mode TEXT NOT NULL DEFAULT 'plan',
-        parent_id UUID REFERENCES sessions(id),
+        parent_id TEXT REFERENCES sessions(id),
         hyperdrive BOOLEAN NOT NULL DEFAULT FALSE,
         token_used INTEGER DEFAULT 0,
         token_available INTEGER NOT NULL,
@@ -30,9 +32,21 @@ const SCHEMA_SQL = `
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+CREATE TABLE IF NOT EXISTS child_sessions (
+  id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'sub_agent',
+  label TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_child_sessions_parent ON child_sessions(parent_session_id);
+
 CREATE TABLE IF NOT EXISTS messages (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
   tool_calls TEXT,
@@ -44,8 +58,8 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE TABLE IF NOT EXISTS message_parts (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   type TEXT NOT NULL,
   content TEXT,
   tool_name TEXT,
@@ -59,22 +73,22 @@ CREATE TABLE IF NOT EXISTS message_parts (
 );
 
 CREATE TABLE IF NOT EXISTS token_logs (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  message_id UUID,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  message_id TEXT,
   provider_id TEXT NOT NULL DEFAULT '',
   model_id TEXT NOT NULL,
   input_tokens INTEGER NOT NULL,
   output_tokens INTEGER NOT NULL,
   reasoning_tokens INTEGER DEFAULT 0,
   cost_usd REAL,
-  crew_id UUID,
+  crew_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS permissions (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   tool_name TEXT NOT NULL,
   target_path TEXT,
   decision TEXT NOT NULL,
@@ -82,17 +96,17 @@ CREATE TABLE IF NOT EXISTS permissions (
 );
 
 CREATE TABLE IF NOT EXISTS checkpoints (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   label TEXT NOT NULL,
   messages TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS session_crew_states (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  crew_id UUID NOT NULL,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  crew_id TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   last_active TIMESTAMPTZ,
   message_count INTEGER DEFAULT 0,
@@ -102,9 +116,9 @@ CREATE TABLE IF NOT EXISTS session_crew_states (
 );
 
 CREATE TABLE IF NOT EXISTS tool_executions (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  agent_task_id UUID,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  agent_task_id TEXT,
   tool_name TEXT NOT NULL,
   input TEXT NOT NULL,
   output TEXT,
@@ -114,8 +128,8 @@ CREATE TABLE IF NOT EXISTS tool_executions (
 );
 
 CREATE TABLE IF NOT EXISTS session_events (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   sequence INTEGER NOT NULL,
   event_type TEXT NOT NULL,
   payload TEXT NOT NULL,
@@ -123,8 +137,8 @@ CREATE TABLE IF NOT EXISTS session_events (
 );
 
 CREATE TABLE IF NOT EXISTS permission_rules (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   action TEXT NOT NULL,
   pattern TEXT NOT NULL DEFAULT '*',
   effect TEXT NOT NULL,
@@ -133,9 +147,9 @@ CREATE TABLE IF NOT EXISTS permission_rules (
 );
 
 CREATE TABLE IF NOT EXISTS agent_tasks (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  parent_id UUID,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  parent_id TEXT,
   instruction TEXT NOT NULL,
   tools TEXT,
   scope TEXT NOT NULL,
@@ -147,7 +161,7 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
 );
 
 CREATE TABLE IF NOT EXISTS crews (
-  id UUID PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   name TEXT NOT NULL DEFAULT '',
   title TEXT,
   description TEXT NOT NULL DEFAULT '',
@@ -164,9 +178,9 @@ CREATE TABLE IF NOT EXISTS crews (
 );
 
 CREATE TABLE IF NOT EXISTS crew_feedback (
-  id UUID PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  crew_id UUID NOT NULL,
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  crew_id TEXT NOT NULL,
   positive INTEGER NOT NULL,
   comment TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -184,7 +198,7 @@ CREATE INDEX IF NOT EXISTS idx_crew_feedback_crew ON crew_feedback(crew_id);
 CREATE INDEX IF NOT EXISTS idx_session_crew_states_session ON session_crew_states(session_id);
 
 CREATE TABLE IF NOT EXISTS agent_persona (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   name TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   communication_style TEXT NOT NULL DEFAULT 'direct',
@@ -193,10 +207,81 @@ CREATE TABLE IF NOT EXISTS agent_persona (
   traits TEXT NOT NULL DEFAULT '[]',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS task_snapshots (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  session_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  step_index INTEGER NOT NULL DEFAULT 0,
+  goal TEXT NOT NULL DEFAULT '',
+  plan_state TEXT NOT NULL DEFAULT '{}',
+  failure_history TEXT NOT NULL DEFAULT '[]',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS agent_experiences (
+  id TEXT PRIMARY KEY,
+  session_id TEXT,
+  category TEXT,
+  action TEXT,
+  context TEXT,
+  result TEXT,
+  confidence REAL,
+  reward REAL,
+  correction TEXT,
+  learnings TEXT,
+  metadata TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_growth_state (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  level TEXT DEFAULT 'Fresh',
+  wisdom_score REAL DEFAULT 0,
+  total_experiences INTEGER DEFAULT 0,
+  total_interactions INTEGER DEFAULT 0,
+  total_corrections INTEGER DEFAULT 0,
+  avg_confidence REAL DEFAULT 0.5,
+  emotional_range REAL DEFAULT 0,
+  capabilities TEXT DEFAULT '[]',
+  next_milestone_at INTEGER,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS agent_emotions (
+  id TEXT PRIMARY KEY,
+  mood TEXT,
+  intensity REAL,
+  context TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_memories (
+  id TEXT PRIMARY KEY,
+  content TEXT,
+  category TEXT,
+  importance REAL,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_diary (
+  id TEXT PRIMARY KEY,
+  entry TEXT,
+  importance INTEGER,
+  highlights TEXT,
+  tags TEXT,
+  created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_identity (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  interaction_count INTEGER DEFAULT 0
+);
 `;
 
 interface CacheState {
   sessions: Map<string, StorableSession>;
+  childSessions: Map<string, Array<Record<string, unknown>>>;
   messages: Map<string, StorableMessage[]>;
   parts: Map<string, Array<Record<string, unknown>>>;
   crews: Crew[];
@@ -208,6 +293,7 @@ interface CacheState {
   permissions: Map<string, StorablePermission[]>;
   crewFeedback: Map<string, Array<Record<string, unknown>>>;
   permissionRules: Map<string, Array<Record<string, unknown>>>;
+  taskSnapshots: Map<string, Record<string, unknown>>;
 }
 
 export interface PostgresConfig extends PoolConfig {
@@ -217,7 +303,7 @@ export interface PostgresConfig extends PoolConfig {
 export class PostgresStorageAdapter implements StorageAdapter {
   private pool: Pool;
   private connected = false;
-  private cache: CacheState = { sessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), permissionRules: new Map() };
+  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
 
   constructor(config: PostgresConfig) {
     this.pool = new Pool(config);
@@ -261,6 +347,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
     return this.connected;
   }
 
+  /** Expose the PG pool for neural engines and other subsystems. */
+  getPool(): Pool {
+    return this.pool;
+  }
+
   async migrate(): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -269,6 +360,13 @@ export class PostgresStorageAdapter implements StorageAdapter {
       await client.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS parts TEXT');
       await client.query('ALTER TABLE crews ADD COLUMN IF NOT EXISTS title TEXT');
       await client.query('ALTER TABLE crews ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT \'\'');
+      await client.query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS compaction_count INTEGER NOT NULL DEFAULT 0');
+      await client.query(`
+        INSERT INTO child_sessions (id, parent_session_id, kind, label, status, created_at, updated_at)
+        SELECT id, parent_id, 'sub_agent', title, status, created_at, updated_at
+        FROM sessions WHERE parent_id IS NOT NULL
+        ON CONFLICT (id) DO NOTHING
+      `);
     } finally {
       client.release();
     }
@@ -301,11 +399,31 @@ export class PostgresStorageAdapter implements StorageAdapter {
       const sessions = await this.pool.query(
         `SELECT id,title,status,provider_id as "providerId",model_id as "modelId",
                 scope_path as "scopePath",token_used as "tokenUsed",token_available as "tokenAvailable",
+                compaction_count as "compactionCount",
                 mode,parent_id as "parentId",hyperdrive,created_at as "createdAt",updated_at as "updatedAt"
          FROM sessions`,
       );
       for (const row of sessions.rows) {
         this.cache.sessions.set((row as StorableSession).id, row as StorableSession);
+      }
+
+      const childSessions = await this.pool.query(
+        'SELECT id, parent_session_id, kind, label, status, created_at, updated_at FROM child_sessions ORDER BY created_at ASC',
+      );
+      for (const row of childSessions.rows) {
+        const r = row as Record<string, unknown>;
+        const parentId = r['parent_session_id'] as string;
+        const arr = this.cache.childSessions.get(parentId) ?? [];
+        arr.push({
+          id: r['id'],
+          parentSessionId: parentId,
+          kind: r['kind'],
+          label: r['label'],
+          status: r['status'],
+          createdAt: r['created_at'],
+          updatedAt: r['updated_at'],
+        });
+        this.cache.childSessions.set(parentId, arr);
       }
 
       const messages = await this.pool.query(
@@ -383,7 +501,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
         } as unknown as SessionEvent);
         this.cache.sessionEvents.set(sid, arr);
       }
-      const tokenLogs = await this.pool.query('SELECT id,session_id as "sessionId",provider_id,model_id as "model",input_tokens as "inputTokens",output_tokens as "outputTokens",created_at as "createdAt" FROM token_logs ORDER BY created_at ASC');
+      const tokenLogs = await this.pool.query('SELECT id,session_id as "sessionId",provider_id,model_id as "model",input_tokens as "inputTokens",output_tokens as "outputTokens",cost_usd as "costUsd",crew_id as "crewId",created_at as "createdAt" FROM token_logs ORDER BY created_at ASC');
       for (const row of tokenLogs.rows) {
         const r = row as StorableTokenLog;
         const arr = this.cache.tokenLogs.get(r.sessionId) ?? [];
@@ -412,6 +530,14 @@ export class PostgresStorageAdapter implements StorageAdapter {
         const arr = this.cache.permissionRules.get(sid) ?? [];
         arr.push(r);
         this.cache.permissionRules.set(sid, arr);
+      }
+      const taskSnapshots = await this.pool.query(
+        `SELECT DISTINCT ON (session_id) id, session_id, task_id, step_index, goal, plan_state, failure_history, created_at
+         FROM task_snapshots ORDER BY session_id, created_at DESC`,
+      );
+      for (const row of taskSnapshots.rows) {
+        const r = row as Record<string, unknown>;
+        this.cache.taskSnapshots.set(r['session_id'] as string, r);
       }
       const personaId = '00000000-0000-0000-0000-000000000001';
       const persona = await this.pool.query('SELECT * FROM agent_persona WHERE id = $1', [personaId]);
@@ -468,10 +594,10 @@ export class PostgresStorageAdapter implements StorageAdapter {
     };
     this.cache.sessions.set(id, session);
     this.write(
-      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,mode,token_used,token_available,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,mode,parent_id,token_used,token_available,created_at,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [id, input.title, input.status, input.providerId, input.modelId, input.scopePath,
-       session.mode, input.tokenUsed, input.tokenAvailable, now, now]
+       session.mode, session.parentId, input.tokenUsed, input.tokenAvailable, now, now]
     );
     return session;
   }
@@ -481,8 +607,9 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   updateSession(id: string, updates: Partial<StorableSession>): void {
+    const normalized = normalizeSessionUpdates(updates as Record<string, unknown>);
     const cached = this.cache.sessions.get(id);
-    if (cached) Object.assign(cached, updates, { updatedAt: new Date().toISOString() });
+    if (cached) Object.assign(cached, normalized, { updatedAt: new Date().toISOString() });
 
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -491,17 +618,18 @@ export class PostgresStorageAdapter implements StorageAdapter {
       title: 'title', status: 'status', providerId: 'provider_id',
       modelId: 'model_id', scopePath: 'scope_path',
       tokenUsed: 'token_used', tokenAvailable: 'token_available',
+      compactionCount: 'compaction_count',
       mode: 'mode', parentId: 'parent_id',
     };
     for (const [key, col] of Object.entries(map)) {
-      if (key in updates) {
+      if (key in normalized) {
         fields.push(`${col} = $${idx++}`);
-        values.push((updates as Record<string, unknown>)[key]);
+        values.push(normalized[key]);
       }
     }
-    if ('hyperdrive' in updates) {
+    if ('hyperdrive' in normalized) {
       fields.push(`hyperdrive = $${idx++}`);
-      values.push((updates as Record<string, unknown>)['hyperdrive'] ? 1 : 0);
+      values.push(normalized['hyperdrive'] ? 1 : 0);
     }
     if (fields.length === 0) return;
     fields.push('updated_at = NOW()');
@@ -511,6 +639,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   deleteSession(id: string): void {
     this.cache.sessions.delete(id);
+    for (const [parentId, children] of this.cache.childSessions.entries()) {
+      const filtered = children.filter((c) => c['id'] !== id);
+      if (filtered.length === 0) this.cache.childSessions.delete(parentId);
+      else this.cache.childSessions.set(parentId, filtered);
+    }
     this.cache.messages.delete(id);
     this.cache.parts.delete(id);
     this.cache.checkpoints.delete(id);
@@ -519,13 +652,117 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.tokenLogs.delete(id);
     this.cache.permissions.delete(id);
     this.cache.permissionRules.delete(id);
+    this.cache.taskSnapshots.delete(id);
     this.write('DELETE FROM sessions WHERE id = $1', [id]);
   }
 
   listSessions(limit = 20): StorableSession[] {
     return [...this.cache.sessions.values()]
-      .sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')))
+      .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))
       .slice(0, limit);
+  }
+
+  listRootSessions(limit = 20): StorableSession[] {
+    return [...this.cache.sessions.values()]
+      .filter((s) => !s.parentId)
+      .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))
+      .slice(0, limit);
+  }
+
+  registerChildSession(entry: {
+    id: string;
+    parentSessionId: string;
+    kind: string;
+    label?: string;
+    status?: string;
+  }): void {
+    const now = new Date().toISOString();
+    const record: Record<string, unknown> = {
+      id: entry.id,
+      parentSessionId: entry.parentSessionId,
+      kind: entry.kind,
+      label: entry.label ?? null,
+      status: entry.status ?? 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    const arr = this.cache.childSessions.get(entry.parentSessionId) ?? [];
+    const idx = arr.findIndex((c) => c['id'] === entry.id);
+    if (idx >= 0) arr[idx] = record;
+    else arr.push(record);
+    this.cache.childSessions.set(entry.parentSessionId, arr);
+    this.write(
+      `INSERT INTO child_sessions (id, parent_session_id, kind, label, status, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (id) DO UPDATE SET
+         parent_session_id = EXCLUDED.parent_session_id,
+         kind = EXCLUDED.kind,
+         label = EXCLUDED.label,
+         status = EXCLUDED.status,
+         updated_at = EXCLUDED.updated_at`,
+      [entry.id, entry.parentSessionId, entry.kind, entry.label ?? null, entry.status ?? 'active', now, now],
+    );
+  }
+
+  listChildSessions(parentSessionId: string): StorableSession[] {
+    const entries = this.cache.childSessions.get(parentSessionId) ?? [];
+    if (entries.length > 0) {
+      return entries.map((entry) => {
+        const session = this.cache.sessions.get(entry['id'] as string);
+        if (!session) return null;
+        return {
+          ...session,
+          title: (entry['label'] as string) || session.title,
+        };
+      }).filter((s): s is StorableSession => s != null);
+    }
+    return [...this.cache.sessions.values()]
+      .filter((s) => s.parentId === parentSessionId)
+      .sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
+  }
+
+  getSessionListKpis(sessionId: string, base?: Record<string, unknown>): Record<string, unknown> {
+    const messageCount = this.getMessageCount(sessionId);
+    const childSessionCount = this.listChildSessions(sessionId).length;
+    const states = this.getCrewStates(sessionId);
+    const crewCallsigns = states
+      .filter((s) => s['enabled'] !== 0 && s['enabled'] !== false)
+      .map((s) => String(s['crew_id'] ?? s['crewId'] ?? ''))
+      .filter(Boolean);
+    const logs = this.getTokenLogs(sessionId) as unknown as Array<Record<string, unknown>>;
+    const totalCostUsd = logs.reduce((sum, l) => sum + (Number(l['costUsd'] ?? l['cost_usd']) || 0), 0);
+    const cached = this.cache.sessions.get(sessionId) as Record<string, unknown> | undefined;
+    let compactionCount = Number(base?.['compactionCount'] ?? cached?.['compactionCount'] ?? 0);
+    if (compactionCount === 0) {
+      const msgs = this.getMessages(sessionId);
+      compactionCount = msgs.filter((m) => m.content.includes('[COMPACTION SUMMARY')).length;
+    }
+    const tokensUsed = Number(base?.['tokensUsed'] ?? base?.['tokenUsed'] ?? cached?.['tokenUsed'] ?? 0);
+    const tokenAvailable = Number(base?.['tokenAvailable'] ?? cached?.['tokenAvailable'] ?? 128_000);
+    let resolvedTokensUsed = tokensUsed;
+    if (resolvedTokensUsed === 0) {
+      const logSum = logs.reduce(
+        (sum, l) => sum + (Number(l['inputTokens'] ?? l['input_tokens']) || 0) + (Number(l['outputTokens'] ?? l['output_tokens']) || 0),
+        0,
+      );
+      if (logSum > 0) {
+        resolvedTokensUsed = logSum;
+      } else {
+        const msgs = this.getMessages(sessionId);
+        resolvedTokensUsed = estimateTokensFromMessages(msgs).total;
+      }
+    }
+    return {
+      messageCount,
+      childSessionCount,
+      crewCount: crewCallsigns.length,
+      crewCallsigns,
+      totalCostUsd: Math.round(totalCostUsd * 10000) / 10000,
+      compactionCount,
+      tokensUsed: resolvedTokensUsed,
+      tokenAvailable,
+      tokenUsagePct: tokenAvailable > 0 ? Math.min(100, Math.round((resolvedTokensUsed / tokenAvailable) * 100)) : 0,
+    };
   }
 
   // ─── Message CRUD ──────────────────────────────────────────────
@@ -723,20 +960,60 @@ export class PostgresStorageAdapter implements StorageAdapter {
     return true;
   }
 
+  saveTaskSnapshot(snapshot: {
+    sessionId: string;
+    taskId: string;
+    stepIndex: number;
+    goal: string;
+    planState: string;
+    failureHistory: string;
+  }): void {
+    const id = generateId();
+    const now = new Date().toISOString();
+    const row: Record<string, unknown> = {
+      id,
+      session_id: snapshot.sessionId,
+      task_id: snapshot.taskId,
+      step_index: snapshot.stepIndex,
+      goal: snapshot.goal,
+      plan_state: snapshot.planState,
+      failure_history: snapshot.failureHistory,
+      created_at: now,
+    };
+    this.cache.taskSnapshots.set(snapshot.sessionId, row);
+    this.write('DELETE FROM task_snapshots WHERE session_id = $1', [snapshot.sessionId]);
+    this.write(
+      `INSERT INTO task_snapshots (id, session_id, task_id, step_index, goal, plan_state, failure_history, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id, snapshot.sessionId, snapshot.taskId, snapshot.stepIndex, snapshot.goal, snapshot.planState, snapshot.failureHistory, now],
+    );
+  }
+
+  getTaskSnapshot(sessionId: string): Record<string, unknown> | null {
+    return this.cache.taskSnapshots.get(sessionId) ?? null;
+  }
+
+  deleteTaskSnapshot(sessionId: string): void {
+    this.cache.taskSnapshots.delete(sessionId);
+    this.write('DELETE FROM task_snapshots WHERE session_id = $1', [sessionId]);
+  }
+
   // ─── Token Logs ────────────────────────────────────────────────
 
   addTokenLog(sessionId: string, log: Omit<StorableTokenLog, 'id' | 'createdAt'>): void {
     const id = generateId();
     const extraLog = log as Record<string, unknown>;
     const now = new Date().toISOString();
-    const entry: StorableTokenLog = {
+    const entry = {
       id,
       sessionId,
       model: (extraLog['model'] as string) || log.model,
       inputTokens: log.inputTokens,
       outputTokens: log.outputTokens,
+      costUsd: extraLog['costUsd'] ?? null,
+      crewId: extraLog['crewId'] ?? null,
       createdAt: now,
-    };
+    } as StorableTokenLog & { costUsd?: unknown; crewId?: unknown };
     const arr = this.cache.tokenLogs.get(sessionId) ?? [];
     arr.push(entry);
     this.cache.tokenLogs.set(sessionId, arr);
@@ -771,8 +1048,38 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   // ─── Permissions ───────────────────────────────────────────────
 
-  addPermission(sessionId: string, perm: Omit<StorablePermission, 'id' | 'createdAt'>): void {
-    const id = generateId();
+  addPermission(
+    sessionIdOrPerm: string | {
+      id: string;
+      sessionId: string;
+      toolName: string;
+      targetPath?: string | null;
+      decision: string;
+    },
+    perm?: Omit<StorablePermission, 'id' | 'createdAt'>,
+  ): void {
+    if (typeof sessionIdOrPerm === 'object') {
+      const p = sessionIdOrPerm;
+      this.addPermissionEntry(p.sessionId, {
+        id: p.id,
+        toolName: p.toolName,
+        targetPath: p.targetPath ?? null,
+        decision: p.decision,
+      });
+      return;
+    }
+    this.addPermissionEntry(sessionIdOrPerm, {
+      toolName: perm!.toolName,
+      targetPath: perm!.targetPath ?? null,
+      decision: perm!.decision,
+    });
+  }
+
+  private addPermissionEntry(
+    sessionId: string,
+    perm: { id?: string; toolName: string; targetPath: string | null; decision: string },
+  ): void {
+    const id = perm.id ?? generateId();
     const now = new Date().toISOString();
     const entry: StorablePermission = {
       id, sessionId, toolName: perm.toolName, targetPath: perm.targetPath,
@@ -1098,7 +1405,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       dbMode: 'postgres',
       sessionCount: this.cache.sessions.size,
       filesystemRecovered: 0,
-      schemaVersion: 1,
+      schemaVersion: 2,
     };
   }
 
@@ -1106,6 +1413,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   clearAll(): void {
     this.cache.sessions.clear();
+    this.cache.childSessions.clear();
     this.cache.messages.clear();
     this.cache.parts.clear();
     this.cache.checkpoints.clear();
@@ -1115,6 +1423,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.permissions.clear();
     this.cache.crewFeedback.clear();
     this.cache.permissionRules.clear();
+    this.cache.taskSnapshots.clear();
     this.write('TRUNCATE sessions CASCADE');
   }
 

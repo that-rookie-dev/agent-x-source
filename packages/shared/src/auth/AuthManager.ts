@@ -60,11 +60,15 @@ export class AuthManager {
   private authPath: string;
   private sessions: Map<string, AuthSession> = new Map();
   private sessionsPath: string;
+  private revokedPath: string;
+  private revokedTokens: Set<string> = new Set();
 
   constructor() {
     this.authPath = getAuthPath();
     this.sessionsPath = join(getAuthDir(), 'sessions.json');
+    this.revokedPath = join(getAuthDir(), 'revoked-tokens.json');
     this.loadSessions();
+    this.loadRevokedTokens();
   }
 
   private loadSessions(): void {
@@ -225,6 +229,12 @@ export class AuthManager {
    * Validate a session token and return the session (with DEK).
    */
   validateSession(token: string): AuthSession | null {
+    // Check global token blacklist first (fast reject)
+    if (this.revokedTokens.has(token)) {
+      this.sessions.delete(token);
+      return null;
+    }
+
     const session = this.sessions.get(token);
     if (!session) return null;
 
@@ -244,14 +254,38 @@ export class AuthManager {
    * Purge all sessions — clear in-memory sessions and delete sessions file.
    * Used during factory reset.
    */
+  private loadRevokedTokens(): void {
+    try {
+      if (existsSync(this.revokedPath)) {
+        const raw = JSON.parse(readFileSync(this.revokedPath, 'utf-8')) as string[];
+        for (const token of raw) {
+          this.revokedTokens.add(token);
+        }
+      }
+    } catch { /* revoked tokens file missing or corrupted — start fresh */ }
+  }
+
+  private saveRevokedTokens(): void {
+    try {
+      const tmpPath = this.revokedPath + '.tmp.' + Date.now();
+      writeFileSync(tmpPath, JSON.stringify(Array.from(this.revokedTokens)), 'utf-8');
+      writeFileSync(this.revokedPath, JSON.stringify(Array.from(this.revokedTokens)), 'utf-8');
+      try { unlinkSync(tmpPath); } catch { /* ignore */ }
+    } catch { /* best effort */ }
+  }
+
   purgeSessions(): void {
     for (const [, session] of this.sessions) {
       session.dek.fill(0);
     }
     this.sessions.clear();
+    this.revokedTokens.clear();
     try {
       if (existsSync(this.sessionsPath)) {
         writeFileSync(this.sessionsPath, '[]', 'utf-8');
+      }
+      if (existsSync(this.revokedPath)) {
+        writeFileSync(this.revokedPath, '[]', 'utf-8');
       }
     } catch { /* best effort */ }
   }
@@ -266,6 +300,9 @@ export class AuthManager {
       this.sessions.delete(token);
       this.saveSessions();
     }
+    // Add to persistent blacklist so even if sessions.json is restored, token is rejected
+    this.revokedTokens.add(token);
+    this.saveRevokedTokens();
   }
 
   /**

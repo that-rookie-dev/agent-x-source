@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, PermissionRule } from '@agentx/shared';
-import { generateMessageId, CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
+import { generateMessageId, CREW_DOMAIN_KEYWORDS, appendStreamText, extractStreamTextDelta } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import type { AgentEventBus } from '../EventBus.js';
 import { countInputTokens, estimateOutputTokens } from '../session/tokenCount.js';
@@ -11,7 +11,9 @@ import { streamText, stepCountIs, tool, jsonSchema } from 'ai';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
 import { FiberSet } from '../concurrency/FiberSet.js';
 import type { SessionManager } from '../session/SessionManager.js';
-import { DecisionEngine } from './DecisionEngine.js';
+import { resolveCrewToolIds } from './crew-tools.js';
+import { autoComposeCrewMembers, assessCrewNeed } from './crew-auto-compose.js';
+import { CHAT_MARKDOWN_PROMPT } from '../secret-sauce/prompt-assembly/sections.js';
 
 const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
 
@@ -205,7 +207,8 @@ export class CrewOrchestrator {
     member: CrewMember,
     userMessage: string,
     _mainSystemPrompt: string,
-    contextText?: string
+    contextText?: string,
+    planMode = false,
   ): Promise<{ content: string; elapsed: number }> {
     const roleLines: string[] = [
       `[CREW_IDENTITY]`,
@@ -235,6 +238,7 @@ export class CrewOrchestrator {
 
     const sections: string[] = [
       roleLines.join('\n'),
+      CHAT_MARKDOWN_PROMPT,
     ];
 
     const crewHistory = this.buildCrewContext(member, userMessage);
@@ -247,7 +251,7 @@ export class CrewOrchestrator {
 
     if (this.toolRegistry && this.toolExecutor && this.config) {
       try {
-        return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit);
+        return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit, planMode);
       } catch (err) {
         // Fall through to legacy path on error
       }
@@ -298,19 +302,17 @@ export class CrewOrchestrator {
     systemPrompt: string,
     startTime: number,
     emit: (e: EngineEvent) => void,
+    planMode = false,
   ): Promise<{ content: string; elapsed: number }> {
-    const CREW_READ_TOOLS = new Set(['file_read', 'folder_list', 'file_find', 'code_search', 'code_grep', 'code_references']);
     const { ToolRegistry: TR } = await import('../tools/ToolRegistry.js');
     const filteredRegistry = new TR();
-
-    const allowedTools = member.crew.tools;
+    const allowedToolIds = resolveCrewToolIds(member.crew, planMode);
     const enabledPrefs = member.crew.toolPreferences?.enabled;
     const disabledPrefs = member.crew.toolPreferences?.disabled;
 
-    for (const toolId of CREW_READ_TOOLS) {
+    for (const toolId of allowedToolIds) {
       const def = this.toolRegistry!.get(toolId);
       if (!def) continue;
-      if (allowedTools && !allowedTools.includes(toolId)) continue;
       if (enabledPrefs && !enabledPrefs.includes(toolId)) continue;
       if (disabledPrefs && disabledPrefs.includes(toolId)) continue;
       filteredRegistry.register(def);
@@ -341,6 +343,7 @@ export class CrewOrchestrator {
       emit,
       () => Promise.resolve('Clarification not available in crew mode.'),
       () => Promise.resolve({ success: false as const, output: 'Sub-agents not supported in crew mode.', elapsed: 0 }),
+      planMode,
     );
 
     const interCrewTool = tool<Record<string, unknown>, string>({
@@ -424,15 +427,16 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
       ],
       tools: allTools,
       temperature: 0,
-      stopWhen: stepCountIs(5),
+      stopWhen: stepCountIs(20),
+      toolChoice: 'auto',
     });
 
     let content = '';
     for await (const chunk of result.fullStream) {
       switch (chunk.type) {
         case 'text-delta': {
-          const delta = (chunk as any).textDelta || (chunk as any).text || '';
-          content += delta;
+          const delta = extractStreamTextDelta(chunk as Record<string, unknown>);
+          content = appendStreamText(content, delta);
           emit({ type: 'stream_chunk', content: delta, fullContent: content });
           break;
         }
@@ -821,7 +825,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     return responses;
   }
 
-  async interCrewMessage(fromId: string, toId: string, message: string, mainSystemPrompt: string): Promise<string> {
+  async interCrewMessage(fromId: string, toId: string, message: string, mainSystemPrompt: string, planMode = false): Promise<string> {
     const from = this.members.find(m => m.crew.id === fromId);
     const to = this.members.find(m => m.crew.id === toId);
     if (!from || !to) return '[Member not found]';
@@ -841,7 +845,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     const systemPrompt = `${mainSystemPrompt}\n\n[CREW MEMBER: ${to.crew.name}]\n${to.crew.systemPrompt}\n\n[CONVERSATION CONTEXT]\n${context}\n\n[NOTE: ${from.crew.name} is asking you a question. Respond directly.]`;
 
     try {
-      const { content } = await this.callCrew(to, `[From ${from.crew.name}]: ${message}`, systemPrompt);
+      const { content } = await this.callCrew(to, `[From ${from.crew.name}]: ${message}`, systemPrompt, undefined, planMode);
 
       this.conversation.push({
         id: generateMessageId(),
@@ -855,6 +859,14 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     } catch (err) {
       return `[Error: ${err instanceof Error ? err.message : 'failed'}]`;
     }
+  }
+
+  async synthesizeMissionResponses(
+    userMessage: string,
+    responses: Array<{ member: string; content: string }>,
+    mainSystemPrompt: string,
+  ): Promise<string> {
+    return this.synthesize(userMessage, responses, mainSystemPrompt);
   }
 
   private async synthesize(
@@ -905,7 +917,13 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
    */
   async matchCrew(userMessage: string, enabledMembers: CrewMember[]): Promise<{ member: CrewMember | null; confidence: 'high' | 'medium' | 'low'; reasons: string[] }> {
     if (enabledMembers.length === 0) return { member: null, confidence: 'low', reasons: ['No crew members available'] };
-    if (enabledMembers.length === 1) return { member: enabledMembers[0]!, confidence: 'high', reasons: ['Only available crew member'] };
+    if (enabledMembers.length === 1) {
+      const assessment = assessCrewNeed(userMessage, enabledMembers);
+      if (!assessment.shouldRoute) {
+        return { member: null, confidence: 'low', reasons: ['Only crew member lacks domain fit for this request'] };
+      }
+      return { member: enabledMembers[0]!, confidence: 'high', reasons: assessment.reasons };
+    }
 
     const crewList = enabledMembers.map((m) => {
       const exp = (m.expertise && m.expertise.length > 0) ? m.expertise.join(', ') : 'general';
@@ -913,19 +931,15 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
       return `- ${m.crew.name} (@${m.crew.callsign}): ${exp}${traits ? ` | traits: ${traits}` : ''}`;
     }).join('\n');
 
-    const prompt = `Match this user request to the best crew member. Only match if the request CLEARLY fits their expertise.
-If the match is weak or the query is vague (like "how can I..." or "what do you think about..."), respond with "none".
-Respond with THREE lines: callsign (or "none"), then confidence (high/medium/low), then a brief reason for the match.
+    const prompt = `Match this user request to the best crew specialist when their domain expertise would clearly help.
+Prefer a specialist over a general assistant when the task fits their skills.
+If the request is pure social chat (greetings, thanks) or truly generic with no specialist fit, respond with "none".
+Respond with THREE lines: callsign (or "none"), then confidence (high/medium/low), then a brief reason.
 
-User: "${userMessage.slice(0, 300)}"
+User: "${userMessage.slice(0, 400)}"
 
 Crews:
-${crewList}
-
-Example output:
-sam_wilson
-high
-The user is asking about code review which matches Sam's expertise in code quality and review.`;
+${crewList}`;
 
     try {
       const completion = this.provider.complete({
@@ -986,42 +1000,6 @@ The user is asking about code review which matches Sam's expertise in code quali
   }
 
   autoCompose(task: string, availableMembers: CrewMember[]): CrewMember[] {
-    const engine = new DecisionEngine();
-    const suggestion = engine.suggestCrewComposition(task);
-    const composed: CrewMember[] = [];
-    for (const { role } of suggestion) {
-      const best = this.findBestMatchForRole(role, availableMembers);
-      if (best) composed.push(best);
-    }
-    if (composed.length === 0) {
-      const first = availableMembers[0];
-      if (first && this.findBestMatchForRole(task, [first])) {
-        composed.push(first);
-      }
-    }
-    return composed;
-  }
-
-  private findBestMatchForRole(role: string, members: CrewMember[]): CrewMember | null {
-    const lower = role.toLowerCase();
-    let best: CrewMember | null = null;
-    let bestScore = 0;
-    for (const member of members) {
-      let score = 0;
-      const name = member.crew.name.toLowerCase();
-      const exp = member.expertise.map(e => e.toLowerCase());
-      const prompt = member.crew.systemPrompt.toLowerCase();
-      if (name.includes(lower) || exp.some(e => e.includes(lower))) score = 10;
-      else if (prompt.includes(lower)) score = 5;
-      const words = lower.split(/\s+/);
-      for (const w of words) {
-        if (w.length > 2) {
-          if (exp.some(e => e.includes(w))) score += 3;
-          else if (prompt.includes(w)) score += 1;
-        }
-      }
-      if (score > bestScore) { bestScore = score; best = member; }
-    }
-    return best;
+    return autoComposeCrewMembers(task, availableMembers);
   }
 }

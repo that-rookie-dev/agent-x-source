@@ -47,6 +47,30 @@ export class TodoManager {
     }
   }
 
+  updateItem(id: number, updates: { title?: string; status?: TodoItem['status'] }): boolean {
+    const item = this.items.find((i) => i.id === id);
+    if (!item) return false;
+    if (updates.title !== undefined) item.title = updates.title;
+    if (updates.status !== undefined) {
+      if (updates.status === 'in-progress') {
+        for (const other of this.items) {
+          if (other.status === 'in-progress' && other.id !== id) other.status = 'not-started';
+        }
+      }
+      item.status = updates.status;
+    }
+    this.emitUpdate();
+    return true;
+  }
+
+  deleteItem(id: number): boolean {
+    const idx = this.items.findIndex((i) => i.id === id);
+    if (idx === -1) return false;
+    this.items.splice(idx, 1);
+    this.emitUpdate();
+    return true;
+  }
+
   getItems(): TodoItem[] {
     return [...this.items];
   }

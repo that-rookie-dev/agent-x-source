@@ -40,3 +40,73 @@ export const toolRiskLevelSchema = z.enum([
   'high',
   'critical',
 ]);
+
+// ─── Config validation schema ────────────────────────────
+
+export const providerProfileSchema = z.object({
+  label: z.string(),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  createdAt: z.string().optional(),
+});
+
+export const providerCredentialsSchema = z.object({
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  configured: z.boolean(),
+  activeProfile: z.string().optional(),
+  profiles: z.record(providerProfileSchema).optional(),
+});
+
+export const ragConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  chunkSize: z.number().positive().optional(),
+  chunkOverlap: z.number().min(0).optional(),
+  topK: z.number().positive().optional(),
+  minScore: z.number().min(0).max(1).optional(),
+}).optional();
+
+export const agentXConfigSchema = z.object({
+  provider: z.object({
+    activeProvider: providerIdSchema,
+    activeModel: z.string(),
+    providers: z.record(providerCredentialsSchema),
+  }),
+  ui: z.object({
+    theme: z.enum(['dark', 'light']),
+    showTokenBar: z.boolean(),
+    showTimers: z.boolean(),
+    animationSpeed: z.enum(['normal', 'fast', 'reduced']),
+    disabledTools: z.array(z.string()).optional(),
+  }),
+  organization: z.object({
+    name: z.string(),
+    contact: z.string().optional(),
+  }).nullable(),
+  telemetry: z.boolean(),
+  timezone: z.string().optional(),
+  user: z.object({
+    callsign: z.string(),
+  }).optional(),
+  setupComplete: z.boolean().optional(),
+  rag: ragConfigSchema,
+  maxSubAgents: z.number().min(1).max(20).optional(),
+  maxSteps: z.number().int().min(1).max(100).optional(),
+  maxRetries: z.number().int().min(0).max(10).optional(),
+  maxOutputTokens: z.number().int().min(256).max(32768).optional(),
+  useSandbox: z.boolean().optional(),
+  permissions: z.record(z.enum(['allow', 'deny', 'ask'])).optional(),
+  agents: z.record(z.object({
+    model: z.string().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    systemPrompt: z.string().optional(),
+    deniedTools: z.array(z.string()).optional(),
+    permissions: z.array(z.object({
+      id: z.string(),
+      action: z.string(),
+      pattern: z.string().optional(),
+      effect: z.string(),
+      comment: z.string().optional(),
+    })).optional(),
+  })).optional(),
+});

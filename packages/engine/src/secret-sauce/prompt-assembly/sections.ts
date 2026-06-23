@@ -24,6 +24,8 @@ export interface SectionContext {
   contextTracker: { getContextSummary(): string; getRecentHistory(): string } | null;
   soulManager: { buildContext(): string };
   personaName: string;
+  experienceEngine: { getProvenContext(): string; getCautionContext(): string } | null;
+  growthEngine: { getGrowthContext(): string } | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -108,12 +110,20 @@ export function createRulesSection(): PromptSection<string> {
     `- Medium (4-8 steps, spanning multiple areas) → spawn 2-3 specialists in parallel.`,
     `- Complex (8+ steps) → decompose, spawn specialists, merge results.`,
     ``,
+    `SCRIPT EXECUTION (pick the lightest option):`,
+    `- Explore codebase → glob/grep/code_grep/file_read (never python_rpc for search).`,
+    `- JS/TS projects (package.json) → script_run (auto) or node_rpc; shell_exec for npm/pnpm scripts.`,
+    `- Python-only libs (pandas, numpy) → python_rpc or script_run with language=python.`,
+    `- One-liner shell → shell_exec (node -e, jq, curl).`,
+    `- Builds/tests → shell_exec or test_run/build tools.`,
+    ``,
     `RESPONSE FORMAT:`,
     `- Be concise unless the task requires depth. Adjust length to the task.`,
     `- Confirmation: "Done: [what]". Error: "Failed: [why] — [fix]".`,
     `- NEVER repeat what the user said. Never summarize your process. Just deliver.`,
     `- Be thorough and complete in your domain output.`,
     `- ONLY elaborate if user asks "explain more" / "go deeper".`,
+    `- For multi-section replies in chat, follow [CHAT_MARKDOWN] formatting rules.`,
     `[/RULES]`,
   ].join('\n');
   return {
@@ -121,6 +131,41 @@ export function createRulesSection(): PromptSection<string> {
     load: () => RULES,
     render: (text) => text,
     diff: () => null, // Never changes
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Chat markdown — user-facing reply formatting (not tool file content)
+// ─────────────────────────────────────────────────────────────
+
+export const CHAT_MARKDOWN_PROMPT = [
+  `[CHAT_MARKDOWN]`,
+  `Applies ONLY to assistant messages shown to the user in chat (Web-UI, TUI, Telegram, Discord, email replies).`,
+  `Use GitHub-Flavored Markdown so the UI can render structured, readable responses:`,
+  `- Section titles: ## or ### headings — never ALL CAPS lines or rows of underscores/dashes as separators.`,
+  `- Lists: - bullets for findings; 1. numbered lists for ordered steps.`,
+  `- Tables: markdown tables for comparisons, metrics, timelines, and multi-column data.`,
+  `- Emphasis: **bold** and *italic* where it aids scanning.`,
+  `- Code: fenced \`\`\` blocks for commands and copyable snippets; inline \`backticks\` for paths, flags, and short identifiers.`,
+  `- Callouts: > blockquotes for warnings, summaries, or key takeaways.`,
+  `- Section breaks: blank lines or --- between major sections.`,
+  ``,
+  `TOOL FILE CONTENT (file_write, file_edit, apply_patch, and similar):`,
+  `- Write the EXACT bytes the destination file requires (.py, .ts, .json, .yaml, etc.).`,
+  `- Do NOT wrap source code or config in markdown formatting.`,
+  `- Use markdown in tool file content ONLY when the target file is markdown (.md, .mdx, README, docs).`,
+  `- Chat markdown rules do NOT apply inside tool arguments unless the file itself is markdown.`,
+  ``,
+  `Short one-line confirmations ("Done: …", "Failed: …") may stay plain text. Use markdown structure when the reply has multiple sections, lists, or data.`,
+  `[/CHAT_MARKDOWN]`,
+].join('\n');
+
+export function createChatMarkdownSection(): PromptSection<string> {
+  return {
+    key: 'core/chat-markdown',
+    load: () => CHAT_MARKDOWN_PROMPT,
+    render: (text) => text,
+    diff: () => null,
   };
 }
 
@@ -355,9 +400,11 @@ export function createMultiCrewSection(ctx: SectionContext): PromptSection<CrewS
         lines.push('');
         lines.push('---');
         lines.push(`**Rules:**`);
-        lines.push(`- Users can @mention one or more crew members. All mentioned crews will respond.`);
-        lines.push(`- If no crew is mentioned, you (${ctx.personaName}) respond as the primary assistant.`);
-        lines.push(`- You can delegate sub-tasks to any crew member using the delegate_to_crew tool.`);
+        lines.push(`- Users can @mention one or more crew members. All mentioned crews will respond directly.`);
+        lines.push(`- If no crew is @mentioned, you (${ctx.personaName}) are the primary assistant — answer the user yourself first.`);
+        lines.push(`- Only delegate to crew when the task clearly requires a specialist's documented expertise that you lack.`);
+        lines.push(`- Do NOT delegate for: general questions, research, comparisons, system/host info, coding, debugging, or tasks you can handle with your tools.`);
+        lines.push(`- Use spawn_crew_workers or delegate_to_crew only after you have reasoned that specialist help is truly needed.`);
         lines.push(`- Crew members respond with their unique personalities, knowledge, and expertise.`);
         lines.push(`- When you delegate, provide clear context about what you want and why you chose that crew.`);
         lines.push(`- All participants share the same conversation history — build on each other's work.`);
@@ -548,6 +595,48 @@ export function createInstructionsSection(scopePath: string): PromptSection<Inst
       return current
         .map(f => `[INSTRUCTION: ${f.path}]\n${f.content}\n[/INSTRUCTION]`)
         .join('\n\n');
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Neural context — ExperienceEngine + GrowthEngine
+// ─────────────────────────────────────────────────────────────
+
+interface NeuralState {
+  proven: string;
+  caution: string;
+  growth: string;
+}
+
+export function createNeuralSection(ctx: SectionContext): PromptSection<NeuralState | null> {
+  return {
+    key: 'core/neural',
+    load: () => {
+      const proven = ctx.experienceEngine?.getProvenContext() ?? '';
+      const caution = ctx.experienceEngine?.getCautionContext() ?? '';
+      const growth = ctx.growthEngine?.getGrowthContext() ?? '';
+      if (!proven && !caution && !growth) return null;
+      return { proven, caution, growth };
+    },
+    render: (state) => {
+      if (!state) return '';
+      const parts: string[] = [];
+      if (state.proven) parts.push(state.proven);
+      if (state.caution) parts.push(state.caution);
+      if (state.growth) parts.push(state.growth);
+      return parts.join('\n');
+    },
+    diff: (prev, current) => {
+      const prevStr = JSON.stringify(prev);
+      const curStr = JSON.stringify(current);
+      if (prevStr === curStr) return null;
+      if (!current) return '';
+      const parts: string[] = [];
+      if (current.proven) parts.push(current.proven);
+      if (current.caution) parts.push(current.caution);
+      if (current.growth) parts.push(current.growth);
+      return parts.join('\n');
     },
   };
 }

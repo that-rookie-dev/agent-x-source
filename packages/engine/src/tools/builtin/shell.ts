@@ -2,6 +2,18 @@ import { execSync, spawn } from 'node:child_process';
 import { resolve, normalize } from 'node:path';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import { IS_WINDOWS, getShellCommand, getProcessListCommand } from '../platform.js';
+import { DockerSandbox } from '../../sandbox/DockerSandbox.js';
+
+let sandboxInstance: DockerSandbox | null = null;
+
+export function setShellSandbox(sandbox: DockerSandbox | null): void {
+  sandboxInstance = sandbox;
+}
+
+/** Check if Docker sandbox is available and should be used */
+function shouldUseSandbox(): boolean {
+  return sandboxInstance !== null && sandboxInstance.available;
+}
 
 function validateRedirects(command: string, scopePath: string): string | null {
   // Match shell redirects: > file, >> file, 2> file, &> file, >| file
@@ -66,6 +78,23 @@ export async function shellExec(args: Record<string, unknown>, context: ToolExec
   const cwd = args['cwd'] ? resolve(context.scopePath, args['cwd'] as string) : context.scopePath;
   const timeout = (args['timeout'] as number) ?? 30000;
   const maxLength = (args['maxLength'] as number) ?? 30000;
+
+  // Route through Docker sandbox if available
+  if (shouldUseSandbox()) {
+    try {
+      const sandboxResult = await sandboxInstance!.exec(command, { timeout });
+      const output = [sandboxResult.stdout, sandboxResult.stderr].filter(Boolean).join('\n').trim();
+      const truncated = output.length > maxLength ? output.slice(0, maxLength) + `\n… [output truncated at ${maxLength} chars]` : output;
+      return {
+        success: sandboxResult.exitCode === 0,
+        output: truncated || `Process exited with code ${sandboxResult.exitCode}`,
+        error: sandboxResult.exitCode !== 0 ? 'EXEC_ERROR' : undefined,
+        metadata: { exitCode: sandboxResult.exitCode, sandboxed: true },
+      };
+    } catch (err) {
+      return { success: false, output: `Sandbox execution failed: ${(err as Error).message}`, error: 'SANDBOX_ERROR' };
+    }
+  }
 
   const shell = getShellCommand(command);
   try {

@@ -157,10 +157,16 @@ export class Gateway {
         targetChannels = this.focus.getActiveChannels();
       }
     } else if (this.focus.hasActiveFocus()) {
-      const focusedId = this.focus.getFocus()!;
-      targetChannels = [focusedId];
+      // Route to focused channel
+      targetChannels = [this.focus.getFocus()!];
     } else {
-      targetChannels = this.focus.getActiveChannels();
+      // No focused channel — sort active channels by priority
+      const active = this.focus.getActiveChannels();
+      targetChannels = active.sort((a, b) => {
+        const pa = this.focus.getChannelPriority(a);
+        const pb = this.focus.getChannelPriority(b);
+        return pb - pa; // Higher priority first
+      });
     }
 
     for (const chId of targetChannels) {

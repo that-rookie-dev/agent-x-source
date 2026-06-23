@@ -112,6 +112,55 @@ Write a one-sentence improved system instruction for this type of task.`;
     return `[LEARNINGS]\nBased on previous tasks, here are proven strategies:\n${unique.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n[/LEARNINGS]`;
   }
 
+  /**
+   * Find the best approach from past reflection history for a similar task.
+   * Uses keyword matching to score relevance of past task patterns.
+   * Returns an actionable directive or empty string.
+   */
+  getBestApproach(currentTask: string): string {
+    if (this.reflectionHistory.length === 0) return '';
+
+    const taskWords = new Set(currentTask.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+
+    // Score each past reflection by keyword overlap with current task
+    const scored = this.reflectionHistory.map(r => {
+      const pastWords = r.task.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      const overlap = pastWords.filter(w => taskWords.has(w)).length;
+      const recency = 1 - (Date.now() - r.timestamp) / (7 * 86400000); // decay over 7 days
+      return { ...r, score: overlap * 2 + Math.max(0, recency) * 3 };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+
+    const best = scored.filter(s => s.score >= 3).slice(0, 3);
+
+    if (best.length === 0) return '';
+
+    const directives: string[] = [];
+    const seenDirectives = new Set<string>();
+
+    for (const b of best) {
+      // Extract "what worked" as prescriptive guidance
+      for (const w of b.result.whatWorked) {
+        if (!seenDirectives.has(w) && w.length > 5) {
+          seenDirectives.add(w);
+          directives.push(`Previously effective: ${w}`);
+        }
+      }
+      // Extract concrete suggestions
+      for (const s of b.result.suggestions) {
+        if (!seenDirectives.has(s) && s.length > 5) {
+          seenDirectives.add(s);
+          directives.push(`Proven strategy: ${s}`);
+        }
+      }
+    }
+
+    if (directives.length === 0) return '';
+
+    return `[MEMORY_DRIVEN]\nFrom past experience with similar tasks:\n${directives.map(d => `- ${d}`).join('\n')}\nPrefer these proven approaches over untried alternatives.\n[/MEMORY_DRIVEN]`;
+  }
+
   getHistory(): Array<{ task: string; result: ReflectionResult; timestamp: number }> {
     return [...this.reflectionHistory];
   }

@@ -199,6 +199,44 @@ describe('PostgresStorageAdapter', () => {
   const pgUrl = process.env['DATABASE_URL'] || process.env['PG_URL'];
   const runPG = pgUrl ? it : it.skip;
 
+  runPG('persists sub-agent pseudo session ids', async () => {
+    const adapter = new PostgresStorageAdapter({ connectionString: pgUrl, max: 1 });
+    await adapter.connect();
+
+    const parent = adapter.createSession({
+      title: 'Parent', status: 'active', providerId: 'openai',
+      modelId: 'gpt-4', scopePath: '/tmp', tokenUsed: 0, tokenAvailable: 128000,
+    });
+
+    const subId = `sub-${crypto.randomUUID()}`;
+    adapter.createSession({
+      id: subId,
+      title: 'Child Session',
+      status: 'active',
+      providerId: 'openai',
+      modelId: 'gpt-4',
+      scopePath: '/tmp',
+      tokenUsed: 0,
+      tokenAvailable: 128000,
+      parentId: parent.id,
+    } as Omit<import('@agentx/shared').StorableSession, 'id' | 'createdAt' | 'updatedAt'> & { id: string });
+
+    expect(adapter.getSession(subId)).not.toBeNull();
+
+    adapter.insertMessage({
+      sessionId: subId,
+      role: 'user',
+      content: 'sub-agent task',
+    });
+    expect(adapter.getMessages(subId)).toHaveLength(1);
+
+    adapter.insertPart(subId, { type: 'tool-call', toolName: 'read', toolCallId: 'tc1' });
+    expect(adapter.getParts(subId)).toHaveLength(1);
+
+    adapter.clearAll();
+    await adapter.disconnect();
+  });
+
   runPG('connects and performs CRUD', async () => {
     const adapter = new PostgresStorageAdapter({ connectionString: pgUrl, max: 1 });
     await adapter.connect();

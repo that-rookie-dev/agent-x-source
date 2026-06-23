@@ -57,18 +57,14 @@ export class CrashRecovery {
       // Don't exit for unhandled rejections — log and continue
     });
 
-    // Graceful shutdown
+    // Graceful shutdown — save state for resume on restart
     process.on('SIGINT', () => {
-      // Save crash state before exit for potential resume
       saveOnCrash('Interrupted by user (SIGINT)');
-      this.clearRecovery();
       process.exit(130);
     });
 
     process.on('SIGTERM', () => {
-      // Save crash state for resume on restart
       saveOnCrash('Terminated (SIGTERM)');
-      this.clearRecovery();
       process.exit(143);
     });
   }

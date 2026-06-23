@@ -49,7 +49,7 @@ export class CrewManager {
           title: (p['title'] as string | undefined),
           callsign: (p['callsign'] as string) ?? (p['id'] as string),
           systemPrompt: (p['systemPrompt'] as string) ?? '',
-          emotion: (p['emotion'] as CrewEmotion | undefined),
+          emotion: (p['emotion'] as CrewEmotion | undefined) ?? (p['tone'] as CrewEmotion | undefined),
           isDefault: (p['isDefault'] as boolean) ?? false,
           enabled: (p['enabled'] as boolean) ?? true,
           expertise: (p['expertise'] as string[] | undefined),
@@ -133,7 +133,7 @@ export class CrewManager {
     if (!/^\S+$/.test(callsign)) {
       throw new Error('Callsign must not contain spaces');
     }
-    if (this.crews.some((c) => c.callsign === callsign)) {
+    if (this.crews.some((c) => c.callsign.toLowerCase() === callsign)) {
       throw new Error(`Callsign "${callsign}" is already taken`);
     }
     const crew: Crew = {
@@ -160,9 +160,7 @@ export class CrewManager {
       updatedAt: new Date().toISOString(),
     };
     this.crews.push(crew);
-    if (this.store && typeof this.store.createCrew === 'function') {
-      this.store.createCrew(crew);
-    }
+    this.persist();
     return crew;
   }
 
@@ -216,6 +214,6 @@ export class CrewManager {
       return `- **${description}** (@${c.callsign}): ${expertise}`;
     }).join('\n');
 
-    return `The following crew members are available in this session:\n\n${crewDescriptions}\n\n**Group Chat Rules:**\n- Users can @mention a specific crew member to get their expertise\n- If no crew is mentioned, you respond as the primary assistant\n- You can delegate to crew members when their expertise is relevant\n- Crew members respond with their unique personalities and knowledge\n- Maintain context across the conversation - all participants see the full history`;
+    return `The following crew members are available in this session:\n\n${crewDescriptions}\n\n**Group Chat Rules:**\n- Users can @mention a specific crew member to get their expertise directly\n- If no crew is @mentioned, Agent-X is the primary assistant and answers first\n- Agent-X may delegate to crew only when a task clearly requires specialist expertise\n- Crew members respond with their unique personalities and knowledge\n- Maintain context across the conversation - all participants see the full history`;
   }
 }

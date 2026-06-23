@@ -13,7 +13,9 @@ export interface ScheduledJob {
   lastRun?: number;
   nextRun: number;
   runCount: number;
-  oneShot?: boolean; // If true, runs once then auto-removes
+  oneShot?: boolean;
+  /** File glob pattern — triggers job on file change (requires FileWatcher integration) */
+  fileTrigger?: string;
 }
 
 interface ParsedCron {
@@ -162,6 +164,23 @@ export class Scheduler {
    */
   setTriggerHandler(handler: (job: ScheduledJob) => void): void {
     this.onJobTrigger = handler;
+  }
+
+  /**
+   * Handle a file change event — triggers any job whose fileTrigger pattern matches.
+   */
+  onFileChange(filePath: string): void {
+    for (const job of this.jobs.values()) {
+      if (!job.enabled || !job.fileTrigger) continue;
+      try {
+        const pattern = job.fileTrigger.replace(/\*/g, '.*').replace(/\?/g, '.');
+        if (new RegExp(pattern).test(filePath)) {
+          job.lastRun = Date.now();
+          job.runCount++;
+          this.onJobTrigger?.(job);
+        }
+      } catch { /* skip malformed patterns */ }
+    }
   }
 
   addJob(name: string, cron: string, instruction: string): ScheduledJob {
