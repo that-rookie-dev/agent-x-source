@@ -16,7 +16,6 @@ import {
   buildFullText,
   buildInstructionForMode,
   runAgentTurnAsync,
-  TURN_TIMEOUT_MS,
 } from './chat-helpers.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
@@ -1127,7 +1126,7 @@ app.put('/api/crews/:id', (req, res) => {
       ...body,
       emotion: (body['emotion'] ?? body['tone']) as string | undefined,
     };
-    delete updates['tone'];
+    delete (updates as Record<string, unknown>)['tone'];
     const crew = eng.crewManager.update(req.params['id']!, updates as Parameters<typeof eng.crewManager.update>[1]);
     if (!crew) { res.status(404).json({ error: 'crew-not-found' }); return; }
     if (eng.agent) {
@@ -2133,8 +2132,8 @@ app.get('/api/sessions', (_req, res) => {
     const listFn = (eng.sessionManager as { listRootSessions?: (n: number) => unknown[] }).listRootSessions;
     const all = (listFn ? listFn.call(eng.sessionManager, 100) : eng.sessionManager.listSessions(100)) as unknown as Array<Record<string, unknown>>;
     const sessions = all.filter(s => s['id'] !== '__channel__' && !s['parentId']);
-    const store = (eng.sessionManager as { store?: { getSessionListKpis?: (id: string, base?: Record<string, unknown>) => Record<string, unknown>; getMessageCount?: (id: string) => number } }).store;
-    const getKpis = (eng.sessionManager as { getSessionListKpis?: (id: string, base?: Record<string, unknown>) => Record<string, unknown> }).getSessionListKpis;
+    const store = (eng.sessionManager as unknown as { store?: { getSessionListKpis?: (id: string, base?: Record<string, unknown>) => Record<string, unknown>; getMessageCount?: (id: string) => number } }).store;
+    const getKpis = (eng.sessionManager as unknown as { getSessionListKpis?: (id: string, base?: Record<string, unknown>) => Record<string, unknown> }).getSessionListKpis;
     const crewManager = eng.crewManager as { get?: (id: string) => { callsign?: string; name?: string } | undefined };
 
     const enriched = sessions.map((s) => {
@@ -2195,7 +2194,7 @@ app.get('/api/sessions/:id/children', (req, res) => {
   try {
     const eng = getEngine();
     const parentId = req.params['id']!;
-    const mgr = eng.sessionManager as { getChildSessions?: (id: string) => Array<Record<string, unknown>> };
+    const mgr = eng.sessionManager as unknown as { getChildSessions?: (id: string) => Array<Record<string, unknown>> };
     const children = mgr.getChildSessions?.(parentId) ?? [];
     res.json({ children });
   } catch (e: unknown) {
@@ -2208,13 +2207,12 @@ app.get('/api/sessions/:id/preview', (req, res) => {
   try {
     const sessionId = req.params['id']!;
     const eng = getEngine();
-    const store = (eng.sessionManager as { store?: { getMessages?: (id: string) => unknown[]; getParts?: (id: string) => unknown[] } }).store;
+    const store = (eng.sessionManager as unknown as { store?: { getMessages?: (id: string) => unknown[]; getParts?: (id: string) => unknown[] } }).store;
     if (!store?.getMessages) {
       res.status(404).json({ error: 'not-found' });
       return;
     }
     const rawMessages = store.getMessages(sessionId) as Array<Record<string, unknown>>;
-    const parts = store.getParts?.(sessionId) as Array<Record<string, unknown>> | undefined ?? [];
     const messages = rawMessages
       .filter((m) => m['role'] !== 'part' && m['role'] !== 'system')
       .map((msg) => {
@@ -2546,9 +2544,6 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       const normalized = normalizeMessageForUi(msg, msgPartRows);
       if (normalized.parts?.length) {
         (msg as Record<string, unknown>)['parts'] = normalized.parts;
-      } else if (msgPartRows.length > 0) {
-        const built = buildPartsFromDbRows(msgPartRows, normalized.content);
-        if (built.length > 0) (msg as Record<string, unknown>)['parts'] = built;
       }
       if (normalized.content) {
         msg['content'] = normalized.content;
@@ -2617,7 +2612,7 @@ app.get('/api/sessions/:id/context', (req, res) => {
       }
     }
     const eng = getEngine();
-    const store = (eng.sessionManager as { store?: { getMessages?: (id: string) => Array<{ role?: string; content?: string }> } }).store;
+    const store = (eng.sessionManager as unknown as { store?: { getMessages?: (id: string) => Array<{ role?: string; content?: string }> } }).store;
     if (store?.getMessages) {
       const msgs = store.getMessages(sessionId);
       const compactionMsgs = msgs.filter((m) => m.role === 'system' && String(m.content ?? '').includes('[COMPACTION SUMMARY'));

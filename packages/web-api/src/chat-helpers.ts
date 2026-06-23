@@ -2,7 +2,7 @@ import type { Agent } from '@agentx/engine';
 import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
-import { getLogger, sanitizeForJson, stripToolNoise, type MessagePart } from '@agentx/shared';
+import { getLogger, sanitizeForJson } from '@agentx/shared';
 
 export const TURN_TIMEOUT_MS = 600_000;
 

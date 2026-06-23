@@ -370,7 +370,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     if (thinkingText) extra.thinkingDoneAt = Date.now();
     if (toolCalls.length > 0) extra.toolCalls = toolCalls;
     if (subAgents.length > 0) extra.subAgents = subAgents;
-    if (parts) extra.parts = parts;
+    if (parts) extra.parts = parts as Array<Record<string, unknown>>;
     if (currentPlan && currentPlan.length > 0) extra.plan = currentPlan;
     if (perTurnTokens != null) { extra.turnTokens = perTurnTokens; extra.tokenCount = perTurnTokens; }
     if (perTurnCostUsd != null) extra.turnCostUsd = perTurnCostUsd;
