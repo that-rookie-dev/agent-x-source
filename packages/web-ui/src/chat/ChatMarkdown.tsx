@@ -249,7 +249,10 @@ function createMarkdownComponents(isFirstSection: boolean) {
     code({ className, children, ...props }: { className?: string; children?: React.ReactNode }) {
       const match = /language-(\w+)/.exec(className ?? '');
       const code = String(children).replace(/\n$/, '');
-      if (match) return <CodeBlockWithCopy code={code} language={match[1]} />;
+      // Fenced blocks without a language tag still arrive as multiline code nodes.
+      if (match || code.includes('\n')) {
+        return <CodeBlockWithCopy code={code} language={match?.[1]} />;
+      }
       return (
         <Box
           component="code"
