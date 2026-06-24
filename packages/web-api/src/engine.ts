@@ -30,7 +30,6 @@ import {
   ExperienceEngine,
   healDatabaseStore,
   startPeriodicDatabaseHeal,
-  CrewChatService,
   buildCrewPrivateIdentityPrompt,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session, Crew } from '@agentx/shared';
@@ -55,8 +54,6 @@ export interface EngineState {
   pgPool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> } | null;
   /** Resolves when the active storage backend has finished connect + schema migration. */
   storageReady: Promise<void>;
-  /** Active crew private chat handlers keyed by session id */
-  crewChatServices: Map<string, CrewChatService>;
   telegramBridge: TelegramBridge | null;
   discordBridge: DiscordBridge | null;
   slackBridge: SlackBridge | null;
@@ -171,7 +168,6 @@ export function getEngine(): EngineState {
     gateway: null,
     pgPool: pgAdapter?.getPool() ?? null,
     storageReady,
-    crewChatServices: new Map<string, CrewChatService>(),
     telegramBridge: null,
     discordBridge: null,
     slackBridge: null,
@@ -722,59 +718,6 @@ export function destroyAgent(): void {
   }
 }
 
-function getSessionDir(sessionId: string): string {
-  return join(getDataDir(), 'sessions', sessionId);
-}
-
-function resolveActiveProvider(cfg: AgentXConfig) {
-  const providerId = cfg.provider.activeProvider;
-  const providerCfg = cfg.provider.providers[providerId];
-  if (!providerId || !providerCfg?.configured) {
-    throw new Error('No provider configured');
-  }
-  return ProviderFactory.create(providerId, providerCfg.apiKey, providerCfg.baseUrl);
-}
-
-export function getOrCreateCrewChatService(session: Session, crew: Crew): CrewChatService {
-  /** @deprecated Prefer ensureCrewPrivateAgentForSession + Agent path. Kept for legacy callers. */
-  const eng = getEngine();
-  const existing = eng.crewChatServices.get(session.id);
-  if (existing) return existing;
-
-  const cfg = eng.configManager.load();
-  const provider = resolveActiveProvider(cfg);
-  const persistDir = getSessionDir(session.id);
-
-  const service = new CrewChatService({
-    sessionId: session.id,
-    crew,
-    scopePath: session.scopePath || process.cwd(),
-    provider,
-    activeModel: cfg.provider.activeModel,
-    providerId: cfg.provider.activeProvider,
-    eventBus: eng.telemetry as never,
-    sessionManager: eng.sessionManager,
-    config: cfg,
-    toolRegistry: eng.toolkit.registry,
-    toolExecutor: eng.toolkit.executor,
-    persistDir,
-  });
-
-  const store = (eng.sessionManager as unknown as { store?: { getMessages?: (id: string) => Array<{ role: string; content: string }> } }).store;
-  const prior = store?.getMessages?.(session.id) ?? [];
-  const narrativeDoc = service.getContextHandler().getNarrativeDocument();
-  if (prior.length > 0 && (narrativeDoc.turnCount ?? 0) === 0) {
-    service.warmFromMessages(prior.map((m) => ({ role: m.role, content: m.content })));
-  }
-
-  eng.crewChatServices.set(session.id, service);
-  return service;
-}
-
-export function destroyCrewChatService(sessionId: string): void {
-  getEngine().crewChatServices.delete(sessionId);
-}
-
 export function clearEngine(): void {
   if (state?.agent) {
     (state.agent as any).sessionLogger?.close();
@@ -785,7 +728,6 @@ export function clearEngine(): void {
     state.channelAgent.endSession();
     state.channelAgent = null;
   }
-  state?.crewChatServices?.clear();
   state = null;
 }
 

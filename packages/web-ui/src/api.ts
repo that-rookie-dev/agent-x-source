@@ -179,6 +179,7 @@ export interface CrewChatSessionInfo {
 }
 
 export const crewChat = {
+  /** Create or return the crew-private session; open via `/console/chat/{sessionId}`. */
   startSession: (body: {
     crewId?: string;
     scopePath?: string;
@@ -202,129 +203,6 @@ export const crewChat = {
     crew: CrewChatCrewInfo;
     session: CrewChatSessionInfo;
   }>('/crew-chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
-
-  restore: (sessionId: string, opts?: { limit?: number; before?: string }) => {
-    const params = new URLSearchParams();
-    if (opts?.limit) params.set('limit', String(opts.limit));
-    if (opts?.before) params.set('before', opts.before);
-    const qs = params.toString();
-    return request<{
-      session: CrewChatSessionInfo;
-      crew: CrewChatCrewInfo;
-      messages: ChatMessage[];
-      pagination?: { total: number; hasMore: boolean; limit: number; before: string | null; oldestId: string | null };
-      canonicalSessionId?: string;
-      redirected?: boolean;
-    }>(`/crew-chat/sessions/${sessionId}${qs ? `?${qs}` : ''}`);
-  },
-
-  loadOlderMessages: (sessionId: string, before: string, limit = 50) => request<{
-    messages: ChatMessage[];
-    pagination: { total: number; hasMore: boolean; limit: number; before: string; oldestId: string | null };
-  }>(`/crew-chat/sessions/${sessionId}/messages?before=${encodeURIComponent(before)}&limit=${limit}`),
-
-  cancel: (sessionId: string) => request<{ ok: boolean }>(
-    `/crew-chat/sessions/${sessionId}/cancel`,
-    { method: 'POST', body: JSON.stringify({}) },
-  ),
-
-  sendMessage: (sessionId: string, text: string) => request<{
-    ok: boolean;
-    content: string;
-    userMessageId: string;
-    assistantMessageId: string;
-    elapsed: number;
-    inputTokens: number;
-    outputTokens: number;
-    costUsd: number;
-    crew: CrewChatCrewInfo;
-  }>(`/crew-chat/sessions/${sessionId}/message`, { method: 'POST', body: JSON.stringify({ text }) }),
-
-  retry: (sessionId: string) => request<{ ok: boolean; narrativeEntries: number }>(
-    `/crew-chat/sessions/${sessionId}/retry`,
-    { method: 'POST', body: JSON.stringify({}) },
-  ),
-
-  sendStream: async (
-    sessionId: string,
-    text: string,
-    onProgress: (event: { type: string; data: unknown }) => void,
-    retry?: boolean,
-  ): Promise<{ ok: boolean; content?: string; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number }> => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-
-    const response = await fetch(`${BASE}/crew-chat/sessions/${sessionId}/message-stream`, {
-      method: 'POST',
-      credentials: 'include',
-      headers,
-      body: JSON.stringify({ text, retry }),
-    });
-
-    if (response.status === 401) {
-      onUnauthorized?.();
-      throw new Error('Unauthorized');
-    }
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error((error as { error?: string }).error || `HTTP ${response.status}`);
-    }
-
-    if (!response.body) throw new Error('No response body');
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let result: { ok: boolean; content?: string; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number } = { ok: false };
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      let currentEvent = { id: '', event: '', data: '' };
-
-      for (const line of lines) {
-        if (line.startsWith('id: ')) {
-          currentEvent.id = line.slice(4);
-        } else if (line.startsWith('event: ')) {
-          currentEvent.event = line.slice(7);
-        } else if (line.startsWith('data: ')) {
-          currentEvent.data = line.slice(6);
-        } else if (line === '' && currentEvent.event) {
-          try {
-            const data = currentEvent.data ? JSON.parse(currentEvent.data) : null;
-            onProgress({ type: currentEvent.event, data });
-
-            if (currentEvent.event === 'complete') {
-              result = {
-                ok: true,
-                content: data?.content,
-                inputTokens: data?.inputTokens,
-                outputTokens: data?.outputTokens,
-                costUsd: data?.costUsd,
-              };
-            } else if (currentEvent.event === 'error') {
-              result = { ok: false, error: data?.error };
-            }
-          } catch { /* ignore parse errors */ }
-          currentEvent = { id: '', event: '', data: '' };
-        }
-      }
-    }
-
-    return result;
-  },
-
-  findByCrew: (crewId: string) => request<{
-    sessionId: string | null;
-    crew: CrewChatCrewInfo | null;
-    session?: CrewChatSessionInfo;
-  }>(`/crew-chat/by-crew/${crewId}`),
 };
 
 export const crewSuggestions = {

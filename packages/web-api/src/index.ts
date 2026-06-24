@@ -7,7 +7,7 @@ import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, assignPartsToAssistantMessage } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady, destroyCrewChatService } from './engine.js';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady } from './engine.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import {
@@ -19,7 +19,7 @@ import {
 } from './chat-helpers.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
-import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, crewChatMessageSchema } from './validation.js';
+import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema } from './validation.js';
 import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
 import crypto from 'node:crypto';
@@ -35,16 +35,7 @@ import {
   evaluateCrewSuggestionForMessage,
   emitCrewSuggestionTelemetry,
 } from './crew-suggestions.js';
-import {
-  postCrewChatSession,
-  getCrewChatSession,
-  getCrewChatMessages,
-  postCrewChatMessage,
-  postCrewChatMessageStream,
-  postCrewChatRetry,
-  postCrewChatCancel,
-  getCrewChatByCrew,
-} from './crew-chat.js';
+import { postCrewChatSession } from './crew-chat.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1189,18 +1180,10 @@ app.post('/api/crew-suggestions/evaluate', validate(crewSuggestionEvaluateSchema
 app.post('/api/crew-suggestions/resolve', validate(crewSuggestionResolveSchema), postCrewSuggestionResolve);
 app.post('/api/crew-suggestions/clear-dismiss', postCrewSuggestionClearDismiss);
 
-// ───── Crew private chat (1:1 user ↔ crew, no Agent-X) ─────
+// ───── Crew private session bootstrap (chat uses /api/sessions + /api/chat) ─────
 const crewChatRateLimiter = createRateLimiter({ prefix: 'CREW_CHAT', label: 'CrewChat' });
 app.use('/api/crew-chat', crewChatRateLimiter.middleware);
-
 app.post('/api/crew-chat/sessions', validate(crewChatSessionSchema), postCrewChatSession);
-app.get('/api/crew-chat/sessions/:sessionId', getCrewChatSession);
-app.get('/api/crew-chat/sessions/:sessionId/messages', getCrewChatMessages);
-app.post('/api/crew-chat/sessions/:sessionId/message', validate(crewChatMessageSchema), postCrewChatMessage);
-app.post('/api/crew-chat/sessions/:sessionId/message-stream', validate(crewChatMessageSchema), postCrewChatMessageStream);
-app.post('/api/crew-chat/sessions/:sessionId/retry', postCrewChatRetry);
-app.post('/api/crew-chat/sessions/:sessionId/cancel', postCrewChatCancel);
-app.get('/api/crew-chat/by-crew/:crewId', getCrewChatByCrew);
 
 app.get('/api/crew-catalog/categories', listCatalogCategories);
 app.get('/api/crew-catalog/seed-status', getCatalogSeedStatusHandler);
@@ -1214,68 +1197,6 @@ app.get('/api/crew/:id', (_req, res) => {
   if (!crew) return res.status(404).json({ error: 'Crew not found' });
   res.json(crew);
 });
-
-app.post('/api/crew/:id/chat', async (req, res) => {
-  try {
-    res.setHeader('Deprecation', 'true');
-    res.setHeader('Link', '</api/crew-chat/sessions>; rel="successor-version"');
-    const eng = getEngine();
-    const crewId = req.params['id']!;
-    const { text } = req.body as { text: string };
-    if (!text || typeof text !== 'string') { res.status(400).json({ error: 'text-required' }); return; }
-    const crew = eng.crewManager.list().find(c => c.id === crewId);
-    if (!crew) { res.status(404).json({ error: 'Crew not found' }); return; }
-    if (!eng.agent) { res.status(400).json({ error: 'no-session' }); return; }
-    const agent = eng.agent;
-    const orch = (agent as unknown as { crewOrchestrator?: { getMembers: () => Array<{ crew: { id: string } }>; addMember: (c: typeof crew) => void } }).crewOrchestrator;
-    const missionOrch = (agent as unknown as { crewMissionOrchestrator?: { runMission: (opts: unknown) => Promise<{ success: boolean; synthesized: string; responses: Array<{ content: string }> }> }; buildCrewMissionOptions: (members: unknown[], msg: string) => unknown }).crewMissionOrchestrator;
-    if (!orch || !missionOrch) { res.status(400).json({ error: 'no-orchestrator' }); return; }
-    const members = orch.getMembers();
-    let member = members.find((m) => m.crew.id === crewId);
-    if (!member) {
-      orch.addMember(crew);
-      member = orch.getMembers().find((m) => m.crew.id === crewId);
-    }
-    if (!member) { res.status(400).json({ error: 'crew-not-found-in-orchestrator' }); return; }
-    const result = await missionOrch.runMission(
-      agent.buildCrewMissionOptions([member as never], text),
-    );
-    const response = result.synthesized || result.responses[0]?.content || '';
-    res.json({
-      ok: true,
-      response,
-      success: result.success,
-      responses: result.responses,
-      deprecated: true,
-      migration: 'Use POST /api/crew-chat/sessions then POST /api/crew-chat/sessions/:id/message',
-    });
-  } catch (e: unknown) {
-    getLogger().error('POST_API_CREW_ID_CHAT', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'crew-chat-failed' });
-  }
-});
-
-app.get('/api/crew/:id/sessions', (req, res) => {
-  res.setHeader('Deprecation', 'true');
-  res.setHeader('Link', '</api/crew-chat/by-crew/:crewId>; rel="successor-version"');
-  const eng = getEngine();
-  const crewId = req.params['id']!;
-  const session = (eng.sessionManager as unknown as {
-    resolveCanonicalCrewPrivateSession?: (id: string) => { id: string } | null;
-    findCrewPrivateSession?: (id: string) => { id: string } | null;
-  }).resolveCanonicalCrewPrivateSession?.(crewId)
-    ?? (eng.sessionManager as unknown as { findCrewPrivateSession?: (id: string) => { id: string } | null }).findCrewPrivateSession?.(crewId);
-  if (!session) {
-    res.json({ deprecated: true, sessionId: null, messages: [] });
-    return;
-  }
-  const store = getMessageStoreFromEngine(eng);
-  const rows = store?.getMessages?.(session.id) ?? [];
-  res.json({ deprecated: true, sessionId: session.id, messages: rows });
-});
-
-function getMessageStoreFromEngine(eng: ReturnType<typeof getEngine>) {
-  return (eng.sessionManager as unknown as { store?: { getMessages?: (id: string) => unknown[] } }).store;
-}
 
 app.post('/api/crew/:id/feedback', (req, res) => {
   try {
@@ -1508,7 +1429,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
   }
 });
 
-// LEGACY: Keep old endpoint for backward compatibility (redirects to streaming)
+// LEGACY comment removed — async turn endpoint used by ChatPanel (SSE uses message-stream).
 app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
   try {
     const { text, attachments, retry, delegateCrewIds } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean; delegateCrewIds?: string[] };
@@ -2537,7 +2458,6 @@ app.delete('/api/sessions/:id', (req, res) => {
   try {
     const sessionId = req.params['id']!;
     const eng = getEngine();
-    destroyCrewChatService(sessionId);
     const store = (eng.sessionManager as unknown as { store: { deleteSession: (id: string) => void } }).store;
     store.deleteSession(sessionId);
     // Clean up session folder on disk
@@ -2558,9 +2478,6 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     const eng = getEngine();
     const peek = eng.sessionManager.getSessionById(sessionId);
     if (!peek) { res.status(404).json({ error: 'not-found' }); return; }
-    if ((peek.contextKind ?? 'agent_x') === 'crew_private') {
-      destroyCrewChatService(sessionId);
-    }
     destroyAgent();
     const session = eng.sessionManager.restoreSession(sessionId);
     if (!session) { res.status(404).json({ error: 'not-found' }); return; }
@@ -2671,24 +2588,6 @@ app.post('/api/sessions/:id/restore', (req, res) => {
             color: crewMember?.color,
             icon: crewMember?.icon,
           };
-        }
-      }
-    }
-
-    // Legacy crew-private assistant rows may lack metadata — backfill from host crew
-    if ((session.contextKind ?? 'agent_x') === 'crew_private' && session.hostCrewId) {
-      const hostCrew = eng.crewManager.get(session.hostCrewId as string);
-      if (hostCrew) {
-        for (const msg of messages) {
-          if (msg['role'] === 'assistant' && !msg['crew']) {
-            msg['crew'] = {
-              crewId: hostCrew.id,
-              name: hostCrew.name,
-              callsign: hostCrew.callsign,
-              color: hostCrew.color,
-              icon: hostCrew.icon,
-            };
-          }
         }
       }
     }

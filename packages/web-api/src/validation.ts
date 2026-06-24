@@ -84,11 +84,6 @@ export const crewChatSessionSchema = z.object({
   }).optional(),
 }).refine((d) => d.crewId || d.recruit, { message: 'crewId or recruit required' });
 
-export const crewChatMessageSchema = z.object({
-  text: z.string().min(1, 'text is required'),
-  retry: z.boolean().optional(),
-});
-
 export const chatSteerSchema = z.object({
   text: z.string().min(1, 'text is required'),
   attachments: z.array(z.object({

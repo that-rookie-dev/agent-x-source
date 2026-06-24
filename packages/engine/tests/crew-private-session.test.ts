@@ -35,35 +35,4 @@ describe('SessionManager crew private sessions', () => {
     expect(peek?.hostCrewId).toBe('crew-x');
     expect(mgr.getActiveSession()?.id).toBe(active.id);
   });
-
-  it('consolidates duplicate crew private sessions for the same crew', () => {
-    const mgr = new SessionManager();
-    const crew = { id: 'crew-dup', name: 'Dup', callsign: 'dup_x' };
-    const s1 = mgr.createCrewPrivateSession('openai', 'gpt-4o', process.cwd(), crew);
-    const store = (mgr as unknown as {
-      store: {
-        insertMessage: (m: Record<string, unknown>) => string;
-        createSession: (s: Record<string, unknown>) => void;
-      };
-    }).store;
-    store.insertMessage({ sessionId: s1.id, role: 'user', content: 'hello' });
-
-    const now = new Date().toISOString();
-    store.createSession({
-      id: 'duplicate-crew-private',
-      title: 'Dup',
-      status: 'active',
-      provider: 'openai',
-      model: 'gpt-4o',
-      scopePath: process.cwd(),
-      contextKind: 'crew_private',
-      hostCrewId: crew.id,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const canonical = mgr.resolveCanonicalCrewPrivateSession(crew.id);
-    expect(canonical?.id).toBe(s1.id);
-    expect(mgr.findAllCrewPrivateSessions(crew.id)).toHaveLength(1);
-  });
 });

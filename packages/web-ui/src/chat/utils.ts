@@ -85,23 +85,6 @@ export function displayContent(message: { content?: string; parts?: Array<{ type
   return partsText || contentText;
 }
 
-/** Backfill crew attribution on assistant rows in crew-private sessions. */
-export function backfillCrewPrivateAssistantCrew<T extends { role?: string; crew?: { crewId: string; name: string; callsign: string } }>(
-  messages: T[],
-  host: { name: string; callsign: string; title?: string },
-  hostCrewId?: string,
-): T[] {
-  if (!host.callsign) return messages;
-  const crew = {
-    crewId: hostCrewId ?? host.callsign,
-    name: host.name,
-    callsign: host.callsign,
-  };
-  return messages.map((m) =>
-    m.role === 'assistant' && !m.crew ? { ...m, crew } : m,
-  );
-}
-
 /** Normalize one restored history row (assistant parts/toolCalls reconciliation). */
 export function mapRestoreHistoryMessage(m: Record<string, unknown>): Record<string, unknown> {
   const toolCalls = Array.isArray(m.toolCalls)

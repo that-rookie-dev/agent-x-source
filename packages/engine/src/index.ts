@@ -82,8 +82,6 @@ export { createSqliteNeuralDb, createPgNeuralDb } from './neural/NeuralDbAdapter
 export type { NeuralDb, NeuralStatement } from './neural/NeuralDbAdapter.js';
 export { CrewOrchestrator, buildCrewPrivateIdentityPrompt } from './agent/CrewOrchestrator.js';
 export { CrewSuggestionService } from './crew/CrewSuggestionService.js';
-export { CrewChatService } from './crew/CrewChatService.js';
-export type { CrewChatServiceDeps, CrewChatTurnResult } from './crew/CrewChatService.js';
 export { catalogEntryToSummary } from './crew/catalog-summary.js';
 export { getCrewSuggestionService, getCrewCatalogStoreFromEngine } from './crew/get-crew-store.js';
 export { startBackgroundCatalogSeed, getCatalogSeedStatus } from './crew/catalog-seed-runner.js';

@@ -3,110 +3,168 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DESKTOP_DIR="$ROOT_DIR/packages/desktop"
+CREDENTIALS_FILE="$ROOT_DIR/../credentials.env"
+
+# Load credentials early (PG targets, optional AGENTX_DATA_DIR override)
+if [ -f "$CREDENTIALS_FILE" ]; then
+  # shellcheck disable=SC1091
+  source "$CREDENTIALS_FILE"
+fi
 
 echo "=== Clean Slate: Agent-X ==="
 
-# 1. Kill running app (force-quit everything including helpers)
-echo ">>> Killing Agent-X if running..."
-pkill -9 -f "Agent-X" 2>/dev/null || true
+# ── 1. Stop all Agent-X / Electron / web-api processes ────────────────────────
+echo ">>> Stopping Agent-X processes..."
+
+stop_agentx() {
+  pkill -9 -f "Agent-X" 2>/dev/null || true
+  pkill -9 -f "com.agentx.desktop" 2>/dev/null || true
+  pkill -9 -f "@agentx/desktop" 2>/dev/null || true
+  pkill -9 -f "agentx/web-api" 2>/dev/null || true
+  pkill -9 -f "packages/web-api/dist/index" 2>/dev/null || true
+
+  # Embedded web-api listens on 3333 in the desktop app
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti:3333 2>/dev/null | xargs kill -9 2>/dev/null || true
+  fi
+}
+
+stop_agentx
+sleep 2
+stop_agentx
 sleep 1
 
-# 2. Remove from /Applications
+# ── 2. Remove installed app ───────────────────────────────────────────────────
 echo ">>> Removing /Applications/Agent-X.app..."
 sudo rm -rf /Applications/Agent-X.app 2>/dev/null || true
 
-# 3. Wipe all local SQLite state (config, data, cache, WAL/SHM sidecars)
-echo ">>> Wiping SQLite databases and Agent-X data directories..."
+# ── 3. Wipe all local Agent-X state (SQLite, config, auth, sessions, cache) ─
+echo ">>> Wiping local Agent-X data (SQLite, config, sessions, cache)..."
 
 wipe_path() {
   local target="$1"
-  if [ -e "$target" ]; then
+  if [ -e "$target" ] || [ -L "$target" ]; then
     echo "    rm -rf $target"
-    rm -rf "$target"
+    rm -rf "$target" 2>/dev/null || true
+    # Retry once after clearing Electron singleton locks
+    if [ -e "$target" ]; then
+      rm -rf "$target" 2>/dev/null || true
+    fi
   fi
 }
 
-wipe_file() {
-  local target="$1"
-  if [ -f "$target" ] || [ -e "$target" ]; then
-    echo "    rm -f $target"
-    rm -f "$target" 2>/dev/null || true
-  fi
-}
-
-# Standard XDG / macOS paths used by @agentx/shared platform helpers
+# Matches @agentx/shared platform.ts defaults + Electron desktop paths on macOS
 AGENTX_DIRS=(
+  # XDG-style (used by web-api / engine on macOS and Linux)
   "$HOME/.config/agentx"
   "$HOME/.local/share/agentx"
   "$HOME/.cache/agentx"
+  # macOS Electron userData / caches (appId: com.agentx.desktop, productName: Agent-X)
   "$HOME/Library/Application Support/@agentx"
   "$HOME/Library/Application Support/Agent-X"
   "$HOME/Library/Application Support/agentx"
+  "$HOME/Library/Application Support/com.agentx.desktop"
   "$HOME/Library/Caches/agentx"
+  "$HOME/Library/Caches/com.agentx.desktop"
+  "$HOME/Library/Caches/com.agentxdesktop.ShipIt"
+  "$HOME/Library/Caches/@agentxdesktop-updater"
+  "$HOME/Library/HTTPStorages/com.agentx.desktop"
+  "$HOME/Library/Logs/Agent-X"
+  "$HOME/Library/Logs/agentx"
+  "$HOME/Library/Saved Application State/com.agentx.desktop.savedState"
 )
 
-# Respect explicit overrides when set in the shell environment
+# Explicit env overrides
 if [ -n "${XDG_CONFIG_HOME:-}" ]; then AGENTX_DIRS+=("$XDG_CONFIG_HOME/agentx"); fi
 if [ -n "${XDG_DATA_HOME:-}" ]; then AGENTX_DIRS+=("$XDG_DATA_HOME/agentx"); fi
 if [ -n "${XDG_CACHE_HOME:-}" ]; then AGENTX_DIRS+=("$XDG_CACHE_HOME/agentx"); fi
 if [ -n "${AGENTX_DATA_DIR:-}" ]; then AGENTX_DIRS+=("$AGENTX_DATA_DIR"); fi
 
+# macOS preferences plist (not a directory)
+AGENTX_FILES=(
+  "$HOME/Library/Preferences/com.agentx.desktop.plist"
+)
+
+# Dev workspace session dirs (GitManager / TaskExecutor use .agentx under cwd)
+if [ -d "$ROOT_DIR/.agentx" ]; then AGENTX_DIRS+=("$ROOT_DIR/.agentx"); fi
+if [ -d "$ROOT_DIR/../.agentx" ]; then AGENTX_DIRS+=("$ROOT_DIR/../.agentx"); fi
+
+# Drop Electron singleton locks first so rm -rf can succeed while stale locks remain
+for lock in \
+  "$HOME/Library/Application Support/@agentx/desktop/SingletonLock" \
+  "$HOME/Library/Application Support/@agentx/desktop/SingletonSocket" \
+  "$HOME/Library/Application Support/@agentx/desktop/SingletonCookie" \
+  "$HOME/Library/Application Support/Agent-X/SingletonLock" \
+  "$HOME/Library/Application Support/Agent-X/SingletonSocket" \
+  "$HOME/Library/Application Support/Agent-X/SingletonCookie"; do
+  [ -e "$lock" ] && rm -f "$lock" 2>/dev/null || true
+done
+
+# De-duplicate directory list
+deduped_dirs=()
 for dir in "${AGENTX_DIRS[@]}"; do
+  already=0
+  for seen in "${deduped_dirs[@]:-}"; do
+    if [ "$seen" = "$dir" ]; then already=1; break; fi
+  done
+  if [ "$already" -eq 0 ]; then deduped_dirs+=("$dir"); fi
+done
+
+for dir in "${deduped_dirs[@]}"; do
   wipe_path "$dir"
 done
 
-# Explicit SQLite files (main session DB, neural DB, WAL/SHM journals)
-AGENTX_DB_FILES=(
-  "$HOME/.local/share/agentx/db/agentx.db"
-  "$HOME/.local/share/agentx/db/agentx.db-wal"
-  "$HOME/.local/share/agentx/db/agentx.db-shm"
-  "$HOME/.config/agentx/neural.db"
-  "$HOME/.config/agentx/neural.db-wal"
-  "$HOME/.config/agentx/neural.db-shm"
-)
-
-if [ -n "${XDG_DATA_HOME:-}" ]; then
-  AGENTX_DB_FILES+=(
-    "$XDG_DATA_HOME/agentx/db/agentx.db"
-    "$XDG_DATA_HOME/agentx/db/agentx.db-wal"
-    "$XDG_DATA_HOME/agentx/db/agentx.db-shm"
-  )
-fi
-if [ -n "${XDG_CONFIG_HOME:-}" ]; then
-  AGENTX_DB_FILES+=(
-    "$XDG_CONFIG_HOME/agentx/neural.db"
-    "$XDG_CONFIG_HOME/agentx/neural.db-wal"
-    "$XDG_CONFIG_HOME/agentx/neural.db-shm"
-  )
-fi
-
-for db_file in "${AGENTX_DB_FILES[@]}"; do
-  wipe_file "$db_file"
+for f in "${AGENTX_FILES[@]}"; do
+  [ -e "$f" ] && echo "    rm -f $f" && rm -f "$f" 2>/dev/null || true
 done
 
-# 3b. Wipe PostgreSQL (drops every table/view/sequence in public schema)
+# Fallback: remove any stray SQLite sidecars under known Agent-X roots
+echo ">>> Sweeping stray Agent-X SQLite files..."
+for root in "${deduped_dirs[@]}"; do
+  if [ -d "$root" ]; then
+    find "$root" \( -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' -o -name '*.sqlite' -o -name '*.sqlite3' \) -print -delete 2>/dev/null || true
+    # Remove parent dir if find left an empty tree
+    rm -rf "$root" 2>/dev/null || true
+  fi
+done
+
+# Verify key paths are gone (warn if something survived — usually a live process)
+VERIFY_PATHS=(
+  "$HOME/.local/share/agentx/db/agentx.db"
+  "$HOME/.config/agentx/config.enc.json"
+  "$HOME/.config/agentx/neural.db"
+)
+survivors=0
+for p in "${VERIFY_PATHS[@]}"; do
+  if [ -e "$p" ]; then
+    echo "    WARNING: still present after wipe: $p"
+    survivors=$((survivors + 1))
+  fi
+done
+if [ "$survivors" -gt 0 ]; then
+  echo "    WARNING: $survivors path(s) survived. Ensure Agent-X is fully quit and re-run."
+else
+  echo "    Local wipe verified (no core SQLite/config files remain)."
+fi
+
+# ── 3b. Wipe PostgreSQL (drops every table/view/sequence in public schema) ───
 echo ">>> Wiping PostgreSQL (public schema)..."
 
 PG_TARGETS=()
 if [ -n "${PG_CONN_STRING:-}" ]; then
   PG_TARGETS+=("$PG_CONN_STRING")
 fi
-if [ -f "$ROOT_DIR/../credentials.env" ]; then
-  # shellcheck disable=SC1091
-  source "$ROOT_DIR/../credentials.env"
-  if [ -n "${PG_CONN_STRING_LOCAL:-}" ]; then
-    PG_TARGETS+=("$PG_CONN_STRING_LOCAL")
-  fi
-  # Opt-in only: set PG_WIPE_SUPABASE=1 to also wipe remote Supabase
-  if [ "${PG_WIPE_SUPABASE:-0}" = "1" ] && [ -n "${PG_CONN_STRING_SUPABASE:-}" ]; then
-    PG_TARGETS+=("$PG_CONN_STRING_SUPABASE")
-  fi
+if [ -n "${PG_CONN_STRING_LOCAL:-}" ]; then
+  PG_TARGETS+=("$PG_CONN_STRING_LOCAL")
+fi
+# Opt-in only: set PG_WIPE_SUPABASE=1 to also wipe remote Supabase
+if [ "${PG_WIPE_SUPABASE:-0}" = "1" ] && [ -n "${PG_CONN_STRING_SUPABASE:-}" ]; then
+  PG_TARGETS+=("$PG_CONN_STRING_SUPABASE")
 fi
 if [ "${#PG_TARGETS[@]}" -eq 0 ]; then
   PG_TARGETS+=("postgresql://admin:admin@localhost:5432/agentx")
 fi
 
-# De-duplicate connection strings while preserving order
 deduped_pg_targets=()
 for conn in "${PG_TARGETS[@]}"; do
   already=0
@@ -117,9 +175,10 @@ for conn in "${PG_TARGETS[@]}"; do
 done
 
 cd "$ROOT_DIR/packages/engine"
+pg_failures=0
 for PG_CONN in "${deduped_pg_targets[@]}"; do
   echo "    wiping $(echo "$PG_CONN" | sed -E 's#://([^:]+):([^@]+)@#://\1:***@#')"
-  PG_CONN="$PG_CONN" node -e "
+  if ! PG_CONN="$PG_CONN" node -e "
     const { Pool } = require('pg');
 
     function redact(url) {
@@ -158,33 +217,42 @@ for PG_CONN in "${deduped_pg_targets[@]}"; do
       console.error('PG wipe failed for', redact(process.env.PG_CONN), '-', e.message);
       process.exit(1);
     });
-  "
+  "; then
+    pg_failures=$((pg_failures + 1))
+    echo "    WARNING: PG wipe failed for one target (continuing)."
+  fi
 done
+if [ "$pg_failures" -gt 0 ]; then
+  echo "    WARNING: $pg_failures PostgreSQL target(s) failed to wipe."
+fi
 
-# 4. Clean previous release artifacts
+# ── 4. Clean previous release artifacts ─────────────────────────────────────
 echo ">>> Cleaning previous desktop build artifacts..."
 cd "$DESKTOP_DIR"
 rm -rf dist release
 
-# 5. Build dependencies
+# ── 5. Build dependencies ───────────────────────────────────────────────────
 echo ">>> Building shared, web-api, and web-ui..."
+cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
 
-# 6. Build desktop app (unpacked .app)
+# ── 6. Build desktop app (unpacked .app) ────────────────────────────────────
 echo ">>> Building desktop app..."
+cd "$DESKTOP_DIR"
 npm run build
 pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api
 npx electron-builder --mac --dir
 
-# 7. Copy to /Applications (uses osascript to prompt for password)
+# ── 7. Copy to /Applications ─────────────────────────────────────────────────
 echo ">>> Installing to /Applications (password prompt may appear)..."
 osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && cp -R '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/\" with administrator privileges"
 
-# 8. Launch
+# ── 8. Launch (creates fresh empty SQLite + config on first run) ─────────────
 echo ">>> Launching Agent-X..."
+echo "    Note: a fresh agentx.db is created on first launch — that is expected."
 open /Applications/Agent-X.app
 
 echo "=== Clean slate done! ==="

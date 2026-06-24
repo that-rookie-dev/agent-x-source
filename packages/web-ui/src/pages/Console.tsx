@@ -1,8 +1,7 @@
-import { Component, type ReactNode, useState, useCallback, useRef, useEffect } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Component, type ReactNode, useState, useCallback, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import CircularProgress from '@mui/material/CircularProgress';
 import { Sidebar } from '../components/Sidebar';
 import { Footer } from '../components/Footer';
 import { LogsPanel } from '../components/LogsPanel';
@@ -21,7 +20,6 @@ import { ProvidersPanel } from '../components/ProvidersPanel';
 import { HealthPanel } from '../components/HealthPanel';
 import { NotificationToast } from '../components/NotificationToast';
 import { colors } from '../theme';
-import { crewChat } from '../api';
 
 export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'knowledge' | 'orchestrator' | 'crews' | 'soul' | 'providers' | 'health';
 
@@ -50,40 +48,9 @@ const RIGHT_PANEL_MIN_WIDTH = 200;
 const RIGHT_PANEL_DEFAULT_WIDTH = 350;
 
 export function Console() {
-  const { panel, sessionId, crewId } = useParams<{ panel?: string; sessionId?: string; crewId?: string }>();
-  const location = useLocation();
-  const isLegacyCrewChat = location.pathname.startsWith('/console/crew-chat/');
+  const { panel, sessionId } = useParams<{ panel?: string; sessionId?: string }>();
   const navigate = useNavigate();
-  const [crewChatRedirecting, setCrewChatRedirecting] = useState(isLegacyCrewChat && !!crewId);
   const activePanel = (panel || 'chat') as PanelId;
-
-  useEffect(() => {
-    if (!isLegacyCrewChat || !crewId) return;
-    let cancelled = false;
-    setCrewChatRedirecting(true);
-    crewChat.findByCrew(crewId)
-      .then((result) => {
-        if (cancelled) return;
-        if (result.sessionId) {
-          navigate(`/console/chat/${result.sessionId}`, { replace: true });
-          return;
-        }
-        crewChat.startSession({ crewId })
-          .then((created) => {
-            if (!cancelled) navigate(`/console/chat/${created.sessionId}`, { replace: true });
-          })
-          .catch(() => {
-            if (!cancelled) navigate('/console/crews', { replace: true });
-          });
-      })
-      .catch(() => {
-        if (!cancelled) navigate('/console/crews', { replace: true });
-      })
-      .finally(() => {
-        if (!cancelled) setCrewChatRedirecting(false);
-      });
-    return () => { cancelled = true; };
-  }, [isLegacyCrewChat, crewId, navigate]);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsPosition, setLogsPosition] = useState<'bottom' | 'right'>('bottom');
   const [panelSize, setPanelSize] = useState(BOTTOM_PANEL_DEFAULT_HEIGHT);
@@ -172,12 +139,6 @@ export function Console() {
         <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', flexDirection: isVertical ? 'row' : 'column' }}>
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
             <PanelErrorBoundary key={activePanel}>
-              {crewChatRedirecting ? (
-                <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <CircularProgress size={24} sx={{ color: colors.accent.blue }} />
-                </Box>
-              ) : (
-                <>
               {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
               {activePanel === 'tools' && <ToolsPanel />}
               {activePanel === 'plugins' && <PluginsPanel />}
@@ -191,8 +152,6 @@ export function Console() {
               {activePanel === 'soul' && <SoulPanel />}
               {activePanel === 'providers' && <ProvidersPanel />}
               {activePanel === 'health' && <HealthPanel />}
-                </>
-              )}
             </PanelErrorBoundary>
           </Box>
           {isVertical && logsContent}

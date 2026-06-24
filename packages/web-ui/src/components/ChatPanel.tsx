@@ -58,7 +58,7 @@ import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
-import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, mapRestoreHistoryMessage, backfillCrewPrivateAssistantCrew } from '../chat/utils';
+import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, mapRestoreHistoryMessage } from '../chat/utils';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
 import { CrewMissionCard, type CrewInterMessage } from './CrewMissionCard';
 import type { CrewWorkerState } from './CrewWorkerPanel';
@@ -308,10 +308,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           callsign: session.hostCrewCallsign ?? '',
           title: session.hostCrewTitle,
         } : null;
-        const restoredMessages = crewPrivate && privateHost
-          ? backfillCrewPrivateAssistantCrew(hydrated.messages, privateHost, session.hostCrewId)
-          : hydrated.messages;
-        setMessages(restoredMessages);
+        setMessages(hydrated.messages);
         if (hydrated.crewWorkers.length > 0) {
           setCrewWorkers(hydrated.crewWorkers);
           setCrewMissionSessionId(sessionId);
@@ -2045,10 +2042,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         callsign: s.hostCrewCallsign ?? session?.hostCrewCallsign ?? '',
         title: s.hostCrewTitle ?? session?.hostCrewTitle,
       } : null;
-      const restoredMessages = crewPrivate && privateHost
-        ? backfillCrewPrivateAssistantCrew(hydrated.messages, privateHost, s.hostCrewId ?? session?.hostCrewId)
-        : hydrated.messages;
-      setMessages(restoredMessages);
+      setMessages(hydrated.messages);
       if (hydrated.crewWorkers.length > 0) {
         setCrewWorkers(hydrated.crewWorkers);
         setCrewMissionSessionId(s.id);
