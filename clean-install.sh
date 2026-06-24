@@ -20,10 +20,11 @@ echo ">>> Clearing cache..."
 rm -rf "$HOME/.cache/agentx"
 rm -rf "$HOME/Library/Application Support/@agentx"
 
-# 4. Ensure dependencies are installed (repairs corrupted node_modules links)
-echo ">>> Installing/updating dependencies..."
+# 4. Clean reinstall dependencies (fixes broken pnpm links like missing resolve-from/nanoid)
+echo ">>> Reinstalling dependencies (clean node_modules)..."
 cd "$ROOT_DIR"
-pnpm install
+rm -rf node_modules packages/*/node_modules
+pnpm install --no-frozen-lockfile
 
 # 5. Clean previous build artifacts
 echo ">>> Cleaning previous desktop build artifacts..."

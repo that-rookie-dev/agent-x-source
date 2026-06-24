@@ -4,6 +4,7 @@ import Typography from '@mui/material/Typography';
 import { colors } from '../theme';
 import { ReasoningBlock } from '../components/ChatEnhancements';
 import { InlineToolCall } from '../components/InlineToolCall';
+import { normalizeMessageForUi } from '@agentx/shared/browser';
 import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
@@ -91,8 +92,26 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession }:
   const crewInfo = message.crew;
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
   const [whyOpen, setWhyOpen] = useState(false);
-  const cleanContent = displayContent(message);
-  const hasParts = !!(message.parts && message.parts.length > 0);
+  const normalized = normalizeMessageForUi({
+    content: message.content,
+    parts: message.parts,
+    toolCalls: message.toolCalls,
+  }, []);
+  const displayMessage = {
+    ...message,
+    content: normalized.content || message.content,
+    parts: normalized.parts?.map((p) => (
+      p.type === 'tool' && p.tool
+        ? { ...p, tool: { ...p.tool, status: p.tool.status || 'done' as const } }
+        : p
+    )) as PartEntry[] | undefined ?? message.parts,
+    toolCalls: (normalized.toolCalls ?? message.toolCalls)?.map((t) => ({
+      ...t,
+      status: t.status || 'done' as const,
+    })),
+  };
+  const cleanContent = displayContent(displayMessage);
+  const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
 
   const subAgentCards = (message.subAgents ?? []).filter((a) => a.id && a.id !== 'subagent');
 
@@ -140,10 +159,10 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession }:
         </Box>
       )}
 
-      {hasParts ? renderParts(message.parts!, onOpenChildSession) : (
+      {hasParts ? renderParts(displayMessage.parts!, onOpenChildSession) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
           {cleanContent && <CrewAwareMarkdown content={cleanContent} />}
-          {message.toolCalls?.map((t) => <InlineToolCall key={t.id} tool={t} />)}
+          {displayMessage.toolCalls?.map((t) => <InlineToolCall key={t.id} tool={t} />)}
         </Box>
       )}
 

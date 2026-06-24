@@ -33,10 +33,12 @@ export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOp
 
   return (
     <>
-      {items.map(({ msg, isLastUser }, idx) => (
+      {items.map(({ msg, isLastUser }, idx) => {
+        const keepVisible = idx >= items.length - 2;
+        return (
         <Box
           key={msg.id}
-          sx={{
+          sx={keepVisible ? undefined : {
             contentVisibility: 'auto',
             containIntrinsicSize: '0 120px',
             contain: 'layout style paint',
@@ -52,7 +54,8 @@ export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOp
             </Box>
           )}
         </Box>
-      ))}
+        );
+      })}
       <div ref={bottomRef} />
     </>
   );

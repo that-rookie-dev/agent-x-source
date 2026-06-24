@@ -363,7 +363,9 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
   } {
     const toolCalls = Array.from(toolCallMap.values());
     const subAgents = Array.from(subAgentMap.values());
-    const parts = accumulatedParts.length > 0 ? [...accumulatedParts] : undefined;
+    const parts = accumulatedParts.length > 0
+      ? JSON.parse(JSON.stringify(accumulatedParts)) as MessagePart[]
+      : undefined;
     const extra: ReturnType<typeof buildExtra> = {};
     if (thinkingText) extra.thinking = thinkingText;
     if (thinkingStartedAt != null) extra.thinkingStartedAt = thinkingStartedAt;
@@ -515,20 +517,15 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
       const msgObj = (event as any).message as Record<string, unknown> | undefined;
       const sessionId = sess?.id || (msgObj?.sessionId as string) || (event as any).sessionId || '';
 
-      // Auto-fill session title from the first user message
       if (evType === 'message_sent') {
+        // Reset first — new user turn must not inherit prior turn parts
+        resetAccumulators();
         const rawMsg: any = (event as any).message?.content;
         if (sess && typeof rawMsg === 'string' && sess.title === 'New Session') {
           const firstLine = String(rawMsg).split('\n')[0] || '';
           const title = firstLine.slice(0, 80).trim();
           if (title.length > 0) eng.sessionManager.updateSession({ title });
         }
-        // Reset accumulators for the new turn
-        resetAccumulators();
-      }
-
-      // Persist user messages
-      if (evType === 'message_sent') {
         const msg: any = (event as any).message;
         const text = (msg?.content as string) || (event as any).content as string || '';
         const crew = msg?.crew as CrewInfo | undefined;
@@ -539,15 +536,18 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
 
       // Persist assistant messages with ALL accumulated rich metadata
       if (evType === 'message_received') {
-        flushTextBuffer();
-        const msg: any = (event as any).message;
-        const text = repairStreamTextGlitches(stripToolNoise((msg?.content as string) || (event as any).content as string || ''));
-        const crew = msg?.crew as CrewInfo | undefined;
-        if (sessionId && text) {
-          const thinkingText = accumulatedThinking || undefined;
-          appendContextFile(sessionId, 'assistant', text, crew, buildExtra(thinkingText));
+        try {
+          flushTextBuffer();
+          const msg: any = (event as any).message;
+          const text = repairStreamTextGlitches(stripToolNoise((msg?.content as string) || (event as any).content as string || ''));
+          const crew = msg?.crew as CrewInfo | undefined;
+          if (sessionId && text) {
+            const thinkingText = accumulatedThinking || undefined;
+            appendContextFile(sessionId, 'assistant', text, crew, buildExtra(thinkingText));
+          }
+        } finally {
+          resetAccumulators();
         }
-        resetAccumulators();
       }
 
       // Also write tool execution system messages for context.txt readability

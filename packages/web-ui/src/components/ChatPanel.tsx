@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -54,7 +54,7 @@ import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
-import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches } from '../chat/utils';
+import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, mapRestoreHistoryMessage } from '../chat/utils';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
 import { CrewMissionCard, type CrewInterMessage } from './CrewMissionCard';
 import type { CrewWorkerState } from './CrewWorkerPanel';
@@ -274,22 +274,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           return;
         }
         const resolvedScope = scopePath || session.scopePath;
-        const visible = historyMsgs.filter((m: any) => m.role !== 'part');
+        const visible = historyMsgs.filter((m: any) => m.role !== 'part' && m.role !== 'system');
         const mapped = visible.map((m: any) => {
           const modeChange = parseModeChange(m.content);
-          const content = repairStreamTextGlitches(stripToolNoise(m.content || ''));
-          const parts = Array.isArray(m.parts)
-            ? m.parts.map((p: any) => (p.type === 'text' && p.content
-              ? { ...p, content: repairStreamTextGlitches(stripToolNoise(p.content, { trim: false })) }
-              : p))
-            : undefined;
+          const restored = mapRestoreHistoryMessage(m);
           return {
-            ...m,
+            ...restored,
             id: m.id || crypto.randomUUID(),
-            content,
             streaming: false,
-            parts,
-            toolCalls: m.toolCalls?.map((tc: any) => ({ ...tc, status: 'done' as const })),
             subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
             plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
             ...(modeChange ? { isModeChange: modeChange } : {}),
@@ -471,6 +463,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   // RAF-batched tool event accumulator (prevents render storm on long-running tasks)
   const toolBatchRef = useRef<TelemetryEvent[]>([]);
   const toolFlushRef = useRef<number | null>(null);
+  const prevStreamingRef = useRef(false);
+
+  const scrollMessagesToBottom = useCallback((behavior: 'smooth' | 'instant' = 'instant') => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    if (behavior === 'smooth') {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, []);
 
   // ─── Smart auto-scroll: track user scroll position ───
   useEffect(() => {
@@ -506,12 +509,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   useEffect(() => {
     if (!initialScrollDone && messages.length > 0) {
       const timer = setTimeout(() => {
-        bottomRef.current?.scrollIntoView();
+        scrollMessagesToBottom('instant');
         setInitialScrollDone(true);
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [messages.length, initialScrollDone]);
+  }, [messages.length, initialScrollDone, scrollMessagesToBottom]);
 
   // Auto-scroll only when user is at bottom — also on streaming content updates
   const prevRealCountRef = useRef(0);
@@ -521,11 +524,20 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     if (countChanged) prevRealCountRef.current = realMsgs.length;
     if (!countChanged && !streaming) return;
     if (isAtBottomRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: countChanged ? 'smooth' : 'instant' });
+      scrollMessagesToBottom(countChanged ? 'smooth' : 'instant');
     } else if (countChanged) {
       setShowJumpPill(true);
     }
-  }, [messages, streaming]);
+  }, [messages, streaming, scrollMessagesToBottom]);
+
+  // Pin scroll to bottom when a turn finishes — content-visibility/layout reflow can jump upward
+  useLayoutEffect(() => {
+    const wasStreaming = prevStreamingRef.current;
+    prevStreamingRef.current = streaming;
+    if (!wasStreaming || streaming || !isAtBottomRef.current) return;
+    scrollMessagesToBottom('instant');
+    requestAnimationFrame(() => scrollMessagesToBottom('instant'));
+  }, [streaming, messages, scrollMessagesToBottom]);
 
   // Load sessions
   const loadSessions = useCallback(() => {
@@ -1870,18 +1882,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         navigate(`/console/chat/${parentId}`);
         return;
       }
-      const visible = historyMsgs.filter((m: any) => m.role !== 'part');
+      const visible = historyMsgs.filter((m: any) => m.role !== 'part' && m.role !== 'system');
       const mapped = visible.map((m: any) => {
         const modeChange = parseModeChange(m.content);
-        const content = repairStreamTextGlitches(stripToolNoise(m.content || ''));
-        const parts = Array.isArray(m.parts)
-          ? m.parts.map((p: any) => (p.type === 'text' && p.content
-            ? { ...p, content: repairStreamTextGlitches(stripToolNoise(p.content, { trim: false })) }
-            : p))
-          : undefined;
+        const restored = mapRestoreHistoryMessage(m);
         return {
-          ...m, id: m.id || crypto.randomUUID(), streaming: false, content, parts,
-          toolCalls: m.toolCalls?.map((tc: any) => ({ ...tc, status: 'done' as const })),
+          ...restored,
+          id: m.id || crypto.randomUUID(), streaming: false,
           subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
           plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
           ...(modeChange ? { isModeChange: modeChange } : {}),
@@ -2236,7 +2243,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               const el = messagesContainerRef.current;
               if (el) jumpSuppressScrollTopRef.current = el.scrollTop;
               setShowJumpPill(false);
-              bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+              scrollMessagesToBottom('smooth');
             }}
           />
         </Box>

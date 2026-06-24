@@ -255,6 +255,9 @@ importers:
 
   packages/web-ui:
     dependencies:
+      '@agentx/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@emotion/react':
         specifier: ^11.13.0
         version: 11.14.0(@types/react@18.3.29)(react@18.3.1)
