@@ -162,7 +162,7 @@ export class AutonomousDiagnosticsSystem {
     * PHASE 2: Intelligent File Resolution
     * Search across multiple locations with fuzzy matching
     */
-  async resolveFile(filename: string, context?: SessionContext): Promise<FileResolution | string> {
+  async resolveFile(filename: string, _context?: SessionContext): Promise<FileResolution | string> {
     this.logger.info('DIAGNOSTICS', `🔍 Resolving file: ${filename}`);
 
     // Check exact match first

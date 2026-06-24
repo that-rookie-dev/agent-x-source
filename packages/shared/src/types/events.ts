@@ -51,8 +51,8 @@ export type EngineEvent =
   | { type: 'token_update'; used: number; available: number }
   | { type: 'error'; code: string; message: string; recoverable: boolean; actions?: RemediationAction[] }
   | { type: 'provider_error'; provider: string; model: string; statusCode?: number; message: string; recoverable: boolean; actions?: RemediationAction[] }
-  | { type: 'tool_executing'; tool: string; description: string; startTime: number; args?: Record<string, unknown>; callId?: string }
-  | { type: 'tool_complete'; tool: string; result: ToolResult; elapsed: number; args?: Record<string, unknown>; callId?: string }
+  | { type: 'tool_executing'; tool: string; description: string; startTime: number; args?: Record<string, unknown>; callId?: string; message?: string }
+  | { type: 'tool_complete'; tool: string; result: ToolResult; elapsed: number; args?: Record<string, unknown>; callId?: string; message?: string }
   | { type: 'tool_output'; tool: string; callId: string; output: string; timestamp: number }
   | { type: 'tool_called'; callId: string; tool: string; args: Record<string, unknown>; startTime: number }
   | { type: 'tool_result'; callId: string; tool: string; success: boolean; output: string; elapsed: number; args?: Record<string, unknown>; metadata?: { diff?: string; filePath?: string; oldContent?: string; newContent?: string; error?: string } }

@@ -24,7 +24,7 @@ export class FiberSet {
     const values: T[] = [];
     for (const r of results) {
       if (r.status === 'fulfilled') {
-        values.push(r.value);
+        values.push(r.value as T);
       } else {
         logger.error('FIBER_SET', r.reason instanceof Error ? r.reason.message : String(r.reason));
       }

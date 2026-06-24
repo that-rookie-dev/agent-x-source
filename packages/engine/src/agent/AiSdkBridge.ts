@@ -252,8 +252,7 @@ export function createAiSdkTools(
              const elapsed = Date.now() - startTime;
              activeOutputCalls.delete(callId);
              onToolExecuted?.(toolDef.id, result.success, result.output, elapsed, args as Record<string, unknown>);
-             const resultPreview = result.output.slice(0, 100) + (result.output.length > 100 ? '...' : '');
-             emit({ 
+              emit({ 
                type: 'tool_complete', 
                tool: toolDef.id, 
                result: { success: result.success, output: result.output }, 

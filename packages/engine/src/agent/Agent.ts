@@ -782,7 +782,7 @@ export class Agent {
     if (!this._neuralDb) {
       try {
         if (this._pgPool) { this._neuralDb = createPgNeuralDb(this._pgPool); }
-        else { const { join } = require('node:path'); this._neuralDb = createSqliteNeuralDb(join(getConfigDir(), 'neural.db')); }
+        else { this._neuralDb = createSqliteNeuralDb(join(getConfigDir(), 'neural.db')); }
       } catch { this._neuralDb = { prepare: () => ({ run: () => ({ changes: 0 }), get: () => null, all: () => [] }) }; }
     }
     return this._neuralDb;
@@ -3394,13 +3394,13 @@ Only include specialists that are actually needed for this task.`;
     
     // Pattern: agent claims to have created/edited/deleted files
     const writePatterns = [
-      /created\s+(["`]?[\w./\-]+["`]?)/gi,
+      /created\s+(["`]?[\w./-]+["`]?)/gi,
       /created the file/gi,
       /created a new file/gi,
-      /wrote.*to\s+(["`]?[\w./\-]+["`]?)/gi,
-      /edited\s+(["`]?[\w./\-]+["`]?)/gi,
-      /modified\s+(["`]?[\w./\-]+["`]?)/gi,
-      /deleted\s+(["`]?[\w./\-]+["`]?)/gi,
+      /wrote.*to\s+(["`]?[\w./-]+["`]?)/gi,
+      /edited\s+(["`]?[\w./-]+["`]?)/gi,
+      /modified\s+(["`]?[\w./-]+["`]?)/gi,
+      /deleted\s+(["`]?[\w./-]+["`]?)/gi,
       /done!\s*i'[^ ]*ve created/gi,
       /done.*created/gi,
       /i've created/gi,
@@ -3422,8 +3422,8 @@ Only include specialists that are actually needed for this task.`;
 
     // Filesystem ground-truth: if a claimed path exists but tool reported failure, note the mismatch
     for (const entry of failedWrites) {
-      const pathMatch = entry.output.match(/path[=:\s]+(["']?)([\w./\-]+)\1/i)
-        || entry.output.match(/([\w./\-]+\.\w{1,8})/);
+      const pathMatch = entry.output.match(/path[=:\s]+(["']?)([\w./-]+)\1/i)
+        || entry.output.match(/([\w./-]+\.\w{1,8})/);
       const relPath = pathMatch?.[2] || pathMatch?.[1];
       if (relPath) {
         const absPath = resolve(this.scopePath, relPath);
