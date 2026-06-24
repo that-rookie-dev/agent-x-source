@@ -1,3 +1,6 @@
+import { repairTreeDiagrams, repairPlainTreeFences } from './tree-diagram.js';
+import { repairPipelineDiagrams, repairPlainPipelineFences } from './pipeline-diagram.js';
+
 const EMOJI_PREFIX = /^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u;
 
 /** Detect standalone ALL-CAPS section titles (common in LLM output). */
@@ -126,11 +129,23 @@ export function normalizeAssistantMarkdown(content: string): string {
 
   const lines = content.replace(/\r\n/g, '\n').split('\n');
   const out: string[] = [];
+  let inFence = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
 
-    // Underscore / dash separators → horizontal rule
+    if (trimmed.startsWith('```')) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+
+    // Underscore / dash separators → horizontal rule (only outside fences)
     if (/^_{4,}$/.test(trimmed) || /^-{4,}$/.test(trimmed) || /^={4,}$/.test(trimmed)) {
       out.push('---');
       continue;
@@ -160,7 +175,13 @@ export function normalizeAssistantMarkdown(content: string): string {
   }
 
   const joined = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  return repairMarkdownTables(joined);
+  return repairPlainPipelineFences(
+    repairPipelineDiagrams(
+      repairPlainTreeFences(
+        repairTreeDiagrams(repairMarkdownTables(joined)),
+      ),
+    ),
+  );
 }
 
 /** Split normalized markdown into card sections (only on explicit --- rules). */

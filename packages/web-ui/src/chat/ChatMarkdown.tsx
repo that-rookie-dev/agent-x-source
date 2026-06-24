@@ -8,6 +8,9 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { colors } from '../theme';
 import { StyledTableWrapper, StyledUl, StyledOl, StyledLi } from '../components/StructuredViews';
 import { splitMarkdownSections } from './markdown-normalize';
+import { expandCollapsedTreeLine, isTreeDiagramContent } from './tree-diagram';
+import { isPipelineDiagramContent } from './pipeline-diagram';
+import { PipelineDiagramBlock } from './PipelineDiagramBlock';
 
 const MARKDOWN_BASE_SX = {
   '& p': { m: 0, mb: 0.75, fontSize: '0.8125rem', lineHeight: 1.65, color: colors.text.secondary, fontFamily: "'Inter', sans-serif" },
@@ -59,10 +62,77 @@ const CODE_BLOCK_SX = {
   },
 } as const;
 
-function CodeBlockWithCopy({ code, language }: { code: string; language?: string }) {
+function TreeDiagramBlock({ code }: { code: string }) {
+  const lines = useMemo(
+    () => expandCollapsedTreeLine(code.replace(/\r\n/g, '\n')).split('\n').filter((l) => l.trim().length > 0),
+    [code],
+  );
   const [copied, setCopied] = useState(false);
+
+  const highlightLine = (line: string) => {
+    const parts = line.split(/(├──|└──|│)/g);
+    return parts.map((part, i) => (
+      /^(?:├──|└──|│)$/.test(part)
+        ? <Box key={i} component="span" sx={{ color: colors.accent.cyan, opacity: 0.9 }}>{part}</Box>
+        : <Fragment key={i}>{part}</Fragment>
+    ));
+  };
+
+  return (
+    <Box sx={{ my: 1.25, border: `1px solid ${colors.border.default}`, borderRadius: 1.25, overflow: 'hidden' }}>
+      <Box sx={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        px: 1.25, py: 0.5, bgcolor: colors.bg.secondary, borderBottom: `1px solid ${colors.border.default}`,
+      }}>
+        <Typography sx={{
+          fontSize: '0.55rem', fontWeight: 700, color: colors.text.secondary,
+          fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em', textTransform: 'uppercase',
+        }}>
+          Structure
+        </Typography>
+        <Box
+          component="button"
+          onClick={() => { navigator.clipboard.writeText(lines.join('\n')).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          sx={{
+            bgcolor: 'transparent', border: `1px solid ${colors.border.subtle}`, borderRadius: '6px',
+            cursor: 'pointer', px: 0.85, py: 0.2, color: copied ? colors.accent.green : colors.text.dim, fontSize: '0.52rem',
+            fontFamily: "'JetBrains Mono', monospace", transition: 'color 0.15s',
+            '&:hover': { borderColor: colors.border.strong, color: colors.text.secondary },
+          }}
+        >
+          {copied ? '✓ Copied' : 'Copy'}
+        </Box>
+      </Box>
+      <Box
+        component="pre"
+        sx={{
+          m: 0, px: 1.5, py: 1.25, bgcolor: colors.bg.primary, overflowX: 'auto',
+          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.68rem', lineHeight: 1.6,
+          color: colors.text.secondary, whiteSpace: 'pre', tabSize: 2,
+        }}
+      >
+        {lines.map((line, i) => (
+          <Box key={i} component="span" sx={{ display: 'block' }}>{highlightLine(line)}</Box>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+function CodeBlockWithCopy({ code, language }: { code: string; language?: string }) {
   const lang = (language || 'text').toLowerCase();
-  const displayLang = lang === 'bash' || lang === 'sh' || lang === 'shell' ? 'bash' : lang;
+  if (lang === 'tree' || lang === 'diagram' || (isTreeDiagramContent(code) && !isPipelineDiagramContent(code))) {
+    return <TreeDiagramBlock code={code} />;
+  }
+  if (lang === 'pipeline' || lang === 'flow' || isPipelineDiagramContent(code)) {
+    return <PipelineDiagramBlock code={code} />;
+  }
+  return <SyntaxCodeBlock code={code} language={lang} />;
+}
+
+function SyntaxCodeBlock({ code, language }: { code: string; language: string }) {
+  const [copied, setCopied] = useState(false);
+  const displayLang = language === 'bash' || language === 'sh' || language === 'shell' ? 'bash' : language;
   return (
     <Box sx={{ my: 1.25, border: `1px solid ${colors.border.default}`, borderRadius: 1.25, overflow: 'hidden' }}>
       <Box sx={{

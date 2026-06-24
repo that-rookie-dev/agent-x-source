@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeAssistantMarkdown, repairMarkdownTables } from '../src/chat/markdown-normalize';
+import { expandCollapsedTreeLine, repairTreeDiagrams } from '../src/chat/tree-diagram';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -78,3 +79,46 @@ function isSeparatorRowLike(line: string): boolean {
   const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
   return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c));
 }
+
+describe('repairTreeDiagrams', () => {
+  it('expands collapsed inline tree onto multiple lines', () => {
+    const collapsed = 'Your AI Platform ├── Core Agent Engine ├── Voice Module';
+    const expanded = expandCollapsedTreeLine(collapsed);
+    expect(expanded.split('\n').length).toBeGreaterThan(1);
+    expect(expanded).toContain('├── Core Agent Engine');
+  });
+
+  it('wraps tree blocks in tree fences for markdown rendering', () => {
+    const input = `Architecture I Recommend
+Your AI Platform ├── Core Agent Engine
+│ ├── STT: Vosk
+│ └── TTS: Piper`;
+    const repaired = repairTreeDiagrams(input);
+    expect(repaired).toContain('```tree');
+    expect(repaired).toContain('Your AI Platform');
+    expect(repaired).toContain('├── STT: Vosk');
+  });
+
+  it('splits prose prefix from tree on the same line', () => {
+    const input = 'On first platform startup: ├── Detect if Vosk + Piper are installed';
+    const repaired = repairTreeDiagrams(input);
+    expect(repaired).toContain('On first platform startup:');
+    expect(repaired).toContain('```tree');
+    expect(repaired).toContain('├── Detect if Vosk + Piper are installed');
+  });
+
+  it('normalizes assistant markdown with tree diagrams', () => {
+    const input = `Implementation Strategy
+1. Bundled Installation
+On first platform startup: ├── Detect if Vosk + Piper are installed`;
+    const normalized = normalizeAssistantMarkdown(input);
+    expect(normalized).toContain('```tree');
+  });
+
+  it('expands deeply collapsed architecture tree from LLM output', () => {
+    const collapsed = 'Your AI Platform ├── Core Agent Engine ├── Voice Module (Optional but bundled) │ ├── STT: Vosk │ └── TTS: Piper';
+    const repaired = repairTreeDiagrams(collapsed);
+    expect(repaired).toContain('```tree');
+    expect(repaired.split('\n').filter((l) => l.includes('├──')).length).toBeGreaterThan(2);
+  });
+});

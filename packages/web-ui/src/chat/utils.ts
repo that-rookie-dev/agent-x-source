@@ -1,5 +1,7 @@
 /** Client-side text helpers (mirrors @agentx/shared). */
 
+import { normalizeMessageForUi } from '@agentx/shared/browser';
+
 export function sanitizeForJson(text: string): string {
   if (!text) return text;
   return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
@@ -47,14 +49,64 @@ export function repairStreamTextGlitches(text: string): string {
   return out;
 }
 
+function partsTextLead(message: { parts?: Array<{ type: string; content?: string }> }): string {
+  const raw = message.parts
+    ?.filter((p) => p.type === 'text' && p.content)
+    .map((p) => p.content!)
+    .join('') ?? '';
+  return stripToolNoise(raw, { trim: false }).slice(0, 80);
+}
+
 /** When parts[] exist, only show text from parts — not the combined content field. */
 export function displayContent(message: { content?: string; parts?: Array<{ type: string; content?: string }> }): string {
-  if (message.parts?.length) {
-    const raw = message.parts
-      .filter((p) => p.type === 'text' && p.content)
-      .map((p) => p.content!)
-      .join('');
-    return repairStreamTextGlitches(stripToolNoise(raw));
+  const contentText = repairStreamTextGlitches(stripToolNoise(message.content || ''));
+  if (!message.parts?.length) return contentText;
+
+  const raw = message.parts
+    .filter((p) => p.type === 'text' && p.content)
+    .map((p) => p.content!)
+    .join('');
+  const partsText = repairStreamTextGlitches(stripToolNoise(raw));
+
+  if (!contentText) return partsText;
+
+  const contentLead = stripToolNoise(contentText).slice(0, 80);
+  const partsLead = partsTextLead(message);
+  if (contentLead.length >= 20 && partsLead.length >= 20 && contentLead !== partsLead) {
+    // Stored parts[] accumulated prior-turn content; content is canonical for this message
+    if (partsText.length > contentText.length * 1.15 && partsText.includes(contentLead.slice(0, 40))) {
+      return contentText;
+    }
+    if (!partsText.includes(contentLead.slice(0, 40)) && !contentText.includes(partsLead.slice(0, 40))) {
+      return contentText;
+    }
   }
-  return repairStreamTextGlitches(stripToolNoise(message.content || ''));
+
+  return partsText || contentText;
+}
+
+/** Normalize one restored history row (assistant parts/toolCalls reconciliation). */
+export function mapRestoreHistoryMessage(m: Record<string, unknown>): Record<string, unknown> {
+  const toolCalls = Array.isArray(m.toolCalls)
+    ? (m.toolCalls as Array<Record<string, unknown>>).map((tc) => ({ ...tc, status: 'done' as const }))
+    : undefined;
+  const normalized = m.role === 'assistant'
+    ? normalizeMessageForUi({ ...m, toolCalls: toolCalls ?? m.toolCalls }, [])
+    : null;
+  const content = normalized?.content
+    ?? repairStreamTextGlitches(stripToolNoise(String(m.content || '')));
+  const parts = normalized?.parts
+    ?? (Array.isArray(m.parts)
+      ? (m.parts as Array<Record<string, unknown>>).map((p) => (
+        p.type === 'text' && p.content
+          ? { ...p, content: repairStreamTextGlitches(stripToolNoise(String(p.content), { trim: false })) }
+          : p
+      ))
+      : undefined);
+  return {
+    ...m,
+    content,
+    parts,
+    toolCalls: normalized?.toolCalls ?? toolCalls,
+  };
 }

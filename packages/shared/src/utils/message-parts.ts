@@ -167,6 +167,110 @@ function parseJsonField(val: unknown): Record<string, unknown> | string | undefi
   return undefined;
 }
 
+function textFromParts(parts: MessagePart[]): string {
+  return parts
+    .filter((p) => p.type === 'text' && p.content)
+    .map((p) => p.content!)
+    .join('');
+}
+
+/** True when parts[] tool ids/count disagree with canonical toolCalls on the message row. */
+export function partsToolIdsMismatch(parts: MessagePart[], toolCalls?: PersistedToolCall[]): boolean {
+  const partIds = parts
+    .filter((p) => p.type === 'tool' && p.tool?.id)
+    .map((p) => p.tool!.id);
+  const callIds = (toolCalls ?? []).map((t) => t.id);
+  if (partIds.length === 0 && callIds.length === 0) return false;
+  if (partIds.length !== callIds.length) return true;
+  const callSet = new Set(callIds);
+  return partIds.some((id) => !callSet.has(id));
+}
+
+/** True when parts text is longer than content but still contains content's opening (merged turns). */
+export function partsTextExceedsContent(content: string, parts: MessagePart[]): boolean {
+  const partsText = stripToolNoise(textFromParts(parts), { trim: false });
+  const cleanContent = stripToolNoise(content, { trim: false });
+  if (!cleanContent || !partsText) return false;
+  if (partsText.length <= cleanContent.length * 1.08) return false;
+  const prefix = cleanContent.slice(0, Math.min(60, cleanContent.length));
+  return prefix.length >= 20 && partsText.includes(prefix);
+}
+
+/** Decide whether stored parts[] should be discarded in favour of content + toolCalls. */
+export function shouldRebuildStoredParts(
+  content: string,
+  parts: MessagePart[],
+  toolCalls?: PersistedToolCall[],
+): boolean {
+  if (!parts.length) return false;
+  if (partsCorruptedByCrossTurn(content, parts)) return true;
+  if (partsToolIdsMismatch(parts, toolCalls)) return true;
+  if (partsTextExceedsContent(content, parts)) return true;
+  return false;
+}
+
+export function rebuildPartsFromCanonical(content: string, toolCalls?: PersistedToolCall[]): MessagePart[] {
+  return dedupeToolParts([
+    ...(content ? [{ type: 'text' as const, id: crypto.randomUUID(), content }] : []),
+    ...(toolCalls ?? []).map((t) => ({
+      type: 'tool' as const,
+      id: t.id,
+      tool: { ...t, status: t.status || 'done' as const },
+    })),
+  ], true);
+}
+
+/**
+ * Detect when persisted parts[] accumulated prior-turn content (parts grow across turns
+ * but content holds the canonical single-turn text from message_received).
+ */
+export function partsCorruptedByCrossTurn(content: string, parts: MessagePart[]): boolean {
+  const partsText = textFromParts(parts);
+  const cleanContent = stripToolNoise(content);
+  const cleanParts = stripToolNoise(partsText, { trim: false });
+  if (!cleanContent || !cleanParts) return false;
+
+  const contentLead = cleanContent.slice(0, Math.min(80, cleanContent.length));
+  const partsLead = cleanParts.slice(0, Math.min(80, cleanParts.length));
+  if (contentLead.length < 20 || partsLead.length < 20) return false;
+  if (contentLead === partsLead) return false;
+
+  // Parts embed this turn's content after a prior-turn prefix
+  if (cleanParts.length > cleanContent.length * 1.15 && cleanParts.includes(contentLead.slice(0, 40))) {
+    return true;
+  }
+  // Parts and content are from unrelated turns (no shared opening)
+  if (!cleanParts.includes(contentLead.slice(0, 40)) && !cleanContent.includes(partsLead.slice(0, 40))) {
+    return true;
+  }
+  return false;
+}
+
+/** Assign message_parts rows to one assistant message (turn window: after prev user, through assistant). */
+export function assignPartsToAssistantMessage(
+  messages: Array<Record<string, unknown>>,
+  allParts: DbPartRow[],
+  assistantIndex: number,
+): DbPartRow[] {
+  const msg = messages[assistantIndex]!;
+  const msgCreatedAt = (msg['created_at'] as string) || '';
+
+  let prevUserCreatedAt = '';
+  for (let j = assistantIndex - 1; j >= 0; j--) {
+    if (messages[j]!['role'] === 'user') {
+      prevUserCreatedAt = (messages[j]!['created_at'] as string) || '';
+      break;
+    }
+  }
+
+  return allParts.filter((p) => {
+    const pca = (p['created_at'] as string) || '';
+    if (prevUserCreatedAt && pca && pca <= prevUserCreatedAt) return false;
+    if (msgCreatedAt && pca && pca > msgCreatedAt) return false;
+    return true;
+  });
+}
+
 /** Normalize stored parts JSON or reconstruct from toolCalls. */
 export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts?: DbPartRow[]): {
   content: string;
@@ -197,29 +301,28 @@ export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts
 
   const storedParts = msg['parts'];
   if (Array.isArray(storedParts) && storedParts.length > 0) {
-    const parts = dedupeToolParts((storedParts as MessagePart[]).map((p) => {
+    const mapped = dedupeToolParts((storedParts as MessagePart[]).map((p) => {
       if (p.type === 'text' && p.content) {
         return { ...p, content: repairStreamTextGlitches(stripToolNoise(p.content, { trim: false })) };
       }
       if (p.type === 'tool' && p.tool) return { ...p, tool: { ...p.tool, status: p.tool.status || 'done' } };
       return p;
     }), true);
-    return { content, parts, toolCalls };
+    if (!shouldRebuildStoredParts(content, mapped, toolCalls)) {
+      return { content, parts: mapped, toolCalls };
+    }
   }
 
   if (sessionParts && sessionParts.length > 0) {
-    const msgCreatedAt = (msg['created_at'] as string) || '';
     const parts = buildPartsFromDbRows(sessionParts, content, toolCalls);
-    if (parts.length > 0) return { content, parts, toolCalls };
-    void msgCreatedAt;
+    if (parts.length > 0 && !shouldRebuildStoredParts(content, parts, toolCalls)) {
+      return { content, parts, toolCalls };
+    }
   }
 
-  if (toolCalls?.length) {
-    const parts = dedupeToolParts([
-      ...(content ? [{ type: 'text' as const, id: crypto.randomUUID(), content }] : []),
-      ...toolCalls.map((t) => ({ type: 'tool' as const, id: t.id, tool: { ...t, status: t.status || 'done' as const } })),
-    ], true);
-    return { content, parts, toolCalls };
+  if (toolCalls?.length || content) {
+    const parts = rebuildPartsFromCanonical(content, toolCalls);
+    return { content, parts: parts.length > 0 ? parts : undefined, toolCalls };
   }
 
   return { content, toolCalls };

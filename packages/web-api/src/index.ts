@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi } from '@agentx/shared';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, assignPartsToAssistantMessage } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus } from './engine.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
@@ -2531,16 +2531,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       const msg = messages[i]!;
       if (msg['role'] !== 'assistant') continue;
 
-      const msgCreatedAt = (msg['created_at'] as string) || '';
-      const nextMsgCreatedAt = (i + 1 < messages.length) ? (messages[i + 1]!['created_at'] as string) : undefined;
-
-      const msgPartRows = parts.filter((p) => {
-        const pca = (p['created_at'] as string) || '';
-        if (msgCreatedAt && pca < msgCreatedAt) return false;
-        if (nextMsgCreatedAt && pca >= nextMsgCreatedAt) return false;
-        return true;
-      });
-
+      const msgPartRows = assignPartsToAssistantMessage(messages, parts, i);
       const normalized = normalizeMessageForUi(msg, msgPartRows);
       if (normalized.parts?.length) {
         (msg as Record<string, unknown>)['parts'] = normalized.parts;
