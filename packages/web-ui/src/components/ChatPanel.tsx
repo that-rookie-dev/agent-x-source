@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -169,6 +169,7 @@ interface ChatPanelProps {
 
 export function ChatPanel({ sessionId }: ChatPanelProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionListTab: SessionListTab = searchParams.get('tab') === 'crew' ? 'crew_private' : 'agent_x';
   const setSessionListTab = useCallback((tab: SessionListTab) => {
@@ -181,10 +182,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId ?? null);
   const [isCrewPrivateSession, setIsCrewPrivateSession] = useState(false);
   const [crewPrivateHost, setCrewPrivateHost] = useState<{ name: string; callsign: string; title?: string } | null>(null);
+  const isCrewPrivateRef = useRef(false);
+  const crewPrivateHostRef = useRef<{ name: string; callsign: string; title?: string } | null>(null);
+  const chatReturnToRef = useRef<'crew_tab' | '/console/crews' | null>(null);
   const [copiedSessionId, setCopiedSessionId] = useState(false);
   const [parentSessionId, setParentSessionId] = useState<string | null>(null);
   const [childSessionDrawer, setChildSessionDrawer] = useState<ChildSessionDrawerState | null>(null);
   const currentSessionIdRef = useRef<string | null>(sessionId ?? null);
+
+  useEffect(() => { isCrewPrivateRef.current = isCrewPrivateSession; }, [isCrewPrivateSession]);
+  useEffect(() => { crewPrivateHostRef.current = crewPrivateHost; }, [crewPrivateHost]);
 
   // Chat state
   const [messages, setMessages] = useState<UIMessage[]>([]);
@@ -321,6 +328,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         } else {
           setCrewPrivateHost(null);
         }
+        if (crewPrivate) {
+          setAgentMode('agent');
+          const navState = location.state as { fromCrews?: boolean } | null;
+          chatReturnToRef.current = navState?.fromCrews ? '/console/crews' : 'crew_tab';
+        } else if (session.mode === 'plan' || session.mode === 'agent') {
+          setAgentMode(session.mode);
+        }
         if (!session.title || session.title === 'New Session' || session.title === 'Child Session') {
           generateTitle(sessionId, visible);
         }
@@ -337,10 +351,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         tokenInputRef.current = inputEst;
         tokenOutputRef.current = outputEst;
         if (resolvedScope) setCwd(resolvedScope);
-        // Restore saved session mode from DB (do not re-send to server)
-        if (session.mode === 'plan' || session.mode === 'agent') {
-          setAgentMode(session.mode);
-        }
         loadTodos();
         isInitialLoadRef.current = false;
       }).catch((err) => {
@@ -353,7 +363,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setIsCrewPrivateSession(false);
       setCrewPrivateHost(null);
     }
-  }, [sessionId]);
+  }, [sessionId, location.state, navigate]);
 
   // Right sidebar state
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
@@ -654,7 +664,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
     system.cwd().then((r) => { if (r.cwd) setCwd(r.cwd); }).catch(() => {});
-    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); }).catch(() => {});
+    sessionSettings.get().then((s) => { if (!sessionId && (s.mode === 'agent' || s.mode === 'plan')) setAgentMode(s.mode); }).catch(() => {});
     // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
       .then(r => r.json())
@@ -866,9 +876,20 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             }
             setLoadingSteps(null);
             const loadingStage = (ev as { stage?: string }).stage;
-            // Crew missions stream crew-attributed messages — no Agent-X placeholder bubble
-            if (loadingStage === 'crew_mission') {
+            // Crew missions / private chats stream crew-attributed messages — no Agent-X placeholder
+            if (loadingStage === 'crew_mission' || loadingStage === 'crew_private') {
               setStreaming(true);
+              if (loadingStage === 'crew_mission') return prev;
+              if (last?.role === 'user' && isCrewPrivateRef.current && crewPrivateHostRef.current) {
+                const host = crewPrivateHostRef.current;
+                return [...prev, {
+                  id: crypto.randomUUID(),
+                  role: 'assistant',
+                  content: '',
+                  streaming: true,
+                  crew: { crewId: '', name: host.name, callsign: host.callsign },
+                }];
+              }
               return prev;
             }
             // Only create a placeholder when a user message just arrived (new turn).
@@ -975,9 +996,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             if (last?.role === 'assistant') {
               const incomingCrewId = crew?.crewId;
               const lastCrewId = last.crew?.crewId;
-              const sameSpeaker = incomingCrewId
-                ? incomingCrewId === lastCrewId
-                : !lastCrewId;
+              const crewPrivateMerge = isCrewPrivateRef.current && last.streaming;
+              const sameSpeaker = crewPrivateMerge
+                || (incomingCrewId
+                  ? incomingCrewId === lastCrewId
+                  : !lastCrewId);
               const shouldMerge = sameSpeaker && (last.streaming || (!text && !!last.content));
               if (shouldMerge) {
                 const mergedParts = (last.parts && last.parts.length > 0) ? last.parts : msg.parts;
@@ -1177,7 +1200,21 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return prev;
           }
 
+          case 'crew_suggestion_required': {
+            if (isCrewPrivateRef.current) return prev;
+            if (crewSuggestionHandledRef.current || crewSuggestOpen) return prev;
+            const evaluation = (ev as { evaluation?: CrewSuggestionEvaluation }).evaluation;
+            const message = (ev as { message?: string }).message;
+            if (evaluation?.shouldSuggest && message) {
+              setStreaming(false);
+              crewSuggestionHandledRef.current = true;
+              openCrewSuggestionFromEvaluation(evaluation, message);
+            }
+            return prev;
+          }
+
           case 'plan_approval_required': {
+            if (isCrewPrivateRef.current) return prev;
             const plan = (ev as { plan?: { title?: string; steps?: { id: string; description: string }[] } }).plan;
             if (plan?.steps) {
               setPlanApproval({ title: plan.title ?? 'Plan', steps: plan.steps });
@@ -1186,6 +1223,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
 
           case 'mode_escalation_required': {
+            if (isCrewPrivateRef.current) return prev;
             const tool = (ev as { tool?: string }).tool ?? 'tool';
             const reason = (ev as { reason?: string }).reason ?? 'Plan mode blocks this operation.';
             setModeEscalation({ tool, reason });
@@ -1557,6 +1595,35 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return null;
   }, [navigate]);
 
+  const maybeOfferCrewSuggestion = useCallback(async (text: string): Promise<boolean> => {
+    if (isCrewPrivateSession) return false;
+    const hasMention = /(?<!\w)@([\w][\w.-]*)/.test(text);
+    if (hasMention) return false;
+    const sessionId = await ensureSession();
+    if (!sessionId) return false;
+    try {
+      const priorUserMessages = messages
+        .filter((m) => m.role === 'user')
+        .map((m) => m.content)
+        .slice(-3);
+      const evaluation = await crewSuggestions.evaluate(text, sessionId, priorUserMessages);
+      if (evaluation.reasons.includes('catalog-unavailable')) {
+        setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
+      }
+      if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
+        crewSuggestionHandledRef.current = true;
+        openCrewSuggestionFromEvaluation(evaluation, text);
+        return true;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Crew suggestion check failed';
+      if (import.meta.env.DEV) {
+        setWarnings((prev) => replaceWarning(prev, `Crew suggestion: ${msg}`));
+      }
+    }
+    return false;
+  }, [messages, ensureSession, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
+
   const handleViewCrewDossier = useCallback(async (candidate: CrewMatchCandidate) => {
     if (candidate.onRoster || candidate.origin === 'custom' || candidate.origin === 'hub_roster') {
       const roster = crewList.find((c) => c.id === candidate.id);
@@ -1595,12 +1662,21 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }
   }, [crewList]);
 
-  const executeSend = useCallback(async (text: string, delegateCrewIds?: string[]) => {
+  const executeSend = useCallback(async (
+    text: string,
+    delegateCrewIds?: string[],
+    options?: { crewSuggestionResolved?: boolean },
+  ) => {
     const trimmed = sanitizeForJson(text.trim());
     if ((!trimmed && attachments.length === 0)) return;
     if (!currentProvider || !currentModel) return;
     rateLimitSeenRef.current = false;
     if (!(await ensureSession())) return;
+
+    const priorUserMessages = messages
+      .filter((m) => m.role === 'user')
+      .map((m) => m.content)
+      .slice(-3);
 
     setStreaming(true);
     const userMsg: UIMessage = {
@@ -1616,8 +1692,28 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
 
+    const crewResolved = options?.crewSuggestionResolved ?? Boolean(delegateCrewIds?.length);
+
     try {
-      const result = await chat.send(trimmed, fileRefs, undefined, delegateCrewIds);
+      const result = await chat.send(
+        trimmed,
+        fileRefs,
+        undefined,
+        delegateCrewIds,
+        crewResolved,
+        priorUserMessages,
+      );
+      if (result?.crewSuggestionRequired && result.evaluation) {
+        setStreaming(false);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'user' && last.content === trimmed) return prev.slice(0, -1);
+          return prev;
+        });
+        crewSuggestionHandledRef.current = true;
+        openCrewSuggestionFromEvaluation(result.evaluation, trimmed);
+        return;
+      }
       if (result?.turnId) activeTurnIdRef.current = result.turnId;
       if (result?.async) return;
       if (result?.message) {
@@ -1651,7 +1747,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       });
       setStreaming(false);
     }
-  }, [attachments, currentProvider, currentModel, agentMode, ensureSession]);
+  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, openCrewSuggestionFromEvaluation]);
+
+  const sendAfterModeChoice = useCallback(async (text: string, switchToAgent: boolean) => {
+    if (switchToAgent) {
+      setAgentMode('agent');
+      await sessionSettings.setMode('agent').catch(() => {});
+    }
+    if (await maybeOfferCrewSuggestion(text)) return;
+    await executeSend(text, undefined, { crewSuggestionResolved: true });
+  }, [maybeOfferCrewSuggestion, executeSend]);
 
   const handleSend = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -1663,29 +1768,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       return;
     }
 
-    const hasMention = !isCrewPrivateSession && /(?<!\w)@([\w][\w.-]*)/.test(trimmed);
-    if (!hasMention && !isCrewPrivateSession) {
-      const sessionId = await ensureSession();
-      if (sessionId) {
-        try {
-          const priorUserMessages = messages
-            .filter((m) => m.role === 'user')
-            .map((m) => m.content)
-            .slice(-3);
-          const evaluation = await crewSuggestions.evaluate(trimmed, sessionId, priorUserMessages);
-          if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
-            crewSuggestionHandledRef.current = true;
-            openCrewSuggestionFromEvaluation(evaluation, trimmed);
-            return;
-          }
-        } catch {
-          // Crew suggestion is best-effort — never block the send path
-        }
-      }
-    }
+    if (await maybeOfferCrewSuggestion(trimmed)) return;
 
     await executeSend(trimmed);
-  }, [attachments.length, agentMode, executeSend, messages, ensureSession, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
+  }, [attachments.length, agentMode, executeSend, maybeOfferCrewSuggestion]);
 
   // Retry last user message — re-sends without duplicating the user message,
   // replaces the existing assistant response on success.
@@ -2004,7 +2090,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const handleShowSessions = () => {
     setStreaming(false);
     loadSessions();
-    navigate('/console/chat');
+    const returnTo = chatReturnToRef.current;
+    chatReturnToRef.current = null;
+    if (returnTo === '/console/crews') {
+      navigate('/console/crews');
+    } else if (returnTo === 'crew_tab' || isCrewPrivateSession) {
+      navigate('/console/chat?tab=crew');
+    } else {
+      navigate('/console/chat');
+    }
   };
 
   const handleSelectSession = async (s: SessionInfo) => {
@@ -2055,6 +2149,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       } else {
         setCrewPrivateHost(null);
       }
+      if (crewPrivate) {
+        setAgentMode('agent');
+        chatReturnToRef.current = 'crew_tab';
+      } else if (session?.mode === 'plan' || session?.mode === 'agent') {
+        setAgentMode(session.mode);
+      }
       setParentSessionId(session?.parentId ?? s.parentId ?? null);
       setCurrentSessionId(s.id);
       setShowJumpPill(false);
@@ -2072,10 +2172,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       tokenOutputRef.current = outputEst;
       const restoredCwd = scopePath || session?.scopePath || '';
       if (restoredCwd) setCwd(restoredCwd);
-      // Restore saved session mode from DB (do not re-send to server)
-      if (session?.mode === 'plan' || session?.mode === 'agent') {
-        setAgentMode(session.mode);
-      }
       loadTodos();
       navigate(`/console/chat/${s.id}`);
     } catch (e) {
@@ -2656,8 +2752,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </Tooltip>
               )}
 
-              {/* Agent Mode — hidden when hyperdriving */}
-              {!hyperdriveMode && (
+              {/* Agent Mode — hidden for crew private and when hyperdriving */}
+              {!hyperdriveMode && !isCrewPrivateSession && (
               <Tooltip title={agentMode === 'agent' ? 'Agent — full access, executes tools freely' : 'Plan — outlines steps, no write access'} arrow>
                 <Chip
                   size="small"
@@ -3056,6 +3152,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }}
         onCancel={() => { setFolderPickerOpen(false); setFolderPickerCallback(null); }}
       />
+      {!isCrewPrivateSession && (
       <PlanApprovalModal
         open={!!planApproval}
         title={planApproval?.title ?? 'Plan'}
@@ -3069,6 +3166,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           setPlanApproval(null);
         }}
       />
+      )}
+      {!isCrewPrivateSession && (
       <ModeEscalationModal
         open={!!modeEscalation}
         tool={modeEscalation?.tool ?? ''}
@@ -3086,6 +3185,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           setStreaming(false);
         }}
       />
+      )}
       {!isCrewPrivateSession && (
       <CrewSuggestionModal
         open={crewSuggestOpen}
@@ -3120,14 +3220,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             });
             if (!result.deployedCrewIds?.length) {
               setWarnings((prev) => replaceWarning(prev, 'Crew deploy failed — no specialists were attached. Continuing with Agent-X.'));
-              await executeSend(text);
+              await executeSend(text, undefined, { crewSuggestionResolved: true });
               return;
             }
-            await executeSend(text, result.deployedCrewIds);
+            await executeSend(text, result.deployedCrewIds, { crewSuggestionResolved: true });
           } catch (err) {
             const msg = err instanceof Error ? err.message : 'Crew deploy failed';
             setWarnings((prev) => replaceWarning(prev, msg.includes('crew-deploy') ? 'Crew deploy failed — continuing with Agent-X only.' : msg));
-            await executeSend(text);
+            await executeSend(text, undefined, { crewSuggestionResolved: true });
           }
         }}
         onSkip={async (dismissForSession) => {
@@ -3146,7 +3246,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               });
             } catch { /* best-effort */ }
           }
-          if (text) await executeSend(text);
+          if (text) await executeSend(text, undefined, { crewSuggestionResolved: true });
         }}
         onClose={() => {
           setCrewSuggestOpen(false);
@@ -3170,17 +3270,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         open={modeSuggestOpen}
         onSwitch={() => {
           setModeSuggestOpen(false);
-          setAgentMode('agent');
-          sessionSettings.setMode('agent').catch(() => {});
           const text = pendingSendTextRef.current;
           pendingSendTextRef.current = null;
-          if (text) void executeSend(text);
+          if (text) void sendAfterModeChoice(text, true);
         }}
         onStay={() => {
           setModeSuggestOpen(false);
           const text = pendingSendTextRef.current;
           pendingSendTextRef.current = null;
-          if (text) void executeSend(text);
+          if (text) void sendAfterModeChoice(text, false);
         }}
         onClose={() => {
           setModeSuggestOpen(false);

@@ -58,15 +58,72 @@ export async function evaluateCrewSuggestionForMessage(input: {
   priorUserMessages?: string[];
 }): Promise<CrewSuggestionEvaluation | null> {
   const eng = getEngine();
+  await ensureCatalogOperational(eng);
   const service = getCrewSuggestionService(getStore(eng));
   if (!service) return null;
+  const prior = input.priorUserMessages ?? getPriorUserMessagesFromStore(eng, input.sessionId);
   return service.evaluate({
     message: input.text,
     sessionId: input.sessionId,
-    priorUserMessages: input.priorUserMessages,
+    priorUserMessages: prior,
     hasAtMention: hasAtMention(input.text),
     explicitCrewRequest: explicitCrewRequest(input.text),
   });
+}
+
+export function getPriorUserMessagesFromStore(
+  eng: ReturnType<typeof getEngine>,
+  sessionId: string,
+  limit = 3,
+): string[] {
+  try {
+    const store = getStore(eng) as {
+      getMessages?: (sid: string) => Array<{ role?: string; content?: string }>;
+    } | undefined;
+    if (!store?.getMessages) return [];
+    return store
+      .getMessages(sessionId)
+      .filter((m) => m.role === 'user' && typeof m.content === 'string')
+      .map((m) => m.content as string)
+      .slice(-limit);
+  } catch {
+    return [];
+  }
+}
+
+export type CrewSuggestionBlockResult =
+  | { block: true; evaluation: CrewSuggestionEvaluation; message: string }
+  | { block: false };
+
+/** Server-side gate: block agent turn until user resolves crew suggestion modal. */
+export async function blockForCrewSuggestionIfNeeded(input: {
+  text: string;
+  sessionId: string;
+  priorUserMessages?: string[];
+  crewPrivateChat: boolean;
+  delegateCrewIds?: string[];
+  crewSuggestionResolved?: boolean;
+}): Promise<CrewSuggestionBlockResult> {
+  if (input.crewPrivateChat) return { block: false };
+  if (input.delegateCrewIds?.length) return { block: false };
+  if (input.crewSuggestionResolved) return { block: false };
+  if (hasAtMention(input.text)) return { block: false };
+
+  const evaluation = await evaluateCrewSuggestionForMessage({
+    text: input.text,
+    sessionId: input.sessionId,
+    priorUserMessages: input.priorUserMessages,
+  });
+
+  if (!evaluation) {
+    getLogger().warn('CREW_SUGGESTION', 'catalog-unavailable during chat gate');
+    return { block: false };
+  }
+
+  if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
+    return { block: true, evaluation, message: input.text };
+  }
+  return { block: false };
 }
 
 export async function postCrewSuggestionEvaluate(req: Request, res: Response): Promise<void> {

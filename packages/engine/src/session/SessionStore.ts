@@ -1805,6 +1805,13 @@ export class SessionStore {
     try {
       this.db.prepare('DELETE FROM child_sessions WHERE id = ? OR parent_session_id = ?').run(sessionId, sessionId);
     } catch { /* table may not exist yet */ }
+    // Delete child sessions (parent_id FK) before the parent row.
+    try {
+      const children = this.db.prepare('SELECT id FROM sessions WHERE parent_id = ?').all(sessionId) as Array<{ id: string }>;
+      for (const child of children) {
+        this.deleteSession(child.id);
+      }
+    } catch { /* best-effort */ }
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   }
 

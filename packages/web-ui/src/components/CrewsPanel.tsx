@@ -312,7 +312,7 @@ export function CrewsPanel() {
       const result = await crewChat.startSession(body);
       await load();
       setDetailCrew(null);
-      navigate(`/console/chat/${result.sessionId}`);
+      navigate(`/console/chat/${result.sessionId}`, { state: { fromCrews: true } });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start private chat');
     } finally {

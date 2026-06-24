@@ -309,7 +309,9 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   });
 
   // Apply session mode immediately so the agent starts in the correct mode
-  if (session.mode === 'plan') {
+  if (isCrewPrivate) {
+    agent.setPlanMode(false);
+  } else if (session.mode === 'plan') {
     agent.setPlanMode(true);
   } else {
     agent.setPlanMode(false);

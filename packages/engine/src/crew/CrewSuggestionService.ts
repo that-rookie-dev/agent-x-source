@@ -10,6 +10,7 @@ import type {
 import { crewRequiresMedicalDisclaimer } from '@agentx/shared';
 import type { RawMatchRow } from './CrewMatchService.js';
 import {
+  buildCrewSuggestionSearchQuery,
   isActiveCrewContinuation,
   isDistinctNewRequirement,
 } from '../agent/crew-auto-compose.js';
@@ -82,8 +83,9 @@ export class CrewSuggestionService {
     if (!gate.pass) return empty;
 
     const recruited = await this.store.listRecruitedCatalogIds();
-    const catalogHits = await this.store.searchCatalog(gate.task, 20);
-    const rosterHits = await this.store.searchRosterCrews(gate.task, 20);
+    const searchQuery = buildCrewSuggestionSearchQuery(gate.task);
+    const catalogHits = await this.store.searchCatalog(searchQuery, 20);
+    const rosterHits = await this.store.searchRosterCrews(searchQuery, 20);
 
     const rows: RawMatchRow[] = [];
 

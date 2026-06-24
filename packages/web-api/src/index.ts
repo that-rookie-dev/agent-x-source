@@ -16,6 +16,7 @@ import {
   buildFullText,
   buildInstructionForMode,
   runAgentTurnAsync,
+  isCrewPrivateSessionRecord,
 } from './chat-helpers.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
@@ -32,8 +33,8 @@ import {
   listCatalogCategories,
   listCatalogByCategory,
   searchCatalogEntries,
-  evaluateCrewSuggestionForMessage,
   emitCrewSuggestionTelemetry,
+  blockForCrewSuggestionIfNeeded,
 } from './crew-suggestions.js';
 import { postCrewChatSession } from './crew-chat.js';
 
@@ -875,6 +876,11 @@ app.post('/api/session/mode', (req, res) => {
       res.status(409).json({ error: 'hyperdrive-active', message: 'Exit Hyperdrive before switching to Plan mode' });
       return;
     }
+    const activeSess = eng.sessionManager.getActiveSession?.();
+    if (isCrewPrivateSessionRecord(activeSess) && mode === 'plan') {
+      res.status(409).json({ error: 'crew-private-agent-only', message: 'Crew private chats always run in Agent mode.' });
+      return;
+    }
     sessionSettings.mode = mode;
     if (eng.agent) {
       eng.agent.setPlanMode(mode === 'plan');
@@ -1291,7 +1297,14 @@ app.use('/api/chat', chatRateLimiter.middleware);
 // NEW: Streaming SSE endpoint for real-time progress visualization
 app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean; delegateCrewIds?: string[] };
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages } = req.body as {
+      text: string;
+      attachments?: { name: string; content: string }[];
+      retry?: boolean;
+      delegateCrewIds?: string[];
+      crewSuggestionResolved?: boolean;
+      priorUserMessages?: string[];
+    };
     const eng = getEngine();
     
     // Auto-create agent if none exists
@@ -1346,7 +1359,9 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
     }
 
     const fullText = buildFullText(text, attachments);
-    const instruction = buildInstructionForMode(mode);
+    const activeSess = eng.sessionManager.getActiveSession?.();
+    const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
+    const instruction = crewPrivateChat ? undefined : buildInstructionForMode(mode);
 
     // Auto-checkpoint
     try {
@@ -1374,6 +1389,28 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
     }, 25000);
 
     const sid = (agent as unknown as { sessionId: string }).sessionId;
+
+    const crewGate = sid
+      ? await blockForCrewSuggestionIfNeeded({
+          text: fullText,
+          sessionId: sid,
+          priorUserMessages,
+          crewPrivateChat,
+          delegateCrewIds,
+          crewSuggestionResolved,
+        })
+      : { block: false as const };
+
+    if (crewGate.block) {
+      emitCrewSuggestionTelemetry(eng, crewGate.evaluation, crewGate.message);
+      sendEvent('crew_suggestion', { evaluation: crewGate.evaluation, message: crewGate.message });
+      sendEvent('crew_suggestion_required', { evaluation: crewGate.evaluation, message: crewGate.message });
+      clearInterval(heartbeat);
+      unsub();
+      res.end();
+      return;
+    }
+
     const turn = turnRegistry.create(sid);
     let finished = false;
 
@@ -1410,16 +1447,6 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       try { agent.cancel(); } catch { /* ignore */ }
     });
 
-    if (!delegateCrewIds?.length && sid && !/(?<!\w)@([\w][\w.-]*)/.test(fullText)) {
-      try {
-        const evaluation = await evaluateCrewSuggestionForMessage({ text: fullText, sessionId: sid });
-        if (evaluation?.shouldSuggest) {
-          sendEvent('crew_suggestion', { evaluation, message: fullText });
-          emitCrewSuggestionTelemetry(eng, evaluation, fullText);
-        }
-      } catch { /* best-effort */ }
-    }
-
     runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds);
     sendEvent('started', { turnId: turn.turnId, async: true });
     return;
@@ -1432,7 +1459,14 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
 // LEGACY comment removed — async turn endpoint used by ChatPanel (SSE uses message-stream).
 app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean; delegateCrewIds?: string[] };
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages } = req.body as {
+      text: string;
+      attachments?: { name: string; content: string }[];
+      retry?: boolean;
+      delegateCrewIds?: string[];
+      crewSuggestionResolved?: boolean;
+      priorUserMessages?: string[];
+    };
     const eng = getEngine();
     // Auto-create agent if none exists (first message in session)
     if (!eng.agent) {
@@ -1466,7 +1500,9 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     }
 
     const fullText = buildFullText(text, attachments);
-    const instruction = buildInstructionForMode(mode);
+    const activeSess = eng.sessionManager.getActiveSession?.();
+    const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
+    const instruction = crewPrivateChat ? undefined : buildInstructionForMode(mode);
 
     // Auto-checkpoint before each user turn — enables /undo to roll back this turn
     try {
@@ -1481,6 +1517,29 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     } catch (e) { /* checkpoint failure shouldn't block the message */ }
 
     const sid = (agent as unknown as { sessionId: string }).sessionId;
+
+    const crewGate = sid
+      ? await blockForCrewSuggestionIfNeeded({
+          text: fullText,
+          sessionId: sid,
+          priorUserMessages,
+          crewPrivateChat,
+          delegateCrewIds,
+          crewSuggestionResolved,
+        })
+      : { block: false as const };
+
+    if (crewGate.block) {
+      emitCrewSuggestionTelemetry(eng, crewGate.evaluation, crewGate.message);
+      res.status(200).json({
+        ok: false,
+        crewSuggestionRequired: true,
+        evaluation: crewGate.evaluation,
+        message: crewGate.message,
+      });
+      return;
+    }
+
     const turn = turnRegistry.create(sid);
     runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds);
 
@@ -1556,7 +1615,9 @@ app.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
     ensureSubscribed();
     const mode = applySessionModeToAgent(agent);
     const fullText = buildFullText(text, attachments);
-    const instruction = buildInstructionForMode(mode);
+    const activeSess = eng.sessionManager.getActiveSession?.();
+    const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
+    const instruction = crewPrivateChat ? undefined : buildInstructionForMode(mode);
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
     runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid);
@@ -2481,8 +2542,13 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     destroyAgent();
     const session = eng.sessionManager.restoreSession(sessionId);
     if (!session) { res.status(404).json({ error: 'not-found' }); return; }
-    // Restore saved session mode (defaults to 'plan')
-    sessionSettings.mode = session.mode || 'plan';
+    // Restore saved session mode (defaults to 'plan'); crew private is always agent
+    if (isCrewPrivateSessionRecord(session)) {
+      session.mode = 'agent';
+      sessionSettings.mode = 'agent';
+    } else {
+      sessionSettings.mode = session.mode || 'plan';
+    }
     createAgent(undefined, session);
     // Restore hyperdrive overlay from DB (persists build agent + auto-approve while engaged)
     if (session.hyperdrive) {

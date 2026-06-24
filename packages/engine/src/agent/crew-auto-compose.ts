@@ -154,7 +154,36 @@ export function isContinuationMessage(text: string): boolean {
     && (CONTINUATION_SIGNALS.test(trimmed) || CONTINUATION_DEICTIC.test(trimmed));
 }
 
-function extractDomainKeywords(text: string): Set<string> {
+const CREW_SEARCH_STOP_WORDS = new Set([
+  'the', 'and', 'for', 'with', 'can', 'you', 'help', 'me', 'please', 'could', 'would',
+  'this', 'that', 'are', 'was', 'were', 'have', 'has', 'had', 'am', 'is', 'my', 'our',
+  'your', 'his', 'her', 'their', 'who', 'what', 'when', 'where', 'how', 'why', 'also',
+  'just', 'need', 'want', 'like', 'some', 'any', 'all', 'very', 'really',
+]);
+
+/** Build a focused catalog FTS query — avoids OR-matching every crew on filler tokens. */
+export function buildCrewSuggestionSearchQuery(task: string): string {
+  const trimmed = task.trim();
+  if (!trimmed) return trimmed;
+
+  const domainKeys = extractDomainKeywords(trimmed);
+  const tokens = trimmed
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !CREW_SEARCH_STOP_WORDS.has(w));
+
+  const parts: string[] = [];
+  for (const d of domainKeys) parts.push(d);
+  for (const t of tokens) {
+    if (!parts.includes(t)) parts.push(t);
+  }
+
+  const query = parts.slice(0, 8).join(' ');
+  return query.length >= 3 ? query : trimmed.slice(0, 120);
+}
+
+export function extractDomainKeywords(text: string): Set<string> {
   const keys = new Set<string>();
   const lower = text.toLowerCase();
   for (const hint of DOMAIN_HINTS) {

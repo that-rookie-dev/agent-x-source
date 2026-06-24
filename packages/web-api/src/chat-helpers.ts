@@ -8,6 +8,10 @@ export const TURN_TIMEOUT_MS = 600_000;
 
 export const sessionSettings: { mode: 'agent' | 'plan' } = { mode: 'plan' };
 
+export function isCrewPrivateSessionRecord(session: { contextKind?: string } | null | undefined): boolean {
+  return (session?.contextKind ?? 'agent_x') === 'crew_private';
+}
+
 /** Sync global sessionSettings from active session record (per-session mode). */
 export function applySessionModeToAgent(agent: Agent): 'agent' | 'plan' {
   // Hyperdrive is an overlay — keep agent in build mode and use agent instructions
@@ -16,7 +20,15 @@ export function applySessionModeToAgent(agent: Agent): 'agent' | 'plan' {
   }
   const eng = getEngine();
   try {
-    const sess = eng.sessionManager.getActiveSession?.() as { mode?: string } | null | undefined;
+    const sess = eng.sessionManager.getActiveSession?.() as { mode?: string; contextKind?: string } | null | undefined;
+    if (isCrewPrivateSessionRecord(sess)) {
+      sessionSettings.mode = 'agent';
+      agent.setPlanMode(false);
+      try {
+        (eng as { toolkit?: { executor?: { setMode?: (m: string) => void } } }).toolkit?.executor?.setMode?.('agent');
+      } catch { /* best-effort */ }
+      return 'agent';
+    }
     if (sess?.mode === 'agent' || sess?.mode === 'plan') {
       sessionSettings.mode = sess.mode;
     }

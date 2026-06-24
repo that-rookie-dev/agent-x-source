@@ -412,7 +412,7 @@ export function createPgCrewCatalogStore(
 
     async getSessionEnabledCrewIds(sessionId: string): Promise<string[]> {
       const res = await pool.query(
-        `SELECT crew_id FROM session_crew_states WHERE session_id = $1 AND enabled = TRUE`,
+        `SELECT crew_id FROM session_crew_states WHERE session_id = $1 AND enabled = 1`,
         [sessionId],
       );
       return (res.rows as Array<Record<string, unknown>>).map((row) => row['crew_id'] as string);

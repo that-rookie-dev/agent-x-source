@@ -1293,6 +1293,11 @@ Return ONLY valid JSON, no other text.`;
     // Reset turn-level permission auto-approve from any prior batch approval
     this.turnApprovedAll = false;
 
+    const isCrewPrivate = this.options.promptProfile === 'crew_private';
+    if (isCrewPrivate && this.planMode) {
+      this.setPlanMode(false);
+    }
+
     // ─── DECISION ENGINE (heuristic — zero LLM calls) ───
     const conversationLen = this.messages.filter(m => m.role === 'user').length;
     const decision = this.decisionEngine.classify(cleanContent, conversationLen);
@@ -1411,9 +1416,10 @@ Return ONLY valid JSON, no other text.`;
 
     // ─── LLM PATH: every message → LLM with all tools → LLM decides ───
     const loadSteps = getLoadingSteps(decision.messageClass);
+    const loadingStage = isCrewPrivate ? 'crew_private' : decision.messageClass;
     this.emit({
       type: 'loading_start',
-      stage: decision.messageClass,
+      stage: loadingStage,
       steps: loadSteps.map(s => ({ ...s, status: 'pending' as const })),
     });
     // Step 1: classify → already done
@@ -1499,7 +1505,7 @@ Return ONLY valid JSON, no other text.`;
 
       // Plan mode (main session only): interactive plan approval before execution.
       // Delegated workers skip this — they deliver analysis/plans as markdown using read-only tools.
-      if (shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker)) {
+      if (shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker, this.options.promptProfile ?? 'default')) {
         const requiresPlan = shouldGeneratePlan(content, decision.messageClass);
 
         if (requiresPlan) {
@@ -1552,7 +1558,7 @@ Return ONLY valid JSON, no other text.`;
 
       // Proactive mode escalation: main session only (workers respond with read-only findings instead)
       if (
-        shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker)
+        shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker, this.options.promptProfile ?? 'default')
         && shouldEscalateForExecution(content, decision.messageClass)
       ) {
         this.emit({
@@ -2451,7 +2457,10 @@ Return ONLY valid JSON, no other text.`;
    */
   addToHistory(msg: { role: 'user' | 'assistant' | 'system'; content: string }): void {
     this.messages.push({ role: msg.role, content: msg.content });
-    if (msg.role !== 'system') {
+    if (msg.role === 'system') return;
+    if (msg.role === 'assistant' && this.options.promptProfile === 'crew_private' && this.options.crewPrivateHost) {
+      this.contextTracker.record('assistant', msg.content, this.options.crewPrivateHost.name);
+    } else {
       this.contextTracker.record(msg.role, msg.content);
     }
   }

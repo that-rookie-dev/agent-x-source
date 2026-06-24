@@ -245,14 +245,37 @@ async function postChatAsync(path: string, body: Record<string, unknown>) {
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   const response = await fetch(`${BASE}${path}`, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
   if (response.status === 401) { onUnauthorized?.(); throw new Error('Unauthorized'); }
-  const data = await response.json().catch(() => ({})) as { ok?: boolean; message?: ChatMessage; turnId?: string; async?: boolean; error?: string; clarification?: boolean };
+  const data = await response.json().catch(() => ({})) as {
+    ok?: boolean;
+    message?: ChatMessage;
+    turnId?: string;
+    async?: boolean;
+    error?: string;
+    clarification?: boolean;
+    crewSuggestionRequired?: boolean;
+    evaluation?: CrewSuggestionEvaluation;
+  };
   if (!response.ok && response.status !== 202) throw new Error(data.error || `HTTP ${response.status}`);
   return data;
 }
 
 export const chat = {
-  send: (text: string, attachments?: { name: string; content: string }[], retry?: boolean, delegateCrewIds?: string[]) =>
-    postChatAsync('/chat/message', { text, attachments, retry, delegateCrewIds }),
+  send: (
+    text: string,
+    attachments?: { name: string; content: string }[],
+    retry?: boolean,
+    delegateCrewIds?: string[],
+    crewSuggestionResolved?: boolean,
+    priorUserMessages?: string[],
+  ) =>
+    postChatAsync('/chat/message', {
+      text,
+      attachments,
+      retry,
+      delegateCrewIds,
+      crewSuggestionResolved,
+      priorUserMessages,
+    }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
   

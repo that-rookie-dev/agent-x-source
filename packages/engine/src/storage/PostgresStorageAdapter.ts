@@ -691,7 +691,21 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.write(`UPDATE sessions SET ${fields.join(', ')} WHERE id = $${idx}`, values);
   }
 
-  deleteSession(id: string): void {
+  private collectDescendantSessionIds(rootId: string): string[] {
+    const out: string[] = [];
+    const visit = (parentId: string) => {
+      for (const s of this.cache.sessions.values()) {
+        if (s.parentId === parentId) {
+          out.push(s.id);
+          visit(s.id);
+        }
+      }
+    };
+    visit(rootId);
+    return out;
+  }
+
+  private purgeSessionCache(id: string): void {
     this.cache.sessions.delete(id);
     for (const [parentId, children] of this.cache.childSessions.entries()) {
       const filtered = children.filter((c) => c['id'] !== id);
@@ -707,6 +721,27 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.permissions.delete(id);
     this.cache.permissionRules.delete(id);
     this.cache.taskSnapshots.delete(id);
+  }
+
+  deleteSession(id: string): void {
+    const descendants = this.collectDescendantSessionIds(id);
+    for (const childId of descendants) {
+      this.purgeSessionCache(childId);
+    }
+    this.purgeSessionCache(id);
+
+    // Delete descendant sessions first — parent_id FK has no ON DELETE CASCADE.
+    if (descendants.length > 0) {
+      this.write(
+        `WITH RECURSIVE tree AS (
+          SELECT id FROM sessions WHERE parent_id = $1
+          UNION ALL
+          SELECT s.id FROM sessions s INNER JOIN tree t ON s.parent_id = t.id
+        )
+        DELETE FROM sessions WHERE id IN (SELECT id FROM tree)`,
+        [id],
+      );
+    }
     this.write('DELETE FROM child_sessions WHERE id = $1 OR parent_session_id = $1', [id]);
     this.write('DELETE FROM sessions WHERE id = $1', [id]);
   }

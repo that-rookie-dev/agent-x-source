@@ -105,6 +105,17 @@ describe('crew catalog storage', () => {
     expect(partial.length).toBeGreaterThan(0);
     const short = await catalogStore.searchCatalog('ta', 10);
     expect(short.length).toBeGreaterThan(0);
+
+    const { buildCrewSuggestionSearchQuery } = await import('../src/agent/crew-auto-compose.js');
+    const { CrewSuggestionService } = await import('../src/crew/CrewSuggestionService.js');
+    const msg = 'I am planning for a international vacation with my wife and new born baby girl.';
+    const focused = buildCrewSuggestionSearchQuery(msg);
+    const hits = await catalogStore.searchCatalog(focused, 20);
+    expect(hits.length).toBeGreaterThan(0);
+    const svc = new CrewSuggestionService(catalogStore);
+    const evaluation = await svc.evaluate({ message: msg, sessionId: 'test-vacation', priorUserMessages: [] });
+    expect(evaluation.shouldSuggest).toBe(true);
+    expect(evaluation.candidates.some((c) => /travel|tourism|itinerary/i.test(c.categoryLabel ?? c.title ?? ''))).toBe(true);
   });
 
   it.skipIf(!manifest)('healDatabaseStore recreates crew_catalog and re-seeds after drop', async () => {

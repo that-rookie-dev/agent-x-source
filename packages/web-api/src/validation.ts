@@ -32,6 +32,9 @@ export const chatMessageSchema = z.object({
   })).optional(),
   retry: z.boolean().optional(),
   delegateCrewIds: z.array(z.string()).optional(),
+  /** Set after user skips/deploys from CrewSuggestionModal — prevents server re-prompt. */
+  crewSuggestionResolved: z.boolean().optional(),
+  priorUserMessages: z.array(z.string()).optional(),
 });
 
 export const crewSuggestionEvaluateSchema = z.object({

@@ -5,6 +5,7 @@ import {
   shouldShowSuggestion,
   type RawMatchRow,
 } from '../src/crew/CrewMatchService.js';
+import { buildCrewSuggestionSearchQuery } from '../src/agent/crew-auto-compose.js';
 
 describe('evaluateSuggestionGate', () => {
   it('blocks when @mention is present', () => {
@@ -37,6 +38,14 @@ describe('evaluateSuggestionGate', () => {
       explicitCrewRequest: false,
     });
     expect(result.pass).toBe(true);
+  });
+
+  it('buildCrewSuggestionSearchQuery focuses domain tokens for vacation messages', () => {
+    const msg = 'I am planning for a international vacation with my wife and new born baby girl.';
+    const query = buildCrewSuggestionSearchQuery(msg);
+    expect(query).toContain('travel');
+    expect(query).not.toMatch(/\bam\b/);
+    expect(query.split(' ').length).toBeLessThanOrEqual(8);
   });
 
   it('passes when dismissed but user explicitly requests crew', () => {

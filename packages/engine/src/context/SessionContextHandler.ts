@@ -227,7 +227,12 @@ export class SessionContextHandler {
         this.doc = appendUserTurn(this.doc, msg.content);
         count++;
       } else if (msg.role === 'assistant') {
-        this.doc = appendAssistantTurn(this.doc, msg.content);
+        const speaker = this.kind === 'crew_private'
+          ? (this.doc.crewRoster.find((c) => c.relationship === 'private_host')?.name
+            ?? this.doc.crewRoster[0]?.name
+            ?? 'Crew')
+          : 'Agent-X';
+        this.doc = appendAssistantTurn(this.doc, msg.content, speaker);
         count++;
       }
     }

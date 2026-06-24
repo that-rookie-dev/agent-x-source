@@ -101,15 +101,37 @@ export function isReadOnlyTool(toolId: string): boolean {
   return isToolAllowedInPlanMode(toolId);
 }
 
-/** Interactive plan approval / mode-escalation modals — main session only, not background workers. */
-export function shouldUseInteractivePlanGates(planMode: boolean, delegatedWorker: boolean): boolean {
+export type PlanGatePromptProfile = 'default' | 'crew_worker' | 'crew_private';
+
+/** Interactive plan approval / mode-escalation modals — Agent-X main session only. */
+export function shouldUseInteractivePlanGates(
+  planMode: boolean,
+  delegatedWorker: boolean,
+  promptProfile: PlanGatePromptProfile = 'default',
+): boolean {
+  if (promptProfile === 'crew_private' || promptProfile === 'crew_worker') return false;
   return planMode && !delegatedWorker;
 }
 
 const PLAN_INTENT_RE =
   /\b(plan|create a plan|make a plan|outline|roadmap|strategy|steps|milestone|break\s*down|step-by-step)\b/i;
 
+/** Software / repo work — interactive plan approval applies. */
+const CODE_TASK_SIGNALS =
+  /\b(code|codebase|repo|repository|api|backend|frontend|react|deploy|docker|kubernetes|microservice|database|sql|typescript|javascript|python|refactor|migration|scaffold|npm|git|ci\/cd|endpoint|component|bug|debug|unit test|e2e|pull request|pr\b|sprint|feature|module|service|infra)\b/i;
+
+/** Personal / lifestyle planning — answer in chat; prefer crew specialists over plan gates. */
+const CONVERSATIONAL_PLANNING_RE =
+  /\b(vacation|itinerary|trip|travel|holiday|tourism|hotel|flight|beach|honeymoon|wedding|party|meal plan|diet plan|workout plan|study plan|lesson plan|reading list|gift list|packing list|road trip|weekend getaway|family trip|newborn|new born|baby shower|birthday party)\b/i;
+
+export function isConversationalPlanningRequest(content: string): boolean {
+  const lower = content.toLowerCase().trim();
+  if (!CONVERSATIONAL_PLANNING_RE.test(lower)) return false;
+  return !CODE_TASK_SIGNALS.test(lower);
+}
+
 export function requiresPlanIntent(content: string): boolean {
+  if (isConversationalPlanningRequest(content)) return false;
   return PLAN_INTENT_RE.test(content);
 }
 
@@ -139,7 +161,10 @@ export function shouldEscalateForExecution(content: string, messageClass?: strin
 
 /** Plan intent from message text + optional classifier (task messages with plan keywords). */
 export function shouldGeneratePlan(content: string, messageClass?: string): boolean {
+  if (isConversationalPlanningRequest(content)) return false;
   if (requiresPlanIntent(content)) return true;
-  if (messageClass === 'task' && /\b(plan|planning|roadmap|outline)\b/i.test(content)) return true;
+  if (messageClass === 'task' && /\b(plan|planning|roadmap|outline)\b/i.test(content)) {
+    return !isConversationalPlanningRequest(content);
+  }
   return false;
 }

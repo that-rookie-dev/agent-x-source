@@ -58,4 +58,24 @@ describe('SessionContextHandler narrative memory', () => {
     expect(text).toContain('Agent-X is not part');
     expect(text).toContain('Elias Svensson');
   });
+
+  it('rebuildFromMessages attributes assistant turns to crew host in crew_private', () => {
+    const store = new SessionNarrativeStore();
+    const handler = createCrewPrivateContextHandler({
+      sessionId: 'crew-chat-2',
+      crewId: 'c9',
+      crewName: 'Elias Svensson',
+      callsign: 'elias_travel',
+      store,
+    });
+
+    handler.rebuildFromMessages([
+      { role: 'user', content: 'Plan a weekend trip to Kyoto' },
+      { role: 'assistant', content: 'Here is a relaxed two-day Kyoto itinerary for your family.' },
+    ]);
+
+    const text = handler.getNarrativeText();
+    expect(text).toContain('Elias Svensson responded');
+    expect(text).not.toContain('Agent-X responded');
+  });
 });
