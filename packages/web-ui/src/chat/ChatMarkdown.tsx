@@ -1,4 +1,4 @@
-import React, { Fragment, useMemo, useState } from 'react';
+import React, { Fragment, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import ReactMarkdown from 'react-markdown';
@@ -9,8 +9,10 @@ import { colors } from '../theme';
 import { StyledTableWrapper, StyledUl, StyledOl, StyledLi } from '../components/StructuredViews';
 import { splitMarkdownSections } from './markdown-normalize';
 import { expandCollapsedTreeLine, isTreeDiagramContent } from './tree-diagram';
-import { isPipelineDiagramContent } from './pipeline-diagram';
+import { isHorizontalPipelineContent, isPipelineDiagramContent } from './pipeline-diagram';
+import { FlowDiagramBlock } from './FlowDiagramBlock';
 import { PipelineDiagramBlock } from './PipelineDiagramBlock';
+import { CodeBlockChrome, CodeBlockBody, CODE_BLOCK_TOKENS, formatBlockTitle } from './code-block-chrome';
 
 const MARKDOWN_BASE_SX = {
   '& p': { m: 0, mb: 0.75, fontSize: '0.8125rem', lineHeight: 1.65, color: colors.text.secondary, fontFamily: "'Inter', sans-serif" },
@@ -62,12 +64,11 @@ const CODE_BLOCK_SX = {
   },
 } as const;
 
-function TreeDiagramBlock({ code }: { code: string }) {
+function HierarchyDiagramBlock({ code }: { code: string }) {
   const lines = useMemo(
     () => expandCollapsedTreeLine(code.replace(/\r\n/g, '\n')).split('\n').filter((l) => l.trim().length > 0),
     [code],
   );
-  const [copied, setCopied] = useState(false);
 
   const highlightLine = (line: string) => {
     const parts = line.split(/(├──|└──|│)/g);
@@ -79,102 +80,72 @@ function TreeDiagramBlock({ code }: { code: string }) {
   };
 
   return (
-    <Box sx={{ my: 1.25, border: `1px solid ${colors.border.default}`, borderRadius: 1.25, overflow: 'hidden' }}>
-      <Box sx={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        px: 1.25, py: 0.5, bgcolor: colors.bg.secondary, borderBottom: `1px solid ${colors.border.default}`,
-      }}>
-        <Typography sx={{
-          fontSize: '0.55rem', fontWeight: 700, color: colors.text.secondary,
-          fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em', textTransform: 'uppercase',
-        }}>
-          Structure
-        </Typography>
+    <CodeBlockChrome title="Hierarchy" copyText={lines.join('\n')}>
+      <CodeBlockBody>
         <Box
-          component="button"
-          onClick={() => { navigator.clipboard.writeText(lines.join('\n')).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          component="pre"
           sx={{
-            bgcolor: 'transparent', border: `1px solid ${colors.border.subtle}`, borderRadius: '6px',
-            cursor: 'pointer', px: 0.85, py: 0.2, color: copied ? colors.accent.green : colors.text.dim, fontSize: '0.52rem',
-            fontFamily: "'JetBrains Mono', monospace", transition: 'color 0.15s',
-            '&:hover': { borderColor: colors.border.strong, color: colors.text.secondary },
+            m: 0, p: 0, overflowX: 'auto',
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: CODE_BLOCK_TOKENS.monoFontSize,
+            lineHeight: CODE_BLOCK_TOKENS.treeLineHeight,
+            color: colors.text.secondary,
+            whiteSpace: 'pre',
+            tabSize: 2,
           }}
         >
-          {copied ? '✓ Copied' : 'Copy'}
+          {lines.map((line, i) => (
+            <Fragment key={i}>
+              {i > 0 ? '\n' : null}
+              {highlightLine(line)}
+            </Fragment>
+          ))}
         </Box>
-      </Box>
-      <Box
-        component="pre"
-        sx={{
-          m: 0, px: 1.5, py: 1.25, bgcolor: colors.bg.primary, overflowX: 'auto',
-          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.68rem', lineHeight: 1.6,
-          color: colors.text.secondary, whiteSpace: 'pre', tabSize: 2,
-        }}
-      >
-        {lines.map((line, i) => (
-          <Box key={i} component="span" sx={{ display: 'block' }}>{highlightLine(line)}</Box>
-        ))}
-      </Box>
-    </Box>
+      </CodeBlockBody>
+    </CodeBlockChrome>
   );
 }
 
 function CodeBlockWithCopy({ code, language }: { code: string; language?: string }) {
   const lang = (language || 'text').toLowerCase();
-  if (lang === 'tree' || lang === 'diagram' || (isTreeDiagramContent(code) && !isPipelineDiagramContent(code))) {
-    return <TreeDiagramBlock code={code} />;
+  if (lang === 'tree' || lang === 'diagram' || (isTreeDiagramContent(code) && !isPipelineDiagramContent(code) && !isHorizontalPipelineContent(code))) {
+    return <HierarchyDiagramBlock code={code} />;
   }
-  if (lang === 'pipeline' || lang === 'flow' || isPipelineDiagramContent(code)) {
+  if (lang === 'flow' || isPipelineDiagramContent(code)) {
+    return <FlowDiagramBlock code={code} />;
+  }
+  if (lang === 'pipeline' || isHorizontalPipelineContent(code)) {
     return <PipelineDiagramBlock code={code} />;
   }
   return <SyntaxCodeBlock code={code} language={lang} />;
 }
 
 function SyntaxCodeBlock({ code, language }: { code: string; language: string }) {
-  const [copied, setCopied] = useState(false);
   const displayLang = language === 'bash' || language === 'sh' || language === 'shell' ? 'bash' : language;
   return (
-    <Box sx={{ my: 1.25, border: `1px solid ${colors.border.default}`, borderRadius: 1.25, overflow: 'hidden' }}>
-      <Box sx={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        px: 1.25, py: 0.5, bgcolor: colors.bg.secondary, borderBottom: `1px solid ${colors.border.default}`,
-      }}>
-        <Typography sx={{ fontSize: '0.55rem', fontWeight: 700, color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-          {displayLang}
-        </Typography>
-        <Box
-          component="button"
-          onClick={() => { navigator.clipboard.writeText(code).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-          sx={{
-            bgcolor: 'transparent', border: `1px solid ${colors.border.subtle}`, borderRadius: '6px',
-            cursor: 'pointer', px: 0.85, py: 0.2, color: copied ? colors.accent.green : colors.text.dim, fontSize: '0.52rem',
-            fontFamily: "'JetBrains Mono', monospace", transition: 'color 0.15s',
-            '&:hover': { borderColor: colors.border.strong, color: colors.text.secondary },
-          }}
-        >
-          {copied ? '✓ Copied' : 'Copy'}
+    <CodeBlockChrome title={formatBlockTitle(displayLang)} copyText={code}>
+      <CodeBlockBody>
+        <Box sx={CODE_BLOCK_SX}>
+          <SyntaxHighlighter
+            style={CODE_BLOCK_THEME}
+            language={displayLang}
+            PreTag="div"
+            wrapLongLines
+            customStyle={{
+              borderRadius: 0,
+              fontSize: CODE_BLOCK_TOKENS.monoFontSize,
+              margin: 0,
+              padding: 0,
+              background: 'transparent',
+              lineHeight: CODE_BLOCK_TOKENS.monoLineHeight,
+            }}
+            codeTagProps={{ style: { background: 'transparent', textShadow: 'none' } }}
+          >
+            {code}
+          </SyntaxHighlighter>
         </Box>
-      </Box>
-      <Box sx={CODE_BLOCK_SX}>
-        <SyntaxHighlighter
-          style={CODE_BLOCK_THEME}
-          language={displayLang}
-          PreTag="div"
-          wrapLongLines
-          customStyle={{
-            borderRadius: 0,
-            fontSize: '0.72rem',
-            margin: 0,
-            padding: '12px 14px',
-            background: colors.bg.primary,
-            lineHeight: 1.55,
-          }}
-          codeTagProps={{ style: { background: 'transparent', textShadow: 'none' } }}
-        >
-          {code}
-        </SyntaxHighlighter>
-      </Box>
-    </Box>
+      </CodeBlockBody>
+    </CodeBlockChrome>
   );
 }
 
@@ -249,9 +220,12 @@ function createMarkdownComponents(isFirstSection: boolean) {
     code({ className, children, ...props }: { className?: string; children?: React.ReactNode }) {
       const match = /language-(\w+)/.exec(className ?? '');
       const code = String(children).replace(/\n$/, '');
-      // Fenced blocks without a language tag still arrive as multiline code nodes.
-      if (match || code.includes('\n')) {
-        return <CodeBlockWithCopy code={code} language={match?.[1]} />;
+      if (match) return <CodeBlockWithCopy code={code} language={match[1]} />;
+      if (code.includes('\n')) {
+        if (isPipelineDiagramContent(code)) return <FlowDiagramBlock code={code} />;
+        if (isHorizontalPipelineContent(code)) return <PipelineDiagramBlock code={code} />;
+        if (isTreeDiagramContent(code)) return <HierarchyDiagramBlock code={code} />;
+        return <SyntaxCodeBlock code={code} language="text" />;
       }
       return (
         <Box
