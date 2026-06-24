@@ -39,7 +39,7 @@ import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createSqliteNeuralDb, createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
@@ -73,6 +73,13 @@ import { SkillRegistry } from './SkillRegistry.js';
 import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
 import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 import { CrewOrchestrator, type CrewMember } from './CrewOrchestrator.js';
+import {
+  assessCrewNeed,
+  autoComposeCrewMembers,
+  buildTaskContextForCrewRouting,
+  isContinuationMessage,
+  userDeferredToAgent,
+} from './crew-auto-compose.js';
 import { CrewMissionOrchestrator, type CrewMissionOptions, type CrewMissionResult } from './CrewMissionOrchestrator.js';
 import { setCrewMissionDeps } from '../tools/builtin/spawn-crew-workers.js';
 import { isMissionInProgress } from './crew-mission-registry.js';
@@ -132,7 +139,9 @@ export interface AgentOptions {
   /** Live crew mission context — injected between agentic steps when revision advances */
   missionContextProvider?: () => { revision: number; block: string };
   /** Slim prompt stack for crew workers (no Agent-X identity bleed). */
-  promptProfile?: 'default' | 'crew_worker';
+  promptProfile?: 'default' | 'crew_worker' | 'crew_private';
+  /** Host crew for 1:1 private chat sessions. */
+  crewPrivateHost?: import('@agentx/shared').Crew;
   /** Background worker (sub-agent / crew) — skip interactive plan approval & mode escalation UI gates. */
   delegatedWorker?: boolean;
 }
@@ -151,6 +160,7 @@ export class Agent {
   private scope: Scope | null = null;
   private _abortSignalController: AbortController | null = null;
   private pendingInstruction: string | null = null;
+  private pendingDelegateCrewIds: string[] | null = null;
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
   private todoManager: TodoManager;
@@ -355,7 +365,8 @@ export class Agent {
   onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number; crewId?: string }) => void) | null = null;
   onSessionEvent: ((event: SessionEvent) => void) | null = null;
 
-  setContextPersistDir(_dir: string, scopePath?: string): void {
+  setContextPersistDir(dir: string, scopePath?: string): void {
+    this.contextTracker.setPersistDir(dir);
     if (scopePath) this.contextTracker.setScopePath(scopePath);
   }
   private maxSubAgents = 5;
@@ -370,6 +381,7 @@ export class Agent {
       scopePath?: string,
       meta?: { kind?: string; label?: string },
     ) => unknown;
+    saveCrewState?: (crewId: string, enabled: boolean, messageCount?: number) => void;
   } | null = null;
   private enabledCrewSessionIds: Set<string> = new Set();
 
@@ -398,7 +410,12 @@ export class Agent {
     }
     this.sessionId = options.sessionId;
     this.scopePath = normalize(resolve(options.scopePath!));
-    this.contextTracker = new ContextTracker(null as any, this.sessionId);
+    const crewHost = options.crewPrivateHost;
+    this.contextTracker = new ContextTracker(null as any, this.sessionId,
+      crewHost && options.promptProfile === 'crew_private'
+        ? { kind: 'crew_private', hostCrewId: crewHost.id, hostCrewName: crewHost.name, hostCrewCallsign: crewHost.callsign }
+        : undefined,
+    );
     this.eventBus = options.eventBus ?? new AgentEventBus();
     this._onPart = options.onPart;
 
@@ -671,7 +688,9 @@ export class Agent {
     // skillGenerator and reflectionLoop are lazy-init (created on first access)
 
     // Register this agent on the bus with persona identity
-    const identity = this.persona?.name || 'Agent-X';
+    const identity = this.options.promptProfile === 'crew_private' && this.options.crewPrivateHost
+      ? this.options.crewPrivateHost.name
+      : (this.persona?.name || 'Agent-X');
     this.agentBus.registerAgent(this.sessionId, [identity]);
 
     // ─── LAZY PIPELINE — components created on first access via getters ───
@@ -1151,7 +1170,7 @@ Return ONLY valid JSON, no other text.`;
     }
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[] }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1221,6 +1240,7 @@ Return ONLY valid JSON, no other text.`;
 
     // Store the per-message instruction for injection during completion (not in history)
     this.pendingInstruction = options?.instruction || null;
+    this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
 
     // Add user message (clean, without instruction)
     if (!options?.retry) {
@@ -1232,6 +1252,8 @@ Return ONLY valid JSON, no other text.`;
 
     // Record in context tracker
     this.contextTracker.record('user', cleanContent);
+
+    const turnContext = this.prepareTurnContext(cleanContent);
 
     const userMessage: Message = {
       id: generateMessageId(),
@@ -1304,7 +1326,8 @@ Return ONLY valid JSON, no other text.`;
       reasoning: decision.reasoning,
     } as unknown as EngineEvent);
 
-    // ─── @MENTION ROUTING — direct crew invocation ───
+    // ─── @MENTION ROUTING — direct crew invocation (Agent-X sessions only) ───
+    if (this.options.promptProfile !== 'crew_private') {
     const mentionedCrewIds = this.detectAtMentions(cleanContent);
     if (mentionedCrewIds.length > 0 && this.crewOrchestrator) {
       const members = this.crewOrchestrator.getMembers();
@@ -1316,8 +1339,50 @@ Return ONLY valid JSON, no other text.`;
       }
     }
 
-    // ─── Fast-reply cache hit → minimal LLM call, no tools ───
-    if (decision.executionPath === 'fast_reply') {
+    // ─── USER-APPROVED CREW SUGGESTION — deploy selected specialists ───
+    if (this.pendingDelegateCrewIds?.length && this.crewOrchestrator) {
+      const delegateIds = this.pendingDelegateCrewIds;
+      this.pendingDelegateCrewIds = null;
+      const members = this.crewOrchestrator.getMembers();
+      const delegatedMembers = members.filter((m) =>
+        delegateIds.includes(m.crew.id) && m.crew.enabled !== false,
+      );
+      if (delegatedMembers.length > 0) {
+        return await this.executeCrewMission(delegatedMembers, cleanContent, startTime, classificationContext);
+      }
+      getLogger().warn('AGENT', `Crew deploy failed: no enabled members for ids ${delegateIds.join(', ')}`);
+      this.emit({
+        type: 'error',
+        code: 'crew_deploy_failed',
+        message: 'Selected crew specialists could not be attached to this session. Continuing with Agent-X.',
+        recoverable: true,
+      });
+    }
+
+    // ─── ACTIVE CREW CONTINUATION — route follow-ups to deployed specialists ───
+    const activeCrew = this.getActiveCrewMembers();
+    if (activeCrew.length > 0 && this.crewOrchestrator) {
+      const priorUserMessages = this.messages
+        .filter((m) => m.role === 'user')
+        .map((m) => (typeof m.content === 'string' ? m.content : ''))
+        .slice(0, -1);
+      const routingTask = turnContext.needsContextMerge
+        ? turnContext.mergedTask
+        : buildTaskContextForCrewRouting(cleanContent, priorUserMessages);
+      const shouldContinueWithCrew = userDeferredToAgent(cleanContent)
+        || isContinuationMessage(cleanContent)
+        || assessCrewNeed(routingTask, activeCrew).shouldRoute;
+
+      if (shouldContinueWithCrew) {
+        const composed = autoComposeCrewMembers(routingTask, activeCrew);
+        const members = composed.length > 0 ? composed : activeCrew.slice(0, 1);
+        return await this.executeCrewMission(members, routingTask, startTime, classificationContext);
+      }
+    }
+    }
+
+    // ─── Fast-reply cache hit → minimal LLM call, no tools (Agent-X only; crew private uses full loop) ───
+    if (this.options.promptProfile !== 'crew_private' && decision.executionPath === 'fast_reply') {
       let identityBlock = '';
       try { identityBlock = this.secretSauce?.identity?.getMergedIdentity?.(this.persona)?.name ?? ''; } catch { /* test env */ }
       const fastPrompt = this.decisionEngine.buildFastReplyPrompt(identityBlock);
@@ -1543,7 +1608,11 @@ Return ONLY valid JSON, no other text.`;
       }
 
       // Record assistant response in context tracker
-      this.contextTracker.record('assistant', assistantMessage.content);
+      this.contextTracker.record(
+        'assistant',
+        assistantMessage.content,
+        this.options.crewPrivateHost?.name,
+      );
 
       // Extract bulleted tasks from response and push to task panel
       this.extractTasksFromResponse(assistantMessage.content);
@@ -1674,13 +1743,15 @@ Return ONLY valid JSON, no other text.`;
    * - Structured events for UI visualization
    */
   private async runCompletionLoop(startTime: number): Promise<Message> {
+    await this.reconcileSystemPrompt();
+
     const emit = (e: EngineEvent) => this.emit(e);
     const registry = this.toolRegistry;
     const executor = this.toolExecutor;
     if (!registry) throw new Error('Tool registry not initialized');
     if (!executor) throw new Error('Tool executor not initialized');
 
-    const tools = createAiSdkTools(
+    let tools = createAiSdkTools(
       registry,
       executor,
       this.sessionId,
@@ -1727,6 +1798,13 @@ Return ONLY valid JSON, no other text.`;
       },
     );
 
+    if (this.options.promptProfile === 'crew_private') {
+      const denyCrewOrchestration = new Set(['spawn_crew_workers', 'delegate_to_crew', 'crew_response']);
+      for (const key of Object.keys(tools)) {
+        if (denyCrewOrchestration.has(key)) delete tools[key];
+      }
+    }
+
     const model = createAiSdkModel(this.config, this.getApiKey());
 
     const aiMessages = this.messages.map((m) => ({
@@ -1742,6 +1820,20 @@ Return ONLY valid JSON, no other text.`;
         aiMessages[userIdx] = { role: 'user', content: `${userMsg.content}\n\n[INSTRUCTION]\n${this.pendingInstruction}\n[/INSTRUCTION]` };
       }
       this.pendingInstruction = null;
+    }
+
+    // Prepend turn context so short follow-ups retain session intent
+    const lastUserMsg = [...this.messages].reverse().find((m) => m.role === 'user');
+    const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+    if (lastUserText) {
+      const turnCtx = this.prepareTurnContext(lastUserText.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim());
+      if (turnCtx.block) {
+        const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+        const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+        if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
+          aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
+        }
+      }
     }
 
     // Prepend RAG context to last user message
@@ -1900,7 +1992,15 @@ Return ONLY valid JSON, no other text.`;
       this.messages.push({ role: 'assistant', content });
       await this.compactContext();
 
-      return { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant' as const, content, toolCalls: null, createdAt: new Date().toISOString(), tokenCount };
+      return this.tagCrewPrivateAssistant({
+        id: generateMessageId(),
+        sessionId: this.sessionId,
+        role: 'assistant' as const,
+        content,
+        toolCalls: null,
+        createdAt: new Date().toISOString(),
+        tokenCount,
+      });
     } catch (error) {
       if (error instanceof Error && error.message === 'MODE_ESCALATION_DECLINED') {
         const declinedMessage: Message = {
@@ -2065,6 +2165,27 @@ Return ONLY valid JSON, no other text.`;
       return;
     }
 
+    if (this.options.promptProfile === 'crew_private') {
+      const ctx = this.createSectionContext();
+      this.promptAssembly
+        .register(createRulesSection())
+        .register(createChatMarkdownSection())
+        .register(createCurrentTimeSection(ctx))
+        .register(createWorkingDirectorySection(ctx))
+        .register(createLearningsSection(ctx))
+        .register(createSkillsSection(ctx))
+        .register(createFormalSkillsSection(ctx))
+        .register(createSessionNarrativeSection(ctx))
+        .register(createUserSection(ctx))
+        .register(createSoulSection(ctx))
+        .register(createNeuralSection(ctx))
+        .register(createInstructionsSection(ctx.scopePath));
+      if (systemOverride) {
+        this.promptAssembly.register(createSystemOverrideSection(systemOverride));
+      }
+      return;
+    }
+
     const ctx = this.createSectionContext();
     this.promptAssembly
       .register(createProviderPromptSection(ctx))
@@ -2081,6 +2202,7 @@ Return ONLY valid JSON, no other text.`;
       .register(createChannelFocusSection(ctx))
       .register(createMultiCrewSection(ctx))
       .register(createUserSection(ctx))
+      .register(createSessionNarrativeSection(ctx))
       .register(createTaskPanelSection())
       .register(createSoulSection(ctx))
       .register(createNeuralSection(ctx))
@@ -2676,7 +2798,28 @@ Only include specialists that are actually needed for this task.`;
     } catch { /* best-effort */ }
   }
 
+  private tagCrewPrivateAssistant(msg: Message): Message {
+    const host = this.options.crewPrivateHost;
+    if (this.options.promptProfile !== 'crew_private' || !host || msg.crew) return msg;
+    return {
+      ...msg,
+      crew: {
+        crewId: host.id,
+        name: host.name,
+        callsign: host.callsign,
+        color: host.color,
+        icon: host.icon,
+      },
+    };
+  }
+
   private emit(event: EngineEvent, isUpdate?: boolean): void {
+    if (event.type === 'message_received') {
+      const raw = event as { message?: Message };
+      if (raw.message?.role === 'assistant') {
+        event = { ...event, message: this.tagCrewPrivateAssistant(raw.message) } as EngineEvent;
+      }
+    }
     // Guard against duplicate message_received — only first one wins per turn
     // Pass isUpdate=true to allow re-emitting an updated message (e.g. crew delegation)
     if (event.type === 'message_received' && !isUpdate) {
@@ -2881,70 +3024,48 @@ Only include specialists that are actually needed for this task.`;
       if (crew && this.crewOrchestrator) {
         this.crewOrchestrator.addMember(crew);
       }
+      this.sessionManager?.saveCrewState?.(crewId, true);
     } else {
       this.enabledCrewSessionIds.delete(crewId);
       this.crewOrchestrator?.removeMember(crewId);
+      this.sessionManager?.saveCrewState?.(crewId, false);
     }
     this.rebuildSystemPrompt();
   }
 
   /**
    * Build a concise session context summary for agentic delegation.
-   * Used when routing to crew members, sub-agents, or research queries —
-   * gives them just enough context to understand the session without
-   * overwhelming them with full history.
+   * Used when routing to crew members, sub-agents, or research queries.
    */
   buildAgenticContext(): string {
-    const recent = this.messages.slice(-12);
-    if (recent.length <= 1) return '';
+    const lastUser = [...this.messages].reverse().find((m) => m.role === 'user');
+    const current = typeof lastUser?.content === 'string'
+      ? lastUser.content.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim()
+      : '';
+    if (!current) return '';
 
-    const parts: string[] = [];
+    const turn = this.prepareTurnContext(current);
+    return turn.block;
+  }
 
-    // Workspace path so delegated agents can explore from the right directory
-    if (this.scopePath) {
-      parts.push(`Working directory: ${this.scopePath}`);
-    }
-    const userMsgs = recent.filter(m => m.role === 'user');
-    const assistantMsgs = recent.filter(m => m.role === 'assistant');
-    const toolMsgs = recent.filter(m => m.role === 'tool');
-    const systemMsgs = recent.filter(m => m.role === 'system' && typeof m.content === 'string' && !(m.content as string).startsWith('[tool]') && (m.content as string).length > 20);
+  /** Realtime context block for the current user turn. */
+  prepareTurnContext(currentUserMessage: string) {
+    return this.contextTracker.getHandler().buildTurnInjection(
+      this.messages.map((m) => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+      })),
+      currentUserMessage,
+      this.contextMemoryChars,
+    );
+  }
 
-    // What the user has been asking
-    const lastUser = userMsgs[userMsgs.length - 1];
-    if (lastUser && typeof lastUser.content === 'string') {
-      const stripped = lastUser.content.replace(/@\w+/g, '').trim();
-      if (stripped) parts.push(`User is working on: "${stripped.slice(0, 200)}"`);
-    }
+  /** Per-session memory budget for injected context (chars). Tunable via setContextMemoryLimits. */
+  contextMemoryChars = 2200;
 
-    // What's been done so far
-    if (toolMsgs.length > 0) {
-      const toolsUsed = [...new Set(toolMsgs.map(m => {
-        const c = typeof m.content === 'string' ? m.content : '';
-        const m2 = c.match(/\[tool\]\s*(\w+)/);
-        return m2 ? m2[1] : '';
-      }).filter(Boolean))];
-      if (toolsUsed.length > 0) {
-        parts.push(`Tools used: ${toolsUsed.join(', ')}`);
-      }
-    }
-
-    // Key assistant responses
-    const keyResponses = assistantMsgs
-      .filter(m => typeof m.content === 'string' && (m.content as string).length > 10 && (m.content as string).length < 300)
-      .slice(-2);
-    for (const r of keyResponses) {
-      const text = (typeof r.content === 'string' ? r.content : '').replace(/\n/g, ' ').slice(0, 200);
-      if (text) parts.push(`Progress: ${text}`);
-    }
-
-    // Relevant system context (directory creation, project init, etc.)
-    for (const s of systemMsgs.slice(-3)) {
-      const text = (typeof s.content === 'string' ? s.content : '').slice(0, 200);
-      if (text) parts.push(`Context: ${text}`);
-    }
-
-    if (parts.length === 0) return '';
-    return `[SESSION CONTEXT]\n${parts.join('\n')}\n[/SESSION CONTEXT]`;
+  setContextMemoryLimits(opts: { maxHistoryMessages?: number; maxHistoryChars?: number; maxBlockChars?: number }): void {
+    if (opts.maxBlockChars !== undefined) this.contextMemoryChars = opts.maxBlockChars;
+    this.contextTracker.setLimits(opts);
   }
 
   /**
@@ -3010,6 +3131,7 @@ Only include specialists that are actually needed for this task.`;
       `@${w.callsign} (${w.crewName}) [${w.success ? 'ok' : 'failed'}]:\n${w.output.slice(0, 2000)}`,
     ).join('\n\n---\n\n');
 
+    const turnCtx = this.prepareTurnContext(cleanContent);
     const reviewPrompt = `${systemContent}\n\n[CREW SUPERVISOR]\nYou are Agent-X, the project manager supervising a crew mission. Review worker outputs, resolve conflicts, and deliver the final cohesive answer to the user. If the mission failed or needs user input, say so clearly and concisely.\n[/CREW SUPERVISOR]`;
 
     try {
@@ -3020,7 +3142,7 @@ Only include specialists that are actually needed for this task.`;
           { role: 'system', content: reviewPrompt },
           {
             role: 'user',
-            content: `User request: ${cleanContent}\n\nMission success: ${mission.success}\n\nCrew outputs:\n${workerSummary}\n\nProvide your final supervised response:`,
+            content: `${turnCtx.block}\n\nUser request: ${turnCtx.mergedTask}\n\nMission success: ${mission.success}\n\nCrew outputs:\n${workerSummary}\n\nProvide your final supervised response:`,
           },
         ],
         maxOutputTokens: 4096,
@@ -3094,6 +3216,15 @@ Only include specialists that are actually needed for this task.`;
     const mission = await this.crewMissionOrchestrator.runMission(
       this.buildCrewMissionOptions(members, task, options?.extraContext),
     );
+
+    for (const m of members) {
+      this.contextTracker.getHandler().registerCrew({
+        crewId: m.crew.id,
+        name: m.crew.name,
+        callsign: m.crew.callsign,
+        relationship: 'deployed',
+      });
+    }
 
     this.publishCrewMissionResponses(mission, members, startTime);
     return mission;

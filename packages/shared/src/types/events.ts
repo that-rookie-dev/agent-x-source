@@ -6,6 +6,14 @@ export interface ClarificationField {
   key: string;
   label: string;
   placeholder?: string;
+  type?: 'text' | 'textarea' | 'number' | 'date';
+  required?: boolean;
+}
+
+export interface ClarificationSource {
+  kind: 'agent' | 'crew';
+  name?: string;
+  callsign?: string;
 }
 
 export interface ClarificationRequestMeta {
@@ -117,9 +125,10 @@ export type EngineEvent =
   | { type: 'watch_event'; event: string; filePath: string; command: string; timestamp: number }
   | { type: 'diff_preview'; tool: string; filePath: string; diff: string; oldContent?: string; newContent?: string }
   | { type: 'command_action'; action: 'show_watch_status'; entries: Array<{ pattern: string; command: string }> }
-  | { type: 'clarification_required'; question: string; options: string[]; allowFreeform: boolean; recommended?: string; allowChooseAll?: boolean; selectionMode?: 'single' | 'multiple'; fields?: ClarificationField[] }
+  | { type: 'clarification_required'; question: string; options: string[]; allowFreeform: boolean; recommended?: string; allowChooseAll?: boolean; selectionMode?: 'single' | 'multiple'; fields?: ClarificationField[]; source?: ClarificationSource }
   | { type: 'model_capability_warning'; model: string; missing: string[]; message: string }
   | { type: 'intent_detected'; intent: string; confidence: number; reasons?: string[] }
+  | { type: 'crew_suggestion'; evaluation: import('./crew-catalog.js').CrewSuggestionEvaluation; message?: string }
   | { type: 'rag_queried'; resultCount: number; elapsed: number }
   | { type: 'subagent_event'; subagentId: string; parentEvent: EngineEvent }
   | { type: 'discord_connected'; code: string; message: string; recoverable: boolean }

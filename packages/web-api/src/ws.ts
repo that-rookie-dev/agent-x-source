@@ -50,8 +50,35 @@ function appendContextFile(
 ): void {
   if (!sessionId || !content) return;
 
-  // Skip DB insert for crew messages — already persisted by CrewOrchestrator
-  if (crew) return;
+  // Crew-attributed messages: persist for crew_private (Agent path); skip for Agent-X delegation (orchestrator persists)
+  if (crew) {
+    try {
+      const eng = getEngine();
+      const session = eng.sessionManager.getSessionById(sessionId);
+      const isCrewPrivate = (session?.contextKind ?? 'agent_x') === 'crew_private';
+      if (!isCrewPrivate) return;
+
+      const store = (eng.sessionManager as any).store;
+      if (store?.insertMessage) {
+        store.insertMessage({
+          sessionId,
+          role,
+          content,
+          toolCalls: extra?.toolCalls,
+          tokenCount: extra?.tokenCount,
+          thinking: extra?.thinking,
+          plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
+          parts: extra?.parts,
+          metadata: {
+            crewId: crew.crewId,
+            crewName: crew.name,
+            callsign: crew.callsign,
+          },
+        });
+      }
+    } catch { /* best-effort */ }
+    return;
+  }
 
   // Primary: messages table
   try {

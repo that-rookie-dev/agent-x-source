@@ -1,3 +1,5 @@
+import type { SessionContextKind } from './session-context.js';
+
 export interface Session {
   id: string;
   title: string;
@@ -6,6 +8,10 @@ export interface Session {
   modelId: string;
   scopePath: string;
   mode: 'agent' | 'plan';
+  /** agent_x (default) or crew_private for 1:1 user↔crew chat */
+  contextKind?: SessionContextKind;
+  /** Set when contextKind is crew_private */
+  hostCrewId?: string | null;
   hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;

@@ -4,12 +4,13 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
+import LinearProgress from '@mui/material/LinearProgress';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import { Footer } from '../components/Footer';
-import { webuiActive, agent, type AgentVitals } from '../api';
+import { webuiActive, agent, crewCatalog, type AgentVitals, type CatalogSeedStatusResponse } from '../api';
 import type { HealthStatus } from '../api';
 
 function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'blank' | 'info' | 'success' | 'dim' | 'heading'; text: string }> {
@@ -58,6 +59,7 @@ export function DockingStation() {
   const [visibleLines, setVisibleLines] = useState(0);
   const [lines, setLines] = useState<ReturnType<typeof buildTerminalLines>>([]);
   const [vitals, setVitals] = useState<AgentVitals | null>(null);
+  const [catalogSeed, setCatalogSeed] = useState<CatalogSeedStatusResponse | null>(null);
   // Register Web-UI as active and keep it refreshed
   useEffect(() => {
     let intervalId: ReturnType<typeof setInterval>;
@@ -86,6 +88,27 @@ export function DockingStation() {
   }, [refreshHealth]);
 
   useEffect(() => { recheckServer(); }, [recheckServer]);
+
+  useEffect(() => {
+    if (!serverOnline) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await crewCatalog.seedStatus();
+        if (!cancelled) setCatalogSeed(status);
+      } catch {
+        if (!cancelled) setCatalogSeed(null);
+      }
+    };
+    void poll();
+    const interval = setInterval(() => {
+      void poll();
+    }, catalogSeed?.status === 'seeding' ? 400 : 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [serverOnline, catalogSeed?.status]);
 
   // Fetch agent vitals
   useEffect(() => {
@@ -219,6 +242,35 @@ export function DockingStation() {
               <StatusRow label="Memory" value={`${Math.round((healthData.memory?.heapUsed ?? 0) / 1024 / 1024)} MB`} color={colors.text.primary} />
               <StatusRow label="Uptime" value={formatUptime(healthData.uptime)} color={colors.text.primary} />
             </>
+          )}
+
+          {catalogSeed && catalogSeed.expectedCount > 0 && (
+            <Box sx={{ mt: 2.5, pt: 2, borderTop: `1px solid ${colors.border.subtle}` }}>
+              <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim, letterSpacing: '2px', mb: 1 }}>
+                CREW HUB CATALOG
+              </Typography>
+              <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.58rem', color: colors.text.secondary, mb: 0.75 }}>
+                {catalogSeed.status === 'ready'
+                  ? `${catalogSeed.seededCount} crews indexed`
+                  : catalogSeed.status === 'seeding'
+                    ? `Indexing ${catalogSeed.processedInRun || catalogSeed.seededCount} / ${catalogSeed.expectedCount}`
+                    : catalogSeed.status === 'error'
+                      ? `Seed failed: ${catalogSeed.error ?? 'unknown error'}`
+                      : `${catalogSeed.seededCount} / ${catalogSeed.expectedCount}`}
+              </Typography>
+              {(catalogSeed.status === 'seeding' || (catalogSeed.seededCount < catalogSeed.expectedCount && catalogSeed.status !== 'error')) && (
+                <LinearProgress
+                  variant="determinate"
+                  value={catalogSeed.percent}
+                  sx={{
+                    height: 6,
+                    borderRadius: 1,
+                    bgcolor: colors.bg.tertiary,
+                    '& .MuiLinearProgress-bar': { bgcolor: colors.accent.purple },
+                  }}
+                />
+              )}
+            </Box>
           )}
         </Box>
 

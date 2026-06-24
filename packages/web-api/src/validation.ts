@@ -31,6 +31,62 @@ export const chatMessageSchema = z.object({
     content: z.string(),
   })).optional(),
   retry: z.boolean().optional(),
+  delegateCrewIds: z.array(z.string()).optional(),
+});
+
+export const crewSuggestionEvaluateSchema = z.object({
+  text: z.string().min(1),
+  sessionId: z.string().min(1),
+  priorUserMessages: z.array(z.string()).optional(),
+});
+
+export const crewSuggestionResolveSchema = z.object({
+  sessionId: z.string().min(1),
+  action: z.enum(['deploy', 'skip', 'dismiss']),
+  dismissForSession: z.boolean().optional(),
+  selectedCandidateIds: z.array(z.string()).optional(),
+  candidates: z.array(z.object({
+    id: z.string(),
+    origin: z.enum(['hub_catalog', 'custom', 'hub_roster']),
+    callsign: z.string(),
+    name: z.string(),
+    title: z.string(),
+    description: z.string(),
+    expertise: z.array(z.string()),
+    traits: z.array(z.string()),
+    matchScore: z.number(),
+    reasons: z.array(z.string()),
+    onRoster: z.boolean(),
+    enabled: z.boolean().optional(),
+    catalogId: z.string().optional(),
+    categoryId: z.string().optional(),
+    categoryLabel: z.string().optional(),
+    tone: z.string().optional(),
+  })).optional(),
+});
+
+export const crewChatSessionSchema = z.object({
+  crewId: z.string().optional(),
+  scopePath: z.string().optional(),
+  recruit: z.object({
+    id: z.string().optional(),
+    name: z.string(),
+    title: z.string().optional(),
+    callsign: z.string().optional(),
+    systemPrompt: z.string(),
+    description: z.string().optional(),
+    tone: z.string().optional(),
+    expertise: z.array(z.string()).optional(),
+    traits: z.array(z.string()).optional(),
+    tools: z.array(z.string()).optional(),
+    source: z.string().optional(),
+    catalogId: z.string().optional(),
+  }).optional(),
+}).refine((d) => d.crewId || d.recruit, { message: 'crewId or recruit required' });
+
+export const crewChatMessageSchema = z.object({
+  text: z.string().min(1, 'text is required'),
+  retry: z.boolean().optional(),
 });
 
 export const chatSteerSchema = z.object({

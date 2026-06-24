@@ -15,7 +15,7 @@ export type PrebuiltCrewData = {
   tools?: string[];
 };
 
-export type CategoryIconId = 'code' | 'storage' | 'verified' | 'autoawesome' | 'palette' | 'trending' | 'campaign' | 'ads' | 'groups' | 'gavel' | 'work' | 'balance' | 'voice' | 'support' | 'shipping' | 'apartment' | 'policy' | 'volunteer' | 'restaurant' | 'factory' | 'construction' | 'landmark' | 'hospital' | 'cart' | 'flight' | 'energy' | 'translate' | 'news' | 'sports' | 'eco' | 'storefront' | 'maritime' | 'school' | 'favorite' | 'home' | 'brush';
+export type CategoryIconId = 'code' | 'web' | 'layers' | 'cloud' | 'verified' | 'devices' | 'analytics' | 'autoawesome' | 'bug_report' | 'database' | 'videogame' | 'lan' | 'palette' | 'trending' | 'campaign' | 'ads' | 'groups' | 'gavel' | 'work' | 'balance' | 'voice' | 'support' | 'shipping' | 'apartment' | 'policy' | 'volunteer' | 'restaurant' | 'factory' | 'construction' | 'landmark' | 'hospital' | 'cart' | 'flight' | 'energy' | 'translate' | 'news' | 'sports' | 'eco' | 'storefront' | 'maritime' | 'school' | 'favorite' | 'home' | 'brush' | 'local_hospital' | 'science' | 'biotech' | 'rocket_launch' | 'sailing' | 'agriculture' | 'pets' | 'museum' | 'police' | 'forensic' | 'volunteer_activism' | 'menu_book';
 
 export type PrebuiltCategoryIndexEntry = {
   id: string;
@@ -32,17 +32,17 @@ export const PREBUILT_CATEGORY_INDEX: PrebuiltCategoryIndexEntry[] = [
   {
     "id": "frontend-engineering",
     "label": "Frontend Engineering",
-    "iconId": "code"
+    "iconId": "web"
   },
   {
     "id": "platform-fullstack",
     "label": "Platform & Fullstack",
-    "iconId": "code"
+    "iconId": "layers"
   },
   {
     "id": "devops-cloud-sre",
     "label": "DevOps, Cloud & SRE",
-    "iconId": "storage"
+    "iconId": "cloud"
   },
   {
     "id": "security-compliance",
@@ -52,12 +52,12 @@ export const PREBUILT_CATEGORY_INDEX: PrebuiltCategoryIndexEntry[] = [
   {
     "id": "mobile-embedded-iot",
     "label": "Mobile, Embedded & IoT",
-    "iconId": "code"
+    "iconId": "devices"
   },
   {
     "id": "data-engineering-analytics",
     "label": "Data Engineering & Analytics",
-    "iconId": "storage"
+    "iconId": "analytics"
   },
   {
     "id": "machine-learning-ai",
@@ -67,22 +67,22 @@ export const PREBUILT_CATEGORY_INDEX: PrebuiltCategoryIndexEntry[] = [
   {
     "id": "quality-testing",
     "label": "Quality & Testing",
-    "iconId": "verified"
+    "iconId": "bug_report"
   },
   {
     "id": "database-infrastructure",
     "label": "Database Infrastructure",
-    "iconId": "storage"
+    "iconId": "database"
   },
   {
     "id": "game-graphics-realtime",
     "label": "Game, Graphics & Realtime",
-    "iconId": "code"
+    "iconId": "videogame"
   },
   {
     "id": "networking-systems",
     "label": "Networking & Systems",
-    "iconId": "storage"
+    "iconId": "lan"
   },
   {
     "id": "creative-product-design",
@@ -253,5 +253,210 @@ export const PREBUILT_CATEGORY_INDEX: PrebuiltCategoryIndexEntry[] = [
     "id": "creative-arts-media",
     "label": "Creative Arts & Media",
     "iconId": "brush"
+  },
+  {
+    "id": "medical-primary-care",
+    "label": "Medical · Primary Care",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-internal-medicine",
+    "label": "Medical · Internal Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-surgical-specialties",
+    "label": "Medical · Surgical Specialties",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-pediatrics-neonatal",
+    "label": "Medical · Pediatrics & Neonatal",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-obstetrics-gynecology",
+    "label": "Medical · OB/GYN & Reproductive Health",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-psychiatry-behavioral",
+    "label": "Medical · Psychiatry & Behavioral Health",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-radiology-imaging",
+    "label": "Medical · Radiology & Imaging",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-pathology-laboratory",
+    "label": "Medical · Pathology & Laboratory",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-emergency-critical-care",
+    "label": "Medical · Emergency & Critical Care",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-dental-oral-health",
+    "label": "Medical · Dental & Oral Health",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-pharmacy-pharmacology",
+    "label": "Medical · Pharmacy & Pharmacology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-nursing-allied-health",
+    "label": "Medical · Nursing & Allied Health",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-rehabilitation-therapy",
+    "label": "Medical · Rehabilitation & Therapy",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-public-health-epidemiology",
+    "label": "Medical · Public Health & Epidemiology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-sports-occupational-health",
+    "label": "Medical · Sports & Occupational Health",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-dermatology-sensory",
+    "label": "Medical · Dermatology & Sensory Health",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-oncology-hematology",
+    "label": "Medical · Oncology & Hematology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-neurology-neuroscience-clinical",
+    "label": "Medical · Neurology (Clinical Literacy)",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "theoretical-physical-sciences",
+    "label": "Theoretical Physical Sciences",
+    "iconId": "science"
+  },
+  {
+    "id": "applied-engineering-sciences",
+    "label": "Applied Engineering Sciences",
+    "iconId": "biotech"
+  },
+  {
+    "id": "space-science-astronomy",
+    "label": "Space Science & Astronomy",
+    "iconId": "rocket_launch"
+  },
+  {
+    "id": "biological-life-sciences",
+    "label": "Biological & Life Sciences",
+    "iconId": "biotech"
+  },
+  {
+    "id": "chemistry-materials-science",
+    "label": "Chemistry & Materials Science",
+    "iconId": "science"
+  },
+  {
+    "id": "environmental-earth-sciences",
+    "label": "Environmental & Earth Sciences",
+    "iconId": "eco"
+  },
+  {
+    "id": "fisheries-aquaculture-marine",
+    "label": "Fisheries & Aquaculture",
+    "iconId": "sailing"
+  },
+  {
+    "id": "crop-farming-agronomy",
+    "label": "Crop Farming & Agronomy",
+    "iconId": "agriculture"
+  },
+  {
+    "id": "livestock-animal-husbandry",
+    "label": "Livestock & Animal Husbandry",
+    "iconId": "pets"
+  },
+  {
+    "id": "agricultural-science-research",
+    "label": "Agricultural Science & Research",
+    "iconId": "science"
+  },
+  {
+    "id": "archaeology-cultural-heritage",
+    "label": "Archaeology & Cultural Heritage",
+    "iconId": "museum"
+  },
+  {
+    "id": "food-safety-quality-systems",
+    "label": "Food Safety & Quality Systems",
+    "iconId": "restaurant"
+  },
+  {
+    "id": "government-executive-legislative",
+    "label": "Government · Executive & Legislative",
+    "iconId": "landmark"
+  },
+  {
+    "id": "government-regulatory-agencies",
+    "label": "Government · Regulatory Agencies",
+    "iconId": "policy"
+  },
+  {
+    "id": "immigration-border-civil-services",
+    "label": "Immigration, Border & Civil Services",
+    "iconId": "translate"
+  },
+  {
+    "id": "urban-planning-municipal-services",
+    "label": "Urban Planning & Municipal Services",
+    "iconId": "apartment"
+  },
+  {
+    "id": "law-enforcement-public-safety",
+    "label": "Law Enforcement & Public Safety",
+    "iconId": "police"
+  },
+  {
+    "id": "legal-practice-specialties",
+    "label": "Legal Practice Specialties",
+    "iconId": "gavel"
+  },
+  {
+    "id": "forensic-science-investigation",
+    "label": "Forensic Science & Investigation",
+    "iconId": "forensic"
+  },
+  {
+    "id": "higher-education-research-admin",
+    "label": "Higher Education & Research Admin",
+    "iconId": "school"
+  },
+  {
+    "id": "veterinary-animal-health",
+    "label": "Veterinary & Animal Health (Non-Human)",
+    "iconId": "pets"
+  },
+  {
+    "id": "religious-chaplaincy-spiritual-care",
+    "label": "Chaplaincy & Spiritual Care",
+    "iconId": "volunteer_activism"
+  },
+  {
+    "id": "library-information-science",
+    "label": "Library & Information Science",
+    "iconId": "menu_book"
   }
 ];

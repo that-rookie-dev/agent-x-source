@@ -7,6 +7,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import ForumIcon from '@mui/icons-material/Forum';
 import type { Crew } from '../../api';
 import { crewCardSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
 import { SkillChips } from './SkillChips';
@@ -15,6 +16,8 @@ interface CrewCardProps {
   crew: Crew;
   regenerating: boolean;
   onOpen: (crew: Crew) => void;
+  onPrivateChat?: (crew: Crew) => void;
+  privateChatLoading?: boolean;
   onToggle: (id: string, enabled: boolean) => void;
   onEdit: (crew: Crew) => void;
   onDelete: (id: string) => void;
@@ -25,6 +28,8 @@ export function CrewCard({
   crew,
   regenerating,
   onOpen,
+  onPrivateChat,
+  privateChatLoading,
   onToggle,
   onEdit,
   onDelete,
@@ -108,6 +113,18 @@ export function CrewCard({
             {enabled ? 'ACTIVE' : 'STANDBY'}
           </Typography>
           <Box sx={{ flex: 1 }} />
+          {onPrivateChat && (
+            <Tooltip title="Private chat">
+              <IconButton
+                size="small"
+                disabled={privateChatLoading}
+                onClick={(e) => { e.stopPropagation(); onPrivateChat(crew); }}
+                sx={{ p: 0.35, color: accent, '&:hover': { color: crewTheme.text.primary, bgcolor: accent + '15' } }}
+              >
+                {privateChatLoading ? <CircularProgress size={12} /> : <ForumIcon sx={{ fontSize: 14 }} />}
+              </IconButton>
+            </Tooltip>
+          )}
           <Switch
             size="small"
             checked={enabled}

@@ -28,8 +28,12 @@ import {
   GrowthEngine,
   EmotionEngine,
   ExperienceEngine,
+  healDatabaseStore,
+  startPeriodicDatabaseHeal,
+  CrewChatService,
+  buildCrewPrivateIdentityPrompt,
 } from '@agentx/engine';
-import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
+import type { AgentXConfig, ProviderId, TelemetryBus, Session, Crew } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
 import { join } from 'node:path';
@@ -49,6 +53,10 @@ export interface EngineState {
   pluginRegistry: PluginRegistry;
   gateway: Gateway | null;
   pgPool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> } | null;
+  /** Resolves when the active storage backend has finished connect + schema migration. */
+  storageReady: Promise<void>;
+  /** Active crew private chat handlers keyed by session id */
+  crewChatServices: Map<string, CrewChatService>;
   telegramBridge: TelegramBridge | null;
   discordBridge: DiscordBridge | null;
   slackBridge: SlackBridge | null;
@@ -97,20 +105,20 @@ export function getEngine(): EngineState {
         max: (pgConfig['poolSize'] as number) ?? 5,
       } as any);
       sessionManager = new SessionManager({ storageAdapter: pgAdapter });
-      pgAdapter.connect()
-        .then(() => {
-          if (state) state.crewManager.refresh();
-        })
-        .catch(e => {
-          console.error('PostgreSQL connect/migrate failed, consider checking connection string or PG availability', e);
-        });
     } catch (e) {
       console.error('Failed to initialize PostgreSQL adapter, falling back to SQLite', e);
       sessionManager = new SessionManager();
+      pgAdapter = null;
     }
   } else {
     sessionManager = new SessionManager();
   }
+
+  const storageReady = (async () => {
+    if (pgAdapter) {
+      await pgAdapter.connect();
+    }
+  })();
 
   const sessionsDir = join(getDataDir(), 'sessions');
   let store: any = undefined;
@@ -162,6 +170,8 @@ export function getEngine(): EngineState {
     pluginRegistry,
     gateway: null,
     pgPool: pgAdapter?.getPool() ?? null,
+    storageReady,
+    crewChatServices: new Map<string, CrewChatService>(),
     telegramBridge: null,
     discordBridge: null,
     slackBridge: null,
@@ -198,7 +208,23 @@ export function getEngine(): EngineState {
     }
   }
 
+  void storageReady
+    .then(async () => {
+      if (state) state.crewManager.refresh();
+      await healDatabaseStore(store);
+      startPeriodicDatabaseHeal(store);
+    })
+    .catch((e) => {
+      console.error('Storage connect/migrate failed; crew catalog tables may be unavailable', e);
+    });
+
   return state!;
+}
+
+/** Wait until the active storage backend has finished schema migration. */
+export async function awaitEngineStorageReady(): Promise<void> {
+  const eng = getEngine();
+  await eng.storageReady;
 }
 
 export function setEngineDEK(dek: Buffer | null): void {
@@ -262,16 +288,28 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     }
   } catch { /* best effort */ }
 
+  const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
+  const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
+  const hostCrewId = session.hostCrewId;
+  const crewPrivateHost = isCrewPrivate && hostCrewId
+    ? eng.crewManager.get(hostCrewId) ?? undefined
+    : undefined;
+  if (isCrewPrivate && !crewPrivateHost) {
+    throw new Error('Crew private session host crew not found on roster.');
+  }
+
   const agent = new Agent({
     config: cfg,
     sessionId: session.id,
-    systemPrompt: '',
+    systemPrompt: crewPrivateHost ? buildCrewPrivateIdentityPrompt(crewPrivateHost) : '',
     scopePath: effectiveScopePath,
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
     onPart,
-    persona,
+    persona: crewPrivateHost ? null : persona,
     pgPool: state?.pgPool ?? null,
+    promptProfile: crewPrivateHost ? 'crew_private' : 'default',
+    crewPrivateHost,
   });
 
   // Apply session mode immediately so the agent starts in the correct mode
@@ -281,7 +319,6 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     agent.setPlanMode(false);
   }
 
-  const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
   const sessionCtx = Number((session as { tokenAvailable?: number }).tokenAvailable ?? 0);
   if (activeModelId && sessionCtx > 0) {
     agent.switchModel(activeModelId, sessionCtx);
@@ -306,7 +343,8 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     setShellSandbox(null);
   }
 
-  // Watchdog: auto-resume interrupted task on startup
+  // Watchdog: auto-resume interrupted task on startup (Agent-X sessions only)
+  if (!isCrewPrivate) {
   try {
     const store = (eng.sessionManager as any).store;
     if (store && typeof store.getTaskSnapshot === 'function') {
@@ -327,6 +365,7 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
       }
     }
   } catch { /* best-effort */ }
+  }
 
   // Restore accumulated token count from session
   const smTracker = eng.sessionManager.getTokenTracker();
@@ -337,10 +376,15 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   (agent.sauce as { crew: CrewManager }).crew = eng.crewManager;
   agent.sauce.crew.refresh();
 
-  const enabledCrews = eng.crewManager.listEnabled();
-  for (const crew of enabledCrews) {
-    agent.addCrewMember(crew);
-    agent.setCrewEnabled(crew.id, true);
+  if (crewPrivateHost) {
+    agent.addCrewMember(crewPrivateHost);
+    agent.setCrewEnabled(crewPrivateHost.id, true);
+  } else {
+    const enabledCrews = eng.crewManager.listEnabled();
+    for (const crew of enabledCrews) {
+      agent.addCrewMember(crew);
+      agent.setCrewEnabled(crew.id, true);
+    }
   }
 
   const crewOrch = (agent as any).crewOrchestrator;
@@ -406,6 +450,10 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
           agent.addToHistory({ role: msg.role as 'user' | 'assistant' | 'system', content: msg.content });
         }
       }
+      try {
+        agent.rebuildContext();
+        agent.rebuildSystemPrompt();
+      } catch { /* best-effort */ }
     }
   } catch { /* best-effort */ }
 
@@ -674,6 +722,59 @@ export function destroyAgent(): void {
   }
 }
 
+function getSessionDir(sessionId: string): string {
+  return join(getDataDir(), 'sessions', sessionId);
+}
+
+function resolveActiveProvider(cfg: AgentXConfig) {
+  const providerId = cfg.provider.activeProvider;
+  const providerCfg = cfg.provider.providers[providerId];
+  if (!providerId || !providerCfg?.configured) {
+    throw new Error('No provider configured');
+  }
+  return ProviderFactory.create(providerId, providerCfg.apiKey, providerCfg.baseUrl);
+}
+
+export function getOrCreateCrewChatService(session: Session, crew: Crew): CrewChatService {
+  /** @deprecated Prefer ensureCrewPrivateAgentForSession + Agent path. Kept for legacy callers. */
+  const eng = getEngine();
+  const existing = eng.crewChatServices.get(session.id);
+  if (existing) return existing;
+
+  const cfg = eng.configManager.load();
+  const provider = resolveActiveProvider(cfg);
+  const persistDir = getSessionDir(session.id);
+
+  const service = new CrewChatService({
+    sessionId: session.id,
+    crew,
+    scopePath: session.scopePath || process.cwd(),
+    provider,
+    activeModel: cfg.provider.activeModel,
+    providerId: cfg.provider.activeProvider,
+    eventBus: eng.telemetry as never,
+    sessionManager: eng.sessionManager,
+    config: cfg,
+    toolRegistry: eng.toolkit.registry,
+    toolExecutor: eng.toolkit.executor,
+    persistDir,
+  });
+
+  const store = (eng.sessionManager as unknown as { store?: { getMessages?: (id: string) => Array<{ role: string; content: string }> } }).store;
+  const prior = store?.getMessages?.(session.id) ?? [];
+  const narrativeDoc = service.getContextHandler().getNarrativeDocument();
+  if (prior.length > 0 && (narrativeDoc.turnCount ?? 0) === 0) {
+    service.warmFromMessages(prior.map((m) => ({ role: m.role, content: m.content })));
+  }
+
+  eng.crewChatServices.set(session.id, service);
+  return service;
+}
+
+export function destroyCrewChatService(sessionId: string): void {
+  getEngine().crewChatServices.delete(sessionId);
+}
+
 export function clearEngine(): void {
   if (state?.agent) {
     (state.agent as any).sessionLogger?.close();
@@ -684,6 +785,7 @@ export function clearEngine(): void {
     state.channelAgent.endSession();
     state.channelAgent = null;
   }
+  state?.crewChatServices?.clear();
   state = null;
 }
 

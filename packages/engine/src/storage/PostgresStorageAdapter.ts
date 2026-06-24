@@ -12,6 +12,14 @@ import type { SessionEvent, Crew, CrewCreateInput } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import { normalizeSessionUpdates } from '../session/session-field-utils.js';
 import { estimateTokensFromMessages } from '../session/session-token-utils.js';
+import { buildCrewSearchText } from '@agentx/shared';
+import { purgeOrphanChildSessionsPg } from '../session/child-session-cleanup.js';
+import {
+  runPgCrewCatalogMigration,
+  backfillPgCrewSearchColumns,
+  createPgCrewCatalogStore,
+} from '../crew/postgres-crew-catalog.js';
+import type { CrewCatalogStore } from '../crew/CrewSuggestionService.js';
 
 const logger = getLogger();
 
@@ -324,15 +332,29 @@ export class PostgresStorageAdapter implements StorageAdapter {
     }
   }
 
+  private connectPromise: Promise<void> | null = null;
+
   async connect(): Promise<void> {
+    if (this.connected) return;
+    if (this.connectPromise) return this.connectPromise;
+    this.connectPromise = this.doConnect();
+    try {
+      await this.connectPromise;
+    } finally {
+      this.connectPromise = null;
+    }
+  }
+
+  private async doConnect(): Promise<void> {
     try {
       const client = await this.pool.connect();
       client.release();
-      this.connected = true;
       await this.migrate();
       await this.hydrateCache();
+      this.connected = true;
       logger.info('PG_CONNECTED', 'PostgreSQL connection established');
     } catch (error) {
+      this.connected = false;
       logger.error('PG_CONNECT_FAILED', error);
       throw error;
     }
@@ -361,23 +383,76 @@ export class PostgresStorageAdapter implements StorageAdapter {
       await client.query('ALTER TABLE crews ADD COLUMN IF NOT EXISTS title TEXT');
       await client.query('ALTER TABLE crews ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT \'\'');
       await client.query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS compaction_count INTEGER NOT NULL DEFAULT 0');
+      await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS context_kind TEXT NOT NULL DEFAULT 'agent_x'`);
+      await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS host_crew_id TEXT`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_crew_private ON sessions(host_crew_id, context_kind)`);
       await client.query(`
         INSERT INTO child_sessions (id, parent_session_id, kind, label, status, created_at, updated_at)
         SELECT id, parent_id, 'sub_agent', title, status, created_at, updated_at
         FROM sessions WHERE parent_id IS NOT NULL
         ON CONFLICT (id) DO NOTHING
       `);
+      await purgeOrphanChildSessionsPg(this.pool);
+      await runPgCrewCatalogMigration(this.pool);
+      await backfillPgCrewSearchColumns(this.pool, (row) => this.crewFromRow(row));
     } finally {
       client.release();
     }
   }
 
-  private writeQueue: Array<{ sql: string; params: unknown[] }> = [];
-  private writing = false;
+  /** Idempotent schema repair — safe after manual table drops. */
+  async repairSchema(): Promise<void> {
+    await this.migrate();
+  }
 
-  private async processQueue(): Promise<void> {
-    if (this.writing) return;
-    this.writing = true;
+  private crewFromRow(row: Record<string, unknown>): Crew {
+    const metadata = row['metadata'] ? JSON.parse(row['metadata'] as string) as Partial<Crew> : {};
+    return {
+      id: row['id'] as string,
+      name: row['name'] as string,
+      title: (row['title'] as string) || metadata.title,
+      callsign: metadata.callsign ?? (row['id'] as string),
+      systemPrompt: row['system_prompt'] as string ?? metadata.systemPrompt ?? '',
+      description: (row['description'] as string) || metadata.description || '',
+      emotion: metadata.emotion,
+      source: (row['source'] as Crew['source']) ?? metadata.source ?? 'custom',
+      catalogId: (row['catalog_id'] as string) ?? metadata.catalogId,
+      searchText: (row['search_text'] as string) ?? metadata.searchText,
+      suggestable: row['suggestable'] !== undefined ? !!(row['suggestable']) : (metadata.suggestable ?? true),
+      isDefault: !!(row['is_default'] ?? metadata.isDefault),
+      enabled: metadata.enabled ?? true,
+      expertise: metadata.expertise ?? (row['expertise'] ? (row['expertise'] as string).split(',') : undefined),
+      traits: metadata.traits ?? (row['traits'] ? (row['traits'] as string).split(',') : undefined),
+      toolPreferences: metadata.toolPreferences,
+      tools: metadata.tools,
+      permissions: metadata.permissions,
+      model: metadata.model,
+      protocol: metadata.protocol,
+      quotas: metadata.quotas,
+      color: metadata.color,
+      icon: metadata.icon,
+      createdAt: row['created_at'] as string ?? metadata.createdAt ?? new Date().toISOString(),
+      updatedAt: row['updated_at'] as string ?? metadata.updatedAt ?? new Date().toISOString(),
+    };
+  }
+
+  getCrewCatalogStore(): CrewCatalogStore {
+    return createPgCrewCatalogStore(this.pool, (row) => this.crewFromRow(row));
+  }
+
+  private writeQueue: Array<{ sql: string; params: unknown[] }> = [];
+  private drainPromise: Promise<void> | null = null;
+
+  private scheduleWriteDrain(): void {
+    if (this.drainPromise) return;
+    this.drainPromise = this.drainWriteQueue().finally(() => {
+      this.drainPromise = null;
+      if (this.writeQueue.length > 0) this.scheduleWriteDrain();
+    });
+  }
+
+  private async drainWriteQueue(): Promise<void> {
+    await this.connect();
     while (this.writeQueue.length > 0) {
       const { sql, params } = this.writeQueue.shift()!;
       try {
@@ -386,12 +461,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
         logger.error('PG_WRITE_ERROR', error, { sql: sql.slice(0, 100) });
       }
     }
-    this.writing = false;
   }
 
   private write(sql: string, params: unknown[] = []): void {
     this.writeQueue.push({ sql, params });
-    this.processQueue();
+    this.scheduleWriteDrain();
   }
 
   private async hydrateCache(): Promise<void> {
@@ -400,6 +474,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
         `SELECT id,title,status,provider_id as "providerId",model_id as "modelId",
                 scope_path as "scopePath",token_used as "tokenUsed",token_available as "tokenAvailable",
                 compaction_count as "compactionCount",
+                context_kind as "contextKind",host_crew_id as "hostCrewId",
                 mode,parent_id as "parentId",hyperdrive,created_at as "createdAt",updated_at as "updatedAt"
          FROM sessions`,
       );
@@ -452,32 +527,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
         this.cache.checkpoints.set(r.session_id, arr);
       }
       const crews = await this.pool.query('SELECT * FROM crews ORDER BY created_at ASC');
-      this.cache.crews = crews.rows.map((row: Record<string, unknown>) => {
-        const metadata = row['metadata'] ? JSON.parse(row['metadata'] as string) as Partial<Crew> : {};
-        return {
-          id: row['id'] as string,
-          name: row['name'] as string,
-          title: (row['title'] as string) || metadata.title,
-          callsign: metadata.callsign ?? (row['id'] as string),
-          systemPrompt: row['system_prompt'] as string ?? metadata.systemPrompt ?? '',
-          description: (row['description'] as string) || metadata.description || '',
-          emotion: metadata.emotion,
-          isDefault: !!(row['is_default'] ?? metadata.isDefault),
-          enabled: metadata.enabled ?? true,
-          expertise: metadata.expertise ?? (row['expertise'] ? (row['expertise'] as string).split(',') : undefined),
-          traits: metadata.traits ?? (row['traits'] ? (row['traits'] as string).split(',') : undefined),
-          toolPreferences: metadata.toolPreferences,
-          tools: metadata.tools,
-          permissions: metadata.permissions,
-          model: metadata.model,
-          protocol: metadata.protocol,
-          quotas: metadata.quotas,
-          color: metadata.color,
-          icon: metadata.icon,
-          createdAt: row['created_at'] as string ?? metadata.createdAt ?? new Date().toISOString(),
-          updatedAt: row['updated_at'] as string ?? metadata.updatedAt ?? new Date().toISOString(),
-        } satisfies Crew;
-      });
+      this.cache.crews = crews.rows.map((row: Record<string, unknown>) => this.crewFromRow(row));
       const crewStates = await this.pool.query('SELECT * FROM session_crew_states ORDER BY created_at ASC');
       for (const row of crewStates.rows) {
         const r = row as Record<string, unknown>;
@@ -589,15 +639,18 @@ export class PostgresStorageAdapter implements StorageAdapter {
       id, ...input,
       mode: (inputAny['mode'] as string) ?? 'plan',
       parentId: (inputAny['parentId'] as string) ?? null,
+      contextKind: (inputAny['contextKind'] as StorableSession['contextKind']) ?? 'agent_x',
+      hostCrewId: (inputAny['hostCrewId'] as string | null) ?? null,
       hyperdrive: !!(inputAny['hyperdrive']),
       createdAt: now, updatedAt: now,
     };
     this.cache.sessions.set(id, session);
     this.write(
-      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,mode,parent_id,token_used,token_available,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,mode,parent_id,token_used,token_available,context_kind,host_crew_id,created_at,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [id, input.title, input.status, input.providerId, input.modelId, input.scopePath,
-       session.mode, session.parentId, input.tokenUsed, input.tokenAvailable, now, now]
+       session.mode, session.parentId, input.tokenUsed, input.tokenAvailable,
+       session.contextKind ?? 'agent_x', session.hostCrewId ?? null, now, now]
     );
     return session;
   }
@@ -620,6 +673,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       tokenUsed: 'token_used', tokenAvailable: 'token_available',
       compactionCount: 'compaction_count',
       mode: 'mode', parentId: 'parent_id',
+      contextKind: 'context_kind', hostCrewId: 'host_crew_id',
     };
     for (const [key, col] of Object.entries(map)) {
       if (key in normalized) {
@@ -653,6 +707,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.permissions.delete(id);
     this.cache.permissionRules.delete(id);
     this.cache.taskSnapshots.delete(id);
+    this.write('DELETE FROM child_sessions WHERE id = $1 OR parent_session_id = $1', [id]);
     this.write('DELETE FROM sessions WHERE id = $1', [id]);
   }
 
@@ -796,6 +851,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   insertMessage(msg: {
+    id?: string;
     sessionId: string;
     role: string;
     content: string;
@@ -808,7 +864,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     metadata?: Record<string, unknown>;
   }): void {
     const msgs = this.cache.messages.get(msg.sessionId) ?? [];
-    const id = crypto.randomUUID();
+    const id = msg.id ?? crypto.randomUUID();
     const now = new Date().toISOString();
     msgs.push({
       id, sessionId: msg.sessionId, role: msg.role, content: msg.content,
@@ -1283,13 +1339,28 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   createCrew(input: CrewCreateInput): Crew {
     const now = new Date().toISOString();
+    const searchText = input.searchText ?? buildCrewSearchText({
+      name: input.name,
+      title: input.title,
+      callsign: input.callsign,
+      description: input.description,
+      tone: input.emotion,
+      expertise: input.expertise,
+      traits: input.traits,
+      systemPrompt: input.systemPrompt,
+    });
     const crew: Crew = {
       id: input.id,
       name: input.name,
       title: input.title,
       callsign: input.callsign || input.name.replace(/\s+/g, '').toLowerCase(),
       systemPrompt: input.systemPrompt ?? '',
+      description: input.description,
       emotion: input.emotion,
+      source: input.source ?? (input.catalogId ? 'hub' : 'custom'),
+      catalogId: input.catalogId,
+      searchText,
+      suggestable: input.suggestable ?? true,
       isDefault: input.isDefault ?? false,
       enabled: input.enabled ?? true,
       expertise: input.expertise,
@@ -1307,8 +1378,8 @@ export class PostgresStorageAdapter implements StorageAdapter {
     };
     this.cache.crews.push(crew);
     this.write(
-      `INSERT INTO crews (id, name, title, description, system_prompt, expertise, traits, tool_preferences, enabled_tools, disabled_tools, is_default, metadata, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      `INSERT INTO crews (id, name, title, description, system_prompt, expertise, traits, tool_preferences, enabled_tools, disabled_tools, is_default, metadata, source, catalog_id, search_text, suggestable, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name,
          title = EXCLUDED.title,
@@ -1321,6 +1392,10 @@ export class PostgresStorageAdapter implements StorageAdapter {
          disabled_tools = EXCLUDED.disabled_tools,
          is_default = EXCLUDED.is_default,
          metadata = EXCLUDED.metadata,
+         source = EXCLUDED.source,
+         catalog_id = EXCLUDED.catalog_id,
+         search_text = EXCLUDED.search_text,
+         suggestable = EXCLUDED.suggestable,
          updated_at = EXCLUDED.updated_at`,
       [
         crew.id,
@@ -1335,6 +1410,10 @@ export class PostgresStorageAdapter implements StorageAdapter {
         crew.toolPreferences?.disabled?.join(',') ?? null,
         crew.isDefault ? 1 : 0,
         JSON.stringify(crew),
+        crew.source ?? 'custom',
+        crew.catalogId ?? null,
+        searchText,
+        crew.suggestable !== false,
         now,
         now,
       ]
@@ -1346,10 +1425,20 @@ export class PostgresStorageAdapter implements StorageAdapter {
     const idx = this.cache.crews.findIndex((c) => c.id === id);
     if (idx < 0) return null;
     const crew = { ...this.cache.crews[idx]!, ...updates, updatedAt: new Date().toISOString() };
+    crew.searchText = crew.searchText ?? buildCrewSearchText({
+      name: crew.name,
+      title: crew.title,
+      callsign: crew.callsign,
+      description: crew.description,
+      tone: crew.emotion,
+      expertise: crew.expertise,
+      traits: crew.traits,
+      systemPrompt: crew.systemPrompt,
+    });
     this.cache.crews[idx] = crew;
     this.write(
-      `UPDATE crews SET name=$1, title=$2, description=$3, system_prompt=$4, expertise=$5, traits=$6, tool_preferences=$7, enabled_tools=$8, disabled_tools=$9, is_default=$10, metadata=$11, updated_at=$12
-       WHERE id=$13`,
+      `UPDATE crews SET name=$1, title=$2, description=$3, system_prompt=$4, expertise=$5, traits=$6, tool_preferences=$7, enabled_tools=$8, disabled_tools=$9, is_default=$10, metadata=$11, source=$12, catalog_id=$13, search_text=$14, suggestable=$15, updated_at=$16
+       WHERE id=$17`,
       [
         crew.name,
         crew.title || null,
@@ -1362,6 +1451,10 @@ export class PostgresStorageAdapter implements StorageAdapter {
         crew.toolPreferences?.disabled?.join(',') ?? null,
         crew.isDefault ? 1 : 0,
         JSON.stringify(crew),
+        crew.source ?? 'custom',
+        crew.catalogId ?? null,
+        crew.searchText,
+        crew.suggestable !== false,
         crew.updatedAt,
         id,
       ]

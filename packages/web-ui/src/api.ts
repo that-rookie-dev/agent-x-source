@@ -148,6 +148,219 @@ export const crews = {
   generateMetadata: (systemPrompt?: string, title?: string, name?: string, description?: string) => request<{ expertise: string[]; traits: string[]; revisedPrompt: string }>('/crew/generate-metadata', { method: 'POST', body: JSON.stringify({ systemPrompt, title, name, description }) }),
 };
 
+// ─── Crew private chat (1:1, no Agent-X) ───
+export interface CrewChatCrewInfo {
+  id: string;
+  name: string;
+  title?: string;
+  callsign: string;
+  color?: string;
+  icon?: string;
+  catalogId?: string;
+  categoryId?: string;
+  description?: string;
+  expertise?: string[];
+  traits?: string[];
+  emotion?: string;
+  tone?: string;
+}
+
+export interface CrewChatSessionInfo {
+  id: string;
+  title?: string;
+  contextKind?: 'agent_x' | 'crew_private';
+  hostCrewId?: string;
+  crewId?: string;
+  crewName?: string;
+  crewCallsign?: string;
+  scopePath?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const crewChat = {
+  startSession: (body: {
+    crewId?: string;
+    scopePath?: string;
+    recruit?: {
+      id?: string;
+      name: string;
+      title?: string;
+      callsign?: string;
+      systemPrompt: string;
+      description?: string;
+      tone?: string;
+      expertise?: string[];
+      traits?: string[];
+      tools?: string[];
+      source?: string;
+      catalogId?: string;
+    };
+  }) => request<{
+    sessionId: string;
+    created: boolean;
+    crew: CrewChatCrewInfo;
+    session: CrewChatSessionInfo;
+  }>('/crew-chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
+
+  restore: (sessionId: string, opts?: { limit?: number; before?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.before) params.set('before', opts.before);
+    const qs = params.toString();
+    return request<{
+      session: CrewChatSessionInfo;
+      crew: CrewChatCrewInfo;
+      messages: ChatMessage[];
+      pagination?: { total: number; hasMore: boolean; limit: number; before: string | null; oldestId: string | null };
+      canonicalSessionId?: string;
+      redirected?: boolean;
+    }>(`/crew-chat/sessions/${sessionId}${qs ? `?${qs}` : ''}`);
+  },
+
+  loadOlderMessages: (sessionId: string, before: string, limit = 50) => request<{
+    messages: ChatMessage[];
+    pagination: { total: number; hasMore: boolean; limit: number; before: string; oldestId: string | null };
+  }>(`/crew-chat/sessions/${sessionId}/messages?before=${encodeURIComponent(before)}&limit=${limit}`),
+
+  cancel: (sessionId: string) => request<{ ok: boolean }>(
+    `/crew-chat/sessions/${sessionId}/cancel`,
+    { method: 'POST', body: JSON.stringify({}) },
+  ),
+
+  sendMessage: (sessionId: string, text: string) => request<{
+    ok: boolean;
+    content: string;
+    userMessageId: string;
+    assistantMessageId: string;
+    elapsed: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    crew: CrewChatCrewInfo;
+  }>(`/crew-chat/sessions/${sessionId}/message`, { method: 'POST', body: JSON.stringify({ text }) }),
+
+  retry: (sessionId: string) => request<{ ok: boolean; narrativeEntries: number }>(
+    `/crew-chat/sessions/${sessionId}/retry`,
+    { method: 'POST', body: JSON.stringify({}) },
+  ),
+
+  sendStream: async (
+    sessionId: string,
+    text: string,
+    onProgress: (event: { type: string; data: unknown }) => void,
+    retry?: boolean,
+  ): Promise<{ ok: boolean; content?: string; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number }> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+    const response = await fetch(`${BASE}/crew-chat/sessions/${sessionId}/message-stream`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify({ text, retry }),
+    });
+
+    if (response.status === 401) {
+      onUnauthorized?.();
+      throw new Error('Unauthorized');
+    }
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: response.statusText }));
+      throw new Error((error as { error?: string }).error || `HTTP ${response.status}`);
+    }
+
+    if (!response.body) throw new Error('No response body');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: { ok: boolean; content?: string; error?: string; inputTokens?: number; outputTokens?: number; costUsd?: number } = { ok: false };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      let currentEvent = { id: '', event: '', data: '' };
+
+      for (const line of lines) {
+        if (line.startsWith('id: ')) {
+          currentEvent.id = line.slice(4);
+        } else if (line.startsWith('event: ')) {
+          currentEvent.event = line.slice(7);
+        } else if (line.startsWith('data: ')) {
+          currentEvent.data = line.slice(6);
+        } else if (line === '' && currentEvent.event) {
+          try {
+            const data = currentEvent.data ? JSON.parse(currentEvent.data) : null;
+            onProgress({ type: currentEvent.event, data });
+
+            if (currentEvent.event === 'complete') {
+              result = {
+                ok: true,
+                content: data?.content,
+                inputTokens: data?.inputTokens,
+                outputTokens: data?.outputTokens,
+                costUsd: data?.costUsd,
+              };
+            } else if (currentEvent.event === 'error') {
+              result = { ok: false, error: data?.error };
+            }
+          } catch { /* ignore parse errors */ }
+          currentEvent = { id: '', event: '', data: '' };
+        }
+      }
+    }
+
+    return result;
+  },
+
+  findByCrew: (crewId: string) => request<{
+    sessionId: string | null;
+    crew: CrewChatCrewInfo | null;
+    session?: CrewChatSessionInfo;
+  }>(`/crew-chat/by-crew/${crewId}`),
+};
+
+export const crewSuggestions = {
+  evaluate: (text: string, sessionId: string, priorUserMessages?: string[]) =>
+    request<CrewSuggestionEvaluation>('/crew-suggestions/evaluate', {
+      method: 'POST',
+      body: JSON.stringify({ text, sessionId, priorUserMessages }),
+    }),
+  resolve: (payload: {
+    sessionId: string;
+    action: 'deploy' | 'skip' | 'dismiss';
+    dismissForSession?: boolean;
+    selectedCandidateIds?: string[];
+    candidates?: CrewMatchCandidate[];
+  }) => request<{ ok: boolean; deployedCrewIds: string[] }>('/crew-suggestions/resolve', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  clearDismiss: (sessionId: string) =>
+    request<{ ok: boolean }>('/crew-suggestions/clear-dismiss', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId }),
+    }),
+  getCatalogEntry: (id: string) =>
+    request<{ entry: CatalogEntry }>(`/crew-catalog/${encodeURIComponent(id)}`),
+};
+
+export const crewCatalog = {
+  seedStatus: () => request<CatalogSeedStatusResponse>('/crew-catalog/seed-status'),
+  listCategories: () => request<{ categories: CatalogCategorySummary[] }>('/crew-catalog/categories'),
+  listByCategory: (categoryId: string, limit = 500) =>
+    request<{ crews: CatalogSummary[] }>(`/crew-catalog/by-category/${encodeURIComponent(categoryId)}?limit=${limit}`),
+  search: (q: string, limit = 40) =>
+    request<{ crews: CatalogSummary[] }>(`/crew-catalog/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+};
+
 // ─── Chat ───
 async function postChatAsync(path: string, body: Record<string, unknown>) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -160,8 +373,8 @@ async function postChatAsync(path: string, body: Record<string, unknown>) {
 }
 
 export const chat = {
-  send: (text: string, attachments?: { name: string; content: string }[], retry?: boolean) =>
-    postChatAsync('/chat/message', { text, attachments, retry }),
+  send: (text: string, attachments?: { name: string; content: string }[], retry?: boolean, delegateCrewIds?: string[]) =>
+    postChatAsync('/chat/message', { text, attachments, retry, delegateCrewIds }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
   
@@ -170,7 +383,8 @@ export const chat = {
     text: string,
     onProgress: (event: { type: string; data: unknown }) => void,
     attachments?: { name: string; content: string }[],
-    retry?: boolean
+    retry?: boolean,
+    delegateCrewIds?: string[],
   ): Promise<{ ok: boolean; message?: ChatMessage; clarification?: boolean; error?: string }> => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -184,7 +398,7 @@ export const chat = {
         method: 'POST',
         credentials: 'include',
         headers,
-        body: JSON.stringify({ text, attachments, retry }),
+        body: JSON.stringify({ text, attachments, retry, delegateCrewIds }),
       });
 
       if (response.status === 401) {
@@ -592,20 +806,109 @@ export interface Crew {
   tools?: string[];
   color?: string;
   icon?: string;
+  catalogId?: string;
+  categoryId?: string;
+  requiresMedicalDisclaimer?: boolean;
 }
 
 export interface CrewInput {
+  id?: string;
   name: string;
   title?: string;
   callsign: string;
   systemPrompt: string;
   description?: string;
   tone?: string;
+  source?: 'custom' | 'hub';
+  catalogId?: string;
   expertise?: string[];
   traits?: string[];
   tools?: string[];
   color?: string;
   icon?: string;
+}
+
+export interface CatalogSeedStatusResponse {
+  status: 'idle' | 'seeding' | 'ready' | 'error';
+  table: 'crew_catalog';
+  ftsTable: 'crew_catalog_fts' | 'crew_catalog.search_tsv';
+  seededCount: number;
+  expectedCount: number;
+  manifestRevision: number;
+  storedRevision: number;
+  percent: number;
+  processedInRun: number;
+  error?: string;
+}
+
+export interface CatalogCategorySummary {
+  id: string;
+  label: string;
+  iconId?: string;
+  crewCount: number;
+}
+
+export interface CatalogSummary {
+  id: string;
+  callsign: string;
+  name: string;
+  title: string;
+  categoryId: string;
+  categoryLabel: string;
+  description: string;
+  expertise: string[];
+  traits: string[];
+  tone?: string;
+  tools?: string[];
+  requiresMedicalDisclaimer?: boolean;
+}
+
+export interface CatalogEntry {
+  id: string;
+  callsign: string;
+  name: string;
+  title: string;
+  categoryId: string;
+  categoryLabel: string;
+  description: string;
+  systemPrompt: string;
+  tone?: string;
+  expertise: string[];
+  traits: string[];
+  tools?: string[];
+  searchText: string;
+  hubRevision: number;
+  active: boolean;
+  requiresMedicalDisclaimer?: boolean;
+}
+
+export interface CrewMatchCandidate {
+  id: string;
+  origin: 'hub_catalog' | 'custom' | 'hub_roster';
+  callsign: string;
+  name: string;
+  title: string;
+  description: string;
+  expertise: string[];
+  traits: string[];
+  matchScore: number;
+  reasons: string[];
+  onRoster: boolean;
+  enabled?: boolean;
+  catalogId?: string;
+  categoryId?: string;
+  categoryLabel?: string;
+  tone?: string;
+  requiresMedicalDisclaimer?: boolean;
+}
+
+export interface CrewSuggestionEvaluation {
+  shouldSuggest: boolean;
+  dismissed: boolean;
+  confidence: number;
+  taskSummary: string;
+  candidates: CrewMatchCandidate[];
+  reasons: string[];
 }
 
 export interface ChatMessage {
@@ -630,6 +933,11 @@ export interface SessionInfo {
   provider: string;
   model: string;
   crewId?: string;
+  contextKind?: 'agent_x' | 'crew_private';
+  hostCrewId?: string;
+  hostCrewName?: string;
+  hostCrewCallsign?: string;
+  hostCrewTitle?: string;
   mode?: 'agent' | 'plan';
   messageCount: number;
   status?: string;

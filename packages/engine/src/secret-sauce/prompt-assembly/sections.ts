@@ -463,34 +463,35 @@ export function createTaskPanelSection(): PromptSection<string> {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Session context — from ContextTracker
+// Session narrative — story-style memory (not chat transcripts)
 // ─────────────────────────────────────────────────────────────
 
-export function createSessionContextSection(ctx: SectionContext): PromptSection<string> {
+export function createSessionNarrativeSection(ctx: SectionContext): PromptSection<string> {
   return {
-    key: 'core/session-context',
+    key: 'core/session-narrative',
     load: () => ctx.contextTracker?.getContextSummary() ?? '',
     render: (text) => text || '',
     diff: (prev, current) => {
-      // Always re-render session context — it's a full snapshot
       if (prev === current) return null;
-      return current ? `[SESSION_CONTEXT]\n${current}\n[/SESSION_CONTEXT]` : '';
+      return current || '';
     },
   };
 }
 
-// ─────────────────────────────────────────────────────────────
-// Recent history — from ContextTracker
-// ─────────────────────────────────────────────────────────────
+/** @deprecated Use createSessionNarrativeSection. */
+export function createSessionContextSection(ctx: SectionContext): PromptSection<string> {
+  return createSessionNarrativeSection(ctx);
+}
 
+/** @deprecated Chat-style history removed — narrative replaces this. */
 export function createRecentHistorySection(ctx: SectionContext): PromptSection<string> {
   return {
-    key: 'core/recent-history',
+    key: 'core/current-focus',
     load: () => ctx.contextTracker?.getRecentHistory() ?? '',
     render: (text) => text || '',
     diff: (prev, current) => {
-      if (prev === current) return null;
-      return current ? `[RECENT_HISTORY]\n${current}\n[/RECENT_HISTORY]` : '';
+      if (prev === current || !current) return null;
+      return current;
     },
   };
 }

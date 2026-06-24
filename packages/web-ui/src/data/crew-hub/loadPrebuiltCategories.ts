@@ -72,12 +72,12 @@ export function loadPrebuiltCategories(): Promise<PrebuiltCategory[]> {
   if (cached) return Promise.resolve(cached);
   if (inflight) return inflight;
 
-  inflight = import('./category-icons').then(async ({ getCategoryIcon }) => {
+  inflight = import('./category-icons').then(async ({ resolveCategoryIcon }) => {
     const categories = await Promise.all(
       PREBUILT_CATEGORY_INDEX.map(async (entry) => ({
         id: entry.id,
         label: entry.label,
-        icon: getCategoryIcon(entry.iconId),
+        icon: resolveCategoryIcon(entry.iconId, entry.id),
         crews: await loadCategoryCrews(entry.id),
       })),
     );
@@ -92,11 +92,11 @@ export function loadPrebuiltCategories(): Promise<PrebuiltCategory[]> {
 
 /** Load hub sector list quickly (metadata only, no crew payloads). */
 export async function loadPrebuiltCategoryIndex(): Promise<PrebuiltCategory[]> {
-  const { getCategoryIcon } = await import('./category-icons');
+  const { resolveCategoryIcon } = await import('./category-icons');
   return PREBUILT_CATEGORY_INDEX.map((entry) => ({
     id: entry.id,
     label: entry.label,
-    icon: getCategoryIcon(entry.iconId),
+    icon: resolveCategoryIcon(entry.iconId, entry.id),
     crews: crewCache.get(entry.id) ?? [],
   }));
 }

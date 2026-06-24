@@ -33,6 +33,7 @@ import GroupIcon from '@mui/icons-material/Group';
 import { sessions, type ConnectionState, type Checkpoint } from '../api';
 import type { Crew } from '../api';
 import { colors } from '../theme';
+import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. ConnectionHealthDot — green/yellow/red dot with last-event timestamp
@@ -359,6 +360,13 @@ export function CrewMentionMenu({
                 <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
                   @{crew.callsign}
                 </Typography>
+                {crewRequiresMedicalDisclaimer({
+                  catalogId: crew.catalogId ?? crew.id,
+                  categoryId: crew.categoryId,
+                  requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+                }) && (
+                  <Typography sx={{ fontSize: '0.45rem', color: '#f4c430', fontWeight: 800 }}>⚠ MED</Typography>
+                )}
                 {crew.title && (
                   <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim }}>
                     — {crew.title}

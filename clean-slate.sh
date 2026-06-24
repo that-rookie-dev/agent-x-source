@@ -15,55 +15,151 @@ sleep 1
 echo ">>> Removing /Applications/Agent-X.app..."
 sudo rm -rf /Applications/Agent-X.app 2>/dev/null || true
 
-# 3. Remove SQLite DB files first, then data directories
-echo ">>> Removing agentx config/data/cache..."
-rm -f "$HOME/.local/share/agentx/db/agentx.db" 2>/dev/null || true
-rm -f "$HOME/.local/share/agentx/db/agentx.db-wal" 2>/dev/null || true
-rm -f "$HOME/.local/share/agentx/db/agentx.db-shm" 2>/dev/null || true
-rm -rf "$HOME/.config/agentx"
-rm -rf "$HOME/.local/share/agentx"
-rm -rf "$HOME/.cache/agentx"
-rm -rf "$HOME/Library/Application Support/@agentx"
+# 3. Wipe all local SQLite state (config, data, cache, WAL/SHM sidecars)
+echo ">>> Wiping SQLite databases and Agent-X data directories..."
 
-# 3b. Clear PostgreSQL tables (hardcoded local dev connection)
-echo ">>> Clearing PostgreSQL tables..."
+wipe_path() {
+  local target="$1"
+  if [ -e "$target" ]; then
+    echo "    rm -rf $target"
+    rm -rf "$target"
+  fi
+}
+
+wipe_file() {
+  local target="$1"
+  if [ -f "$target" ] || [ -e "$target" ]; then
+    echo "    rm -f $target"
+    rm -f "$target" 2>/dev/null || true
+  fi
+}
+
+# Standard XDG / macOS paths used by @agentx/shared platform helpers
+AGENTX_DIRS=(
+  "$HOME/.config/agentx"
+  "$HOME/.local/share/agentx"
+  "$HOME/.cache/agentx"
+  "$HOME/Library/Application Support/@agentx"
+  "$HOME/Library/Application Support/Agent-X"
+  "$HOME/Library/Application Support/agentx"
+  "$HOME/Library/Caches/agentx"
+)
+
+# Respect explicit overrides when set in the shell environment
+if [ -n "${XDG_CONFIG_HOME:-}" ]; then AGENTX_DIRS+=("$XDG_CONFIG_HOME/agentx"); fi
+if [ -n "${XDG_DATA_HOME:-}" ]; then AGENTX_DIRS+=("$XDG_DATA_HOME/agentx"); fi
+if [ -n "${XDG_CACHE_HOME:-}" ]; then AGENTX_DIRS+=("$XDG_CACHE_HOME/agentx"); fi
+if [ -n "${AGENTX_DATA_DIR:-}" ]; then AGENTX_DIRS+=("$AGENTX_DATA_DIR"); fi
+
+for dir in "${AGENTX_DIRS[@]}"; do
+  wipe_path "$dir"
+done
+
+# Explicit SQLite files (main session DB, neural DB, WAL/SHM journals)
+AGENTX_DB_FILES=(
+  "$HOME/.local/share/agentx/db/agentx.db"
+  "$HOME/.local/share/agentx/db/agentx.db-wal"
+  "$HOME/.local/share/agentx/db/agentx.db-shm"
+  "$HOME/.config/agentx/neural.db"
+  "$HOME/.config/agentx/neural.db-wal"
+  "$HOME/.config/agentx/neural.db-shm"
+)
+
+if [ -n "${XDG_DATA_HOME:-}" ]; then
+  AGENTX_DB_FILES+=(
+    "$XDG_DATA_HOME/agentx/db/agentx.db"
+    "$XDG_DATA_HOME/agentx/db/agentx.db-wal"
+    "$XDG_DATA_HOME/agentx/db/agentx.db-shm"
+  )
+fi
+if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+  AGENTX_DB_FILES+=(
+    "$XDG_CONFIG_HOME/agentx/neural.db"
+    "$XDG_CONFIG_HOME/agentx/neural.db-wal"
+    "$XDG_CONFIG_HOME/agentx/neural.db-shm"
+  )
+fi
+
+for db_file in "${AGENTX_DB_FILES[@]}"; do
+  wipe_file "$db_file"
+done
+
+# 3b. Wipe PostgreSQL (drops every table/view/sequence in public schema)
+echo ">>> Wiping PostgreSQL (public schema)..."
+
+PG_TARGETS=()
+if [ -n "${PG_CONN_STRING:-}" ]; then
+  PG_TARGETS+=("$PG_CONN_STRING")
+fi
+if [ -f "$ROOT_DIR/../credentials.env" ]; then
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/../credentials.env"
+  if [ -n "${PG_CONN_STRING_LOCAL:-}" ]; then
+    PG_TARGETS+=("$PG_CONN_STRING_LOCAL")
+  fi
+  # Opt-in only: set PG_WIPE_SUPABASE=1 to also wipe remote Supabase
+  if [ "${PG_WIPE_SUPABASE:-0}" = "1" ] && [ -n "${PG_CONN_STRING_SUPABASE:-}" ]; then
+    PG_TARGETS+=("$PG_CONN_STRING_SUPABASE")
+  fi
+fi
+if [ "${#PG_TARGETS[@]}" -eq 0 ]; then
+  PG_TARGETS+=("postgresql://admin:admin@localhost:5432/agentx")
+fi
+
+# De-duplicate connection strings while preserving order
+deduped_pg_targets=()
+for conn in "${PG_TARGETS[@]}"; do
+  already=0
+  for seen in "${deduped_pg_targets[@]:-}"; do
+    if [ "$seen" = "$conn" ]; then already=1; break; fi
+  done
+  if [ "$already" -eq 0 ]; then deduped_pg_targets+=("$conn"); fi
+done
+
 cd "$ROOT_DIR/packages/engine"
-node -e "
-  const { Pool } = require('pg');
-  const pool = new Pool({ connectionString: 'postgresql://admin:admin@localhost:5432/agentx' });
-  pool.query(\`
-    DROP TABLE IF EXISTS _schema CASCADE;
-    DROP TABLE IF EXISTS agent_persona CASCADE;
-    DROP TABLE IF EXISTS crew_feedback CASCADE;
-    DROP TABLE IF EXISTS session_crew_states CASCADE;
-    DROP TABLE IF EXISTS agent_tasks CASCADE;
-    DROP TABLE IF EXISTS task_snapshots CASCADE;
-    DROP TABLE IF EXISTS permission_rules CASCADE;
-    DROP TABLE IF EXISTS session_events CASCADE;
-    DROP TABLE IF EXISTS tool_executions CASCADE;
-    DROP TABLE IF EXISTS checkpoints CASCADE;
-    DROP TABLE IF EXISTS permissions CASCADE;
-    DROP TABLE IF EXISTS token_logs CASCADE;
-    DROP TABLE IF EXISTS message_parts CASCADE;
-    DROP TABLE IF EXISTS messages CASCADE;
-    DROP TABLE IF EXISTS tool_registry CASCADE;
-    DROP TABLE IF EXISTS commands CASCADE;
-    DROP TABLE IF EXISTS crews CASCADE;
-    DROP TABLE IF EXISTS sessions CASCADE;
-    DROP TABLE IF EXISTS agent_experiences CASCADE;
-    DROP TABLE IF EXISTS agent_growth_state CASCADE;
-    DROP TABLE IF EXISTS agent_emotions CASCADE;
-    DROP TABLE IF EXISTS agent_memories CASCADE;
-    DROP TABLE IF EXISTS agent_diary CASCADE;
-    DROP TABLE IF EXISTS agent_identity CASCADE;
-  \`).then(() => { console.log('PG tables cleared'); process.exit(0); }).catch(e => { console.error('PG clear failed:', e.message); process.exit(1); });
-" || true
+for PG_CONN in "${deduped_pg_targets[@]}"; do
+  echo "    wiping $(echo "$PG_CONN" | sed -E 's#://([^:]+):([^@]+)@#://\1:***@#')"
+  PG_CONN="$PG_CONN" node -e "
+    const { Pool } = require('pg');
 
-# 3c. Clear neural SQLite database
-echo ">>> Clearing neural SQLite database..."
-rm -f "$HOME/.config/agentx/neural.db" 2>/dev/null || true
-rm -f "$HOME/.config/agentx/neural.db-wal" 2>/dev/null || true
-rm -f "$HOME/.config/agentx/neural.db-shm" 2>/dev/null || true
+    function redact(url) {
+      return url.replace(/:\\/\\/([^:]+):([^@]+)@/, '://\$1:***@');
+    }
+
+    async function wipePublicSchema() {
+      const connectionString = process.env.PG_CONN;
+      const pool = new Pool({ connectionString, max: 1 });
+      const client = await pool.connect();
+      try {
+        const before = await client.query(
+          \"SELECT COUNT(*)::int AS c FROM pg_tables WHERE schemaname = 'public'\"
+        );
+        await client.query('DROP SCHEMA IF EXISTS public CASCADE');
+        await client.query('CREATE SCHEMA public');
+        await client.query('GRANT ALL ON SCHEMA public TO public');
+        try {
+          await client.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
+        } catch { /* role may already own schema */ }
+        const after = await client.query(
+          \"SELECT COUNT(*)::int AS c FROM pg_tables WHERE schemaname = 'public'\"
+        );
+        console.log(
+          'PG wiped',
+          redact(connectionString),
+          '(' + before.rows[0].c + ' tables -> ' + after.rows[0].c + ')'
+        );
+      } finally {
+        client.release();
+        await pool.end();
+      }
+    }
+
+    wipePublicSchema().then(() => process.exit(0)).catch((e) => {
+      console.error('PG wipe failed for', redact(process.env.PG_CONN), '-', e.message);
+      process.exit(1);
+    });
+  "
+done
 
 # 4. Clean previous release artifacts
 echo ">>> Cleaning previous desktop build artifacts..."

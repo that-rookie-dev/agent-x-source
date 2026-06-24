@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useImperativeHandle } from 'react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Menu from '@mui/material/Menu';
@@ -15,12 +15,18 @@ import { CrewMentionMenu } from './ChatEnhancements';
 import { colors } from '../theme';
 import type { Crew } from '../api';
 
+export interface ChatInputBarHandle {
+  clear: () => void;
+  setText: (text: string) => void;
+}
+
 export interface ChatInputBarProps {
   streaming: boolean;
   sendBlocked: boolean;
   sendBlockedReason: string;
   hasAttachments: boolean;
   crewList: Crew[];
+  disableMentions?: boolean;
   placeholder?: string;
   onSend: (text: string) => void;
   onCancel: () => void;
@@ -31,12 +37,13 @@ export interface ChatInputBarProps {
   clearSignal?: number;
 }
 
-function ChatInputBarComponent({
+const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar({
   streaming,
   sendBlocked,
   sendBlockedReason,
   hasAttachments,
   crewList,
+  disableMentions = false,
   placeholder = '@agentx — message your AI wingman...',
   onSend,
   onCancel,
@@ -44,13 +51,24 @@ function ChatInputBarComponent({
   onAddToQueue,
   onSteer,
   clearSignal,
-}: ChatInputBarProps) {
+}, ref) {
   const mentionInputRef = useRef<MentionInputHandle>(null);
   const mentionActiveRef = useRef(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [showCrewMention, setShowCrewMention] = useState(false);
   const [sendMenuAnchor, setSendMenuAnchor] = useState<null | HTMLElement>(null);
   const [hasText, setHasText] = useState(false);
+
+  useImperativeHandle(ref, () => ({
+    clear: () => {
+      mentionInputRef.current?.clear();
+      setHasText(false);
+    },
+    setText: (text: string) => {
+      mentionInputRef.current?.setValue(text);
+      setHasText(text.trim().length > 0);
+    },
+  }), []);
 
   useEffect(() => {
     const active = mentionQuery !== null;
@@ -66,8 +84,9 @@ function ChatInputBarComponent({
   }, [clearSignal]);
 
   const handleMentionQuery = useCallback((q: string | null) => {
+    if (disableMentions) return;
     setMentionQuery(q);
-  }, []);
+  }, [disableMentions]);
 
   const handleTextChange = useCallback((text: string) => {
     setHasText(text.trim().length > 0);
@@ -88,10 +107,10 @@ function ChatInputBarComponent({
   }, []);
 
   const handleSendClick = useCallback(() => {
-    const text = clearAndGetText();
+    const text = mentionInputRef.current?.getValue().trim() ?? '';
     if (!text && !hasAttachments) return;
     onSend(text);
-  }, [clearAndGetText, hasAttachments, onSend]);
+  }, [hasAttachments, onSend]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -108,7 +127,7 @@ function ChatInputBarComponent({
 
   return (
     <>
-      {showCrewMention && (
+      {showCrewMention && !disableMentions && (
         <CrewMentionMenu
           query={mentionQuery ?? ''}
           crewList={crewList}
@@ -124,7 +143,7 @@ function ChatInputBarComponent({
           onMentionQuery={handleMentionQuery}
           onTextChange={handleTextChange}
           placeholder={placeholder}
-          crewList={crewList}
+          crewList={disableMentions ? [] : crewList}
         />
 
         {streaming ? (
@@ -178,12 +197,12 @@ function ChatInputBarComponent({
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Steer with Message</Typography>
               <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>Redirect agent mid-task</Typography>
             </Box>
-            <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, ml: 'auto', pl: 1 }}>Enter</Typography>
+            <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, ml: 'auto', pl: 1 }}>⌥Enter</Typography>
           </MenuItem>
         </Menu>
       </Box>
     </>
   );
-}
+});
 
 export const ChatInputBar = React.memo(ChatInputBarComponent);

@@ -1,6 +1,7 @@
+import type { Response } from 'express';
 import type { Agent } from '@agentx/engine';
-import { getEngine } from './engine.js';
-import { persistMessageDirect } from './ws.js';
+import { createAgent, destroyAgent, destroyCrewChatService, getEngine } from './engine.js';
+import { ensureSubscribed, persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import { getLogger, sanitizeForJson } from '@agentx/shared';
 
@@ -76,6 +77,170 @@ export function buildInstructionForMode(mode: 'agent' | 'plan'): string | undefi
   return mode === 'plan' ? buildPlanInstruction() : buildAgentInstruction();
 }
 
+/** Activate the canonical crew-private session on the shared Agent (same stack as session chat). */
+export function ensureCrewPrivateAgentForSession(sessionId: string): Agent {
+  const eng = getEngine();
+  let session = eng.sessionManager.getSessionById(sessionId);
+  if (!session || (session.contextKind ?? 'agent_x') !== 'crew_private') {
+    throw new Error('not-crew-private-session');
+  }
+
+  const hostCrewId = session.hostCrewId as string | undefined;
+  if (hostCrewId) {
+    const mgr = eng.sessionManager as unknown as {
+      resolveCanonicalCrewPrivateSession?: (id: string) => typeof session | null;
+      findCrewPrivateSession?: (id: string) => typeof session | null;
+    };
+    const canonical = mgr.resolveCanonicalCrewPrivateSession?.(hostCrewId)
+      ?? mgr.findCrewPrivateSession?.(hostCrewId);
+    if (canonical && canonical.id !== session.id) session = canonical;
+  }
+
+  const targetId = session.id;
+  const current = eng.agent;
+  if (current && (current as unknown as { sessionId?: string }).sessionId === targetId) {
+    return current;
+  }
+
+  destroyCrewChatService(targetId);
+  destroyAgent();
+  const restored = eng.sessionManager.restoreSession(targetId);
+  if (!restored) throw new Error('not-found');
+
+  sessionSettings.mode = restored.mode === 'agent' ? 'agent' : 'plan';
+  createAgent(undefined, restored);
+  ensureSubscribed();
+
+  if (!eng.agent) throw new Error('agent-create-failed');
+  return eng.agent;
+}
+
+export type AgentMessageStreamOptions = {
+  text: string;
+  attachments?: { name: string; content: string }[];
+  retry?: boolean;
+  skipCrewSuggestion?: boolean;
+  connectedPayload?: Record<string, unknown>;
+};
+
+/** Shared SSE handler for Agent-backed chat turns (session chat + crew private). */
+export async function handleAgentMessageStream(
+  res: Response,
+  agent: Agent,
+  opts: AgentMessageStreamOptions,
+  evaluateCrewSuggestion?: (args: { text: string; sessionId: string }) => Promise<{ shouldSuggest: boolean } | null>,
+): Promise<void> {
+  if (agent.processing) {
+    try { agent.cancel(); } catch { /* ignore */ }
+    await new Promise((r) => setTimeout(r, 100));
+    if (agent.processing) {
+      res.status(503).json({ error: 'Agent is busy. Please try again in a moment.' });
+      return;
+    }
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  let eventId = 0;
+  const sendEvent = (event: string, data: unknown) => {
+    try {
+      res.write(`id: ${eventId}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      eventId++;
+    } catch { /* connection closed */ }
+  };
+
+  sendEvent('connected', opts.connectedPayload ?? { timestamp: new Date().toISOString() });
+
+  const eng = getEngine();
+  const mode = applySessionModeToAgent(agent);
+
+  if (opts.retry) {
+    try {
+      const store = (eng.sessionManager as unknown as { store?: { deleteLastMessages?: (id: string, n: number, roles?: string[]) => void } }).store;
+      const sid = (agent as unknown as { sessionId: string }).sessionId;
+      if (store?.deleteLastMessages && sid) {
+        store.deleteLastMessages(sid, 2, ['user', 'assistant']);
+      }
+      try { agent.rebuildContext(); } catch { /* best-effort */ }
+    } catch { /* best-effort */ }
+  }
+
+  const fullText = buildFullText(opts.text, opts.attachments);
+  const instruction = buildInstructionForMode(mode);
+
+  try {
+    const store = (eng.sessionManager as unknown as { store?: { createCheckpoint?: (id: string, label: string) => void } }).store;
+    const sid = (agent as unknown as { sessionId: string }).sessionId;
+    if (store?.createCheckpoint && sid) {
+      store.createCheckpoint(sid, `Auto · ${new Date().toLocaleTimeString()}`);
+    }
+  } catch { /* best-effort */ }
+
+  const unsub = eng.telemetry.onEvent((ev) => {
+    sendEvent('progress', ev);
+  });
+
+  const heartbeat = setInterval(() => {
+    try { res.write(':heartbeat\n\n'); } catch { clearInterval(heartbeat); unsub(); }
+  }, 25000);
+
+  const sid = (agent as unknown as { sessionId: string }).sessionId;
+  const turn = turnRegistry.create(sid);
+  let finished = false;
+
+  const poll = setInterval(() => {
+    if (finished) return;
+    const record = turnRegistry.get(turn.turnId);
+    if (!record) return;
+    if (record.status === 'complete') {
+      finished = true;
+      clearInterval(poll);
+      if ((record.message as Record<string, unknown> | undefined)?.id === '__clarify__') {
+        sendEvent('clarification', { ok: true });
+      } else {
+        sendEvent('complete', { ok: true, message: record.message, turnId: turn.turnId });
+      }
+      clearInterval(heartbeat);
+      unsub();
+      res.end();
+    } else if (record.status === 'error' || record.status === 'cancelled') {
+      finished = true;
+      clearInterval(poll);
+      sendEvent('error', { error: record.error ?? 'chat-failed', code: 'PROCESSING_FAILED', partialContent: record.partialContent });
+      clearInterval(heartbeat);
+      unsub();
+      res.end();
+    }
+  }, 500);
+
+  const cleanup = () => {
+    finished = true;
+    clearInterval(poll);
+    clearInterval(heartbeat);
+    unsub();
+    try { agent.cancel(); } catch { /* ignore */ }
+  };
+
+  res.on('close', cleanup);
+
+  if (!opts.skipCrewSuggestion && evaluateCrewSuggestion && sid && !/(?<!\w)@([\w][\w.-]*)/.test(fullText)) {
+    try {
+      const evaluation = await evaluateCrewSuggestion({ text: fullText, sessionId: sid });
+      if (evaluation?.shouldSuggest) {
+        sendEvent('crew_suggestion', { evaluation, message: fullText });
+      }
+    } catch { /* best-effort */ }
+  }
+
+  runAgentTurnAsync(agent, fullText, instruction, opts.retry, turn.turnId, sid);
+  sendEvent('started', { turnId: turn.turnId, async: true });
+}
+
 export function persistToolLedger(agent: Agent, sessionId: string): void {
   try {
     const ledger = (agent as unknown as { getToolLedgerContent?: () => string }).getToolLedgerContent?.() ?? '';
@@ -107,6 +272,7 @@ export function runAgentTurnAsync(
   sessionId: string,
   onComplete?: (message: unknown) => void,
   onError?: (error: string, partial?: string) => void,
+  delegateCrewIds?: string[],
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const onTimeout = () => {
@@ -131,7 +297,11 @@ export function runAgentTurnAsync(
   });
   scheduleTimeout();
 
-  void agent.sendMessage(fullText, { ...(instruction ? { instruction } : {}), ...(retry ? { retry: true } : {}) })
+  void agent.sendMessage(fullText, {
+    ...(instruction ? { instruction } : {}),
+    ...(retry ? { retry: true } : {}),
+    ...(delegateCrewIds?.length ? { delegateCrewIds } : {}),
+  })
     .then((message) => {
       if (timeoutId) clearTimeout(timeoutId);
       unsubActivity();

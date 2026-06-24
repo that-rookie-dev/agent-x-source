@@ -4,6 +4,8 @@ export interface RecordMeta {
   updatedAt?: string;
 }
 
+import type { SessionContextKind } from './session-context.js';
+
 export interface StorableSession extends RecordMeta {
   title: string;
   status: string;
@@ -12,6 +14,8 @@ export interface StorableSession extends RecordMeta {
   scopePath: string;
   mode?: string;
   parentId?: string | null;
+  contextKind?: SessionContextKind;
+  hostCrewId?: string | null;
   hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;

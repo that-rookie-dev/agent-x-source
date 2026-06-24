@@ -66,10 +66,7 @@ export class CrewWorker {
     } as any);
 
     const sharedContext = missionContext.getSharedContextBlock();
-    const planNote = planMode
-      ? '\nPLAN MODE — read-only: research and analyze freely; respond with complete markdown findings (no file writes or mutating commands).'
-      : '';
-    const systemPrompt = buildCrewWorkerSystemPrompt(crew, sharedContext + planNote);
+    const systemPrompt = buildCrewWorkerSystemPrompt(crew, sharedContext, planMode);
     const toolIds = resolveCrewToolIds(crew, planMode);
 
     let configOverride: Partial<AgentXConfig> | undefined;

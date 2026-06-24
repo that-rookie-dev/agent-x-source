@@ -4,6 +4,8 @@ import {
   autoComposeCrewMembers,
   buildTaskContextForCrewRouting,
   hasTaskSignals,
+  isActiveCrewContinuation,
+  isDistinctNewRequirement,
   shouldSkipAutonomousCrewRouting,
 } from '../src/agent/crew-auto-compose.js';
 import type { CrewMember } from '../src/agent/CrewOrchestrator.js';
@@ -111,6 +113,24 @@ describe('buildTaskContextForCrewRouting', () => {
     const msg = 'Set up Kubernetes deployment with CI/CD for our API backend service';
     expect(buildTaskContextForCrewRouting(msg, ['older unrelated message about lunch'])).toBe(msg);
   });
+
+  it('merges prior context when user defers planning to the agent', () => {
+    const context = buildTaskContextForCrewRouting(
+      'plan it yourself',
+      ['I would like to plan a beach vacation with my wife and baby'],
+    );
+    expect(context).toContain('beach vacation');
+    expect(context).toContain('plan it yourself');
+  });
+
+  it('merges prior context for uncertain follow-ups', () => {
+    const context = buildTaskContextForCrewRouting(
+      'I am not sure, can you suggest me a best plan. This is kind of a surprise for my family.',
+      ['I would like to plan for a vacation with my wife and 4 month old baby girl'],
+    );
+    expect(context).toContain('vacation');
+    expect(context).toContain('not sure');
+  });
 });
 
 describe('hasTaskSignals', () => {
@@ -154,5 +174,25 @@ describe('system spec follow-up after unrelated prior message', () => {
     expect(context).toBe(msg);
     const assessment = assessCrewNeed(context, [mockMember(sophia)]);
     expect(assessment.shouldRoute).toBe(false);
+  });
+});
+
+describe('crew suggestion continuation vs new requirement', () => {
+  const vacationPrior = ['Plan a surprise beach vacation for my partner in Bali'];
+
+  it('treats deferrals and short follow-ups as continuation', () => {
+    expect(isActiveCrewContinuation('plan it yourself', vacationPrior)).toBe(true);
+    expect(isActiveCrewContinuation('yes please', vacationPrior)).toBe(true);
+  });
+
+  it('detects a distinct new domain in follow-up messages', () => {
+    expect(isDistinctNewRequirement(
+      'Also help me file my income tax return for freelancers',
+      vacationPrior,
+    )).toBe(true);
+  });
+
+  it('does not flag same-domain vacation follow-ups as new requirements', () => {
+    expect(isDistinctNewRequirement('add scuba diving to the itinerary', vacationPrior)).toBe(false);
   });
 });

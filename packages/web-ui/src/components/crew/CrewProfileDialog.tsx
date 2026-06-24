@@ -7,6 +7,7 @@ import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
+import ChatIcon from '@mui/icons-material/Chat';
 import CloseIcon from '@mui/icons-material/Close';
 import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
 import EditIcon from '@mui/icons-material/Edit';
@@ -14,6 +15,8 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import type { PrebuiltCrew } from './CrewHubDialog';
 import { crewDialogPaperSx, crewHubScanlineSx, crewOverlineSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
+import { MedicalProfileIdentityFrame } from './MedicalDisclaimerBanner';
+import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 
 export interface RosterProfileActions {
   enabled: boolean;
@@ -32,6 +35,9 @@ interface CrewProfileDialogProps {
   onClose: () => void;
   onImport: () => void;
   onRemove: () => void;
+  /** Open private 1:1 crew chat (recruits from hub if needed) */
+  onPrivateChat?: () => void;
+  privateChatLoading?: boolean;
   /** When set, dialog runs in roster mode with edit/delete/toggle actions */
   rosterActions?: RosterProfileActions;
   accentColor?: string;
@@ -68,6 +74,116 @@ function MetaField({ label, value, accent }: { label: string; value: string; acc
   );
 }
 
+function IdentityBlockContent({ crew, accent }: { crew: PrebuiltCrew; accent: string }) {
+  return (
+    <>
+      <Box sx={{
+        position: 'absolute',
+        inset: 0,
+        pointerEvents: 'none',
+        opacity: 0.06,
+        backgroundImage: 'repeating-linear-gradient(-24deg, transparent, transparent 8px, #fff 8px, #fff 9px)',
+      }} />
+      <Typography sx={{
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%) rotate(-18deg)',
+        fontSize: '1.4rem',
+        fontFamily: "'JetBrains Mono', monospace",
+        fontWeight: 800,
+        letterSpacing: '6px',
+        color: crewTheme.accent.alert,
+        opacity: 0.12,
+        whiteSpace: 'nowrap',
+        userSelect: 'none',
+      }}>
+        CLASSIFIED
+      </Typography>
+
+      <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'flex-start', position: 'relative' }}>
+        <RedactedAvatar />
+        <IdentityText crew={crew} accent={accent} />
+      </Box>
+    </>
+  );
+}
+
+function RedactedAvatar() {
+  return (
+    <Box sx={{
+      width: 56,
+      height: 56,
+      flexShrink: 0,
+      borderRadius: '6px',
+      bgcolor: crewTheme.bg.inset,
+      border: `1px dashed ${crewTheme.border.strong}`,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 0.25,
+    }}>
+      <Box sx={{ width: '70%', height: 3, bgcolor: crewTheme.border.strong, borderRadius: 1 }} />
+      <Box sx={{ width: '55%', height: 3, bgcolor: crewTheme.border.default, borderRadius: 1 }} />
+      <Box sx={{ width: '65%', height: 3, bgcolor: crewTheme.border.default, borderRadius: 1 }} />
+      <Typography sx={{
+        fontSize: '0.45rem',
+        fontFamily: "'JetBrains Mono', monospace",
+        color: crewTheme.text.dim,
+        letterSpacing: '0.5px',
+        mt: 0.25,
+      }}>
+        REDACTED
+      </Typography>
+    </Box>
+  );
+}
+
+function IdentityText({ crew, accent }: { crew: PrebuiltCrew; accent: string }) {
+  return (
+    <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Typography sx={{
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: '0.95rem',
+        fontWeight: 700,
+        letterSpacing: '0.5px',
+        color: crewTheme.text.primary,
+        lineHeight: 1.2,
+      }}>
+        {crew.name}
+      </Typography>
+      <Typography sx={{ fontSize: '0.72rem', color: crewTheme.text.secondary, mt: 0.35 }}>
+        {crew.title}
+      </Typography>
+      <Typography sx={{
+        fontSize: '0.62rem',
+        color: accent,
+        fontFamily: "'JetBrains Mono', monospace",
+        mt: 0.5,
+      }}>
+        @{crew.callsign}
+      </Typography>
+    </Box>
+  );
+}
+
+function IdentityBlock({ crew, accent }: { crew: PrebuiltCrew; accent: string }) {
+  return (
+    <Box sx={{
+      position: 'relative',
+      mb: 2,
+      p: 1.5,
+      borderRadius: '8px',
+      border: `1px solid ${crewTheme.border.strong}`,
+      bgcolor: crewTheme.bg.card,
+      overflow: 'hidden',
+    }}>
+      <IdentityBlockContent crew={crew} accent={accent} />
+    </Box>
+  );
+}
+
 export function CrewProfileDialog({
   open,
   crew,
@@ -76,6 +192,8 @@ export function CrewProfileDialog({
   onClose,
   onImport,
   onRemove,
+  onPrivateChat,
+  privateChatLoading,
   rosterActions,
   accentColor,
 }: CrewProfileDialogProps) {
@@ -84,6 +202,11 @@ export function CrewProfileDialog({
   const accent = accentColor ?? getCrewAccent(undefined, crew.callsign);
   const isRoster = !!rosterActions;
   const rosterActive = rosterActions?.enabled !== false;
+  const showMedicalDisclaimer = crewRequiresMedicalDisclaimer({
+    categoryId: crew.categoryId,
+    requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    catalogId: crew.catalogId,
+  });
 
   return (
     <Dialog
@@ -128,92 +251,13 @@ export function CrewProfileDialog({
 
       <DialogContent sx={{ px: 2, pt: '16px !important', pb: 2 }}>
         {/* Redacted identity block — no photo */}
-        <Box sx={{
-          position: 'relative',
-          mb: 2,
-          p: 1.5,
-          borderRadius: '8px',
-          border: `1px solid ${crewTheme.border.strong}`,
-          bgcolor: crewTheme.bg.card,
-          overflow: 'hidden',
-        }}>
-          <Box sx={{
-            position: 'absolute',
-            inset: 0,
-            pointerEvents: 'none',
-            opacity: 0.06,
-            backgroundImage: 'repeating-linear-gradient(-24deg, transparent, transparent 8px, #fff 8px, #fff 9px)',
-          }} />
-          <Typography sx={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%) rotate(-18deg)',
-            fontSize: '1.4rem',
-            fontFamily: "'JetBrains Mono', monospace",
-            fontWeight: 800,
-            letterSpacing: '6px',
-            color: crewTheme.accent.alert,
-            opacity: 0.12,
-            whiteSpace: 'nowrap',
-            userSelect: 'none',
-          }}>
-            CLASSIFIED
-          </Typography>
-
-          <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'flex-start', position: 'relative' }}>
-            <Box sx={{
-              width: 56,
-              height: 56,
-              flexShrink: 0,
-              borderRadius: '6px',
-              bgcolor: crewTheme.bg.inset,
-              border: `1px dashed ${crewTheme.border.strong}`,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 0.25,
-            }}>
-              <Box sx={{ width: '70%', height: 3, bgcolor: crewTheme.border.strong, borderRadius: 1 }} />
-              <Box sx={{ width: '55%', height: 3, bgcolor: crewTheme.border.default, borderRadius: 1 }} />
-              <Box sx={{ width: '65%', height: 3, bgcolor: crewTheme.border.default, borderRadius: 1 }} />
-              <Typography sx={{
-                fontSize: '0.45rem',
-                fontFamily: "'JetBrains Mono', monospace",
-                color: crewTheme.text.dim,
-                letterSpacing: '0.5px',
-                mt: 0.25,
-              }}>
-                REDACTED
-              </Typography>
-            </Box>
-
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography sx={{
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: '0.95rem',
-                fontWeight: 700,
-                letterSpacing: '0.5px',
-                color: crewTheme.text.primary,
-                lineHeight: 1.2,
-              }}>
-                {crew.name}
-              </Typography>
-              <Typography sx={{ fontSize: '0.72rem', color: crewTheme.text.secondary, mt: 0.35 }}>
-                {crew.title}
-              </Typography>
-              <Typography sx={{
-                fontSize: '0.62rem',
-                color: accent,
-                fontFamily: "'JetBrains Mono', monospace",
-                mt: 0.5,
-              }}>
-                @{crew.callsign}
-              </Typography>
-            </Box>
-          </Box>
-        </Box>
+        {showMedicalDisclaimer ? (
+          <MedicalProfileIdentityFrame>
+            <IdentityBlockContent crew={crew} accent={accent} />
+          </MedicalProfileIdentityFrame>
+        ) : (
+          <IdentityBlock crew={crew} accent={accent} />
+        )}
 
         {/* Metadata grid */}
         <Box sx={{
@@ -345,6 +389,26 @@ export function CrewProfileDialog({
 
           {isRoster && rosterActions ? (
             <>
+              {onPrivateChat && (
+                <Button
+                  size="small"
+                  variant="contained"
+                  startIcon={privateChatLoading ? <CircularProgress size={12} color="inherit" /> : <ChatIcon sx={{ fontSize: 14 }} />}
+                  disabled={privateChatLoading}
+                  onClick={onPrivateChat}
+                  sx={{
+                    fontSize: '0.62rem',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    letterSpacing: '0.5px',
+                    py: 0.6,
+                    bgcolor: accent,
+                    color: '#0d1117',
+                    '&:hover': { bgcolor: accent, filter: 'brightness(1.08)' },
+                  }}
+                >
+                  PRIVATE CHAT
+                </Button>
+              )}
               <Box sx={{
                 display: 'flex',
                 alignItems: 'center',
@@ -425,11 +489,33 @@ export function CrewProfileDialog({
               </Button>
             </>
           ) : imported ? (
-            <Button
-              fullWidth
-              size="small"
-              variant="outlined"
-              onClick={onRemove}
+            <>
+              {onPrivateChat && (
+                <Button
+                  size="small"
+                  variant="contained"
+                  startIcon={privateChatLoading ? <CircularProgress size={12} color="inherit" /> : <ChatIcon sx={{ fontSize: 14 }} />}
+                  disabled={privateChatLoading}
+                  onClick={onPrivateChat}
+                  sx={{
+                    flex: 1,
+                    fontSize: '0.62rem',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    letterSpacing: '0.5px',
+                    py: 0.6,
+                    bgcolor: accent,
+                    color: '#0d1117',
+                    '&:hover': { bgcolor: accent, filter: 'brightness(1.08)' },
+                  }}
+                >
+                  PRIVATE CHAT
+                </Button>
+              )}
+              <Button
+                fullWidth={!onPrivateChat}
+                size="small"
+                variant="outlined"
+                onClick={onRemove}
               sx={{
                 fontSize: '0.62rem',
                 fontFamily: "'JetBrains Mono', monospace",
@@ -442,26 +528,52 @@ export function CrewProfileDialog({
             >
               DEACTIVATE OPERATIVE
             </Button>
+            </>
           ) : (
-            <Button
-              fullWidth
-              size="small"
-              variant="outlined"
-              onClick={onImport}
-              disabled={importLoading}
-              sx={{
-                fontSize: '0.62rem',
-                fontFamily: "'JetBrains Mono', monospace",
-                letterSpacing: '0.5px',
-                py: 0.6,
-                borderColor: crewTheme.border.strong,
-                color: crewTheme.text.primary,
-                '&:hover': { borderColor: crewTheme.text.primary, bgcolor: crewTheme.bg.cardHover },
-              }}
-            >
-              {importLoading ? <CircularProgress size={12} sx={{ mr: 0.5 }} /> : null}
-              RECRUIT TO ROSTER
-            </Button>
+            <>
+              <Box sx={{ display: 'flex', gap: 0.5, width: '100%' }}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  fullWidth
+                  onClick={onImport}
+                  disabled={importLoading}
+                  sx={{
+                    fontSize: '0.62rem',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    letterSpacing: '0.5px',
+                    py: 0.6,
+                    borderColor: crewTheme.border.strong,
+                    color: crewTheme.text.primary,
+                    '&:hover': { borderColor: crewTheme.text.primary, bgcolor: crewTheme.bg.cardHover },
+                  }}
+                >
+                  {importLoading ? <CircularProgress size={12} sx={{ mr: 0.5 }} /> : null}
+                  RECRUIT
+                </Button>
+                {onPrivateChat && (
+                  <Button
+                    size="small"
+                    variant="contained"
+                    fullWidth
+                    startIcon={privateChatLoading ? <CircularProgress size={12} color="inherit" /> : <ChatIcon sx={{ fontSize: 14 }} />}
+                    disabled={privateChatLoading}
+                    onClick={onPrivateChat}
+                    sx={{
+                      fontSize: '0.62rem',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      letterSpacing: '0.5px',
+                      py: 0.6,
+                      bgcolor: accent,
+                      color: '#0d1117',
+                      '&:hover': { bgcolor: accent, filter: 'brightness(1.08)' },
+                    }}
+                  >
+                    CHAT
+                  </Button>
+                )}
+              </Box>
+            </>
           )}
         </Box>
       </DialogContent>

@@ -6,6 +6,15 @@ import { getLogger } from '@agentx/shared';
 import type { SessionEvent, Crew, CrewCreateInput, CrewEmotion } from '@agentx/shared';
 import { normalizeSessionUpdates } from './session-field-utils.js';
 import { estimateTokensFromMessages } from './session-token-utils.js';
+import { buildCrewSearchText } from '@agentx/shared';
+import {
+  runSqliteCrewCatalogMigration,
+  backfillSqliteCrewSearchColumns,
+  createSqliteCrewCatalogStore,
+  syncSqliteCrewFts,
+} from '../crew/sqlite-crew-catalog.js';
+import type { CrewCatalogStore } from '../crew/CrewSuggestionService.js';
+import { purgeOrphanChildSessionsSqlite } from './child-session-cleanup.js';
 
 // Try to load better-sqlite3, but don't crash if native bindings are missing.
 let BetterSqlite3: any = null;
@@ -17,7 +26,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 18;
+const CURRENT_SCHEMA_VERSION = 20;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
@@ -442,7 +451,66 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
       try { db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at DESC)`); } catch { /* best-effort */ }
     },
   },
+  {
+    version: 19,
+    description: 'Add crew catalog, FTS search indexes, and session crew suggestion preferences',
+    run: (db: any) => {
+      runSqliteCrewCatalogMigration(db);
+      backfillSqliteCrewSearchColumns(db, (row) => {
+        const metadata = row['metadata'] ? JSON.parse(row['metadata'] as string) as Partial<Crew> : {};
+        return {
+          id: row['id'] as string,
+          name: row['name'] as string,
+          title: (row['title'] as string) || metadata.title,
+          callsign: metadata.callsign ?? (row['id'] as string),
+          systemPrompt: row['system_prompt'] as string ?? metadata.systemPrompt ?? '',
+          description: row['description'] as string || metadata.description || '',
+          emotion: metadata.emotion ?? (metadata as { tone?: CrewEmotion }).tone,
+          source: (row['source'] as Crew['source']) ?? metadata.source,
+          catalogId: (row['catalog_id'] as string) ?? metadata.catalogId,
+          searchText: (row['search_text'] as string) ?? metadata.searchText,
+          suggestable: row['suggestable'] !== undefined ? !!(row['suggestable']) : metadata.suggestable,
+          isDefault: !!(row['is_default'] ?? metadata.isDefault),
+          enabled: metadata.enabled ?? true,
+          expertise: metadata.expertise ?? (row['expertise'] ? (row['expertise'] as string).split(',') : undefined),
+          traits: metadata.traits ?? (row['traits'] ? (row['traits'] as string).split(',') : undefined),
+          toolPreferences: metadata.toolPreferences,
+          tools: metadata.tools,
+          permissions: metadata.permissions,
+          model: metadata.model,
+          protocol: metadata.protocol,
+          quotas: metadata.quotas,
+          color: metadata.color,
+          icon: metadata.icon,
+          createdAt: row['created_at'] as string ?? metadata.createdAt ?? new Date().toISOString(),
+          updatedAt: row['updated_at'] as string ?? metadata.updatedAt ?? new Date().toISOString(),
+        };
+      });
+    },
+  },
+  {
+    version: 20,
+    description: 'Add context_kind and host_crew_id for crew private chat sessions',
+    run: (db: any) => {
+      try { db.exec(`ALTER TABLE sessions ADD COLUMN context_kind TEXT NOT NULL DEFAULT 'agent_x'`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE sessions ADD COLUMN host_crew_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_crew_private ON sessions(host_crew_id, context_kind)`); } catch { /* best-effort */ }
+    },
+  },
 ];
+
+/** Idempotent: recreate core + crew_catalog tables if manually dropped while _schema is current. */
+export function repairSqliteFullSchema(db: {
+  exec: (sql: string) => void;
+  prepare: (sql: string) => {
+    run: (...args: unknown[]) => unknown;
+    get: (...args: unknown[]) => Record<string, unknown> | undefined;
+    all: (...args: unknown[]) => Array<Record<string, unknown>>;
+  };
+}): void {
+  db.exec(SCHEMA_SQL);
+  runSqliteCrewCatalogMigration(db);
+}
 
 export class SessionStore {
   // If BetterSqlite3 is unavailable we operate in in-memory fallback mode.
@@ -533,6 +601,9 @@ export class SessionStore {
         }
         getLogger().info('SCHEMA', `Schema updated to v${CURRENT_SCHEMA_VERSION}`);
       }
+      // Idempotent repair: crew_catalog may be missing after manual drops while _schema stays at v19.
+      repairSqliteFullSchema(this.db);
+      purgeOrphanChildSessionsSqlite(this.db);
     } catch (e) {
       if (e instanceof Error && e.message.includes('Migration')) {
         throw e; // Re-throw migration failures
@@ -717,6 +788,8 @@ export class SessionStore {
     scopePath?: string;
     mode?: string;
     hyperdrive?: boolean;
+    contextKind?: string;
+    hostCrewId?: string | null;
     createdAt: string;
     updatedAt: string;
   }): void {
@@ -733,6 +806,8 @@ export class SessionStore {
         scopePath: session.scopePath!,
         mode: session.mode ?? 'plan',
         hyperdrive: session.hyperdrive ? 1 : 0,
+        contextKind: session.contextKind ?? 'agent_x',
+        hostCrewId: session.hostCrewId ?? null,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       });
@@ -740,8 +815,8 @@ export class SessionStore {
     }
 
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, title, status, provider_id, model_id, parent_id, token_used, token_available, scope_path, mode, hyperdrive, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, status, provider_id, model_id, parent_id, token_used, token_available, scope_path, mode, hyperdrive, context_kind, host_crew_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       session.id,
@@ -755,6 +830,8 @@ export class SessionStore {
       session.scopePath ?? process.cwd(),
       session.mode ?? 'plan',
       session.hyperdrive ? 1 : 0,
+      session.contextKind ?? 'agent_x',
+      session.hostCrewId ?? null,
       session.createdAt,
       session.updatedAt,
     );
@@ -782,6 +859,8 @@ export class SessionStore {
       scopePath: row['scope_path'],
       mode: row['mode'] ?? 'plan',
       hyperdrive: !!row['hyperdrive'],
+      contextKind: row['context_kind'] ?? 'agent_x',
+      hostCrewId: row['host_crew_id'] ?? null,
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     };
@@ -814,6 +893,8 @@ export class SessionStore {
       tokenAvailable: 'token_available',
       compactionCount: 'compaction_count',
       scopePath: 'scope_path',
+      contextKind: 'context_kind',
+      hostCrewId: 'host_crew_id',
       updatedAt: 'updated_at',
     };
 
@@ -935,6 +1016,8 @@ export class SessionStore {
       scopePath: row['scope_path'],
       mode: row['mode'] ?? 'plan',
       hyperdrive: !!row['hyperdrive'],
+      contextKind: row['context_kind'] ?? 'agent_x',
+      hostCrewId: row['host_crew_id'] ?? null,
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     };
@@ -993,7 +1076,83 @@ export class SessionStore {
     }));
   }
 
+  /** Paginated chat messages (user/assistant only). Returns chronological order. */
+  getMessagesPage(
+    sessionId: string,
+    opts: { limit?: number; before?: string },
+  ): { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean } {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+
+    const countRoles = (sid: string): number => {
+      if (this.memMode) {
+        return (this.memMessages.get(sid) ?? []).filter((m) => m.role === 'user' || m.role === 'assistant').length;
+      }
+      const row = this.db!.prepare(
+        `SELECT COUNT(*) as count FROM messages WHERE session_id = ? AND role IN ('user', 'assistant')`,
+      ).get(sid) as { count: number } | undefined;
+      return row?.count ?? 0;
+    };
+
+    const total = countRoles(sessionId);
+
+    if (this.memMode) {
+      const all = (this.memMessages.get(sessionId) ?? [])
+        .filter((m) => m.role === 'user' || m.role === 'assistant') as Array<Record<string, unknown>>;
+      let slice = all;
+      if (opts.before) {
+        const idx = all.findIndex((m) => m.id === opts.before);
+        slice = idx > 0 ? all.slice(0, idx) : [];
+      }
+      const page = slice.slice(-limit);
+      return { messages: page, total, hasMore: slice.length > page.length };
+    }
+
+    const baseFilter = `session_id = ? AND role IN ('user', 'assistant')`;
+    let rows: Array<Record<string, unknown>>;
+    if (opts.before) {
+      const cursor = this.db!.prepare('SELECT created_at FROM messages WHERE id = ? AND session_id = ?').get(opts.before, sessionId) as { created_at?: string } | undefined;
+      if (!cursor?.created_at) {
+        rows = [];
+      } else {
+        rows = this.db!.prepare(`
+          SELECT * FROM messages
+          WHERE ${baseFilter}
+            AND (created_at < ? OR (created_at = ? AND id < ?))
+          ORDER BY created_at DESC, id DESC
+          LIMIT ?
+        `).all(sessionId, cursor.created_at, cursor.created_at, opts.before, limit) as Array<Record<string, unknown>>;
+      }
+    } else {
+      rows = this.db!.prepare(`
+        SELECT * FROM messages
+        WHERE ${baseFilter}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+      `).all(sessionId, limit) as Array<Record<string, unknown>>;
+    }
+
+    const messages = rows.reverse().map((row) => ({
+      ...row,
+      parts: row['parts'] ? (() => { try { return JSON.parse(row['parts'] as string); } catch { return undefined; } })() : undefined,
+      metadata: row['metadata'] ? JSON.parse(row['metadata'] as string) : undefined,
+    }));
+
+    let hasMore = false;
+    if (messages.length > 0) {
+      const first = messages[0] as Record<string, unknown>;
+      const row = this.db!.prepare(`
+        SELECT COUNT(*) as count FROM messages
+        WHERE ${baseFilter}
+          AND (created_at < ? OR (created_at = ? AND id < ?))
+      `).get(sessionId, first['created_at'], first['created_at'], first['id']) as { count: number } | undefined;
+      hasMore = (row?.count ?? 0) > 0;
+    }
+
+    return { messages, total, hasMore };
+  }
+
   insertMessage(msg: {
+    id?: string;
     sessionId: string;
     role: string;
     content: string;
@@ -1004,19 +1163,20 @@ export class SessionStore {
     plan?: string;
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
-  }): void {
+  }): string {
+    const id = msg.id ?? crypto.randomUUID();
     if (this.memMode) {
       const msgs = this.memMessages.get(msg.sessionId) ?? [];
-      msgs.push({ ...msg, id: crypto.randomUUID(), created_at: new Date().toISOString() });
+      msgs.push({ ...msg, id, created_at: new Date().toISOString() });
       this.memMessages.set(msg.sessionId, msgs);
-      return;
+      return id;
     }
     try {
       this.db!.prepare(`
         INSERT INTO messages (id, session_id, role, content, tool_calls, token_count, plan, parts, metadata, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `).run(
-        crypto.randomUUID(),
+        id,
         msg.sessionId,
         msg.role,
         msg.content,
@@ -1029,6 +1189,7 @@ export class SessionStore {
     } catch (e) {
       getLogger().warn('STORE', `insertMessage failed: ${e instanceof Error ? e.message : e}`);
     }
+    return id;
   }
 
   insertPart(sessionId: string, part: {
@@ -1641,6 +1802,9 @@ export class SessionStore {
     this.db.prepare('DELETE FROM agent_tasks WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM message_parts WHERE session_id = ?').run(sessionId);
+    try {
+      this.db.prepare('DELETE FROM child_sessions WHERE id = ? OR parent_session_id = ?').run(sessionId, sessionId);
+    } catch { /* table may not exist yet */ }
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
   }
 
@@ -1769,6 +1933,10 @@ export class SessionStore {
       systemPrompt: row['system_prompt'] as string ?? metadata.systemPrompt ?? '',
       description: row['description'] as string || metadata.description || '',
       emotion: metadata.emotion ?? (metadata as { tone?: CrewEmotion }).tone,
+      source: (row['source'] as Crew['source']) ?? metadata.source ?? 'custom',
+      catalogId: (row['catalog_id'] as string) ?? metadata.catalogId,
+      searchText: (row['search_text'] as string) ?? metadata.searchText,
+      suggestable: row['suggestable'] !== undefined ? !!(row['suggestable']) : (metadata.suggestable ?? true),
       isDefault: !!(row['is_default'] ?? metadata.isDefault),
       enabled: metadata.enabled ?? true,
       expertise: metadata.expertise ?? (row['expertise'] ? (row['expertise'] as string).split(',') : undefined),
@@ -1808,6 +1976,16 @@ export class SessionStore {
 
   createCrew(input: CrewCreateInput): Crew {
     const now = new Date().toISOString();
+    const searchText = input.searchText ?? buildCrewSearchText({
+      name: input.name,
+      title: input.title,
+      callsign: input.callsign,
+      description: input.description,
+      tone: input.emotion,
+      expertise: input.expertise,
+      traits: input.traits,
+      systemPrompt: input.systemPrompt,
+    });
     const crew: Crew = {
       id: input.id,
       name: input.name,
@@ -1815,6 +1993,10 @@ export class SessionStore {
       callsign: input.callsign || input.name.replace(/\s+/g, '').toLowerCase(),
       systemPrompt: input.systemPrompt ?? '',
       emotion: input.emotion,
+      source: input.source ?? (input.catalogId ? 'hub' : 'custom'),
+      catalogId: input.catalogId,
+      searchText,
+      suggestable: input.suggestable ?? true,
       isDefault: input.isDefault ?? false,
       enabled: input.enabled ?? true,
       expertise: input.expertise,
@@ -1833,8 +2015,8 @@ export class SessionStore {
     if (this.memMode || !this.db) return crew;
     try {
       this.db.prepare(`
-        INSERT INTO crews (id, name, title, description, system_prompt, expertise, traits, tool_preferences, enabled_tools, disabled_tools, is_default, metadata, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO crews (id, name, title, description, system_prompt, expertise, traits, tool_preferences, enabled_tools, disabled_tools, is_default, metadata, source, catalog_id, search_text, suggestable, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         crew.id,
         crew.name,
@@ -1848,9 +2030,14 @@ export class SessionStore {
         crew.toolPreferences?.disabled?.join(',') ?? null,
         crew.isDefault ? 1 : 0,
         JSON.stringify(crew),
+        crew.source ?? 'custom',
+        crew.catalogId ?? null,
+        searchText,
+        crew.suggestable !== false ? 1 : 0,
         now,
         now,
       );
+      syncSqliteCrewFts(this.db, crew.id, searchText);
     } catch (e) {
       getLogger().warn('STORE', `createCrew failed: ${e instanceof Error ? e.message : e}`);
     }
@@ -1865,8 +2052,18 @@ export class SessionStore {
       const crew = this.crewFromRow(existing);
       Object.assign(crew, updates, { id: crew.id, createdAt: crew.createdAt });
       crew.updatedAt = new Date().toISOString();
+      crew.searchText = crew.searchText ?? buildCrewSearchText({
+        name: crew.name,
+        title: crew.title,
+        callsign: crew.callsign,
+        description: crew.description,
+        tone: crew.emotion,
+        expertise: crew.expertise,
+        traits: crew.traits,
+        systemPrompt: crew.systemPrompt,
+      });
       this.db.prepare(`
-        UPDATE crews SET name=?, title=?, description=?, system_prompt=?, expertise=?, traits=?, tool_preferences=?, enabled_tools=?, disabled_tools=?, is_default=?, metadata=?, updated_at=?
+        UPDATE crews SET name=?, title=?, description=?, system_prompt=?, expertise=?, traits=?, tool_preferences=?, enabled_tools=?, disabled_tools=?, is_default=?, metadata=?, source=?, catalog_id=?, search_text=?, suggestable=?, updated_at=?
         WHERE id=?
       `).run(
         crew.name,
@@ -1880,9 +2077,14 @@ export class SessionStore {
         crew.toolPreferences?.disabled?.join(',') ?? null,
         crew.isDefault ? 1 : 0,
         JSON.stringify(crew),
+        crew.source ?? 'custom',
+        crew.catalogId ?? null,
+        crew.searchText,
+        crew.suggestable !== false ? 1 : 0,
         crew.updatedAt,
         id,
       );
+      syncSqliteCrewFts(this.db, crew.id, crew.searchText);
       return crew;
     } catch (e) {
       getLogger().warn('STORE', `updateCrew failed: ${e instanceof Error ? e.message : e}`);
@@ -1904,6 +2106,10 @@ export class SessionStore {
       const row = this.db.prepare('SELECT * FROM crews WHERE is_default = 1 LIMIT 1').get() as Record<string, unknown> | undefined;
       return row ? this.crewFromRow(row) : undefined;
     } catch { return undefined; }
+  }
+
+  getCrewCatalogStore(): CrewCatalogStore {
+    return createSqliteCrewCatalogStore(this.db, this.memMode, (row) => this.crewFromRow(row));
   }
 
   close(): void {

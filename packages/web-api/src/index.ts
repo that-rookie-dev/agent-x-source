@@ -7,7 +7,7 @@ import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, assignPartsToAssistantMessage } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus } from './engine.js';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady, destroyCrewChatService } from './engine.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import {
@@ -19,10 +19,32 @@ import {
 } from './chat-helpers.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
-import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector } from '@agentx/engine';
+import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, crewChatMessageSchema } from './validation.js';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
 import crypto from 'node:crypto';
+import {
+  postCrewSuggestionEvaluate,
+  postCrewSuggestionResolve,
+  postCrewSuggestionClearDismiss,
+  getCatalogEntry,
+  getCatalogSeedStatusHandler,
+  listCatalogCategories,
+  listCatalogByCategory,
+  searchCatalogEntries,
+  evaluateCrewSuggestionForMessage,
+  emitCrewSuggestionTelemetry,
+} from './crew-suggestions.js';
+import {
+  postCrewChatSession,
+  getCrewChatSession,
+  getCrewChatMessages,
+  postCrewChatMessage,
+  postCrewChatMessageStream,
+  postCrewChatRetry,
+  postCrewChatCancel,
+  getCrewChatByCrew,
+} from './crew-chat.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -440,9 +462,10 @@ app.get('/api/agent/persona', (_req, res) => {
   }
 });
 
-app.put('/api/agent/persona', (req, res) => {
+app.put('/api/agent/persona', async (req, res) => {
   const eng = getEngine();
   try {
+    await awaitEngineStorageReady();
     const store = (eng.sessionManager as any).store;
     if (store && typeof store.setPersona === 'function') {
       store.setPersona({
@@ -1088,10 +1111,10 @@ app.post('/api/crews', (req, res) => {
     const body = req.body as {
       id: string; name: string; title?: string; callsign?: string; systemPrompt: string; description?: string;
       emotion?: string; tone?: string; isDefault?: boolean; expertise?: string[]; traits?: string[]; tools?: string[];
-      color?: string; icon?: string;
+      color?: string; icon?: string; source?: string; catalogId?: string;
     };
     const emotion = body.emotion ?? body.tone;
-    const { id, name, title, callsign, systemPrompt, description, isDefault, expertise, traits, tools, color, icon } = body;
+    const { id, name, title, callsign, systemPrompt, description, isDefault, expertise, traits, tools, color, icon, source, catalogId } = body;
     const eng = getEngine();
     const crew = eng.crewManager.create({
       id: id || crypto.randomUUID(),
@@ -1107,6 +1130,8 @@ app.post('/api/crews', (req, res) => {
       tools,
       color,
       icon,
+      source: (source as 'custom' | 'hub' | undefined) ?? (catalogId ? 'hub' : 'custom'),
+      catalogId,
     });
     if (eng.agent && crew.enabled) {
       eng.agent.addCrewMember(crew);
@@ -1159,6 +1184,30 @@ app.delete('/api/crews/:id', (req, res) => {
   }
 });
 
+// ───── Crew suggestions (catalog match + deploy) ─────
+app.post('/api/crew-suggestions/evaluate', validate(crewSuggestionEvaluateSchema), postCrewSuggestionEvaluate);
+app.post('/api/crew-suggestions/resolve', validate(crewSuggestionResolveSchema), postCrewSuggestionResolve);
+app.post('/api/crew-suggestions/clear-dismiss', postCrewSuggestionClearDismiss);
+
+// ───── Crew private chat (1:1 user ↔ crew, no Agent-X) ─────
+const crewChatRateLimiter = createRateLimiter({ prefix: 'CREW_CHAT', label: 'CrewChat' });
+app.use('/api/crew-chat', crewChatRateLimiter.middleware);
+
+app.post('/api/crew-chat/sessions', validate(crewChatSessionSchema), postCrewChatSession);
+app.get('/api/crew-chat/sessions/:sessionId', getCrewChatSession);
+app.get('/api/crew-chat/sessions/:sessionId/messages', getCrewChatMessages);
+app.post('/api/crew-chat/sessions/:sessionId/message', validate(crewChatMessageSchema), postCrewChatMessage);
+app.post('/api/crew-chat/sessions/:sessionId/message-stream', validate(crewChatMessageSchema), postCrewChatMessageStream);
+app.post('/api/crew-chat/sessions/:sessionId/retry', postCrewChatRetry);
+app.post('/api/crew-chat/sessions/:sessionId/cancel', postCrewChatCancel);
+app.get('/api/crew-chat/by-crew/:crewId', getCrewChatByCrew);
+
+app.get('/api/crew-catalog/categories', listCatalogCategories);
+app.get('/api/crew-catalog/seed-status', getCatalogSeedStatusHandler);
+app.get('/api/crew-catalog/search', searchCatalogEntries);
+app.get('/api/crew-catalog/by-category/:categoryId', listCatalogByCategory);
+app.get('/api/crew-catalog/:id', getCatalogEntry);
+
 app.get('/api/crew/:id', (_req, res) => {
   const eng = getEngine();
   const crew = eng.crewManager.list().find(c => c.id === _req.params.id);
@@ -1168,6 +1217,8 @@ app.get('/api/crew/:id', (_req, res) => {
 
 app.post('/api/crew/:id/chat', async (req, res) => {
   try {
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/crew-chat/sessions>; rel="successor-version"');
     const eng = getEngine();
     const crewId = req.params['id']!;
     const { text } = req.body as { text: string };
@@ -1190,21 +1241,41 @@ app.post('/api/crew/:id/chat', async (req, res) => {
       agent.buildCrewMissionOptions([member as never], text),
     );
     const response = result.synthesized || result.responses[0]?.content || '';
-    res.json({ ok: true, response, success: result.success, responses: result.responses });
+    res.json({
+      ok: true,
+      response,
+      success: result.success,
+      responses: result.responses,
+      deprecated: true,
+      migration: 'Use POST /api/crew-chat/sessions then POST /api/crew-chat/sessions/:id/message',
+    });
   } catch (e: unknown) {
     getLogger().error('POST_API_CREW_ID_CHAT', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'crew-chat-failed' });
   }
 });
 
-app.get('/api/crew/:id/sessions', (_req, res) => {
+app.get('/api/crew/:id/sessions', (req, res) => {
+  res.setHeader('Deprecation', 'true');
+  res.setHeader('Link', '</api/crew-chat/by-crew/:crewId>; rel="successor-version"');
   const eng = getEngine();
-  const store = (eng.sessionManager as any)?.store ?? (eng.sessionManager as any)?.['_store'];
-  const sessionId = (eng.agent as any)?.sessionId ?? '';
-  const rows = typeof store?.getMessages === 'function'
-    ? (store.getMessages(`${sessionId}:crew:${_req.params.id}`) as any[])
-    : [];
-  res.json(rows);
+  const crewId = req.params['id']!;
+  const session = (eng.sessionManager as unknown as {
+    resolveCanonicalCrewPrivateSession?: (id: string) => { id: string } | null;
+    findCrewPrivateSession?: (id: string) => { id: string } | null;
+  }).resolveCanonicalCrewPrivateSession?.(crewId)
+    ?? (eng.sessionManager as unknown as { findCrewPrivateSession?: (id: string) => { id: string } | null }).findCrewPrivateSession?.(crewId);
+  if (!session) {
+    res.json({ deprecated: true, sessionId: null, messages: [] });
+    return;
+  }
+  const store = getMessageStoreFromEngine(eng);
+  const rows = store?.getMessages?.(session.id) ?? [];
+  res.json({ deprecated: true, sessionId: session.id, messages: rows });
 });
+
+function getMessageStoreFromEngine(eng: ReturnType<typeof getEngine>) {
+  return (eng.sessionManager as unknown as { store?: { getMessages?: (id: string) => unknown[] } }).store;
+}
 
 app.post('/api/crew/:id/feedback', (req, res) => {
   try {
@@ -1299,7 +1370,7 @@ app.use('/api/chat', chatRateLimiter.middleware);
 // NEW: Streaming SSE endpoint for real-time progress visualization
 app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean };
+    const { text, attachments, retry, delegateCrewIds } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean; delegateCrewIds?: string[] };
     const eng = getEngine();
     
     // Auto-create agent if none exists
@@ -1418,7 +1489,17 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       try { agent.cancel(); } catch { /* ignore */ }
     });
 
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid);
+    if (!delegateCrewIds?.length && sid && !/(?<!\w)@([\w][\w.-]*)/.test(fullText)) {
+      try {
+        const evaluation = await evaluateCrewSuggestionForMessage({ text: fullText, sessionId: sid });
+        if (evaluation?.shouldSuggest) {
+          sendEvent('crew_suggestion', { evaluation, message: fullText });
+          emitCrewSuggestionTelemetry(eng, evaluation, fullText);
+        }
+      } catch { /* best-effort */ }
+    }
+
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds);
     sendEvent('started', { turnId: turn.turnId, async: true });
     return;
   } catch (e: unknown) {
@@ -1430,7 +1511,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
 // LEGACY: Keep old endpoint for backward compatibility (redirects to streaming)
 app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean };
+    const { text, attachments, retry, delegateCrewIds } = req.body as { text: string; attachments?: { name: string; content: string }[]; retry?: boolean; delegateCrewIds?: string[] };
     const eng = getEngine();
     // Auto-create agent if none exists (first message in session)
     if (!eng.agent) {
@@ -1480,7 +1561,7 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
 
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds);
 
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
@@ -1989,8 +2070,15 @@ app.put('/api/settings/db', async (req, res) => {
     getLogger().info('SETTINGS_DB_UPDATE', `Backend switch requested: ${backend}`);
 
     if (backend === 'postgres' && postgres?.connectionString) {
+      const { PostgresStorageAdapter } = await import('@agentx/engine');
+      const test = await PostgresStorageAdapter.testConnection(postgres.connectionString);
+      if (!test.ok) {
+        res.status(400).json({ ok: false, error: test.error ?? 'PostgreSQL connection failed' });
+        return;
+      }
+
       const eng = getEngine();
-      const { getBuiltinPlugin, PostgresStorageAdapter } = await import('@agentx/engine');
+      const { getBuiltinPlugin } = await import('@agentx/engine');
 
       if (!eng.pluginRegistry.isInstalled('postgresql')) {
         const entry = getBuiltinPlugin('postgresql');
@@ -2004,13 +2092,6 @@ app.put('/api/settings/db', async (req, res) => {
         autoMigrate: true,
         poolSize: 5,
       });
-
-      const adapter = new PostgresStorageAdapter({
-        connectionString: postgres.connectionString,
-        max: 1,
-      } as any);
-      await adapter.connect();
-      await adapter.disconnect();
 
       clearEngine();
     }
@@ -2073,6 +2154,14 @@ app.post('/api/settings/db/migrate', async (_req, res) => {
 app.get('/api/settings/db/health', async (_req, res) => {
   try {
     const eng = getEngine();
+    const store = (eng.sessionManager as { store?: unknown }).store;
+    if (store) {
+      try {
+        await healDatabaseStore(store);
+      } catch (healErr) {
+        getLogger().warn('DB_HEALTH_HEAL', healErr instanceof Error ? healErr.message : String(healErr));
+      }
+    }
     const status = await buildDbStatus(eng);
     res.json(status.health);
   } catch (e: unknown) {
@@ -2157,6 +2246,9 @@ app.get('/api/sessions', (_req, res) => {
 
       const tokensUsed = Number(kpis['tokensUsed'] ?? s['tokensUsed'] ?? s['tokenUsed'] ?? 0);
       const tokenAvailable = Number(kpis['tokenAvailable'] ?? s['tokenAvailable'] ?? s['token_available'] ?? 128_000);
+      const contextKind = (s['contextKind'] as string | undefined) ?? 'agent_x';
+      const hostCrewId = (s['hostCrewId'] as string | null | undefined) ?? null;
+      const hostCrew = hostCrewId ? crewManager?.get?.(hostCrewId) : undefined;
 
       return {
         id: s['id'],
@@ -2179,6 +2271,12 @@ app.get('/api/sessions', (_req, res) => {
         crewCallsigns,
         totalCostUsd: kpis['totalCostUsd'] ?? 0,
         compactionCount: kpis['compactionCount'] ?? 0,
+        contextKind,
+        hostCrewId,
+        hostCrewName: hostCrew?.name ?? null,
+        hostCrewCallsign: hostCrew?.callsign ?? null,
+        hostCrewTitle: (hostCrew as { title?: string } | undefined)?.title ?? null,
+        crewId: hostCrewId,
       };
     });
 
@@ -2430,16 +2528,18 @@ app.post('/api/sessions', validate(createSessionSchema), (req, res) => {
 
 app.get('/api/sessions/:id', (req, res) => {
   const eng = getEngine();
-  const session = eng.sessionManager.restoreSession(req.params['id']!);
+  const session = eng.sessionManager.getSessionById(req.params['id']!);
   if (!session) { res.status(404).json({ error: 'not-found' }); return; }
   res.json(session);
 });
 
 app.delete('/api/sessions/:id', (req, res) => {
   try {
+    const sessionId = req.params['id']!;
     const eng = getEngine();
+    destroyCrewChatService(sessionId);
     const store = (eng.sessionManager as unknown as { store: { deleteSession: (id: string) => void } }).store;
-    store.deleteSession(req.params['id']!);
+    store.deleteSession(sessionId);
     // Clean up session folder on disk
     const dir = getSessionDir(req.params['id']!);
     if (existsSync(dir)) {
@@ -2456,6 +2556,11 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     const sessionId = req.params['id']!;
     if (sessionId === '__channel__') { res.status(403).json({ error: 'channel-session' }); return; }
     const eng = getEngine();
+    const peek = eng.sessionManager.getSessionById(sessionId);
+    if (!peek) { res.status(404).json({ error: 'not-found' }); return; }
+    if ((peek.contextKind ?? 'agent_x') === 'crew_private') {
+      destroyCrewChatService(sessionId);
+    }
     destroyAgent();
     const session = eng.sessionManager.restoreSession(sessionId);
     if (!session) { res.status(404).json({ error: 'not-found' }); return; }
@@ -2570,6 +2675,24 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       }
     }
 
+    // Legacy crew-private assistant rows may lack metadata — backfill from host crew
+    if ((session.contextKind ?? 'agent_x') === 'crew_private' && session.hostCrewId) {
+      const hostCrew = eng.crewManager.get(session.hostCrewId as string);
+      if (hostCrew) {
+        for (const msg of messages) {
+          if (msg['role'] === 'assistant' && !msg['crew']) {
+            msg['crew'] = {
+              crewId: hostCrew.id,
+              name: hostCrew.name,
+              callsign: hostCrew.callsign,
+              color: hostCrew.color,
+              icon: hostCrew.icon,
+            };
+          }
+        }
+      }
+    }
+
     res.json({ session, messages, parts: [], crewStates, scopePath: session.scopePath, interruptedTask });
   } catch (e: unknown) {
     getLogger().error('RESTORE_SESSION', e instanceof Error ? e : String(e));
@@ -2584,9 +2707,28 @@ app.post('/api/sessions/:id/context/rebuild', (_req, res) => {
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
     const count = agent.rebuildContext();
+    agent.rebuildSystemPrompt();
     res.json({ ok: true, rebuilt: count });
   } catch (e: unknown) {
     getLogger().error('POST_API_SESSIONS_ID_CONTEXT_REBUILD', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'rebuild-failed' });
+  }
+});
+
+app.post('/api/sessions/:id/context/limits', (req, res) => {
+  try {
+    const eng = getEngine();
+    const agent = eng.agent as { setContextMemoryLimits?: (opts: Record<string, number>) => void } | undefined;
+    if (!agent?.setContextMemoryLimits) { res.status(400).json({ error: 'no-session' }); return; }
+    const { maxHistoryMessages, maxHistoryChars, maxBlockChars } = req.body as {
+      maxHistoryMessages?: number;
+      maxHistoryChars?: number;
+      maxBlockChars?: number;
+    };
+    agent.setContextMemoryLimits({ maxHistoryMessages, maxHistoryChars, maxBlockChars });
+    res.json({ ok: true, maxHistoryMessages, maxHistoryChars, maxBlockChars });
+  } catch (e: unknown) {
+    getLogger().error('POST_API_SESSIONS_ID_CONTEXT_LIMITS', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'limits-failed' });
   }
 });
 

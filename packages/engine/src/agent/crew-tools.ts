@@ -21,7 +21,7 @@ const CORE_CREW_TOOLS = [
   'shell_exec', 'test_run', 'test_coverage', 'git_status', 'git_diff', 'git_commit',
   'browser_open', 'browser_screenshot', 'http_get', 'http_post',
   'pdf_read', 'csv_parse', 'json_parse', 'doc_markdown',
-  'crew_message', 'crew_response',
+  'crew_message', 'crew_response', 'ask_clarification',
 ];
 
 const DENIED_CREW_WORKER_TOOLS = new Set([
@@ -34,13 +34,14 @@ const WRITE_CREW_TOOLS = new Set([
   'code_replace', 'code_insert', 'shell_exec',
   'git_commit', 'container_run', 'container_compose', 'container_start', 'container_stop',
   'container_exec', 'docker_build', 'package_install',
+  'doc_markdown', 'doc_html',
 ]);
 
-/** Read / research tools — always available regardless of session mode. */
+/** Read / research tools — always available in plan mode. */
 const READ_CREW_TOOLS = new Set([
   'file_read', 'folder_list', 'code_search', 'code_grep', 'code_definitions',
   'glob', 'grep', 'pdf_read', 'csv_parse', 'json_parse', 'http_get',
-  'browser_open', 'browser_screenshot', 'doc_markdown', 'git_status', 'git_diff',
+  'browser_open', 'browser_screenshot', 'git_status', 'git_diff',
   'git_log', 'test_run', 'test_coverage', 'db_query', 'web_search', 'web_fetch',
 ]);
 
@@ -88,7 +89,7 @@ export function buildFilteredRegistry(parentRegistry: ToolRegistry, toolIds: str
   return filtered;
 }
 
-export function buildCrewWorkerSystemPrompt(crew: Crew, sharedContext?: string): string {
+export function buildCrewWorkerSystemPrompt(crew: Crew, sharedContext?: string, planMode = false): string {
   const lines: string[] = [
     '[CREW_IDENTITY]',
     `You are ${crew.name}${crew.title ? `, ${crew.title}` : ''}.`,
@@ -101,15 +102,22 @@ export function buildCrewWorkerSystemPrompt(crew: Crew, sharedContext?: string):
   const voice = buildCrewVoiceBlock(crew);
   if (voice) lines.push('', voice);
   lines.push('');
-  lines.push('You are a crew worker on a team mission. EXECUTE tasks — do not only describe plans.');
-  lines.push('Use tools aggressively: read → analyze → research → verify.');
-  lines.push('Write for the user in chat: use rich Markdown (headings, lists, tables, code blocks) when it helps clarity.');
-  if (sharedContext?.includes('PLAN MODE') || sharedContext?.toLowerCase().includes('read-only')) {
-    lines.push('READ-ONLY MODE: use read/search/research tools freely. Do NOT write files or run mutating shell commands.');
-    lines.push('Deliver your full analysis, plan, or findings as a markdown response message. If execution would require writes, describe what you would do and include draft content inline.');
+  if (planMode) {
+    lines.push('PLAN MODE — read-only specialist contribution: research, analyze, and discuss your domain.');
+    lines.push('Use read/search/research tools freely to inspect files and context when needed.');
+    lines.push('Do NOT write, edit, or delete files. Do NOT run mutating shell or container commands.');
+    lines.push('Deliver your full domain analysis, recommendations, and planned steps as rich Markdown in your chat response.');
+    lines.push('If execution would require writes, describe the steps and include draft content inline — do not write files.');
+  } else {
+    lines.push('You are a crew worker on a team mission. EXECUTE tasks — do not only describe plans.');
+    lines.push('Use tools aggressively: read → analyze → research → verify.');
+    lines.push('When done, summarize what you built, tested, and verified.');
   }
+  lines.push('Write for the user in chat: use rich Markdown (headings, lists, tables, code blocks) when it helps clarity.');
+  lines.push('CLARIFICATION: ask at most ONE question at a time — never numbered lists of questions in chat.');
+  lines.push('Use the ask_clarification tool for questions (single choice, multi choice, or short text fields).');
+  lines.push('If the user defers to you ("plan it yourself", "you decide", "not sure", "surprise me"), state brief assumptions and deliver a concrete plan — do not re-ask for context already in the session.');
   lines.push('If blocked, use crew_message to ask another crew member or Agent-X for clarity.');
-  lines.push('When done, summarize what you built, tested, and verified.');
   lines.push('[/CREW_IDENTITY]');
   if (sharedContext) {
     lines.push('', '[SHARED MISSION CONTEXT]', sharedContext, '[/SHARED MISSION CONTEXT]');

@@ -15,14 +15,21 @@ import HubIcon from '@mui/icons-material/Hub';
 import CloseIcon from '@mui/icons-material/Close';
 import SearchIcon from '@mui/icons-material/Search';
 import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
+import ForumIcon from '@mui/icons-material/Forum';
 import SatelliteAltIcon from '@mui/icons-material/SatelliteAlt';
 import type { Crew } from '../../api';
-import { loadCrewSearchIndex, resolveHubCrew, searchCrewHub } from '../../data/crew-hub/loadPrebuiltCategories';
+import { searchHubCatalog, resolveHubCrewById } from '../../data/crew-hub/loadHubCatalog';
 import { crewDialogPaperSx, crewHubScanlineSx, crewOverlineSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
 import { SkillChips } from './SkillChips';
 import { CrewProfileDialog } from './CrewProfileDialog';
+import { HubSectorNavItem } from './HubSectorNavItem';
+import { MedicalDisclaimerSectorCard } from './MedicalDisclaimerBanner';
+import { crewRequiresMedicalDisclaimer, isMedicalHubCategory } from '@agentx/shared/browser';
 
 export interface PrebuiltCrew {
+  catalogId?: string;
+  categoryId?: string;
+  requiresMedicalDisclaimer?: boolean;
   name: string;
   title: string;
   callsign: string;
@@ -54,11 +61,15 @@ interface CrewHubDialogProps {
   importLoading: string | null;
   onImport: (crew: PrebuiltCrew) => void;
   onRemove: (id: string) => void;
+  onPrivateChat?: (crew: PrebuiltCrew, rosterCrewId?: string) => void;
+  privateChatLoading?: boolean;
 }
 
 interface HubCardCrew {
+  catalogId: string;
   categoryId: string;
   categoryLabel?: string;
+  requiresMedicalDisclaimer?: boolean;
   name: string;
   title: string;
   callsign: string;
@@ -84,26 +95,16 @@ export function CrewHubDialog({
   importLoading,
   onImport,
   onRemove,
+  onPrivateChat,
+  privateChatLoading,
 }: CrewHubDialogProps) {
   const activeCategory = categories[categoryIndex];
   const [profileCrew, setProfileCrew] = useState<PrebuiltCrew | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [searchReady, setSearchReady] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [, startSearchTransition] = useTransition();
   const [displayCrews, setDisplayCrews] = useState<HubCardCrew[]>([]);
-
-  useEffect(() => {
-    if (!open) {
-      setSearchReady(false);
-      return;
-    }
-    let cancelled = false;
-    loadCrewSearchIndex().then(() => {
-      if (!cancelled) setSearchReady(true);
-    });
-    return () => { cancelled = true; };
-  }, [open]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => setDebouncedSearch(searchQuery), SEARCH_DEBOUNCE_MS);
@@ -111,35 +112,48 @@ export function CrewHubDialog({
   }, [searchQuery]);
 
   const isSearching = debouncedSearch.trim().length > 0;
-  const searchPending = searchQuery.trim() !== debouncedSearch.trim()
-    || (searchQuery.trim().length > 0 && !searchReady);
+  const searchPending = searchQuery.trim() !== debouncedSearch.trim() || searchLoading;
 
   useEffect(() => {
     if (isSearching) {
-      if (!searchReady) {
-        setDisplayCrews([]);
-        return;
-      }
-      startSearchTransition(() => {
-        setDisplayCrews(searchCrewHub(debouncedSearch).map((hit) => ({
-          categoryId: hit.categoryId,
-          categoryLabel: hit.categoryLabel,
-          name: hit.name,
-          title: hit.title,
-          callsign: hit.callsign,
-          tone: 'professional',
-          expertise: hit.expertise,
-          traits: [],
-        })));
-      });
-      return;
+      let cancelled = false;
+      setSearchLoading(true);
+      searchHubCatalog(debouncedSearch)
+        .then((hits) => {
+          if (cancelled) return;
+          startSearchTransition(() => {
+            setDisplayCrews(hits.map((hit) => ({
+              catalogId: hit.catalogId,
+              categoryId: hit.categoryId,
+              categoryLabel: hit.categoryLabel,
+              requiresMedicalDisclaimer: hit.requiresMedicalDisclaimer,
+              name: hit.name,
+              title: hit.title,
+              callsign: hit.callsign,
+              description: hit.description,
+              tone: hit.tone,
+              expertise: hit.expertise,
+              traits: hit.traits,
+            })));
+          });
+        })
+        .catch(() => {
+          if (!cancelled) setDisplayCrews([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearchLoading(false);
+        });
+      return () => { cancelled = true; };
     }
     if (!activeCategory) {
       setDisplayCrews([]);
+      setSearchLoading(false);
       return;
     }
     setDisplayCrews(activeCategory.crews.map((crew) => ({
+      catalogId: crew.catalogId ?? crew.callsign,
       categoryId: activeCategory.id,
+      requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
       name: crew.name,
       title: crew.title,
       callsign: crew.callsign,
@@ -149,15 +163,37 @@ export function CrewHubDialog({
       traits: crew.traits,
       fullCrew: crew,
     })));
-  }, [activeCategory, debouncedSearch, isSearching, searchReady]);
+  }, [activeCategory, debouncedSearch, isSearching]);
+
+  const searchStatusText = (() => {
+    if (!isSearching) return '\u00a0';
+    if (searchPending && displayCrews.length === 0) return 'Searching…';
+    if (searchPending) return `${displayCrews.length} match${displayCrews.length === 1 ? '' : 'es'}…`;
+    return `${displayCrews.length} match${displayCrews.length === 1 ? '' : 'es'} across all sectors`;
+  })();
+
+  const showSectorMedicalBanner = isSearching
+    ? displayCrews.some((c) => crewRequiresMedicalDisclaimer({
+      categoryId: c.categoryId,
+      requiresMedicalDisclaimer: c.requiresMedicalDisclaimer,
+      catalogId: c.catalogId,
+    }))
+    : !!activeCategory && (
+      isMedicalHubCategory(activeCategory.id)
+      || displayCrews.some((c) => crewRequiresMedicalDisclaimer({
+        categoryId: c.categoryId,
+        requiresMedicalDisclaimer: c.requiresMedicalDisclaimer,
+        catalogId: c.catalogId,
+      }))
+    );
 
   const profileExisting = profileCrew
     ? crews.find((c) => c.callsign.toLowerCase() === profileCrew.callsign.toLowerCase())
     : undefined;
 
   const resolveCardCrew = useCallback(async (item: HubCardCrew): Promise<PrebuiltCrew | undefined> => {
-    if (item.fullCrew) return item.fullCrew;
-    return resolveHubCrew(item.categoryId, item.callsign);
+    if (item.fullCrew?.systemPrompt) return item.fullCrew;
+    return resolveHubCrewById(item.catalogId);
   }, []);
 
   const handleOpenProfile = useCallback(async (item: HubCardCrew) => {
@@ -169,6 +205,26 @@ export function CrewHubDialog({
     const crew = await resolveCardCrew(item);
     if (crew) onImport(crew);
   }, [onImport, resolveCardCrew]);
+
+  const handleQuickChat = useCallback(async (item: HubCardCrew) => {
+    if (!onPrivateChat) return;
+    const crew = await resolveCardCrew(item);
+    if (!crew) return;
+    const existing = crews.find((c) => c.callsign.toLowerCase() === item.callsign.toLowerCase());
+    if (existing) {
+      onPrivateChat(crew, existing.id);
+    } else {
+      onPrivateChat(crew);
+    }
+  }, [crews, onPrivateChat, resolveCardCrew]);
+
+  const chatIconButtonSx = (accentColor: string) => ({
+    width: 28, height: 28, flexShrink: 0,
+    borderRadius: '6px',
+    border: `1px solid ${accentColor}50`,
+    color: accentColor,
+    '&:hover': { borderColor: accentColor, bgcolor: `${accentColor}12` },
+  });
 
   const handleClose = () => {
     setSearchQuery('');
@@ -247,71 +303,118 @@ export function CrewHubDialog({
         </Box>
       </DialogTitle>
 
-      <DialogContent sx={{ px: 2.5, pt: '14px !important', pb: 2.5, overflow: 'auto' }}>
+      <DialogContent sx={{
+        px: 0,
+        pt: '0 !important',
+        pb: 0,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'row',
+        minHeight: 420,
+      }}>
         {categoriesError ? (
-          <Typography sx={{ fontSize: '0.72rem', color: crewTheme.accent.alert, py: 4, textAlign: 'center' }}>
+          <Typography sx={{ fontSize: '0.72rem', color: crewTheme.accent.alert, py: 4, textAlign: 'center', width: '100%', px: 2.5 }}>
             {categoriesError}
           </Typography>
         ) : categoriesLoading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8, width: '100%' }}>
             <CircularProgress size={28} sx={{ color: crewTheme.text.secondary }} />
           </Box>
         ) : (
         <>
-        {!searchQuery.trim() && (
+        {!isSearching && (
           <Box sx={{
-            display: 'flex',
-            flexWrap: 'nowrap',
-            gap: 0.5,
-            mb: 1.5,
-            overflowX: 'auto',
-            overflowY: 'hidden',
-            pb: 0.5,
-            scrollbarWidth: 'none',
-            msOverflowStyle: 'none',
-            '&::-webkit-scrollbar': { display: 'none' },
+            width: 232,
+            flexShrink: 0,
+            borderRight: `1px solid ${crewTheme.border.subtle}`,
+            overflowY: 'auto',
+            py: 1.25,
+            px: 0.75,
+            bgcolor: crewTheme.bg.inset,
           }}>
-            {categories.map((cat, idx) => {
-              const selected = categoryIndex === idx;
-              return (
-                <Button
-                  key={cat.id}
-                  size="small"
-                  variant={selected ? 'contained' : 'outlined'}
-                  startIcon={cat.icon}
-                  onClick={() => onCategoryChange(idx)}
-                  sx={{
-                    flexShrink: 0,
-                    fontSize: '0.62rem',
-                    fontFamily: "'JetBrains Mono', monospace",
-                    letterSpacing: '0.3px',
-                    textTransform: 'uppercase',
-                    minHeight: 30,
-                    px: 1,
-                    py: 0.25,
-                    whiteSpace: 'nowrap',
-                    borderColor: selected ? crewTheme.text.primary : crewTheme.border.default,
-                    color: selected ? crewTheme.bg.void : crewTheme.text.dim,
-                    bgcolor: selected ? crewTheme.text.primary : 'transparent',
-                    '&:hover': {
-                      borderColor: crewTheme.text.primary,
-                      bgcolor: selected ? '#e0e0e0' : crewTheme.bg.cardHover,
-                    },
-                    '& .MuiButton-startIcon': { mr: 0.5, ml: 0 },
-                    '& .MuiButton-startIcon > *:nth-of-type(1)': { fontSize: 14 },
-                  }}
-                >
-                  {cat.label}
-                </Button>
-              );
-            })}
+            <Typography sx={{
+              fontSize: '0.5rem',
+              fontFamily: "'JetBrains Mono', monospace",
+              letterSpacing: '1px',
+              color: crewTheme.text.dim,
+              px: 0.75,
+              mb: 0.75,
+              textTransform: 'uppercase',
+            }}>
+              Sectors
+            </Typography>
+            {categories.map((cat, idx) => (
+              <HubSectorNavItem
+                key={cat.id}
+                label={cat.label}
+                icon={cat.icon}
+                selected={categoryIndex === idx}
+                onClick={() => onCategoryChange(idx)}
+              />
+            ))}
           </Box>
         )}
 
-        {isSearching && !searchPending && (
-          <Typography sx={{ fontSize: '0.62rem', color: crewTheme.text.secondary, mb: 1.5, fontFamily: "'JetBrains Mono', monospace" }}>
-            {displayCrews.length} match{displayCrews.length === 1 ? '' : 'es'} across all sectors
+        <Box sx={{
+          flex: 1,
+          minWidth: 0,
+          overflowY: 'auto',
+          px: 2.5,
+          py: 1.5,
+          display: 'flex',
+          flexDirection: 'column',
+        }}>
+        <Box sx={{ minHeight: isSearching ? 20 : 0, mb: isSearching ? 1.5 : 0, flexShrink: 0 }}>
+          <Typography sx={{
+            fontSize: '0.62rem',
+            color: crewTheme.text.secondary,
+            fontFamily: "'JetBrains Mono', monospace",
+            visibility: isSearching ? 'visible' : 'hidden',
+          }}>
+            {searchStatusText}
           </Typography>
+        </Box>
+
+        {!isSearching && activeCategory && (
+          <Box sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.85,
+            mb: 1.25,
+            pb: 1,
+            flexShrink: 0,
+            borderBottom: `1px solid ${crewTheme.border.subtle}`,
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', color: crewTheme.text.secondary }}>
+              {activeCategory.icon}
+            </Box>
+            <Typography sx={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              letterSpacing: '0.5px',
+              color: crewTheme.text.primary,
+              flex: 1,
+              minWidth: 0,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}>
+              {activeCategory.label}
+            </Typography>
+            <Typography sx={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.52rem',
+              color: crewTheme.text.dim,
+              flexShrink: 0,
+            }}>
+              {sectorCrewsLoading ? '…' : `${displayCrews.length} crew`}
+            </Typography>
+          </Box>
+        )}
+
+        {showSectorMedicalBanner && (
+          <MedicalDisclaimerSectorCard sx={{ mb: 1.25, flexShrink: 0 }} />
         )}
 
         {displayCrews.length === 0 && (sectorCrewsLoading || searchPending) ? (
@@ -417,6 +520,18 @@ export function CrewHubDialog({
                         <AssignmentIndIcon sx={{ fontSize: 14 }} />
                       </IconButton>
                     </Tooltip>
+                    {onPrivateChat && (
+                      <Tooltip title="Private chat" arrow>
+                        <IconButton
+                          size="small"
+                          onClick={() => { void handleQuickChat(pc); }}
+                          disabled={privateChatLoading}
+                          sx={chatIconButtonSx(accent)}
+                        >
+                          <ForumIcon sx={{ fontSize: 14 }} />
+                        </IconButton>
+                      </Tooltip>
+                    )}
                     <Button size="small" variant="outlined" fullWidth
                       onClick={() => existing && onRemove(existing.id)}
                       sx={{
@@ -445,6 +560,18 @@ export function CrewHubDialog({
                         <AssignmentIndIcon sx={{ fontSize: 14 }} />
                       </IconButton>
                     </Tooltip>
+                    {onPrivateChat && (
+                      <Tooltip title="Private chat" arrow>
+                        <IconButton
+                          size="small"
+                          onClick={() => { void handleQuickChat(pc); }}
+                          disabled={privateChatLoading}
+                          sx={chatIconButtonSx(accent)}
+                        >
+                          <ForumIcon sx={{ fontSize: 14 }} />
+                        </IconButton>
+                      </Tooltip>
+                    )}
                     <Button size="small" variant="outlined" fullWidth
                       onClick={() => { void handleRecruit(pc); }}
                       disabled={isLoading || imported}
@@ -464,6 +591,7 @@ export function CrewHubDialog({
           })}
         </Box>
         )}
+        </Box>
         </>
         )}
       </DialogContent>
@@ -477,6 +605,10 @@ export function CrewHubDialog({
       onClose={() => setProfileCrew(null)}
       onImport={() => profileCrew && onImport(profileCrew)}
       onRemove={() => profileExisting && onRemove(profileExisting.id)}
+      onPrivateChat={profileCrew && onPrivateChat
+        ? () => onPrivateChat(profileCrew, profileExisting?.id)
+        : undefined}
+      privateChatLoading={privateChatLoading}
     />
     </>
   );

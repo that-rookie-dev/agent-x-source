@@ -60,6 +60,8 @@ export class SessionManager {
         hyperdrive: session.hyperdrive,
         tokenUsed: session.tokenUsed,
         tokenAvailable: session.tokenAvailable,
+        contextKind: session.contextKind ?? 'agent_x',
+        hostCrewId: session.hostCrewId ?? null,
       });
     } else {
       this.getSessionStore().createSession({
@@ -72,6 +74,10 @@ export class SessionManager {
         scopePath: session.scopePath,
         tokensUsed: session.tokenUsed,
         tokenAvailable: session.tokenAvailable,
+        mode: session.mode,
+        hyperdrive: session.hyperdrive,
+        contextKind: session.contextKind ?? 'agent_x',
+        hostCrewId: session.hostCrewId ?? null,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       });
@@ -108,6 +114,104 @@ export class SessionManager {
     this.activeSession = session;
     this.tokenTracker = new TokenTracker(session.tokenAvailable || 128_000);
     this.startAutoSave();
+    return session;
+  }
+
+  /** All private sessions for a crew (normally 0–1; legacy duplicates possible). */
+  findAllCrewPrivateSessions(crewId: string): Session[] {
+    return this.listSessions(500).filter((s) =>
+      !s.parentId
+      && s.contextKind === 'crew_private'
+      && s.hostCrewId === crewId,
+    );
+  }
+
+  /** One lifelong private chat session per crew — returns existing or creates new. */
+  findCrewPrivateSession(crewId: string): Session | null {
+    const canonical = this.resolveCanonicalCrewPrivateSession(crewId);
+    return canonical;
+  }
+
+  /**
+   * Ensures exactly one crew_private session per crew.
+   * If duplicates exist (legacy), keeps the richest/oldest and merges messages into it.
+   */
+  resolveCanonicalCrewPrivateSession(crewId: string): Session | null {
+    const dupes = this.findAllCrewPrivateSessions(crewId);
+    if (dupes.length === 0) return null;
+
+    const scored = dupes.map((s) => ({
+      session: s,
+      messageCount: this.getSessionMessageCount(s.id),
+    }));
+    scored.sort((a, b) => {
+      if (b.messageCount !== a.messageCount) return b.messageCount - a.messageCount;
+      return String(a.session.createdAt ?? '').localeCompare(String(b.session.createdAt ?? ''));
+    });
+
+    const canonical = scored[0]!.session;
+    for (const { session: dup } of scored.slice(1)) {
+      this.mergeSessionMessagesInto(dup.id, canonical.id);
+      this.deleteSessionRecord(dup.id);
+    }
+    return canonical;
+  }
+
+  private getSessionMessageCount(sessionId: string): number {
+    if (this.usingStorageAdapter) {
+      return (this.store as StorageAdapter).getMessageCount(sessionId);
+    }
+    return this.getSessionStore().getMessageCount(sessionId);
+  }
+
+  private mergeSessionMessagesInto(fromId: string, toId: string): void {
+    const store = this.usingStorageAdapter
+      ? (this.store as StorageAdapter)
+      : this.getSessionStore();
+    const getMsgs = (store as { getMessages?: (id: string) => Array<Record<string, unknown>> }).getMessages;
+    const insert = (store as { insertMessage?: (msg: Record<string, unknown>) => void }).insertMessage;
+    if (!getMsgs || !insert) return;
+    const msgs = getMsgs.call(store, fromId).filter((m) => m['role'] === 'user' || m['role'] === 'assistant');
+    for (const msg of msgs) {
+      insert.call(store, {
+        sessionId: toId,
+        role: msg['role'],
+        content: msg['content'],
+        metadata: msg['metadata'],
+        tokenCount: msg['token_count'] ?? msg['tokenCount'] ?? 0,
+      });
+    }
+  }
+
+  private deleteSessionRecord(sessionId: string): void {
+    if (this.usingStorageAdapter) {
+      (this.store as StorageAdapter).deleteSession(sessionId);
+      return;
+    }
+    this.getSessionStore().deleteSession(sessionId);
+  }
+
+  createCrewPrivateSession(
+    providerId: string,
+    modelId: string,
+    scopePath: string,
+    crew: { id: string; name: string; callsign: string; title?: string },
+  ): Session {
+    const existing = this.resolveCanonicalCrewPrivateSession(crew.id);
+    if (existing) return existing;
+
+    const session = this.buildSessionRecord(
+      providerId,
+      modelId,
+      scopePath,
+      undefined,
+      undefined,
+      crew.name,
+    );
+    session.contextKind = 'crew_private';
+    session.hostCrewId = crew.id;
+    session.mode = 'agent';
+    this.createSessionRecord(session);
     return session;
   }
 
@@ -266,6 +370,11 @@ export class SessionManager {
       return session;
     }
     return null;
+  }
+
+  /** Load session metadata without switching the active Agent-X session pointer. */
+  getSessionById(sessionId: string): Session | null {
+    return this.getSessionRecord(sessionId);
   }
 
   replayEvents(sessionId: string, sinceSequence?: number): Generator<SessionEvent, void, undefined> {

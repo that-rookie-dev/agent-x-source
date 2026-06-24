@@ -9,6 +9,8 @@ import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
+import { MedicalDisclaimerBanner } from '../components/crew/MedicalDisclaimerBanner';
+import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 
 function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   const [expanded, setExpanded] = useState(false);
@@ -112,6 +114,17 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession }:
   };
   const cleanContent = displayContent(displayMessage);
   const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
+  const showMedicalDisclaimer = crewInfo && crewRequiresMedicalDisclaimer({
+    catalogId: crewInfo.crewId,
+    crewId: crewInfo.crewId,
+  });
+
+  const contentBlock = hasParts ? renderParts(displayMessage.parts!, onOpenChildSession) : (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+      {cleanContent && <CrewAwareMarkdown content={cleanContent} />}
+      {displayMessage.toolCalls?.map((t) => <InlineToolCall key={t.id} tool={t} />)}
+    </Box>
+  );
 
   const subAgentCards = (message.subAgents ?? []).filter((a) => a.id && a.id !== 'subagent');
 
@@ -159,12 +172,11 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession }:
         </Box>
       )}
 
-      {hasParts ? renderParts(displayMessage.parts!, onOpenChildSession) : (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-          {cleanContent && <CrewAwareMarkdown content={cleanContent} />}
-          {displayMessage.toolCalls?.map((t) => <InlineToolCall key={t.id} tool={t} />)}
-        </Box>
-      )}
+      {hasParts || cleanContent ? (
+        showMedicalDisclaimer ? (
+          <MedicalDisclaimerBanner variant="frame">{contentBlock}</MedicalDisclaimerBanner>
+        ) : contentBlock
+      ) : null}
 
       {message.streaming && !cleanContent && !hasParts && (
         <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>
