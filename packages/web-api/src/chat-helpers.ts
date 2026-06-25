@@ -242,7 +242,7 @@ export function loadSessionMessagesPage(
   let slice = all;
   if (opts.before) {
     const idx = all.findIndex((m) => m['id'] === opts.before);
-    slice = idx > 0 ? all.slice(0, idx) : all;
+    slice = idx > 0 ? all.slice(0, idx) : [];
   }
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
   const messages = slice.slice(-limit);

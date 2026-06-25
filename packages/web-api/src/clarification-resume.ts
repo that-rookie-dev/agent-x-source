@@ -1,6 +1,6 @@
 import type { Agent } from '@agentx/engine';
 import { getLogger } from '@agentx/shared';
-import { getEngine } from './engine.js';
+import { getEngine, createAgent, destroyAgent } from './engine.js';
 import {
   runAgentTurnAsync,
   applySessionModeToAgent,
@@ -21,24 +21,13 @@ function getMessageStore(): MessageStore | null {
 }
 
 export function persistClarificationResumeFromAgent(agent: Agent, sessionId: string): void {
-  const resume = (agent as unknown as {
-    getClarificationResumeState?: () => {
-      kind: 'questionnaire' | 'crew_intake';
-      messageId: string;
-      questionnaireMessageId?: string;
-      userText?: string;
-      delegateCrewIds?: string[];
-      primaryCrewId?: string;
-      crewIntakeFromPicker?: boolean;
-      createdAt: string;
-    } | null;
-  }).getClarificationResumeState?.();
+  const resume = agent.getClarificationResumeState?.();
   if (resume) {
     saveSessionResumeState(sessionId, resume);
   }
 }
 
-function findPendingQuestionnaireMessage(sessionId: string): {
+export function findPendingQuestionnaireMessage(sessionId: string): {
   messageId: string;
   part: Record<string, unknown>;
 } | null {
@@ -54,6 +43,23 @@ function findPendingQuestionnaireMessage(sessionId: string): {
     );
     if (part) {
       return { messageId: String(msg['id'] ?? ''), part };
+    }
+  }
+  return null;
+}
+
+/** User turn that triggered the pending questionnaire (walk backward from questionnaire msg). */
+export function findUserMessageBeforeQuestionnaire(
+  sessionId: string,
+  questionnaireMessageId: string,
+): string | null {
+  const msgs = getMessageStore()?.getMessages?.(sessionId) ?? [];
+  const qIdx = msgs.findIndex((m) => String(m['id'] ?? '') === questionnaireMessageId);
+  if (qIdx < 0) return null;
+  for (let i = qIdx - 1; i >= 0; i--) {
+    const msg = msgs[i]!;
+    if (msg['role'] === 'user' && typeof msg['content'] === 'string' && msg['content'].trim()) {
+      return msg['content'].trim();
     }
   }
   return null;
@@ -79,7 +85,49 @@ function markQuestionnaireAnswered(
   });
 }
 
-export async function handleClarificationRespond(response: string): Promise<{
+export function buildQuestionnaireResumeInstruction(baseInstruction: string, answer: string): string {
+  return `${baseInstruction}
+
+[QUESTIONNAIRE_ALREADY_ANSWERED]
+The user submitted questionnaire answers (session may have reconnected). Continue the in-progress turn using these answers. Do not re-ask the same questionnaire.
+
+${answer}
+[/QUESTIONNAIRE_ALREADY_ANSWERED]`;
+}
+
+function agentSessionId(agent: Agent): string {
+  return (agent as unknown as { sessionId: string }).sessionId;
+}
+
+function ensureAgentForSession(requestedSessionId?: string): {
+  agent: Agent;
+  sessionId: string;
+} | {
+  error: string;
+  status: number;
+} {
+  const eng = getEngine();
+  let agent = eng.agent;
+  if (!agent) return { error: 'no-session', status: 400 };
+
+  const targetSessionId = requestedSessionId ?? agentSessionId(agent);
+  if (agentSessionId(agent) !== targetSessionId) {
+    const session = eng.sessionManager.getSessionById(targetSessionId);
+    if (!session) return { error: 'session-not-found', status: 404 };
+    destroyAgent();
+    eng.sessionManager.restoreSession(targetSessionId);
+    createAgent(undefined, session);
+    agent = eng.agent;
+    if (!agent) return { error: 'no-session', status: 400 };
+  }
+
+  return { agent, sessionId: targetSessionId };
+}
+
+export async function handleClarificationRespond(
+  response: string,
+  requestedSessionId?: string,
+): Promise<{
   ok: boolean;
   resumed?: boolean;
   error?: string;
@@ -88,14 +136,14 @@ export async function handleClarificationRespond(response: string): Promise<{
   const trimmed = response.trim();
   if (!trimmed) return { ok: false, error: 'empty-response', status: 400 };
 
-  const eng = getEngine();
-  const agent = eng.agent;
-  if (!agent) return { ok: false, error: 'no-session', status: 400 };
+  const ensured = ensureAgentForSession(requestedSessionId);
+  if ('error' in ensured) {
+    return { ok: false, error: ensured.error, status: ensured.status };
+  }
+  const { agent, sessionId } = ensured;
 
-  const sessionId = (agent as unknown as { sessionId: string }).sessionId;
-  const respond = (agent as unknown as { respondToClarification: (r: string) => boolean }).respondToClarification;
-
-  if (respond?.(trimmed)) {
+  // Must call on the agent instance — unbound extraction loses `this` and throws.
+  if (agent.respondToClarification(trimmed)) {
     clearSessionResumeState(sessionId);
     return { ok: true, resumed: true };
   }
@@ -106,15 +154,17 @@ export async function handleClarificationRespond(response: string): Promise<{
     return { ok: false, error: 'no-pending-clarification', status: 409 };
   }
 
+  const questionnaireMessageId = pending?.messageId ?? resume?.questionnaireMessageId ?? resume?.messageId;
   if (pending) {
     markQuestionnaireAnswered(sessionId, pending.messageId, pending.part, trimmed);
   }
   clearSessionResumeState(sessionId);
-  (agent as unknown as { clearClarificationResumeState?: () => void }).clearClarificationResumeState?.();
+  agent.clearClarificationResumeState?.();
 
   if (resume?.crewIntakeFromPicker && resume.delegateCrewIds?.length && resume.userText) {
     const mode = applySessionModeToAgent(agent);
-    const activeSess = eng.sessionManager.getActiveSession?.();
+    const activeSess = getEngine().sessionManager.getActiveSession?.()
+      ?? getEngine().sessionManager.getSessionById(sessionId);
     const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
     const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
     const turn = turnRegistry.create(sessionId);
@@ -143,6 +193,32 @@ export async function handleClarificationRespond(response: string): Promise<{
     return { ok: true, resumed: true };
   }
 
-  getLogger().info('CLARIFICATION_RESUME', `Answered restored questionnaire in session ${sessionId.slice(0, 8)}`);
+  const priorUserText = questionnaireMessageId
+    ? findUserMessageBeforeQuestionnaire(sessionId, questionnaireMessageId)
+    : null;
+
+  if (priorUserText) {
+    const mode = applySessionModeToAgent(agent);
+    const activeSess = getEngine().sessionManager.getActiveSession?.()
+      ?? getEngine().sessionManager.getSessionById(sessionId);
+    const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
+    const instruction = buildQuestionnaireResumeInstruction(
+      buildInstructionForMode(mode, { crewPrivate: crewPrivateChat }) ?? '',
+      trimmed,
+    );
+    const turn = turnRegistry.create(sessionId);
+    runAgentTurnAsync(
+      agent,
+      priorUserText,
+      instruction,
+      true,
+      turn.turnId,
+      sessionId,
+    );
+    getLogger().info('CLARIFICATION_RESUME', `Resumed questionnaire turn in session ${sessionId.slice(0, 8)}`);
+    return { ok: true, resumed: true };
+  }
+
+  getLogger().info('CLARIFICATION_RESUME', `Marked questionnaire answered in session ${sessionId.slice(0, 8)} (no turn to resume)`);
   return { ok: true, resumed: false };
 }

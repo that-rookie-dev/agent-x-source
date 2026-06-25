@@ -113,6 +113,7 @@ export const chatSteerSchema = z.object({
 
 export const clarificationRespondSchema = z.object({
   response: z.string().min(1, 'response is required'),
+  sessionId: z.string().min(1).optional(),
 });
 
 export const crewRosterPickerOfferSchema = z.object({

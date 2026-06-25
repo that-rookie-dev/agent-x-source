@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -10,17 +10,33 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import { Footer } from '../components/Footer';
-import { webuiActive, agent, crewCatalog, type AgentVitals, type CatalogSeedStatusResponse } from '../api';
+import { webuiActive, agent, crewCatalog, crews, type AgentVitals, type CatalogSeedStatusResponse, type Crew } from '../api';
 import type { HealthStatus } from '../api';
 
-function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'blank' | 'info' | 'success' | 'dim' | 'heading'; text: string }> {
+function computeTotalCrewCatalogCount(
+  catalogSeed: CatalogSeedStatusResponse | null,
+  roster: Crew[],
+): number {
+  const hubCount = catalogSeed
+    ? (catalogSeed.status === 'ready' ? catalogSeed.seededCount : catalogSeed.expectedCount)
+    : 0;
+  const customCount = roster.filter((c) => !c.catalogId).length;
+  return hubCount + customCount;
+}
+
+function buildTerminalLines(
+  h: HealthStatus | null,
+  catalogSeed: CatalogSeedStatusResponse | null,
+  roster: Crew[],
+): Array<{ type: 'banner' | 'blank' | 'info' | 'success' | 'dim' | 'heading'; text: string }> {
   const v = h?.version || '';
   const provider = h?.config?.provider || '—';
   const model = h?.config?.model || '—';
   const user = h?.config?.user || 'Operator';
 
   const sessions = h?.sessionCount ?? 0;
-  const telegram = h?.telegramConnected ? `Connected${h.telegramBot ? ` (@${h.telegramBot})` : ''}` : 'Not configured';
+  const crewCount = computeTotalCrewCatalogCount(catalogSeed, roster);
+  const crewLine = crewCount > 0 ? String(crewCount) : '—';
   const mem = h ? `${Math.round((h.memory?.heapUsed ?? 0) / 1024 / 1024)} MB` : '—';
   const uptime = h ? formatUptime(h.uptime) : '—';
 
@@ -41,7 +57,7 @@ function buildTerminalLines(h: HealthStatus | null): Array<{ type: 'banner' | 'b
     { type: 'success', text: `  \u2713 Sessions     ${sessions}` },
     { type: 'success', text: `  \u2713 Memory       ${mem}` },
     { type: 'success', text: `  \u2713 Uptime       ${uptime}` },
-    { type: 'success', text: `  \u2713 Telegram     ${telegram}` },
+    { type: 'success', text: `  \u2713 Crew         ${crewLine}` },
     { type: 'blank', text: '' },
     { type: 'heading', text: '  CAPABILITIES' },
     { type: 'dim', text: '  183 tools \u00B7 16 providers \u00B7 22 MCP servers' },
@@ -60,10 +76,13 @@ export function DockingStation() {
   const [lines, setLines] = useState<ReturnType<typeof buildTerminalLines>>([]);
   const [vitals, setVitals] = useState<AgentVitals | null>(null);
   const [catalogSeed, setCatalogSeed] = useState<CatalogSeedStatusResponse | null>(null);
-  // Register Web-UI as active and keep it refreshed
+  const [rosterCrews, setRosterCrews] = useState<Crew[]>([]);
+  const introStartedRef = useRef(false);
+  const introPlayedRef = useRef(false);
+
   useEffect(() => {
     let intervalId: ReturnType<typeof setInterval>;
-    
+
     const register = async () => {
       try {
         await webuiActive.register();
@@ -71,10 +90,8 @@ export function DockingStation() {
     };
 
     register();
-    // Refresh every 20 seconds to keep the marker alive
     intervalId = setInterval(register, 20000);
 
-    // Unregister on unmount
     return () => {
       clearInterval(intervalId);
       webuiActive.unregister().catch(() => {});
@@ -88,6 +105,18 @@ export function DockingStation() {
   }, [refreshHealth]);
 
   useEffect(() => { recheckServer(); }, [recheckServer]);
+
+  useEffect(() => {
+    if (!serverOnline) {
+      setRosterCrews([]);
+      return;
+    }
+    let cancelled = false;
+    crews.list()
+      .then((list) => { if (!cancelled) setRosterCrews(list); })
+      .catch(() => { if (!cancelled) setRosterCrews([]); });
+    return () => { cancelled = true; };
+  }, [serverOnline]);
 
   useEffect(() => {
     if (!serverOnline) return;
@@ -110,26 +139,31 @@ export function DockingStation() {
     };
   }, [serverOnline, catalogSeed?.status]);
 
-  // Fetch agent vitals
   useEffect(() => {
     agent.vitals().then(setVitals).catch(() => {});
     const interval = setInterval(() => { agent.vitals().then(setVitals).catch(() => {}); }, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Rebuild terminal lines when health data changes
   useEffect(() => {
-    const built = buildTerminalLines(healthData);
+    const built = buildTerminalLines(healthData, catalogSeed, rosterCrews);
     setLines(built);
-    setVisibleLines(0); // restart animation
-  }, [healthData]);
+    if (introPlayedRef.current) {
+      setVisibleLines(built.length);
+    } else if (!introStartedRef.current) {
+      introStartedRef.current = true;
+      setVisibleLines(0);
+    }
+  }, [healthData, catalogSeed, rosterCrews]);
 
   const handleLaunch = useCallback(() => {
     navigate('/console/chat');
   }, [navigate]);
 
-  // Typewriter animation
   useEffect(() => {
+    if (lines.length > 0 && visibleLines >= lines.length) {
+      introPlayedRef.current = true;
+    }
     if (visibleLines >= lines.length) return;
     const delay = lines[visibleLines]?.type === 'blank' ? 200
       : lines[visibleLines]?.type === 'banner' ? 60
@@ -139,17 +173,15 @@ export function DockingStation() {
     return () => clearTimeout(timeout);
   }, [visibleLines, lines]);
   const version = healthData?.version || '';
+  const crewCatalogCount = computeTotalCrewCatalogCount(catalogSeed, rosterCrews);
 
   return (
     <Box sx={{
       height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column',
       overflow: 'hidden', bgcolor: colors.bg.primary,
     }}>
-      {/* Main content row */}
       <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
-        {/* ─── Left: Terminal area ─── */}
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 3, overflow: 'hidden' }}>
-          {/* Header with version */}
           <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <img src="/logo.png" alt="Agent-X" style={{ width: 28, height: 28, objectFit: 'contain' }} />
             <Typography sx={{ fontSize: '1.3rem', fontWeight: 700, fontFamily: "'Inter', sans-serif", color: colors.text.primary }}>
@@ -165,14 +197,12 @@ export function DockingStation() {
             </Typography>
           </Box>
 
-        {/* Terminal */}
         <Box sx={{
           flex: 1, display: 'flex', flexDirection: 'column',
           border: `1px solid ${colors.border.default}`,
           borderRadius: '6px', overflow: 'hidden', minHeight: 0,
           bgcolor: colors.bg.secondary,
         }}>
-          {/* Terminal bar */}
           <Box sx={{
             display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1,
             borderBottom: `1px solid ${colors.border.default}`,
@@ -185,7 +215,6 @@ export function DockingStation() {
             </Typography>
           </Box>
 
-          {/* Terminal body */}
           <Box sx={{
             flex: 1, px: 3, py: 2.5, overflow: 'auto',
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem', lineHeight: 1.8,
@@ -218,13 +247,11 @@ export function DockingStation() {
         </Box>
       </Box>
 
-      {/* ─── Right: Sidebar ─── */}
       <Box sx={{
         width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column',
         borderLeft: `1px solid ${colors.border.default}`, p: 3,
         justifyContent: 'space-between',
       }}>
-        {/* Status section */}
         <Box>
           <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim, letterSpacing: '2px', mb: 2 }}>
             SYSTEM STATUS
@@ -236,8 +263,11 @@ export function DockingStation() {
             <>
               <StatusRow label="Provider" value={healthData.config?.provider || '—'} color={colors.text.primary} />
               <StatusRow label="Model" value={shortModel(healthData.config?.model)} color={colors.text.primary} />
-    
-              <StatusRow label="Telegram" value={healthData.telegramConnected ? `Connected${healthData.telegramBot ? ` (@${healthData.telegramBot})` : ''}` : '—'} color={healthData.telegramConnected ? colors.accent.green : colors.text.dim} />
+              <StatusRow
+                label="Crew catalog"
+                value={crewCatalogCount > 0 ? String(crewCatalogCount) : '—'}
+                color={crewCatalogCount > 0 ? colors.accent.green : colors.text.dim}
+              />
               <StatusRow label="Sessions" value={String(healthData.sessionCount ?? 0)} color={colors.text.primary} />
               <StatusRow label="Memory" value={`${Math.round((healthData.memory?.heapUsed ?? 0) / 1024 / 1024)} MB`} color={colors.text.primary} />
               <StatusRow label="Uptime" value={formatUptime(healthData.uptime)} color={colors.text.primary} />
@@ -274,7 +304,6 @@ export function DockingStation() {
           )}
         </Box>
 
-        {/* Launch */}
         <Box>
           {serverOnline ? (
             <Button
@@ -317,7 +346,6 @@ export function DockingStation() {
       </Box>
       </Box>
 
-      {/* Agent Vitals */}
       {vitals && vitals.status !== 'uninitialized' && (
         <Box sx={{
           borderTop: `1px solid ${colors.border.default}`,
@@ -364,7 +392,6 @@ function StatusRow({ label, value, color, checking }: { label: string; value: st
 
 function shortModel(model?: string): string {
   if (!model) return '—';
-  // Trim long model paths like "models/gemini-flash-lite-latest"
   const parts = model.split('/');
   return parts[parts.length - 1] || model;
 }

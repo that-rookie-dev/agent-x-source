@@ -6,6 +6,7 @@ import {
   hasTaskSignals,
   isActiveCrewContinuation,
   isDistinctNewRequirement,
+  shouldBypassActiveCrewRouting,
   shouldSkipAutonomousCrewRouting,
 } from '../src/agent/crew-auto-compose.js';
 import type { CrewMember } from '../src/agent/CrewOrchestrator.js';
@@ -192,7 +193,54 @@ describe('crew suggestion continuation vs new requirement', () => {
     )).toBe(true);
   });
 
+  it('detects AWS workforce requests as distinct from travel context', () => {
+    expect(isDistinctNewRequirement(
+      'I want crew members who have AWS skills',
+      vacationPrior,
+    )).toBe(true);
+    const context = buildTaskContextForCrewRouting(
+      'I want crew members who have AWS skills',
+      vacationPrior,
+    );
+    expect(context).not.toContain('beach vacation');
+  });
+
   it('does not flag same-domain vacation follow-ups as new requirements', () => {
     expect(isDistinctNewRequirement('add scuba diving to the itinerary', vacationPrior)).toBe(false);
+  });
+});
+
+describe('shouldBypassActiveCrewRouting', () => {
+  it('bypasses when user skipped crew suggestion', () => {
+    expect(shouldBypassActiveCrewRouting('continue with agent-x', { crewSuggestionResolved: true })).toBe(true);
+  });
+
+  it('bypasses workforce and explicit crew searches', () => {
+    expect(shouldBypassActiveCrewRouting('I want crew members who have AWS skills')).toBe(true);
+    expect(shouldBypassActiveCrewRouting('find a skilled person for kubernetes')).toBe(true);
+  });
+
+  it('does not bypass when user deployed crew this turn', () => {
+    expect(shouldBypassActiveCrewRouting('deploy them', { hasDelegateCrewIds: true })).toBe(false);
+  });
+});
+
+describe('travel crew must not answer AWS workforce requests', () => {
+  const jonas = mockCrew({
+    id: 'jonas-travel',
+    name: 'Jonas Park',
+    callsign: 'jonas_park',
+    systemPrompt: 'Travel planner specializing in itineraries and tourism.',
+    expertise: ['travel', 'tourism', 'planning', 'logistics'],
+  });
+
+  it('does not route AWS specialist search to travel crew', () => {
+    const prior = ['Plan a beach vacation with my family'];
+    const task = buildTaskContextForCrewRouting(
+      'I want crew members who have AWS skills',
+      prior,
+    );
+    const assessment = assessCrewNeed(task, [mockMember(jonas)]);
+    expect(assessment.shouldRoute).toBe(false);
   });
 });

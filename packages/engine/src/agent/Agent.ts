@@ -81,10 +81,8 @@ import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 import { CrewOrchestrator, buildCrewPrivateFastReplyPrompt, type CrewMember } from './CrewOrchestrator.js';
 import {
   assessCrewNeed,
-  autoComposeCrewMembers,
   buildTaskContextForCrewRouting,
-  isContinuationMessage,
-  userDeferredToAgent,
+  shouldBypassActiveCrewRouting,
 } from './crew-auto-compose.js';
 import { CrewMissionOrchestrator, type CrewMissionOptions, type CrewMissionResult } from './CrewMissionOrchestrator.js';
 import { setCrewMissionDeps } from '../tools/builtin/spawn-crew-workers.js';
@@ -1627,21 +1625,24 @@ export class Agent {
     // ─── ACTIVE CREW CONTINUATION — route follow-ups to deployed specialists ───
     const activeCrew = this.getActiveCrewMembers();
     if (activeCrew.length > 0 && this.crewOrchestrator) {
-      const priorUserMessages = this.messages
-        .filter((m) => m.role === 'user')
-        .map((m) => (typeof m.content === 'string' ? m.content : ''))
-        .slice(0, -1);
-      const routingTask = turnContext.needsContextMerge
-        ? turnContext.mergedTask
-        : buildTaskContextForCrewRouting(cleanContent, priorUserMessages);
-      const shouldContinueWithCrew = userDeferredToAgent(cleanContent)
-        || isContinuationMessage(cleanContent)
-        || assessCrewNeed(routingTask, activeCrew).shouldRoute;
+      const bypassActiveCrew = shouldBypassActiveCrewRouting(cleanContent, {
+        crewSuggestionResolved: options?.crewSuggestionResolved,
+        hasDelegateCrewIds: Boolean(options?.delegateCrewIds?.length),
+      });
 
-      if (shouldContinueWithCrew) {
-        const composed = autoComposeCrewMembers(routingTask, activeCrew);
-        const members = composed.length > 0 ? composed : activeCrew.slice(0, 1);
-        return await this.executeCrewMission(members, routingTask, startTime, classificationContext);
+      if (!bypassActiveCrew) {
+        const priorUserMessages = this.messages
+          .filter((m) => m.role === 'user')
+          .map((m) => (typeof m.content === 'string' ? m.content : ''))
+          .slice(0, -1);
+        const routingTask = turnContext.needsContextMerge
+          ? turnContext.mergedTask
+          : buildTaskContextForCrewRouting(cleanContent, priorUserMessages);
+        const assessment = assessCrewNeed(routingTask, activeCrew);
+
+        if (assessment.shouldRoute && assessment.members.length > 0) {
+          return await this.executeCrewMission(assessment.members, routingTask, startTime, classificationContext);
+        }
       }
     }
     }
@@ -3463,7 +3464,11 @@ Only include specialists that are actually needed for this task.`;
     startTime: number,
   ): void {
     for (const r of mission.responses) {
-      const crewMember = members.find((m) => m.crew.id === r.crewId) ?? members[0]!;
+      const crewMember = members.find((m) => m.crew.id === r.crewId);
+      if (!crewMember) {
+        getLogger().warn('CREW_MISSION', `Response crewId ${r.crewId} not in mission members — skipping misattributed publish`);
+        continue;
+      }
       const msg: Message = {
         id: generateMessageId(),
         sessionId: this.sessionId,

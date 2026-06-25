@@ -56,6 +56,7 @@ export function buildCrewRosterHintFromEvaluation(
 /** Evaluate catalog + roster and return a turn instruction block, or null. */
 export async function buildCrewRosterHintBlock(input: CrewRosterHintInput): Promise<string | null> {
   if (input.crewSuggestionResolved) return null;
+  if (explicitCrewRequest(input.message)) return null;
 
   const service = getCrewSuggestionService(input.store);
   if (!service) return null;

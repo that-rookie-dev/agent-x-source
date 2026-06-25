@@ -1586,7 +1586,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     let slice = all;
     if (opts.before) {
       const idx = all.findIndex((m) => m.id === opts.before);
-      slice = idx > 0 ? all.slice(0, idx) : all;
+      slice = idx > 0 ? all.slice(0, idx) : [];
     }
     const page = slice.slice(-limit);
     const hasMore = slice.length > limit || (opts.before ? all.findIndex((m) => m.id === opts.before) > limit : total > limit);

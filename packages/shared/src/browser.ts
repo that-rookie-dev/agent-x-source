@@ -76,5 +76,7 @@ export {
 
 export { summarizeMessageForTurnFeedback, displayTextForTurnFeedback } from './utils/turn-display.js';
 
+export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNeed } from './utils/crew-roster-intent.js';
+
 export type { CrewRosterPickerRecord, CrewRosterPickerStatus } from './types/crew-roster-picker.js';
 export type { SessionResumeState, SessionResumeKind } from './types/session-resume.js';

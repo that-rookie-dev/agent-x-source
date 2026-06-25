@@ -130,19 +130,6 @@ export function MedicalDisclaimerChatSessionStrip() {
     >
       <MedicalDisclaimerStripe height={3} />
       <Box sx={{ px: 1.25, py: 0.75, bgcolor: MEDICAL_YELLOW }}>
-        <Typography
-          component="p"
-          sx={{
-            ...medicalWarningChatStripSx,
-            mb: 0.35,
-            fontSize: '0.52rem',
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-            opacity: 0.92,
-          }}
-        >
-          Medical information notice
-        </Typography>
         <Typography component="p" sx={medicalWarningChatStripSx}>
           {MEDICAL_INFORMATIONAL_DISCLAIMER}
         </Typography>

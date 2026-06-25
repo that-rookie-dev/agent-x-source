@@ -1,4 +1,5 @@
 import { CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
+import { explicitCrewRequest } from '@agentx/shared';
 import type { CrewMember } from './CrewOrchestrator.js';
 
 export interface CrewNeedAssessment {
@@ -14,6 +15,7 @@ const DOMAIN_HINTS: Array<{ pattern: RegExp; keywords: string[] }> = [
   { pattern: /\b(api|backend|server|database|microservice|endpoint|graphql|rest)\b/i, keywords: ['backend', 'api', 'database', 'distributed', 'microservices', 'node'] },
   { pattern: /\b(frontend|react|css|ui|ux|design|dashboard|component|tailwind)\b/i, keywords: ['frontend', 'react', 'design', 'ui', 'ux', 'css'] },
   { pattern: /\b(deploy|docker|kubernetes|ci\/cd|devops|infra|pipeline|helm)\b/i, keywords: ['devops', 'docker', 'kubernetes', 'ci/cd', 'infrastructure', 'cloud'] },
+  { pattern: /\b(aws|amazon web services|azure|gcp|google cloud|cloud\s+(architect|engineer|infra)|ec2|s3|lambda|iam)\b/i, keywords: ['aws', 'cloud', 'azure', 'gcp', 'devops', 'infrastructure'] },
   { pattern: /\b(security|audit|vulnerability|owasp|penetration|encrypt|auth)\b/i, keywords: ['security', 'audit', 'owasp', 'threat'] },
   { pattern: /\b(legal|contract|compliance|regulation|law|gdpr|privacy)\b/i, keywords: ['legal', 'compliance', 'law', 'regulation', 'contract'] },
   { pattern: /\b(marketing|seo|content|copywrit|brand|campaign|social media)\b/i, keywords: ['marketing', 'seo', 'content', 'brand'] },
@@ -126,6 +128,8 @@ export function buildTaskContextForCrewRouting(
   if (priorUserMessages.length === 0) return current;
 
   if (shouldSkipAutonomousCrewRouting(current)) return current;
+  if (explicitCrewRequest(current)) return current;
+  if (isDistinctNewRequirement(current, priorUserMessages)) return current;
 
   const substantive = priorUserMessages
     .map((m) => m.trim())
@@ -193,7 +197,20 @@ export function extractDomainKeywords(text: string): Set<string> {
       for (const kw of hint.keywords) keys.add(kw);
     }
   }
+  for (const kw of CREW_DOMAIN_KEYWORDS) {
+    if (lower.includes(kw)) keys.add(kw);
+  }
   return keys;
+}
+
+/** Skip routing to already-enabled crew when the user is searching for new specialists. */
+export function shouldBypassActiveCrewRouting(
+  message: string,
+  opts?: { crewSuggestionResolved?: boolean; hasDelegateCrewIds?: boolean },
+): boolean {
+  if (opts?.hasDelegateCrewIds) return false;
+  if (opts?.crewSuggestionResolved) return true;
+  return explicitCrewRequest(message.trim());
 }
 
 /** True when the message introduces a domain not covered by recent user turns. */

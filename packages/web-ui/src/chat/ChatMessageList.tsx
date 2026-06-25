@@ -22,10 +22,12 @@ interface ChatMessageListProps {
   onTurnFeedback?: (messageId: string, rating: import('@agentx/shared/browser').TurnFeedbackRating) => void;
   feedbackSubmitting?: boolean;
   planMode?: boolean;
+  /** Disable content-visibility sizing while prepending older messages (prevents scroll jumps). */
+  freezeLayout?: boolean;
 }
 
 /** Virtual-ish message list — content-visibility keeps long sessions smooth. */
-export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting, planMode }: ChatMessageListProps) {
+export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting, planMode, freezeLayout }: ChatMessageListProps) {
   const renderMessage = useCallback((msg: UIMessage, idx: number) => {
     const isLast = idx === items.length - 1;
     const hasText = !!(msg.content?.trim() || msg.parts?.some((p) => p.type === 'text' && p.content?.trim()));
@@ -59,10 +61,11 @@ export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOp
   return (
     <>
       {items.map(({ msg, isLastUser }, idx) => {
-        const keepVisible = idx >= items.length - 2;
+        const keepVisible = freezeLayout || idx >= items.length - 2;
         return (
         <Box
           key={msg.id}
+          data-message-id={msg.id}
           sx={keepVisible ? undefined : {
             contentVisibility: 'auto',
             containIntrinsicSize: '0 120px',

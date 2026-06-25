@@ -139,6 +139,14 @@ export function lastMessageIsQuestionnaireCard(messages: Array<{
     && (last.parts?.some((p) => p.type === 'questionnaire') ?? false);
 }
 
+/** Parse legacy [MODE_CHANGE] system rows into chip metadata. */
+export function parseModeChange(content?: string): { from: string; to: string } | null {
+  if (!content) return null;
+  const match = content.match(/^\[MODE_CHANGE\]\s*(\w+)\s*→\s*(\w+)/);
+  if (!match) return null;
+  return { from: match[1]!, to: match[2]! };
+}
+
 /** Normalize one restored history row (assistant parts/toolCalls reconciliation). */
 export function mapRestoreHistoryMessage(m: Record<string, unknown>): Record<string, unknown> {
   const toolCalls = Array.isArray(m.toolCalls)

@@ -82,6 +82,7 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
     <Box
       onClick={() => onOpen(session)}
       sx={{
+        position: 'relative',
         borderRadius: '10px',
         border: `1px solid ${isCrewPrivate ? crewAccent + '35' : isActive ? colors.accent.green + '35' : colors.border.subtle}`,
         bgcolor: colors.bg.secondary,
@@ -98,7 +99,21 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         },
       }}
     >
-      {isMedical && <MedicalCrewCardStripe />}
+      {isMedical && (
+        <Box
+          aria-hidden
+          sx={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 1,
+            pointerEvents: 'none',
+          }}
+        >
+          <MedicalCrewCardStripe />
+        </Box>
+      )}
       <Box sx={{ p: 1.25, flex: 1, display: 'flex', flexDirection: 'column', gap: 0.85 }}>
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75 }}>
         <Box sx={{
@@ -132,14 +147,24 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
           </Typography>
           <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", mt: 0.2 }}>
             {isCrewPrivate ? (
-              <>
-                {hostTitle || 'Crew specialist'}
-                {hostCallsign ? ` · @${hostCallsign}` : ''}
-              </>
+              hostTitle || 'Crew specialist'
             ) : (
               <>{formatDate(session.createdAt)} · {formatTime(session.createdAt)}</>
             )}
           </Typography>
+          {isCrewPrivate && hostCallsign && (
+            <Typography sx={{
+              fontSize: '0.48rem',
+              color: crewAccent,
+              fontFamily: "'JetBrains Mono', monospace",
+              mt: 0.15,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              @{hostCallsign}
+            </Typography>
+          )}
         </Box>
         <IconButton
           size="small"

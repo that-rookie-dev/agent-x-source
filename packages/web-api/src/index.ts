@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, assignPartsToAssistantMessage } from '@agentx/shared';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady } from './engine.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
@@ -21,6 +21,7 @@ import {
   recordTurnFeedback,
   loadSessionMessagesPage,
 } from './chat-helpers.js';
+import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi, selectRecentMessagesTail } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { healOrphanedUserMessages } from './message-history-repair.js';
@@ -908,8 +909,8 @@ app.post('/api/session/mode', (req, res) => {
 
 app.post('/api/clarification/respond', validate(clarificationRespondSchema), async (req, res) => {
   try {
-    const { response } = req.body as { response: string };
-    const result = await handleClarificationRespond(response);
+    const { response, sessionId } = req.body as { response: string; sessionId?: string };
+    const result = await handleClarificationRespond(response, sessionId);
     if (!result.ok) {
       res.status(result.status ?? 500).json({ error: result.error ?? 'clarification-respond-failed' });
       return;
@@ -2661,6 +2662,10 @@ app.delete('/api/sessions/:id', (req, res) => {
 app.post('/api/sessions/:id/restore', async (req, res) => {
   try {
     const sessionId = req.params['id']!;
+    const perRoleRaw = (req.body as { perRole?: number } | undefined)?.perRole;
+    const perRole = typeof perRoleRaw === 'number'
+      ? Math.min(50, Math.max(1, Math.floor(perRoleRaw)))
+      : undefined;
     if (sessionId === '__channel__') { res.status(403).json({ error: 'channel-session' }); return; }
     const eng = getEngine();
     const peek = eng.sessionManager.getSessionById(sessionId);
@@ -2783,57 +2788,33 @@ app.post('/api/sessions/:id/restore', async (req, res) => {
       }
     } catch { /* best-effort */ }
 
-    // Merge parts into messages so the frontend gets chronological parts arrays
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i]!;
-      if (msg['role'] !== 'assistant') continue;
-
-      const msgPartRows = assignPartsToAssistantMessage(messages, parts, i);
-      const normalized = normalizeMessageForUi(msg, msgPartRows);
-      if (normalized.parts?.length) {
-        (msg as Record<string, unknown>)['parts'] = normalized.parts;
-      }
-      if (normalized.content) {
-        msg['content'] = normalized.content;
-      }
-      if (normalized.toolCalls) {
-        msg['toolCalls'] = normalized.toolCalls;
-      }
+    let messageTotal = messages.filter((m) => m['role'] === 'user' || m['role'] === 'assistant').length;
+    let messagesTruncated = false;
+    if (perRole != null && messages.length > 0) {
+      const preview = selectRecentMessagesTail(messages, perRole * 2);
+      messages = preview.messages;
+      messageTotal = preview.total;
+      messagesTruncated = preview.truncated;
     }
 
-    // Normalize toolCalls from JSON strings to arrays for the frontend
-    for (const msg of messages) {
-      if (msg['tool_calls'] != null && typeof msg['tool_calls'] === 'string') {
-        try { msg['tool_calls'] = JSON.parse(msg['tool_calls'] as string); } catch { msg['tool_calls'] = undefined; }
-      }
-      if (msg['toolCalls'] != null && typeof msg['toolCalls'] === 'string') {
-        try { msg['toolCalls'] = JSON.parse(msg['toolCalls'] as string); } catch { msg['toolCalls'] = undefined; }
-      }
-      // Transform metadata.crewId/crewName/callsign into crew object for frontend
-      if (msg['metadata'] && !msg['crew']) {
-        const meta = typeof msg['metadata'] === 'string'
-          ? (() => { try { return JSON.parse(msg['metadata'] as string) as Record<string, unknown>; } catch { return {}; } })()
-          : msg['metadata'] as Record<string, unknown>;
-        if (meta['crewId']) {
-          const crewMember = eng.crewManager.get(meta['crewId'] as string);
-          msg['crew'] = {
-            crewId: meta['crewId'],
-            name: (meta['crewName'] as string) || crewMember?.name || '',
-            callsign: (meta['callsign'] as string) || crewMember?.callsign || '',
-            color: crewMember?.color,
-            icon: crewMember?.icon,
-          };
-        }
-      }
-    }
+    enrichSessionMessagesForUi(eng, messages, parts);
 
-    res.json({ session, messages, parts: [], crewStates, scopePath: session.scopePath, interruptedTask, turnFeedback: loadTurnFeedbackForSession(eng, sessionId), resumeState });
+    res.json({
+      session,
+      messages,
+      parts: [],
+      crewStates,
+      scopePath: session.scopePath,
+      interruptedTask,
+      turnFeedback: loadTurnFeedbackForSession(eng, sessionId),
+      resumeState,
+      messagesMeta: perRole != null ? { total: messageTotal, truncated: messagesTruncated, perRole } : undefined,
+    });
   } catch (e: unknown) {
     getLogger().error('RESTORE_SESSION', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
   }
 });
-
 app.get('/api/sessions/:id/feedback', (req, res) => {
   try {
     const sessionId = req.params['id']!;
@@ -2861,7 +2842,13 @@ app.get('/api/sessions/:id/messages', (req, res) => {
 
     const { limit, before } = parsed.data;
     const page = loadSessionMessagesPage(sessionId, { limit, before });
-    const messages = page.messages.map((m) => normalizeMessageForUi(m as Parameters<typeof normalizeMessageForUi>[0]));
+    let parts: Array<Record<string, unknown>> = [];
+    try {
+      const store = (eng.sessionManager as unknown as { store?: { getParts?: (id: string) => Array<Record<string, unknown>> } }).store;
+      parts = store?.getParts?.(sessionId) ?? [];
+    } catch { /* best-effort */ }
+    const enriched = enrichSessionMessagesForUi(eng, [...page.messages], parts);
+    const messages = enriched.map((m) => mergeNormalizedMessageForApi(m));
     res.json({ messages, total: page.total, hasMore: page.hasMore });
   } catch (e: unknown) {
     getLogger().error('GET_SESSION_MESSAGES', e instanceof Error ? e : String(e));
