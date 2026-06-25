@@ -68,8 +68,8 @@ describe('strict crew suggestion — blackholes', () => {
     const svc = new CrewSuggestionService(catalogStore);
 
     const evaluation = await svc.evaluate({
-      message: 'I need to understand CRISPR gene editing. Who can help me?',
-      sessionId: 'test-crispr',
+      message: 'I need to understand anglerfish bioluminescence. Who can help me?',
+      sessionId: 'test-anglerfish',
       priorUserMessages: [],
       expandKeywords: async () => ['genetics', 'molecular biology', 'biotechnology'],
     });
