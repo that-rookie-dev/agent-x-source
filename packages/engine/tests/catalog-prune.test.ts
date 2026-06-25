@@ -13,6 +13,9 @@ import { SessionStore } from '../src/session/SessionStore.js';
 
 const manifest = loadCatalogManifest();
 
+/** Full hub manifest seed/heal can exceed 5s on CI runners. */
+const CATALOG_SEED_TIMEOUT_MS = 30_000;
+
 function isSqliteStore(store: SessionStore): boolean {
   return !(store as unknown as { memMode: boolean }).memMode && !!(store as unknown as { db: unknown }).db;
 }
@@ -54,7 +57,7 @@ describe('catalog-prune', () => {
       store.close();
       rmSync(tempDir, { recursive: true, force: true });
     }
-  });
+  }, CATALOG_SEED_TIMEOUT_MS);
 
   it.skipIf(!manifest)('dedupeSqliteCatalogTitles keeps manifest row', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'agentx-dedupe-test-'));
@@ -84,7 +87,7 @@ describe('catalog-prune', () => {
       store.close();
       rmSync(tempDir, { recursive: true, force: true });
     }
-  });
+  }, CATALOG_SEED_TIMEOUT_MS);
 
   it.skipIf(!manifest)('healDatabaseStore prunes when catalog count exceeds manifest', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'agentx-heal-prune-'));
@@ -110,5 +113,5 @@ describe('catalog-prune', () => {
       store.close();
       rmSync(tempDir, { recursive: true, force: true });
     }
-  });
+  }, CATALOG_SEED_TIMEOUT_MS);
 });

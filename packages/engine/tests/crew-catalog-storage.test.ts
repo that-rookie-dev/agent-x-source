@@ -11,6 +11,9 @@ import { healDatabaseStore } from '../src/db/database-healer.js';
 
 const manifest = loadCatalogManifest();
 
+/** Full hub manifest seed/sync can exceed 5s on CI runners. */
+const CATALOG_SEED_TIMEOUT_MS = 30_000;
+
 function isSqliteStore(store: SessionStore): boolean {
   return !(store as unknown as { memMode: boolean }).memMode;
 }
@@ -70,7 +73,7 @@ describe('crew catalog storage', () => {
     expect(entry?.callsign).toBe(sample.callsign);
     const hits = await catalogStore.searchCatalog('income tax return filing help', 5);
     expect(hits.length).toBeGreaterThan(0);
-  });
+  }, CATALOG_SEED_TIMEOUT_MS);
 
   it.skipIf(!manifest)('repair ensures crew_catalog after manual table drop at schema v19', () => {
     if (!isSqliteStore(store)) return;
@@ -94,7 +97,7 @@ describe('crew catalog storage', () => {
     const seeded = await catalogStore.seedCatalog(bumped);
     expect(seeded.inserted + seeded.updated).toBeGreaterThan(0);
     expect(await catalogStore.getCatalogRevision()).toBe(bumped.revision);
-  });
+  }, CATALOG_SEED_TIMEOUT_MS);
 
   it.skipIf(!manifest)('searchCatalog matches partial hub keywords', async () => {
     if (!isSqliteStore(store)) return;
@@ -116,7 +119,7 @@ describe('crew catalog storage', () => {
     const evaluation = await svc.evaluate({ message: msg, sessionId: 'test-vacation', priorUserMessages: [] });
     expect(evaluation.shouldSuggest).toBe(true);
     expect(evaluation.candidates.some((c) => /travel|tourism|itinerary/i.test(c.categoryLabel ?? c.title ?? ''))).toBe(true);
-  });
+  }, CATALOG_SEED_TIMEOUT_MS);
 
   it.skipIf(!manifest)('healDatabaseStore recreates crew_catalog and re-seeds after drop', async () => {
     if (!isSqliteStore(store)) return;
@@ -130,5 +133,5 @@ describe('crew catalog storage', () => {
     expect(result.schemaRepaired).toBe(true);
     expect(result.catalogSynced).toBe(true);
     expect(result.catalogCount).toBeGreaterThanOrEqual(manifest!.crews.length);
-  });
+  }, CATALOG_SEED_TIMEOUT_MS);
 });
