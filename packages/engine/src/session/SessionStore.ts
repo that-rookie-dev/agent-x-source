@@ -26,7 +26,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 21;
+const CURRENT_SCHEMA_VERSION = 23;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
