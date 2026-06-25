@@ -85,6 +85,46 @@ export function displayContent(message: { content?: string; parts?: Array<{ type
   return partsText || contentText;
 }
 
+/** True when any assistant message has a pending questionnaire part. */
+export function hasPendingQuestionnaire(messages: Array<{ parts?: Array<{ type?: string; questionnaire?: { status?: string } }> }>): boolean {
+  for (const m of messages) {
+    for (const p of m.parts ?? []) {
+      if (p.type === 'questionnaire' && p.questionnaire?.status === 'pending') return true;
+    }
+  }
+  return false;
+}
+
+/** Remove a trailing streaming/text-only assistant bubble before a questionnaire card. */
+export function stripTrailingStreamPreamble<T extends {
+  role?: string;
+  streaming?: boolean;
+  content?: string;
+  parts?: Array<{ type?: string }>;
+}>(messages: T[]): T[] {
+  const last = messages[messages.length - 1];
+  if (last?.role !== 'assistant') return messages;
+  const hasQuestionnaire = last.parts?.some((p) => p.type === 'questionnaire');
+  const hasTools = last.parts?.some((p) => p.type === 'tool');
+  if (hasQuestionnaire || hasTools) return messages;
+  if (last.streaming || last.content?.trim()) {
+    return messages.slice(0, -1);
+  }
+  return messages;
+}
+
+/** True when the last assistant message is a non-streaming questionnaire card. */
+export function lastMessageIsQuestionnaireCard(messages: Array<{
+  role?: string;
+  streaming?: boolean;
+  parts?: Array<{ type?: string; questionnaire?: { status?: string } }>;
+}>): boolean {
+  const last = messages[messages.length - 1];
+  return last?.role === 'assistant'
+    && !last.streaming
+    && (last.parts?.some((p) => p.type === 'questionnaire') ?? false);
+}
+
 /** Normalize one restored history row (assistant parts/toolCalls reconciliation). */
 export function mapRestoreHistoryMessage(m: Record<string, unknown>): Record<string, unknown> {
   const toolCalls = Array.isArray(m.toolCalls)
@@ -97,11 +137,12 @@ export function mapRestoreHistoryMessage(m: Record<string, unknown>): Record<str
     ?? repairStreamTextGlitches(stripToolNoise(String(m.content || '')));
   const parts = normalized?.parts
     ?? (Array.isArray(m.parts)
-      ? (m.parts as Array<Record<string, unknown>>).map((p) => (
-        p.type === 'text' && p.content
-          ? { ...p, content: repairStreamTextGlitches(stripToolNoise(String(p.content), { trim: false })) }
-          : p
-      ))
+      ? (m.parts as Array<Record<string, unknown>>).map((p) => {
+        if (p.type === 'text' && p.content) {
+          return { ...p, content: repairStreamTextGlitches(stripToolNoise(String(p.content), { trim: false })) };
+        }
+        return p;
+      })
       : undefined);
   return {
     ...m,

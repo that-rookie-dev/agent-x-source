@@ -53,10 +53,13 @@ export interface ToolParameterSchema {
 
 export interface ToolParameter {
   type: string;
-  description: string;
+  description?: string;
   enum?: string[];
   default?: unknown;
   items?: ToolParameter;
+  properties?: Record<string, ToolParameter>;
+  required?: string[];
+  maxItems?: number;
 }
 
 export interface ToolResult {

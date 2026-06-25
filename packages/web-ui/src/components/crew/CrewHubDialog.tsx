@@ -23,8 +23,7 @@ import { crewDialogPaperSx, crewHubScanlineSx, crewOverlineSx, crewTheme, getCre
 import { SkillChips } from './SkillChips';
 import { CrewProfileDialog } from './CrewProfileDialog';
 import { HubSectorNavItem } from './HubSectorNavItem';
-import { MedicalDisclaimerSectorCard } from './MedicalDisclaimerBanner';
-import { crewRequiresMedicalDisclaimer, isMedicalHubCategory } from '@agentx/shared/browser';
+import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
 
 export interface PrebuiltCrew {
   catalogId?: string;
@@ -171,21 +170,6 @@ export function CrewHubDialog({
     if (searchPending) return `${displayCrews.length} match${displayCrews.length === 1 ? '' : 'es'}…`;
     return `${displayCrews.length} match${displayCrews.length === 1 ? '' : 'es'} across all sectors`;
   })();
-
-  const showSectorMedicalBanner = isSearching
-    ? displayCrews.some((c) => crewRequiresMedicalDisclaimer({
-      categoryId: c.categoryId,
-      requiresMedicalDisclaimer: c.requiresMedicalDisclaimer,
-      catalogId: c.catalogId,
-    }))
-    : !!activeCategory && (
-      isMedicalHubCategory(activeCategory.id)
-      || displayCrews.some((c) => crewRequiresMedicalDisclaimer({
-        categoryId: c.categoryId,
-        requiresMedicalDisclaimer: c.requiresMedicalDisclaimer,
-        catalogId: c.catalogId,
-      }))
-    );
 
   const profileExisting = profileCrew
     ? crews.find((c) => c.callsign.toLowerCase() === profileCrew.callsign.toLowerCase())
@@ -413,10 +397,6 @@ export function CrewHubDialog({
           </Box>
         )}
 
-        {showSectorMedicalBanner && (
-          <MedicalDisclaimerSectorCard sx={{ mb: 1.25, flexShrink: 0 }} />
-        )}
-
         {displayCrews.length === 0 && (sectorCrewsLoading || searchPending) ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 8 }}>
             <CircularProgress size={28} sx={{ color: crewTheme.text.secondary }} />
@@ -439,19 +419,32 @@ export function CrewHubDialog({
             const imported = !!existing;
             const accent = getCrewAccent(undefined, pc.callsign);
             const isLoading = importLoading === pc.callsign;
+            const isMedical = isMedicalCrewDisplay({
+              categoryId: pc.categoryId,
+              requiresMedicalDisclaimer: pc.requiresMedicalDisclaimer,
+              catalogId: pc.catalogId,
+              callsign: pc.callsign,
+            });
 
             return (
               <Box key={pc.callsign} sx={{
-                p: 1.5,
                 borderRadius: '8px',
                 bgcolor: crewTheme.bg.card,
                 border: `1px solid ${imported ? crewTheme.border.strong : crewTheme.border.default}`,
                 minHeight: crewTheme.grid.hubCardHeight,
                 display: 'flex',
                 flexDirection: 'column',
+                overflow: 'hidden',
                 transition: 'border-color 0.15s ease',
                 '&:hover': { borderColor: crewTheme.border.strong },
               }}>
+                {isMedical && <MedicalCrewCardStripe />}
+                <Box sx={{
+                  p: 1.5,
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}>
                 {categoryLabel && (
                   <Chip
                     label={categoryLabel}
@@ -586,6 +579,7 @@ export function CrewHubDialog({
                     </Button>
                   </Box>
                 )}
+                </Box>
               </Box>
             );
           })}

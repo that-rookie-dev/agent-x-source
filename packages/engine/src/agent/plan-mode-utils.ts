@@ -103,13 +103,13 @@ export function isReadOnlyTool(toolId: string): boolean {
 
 export type PlanGatePromptProfile = 'default' | 'crew_worker' | 'crew_private';
 
-/** Interactive plan approval / mode-escalation modals — Agent-X main session only. */
+/** Proactive mode-escalation UI gates — Agent-X main session only (not crew private/worker). */
 export function shouldUseInteractivePlanGates(
   planMode: boolean,
   delegatedWorker: boolean,
   promptProfile: PlanGatePromptProfile = 'default',
 ): boolean {
-  if (promptProfile === 'crew_private' || promptProfile === 'crew_worker') return false;
+  if (promptProfile === 'crew_worker' || promptProfile === 'crew_private') return false;
   return planMode && !delegatedWorker;
 }
 
@@ -159,7 +159,7 @@ export function shouldEscalateForExecution(content: string, messageClass?: strin
   return requiresExecutionIntent(content) && !requiresPlanIntent(content);
 }
 
-/** Plan intent from message text + optional classifier (task messages with plan keywords). */
+/** @deprecated Interactive plan approval removed — plans are markdown in the completion loop. */
 export function shouldGeneratePlan(content: string, messageClass?: string): boolean {
   if (isConversationalPlanningRequest(content)) return false;
   if (requiresPlanIntent(content)) return true;
@@ -167,4 +167,39 @@ export function shouldGeneratePlan(content: string, messageClass?: string): bool
     return !isConversationalPlanningRequest(content);
   }
   return false;
+}
+
+/** Tool-result hint when a mutating tool is blocked in plan mode. */
+export function buildPlanModeRestrictedToolHint(
+  toolId: string,
+  systemOutput: string,
+  promptProfile: PlanGatePromptProfile = 'default',
+): string {
+  if (promptProfile === 'crew_private') {
+    return [
+      `The "${toolId}" tool is not available in this private chat turn.`,
+      systemOutput,
+      'Do NOT ask the user to switch to Agent mode or open any approval UI.',
+      'Continue the conversation: deliver your complete answer as markdown in chat.',
+      'Only mention filesystem tools if they explicitly asked to modify files on their machine.',
+    ].join('\n');
+  }
+
+  return `🚨 CRITICAL RESTRICTION 🚨
+
+The "${toolId}" tool FAILED with error: MODE_RESTRICTED
+
+The user is in Plan Mode (read-only). The "${toolId}" tool requires Agent Mode and CANNOT be executed right now.
+
+YOUR RESPONSE MUST:
+1. ❌ NEVER claim you created/edited/deleted/executed anything. The action FAILED.
+2. ❌ NEVER show fake code or fake output. It didn't actually run.
+3. ✅ TELL the user the action failed and why: you're in Plan Mode and need Agent Mode
+4. ✅ EXPLAIN which specific action you tried to perform and why it failed
+5. ✅ SUGGEST the user click the Agent Mode button in the UI to switch modes
+6. ✅ TELL them what you'll do once they switch modes
+
+This is NOT a suggestion - it's an instruction. If you claim the tool succeeded when it failed, you're deceiving the user.
+
+ERROR MESSAGE FROM SYSTEM: ${systemOutput}`;
 }

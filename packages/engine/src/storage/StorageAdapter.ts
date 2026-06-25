@@ -181,6 +181,8 @@ export class DefaultStorageAdapter implements StorageAdapter {
       content: row['content'] as string,
       tokenCount: (row['token_count'] as number) ?? 0,
       toolCalls: row['tool_calls'] as string | undefined,
+      parts: row['parts'] as StorableMessage['parts'],
+      metadata: row['metadata'] as StorableMessage['metadata'],
       createdAt: row['created_at'] as string,
     }));
   }

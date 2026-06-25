@@ -11,6 +11,7 @@ import ForumIcon from '@mui/icons-material/Forum';
 import type { Crew } from '../../api';
 import { crewCardSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
 import { SkillChips } from './SkillChips';
+import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
 
 interface CrewCardProps {
   crew: Crew;
@@ -37,9 +38,17 @@ export function CrewCard({
 }: CrewCardProps) {
   const enabled = crew.enabled !== false;
   const accent = getCrewAccent(crew.color, crew.callsign);
+  const isMedical = isMedicalCrewDisplay({
+    categoryId: crew.categoryId,
+    requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    catalogId: crew.catalogId,
+    callsign: crew.callsign,
+    crewId: crew.id,
+  });
 
   return (
     <Box onClick={() => onOpen(crew)} sx={crewCardSx(accent, enabled)}>
+      {isMedical && <MedicalCrewCardStripe />}
       <Box sx={{ p: 1.75 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 0.85 }}>
           <Box sx={{

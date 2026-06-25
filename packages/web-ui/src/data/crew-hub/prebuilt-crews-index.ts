@@ -266,7 +266,7 @@ export const PREBUILT_CATEGORY_INDEX: PrebuiltCategoryIndexEntry[] = [
   },
   {
     "id": "medical-surgical-specialties",
-    "label": "Medical · Surgical Specialties",
+    "label": "Medical · Surgical Specialties (General)",
     "iconId": "local_hospital"
   },
   {
@@ -458,5 +458,650 @@ export const PREBUILT_CATEGORY_INDEX: PrebuiltCategoryIndexEntry[] = [
     "id": "library-information-science",
     "label": "Library & Information Science",
     "iconId": "menu_book"
+  },
+  {
+    "id": "medical-allergy-immunology",
+    "label": "Medical · Allergy & Immunology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-anesthesiology",
+    "label": "Medical · Anesthesiology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-cardiology-vascular",
+    "label": "Medical · Cardiology & Vascular Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-gastroenterology-hepatology",
+    "label": "Medical · Gastroenterology & Hepatology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-pulmonology-critical-care",
+    "label": "Medical · Pulmonology & Critical Care",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-nephrology",
+    "label": "Medical · Nephrology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-endocrinology-metabolism",
+    "label": "Medical · Endocrinology & Metabolism",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-rheumatology-autoimmune",
+    "label": "Medical · Rheumatology & Autoimmune Disease",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-infectious-disease-medicine",
+    "label": "Medical · Infectious Disease",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-hematology",
+    "label": "Medical · Hematology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-medical-genetics",
+    "label": "Medical · Medical Genetics & Genomics",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-nuclear-medicine",
+    "label": "Medical · Nuclear Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-preventive-medicine",
+    "label": "Medical · Preventive Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-physical-medicine-rehab",
+    "label": "Medical · Physical Medicine & Rehabilitation",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-pain-medicine",
+    "label": "Medical · Pain Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-sleep-medicine",
+    "label": "Medical · Sleep Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-hospice-palliative",
+    "label": "Medical · Hospice & Palliative Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-addiction-medicine",
+    "label": "Medical · Addiction Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-medical-toxicology",
+    "label": "Medical · Medical Toxicology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-colorectal-surgery",
+    "label": "Medical · Colon & Rectal Surgery",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-thoracic-surgery",
+    "label": "Medical · Thoracic Surgery",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-vascular-surgery",
+    "label": "Medical · Vascular Surgery",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-neurosurgery",
+    "label": "Medical · Neurological Surgery",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-orthopedic-surgery",
+    "label": "Medical · Orthopedic Surgery",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-plastic-surgery",
+    "label": "Medical · Plastic & Reconstructive Surgery",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-otolaryngology",
+    "label": "Medical · Otolaryngology (ENT)",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-urology-specialty",
+    "label": "Medical · Urology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-ophthalmology-specialty",
+    "label": "Medical · Ophthalmology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-interventional-radiology",
+    "label": "Medical · Interventional Radiology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-radiation-oncology",
+    "label": "Medical · Radiation Oncology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-geriatric-medicine",
+    "label": "Medical · Geriatric Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-adolescent-medicine",
+    "label": "Medical · Adolescent Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-occupational-medicine",
+    "label": "Medical · Occupational Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-sports-medicine-physician",
+    "label": "Medical · Sports Medicine (Physician)",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-podiatry",
+    "label": "Medical · Podiatry",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-optometry",
+    "label": "Medical · Optometry",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-audiology",
+    "label": "Medical · Audiology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-chiropractic",
+    "label": "Medical · Chiropractic & Spinal Care",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-genetic-counseling",
+    "label": "Medical · Genetic Counseling",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-clinical-dietetics",
+    "label": "Medical · Clinical Dietetics & Nutrition",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-ems-paramedic",
+    "label": "Medical · EMS & Prehospital Care",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-cardiovascular-perfusion",
+    "label": "Medical · Cardiovascular Perfusion",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-health-social-work",
+    "label": "Medical · Health Social Work",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-pediatric-subspecialties",
+    "label": "Medical · Pediatric Subspecialties",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-integrative-medicine",
+    "label": "Medical · Integrative & Complementary Health",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-oral-maxillofacial-surgery",
+    "label": "Medical · Oral & Maxillofacial Surgery",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-pediatric-surgery",
+    "label": "Medical · Pediatric Surgery",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-surgical-oncology",
+    "label": "Medical · Surgical Oncology",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-transplant-medicine",
+    "label": "Medical · Transplant Medicine",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "medical-reproductive-endocrinology",
+    "label": "Medical · Reproductive Endocrinology & Infertility",
+    "iconId": "local_hospital"
+  },
+  {
+    "id": "k12-teaching-instruction",
+    "label": "K-12 Teaching & Instruction",
+    "iconId": "school"
+  },
+  {
+    "id": "early-childhood-education",
+    "label": "Early Childhood & Daycare",
+    "iconId": "school"
+  },
+  {
+    "id": "special-education-inclusion",
+    "label": "Special Education & Inclusion",
+    "iconId": "school"
+  },
+  {
+    "id": "vocational-trade-instruction",
+    "label": "Vocational & Trade School Instruction",
+    "iconId": "construction"
+  },
+  {
+    "id": "banking-commercial-finance",
+    "label": "Banking & Commercial Finance",
+    "iconId": "balance"
+  },
+  {
+    "id": "investment-capital-markets",
+    "label": "Investment Banking & Capital Markets",
+    "iconId": "trending"
+  },
+  {
+    "id": "wealth-management-advisory",
+    "label": "Wealth Management & Financial Planning",
+    "iconId": "trending"
+  },
+  {
+    "id": "actuarial-quantitative-risk",
+    "label": "Actuarial Science & Quantitative Risk",
+    "iconId": "analytics"
+  },
+  {
+    "id": "social-work-human-services",
+    "label": "Social Work & Human Services",
+    "iconId": "volunteer"
+  },
+  {
+    "id": "child-family-welfare",
+    "label": "Child & Family Welfare Services",
+    "iconId": "favorite"
+  },
+  {
+    "id": "electrical-trades-power",
+    "label": "Electrical Trades & Power Systems",
+    "iconId": "construction"
+  },
+  {
+    "id": "plumbing-hvac-trades",
+    "label": "Plumbing, Heating & HVAC Trades",
+    "iconId": "construction"
+  },
+  {
+    "id": "carpentry-masonry-finishing",
+    "label": "Carpentry, Masonry & Finishing Trades",
+    "iconId": "construction"
+  },
+  {
+    "id": "automotive-sales-service",
+    "label": "Automotive Sales & Service",
+    "iconId": "devices"
+  },
+  {
+    "id": "aviation-airline-operations",
+    "label": "Aviation & Airline Operations",
+    "iconId": "flight"
+  },
+  {
+    "id": "maritime-port-operations",
+    "label": "Maritime Shipping & Port Operations",
+    "iconId": "maritime"
+  },
+  {
+    "id": "postal-courier-delivery",
+    "label": "Postal, Courier & Last-Mile Delivery",
+    "iconId": "shipping"
+  },
+  {
+    "id": "telecom-network-operations",
+    "label": "Telecommunications & Network Operations",
+    "iconId": "lan"
+  },
+  {
+    "id": "film-tv-broadcast-production",
+    "label": "Film, TV & Broadcast Production",
+    "iconId": "videogame"
+  },
+  {
+    "id": "photography-videography-services",
+    "label": "Photography & Videography Services",
+    "iconId": "brush"
+  },
+  {
+    "id": "music-performing-arts",
+    "label": "Music & Performing Arts",
+    "iconId": "brush"
+  },
+  {
+    "id": "fashion-apparel-textiles",
+    "label": "Fashion, Apparel & Textiles",
+    "iconId": "palette"
+  },
+  {
+    "id": "mining-mineral-extraction",
+    "label": "Mining & Mineral Extraction",
+    "iconId": "factory"
+  },
+  {
+    "id": "oil-gas-upstream",
+    "label": "Oil & Gas Upstream Operations",
+    "iconId": "energy"
+  },
+  {
+    "id": "pharma-biotech-commercial",
+    "label": "Pharmaceuticals & Biotech Commercial",
+    "iconId": "biotech"
+  },
+  {
+    "id": "clinical-research-trials",
+    "label": "Clinical Research & Trial Operations",
+    "iconId": "science"
+  },
+  {
+    "id": "beauty-cosmetology-personal-care",
+    "label": "Beauty, Cosmetology & Personal Care",
+    "iconId": "palette"
+  },
+  {
+    "id": "funeral-death-care",
+    "label": "Funeral & Death Care Services",
+    "iconId": "home"
+  },
+  {
+    "id": "cleaning-facilities-janitorial",
+    "label": "Facilities, Cleaning & Janitorial",
+    "iconId": "home"
+  },
+  {
+    "id": "private-security-protective",
+    "label": "Private Security & Protective Services",
+    "iconId": "police"
+  },
+  {
+    "id": "military-defense-operations",
+    "label": "Military & Defense Operations",
+    "iconId": "landmark"
+  },
+  {
+    "id": "intelligence-national-security",
+    "label": "Intelligence & National Security Analysis",
+    "iconId": "forensic"
+  },
+  {
+    "id": "professional-sports-coaching",
+    "label": "Professional Sports Coaching",
+    "iconId": "sports"
+  },
+  {
+    "id": "fitness-gym-operations",
+    "label": "Fitness Training & Gym Operations",
+    "iconId": "sports"
+  },
+  {
+    "id": "retail-store-merchandising",
+    "label": "Retail Store Management & Merchandising",
+    "iconId": "storefront"
+  },
+  {
+    "id": "wholesale-distribution",
+    "label": "Wholesale & Distribution Sales",
+    "iconId": "shipping"
+  },
+  {
+    "id": "warehouse-fulfillment-operations",
+    "label": "Warehouse & Fulfillment Operations",
+    "iconId": "factory"
+  },
+  {
+    "id": "property-management-leasing",
+    "label": "Property Management & Leasing Operations",
+    "iconId": "apartment"
+  },
+  {
+    "id": "culinary-arts-chef-roles",
+    "label": "Culinary Arts & Chef Roles",
+    "iconId": "restaurant"
+  },
+  {
+    "id": "bartending-beverage-service",
+    "label": "Bartending & Beverage Service",
+    "iconId": "restaurant"
+  },
+  {
+    "id": "event-planning-weddings",
+    "label": "Event Planning & Wedding Coordination",
+    "iconId": "groups"
+  },
+  {
+    "id": "copywriting-content-production",
+    "label": "Copywriting, Editing & Content Production",
+    "iconId": "news"
+  },
+  {
+    "id": "market-research-consumer-insights",
+    "label": "Market Research & Consumer Insights",
+    "iconId": "analytics"
+  },
+  {
+    "id": "executive-administrative-support",
+    "label": "Executive & Administrative Support",
+    "iconId": "work"
+  },
+  {
+    "id": "call-center-contact-operations",
+    "label": "Call Center & Contact Center Operations",
+    "iconId": "support"
+  },
+  {
+    "id": "notary-paralegal-legal-support",
+    "label": "Notary, Paralegal & Legal Support",
+    "iconId": "gavel"
+  },
+  {
+    "id": "tax-preparation-enrolled-agent",
+    "label": "Tax Preparation & Enrolled Agent Services",
+    "iconId": "balance"
+  },
+  {
+    "id": "payroll-benefits-hris",
+    "label": "Payroll, Benefits & HRIS Administration",
+    "iconId": "work"
+  },
+  {
+    "id": "diplomacy-foreign-service",
+    "label": "Diplomacy & Foreign Service",
+    "iconId": "landmark"
+  },
+  {
+    "id": "anthropology-sociology-research",
+    "label": "Anthropology, Sociology & Social Research",
+    "iconId": "science"
+  },
+  {
+    "id": "psychology-counseling-services",
+    "label": "Psychology & Counseling (Non-Medical)",
+    "iconId": "favorite"
+  },
+  {
+    "id": "life-coaching-career-development",
+    "label": "Life Coaching & Career Development",
+    "iconId": "work"
+  },
+  {
+    "id": "pest-control-services",
+    "label": "Pest Control & Extermination",
+    "iconId": "home"
+  },
+  {
+    "id": "landscaping-garden-services",
+    "label": "Landscaping, Lawn & Garden Services",
+    "iconId": "eco"
+  },
+  {
+    "id": "locksmith-security-hardware",
+    "label": "Locksmith & Security Hardware",
+    "iconId": "construction"
+  },
+  {
+    "id": "laundry-alterations-services",
+    "label": "Laundry, Dry Cleaning & Alterations",
+    "iconId": "home"
+  },
+  {
+    "id": "jewelry-watchmaking-gemology",
+    "label": "Jewelry, Watchmaking & Gemology",
+    "iconId": "palette"
+  },
+  {
+    "id": "printing-signage-production",
+    "label": "Printing, Signage & Large Format",
+    "iconId": "factory"
+  },
+  {
+    "id": "waste-management-recycling",
+    "label": "Waste Management & Recycling",
+    "iconId": "eco"
+  },
+  {
+    "id": "water-wastewater-treatment",
+    "label": "Water & Wastewater Treatment",
+    "iconId": "energy"
+  },
+  {
+    "id": "elevator-building-systems-maintenance",
+    "label": "Elevator & Building Systems Maintenance",
+    "iconId": "construction"
+  },
+  {
+    "id": "crane-heavy-equipment-operation",
+    "label": "Crane, Heavy Equipment & Rigging",
+    "iconId": "construction"
+  },
+  {
+    "id": "land-surveying-geomatics",
+    "label": "Land Surveying & Geomatics",
+    "iconId": "construction"
+  },
+  {
+    "id": "architecture-built-environment",
+    "label": "Architecture & Built Environment Design",
+    "iconId": "apartment"
+  },
+  {
+    "id": "industrial-product-design",
+    "label": "Industrial & Product Design",
+    "iconId": "palette"
+  },
+  {
+    "id": "ux-research-human-centered-design",
+    "label": "UX Research & Human-Centered Design",
+    "iconId": "web"
+  },
+  {
+    "id": "lobbying-government-affairs",
+    "label": "Lobbying & Government Affairs",
+    "iconId": "landmark"
+  },
+  {
+    "id": "grant-writing-proposal-development",
+    "label": "Grant Writing & Proposal Development",
+    "iconId": "volunteer"
+  },
+  {
+    "id": "small-business-entrepreneurship",
+    "label": "Small Business Ownership & Entrepreneurship",
+    "iconId": "storefront"
+  },
+  {
+    "id": "home-inspection-appraisal",
+    "label": "Home Inspection & Real Estate Appraisal",
+    "iconId": "apartment"
+  },
+  {
+    "id": "mediation-dispute-resolution",
+    "label": "Mediation & Alternative Dispute Resolution",
+    "iconId": "gavel"
+  },
+  {
+    "id": "nursing-home-longterm-care",
+    "label": "Nursing Home & Long-Term Care Administration",
+    "iconId": "hospital"
+  },
+  {
+    "id": "home-health-hospice-operations",
+    "label": "Home Health & Hospice Care Operations",
+    "iconId": "hospital"
+  },
+  {
+    "id": "real-estate-appraisal-valuation",
+    "label": "Real Estate Appraisal & Valuation",
+    "iconId": "apartment"
+  },
+  {
+    "id": "insurance-claims-adjusting",
+    "label": "Insurance Claims Adjusting & Underwriting",
+    "iconId": "policy"
+  },
+  {
+    "id": "court-reporting-litigation-support",
+    "label": "Court Reporting & Litigation Support",
+    "iconId": "gavel"
+  },
+  {
+    "id": "broadcast-journalism-newsroom",
+    "label": "Broadcast Journalism & Newsroom",
+    "iconId": "news"
+  },
+  {
+    "id": "fine-arts-crafts-artisan",
+    "label": "Fine Arts, Crafts & Artisan Work",
+    "iconId": "brush"
+  },
+  {
+    "id": "diplomatic-courier-logistics",
+    "label": "International Trade & Customs Brokerage",
+    "iconId": "shipping"
   }
 ];

@@ -22,12 +22,15 @@ export interface SubAgent {
   kind?: 'sub_agent' | 'crew_worker';
 }
 
+import type { QuestionnaireRecord } from '@agentx/shared/browser';
+
 export interface PartEntry {
-  type: 'text' | 'tool' | 'subagent';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire';
   id: string;
   content?: string;
   tool?: ToolCall;
   agent?: SubAgent;
+  questionnaire?: QuestionnaireRecord;
 }
 
 export interface UIMessage extends ChatMessage {
@@ -53,6 +56,7 @@ export interface UIMessage extends ChatMessage {
   };
   parts?: PartEntry[];
   isModeChange?: { from: string; to: string };
+  turnFeedback?: { rating: import('@agentx/shared/browser').TurnFeedbackRating };
 }
 
 export interface VisibleMessageItem {

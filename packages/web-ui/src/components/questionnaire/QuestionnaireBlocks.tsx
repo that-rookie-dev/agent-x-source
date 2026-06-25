@@ -2,14 +2,10 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { colors } from '../../theme';
 import type {
-  FormFieldsBlock,
-  MultiChoiceBlock,
-  QuestionnaireBlock,
+  QuestionnaireQuestion,
   QuestionnaireResponseState,
-  SingleChoiceBlock,
-  TextBlock,
 } from './types';
-import { ALL_CHOICE_VALUE } from './types';
+import { QUESTIONNAIRE_CUSTOM_SUFFIX } from './types';
 
 export const fieldInputStyle: React.CSSProperties = {
   width: '100%',
@@ -61,10 +57,47 @@ function CheckMark({ checked }: { checked: boolean }) {
   );
 }
 
+function CustomAnswerField({
+  value,
+  onChange,
+  onSubmit,
+  onSkip,
+  label = 'Or type a custom answer',
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  onSkip: () => void;
+  label?: string;
+}) {
+  return (
+    <Box sx={{ px: 1.25, pb: 0.5 }}>
+      <Typography sx={{
+        fontSize: '0.5rem',
+        color: colors.text.dim,
+        fontFamily: "'JetBrains Mono', monospace",
+        mb: 0.3,
+      }}>
+        {label}
+      </Typography>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onSubmit(); }
+          if (e.key === 'Escape') { e.preventDefault(); onSkip(); }
+        }}
+        placeholder="Custom answer…"
+        style={{ ...fieldInputStyle, fontSize: '0.65rem' }}
+      />
+    </Box>
+  );
+}
+
 interface ChoiceListProps {
   mode: 'single' | 'multi';
   options: Array<{ value: string; label?: string; recommended?: boolean }>;
-  allowAll?: boolean;
   selected: string | null | Set<string>;
   focusIdx: number;
   onFocusIdx: (idx: number) => void;
@@ -77,7 +110,6 @@ interface ChoiceListProps {
 function ChoiceList({
   mode,
   options,
-  allowAll,
   selected,
   focusIdx,
   onFocusIdx,
@@ -86,19 +118,14 @@ function ChoiceList({
   onKeyDown,
   listRef,
 }: ChoiceListProps) {
-  const navigable = [...options];
-  if (allowAll && options.length > 1) {
-    navigable.push({ value: ALL_CHOICE_VALUE, label: 'All of the above' });
-  }
-
   return (
     <Box
       ref={listRef}
-      tabIndex={0}
+      tabIndex={focusIdx >= 0 ? 0 : -1}
       onKeyDown={onKeyDown}
       sx={{ outline: 'none', py: 0.5, px: 0.75, display: 'flex', flexDirection: 'column', gap: 0.25 }}
     >
-      {navigable.map((opt, idx) => {
+      {options.map((opt, idx) => {
         const label = opt.label ?? opt.value;
         const checked = mode === 'single'
           ? selected === opt.value
@@ -156,178 +183,144 @@ function ChoiceList({
   );
 }
 
-interface BlockRendererProps {
-  block: QuestionnaireBlock;
+interface QuestionBlockRendererProps {
+  question: QuestionnaireQuestion;
   state: QuestionnaireResponseState;
-  onStateChange: (blockId: string, value: QuestionnaireResponseState[string]) => void;
+  onStateChange: (key: string, value: QuestionnaireResponseState[string]) => void;
   focusIdx: number;
   onFocusIdx: (idx: number) => void;
   listRef: React.RefObject<HTMLDivElement | null>;
-  onListKeyDown: (e: React.KeyboardEvent, block: SingleChoiceBlock | MultiChoiceBlock) => void;
   onSubmit: () => void;
   onSkip: () => void;
 }
 
-export function QuestionnaireBlockRenderer({
-  block,
+export function QuestionBlockRenderer({
+  question,
   state,
   onStateChange,
   focusIdx,
   onFocusIdx,
   listRef,
-  onListKeyDown,
   onSubmit,
   onSkip,
-}: BlockRendererProps) {
-  if (block.type === 'single_choice') {
-    const freeTextKey = `${block.id}__freeform`;
-    const freeText = (state[freeTextKey] as string) ?? '';
+}: QuestionBlockRendererProps) {
+  const customKey = `${question.id}${QUESTIONNAIRE_CUSTOM_SUFFIX}`;
+  const customValue = (state[customKey] as string) ?? '';
 
+  const handleListKeyDown = (e: React.KeyboardEvent) => {
+    if (question.type !== 'single_choice' && question.type !== 'multi_choice') return;
+    const options = question.options ?? [];
+    const max = options.length - 1;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      onFocusIdx(Math.min(focusIdx + 1, max));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      onFocusIdx(Math.max(focusIdx - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const opt = options[focusIdx];
+      if (!opt) return;
+      if (question.type === 'single_choice') {
+        onStateChange(question.id, opt.value);
+      } else {
+        const current = new Set((state[question.id] as Set<string>) ?? []);
+        if (current.has(opt.value)) current.delete(opt.value);
+        else current.add(opt.value);
+        onStateChange(question.id, current);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onSkip();
+    }
+  };
+
+  if (question.type === 'single_choice' && question.options?.length) {
     return (
       <>
         <ChoiceList
           mode="single"
-          options={block.options}
-          allowAll={block.allowAll}
-          selected={(state[block.id] as string | null) ?? null}
+          options={question.options}
+          selected={(state[question.id] as string | null) ?? null}
           focusIdx={focusIdx}
           onFocusIdx={onFocusIdx}
-          onSelectSingle={(value) => onStateChange(block.id, value)}
+          onSelectSingle={(value) => onStateChange(question.id, value)}
           onToggleMulti={() => {}}
-          onKeyDown={(e) => onListKeyDown(e, block)}
+          onKeyDown={handleListKeyDown}
           listRef={listRef}
         />
-        {block.allowFreeform !== false && (
-          <Box sx={{ px: 1.25, pb: 0.5 }}>
-            <Typography sx={{
-              fontSize: '0.5rem',
-              color: colors.text.dim,
-              fontFamily: "'JetBrains Mono', monospace",
-              mb: 0.3,
-            }}>
-              Or type a custom answer
-            </Typography>
-            <input
-              type="text"
-              value={freeText}
-              onChange={(e) => onStateChange(freeTextKey, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && freeText.trim()) { e.preventDefault(); onSubmit(); }
-                if (e.key === 'Escape') { e.preventDefault(); onSkip(); }
-              }}
-              placeholder="Custom answer…"
-              style={{ ...fieldInputStyle, fontSize: '0.65rem' }}
-            />
-          </Box>
+        {question.allowCustom !== false && (
+          <CustomAnswerField
+            value={customValue}
+            onChange={(v) => onStateChange(customKey, v)}
+            onSubmit={onSubmit}
+            onSkip={onSkip}
+          />
         )}
       </>
     );
   }
 
-  if (block.type === 'multi_choice') {
+  if (question.type === 'multi_choice' && question.options?.length) {
     return (
-      <ChoiceList
-        mode="multi"
-        options={block.options}
-        allowAll={block.allowAll}
-        selected={(state[block.id] as Set<string>) ?? new Set()}
-        focusIdx={focusIdx}
-        onFocusIdx={onFocusIdx}
-        onSelectSingle={() => {}}
-        onToggleMulti={(value) => {
-          const current = new Set((state[block.id] as Set<string>) ?? []);
-          if (current.has(value)) current.delete(value);
-          else current.add(value);
-          onStateChange(block.id, current);
-        }}
-        onKeyDown={(e) => onListKeyDown(e, block)}
-        listRef={listRef}
-      />
-    );
-  }
-
-  if (block.type === 'text') {
-    const textBlock = block as TextBlock;
-    const value = (state[block.id] as string) ?? '';
-    return (
-      <Box sx={{ px: 1.25, py: 0.75 }}>
-        {textBlock.multiline ? (
-          <textarea
-            value={value}
-            onChange={(e) => onStateChange(block.id, e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); }
-              if (e.key === 'Escape') { e.preventDefault(); onSkip(); }
-            }}
-            placeholder={textBlock.placeholder ?? 'Type your answer…'}
-            rows={3}
-            style={{ ...fieldInputStyle, resize: 'vertical', minHeight: 56 }}
-          />
-        ) : (
-          <input
-            type="text"
-            value={value}
-            onChange={(e) => onStateChange(block.id, e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); onSubmit(); }
-              if (e.key === 'Escape') { e.preventDefault(); onSkip(); }
-            }}
-            placeholder={textBlock.placeholder ?? 'Type your answer…'}
-            style={fieldInputStyle}
+      <>
+        <ChoiceList
+          mode="multi"
+          options={question.options}
+          selected={(state[question.id] as Set<string>) ?? new Set()}
+          focusIdx={focusIdx}
+          onFocusIdx={onFocusIdx}
+          onSelectSingle={() => {}}
+          onToggleMulti={(value) => {
+            const current = new Set((state[question.id] as Set<string>) ?? []);
+            if (current.has(value)) current.delete(value);
+            else current.add(value);
+            onStateChange(question.id, current);
+          }}
+          onKeyDown={handleListKeyDown}
+          listRef={listRef}
+        />
+        {question.allowCustom !== false && (
+          <CustomAnswerField
+            value={customValue}
+            onChange={(v) => onStateChange(customKey, v)}
+            onSubmit={onSubmit}
+            onSkip={onSkip}
           />
         )}
-      </Box>
+      </>
     );
   }
 
-  if (block.type === 'form_fields') {
-    const formBlock = block as FormFieldsBlock;
-    const values = (state[block.id] as Record<string, string>) ?? {};
-
-    return (
-      <Box sx={{ px: 1.25, py: 0.75, display: 'flex', flexDirection: 'column', gap: 0.65 }}>
-        {formBlock.fields.map((field) => (
-          <Box key={field.key}>
-            <Typography sx={{
-              fontSize: '0.55rem',
-              color: colors.text.dim,
-              fontFamily: "'JetBrains Mono', monospace",
-              mb: 0.3,
-              textTransform: 'uppercase',
-              letterSpacing: '0.04em',
-            }}>
-              {field.label}
-            </Typography>
-            {field.type === 'textarea' ? (
-              <textarea
-                value={values[field.key] ?? ''}
-                onChange={(e) => onStateChange(block.id, { ...values, [field.key]: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); }
-                  if (e.key === 'Escape') { e.preventDefault(); onSkip(); }
-                }}
-                placeholder={field.placeholder ?? ''}
-                rows={2}
-                style={{ ...fieldInputStyle, resize: 'vertical' }}
-              />
-            ) : (
-              <input
-                type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
-                value={values[field.key] ?? ''}
-                onChange={(e) => onStateChange(block.id, { ...values, [field.key]: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); onSubmit(); }
-                  if (e.key === 'Escape') { e.preventDefault(); onSkip(); }
-                }}
-                placeholder={field.placeholder ?? ''}
-                style={fieldInputStyle}
-              />
-            )}
-          </Box>
-        ))}
-      </Box>
-    );
-  }
-
-  return null;
+  const value = (state[question.id] as string) ?? '';
+  return (
+    <Box sx={{ px: 1.25, py: 0.75 }}>
+      {question.multiline ? (
+        <textarea
+          value={value}
+          onChange={(e) => onStateChange(question.id, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); }
+            if (e.key === 'Escape') { e.preventDefault(); onSkip(); }
+          }}
+          placeholder={question.placeholder ?? 'Type your answer…'}
+          rows={3}
+          style={{ ...fieldInputStyle, resize: 'vertical', minHeight: 56 }}
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onStateChange(question.id, e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); onSubmit(); }
+            if (e.key === 'Escape') { e.preventDefault(); onSkip(); }
+          }}
+          placeholder={question.placeholder ?? 'Type your answer…'}
+          style={fieldInputStyle}
+        />
+      )}
+    </Box>
+  );
 }

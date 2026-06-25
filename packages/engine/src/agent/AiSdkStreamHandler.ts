@@ -17,6 +17,8 @@ interface StreamState {
   accumulatedContent: string;
   accumulatedReasoning: string;
   stepCount: number;
+  stepTextStartLength: number;
+  clarificationUsed: boolean;
   totalInputTokens: number;
   totalOutputTokens: number;
   promptCharEstimate: number;
@@ -187,6 +189,8 @@ export function createAiSdkStreamHandler(
     accumulatedContent: '',
     accumulatedReasoning: '',
     stepCount: 0,
+    stepTextStartLength: 0,
+    clarificationUsed: false,
     totalInputTokens: 0,
     totalOutputTokens: 0,
     promptCharEstimate,
@@ -291,6 +295,7 @@ export function createAiSdkStreamHandler(
 
         case 'step-start': {
           state.stepCount++;
+          state.stepTextStartLength = state.accumulatedContent.length;
           if (state.stepCount > 1) {
             emit({ type: 'loading_start', stage: 'tool_execution', message: 'Executing...' } as unknown as EngineEvent);
           }
@@ -474,7 +479,14 @@ export function createAiSdkStreamHandler(
           timestamp: Date.now(),
         });
 
-        const finalContent = state.accumulatedContent || 'I apologize, I was unable to generate a response.';
+        const trimmedContent = (state.accumulatedContent || '').trim();
+        // Questionnaire-only turns: skip empty recap bubbles after ask_clarification steps
+        if (state.clarificationUsed && !trimmedContent) {
+          emit({ type: 'completion_finished', message: 'Thought.' } as unknown as EngineEvent);
+          break;
+        }
+
+        const finalContent = trimmedContent || 'I apologize, I was unable to generate a response.';
 
         const assistantMessage: Message = {
           id: generateMessageId(),
@@ -551,10 +563,17 @@ export function createAiSdkStreamHandler(
   return {
     handleEvent,
     getState: () => state,
+    discardCurrentStepText: () => {
+      state.clarificationUsed = true;
+      state.accumulatedContent = state.accumulatedContent.slice(0, state.stepTextStartLength);
+      emit({ type: 'stream_clear' });
+    },
     reset: () => {
       state.accumulatedContent = '';
       state.accumulatedReasoning = '';
       state.stepCount = 0;
+      state.stepTextStartLength = 0;
+      state.clarificationUsed = false;
       state.toolCallCount = 0;
     },
   };

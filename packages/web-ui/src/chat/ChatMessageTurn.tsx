@@ -9,8 +9,9 @@ import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
-import { MedicalDisclaimerBanner } from '../components/crew/MedicalDisclaimerBanner';
-import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
+import { QuestionnaireMessage } from '../components/questionnaire/QuestionnaireMessage';
+import { TurnFeedbackBar } from './TurnFeedbackBar';
+import type { TurnFeedbackRating } from '@agentx/shared/browser';
 
 function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   const [expanded, setExpanded] = useState(false);
@@ -35,11 +36,14 @@ function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
 function renderParts(
   parts: PartEntry[],
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void,
+  onQuestionnaireRespond?: (messageId: string, response: string) => void,
+  messageId?: string,
 ) {
   const filtered = parts.filter((p) => {
     if (p.type === 'text') return !!p.content?.trim();
     if (p.type === 'tool') return !!p.tool;
     if (p.type === 'subagent') return !!p.agent;
+    if (p.type === 'questionnaire') return !!p.questionnaire;
     return false;
   });
 
@@ -49,6 +53,19 @@ function renderParts(
         switch (part.type) {
           case 'text':
             return part.content ? <CrewAwareMarkdown key={part.id} content={part.content} /> : null;
+          case 'questionnaire':
+            if (!part.questionnaire) return null;
+            return (
+              <QuestionnaireMessage
+                key={part.id}
+                record={part.questionnaire}
+                onRespond={
+                  part.questionnaire.status === 'pending' && onQuestionnaireRespond && messageId
+                    ? (response) => onQuestionnaireRespond(messageId, response)
+                    : undefined
+                }
+              />
+            );
           case 'tool':
             return part.tool ? <InlineToolCall key={part.id} tool={part.tool} /> : null;
           case 'subagent':
@@ -86,10 +103,14 @@ function renderParts(
   );
 }
 
-function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession }: {
+function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, showFeedback, onTurnFeedback, feedbackSubmitting }: {
   message: UIMessage;
   loadingSteps?: Array<{ id: string; label: string; status: string }> | null;
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void;
+  onQuestionnaireRespond?: (messageId: string, response: string) => void;
+  showFeedback?: boolean;
+  onTurnFeedback?: (messageId: string, rating: TurnFeedbackRating) => void;
+  feedbackSubmitting?: boolean;
 }) {
   const crewInfo = message.crew;
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
@@ -114,12 +135,8 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession }:
   };
   const cleanContent = displayContent(displayMessage);
   const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
-  const showMedicalDisclaimer = crewInfo && crewRequiresMedicalDisclaimer({
-    catalogId: crewInfo.crewId,
-    crewId: crewInfo.crewId,
-  });
-
-  const contentBlock = hasParts ? renderParts(displayMessage.parts!, onOpenChildSession) : (
+  const hasQuestionnaire = !!(displayMessage.parts?.some((p) => p.type === 'questionnaire'));
+  const contentBlock = hasParts ? renderParts(displayMessage.parts!, onOpenChildSession, onQuestionnaireRespond, message.id) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       {cleanContent && <CrewAwareMarkdown content={cleanContent} />}
       {displayMessage.toolCalls?.map((t) => <InlineToolCall key={t.id} tool={t} />)}
@@ -172,13 +189,9 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession }:
         </Box>
       )}
 
-      {hasParts || cleanContent ? (
-        showMedicalDisclaimer ? (
-          <MedicalDisclaimerBanner variant="frame">{contentBlock}</MedicalDisclaimerBanner>
-        ) : contentBlock
-      ) : null}
+      {hasParts || cleanContent || hasQuestionnaire ? contentBlock : null}
 
-      {message.streaming && !cleanContent && !hasParts && (
+      {message.streaming && !cleanContent && !hasParts && !hasQuestionnaire && (
         <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>
           {[0, 1, 2].map((i) => (
             <Box key={i} sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.2}s` }} />
@@ -189,34 +202,46 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession }:
         </Box>
       )}
 
+      {!message.streaming && showFeedback && !message.turnFeedback && onTurnFeedback && message.role === 'assistant' && (
+        <TurnFeedbackBar
+          disabled={feedbackSubmitting}
+          onRate={(rating) => onTurnFeedback(message.id, rating)}
+        />
+      )}
+
       {!message.streaming && (
         <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75, opacity: 0.45 }}>
-          {message.timestamp && (
-            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-              {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </Typography>
-          )}
-          {message.turnTokens != null && (
-            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-              {message.turnTokens.toLocaleString()} tok
-            </Typography>
-          )}
+            {message.timestamp && (
+              <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
+                {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </Typography>
+            )}
+            {message.turnTokens != null && (
+              <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
+                {message.turnTokens.toLocaleString()} tok
+              </Typography>
+            )}
         </Box>
       )}
     </Box>
   );
 }
 
-function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown },
-  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown }) {
+function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean },
+  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean }) {
   if (prev.loadingSteps !== next.loadingSteps) return false;
   if (prev.onOpenChildSession !== next.onOpenChildSession) return false;
+  if (prev.onQuestionnaireRespond !== next.onQuestionnaireRespond) return false;
+  if (prev.showFeedback !== next.showFeedback) return false;
+  if (prev.onTurnFeedback !== next.onTurnFeedback) return false;
+  if (prev.feedbackSubmitting !== next.feedbackSubmitting) return false;
   const pm = prev.message;
   const nm = next.message;
   return pm.id === nm.id && pm.content === nm.content && pm.streaming === nm.streaming
     && pm.thinking === nm.thinking && pm.parts === nm.parts && pm.toolCalls === nm.toolCalls
     && pm.crew?.crewId === nm.crew?.crewId && pm.crew?.name === nm.crew?.name
-    && pm.subAgents === nm.subAgents;
+    && pm.subAgents === nm.subAgents
+    && pm.turnFeedback?.rating === nm.turnFeedback?.rating;
 }
 
 export const ChatMessageTurn = React.memo(ChatMessageTurnComponent, propsEqual);

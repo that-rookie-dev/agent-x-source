@@ -46,7 +46,6 @@ import {
 } from './ChatEnhancements';
 import { chat, sessions, todos, tools, models, crews, crewSuggestions, providers, system, sessionSettings, agent, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate } from '../api';
 import { colors } from '../theme';
-import PlanApprovalModal from './PlanApprovalModal';
 import ModeEscalationModal from './ModeEscalationModal';
 import StepCapModal from './StepCapModal';
 import ModeSuggestionModal, { DISMISS_KEY, shouldSuggestMode } from './ModeSuggestionModal';
@@ -58,13 +57,15 @@ import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
-import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, mapRestoreHistoryMessage } from '../chat/utils';
+import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, mapRestoreHistoryMessage, hasPendingQuestionnaire, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard } from '../chat/utils';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
+import { isTurnFeedbackEligible, summarizeTurnForFeedback, crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
+import type { TurnFeedbackRating } from '@agentx/shared/browser';
+import { MedicalDisclaimerChatSessionStrip } from './crew/MedicalDisclaimerBanner';
 import { CrewMissionCard, type CrewInterMessage } from './CrewMissionCard';
 import type { CrewWorkerState } from './CrewWorkerPanel';
 import { SessionGridCard } from './SessionGridCard';
 import { FolderPickerModal } from './FolderPickerModal';
-import { ClarificationQuestionnaire, type ClarificationData } from './ClarificationPrompt';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -102,6 +103,27 @@ if (!document.getElementById(styleId)) {
   document.head.appendChild(style);
 }
 
+/** Shared height for chat header and right-sidebar section headers. */
+const CHAT_HEADER_HEIGHT = 36;
+
+const panelHeaderRowSx = {
+  px: 1.5,
+  py: 0.5,
+  height: CHAT_HEADER_HEIGHT,
+  boxSizing: 'border-box' as const,
+  borderBottom: `1px solid ${colors.border.default}`,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 0.5,
+  flexShrink: 0,
+};
+
+const sidebarSectionHeaderSx = {
+  ...panelHeaderRowSx,
+  cursor: 'pointer',
+  '&:hover': { bgcolor: colors.bg.tertiary + '40' },
+};
+
 interface UIMessage extends ChatMessage {
   thinking?: string;
   thinkingStartedAt?: number;
@@ -118,6 +140,7 @@ interface UIMessage extends ChatMessage {
   crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
   parts?: PartEntry[];
   isModeChange?: { from: string; to: string };
+  turnFeedback?: { rating: TurnFeedbackRating };
 }
 
 function parseModeChange(content?: string): { from: string; to: string } | null {
@@ -128,11 +151,12 @@ function parseModeChange(content?: string): { from: string; to: string } | null 
 }
 
 interface PartEntry {
-  type: 'text' | 'tool' | 'subagent';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire';
   id: string;
   content?: string;
   tool?: ToolCall;
   agent?: SubAgent;
+  questionnaire?: import('@agentx/shared/browser').QuestionnaireRecord;
 }
 
 interface ToolCall {
@@ -182,6 +206,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId ?? null);
   const [isCrewPrivateSession, setIsCrewPrivateSession] = useState(false);
   const [crewPrivateHost, setCrewPrivateHost] = useState<{ name: string; callsign: string; title?: string } | null>(null);
+  const [privateHostCrewId, setPrivateHostCrewId] = useState<string | null>(null);
   const isCrewPrivateRef = useRef(false);
   const crewPrivateHostRef = useRef<{ name: string; callsign: string; title?: string } | null>(null);
   const chatReturnToRef = useRef<'crew_tab' | '/console/crews' | null>(null);
@@ -223,7 +248,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [warnings, setWarnings] = useState<string[]>([]);
 
   // Clarification prompt — only shown while agent is actively waiting (streaming)
-  const [clarification, setClarification] = useState<ClarificationData | null>(null);
   const providerErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rateLimitSeenRef = useRef(false);
 
@@ -284,7 +308,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       isAtBottomRef.current = true;
       setInitialScrollDone(false);
       titleGeneratedRef.current = false;
-      sessions.restore(sessionId).then(async ({ messages: historyMsgs, session, scopePath }) => {
+      sessions.restore(sessionId).then(async ({ messages: historyMsgs, session, scopePath, turnFeedback }) => {
         if (session.parentId) {
           setChildSessionDrawer({
             childSessionId: sessionId,
@@ -309,13 +333,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           };
         }) as unknown as UIMessage[];
         const hydrated = await hydrateCrewDeliverables(sessionId, mapped, crewList);
+        const withFeedback = applyTurnFeedbackRows(hydrated.messages, turnFeedback);
         const crewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
         const privateHost = crewPrivate ? {
           name: session.hostCrewName ?? session.title ?? 'Crew member',
           callsign: session.hostCrewCallsign ?? '',
           title: session.hostCrewTitle,
         } : null;
-        setMessages(hydrated.messages);
+        setMessages(withFeedback);
         if (hydrated.crewWorkers.length > 0) {
           setCrewWorkers(hydrated.crewWorkers);
           setCrewMissionSessionId(sessionId);
@@ -325,11 +350,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         setIsCrewPrivateSession(crewPrivate);
         if (privateHost) {
           setCrewPrivateHost(privateHost);
+          setPrivateHostCrewId(session.hostCrewId ?? null);
         } else {
           setCrewPrivateHost(null);
+          setPrivateHostCrewId(null);
         }
         if (crewPrivate) {
-          setAgentMode('agent');
+          setAgentMode(session.mode === 'agent' ? 'agent' : 'plan');
           const navState = location.state as { fromCrews?: boolean } | null;
           chatReturnToRef.current = navState?.fromCrews ? '/console/crews' : 'crew_tab';
         } else if (session.mode === 'plan' || session.mode === 'agent') {
@@ -362,6 +389,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setView('sessions');
       setIsCrewPrivateSession(false);
       setCrewPrivateHost(null);
+      setPrivateHostCrewId(null);
     }
   }, [sessionId, location.state, navigate]);
 
@@ -479,16 +507,34 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const pendingFolderActionRef = useRef<'newSession' | 'changeCwd' | null>(null);
 
   // Agent gate modals (plan approval, mode escalation, step cap)
-  const [planApproval, setPlanApproval] = useState<{ title: string; steps: { id: string; description: string }[] } | null>(null);
   const [modeEscalation, setModeEscalation] = useState<{ tool: string; reason: string } | null>(null);
   const [stepCapPrompt, setStepCapPrompt] = useState<{ currentSteps: number; maxSteps: number } | null>(null);
   const [turnActivity, setTurnActivity] = useState<{ stage: string; step: number; elapsedMs: number } | null>(null);
+  const [pendingFeedbackMessageId, setPendingFeedbackMessageId] = useState<string | null>(null);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const lastTurnFeedbackCandidateRef = useRef<{ messageId: string; elapsedMs: number } | null>(null);
   const activeTurnIdRef = useRef<string | null>(null);
+  const turnActiveRef = useRef(false);
   const resendInProgressRef = useRef(false);
   const lastActivityRef = useRef<number>(Date.now());
   const isTimeoutWarning = (msg: string) => /timeout|timed out|aborted due to timeout/i.test(msg);
   const clearTimeoutWarnings = useCallback((prev: string[]) => prev.filter(w => !isTimeoutWarning(w)), []);
   const isAgentRecentlyActive = useCallback((withinMs = 45000) => Date.now() - lastActivityRef.current < withinMs, []);
+
+  const endTurnUi = useCallback(() => {
+    turnActiveRef.current = false;
+    activeTurnIdRef.current = null;
+    resendInProgressRef.current = false;
+    setStreaming(false);
+    setTurnActivity(null);
+    setTokenStreaming(0);
+  }, []);
+
+  const beginTurnUi = useCallback(() => {
+    turnActiveRef.current = true;
+    setStreaming(true);
+    setPendingFeedbackMessageId(null);
+  }, []);
   const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
   const [crewSuggestOpen, setCrewSuggestOpen] = useState(false);
   const [crewEvaluation, setCrewEvaluation] = useState<CrewSuggestionEvaluation | null>(null);
@@ -497,6 +543,62 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const pendingSendTextRef = useRef<string | null>(null);
   const pendingCrewCandidatesRef = useRef<CrewMatchCandidate[]>([]);
   const crewSuggestionHandledRef = useRef(false);
+
+  const applyTurnFeedbackRows = useCallback((msgs: UIMessage[], rows?: Array<Record<string, unknown>>) => {
+    if (!rows?.length) return msgs;
+    const byMessage = new Map<string, TurnFeedbackRating>();
+    for (const row of rows) {
+      const messageId = String(row['message_id'] ?? row['messageId'] ?? '');
+      const rating = String(row['rating'] ?? '') as TurnFeedbackRating;
+      if (messageId && (rating === 'positive' || rating === 'negative' || rating === 'skipped')) {
+        byMessage.set(messageId, rating);
+      }
+    }
+    if (byMessage.size === 0) return msgs;
+    return msgs.map((m) => {
+      const rating = byMessage.get(m.id);
+      return rating ? { ...m, turnFeedback: { rating } } : m;
+    });
+  }, []);
+
+  const handleTurnFeedback = useCallback(async (messageId: string, rating: TurnFeedbackRating) => {
+    const sessionId = currentSessionIdRef.current;
+    if (!sessionId) return;
+    setFeedbackSubmitting(true);
+    setPendingFeedbackMessageId(null);
+    const msg = messages.find((m) => m.id === messageId);
+    const turnSummary = summarizeTurnForFeedback(msg?.content ?? '');
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, turnFeedback: { rating } } : m)));
+    try {
+      await sessions.submitTurnFeedback(sessionId, {
+        messageId,
+        rating,
+        turnSummary: turnSummary || undefined,
+        metadata: msg?.crew ? { crewId: msg.crew.crewId } : undefined,
+      });
+    } catch {
+      /* best-effort — local state already updated */
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    const candidate = lastTurnFeedbackCandidateRef.current;
+    if (!candidate) return;
+    const msg = messages.find((m) => m.id === candidate.messageId);
+    lastTurnFeedbackCandidateRef.current = null;
+    if (!msg || msg.turnFeedback || msg.streaming || msg.isModeChange) return;
+    if (isTurnFeedbackEligible({
+      role: 'assistant',
+      content: msg.content,
+      parts: msg.parts,
+      toolCalls: msg.toolCalls,
+      elapsedMs: candidate.elapsedMs,
+    })) {
+      setPendingFeedbackMessageId(candidate.messageId);
+    }
+  }, [messages]);
 
   const openCrewSuggestionFromEvaluation = useCallback((evaluation: CrewSuggestionEvaluation, text: string) => {
     if (!evaluation.shouldSuggest || evaluation.candidates.length === 0) return;
@@ -750,7 +852,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // Connect SSE for streaming events
   useEffect(() => {
-
+    const stopTurnIndicator = () => {
+      turnActiveRef.current = false;
+      activeTurnIdRef.current = null;
+      resendInProgressRef.current = false;
+      setStreaming(false);
+      setTurnActivity(null);
+      setTokenStreaming(0);
+    };
 
     // Pure function to apply a single tool event to messages state (used by RAF batch)
     const applyToolEvent = (prev: UIMessage[], ev: TelemetryEvent): UIMessage[] => {
@@ -869,6 +978,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'loading_start': {
             // Ignore stale loading_start events replayed from telemetry buffer on page load
             if (isInitialLoadRef.current) { return prev; }
+            if (!turnActiveRef.current) return prev;
             streamChunkPendingRef.current = null;
             if (streamChunkRAFRef.current !== null) {
               cancelAnimationFrame(streamChunkRAFRef.current);
@@ -890,7 +1000,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   crew: { crewId: '', name: host.name, callsign: host.callsign },
                 }];
               }
+              if (lastMessageIsQuestionnaireCard(prev) && isCrewPrivateRef.current && last?.crew) {
+                return [...prev, {
+                  id: crypto.randomUUID(),
+                  role: 'assistant',
+                  content: '',
+                  streaming: true,
+                  crew: last.crew,
+                }];
+              }
               return prev;
+            }
+            if (lastMessageIsQuestionnaireCard(prev)) {
+              setStreaming(true);
+              return [...prev, {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: '',
+                streaming: true,
+                ...(last?.crew ? { crew: last.crew } : {}),
+              }];
             }
             // Only create a placeholder when a user message just arrived (new turn).
             // If the last message is a completed assistant (race with handleSend),
@@ -926,10 +1055,23 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'stream_chunk': {
             // Ignore stale stream chunks replayed from telemetry buffer on page load
             if (isInitialLoadRef.current) return prev;
+            if (!turnActiveRef.current) return prev;
+            setStreaming(true);
             const rawDelta = (ev.content as string) ?? '';
             if (/Calling:|✅ Result:|\[STEP \d+\]/.test(rawDelta)) return prev;
             const rawFull = (ev.fullContent as string) ?? '';
             if (!rawFull && !rawDelta) return prev;
+            if (last?.role === 'assistant' && lastMessageIsQuestionnaireCard(prev)) {
+              const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: rawFull || rawDelta };
+              return [...prev, {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: rawFull || rawDelta,
+                streaming: true,
+                parts: [textPart],
+                ...(last.crew ? { crew: last.crew } : {}),
+              }];
+            }
             if (last?.role === 'assistant') {
               streamChunkPendingRef.current = rawFull || null;
               if (streamChunkRAFRef.current === null) {
@@ -983,16 +1125,85 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'message_received': {
             // Ignore stale message_received events replayed from telemetry buffer on page load
             if (isInitialLoadRef.current) return prev;
-            setTurnActivity(null);
-            activeTurnIdRef.current = null;
-            resendInProgressRef.current = false;
-            setClarification(null);
-            setTokenStreaming(0);
-            const msg = ev.message as { id?: string; content?: string; role?: string; parts?: PartEntry[]; toolCalls?: ToolCall[]; crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] }; tokenCount?: number } | undefined;
+            const isUpdate = (ev as { isUpdate?: boolean }).isUpdate === true;
+            const msg = ev.message as {
+              id?: string;
+              content?: string;
+              role?: string;
+              parts?: PartEntry[];
+              toolCalls?: ToolCall[];
+              crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
+              tokenCount?: number;
+            } | undefined;
             const crew = msg?.crew;
-            setStreaming(false);
+            const msgId = msg?.id || crypto.randomUUID();
+            const hasQuestionnaire = msg?.parts?.some((p) => p.type === 'questionnaire');
+            const questionnairePending = hasQuestionnaire
+              && msg?.parts?.some((p) => p.type === 'questionnaire' && p.questionnaire?.status === 'pending');
+            const turnContinues = isUpdate || questionnairePending;
+
+            if (!turnContinues) {
+              stopTurnIndicator();
+              if (msg?.role === 'assistant') {
+                lastTurnFeedbackCandidateRef.current = {
+                  messageId: msgId,
+                  elapsedMs: (ev as { elapsed?: number }).elapsed ?? turnActivity?.elapsedMs ?? 0,
+                };
+              }
+            } else {
+              setTokenStreaming(0);
+            }
+
+            if (msgId && prev.some((m) => m.id === msgId)) {
+              const idx = prev.findIndex((m) => m.id === msgId);
+              if (idx >= 0 && msg) {
+                if (isUpdate && !questionnairePending) {
+                  setStreaming(true);
+                } else if (questionnairePending) {
+                  setStreaming(false);
+                } else {
+                  setStreaming(false);
+                }
+                const text = repairStreamTextGlitches(stripToolNoise(msg.content ?? ''));
+                const updated: UIMessage = {
+                  ...prev[idx]!,
+                  content: text || prev[idx]!.content,
+                  parts: msg.parts ?? prev[idx]!.parts,
+                  streaming: false,
+                  ...(crew ? { crew } : {}),
+                };
+                return [...prev.slice(0, idx), updated, ...prev.slice(idx + 1)];
+              }
+            }
+
+            if (msg?.role === 'user' && msg.content?.trim()) {
+              setStreaming(false);
+              if (prev.some((m) => m.id === msgId)) return prev;
+              return [...prev, {
+                id: msgId,
+                role: 'user' as const,
+                content: msg.content.trim(),
+                timestamp: new Date().toISOString(),
+              }];
+            }
+
             if (!msg || msg.role === 'system') return prev;
             const text = repairStreamTextGlitches(stripToolNoise(msg.content ?? ''));
+            if (msg.role === 'assistant' && hasQuestionnaire) {
+              setStreaming(questionnairePending ? false : true);
+              const base = stripTrailingStreamPreamble(prev);
+              return [...base, {
+                id: msgId,
+                role: 'assistant' as const,
+                content: '',
+                streaming: false,
+                parts: msg.parts,
+                timestamp: new Date().toISOString(),
+                ...(crew ? { crew } : {}),
+              } as UIMessage];
+            }
+
+            setStreaming(false);
             if (last?.role === 'assistant') {
               const incomingCrewId = crew?.crewId;
               const lastCrewId = last.crew?.crewId;
@@ -1123,20 +1334,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return updateLastMessage(prev, { streaming: false });
           }
 
-          case 'clarification_required': {
-            setStreaming(true);
-            setClarification({
-              question: (ev.question as string) ?? 'Could you clarify?',
-              options: (ev.options as string[]) ?? [],
-              recommended: (ev.recommended as string) ?? undefined,
-              allowChooseAll: (ev.allowChooseAll as boolean) ?? false,
-              allowFreeform: (ev.allowFreeform as boolean) ?? true,
-              selectionMode: (ev as { selectionMode?: 'single' | 'multiple' }).selectionMode,
-              fields: (ev as { fields?: ClarificationData['fields'] }).fields,
-              source: (ev as { source?: ClarificationData['source'] }).source,
-            });
+          case 'clarification_required':
+            setStreaming(false);
             return prev;
-          }
+
+          case 'stream_clear':
+            return stripTrailingStreamPreamble(prev);
 
           case 'error': {
             // Suppress cascaded errors after a rate-limit — only show the first warning
@@ -1213,15 +1416,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return prev;
           }
 
-          case 'plan_approval_required': {
-            if (isCrewPrivateRef.current) return prev;
-            const plan = (ev as { plan?: { title?: string; steps?: { id: string; description: string }[] } }).plan;
-            if (plan?.steps) {
-              setPlanApproval({ title: plan.title ?? 'Plan', steps: plan.steps });
-            }
-            return prev;
-          }
-
           case 'mode_escalation_required': {
             if (isCrewPrivateRef.current) return prev;
             const tool = (ev as { tool?: string }).tool ?? 'tool';
@@ -1231,6 +1425,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
 
           case 'mode_escalation_accepted':
+            if (isCrewPrivateRef.current) return prev;
             setAgentMode('agent');
             sessionSettings.setMode('agent').catch(() => {});
             setModeEscalation(null);
@@ -1253,12 +1448,27 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
 
           case 'turn_heartbeat': {
+            if (!turnActiveRef.current) return prev;
             setTurnActivity({
               stage: (ev as { stage?: string }).stage ?? 'working',
               step: (ev as { step?: number }).step ?? 0,
               elapsedMs: (ev as { elapsedMs?: number }).elapsedMs ?? 0,
             });
+            setStreaming(true);
             setWarnings(clearTimeoutWarnings);
+            return prev;
+          }
+
+          case 'turn_state': {
+            const phase = (ev as { phase?: string }).phase;
+            if (phase === 'running') {
+              if (turnActiveRef.current) setStreaming(true);
+            } else if (phase === 'awaiting_permission' || phase === 'awaiting_plan'
+              || phase === 'awaiting_mode' || phase === 'awaiting_step_cap') {
+              setStreaming(false);
+            } else if (phase === 'done' || phase === 'cancelled' || phase === 'idle') {
+              stopTurnIndicator();
+            }
             return prev;
           }
 
@@ -1460,7 +1670,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             .then(r => r.json())
             .then(data => {
               if (data.processing) {
+                turnActiveRef.current = true;
                 setStreaming(true);
+              } else {
+                stopTurnIndicator();
               }
             })
             .catch(() => {});
@@ -1552,19 +1765,40 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               return p;
             });
           }
-          setStreaming(false);
-          activeTurnIdRef.current = null;
+          endTurnUi();
         } else if (record.status === 'complete' || record.status === 'cancelled') {
-          activeTurnIdRef.current = null;
+          endTurnUi();
         }
       }).catch(() => {});
     }, 5000);
     return () => clearInterval(poll);
-  }, [streaming]);
+  }, [streaming, endTurnUi]);
 
   // Compute whether send is blocked due to missing provider/model
+  const questionnairePending = useMemo(() => hasPendingQuestionnaire(messages), [messages]);
+
+  const showMedicalSessionDisclaimer = useMemo(() => {
+    const rosterCrew = privateHostCrewId ? crewList.find((c) => c.id === privateHostCrewId) : undefined;
+    if (isCrewPrivateSession && crewPrivateHost) {
+      const catalogId = rosterCrew?.catalogId
+        ?? (crewPrivateHost.callsign ? `hub-${crewPrivateHost.callsign}` : undefined);
+      return crewRequiresMedicalDisclaimer({
+        catalogId,
+        crewId: rosterCrew?.id,
+        categoryId: (rosterCrew as Crew & { categoryId?: string })?.categoryId,
+      });
+    }
+    return messages.some((m) => {
+      if (m.role !== 'assistant' || !m.crew) return false;
+      const catalogId = m.crew.callsign ? `hub-${m.crew.callsign}` : undefined;
+      return crewRequiresMedicalDisclaimer({ catalogId, crewId: m.crew.crewId || undefined });
+    });
+  }, [isCrewPrivateSession, crewPrivateHost, privateHostCrewId, crewList, messages]);
+
   const sendBlocked = !currentProvider || !currentModel;
-  const sendBlockedReason = !currentProvider ? 'Select a provider before sending' : !currentModel ? 'Select a model before sending' : '';
+  const sendBlockedReason = !currentProvider
+    ? 'Select a provider before sending'
+    : !currentModel ? 'Select a model before sending' : '';
 
   // Keep refs in sync so send handlers never capture stale session/cwd from closures.
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
@@ -1678,7 +1912,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .map((m) => m.content)
       .slice(-3);
 
-    setStreaming(true);
+    beginTurnUi();
     const userMsg: UIMessage = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -1704,7 +1938,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         priorUserMessages,
       );
       if (result?.crewSuggestionRequired && result.evaluation) {
-        setStreaming(false);
+        endTurnUi();
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === 'user' && last.content === trimmed) return prev.slice(0, -1);
@@ -1728,7 +1962,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           return prev;
         });
       }
-      setStreaming(false);
+      endTurnUi();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
@@ -1745,9 +1979,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         if (last?.role === 'assistant' && last.streaming) return prev.slice(0, -1);
         return prev;
       });
-      setStreaming(false);
+      endTurnUi();
     }
-  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, openCrewSuggestionFromEvaluation]);
+  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, openCrewSuggestionFromEvaluation, beginTurnUi, endTurnUi]);
 
   const sendAfterModeChoice = useCallback(async (text: string, switchToAgent: boolean) => {
     if (switchToAgent) {
@@ -1780,7 +2014,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     if (!(await ensureSession())) return;
 
     resendInProgressRef.current = true;
-    setStreaming(true);
+    beginTurnUi();
 
     // Remove the old assistant response — SSE will update the placeholder
     setMessages(prev => {
@@ -1802,7 +2036,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }
         return prev;
       });
-      setStreaming(false);
+      endTurnUi();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
@@ -1822,18 +2056,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }
         return prev;
       });
-      setStreaming(false);
+      endTurnUi();
     }
-  }, [streaming, currentProvider, currentModel, ensureSession]);
+  }, [streaming, currentProvider, currentModel, ensureSession, beginTurnUi, endTurnUi]);
 
   // --- Clarification response ---
-  const handleClarifyRespond = useCallback(async (response: string) => {
-    setClarification(null);
+  const handleQuestionnaireRespond = useCallback(async (_messageId: string, response: string) => {
     try {
       await agent.respondToClarification(response);
       setStreaming(true);
     } catch {
-      setWarnings((prev) => replaceWarning(prev, 'Failed to send clarification response'));
+      setWarnings((prev) => replaceWarning(prev, 'Failed to send questionnaire response'));
     }
   }, []);
 
@@ -1852,7 +2085,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return bound != null && current != null && bound === current;
   }, []);
 
-  useEffect(() => { setClarification(null); }, [currentSessionId]);
   useEffect(() => {
     setCrewSuggestOpen(false);
     setCrewEvaluation(null);
@@ -1861,13 +2093,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     crewSuggestionHandledRef.current = false;
   }, [currentSessionId]);
   useEffect(() => { resetCrewMissionState(); }, [currentSessionId, resetCrewMissionState]);
-  useEffect(() => { if (!streaming) setClarification(null); }, [streaming]);
 
   const handleCancel = useCallback(async () => {
+    endTurnUi();
     try { await chat.cancel(); } catch { /* ignore */ }
-    setClarification(null);
-    setStreaming(false);
-  }, []);
+  }, [endTurnUi]);
 
   // ─── Slash command handler ───
   // ─── Global keyboard shortcuts ───
@@ -1882,6 +2112,18 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // ─── Hyperdrive toggle ───
   const engageHyperdrive = useCallback(async (skipDisclaimer = false) => {
+    if (isCrewPrivateRef.current) {
+      if (hyperdriveMode) {
+        try {
+          const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
+          const data = await res.json();
+          setHyperdriveMode(false);
+          if (data.mode) setAgentMode(data.mode);
+          else setAgentMode(prevModeBeforeHyperdrive.current);
+        } catch { /* best-effort */ }
+      }
+      return;
+    }
     if (hyperdriveMode) {
       // Deactivate hyperdrive — restore previous mode
       try {
@@ -1925,9 +2167,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     } catch {}
   }, [agentMode]);
 
-  // Check hyperdrive mode on mount
+  // Check hyperdrive mode on mount (disabled for crew private chats)
   useEffect(() => {
-    hyperdrivePromptShownRef.current = false; // reset on session change
+    hyperdrivePromptShownRef.current = false;
+    if (isCrewPrivateSession) {
+      setHyperdriveMode(false);
+      fetch('/api/mode/hyperdrive', { credentials: 'include' })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.hyperdriveMode) {
+            return fetch('/api/mode/hyperdrive', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          return undefined;
+        })
+        .catch(() => {});
+      return;
+    }
     fetch('/api/mode/hyperdrive', { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
@@ -1937,7 +2196,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }
       })
       .catch(() => {});
-  }, [currentSessionId]);
+  }, [currentSessionId, isCrewPrivateSession]);
 
   // Refresh context data when session loads or changes
   useEffect(() => {
@@ -1957,12 +2216,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         // Hyperdrive active → TAB deactivates it, restores previous mode
         if (hyperdriveMode) {
           e.preventDefault();
-          engageHyperdrive(); // toggles off (hyperdriveMode is true → deactivates)
+          engageHyperdrive();
           return;
         }
         e.preventDefault();
         handleToggleMode();
       } else if (e.key === 'Shift') {
+        if (isCrewPrivateRef.current) return;
         // Double-Shift → engage/disengage hyperdrive
         const now = Date.now();
         if (now - lastShiftRef.current < 500) {
@@ -2014,7 +2274,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
     if (!(await ensureSession())) return;
-    setStreaming(true);
+    beginTurnUi();
     const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: trimmed, streaming: false, attachments: attachments.map((a) => ({ name: a.name })) };
     setMessages((prev) => [...prev, userMsg, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }]);
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
@@ -2033,8 +2293,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         });
       }
     } catch { /* handled by SSE */ }
-    setStreaming(false);
-  }, [attachments, ensureSession]);
+    endTurnUi();
+  }, [attachments, ensureSession, beginTurnUi, endTurnUi]);
 
   const handleAddToQueue = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -2048,7 +2308,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
     if (!(await ensureSession())) return;
-    setStreaming(true);
+    beginTurnUi();
     const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: `↑ ${trimmed}`, streaming: false };
     setMessages((prev) => [...prev, userMsg, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }]);
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
@@ -2067,8 +2327,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         });
       }
     } catch { /* handled by SSE */ }
-    setStreaming(false);
-  }, [attachments, ensureSession]);
+    endTurnUi();
+  }, [attachments, ensureSession, beginTurnUi, endTurnUi]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -2106,7 +2366,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     rateLimitSeenRef.current = false;
     setStreaming(false);
     try {
-      const { messages: historyMsgs, session, scopePath } = await sessions.restore(s.id);
+      const { messages: historyMsgs, session, scopePath, turnFeedback } = await sessions.restore(s.id);
       if (session?.parentId || s.parentId) {
         const parentId = session?.parentId ?? s.parentId!;
         setChildSessionDrawer({
@@ -2130,13 +2390,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         };
       }) as unknown as UIMessage[];
       const hydrated = await hydrateCrewDeliverables(s.id, mapped, crewList);
+      const withFeedback = applyTurnFeedbackRows(hydrated.messages, turnFeedback);
       const crewPrivate = (session?.contextKind ?? s.contextKind ?? 'agent_x') === 'crew_private';
       const privateHost = crewPrivate ? {
         name: s.hostCrewName ?? session?.hostCrewName ?? s.title ?? 'Crew member',
         callsign: s.hostCrewCallsign ?? session?.hostCrewCallsign ?? '',
         title: s.hostCrewTitle ?? session?.hostCrewTitle,
       } : null;
-      setMessages(hydrated.messages);
+      setMessages(withFeedback);
       if (hydrated.crewWorkers.length > 0) {
         setCrewWorkers(hydrated.crewWorkers);
         setCrewMissionSessionId(s.id);
@@ -2146,11 +2407,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setIsCrewPrivateSession(crewPrivate);
       if (privateHost) {
         setCrewPrivateHost(privateHost);
+        setPrivateHostCrewId(s.hostCrewId ?? session?.hostCrewId ?? null);
       } else {
         setCrewPrivateHost(null);
+        setPrivateHostCrewId(null);
       }
       if (crewPrivate) {
-        setAgentMode('agent');
+        setAgentMode(s.mode === 'agent' ? 'agent' : 'plan');
         chatReturnToRef.current = 'crew_tab';
       } else if (session?.mode === 'plan' || session?.mode === 'agent') {
         setAgentMode(session.mode);
@@ -2449,8 +2712,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         )}
         {/* Header */}
         <Box sx={{
-          px: 1.5, py: 0.5, borderBottom: `1px solid ${hyperdriveMode ? '#ff00ff20' : colors.border.default}`,
-          display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 36, position: 'relative', zIndex: 1,
+          ...panelHeaderRowSx,
+          borderBottom: `1px solid ${hyperdriveMode ? '#ff00ff20' : colors.border.default}`,
+          position: 'relative',
+          zIndex: 1,
           transition: 'border-color 0.6s ease',
         }}>
           <IconButton size="small" onClick={handleShowSessions} sx={{ color: colors.text.dim, p: 0.5 }}>
@@ -2507,6 +2772,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           </Button>
         </Box>
 
+        {showMedicalSessionDisclaimer && <MedicalDisclaimerChatSessionStrip />}
+
         {/* Messages */}
         <Box
           ref={messagesContainerRef}
@@ -2539,6 +2806,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             onResend={handleResend}
             bottomRef={bottomRef}
             onOpenChildSession={openChildSession}
+            onQuestionnaireRespond={handleQuestionnaireRespond}
+            pendingFeedbackMessageId={pendingFeedbackMessageId}
+            onTurnFeedback={handleTurnFeedback}
+            feedbackSubmitting={feedbackSubmitting}
           />
 
           {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
@@ -2649,13 +2920,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           />
           )}
 
-          {clarification && streaming && (
-            <ClarificationQuestionnaire
-              data={clarification}
-              onRespond={handleClarifyRespond}
-            />
-          )}
-
           {/* Single unified box: input + toolbar — border tinted by mode */}
           <Box sx={{
             position: 'relative',
@@ -2664,8 +2928,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             borderRadius: '14px',
             bgcolor: colors.bg.tertiary,
             backgroundImage: hyperdriveMode ? 'linear-gradient(#ff00ff08, #ff00ff08)' : agentMode === 'agent' ? `linear-gradient(${colors.accent.orange}08, ${colors.accent.orange}08)` : 'none',
-            transition: 'border-color 0.2s, background-color 0.2s',
-            '&:focus-within': { borderColor: hyperdriveMode ? '#ff00ff90' : agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
+            transition: 'border-color 0.2s, background-color 0.2s, opacity 0.2s ease',
+            opacity: questionnairePending ? 0.42 : 1,
+            pointerEvents: questionnairePending ? 'none' : 'auto',
+            '&:focus-within': questionnairePending ? {} : { borderColor: hyperdriveMode ? '#ff00ff90' : agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
           }}>
             {streaming && (
               <Box sx={{ px: 1.25, pt: 0.75, pb: 0.25 }}>
@@ -2691,7 +2957,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             <ChatInputBar
               ref={inputBarRef}
               streaming={streaming}
-              sendBlocked={sendBlocked}
+              inputDisabled={questionnairePending}
+              sendBlocked={sendBlocked || questionnairePending}
               sendBlockedReason={sendBlockedReason}
               hasAttachments={attachments.length > 0}
               crewList={crewList}
@@ -2752,8 +3019,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </Tooltip>
               )}
 
-              {/* Agent Mode — hidden for crew private and when hyperdriving */}
-              {!hyperdriveMode && !isCrewPrivateSession && (
+              {/* Agent Mode — hidden while hyperdriving; crew private has no hyperdrive */}
+              {!hyperdriveMode && (
               <Tooltip title={agentMode === 'agent' ? 'Agent — full access, executes tools freely' : 'Plan — outlines steps, no write access'} arrow>
                 <Chip
                   size="small"
@@ -2927,10 +3194,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       }}>
 
         {/* ─── Context ─── */}
-        <Box sx={{ borderBottom: `1px solid ${colors.border.default}` }}>
+        <Box>
           <Box
             onClick={() => setContextExpanded(!contextExpanded)}
-            sx={{ px: 1.5, pt: 1.5, pb: contextExpanded ? 1.5 : 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 0.5, '&:hover': { bgcolor: colors.bg.tertiary + '40' } }}
+            sx={sidebarSectionHeaderSx}
           >
             <ArticleIcon sx={{ fontSize: 12, color: '#00bcd4' }} />
               <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -2943,7 +3210,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 size="small"
                 onClick={(e) => { e.stopPropagation(); handleRebuildContext(); }}
                 disabled={rebuildingContext}
-                sx={{ p: 0.25, color: rebuildingContext ? colors.accent.blue : colors.text.dim, '&:hover': { color: '#00bcd4' } }}
+                sx={{ p: 0.25, width: 20, height: 20, color: rebuildingContext ? colors.accent.blue : colors.text.dim, '&:hover': { color: '#00bcd4' } }}
               >
                 <ReplayIcon sx={{ fontSize: 12, animation: rebuildingContext ? 'agentx-spin 1s linear infinite' : 'none' }} />
               </IconButton>
@@ -2964,10 +3231,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         </Box>
 
         {/* ─── Token usage ─── */}
-        <Box sx={{ borderBottom: `1px solid ${colors.border.default}` }}>
+        <Box>
           <Box
             onClick={() => setTokenExpanded(!tokenExpanded)}
-            sx={{ px: 1.5, pt: 1.5, pb: tokenExpanded ? 0.75 : 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 0.5, '&:hover': { bgcolor: colors.bg.tertiary + '40' } }}
+            sx={sidebarSectionHeaderSx}
           >
             <AutoGraphIcon sx={{ fontSize: 12, color: '#4caf50' }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -3079,7 +3346,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         <Box sx={{ flex: 1, overflow: 'auto' }}>
           <Box
             onClick={() => setTasksExpanded(!tasksExpanded)}
-            sx={{ px: 1.5, pt: 1.5, pb: tasksExpanded ? 0.75 : 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 0.5, '&:hover': { bgcolor: colors.bg.tertiary + '40' } }}
+            sx={sidebarSectionHeaderSx}
           >
             <ChecklistIcon sx={{ fontSize: 12, color: colors.accent.blue }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -3152,24 +3419,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }}
         onCancel={() => { setFolderPickerOpen(false); setFolderPickerCallback(null); }}
       />
-      {!isCrewPrivateSession && (
-      <PlanApprovalModal
-        open={!!planApproval}
-        title={planApproval?.title ?? 'Plan'}
-        steps={planApproval?.steps ?? []}
-        onApprove={() => {
-          agent.respondToPlan(true).catch(() => {});
-          setPlanApproval(null);
-        }}
-        onReject={() => {
-          agent.respondToPlan(false).catch(() => {});
-          setPlanApproval(null);
-        }}
-      />
-      )}
-      {!isCrewPrivateSession && (
       <ModeEscalationModal
-        open={!!modeEscalation}
+        open={!!modeEscalation && !isCrewPrivateSession}
         tool={modeEscalation?.tool ?? ''}
         reason={modeEscalation?.reason ?? ''}
         onSwitch={() => {
@@ -3185,7 +3436,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           setStreaming(false);
         }}
       />
-      )}
       {!isCrewPrivateSession && (
       <CrewSuggestionModal
         open={crewSuggestOpen}

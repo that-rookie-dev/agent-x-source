@@ -118,4 +118,21 @@ describe('message-parts', () => {
     expect(result.parts?.filter((p) => p.type === 'tool')).toHaveLength(1);
     expect(result.parts?.find((p) => p.type === 'tool')?.tool?.name).toBe('web_search');
   });
+
+  it('preserves questionnaire-only stored parts on restore', () => {
+    const result = normalizeMessageForUi({
+      role: 'assistant',
+      content: '',
+      parts: [{
+        type: 'questionnaire',
+        id: 'q1',
+        questionnaire: {
+          payload: { id: 'q1', questions: [{ id: 'a', prompt: 'Which?', type: 'text' }] },
+          status: 'answered',
+          answer: 'Which?: React',
+        },
+      }],
+    });
+    expect(result.parts?.some((p) => p.type === 'questionnaire')).toBe(true);
+  });
 });

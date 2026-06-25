@@ -114,8 +114,7 @@ export function buildCrewWorkerSystemPrompt(crew: Crew, sharedContext?: string, 
     lines.push('When done, summarize what you built, tested, and verified.');
   }
   lines.push('Write for the user in chat: use rich Markdown (headings, lists, tables, code blocks) when it helps clarity.');
-  lines.push('CLARIFICATION: ask at most ONE question at a time — never numbered lists of questions in chat.');
-  lines.push('Use the ask_clarification tool for questions (single choice, multi choice, or short text fields).');
+  lines.push('CLARIFICATION (STRICT): NEVER ask in chat text. Use ask_clarification. DEFAULT: one question per call — wait for the answer. Bundle 2+ questions only for complex related intake (see [QUESTIONNAIRE]).');
   lines.push('If the user defers to you ("plan it yourself", "you decide", "not sure", "surprise me"), state brief assumptions and deliver a concrete plan — do not re-ask for context already in the session.');
   lines.push('If blocked, use crew_message to ask another crew member or Agent-X for clarity.');
   lines.push('[/CREW_IDENTITY]');

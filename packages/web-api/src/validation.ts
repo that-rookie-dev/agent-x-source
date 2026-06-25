@@ -118,6 +118,13 @@ export const generateTitleSchema = z.object({
   message: z.string().min(1),
 });
 
+export const turnFeedbackSchema = z.object({
+  messageId: z.string().min(1),
+  rating: z.enum(['positive', 'negative', 'skipped']),
+  turnSummary: z.string().max(500).optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 export const updateSessionSchema = z.object({
   title: z.string().optional(),
   mode: z.enum(['agent', 'plan']).optional(),

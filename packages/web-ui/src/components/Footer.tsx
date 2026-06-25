@@ -3,6 +3,13 @@ import Box from '@mui/material/Box';
 import { colors } from '../theme';
 import { health } from '../api';
 
+function getZoomShortcutHint(): string {
+  if (typeof navigator === 'undefined') return 'zoom Ctrl +/− · Ctrl 0';
+  const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+    || navigator.userAgent.includes('Mac');
+  return isMac ? 'zoom ⌘ +/− · ⌘ 0' : 'zoom Ctrl +/− · Ctrl 0';
+}
+
 export interface FooterProps {
   onToggleLogs?: () => void;
   logsOpen?: boolean;
@@ -10,6 +17,7 @@ export interface FooterProps {
 
 export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const [version, setVersion] = useState('');
+  const [zoomHint] = useState(getZoomShortcutHint);
 
   useEffect(() => {
     health.check().then((h) => setVersion(h.version)).catch(() => {});
@@ -50,7 +58,13 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
             <span style={{ color: colors.border.default }}>/</span>
           </>
         )}
-        {version && <span>v{version}</span>}
+        {version && (
+          <>
+            <span>v{version}</span>
+            <span style={{ color: colors.border.default }}>/</span>
+          </>
+        )}
+        <span>{zoomHint}</span>
       </Box>
     </Box>
   );

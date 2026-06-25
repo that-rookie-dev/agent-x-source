@@ -16,3 +16,5 @@ export * from './communication.js';
 export * from './visualization.js';
 export * from './session-events.js';
 export * from './session-context.js';
+export * from './questionnaire.js';
+export * from './turn-feedback.js';

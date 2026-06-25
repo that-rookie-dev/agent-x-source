@@ -6,6 +6,7 @@ import { catalogLikePattern, mergeCatalogSearchHits } from './catalog-search.js'
 import { mergeCategoryIconIds } from './catalog-categories.js';
 import { catalogEntryToSummary } from './catalog-summary.js';
 import { markCatalogSeedProgress } from './catalog-seed-state.js';
+import { dedupeSqliteCatalogTitles, pruneSqliteCatalogOrphans } from './catalog-prune.js';
 import type { CrewCatalogStore } from './CrewSuggestionService.js';
 
 export const CREW_CATALOG_SCHEMA_V19 = `
@@ -198,6 +199,8 @@ export function seedSqliteCatalog(
           INSERT INTO app_metadata (key, value) VALUES ('crew_catalog_revision', ?)
           ON CONFLICT(key) DO UPDATE SET value=excluded.value
         `).run(String(manifest.revision));
+        pruneSqliteCatalogOrphans(db, manifest);
+        dedupeSqliteCatalogTitles(db, manifest);
       })
     : null;
 
@@ -234,6 +237,8 @@ export function seedSqliteCatalog(
       INSERT INTO app_metadata (key, value) VALUES ('crew_catalog_revision', ?)
       ON CONFLICT(key) DO UPDATE SET value=excluded.value
     `).run(String(manifest.revision));
+    pruneSqliteCatalogOrphans(db, manifest);
+    dedupeSqliteCatalogTitles(db, manifest);
   }
   return { inserted, updated };
 }

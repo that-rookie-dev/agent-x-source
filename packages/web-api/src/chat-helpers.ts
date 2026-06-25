@@ -2,7 +2,7 @@ import type { Agent } from '@agentx/engine';
 import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
-import { getLogger, sanitizeForJson } from '@agentx/shared';
+import { getLogger, sanitizeForJson, generateId } from '@agentx/shared';
 
 export const TURN_TIMEOUT_MS = 600_000;
 
@@ -21,14 +21,6 @@ export function applySessionModeToAgent(agent: Agent): 'agent' | 'plan' {
   const eng = getEngine();
   try {
     const sess = eng.sessionManager.getActiveSession?.() as { mode?: string; contextKind?: string } | null | undefined;
-    if (isCrewPrivateSessionRecord(sess)) {
-      sessionSettings.mode = 'agent';
-      agent.setPlanMode(false);
-      try {
-        (eng as { toolkit?: { executor?: { setMode?: (m: string) => void } } }).toolkit?.executor?.setMode?.('agent');
-      } catch { /* best-effort */ }
-      return 'agent';
-    }
     if (sess?.mode === 'agent' || sess?.mode === 'plan') {
       sessionSettings.mode = sess.mode;
     }
@@ -67,6 +59,17 @@ IF USER ASKS YOU TO CREATE/WRITE/MODIFY FILES:
 You can only ANALYZE, READ, SEARCH, and PLAN in chat. You cannot EXECUTE modifications.`;
 }
 
+export function buildCrewPrivatePlanInstruction(): string {
+  return `CREW PRIVATE CHAT — conversational specialist mode.
+
+- Deliver complete plans, itineraries, analysis, and expertise as rich markdown IN THIS CHAT.
+- Planning is internal reasoning between you and the system — NEVER ask the user to approve a plan in a modal.
+- Do NOT tell the user to switch to Agent mode for conversational deliverables (travel plans, advice, outlines, questionnaires).
+- After the last questionnaire answer, include the FULL plan or response in the same turn — never stop at a transition phrase.
+- Use read/analysis tools when they genuinely help your domain expertise.
+- Only mention Agent mode if they explicitly asked you to write files or run commands on their machine.`;
+}
+
 export function buildAgentInstruction(): string {
   return `🛡️ AUTONOMOUS DIAGNOSTICS PROTOCOL (Agent Mode)
 
@@ -84,7 +87,13 @@ YOUR RESPONSIBILITIES:
 - Trust the auto-healing system; do not retry failed operations yourself`;
 }
 
-export function buildInstructionForMode(mode: 'agent' | 'plan'): string | undefined {
+export function buildInstructionForMode(
+  mode: 'agent' | 'plan',
+  opts?: { crewPrivate?: boolean },
+): string | undefined {
+  if (opts?.crewPrivate) {
+    return mode === 'plan' ? buildCrewPrivatePlanInstruction() : undefined;
+  }
   return mode === 'plan' ? buildPlanInstruction() : buildAgentInstruction();
 }
 
@@ -175,4 +184,70 @@ export function runAgentTurnAsync(
       getLogger().error('CHAT_TURN_ASYNC', e instanceof Error ? e : String(e));
       onError?.(errMsg, partial);
     });
+}
+
+type TurnFeedbackStoreLike = {
+  upsertTurnFeedback?: (feedback: Record<string, unknown>) => void;
+  getTurnFeedbackBySession?: (sessionId: string) => Array<Record<string, unknown>>;
+};
+
+export function getSessionStore(): TurnFeedbackStoreLike | null {
+  const eng = getEngine();
+  return (eng.sessionManager as unknown as { store?: TurnFeedbackStoreLike })?.store ?? null;
+}
+
+export function loadTurnFeedbackForSession(_eng: ReturnType<typeof getEngine>, sessionId: string): Array<Record<string, unknown>> {
+  const store = getSessionStore();
+  if (!store?.getTurnFeedbackBySession) return [];
+  try {
+    return store.getTurnFeedbackBySession(sessionId);
+  } catch {
+    return [];
+  }
+}
+
+export function recordTurnFeedback(input: {
+  sessionId: string;
+  messageId: string;
+  rating: 'positive' | 'negative' | 'skipped';
+  contextKind: 'agent_x' | 'crew_private';
+  crewId?: string | null;
+  turnSummary?: string | null;
+  metadata?: Record<string, unknown> | null;
+}): { ok: true } | { ok: false; error: string } {
+  const store = getSessionStore();
+  if (!store?.upsertTurnFeedback) return { ok: false, error: 'store-unavailable' };
+
+  store.upsertTurnFeedback({
+    id: generateId(),
+    sessionId: input.sessionId,
+    messageId: input.messageId,
+    contextKind: input.contextKind,
+    crewId: input.crewId ?? null,
+    rating: input.rating,
+    turnSummary: input.turnSummary ?? null,
+    metadata: input.metadata ?? null,
+    createdAt: new Date().toISOString(),
+  });
+
+  if (input.rating === 'positive' || input.rating === 'negative') {
+    try {
+      const agent = getEngine().agent as Agent | null;
+      const exp = agent as unknown as { experienceEngine?: { recordTrial: (sid: string, trial: Record<string, unknown>) => void } } | null;
+      exp?.experienceEngine?.recordTrial(input.sessionId, {
+        category: 'user_feedback',
+        action: input.turnSummary || 'assistant_turn',
+        result: input.rating === 'positive' ? 'success' : 'failure',
+        reward: input.rating === 'positive' ? 1 : -1,
+        metadata: { messageId: input.messageId, crewId: input.crewId, contextKind: input.contextKind },
+      });
+    } catch { /* best-effort neural sync */ }
+  }
+
+  try {
+    const agent = getEngine().agent as Agent | null;
+    agent?.rebuildSystemPrompt?.();
+  } catch { /* best-effort */ }
+
+  return { ok: true };
 }

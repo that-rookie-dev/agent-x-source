@@ -11,8 +11,9 @@ import { createXai } from '@ai-sdk/xai';
 import { createPerplexity } from '@ai-sdk/perplexity';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
-import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, ClarificationRequestMeta } from '@agentx/shared';
-import { isToolAllowedInPlanMode } from './plan-mode-utils.js';
+import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, QuestionnairePayload } from '@agentx/shared';
+import { normalizeAskClarificationArgs } from '@agentx/shared';
+import { isToolAllowedInPlanMode, buildPlanModeRestrictedToolHint, type PlanGatePromptProfile } from './plan-mode-utils.js';
 
 const DEFAULT_BASE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
@@ -123,11 +124,12 @@ export function createAiSdkTools(
   toolExecutor: { execute: (toolId: string, args: Record<string, unknown>, sessionId: string) => Promise<ToolResult>; setToolOutputHandler?: (handler: (output: string) => void) => void },
   sessionId: string,
   emit: (event: EngineEvent) => void,
-  waitForClarification: (question: string, options: string[], allowFreeform: boolean, meta?: ClarificationRequestMeta) => Promise<string>,
+  waitForClarification: (questionnaire: QuestionnairePayload) => Promise<string>,
   runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }>,
   planMode: boolean = false,
   waitForModeEscalation?: (toolId: string, reason: string) => Promise<boolean>,
   onToolExecuted?: (toolId: string, success: boolean, output: string, elapsed: number, args?: Record<string, unknown>) => void,
+  promptProfile: PlanGatePromptProfile = 'default',
 ): ToolSet {
   const allTools = toolRegistry.list();
   const tools: ToolSet = {};
@@ -156,20 +158,8 @@ export function createAiSdkTools(
         description: toolDef.modelDescription,
         inputSchema: jsonSchema(schema),
         async execute(args) {
-          const question = (args as any).question || 'I need more information.';
-          const options = Array.isArray((args as any).options) ? (args as any).options : [];
-          const allowFreeform = (args as any).allowFreeform !== false;
-          const multiple = (args as any).multiple === true;
-          const fields = Array.isArray((args as any).fields)
-            ? (args as any).fields.filter((f: unknown) => f && typeof f === 'object')
-            : undefined;
-          const recommended = typeof (args as any).recommended === 'string' ? (args as any).recommended : undefined;
-          const meta: ClarificationRequestMeta = {
-            selectionMode: fields?.length ? undefined : multiple ? 'multiple' : options.length > 0 ? 'single' : undefined,
-            fields,
-            recommended,
-          };
-          const response = await waitForClarification(question, options, allowFreeform, meta);
+          const questionnaire = normalizeAskClarificationArgs(args as import('@agentx/shared').AskClarificationToolArgs);
+          const response = await waitForClarification(questionnaire);
           return `User response: ${response}`;
         },
       });
@@ -295,25 +285,10 @@ export function createAiSdkTools(
                      throw new Error('MODE_ESCALATION_DECLINED');
                    }
 
-                   const modeNeeded = result.error === 'MODE_RESTRICTED' ? 'Agent Mode' : 'higher permissions';
-                   const instructions = `🚨 CRITICAL RESTRICTION 🚨
-
-The "${toolDef.id}" tool FAILED with error: MODE_RESTRICTED
-
-The user is in Plan Mode (read-only). The "${toolDef.id}" tool requires ${modeNeeded} and CANNOT be executed right now.
-
-YOUR RESPONSE MUST:
-1. ❌ NEVER claim you created/edited/deleted/executed anything. The action FAILED.
-2. ❌ NEVER show fake code or fake output. It didn't actually run.
-3. ✅ TELL the user the action failed and why: you're in Plan Mode and need ${modeNeeded}
-4. ✅ EXPLAIN which specific action you tried to perform and why it failed
-5. ✅ SUGGEST the user click the Agent Mode button in the UI to switch modes
-6. ✅ TELL them what you'll do once they switch modes
-
-This is NOT a suggestion - it's an instruction. If you claim the tool succeeded when it failed, you're deceiving the user.
-
-ERROR MESSAGE FROM SYSTEM: ${result.output}`;
-                   return instructions;
+                   if (result.error === 'MODE_RESTRICTED') {
+                     return buildPlanModeRestrictedToolHint(toolDef.id, result.output, promptProfile);
+                   }
+                   return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
                  }
                  return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
                }

@@ -14,7 +14,8 @@ import {
   unregisterMission,
 } from './crew-mission-registry.js';
 
-import type { ClarificationRequestMeta } from '@agentx/shared';
+import type { QuestionnairePayload } from '@agentx/shared';
+import { buildTextQuestionnaire } from '@agentx/shared';
 
 export interface CrewMissionOptions {
   agent: Agent;
@@ -26,12 +27,7 @@ export interface CrewMissionOptions {
   sessionId?: string;
   mainSystemPrompt?: string;
   crewOrchestrator?: CrewOrchestrator;
-  waitForClarification?: (
-    question: string,
-    options?: string[],
-    allowFreeform?: boolean,
-    meta?: ClarificationRequestMeta,
-  ) => Promise<string>;
+  waitForClarification?: (questionnaire: QuestionnairePayload) => Promise<string>;
   onMissionEvent?: (payload: Record<string, unknown>) => void;
 }
 
@@ -473,8 +469,12 @@ export class CrewMissionOrchestrator {
         continue;
       }
 
-      const prompt = `@${w.callsign} (${w.crewName}) needs clarification:\n\n${question}`;
-      const answer = await opts.waitForClarification(prompt, undefined, true);
+      const questionnaire = buildTextQuestionnaire({
+        title: `${w.crewName} needs clarification`,
+        prompt: question,
+        source: { kind: 'crew', name: w.crewName, callsign: w.callsign },
+      });
+      const answer = await opts.waitForClarification(questionnaire);
       context.addClarificationAnswer({ crewId: w.crewId, question, answer });
       context.setMemory(`clarification:${w.crewId}`, answer);
       context.addInterMessage('Agent-X', w.crewName, answer);

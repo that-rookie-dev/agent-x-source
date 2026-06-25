@@ -26,7 +26,7 @@ try {
   BetterSqlite3 = null;
 }
 
-const CURRENT_SCHEMA_VERSION = 20;
+const CURRENT_SCHEMA_VERSION = 21;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS _schema (
@@ -497,6 +497,28 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
       try { db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_crew_private ON sessions(host_crew_id, context_kind)`); } catch { /* best-effort */ }
     },
   },
+  {
+    version: 21,
+    description: 'Add turn_feedback table for per-turn user ratings',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS turn_feedback (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          context_kind TEXT NOT NULL DEFAULT 'agent_x',
+          crew_id TEXT,
+          rating TEXT NOT NULL,
+          turn_summary TEXT,
+          metadata TEXT,
+          created_at TEXT NOT NULL,
+          UNIQUE(session_id, message_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_turn_feedback_session ON turn_feedback(session_id);
+        CREATE INDEX IF NOT EXISTS idx_turn_feedback_crew ON turn_feedback(crew_id);
+      `);
+    },
+  },
 ];
 
 /** Idempotent: recreate core + crew_catalog tables if manually dropped while _schema is current. */
@@ -525,6 +547,7 @@ export class SessionStore {
   private memSessionEvents: Map<string, Array<SessionEvent>> = new Map();
   private memPermissionRules: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCrewFeedback: Map<string, Array<Record<string, unknown>>> = new Map();
+  private memTurnFeedback: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCheckpoints: Map<string, Array<Record<string, unknown>>> = new Map();
   private memTaskSnapshots: Map<string, Record<string, unknown>> = new Map();
   private memPersona: Record<string, unknown> | null = null;
@@ -1192,6 +1215,34 @@ export class SessionStore {
     return id;
   }
 
+  updateMessage(sessionId: string, messageId: string, patch: {
+    content?: string;
+    parts?: Array<Record<string, unknown>>;
+    metadata?: Record<string, unknown>;
+  }): void {
+    if (this.memMode) {
+      const msgs = this.memMessages.get(sessionId) ?? [];
+      const idx = msgs.findIndex((m) => (m as { id?: string }).id === messageId);
+      if (idx >= 0) {
+        msgs[idx] = { ...msgs[idx], ...patch };
+        this.memMessages.set(sessionId, msgs);
+      }
+      return;
+    }
+    try {
+      const sets: string[] = [];
+      const vals: unknown[] = [];
+      if (patch.content !== undefined) { sets.push('content = ?'); vals.push(patch.content); }
+      if (patch.parts !== undefined) { sets.push('parts = ?'); vals.push(JSON.stringify(patch.parts)); }
+      if (patch.metadata !== undefined) { sets.push('metadata = ?'); vals.push(JSON.stringify(patch.metadata)); }
+      if (sets.length === 0) return;
+      vals.push(messageId, sessionId);
+      this.db!.prepare(`UPDATE messages SET ${sets.join(', ')} WHERE id = ? AND session_id = ?`).run(...vals);
+    } catch (e) {
+      getLogger().warn('STORE', `updateMessage failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
   insertPart(sessionId: string, part: {
     type: string;
     content?: string;
@@ -1773,6 +1824,73 @@ export class SessionStore {
     return stmt.all(crewId) as Array<Record<string, unknown>>;
   }
 
+  upsertTurnFeedback(feedback: {
+    id: string;
+    sessionId: string;
+    messageId: string;
+    contextKind: string;
+    crewId?: string | null;
+    rating: string;
+    turnSummary?: string | null;
+    metadata?: Record<string, unknown> | null;
+    createdAt: string;
+  }): void {
+    const row = {
+      id: feedback.id,
+      session_id: feedback.sessionId,
+      message_id: feedback.messageId,
+      context_kind: feedback.contextKind,
+      crew_id: feedback.crewId ?? null,
+      rating: feedback.rating,
+      turn_summary: feedback.turnSummary ?? null,
+      metadata: feedback.metadata ? JSON.stringify(feedback.metadata) : null,
+      created_at: feedback.createdAt,
+    };
+
+    if (this.memMode) {
+      const arr = this.memTurnFeedback.get(feedback.sessionId) ?? [];
+      const idx = arr.findIndex((e) => e['message_id'] === feedback.messageId);
+      if (idx >= 0) arr[idx] = row;
+      else arr.push(row);
+      this.memTurnFeedback.set(feedback.sessionId, arr);
+      return;
+    }
+
+    const stmt = this.db.prepare(`
+      INSERT INTO turn_feedback (id, session_id, message_id, context_kind, crew_id, rating, turn_summary, metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id, message_id) DO UPDATE SET
+        rating = excluded.rating,
+        turn_summary = excluded.turn_summary,
+        metadata = excluded.metadata,
+        created_at = excluded.created_at
+    `);
+    stmt.run(
+      row.id,
+      row.session_id,
+      row.message_id,
+      row.context_kind,
+      row.crew_id,
+      row.rating,
+      row.turn_summary,
+      row.metadata,
+      row.created_at,
+    );
+  }
+
+  getTurnFeedbackBySession(sessionId: string): Array<Record<string, unknown>> {
+    if (this.memMode) {
+      return (this.memTurnFeedback.get(sessionId) ?? []) as Array<Record<string, unknown>>;
+    }
+
+    try {
+      const stmt = this.db.prepare('SELECT * FROM turn_feedback WHERE session_id = ? ORDER BY created_at ASC');
+      return stmt.all(sessionId) as Array<Record<string, unknown>>;
+    } catch {
+      return [];
+    }
+  }
+
   deleteSession(sessionId: string): void {
     if (this.memMode) {
       this.memSessions.delete(sessionId);
@@ -1781,6 +1899,7 @@ export class SessionStore {
       this.memPermissions.delete(sessionId);
       this.memSessionEvents.delete(sessionId);
       this.memPermissionRules.delete(sessionId);
+      this.memTurnFeedback.delete(sessionId);
       if (this.memCrewStates) {
         for (const key of this.memCrewStates.keys()) {
           if (key.startsWith(`${sessionId}:`)) {
@@ -1793,6 +1912,7 @@ export class SessionStore {
 
     try { this.db.prepare('DELETE FROM session_events WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
     try { this.db.prepare('DELETE FROM crew_feedback WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
+    try { this.db.prepare('DELETE FROM turn_feedback WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
     try { this.db.prepare('DELETE FROM permission_rules WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
     this.db.prepare('DELETE FROM session_crew_states WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM tool_executions WHERE session_id = ?').run(sessionId);
@@ -1864,12 +1984,14 @@ export class SessionStore {
       this.memPermissions.clear();
       this.memPermissionRules.clear();
       this.memSessionEvents.clear();
+      this.memTurnFeedback.clear();
       this.memPersona = null;
       if (this.memCrewStates) this.memCrewStates.clear();
       return;
     }
     try { this.db.exec('DELETE FROM session_events'); } catch { /* table may not exist yet */ }
     try { this.db.exec('DELETE FROM crew_feedback'); } catch { /* table may not exist yet */ }
+    try { this.db.exec('DELETE FROM turn_feedback'); } catch { /* table may not exist yet */ }
     try { this.db.exec('DELETE FROM permission_rules'); } catch { /* table may not exist yet */ }
     this.db.exec('DELETE FROM session_crew_states');
     this.db.exec('DELETE FROM tool_executions');

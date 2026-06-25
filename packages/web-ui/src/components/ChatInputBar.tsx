@@ -22,6 +22,7 @@ export interface ChatInputBarHandle {
 
 export interface ChatInputBarProps {
   streaming: boolean;
+  inputDisabled?: boolean;
   sendBlocked: boolean;
   sendBlockedReason: string;
   hasAttachments: boolean;
@@ -39,6 +40,7 @@ export interface ChatInputBarProps {
 
 const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar({
   streaming,
+  inputDisabled = false,
   sendBlocked,
   sendBlockedReason,
   hasAttachments,
@@ -107,12 +109,14 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
   }, []);
 
   const handleSendClick = useCallback(() => {
+    if (inputDisabled) return;
     const text = mentionInputRef.current?.getValue().trim() ?? '';
     if (!text && !hasAttachments) return;
     onSend(text);
-  }, [hasAttachments, onSend]);
+  }, [hasAttachments, onSend, inputDisabled]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (inputDisabled) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       if (mentionActiveRef.current) {
         e.preventDefault();
@@ -121,9 +125,9 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
       e.preventDefault();
       handleSendClick();
     }
-  }, [handleSendClick]);
+  }, [handleSendClick, inputDisabled]);
 
-  const canSend = !sendBlocked && (hasText || hasAttachments);
+  const canSend = !inputDisabled && !sendBlocked && (hasText || hasAttachments);
 
   return (
     <>
@@ -144,6 +148,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
           onTextChange={handleTextChange}
           placeholder={placeholder}
           crewList={disableMentions ? [] : crewList}
+          disabled={inputDisabled}
         />
 
         {streaming ? (
@@ -158,7 +163,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
             )}
           </Box>
         ) : (
-          <Tooltip title={sendBlocked ? sendBlockedReason : ''} arrow disableHoverListener={!sendBlocked}>
+          <Tooltip title={sendBlocked && sendBlockedReason ? sendBlockedReason : ''} arrow disableHoverListener={!sendBlocked || !sendBlockedReason}>
             <span>
               <IconButton
                 size="small"

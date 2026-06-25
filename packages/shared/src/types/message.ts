@@ -15,6 +15,8 @@ export interface Message {
   metadata?: MessageMetadata;
   compactionMarker?: CompactionMarker;
   crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
+  /** Chronological UI parts (text, tools, questionnaires) — persisted for restore. */
+  parts?: Array<Record<string, unknown>>;
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';

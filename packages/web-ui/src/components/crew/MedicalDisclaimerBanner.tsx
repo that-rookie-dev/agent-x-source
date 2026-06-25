@@ -3,7 +3,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import type { SxProps, Theme } from '@mui/material/styles';
 import { crewTheme } from '../../styles/crew-theme';
-import { MEDICAL_INFORMATIONAL_DISCLAIMER } from '@agentx/shared/browser';
+import { MEDICAL_INFORMATIONAL_DISCLAIMER, crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 
 export const HAZARD_STRIPE_BG = `repeating-linear-gradient(
   -45deg,
@@ -28,6 +28,28 @@ export function MedicalDisclaimerStripe({ height = 3 }: { height?: number }) {
       }}
     />
   );
+}
+
+/** Thin 3–4px hazard stripe for medical crew cards (hub grid + roster). */
+export function MedicalCrewCardStripe({ height = 4 }: { height?: number }) {
+  return <MedicalDisclaimerStripe height={height} />;
+}
+
+export function isMedicalCrewDisplay(input: {
+  categoryId?: string | null;
+  requiresMedicalDisclaimer?: boolean;
+  catalogId?: string | null;
+  callsign?: string;
+  crewId?: string | null;
+}): boolean {
+  const catalogId = input.catalogId
+    ?? (input.callsign ? `hub-${input.callsign}` : undefined);
+  return crewRequiresMedicalDisclaimer({
+    categoryId: input.categoryId,
+    requiresMedicalDisclaimer: input.requiresMedicalDisclaimer,
+    catalogId,
+    crewId: input.crewId ?? undefined,
+  });
 }
 
 /** Sector-level card: stripe header + yellow body with readable disclaimer text. */
@@ -73,6 +95,34 @@ export function MedicalProfileIdentityFrame({ children }: { children: React.Reac
         {children}
       </Box>
       <MedicalDisclaimerStripe height={3} />
+    </Box>
+  );
+}
+
+/** Compact session chat strip: full-bleed hazard line + yellow disclaimer (below chat header). */
+export function MedicalDisclaimerChatSessionStrip() {
+  return (
+    <Box
+      role="note"
+      aria-label="Medical information disclaimer"
+      sx={{
+        width: '100%',
+        flexShrink: 0,
+        overflow: 'hidden',
+      }}
+    >
+      <MedicalDisclaimerStripe height={3} />
+      <Box sx={{ px: 1.25, py: 0.75, bgcolor: MEDICAL_YELLOW }}>
+        <Typography sx={{
+          fontSize: '0.8125rem',
+          fontFamily: "'Inter', sans-serif",
+          color: '#1a1200',
+          lineHeight: 1.65,
+          textAlign: 'center',
+        }}>
+          {MEDICAL_INFORMATIONAL_DISCLAIMER}
+        </Typography>
+      </Box>
     </Box>
   );
 }

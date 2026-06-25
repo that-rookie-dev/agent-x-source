@@ -1,3 +1,4 @@
+import { catalogNeedsManifestSync } from './catalog-prune.js';
 import { loadCatalogManifest } from './catalog-manifest.js';
 import type { CrewCatalogStore } from './CrewSuggestionService.js';
 import {
@@ -20,7 +21,7 @@ async function runCatalogSeed(store: CrewCatalogStore): Promise<void> {
   const seededCount = await store.getCatalogCount();
   const expectedCount = manifest.crews.length;
 
-  if (seededCount >= expectedCount && storedRev >= manifest.revision) {
+  if (!catalogNeedsManifestSync(seededCount, storedRev, manifest)) {
     markCatalogSeedReady(seededCount, manifest.revision);
     return;
   }

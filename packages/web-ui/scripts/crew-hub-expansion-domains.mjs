@@ -45,21 +45,25 @@ export function expansionCategoryDefinitions() {
   ]);
 
   addMedical('medical-internal-medicine', 'Medical · Internal Medicine', [
-    'Internal Medicine Hospitalist Advisor', 'Cardiology Education Specialist', 'Endocrinology Coach', 'Gastroenterology Navigator',
-    'Nephrology Diet Educator', 'Pulmonology Rehab Guide', 'Rheumatology Support Advisor', 'Infectious Disease Literacy Coach',
-    'Hematology Patient Educator', 'Immunology Explainer', 'Geriatric Medicine Advisor', 'Hospital Medicine Flow Coach',
-    'Anticoagulation Education Advisor', 'Heart Failure Self-Management Coach', 'COPD Action Plan Advisor', 'Liver Disease Lifestyle Guide',
-    'Kidney Disease Stage Educator', 'Autoimmune Support Navigator', 'Fever Workup Literacy Guide', 'Polypharmacy Review Educator',
-    'Metabolic Syndrome Coach', 'Internal Medicine Board Prep Tutor',
+    'Internal Medicine Hospitalist Advisor', 'General Internist Educator', 'Hospital Medicine Flow Coach',
+    'Anticoagulation Education Advisor', 'Fever Workup Literacy Guide', 'Polypharmacy Review Educator',
+    'Metabolic Syndrome Coach', 'Internal Medicine Board Prep Tutor', 'Multimorbidity Care Coordinator',
+    'Complex Chronic Disease Navigator', 'Hospital Discharge Planning Educator', 'Medicine Consult Communication Coach',
+    'Preoperative Medical Clearance Educator', 'Adult Immunization Schedule Advisor', 'Travel Medicine Chronic Disease Coach',
+    'Hospital Antibiotic Stewardship Educator', 'Internal Medicine Quality Improvement Coach', 'Medicine Ward Rounds Family Educator',
+    'Inpatient Glycemic Management Coach', 'Delirium Prevention Hospital Advisor', 'Hospital Falls Prevention Educator',
+    'Internal Medicine Telehealth Coach',
   ]);
 
-  addMedical('medical-surgical-specialties', 'Medical · Surgical Specialties', [
-    'General Surgery Prehab Advisor', 'Orthopedic Recovery Educator', 'Neurosurgery Recovery Navigator', 'Cardiothoracic Rehab Guide',
-    'Vascular Surgery Education Specialist', 'Plastic Surgery Expectation Coach', 'ENT Surgery Recovery Advisor', 'Urology Procedure Educator',
-    'Ophthalmic Surgery Counselor', 'Trauma Surgery Recovery Planner', 'Bariatric Surgery Lifestyle Coach', 'Transplant Education Navigator',
-    'Surgical Consent Literacy Advisor', 'Post-Op Wound Care Educator', 'Anesthesia Pre-Op Anxiety Coach', 'Surgical Scheduling Coordinator',
-    'Minimally Invasive Surgery Educator', 'Robotic Surgery Patient Guide', 'Surgical Site Infection Prevention Coach', 'Amputation Rehab Navigator',
-    'Hernia Repair Recovery Advisor', 'Spine Surgery Recovery Educator',
+  addMedical('medical-surgical-specialties', 'Medical · Surgical Specialties (General)', [
+    'General Surgery Prehab Advisor', 'Surgical Consent Literacy Advisor', 'Post-Op Wound Care Educator',
+    'Surgical Scheduling Coordinator', 'Minimally Invasive Surgery Educator', 'Robotic Surgery Patient Guide',
+    'Surgical Site Infection Prevention Coach', 'Same-Day Surgery Discharge Coach', 'Surgical Risk Stratification Educator',
+    'Perioperative Blood Management Advisor', 'Surgical Antibiotic Prophylaxis Educator', 'Surgical Pain Expectation Coach',
+    'Surgical Second Opinion Navigator', 'Surgical Clinical Trial Educator', 'Surgical Quality Outcomes Advisor',
+    'Surgical Team Communication Educator', 'Outpatient Surgery Center Navigator', 'Surgical Complication Red Flag Educator',
+    'Surgical Nutrition Prehab Coach', 'Surgical DVT Prevention Educator', 'Surgical Scar Management Advisor',
+    'Surgical Telehealth Follow-Up Coach',
   ]);
 
   addMedical('medical-pediatrics-neonatal', 'Medical · Pediatrics & Neonatal', [
@@ -67,7 +71,7 @@ export function expansionCategoryDefinitions() {
     'Adolescent Medicine Counselor', 'Pediatric Emergency Triage Educator', 'Developmental Milestone Guide', 'Vaccine Hesitancy Counselor',
     'Pediatric Diabetes Educator', 'NICU Discharge Planner', 'Breastfeeding Lactation Educator', 'Pediatric Sleep Coach',
     'Childhood Obesity Prevention Advisor', 'Pediatric Allergy Educator', 'School Health Policy Advisor', 'Pediatric Mental Health First Aid Coach',
-    'Newborn Care Skills Educator', 'Pediatric Pain Management Literacy Guide', 'Youth Sports Safety Advisor', 'Pediatric Palliative Family Navigator',
+    'Newborn Care Skills Educator', 'Pediatric Pain Management Literacy Guide', 'Youth Sports Safety Advisor', 'Neonatal Pediatric Palliative Navigator',
     'Child Abuse Recognition Trainer', 'Pediatric Telehealth Coach',
   ]);
 
@@ -157,7 +161,7 @@ export function expansionCategoryDefinitions() {
     'Environmental Health Risk Communicator', 'Maternal & Child Health Program Coach', 'Global Health Logistics Advisor', 'Biostatistics for Policy Educator',
     'Contact Tracing Operations Coach', 'School Outbreak Response Advisor', 'Water Sanitation Health Educator', 'Tobacco Control Program Planner',
     'Nutrition Policy Advisor', 'Injury Prevention Epidemiologist Educator', 'Refugee Health Program Navigator', 'Pandemic Preparedness Planner',
-    'Health Department Accreditation Coach', 'Syndromic Surveillance Explainer', 'One Health Zoonosis Educator', 'Climate Health Adaptation Advisor',
+    'Health Department Accreditation Coach', 'Syndromic Surveillance Explainer', 'Public Health One Health Zoonosis Educator', 'Climate Health Adaptation Advisor',
     'Community Needs Assessment Facilitator', 'Public Health Data Dashboard Coach',
   ]);
 
@@ -184,7 +188,7 @@ export function expansionCategoryDefinitions() {
     'Oncology Nutrition Support Coach', 'Palliative Oncology Communication Advisor', 'Survivorship Care Plan Educator', 'Tumor Board Literacy Explainer',
     'Breast Cancer Screening Navigator', 'Colorectal Cancer Screening Educator', 'Lung Cancer Risk Reduction Coach', 'Prostate Cancer Decision Aid Educator',
     'Leukemia Family Support Navigator', 'Lymphoma Treatment Pathway Educator', 'Multiple Myeloma Support Coach', 'Sickle Cell Crisis Plan Educator',
-    'Hemophilia Home Care Advisor', 'Anemia Workup Literacy Coach', 'Bone Marrow Transplant Educator', 'Cancer Pain Management Literacy Guide',
+    'Hemophilia Home Care Advisor', 'Anemia Workup Literacy Coach', 'Oncology Bone Marrow Transplant Educator', 'Cancer Pain Management Literacy Guide',
     'Oncofertility Preservation Educator', 'Cancer Financial Toxicity Navigator',
   ]);
 
@@ -345,9 +349,9 @@ export function expansionCategoryDefinitions() {
 
   addGov('government-executive-legislative', 'Government · Executive & Legislative', [
     'City Manager Operations Advisor', 'County Administrator Coach', 'Legislative Bill Analysis Specialist', 'Committee Hearing Prep Coach',
-    'Constituent Services Manager', 'Mayor\'s Office Policy Advisor', 'Parliamentary Procedure Educator', 'Municipal Budget Analyst',
+    'Constituent Services Manager', 'Mayor\'s Office Policy Advisor', 'Parliamentary Procedure Educator', 'City Municipal Budget Analyst',
     'Public-Private Partnership Advisor', 'Ethics & Conflicts Counselor', 'Lobbying Disclosure Compliance Coach', 'Election Administration Advisor',
-    'Redistricting Policy Educator', 'Intergovernmental Relations Specialist', 'State Agency Program Auditor', 'Federal Grants Compliance Coach',
+    'Redistricting Policy Educator', 'Legislative Intergovernmental Relations Specialist', 'State Agency Program Auditor', 'Federal Grants Compliance Coach',
     'Legislative Staff Researcher', 'Executive Order Implementation Planner', 'Civic Engagement Facilitator', 'Transparency & FOIA Coach',
     'Municipal Charter Revision Advisor', 'Public Meeting Facilitation Specialist',
   ]);
@@ -398,7 +402,7 @@ export function expansionCategoryDefinitions() {
     traitBank: govTraits,
     roles: rolesFromTitles('Legal Practice', [
       'Corporate Transaction Attorney Advisor', 'Mergers & Acquisitions Counsel', 'Securities Law Specialist', 'Intellectual Property Strategist',
-      'Patent Prosecution Advisor', 'Trademark Portfolio Counsel', 'Employment Law Advisor', 'Labor Relations Counsel',
+      'Patent Prosecution Advisor', 'Trademark Portfolio Counsel', 'Employment Law Practice Advisor', 'Labor Relations Counsel',
       'Real Estate Transaction Attorney', 'Landlord-Tenant Law Educator', 'Family Law Mediation Advisor', 'Estate Planning Counsel',
       'Immigration Attorney Advisor', 'Criminal Defense Strategy Coach', 'Prosecution Case Theory Educator', 'Personal Injury Case Analyst',
       'Medical Malpractice Literacy Advisor', 'Environmental Law Counsel', 'Tax Controversy Advisor', 'Bankruptcy Restructuring Counsel',
@@ -431,7 +435,7 @@ export function expansionCategoryDefinitions() {
     'Small Animal Practice Advisor', 'Large Animal Veterinarian Educator', 'Wildlife Veterinarian Specialist', 'Equine Health Coach',
     'Avian Veterinary Advisor', 'Exotic Pet Health Educator', 'Veterinary Surgery Recovery Coach', 'Animal Shelter Medicine Advisor',
     'Zoo Veterinary Operations Coach', 'Veterinary Pharmacology Educator', 'Livestock Veterinary Public Health Advisor', 'Aquatic Animal Health Specialist',
-    'Veterinary Dentistry Educator', 'Animal Behavior Modification Coach', 'Veterinary Telemedicine Advisor', 'One Health Zoonosis Educator',
+    'Veterinary Dentistry Educator', 'Animal Behavior Modification Coach', 'Veterinary Telemedicine Advisor', 'Veterinary One Health Zoonosis Educator',
     'Pet Nutrition Formulation Coach', 'Veterinary Practice Management Advisor', 'Animal Rehabilitation Therapist Educator', 'Veterinary Lab Diagnostics Coach',
     'Spay Neuter Program Planner', 'Veterinary Ethics & Welfare Advisor',
   ]);

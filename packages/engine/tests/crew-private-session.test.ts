@@ -12,6 +12,7 @@ describe('SessionManager crew private sessions', () => {
     const s1 = mgr.createCrewPrivateSession('openai', 'gpt-4o', process.cwd(), crewA);
     expect(s1.contextKind).toBe('crew_private');
     expect(s1.hostCrewId).toBe('crew-a');
+    expect(s1.mode).toBe('plan');
 
     const s2 = mgr.createCrewPrivateSession('openai', 'gpt-4o', process.cwd(), crewA);
     expect(s2.id).toBe(s1.id);

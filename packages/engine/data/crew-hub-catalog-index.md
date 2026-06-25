@@ -1,8 +1,8 @@
 # Crew Hub Catalog Index
 
-Revision: **3**
-Categories: **87**
-Crew members: **1823**
+Revision: **4**
+Categories: **216**
+Crew members: **4661**
 
 > Existing installs pick up new crews automatically when manifest revision advances (background catalog seed).
 
@@ -189,7 +189,7 @@ Crew members: **1823**
 - Performance Test Engineer — Rina Jensen
 - Accessibility QA Engineer — Valentina Mansour
 - Security Test Engineer — Aarav Okafor
-- Mobile QA Engineer — Akira Silva
+- Mobile App QA Engineer — Akira Silva
 - API Test Engineer — Aya Abdi
 - Data Quality Test Engineer — Daniel Costa
 - Release Validation Engineer — Emre Haddad
@@ -663,7 +663,7 @@ Crew members: **1823**
 - Assembly Line Balancer — Chidi Fernandez
 - Packaging Operations Manager — Efe Khan
 - ISO 9001 Implementation Advisor — Freya Mensah
-- Capacity Planning Engineer — Idris Patel
+- Manufacturing Capacity Planning Engineer — Idris Patel
 - Manufacturing Cost Analyst — Jonas Tanaka
 - New Product Introduction Manager — Layla Alvarez
 
@@ -1047,52 +1047,52 @@ Crew members: **1823**
 ## Medical · Internal Medicine (`medical-internal-medicine`) — 22 roles
 *Medical informational disclaimer required*
 - Internal Medicine Hospitalist Advisor — Sophia Volkov
-- Cardiology Education Specialist — Zainab Brooks
-- Endocrinology Coach — Aditya Fernandez
-- Gastroenterology Navigator — Anika Khan
-- Nephrology Diet Educator — Chidi Mensah
-- Pulmonology Rehab Guide — Efe Patel
-- Rheumatology Support Advisor — Freya Tanaka
-- Infectious Disease Literacy Coach — Idris Alvarez
-- Hematology Patient Educator — Jonas Desai
-- Immunology Explainer — Layla Iyer
-- Geriatric Medicine Advisor — Meera Malik
-- Hospital Medicine Flow Coach — Noah Nwosu
-- Anticoagulation Education Advisor — Rina Sharma
-- Heart Failure Self-Management Coach — Valentina Zhang
-- COPD Action Plan Advisor — Aarav Chen
-- Liver Disease Lifestyle Guide — Akira Gupta
-- Kidney Disease Stage Educator — Aya Laurent
-- Autoimmune Support Navigator — Daniel Nakamura
-- Fever Workup Literacy Guide — Emre Rahman
-- Polypharmacy Review Educator — Hana Vega
-- Metabolic Syndrome Coach — Iris Boateng
-- Internal Medicine Board Prep Tutor — Kavya Farouk
+- General Internist Educator — Zainab Brooks
+- Hospital Medicine Flow Coach — Aditya Fernandez
+- Anticoagulation Education Advisor — Anika Khan
+- Fever Workup Literacy Guide — Chidi Mensah
+- Polypharmacy Review Educator — Efe Patel
+- Metabolic Syndrome Coach — Freya Tanaka
+- Internal Medicine Board Prep Tutor — Idris Alvarez
+- Multimorbidity Care Coordinator — Jonas Desai
+- Complex Chronic Disease Navigator — Layla Iyer
+- Hospital Discharge Planning Educator — Meera Malik
+- Medicine Consult Communication Coach — Noah Nwosu
+- Preoperative Medical Clearance Educator — Rina Sharma
+- Adult Immunization Schedule Advisor — Valentina Zhang
+- Travel Medicine Chronic Disease Coach — Aarav Chen
+- Hospital Antibiotic Stewardship Educator — Akira Gupta
+- Internal Medicine Quality Improvement Coach — Aya Laurent
+- Medicine Ward Rounds Family Educator — Daniel Nakamura
+- Inpatient Glycemic Management Coach — Emre Rahman
+- Delirium Prevention Hospital Advisor — Hana Vega
+- Hospital Falls Prevention Educator — Iris Boateng
+- Internal Medicine Telehealth Coach — Kavya Farouk
 
-## Medical · Surgical Specialties (`medical-surgical-specialties`) — 22 roles
+## Medical · Surgical Specialties (General) (`medical-surgical-specialties`) — 22 roles
 *Medical informational disclaimer required*
 - General Surgery Prehab Advisor — Linh Kaur
-- Orthopedic Recovery Educator — Mina Mehta
-- Neurosurgery Recovery Navigator — Paloma Park
-- Cardiothoracic Rehab Guide — Sofia Svensson
-- Vascular Surgery Education Specialist — Yuki Ahmed
-- Plastic Surgery Expectation Coach — Adaeze Dahl
-- ENT Surgery Recovery Advisor — Amir Ibrahim
-- Urology Procedure Educator — Camila Lopez
-- Ophthalmic Surgery Counselor — Diego Novak
-- Trauma Surgery Recovery Planner — Felix Santos
-- Bariatric Surgery Lifestyle Coach — Hugo Williams
-- Transplant Education Navigator — Jia Chang
-- Surgical Consent Literacy Advisor — Kwame Garcia
-- Post-Op Wound Care Educator — Maya Kowalski
-- Anesthesia Pre-Op Anxiety Coach — Nia Muller
-- Surgical Scheduling Coordinator — Rami Popov
-- Minimally Invasive Surgery Educator — Tomas Usman
-- Robotic Surgery Patient Guide — Zola Bianchi
-- Surgical Site Infection Prevention Coach — Aisha Dubois
-- Amputation Rehab Navigator — Arjun Joshi
-- Hernia Repair Recovery Advisor — Dalia Martinez
-- Spine Surgery Recovery Educator — Elias Oliveira
+- Surgical Consent Literacy Advisor — Mina Mehta
+- Post-Op Wound Care Educator — Paloma Park
+- Surgical Scheduling Coordinator — Sofia Svensson
+- Minimally Invasive Surgery Educator — Yuki Ahmed
+- Robotic Surgery Patient Guide — Adaeze Dahl
+- Surgical Site Infection Prevention Coach — Amir Ibrahim
+- Same-Day Surgery Discharge Coach — Camila Lopez
+- Surgical Risk Stratification Educator — Diego Novak
+- Perioperative Blood Management Advisor — Felix Santos
+- Surgical Antibiotic Prophylaxis Educator — Hugo Williams
+- Surgical Pain Expectation Coach — Jia Chang
+- Surgical Second Opinion Navigator — Kwame Garcia
+- Surgical Clinical Trial Educator — Maya Kowalski
+- Surgical Quality Outcomes Advisor — Nia Muller
+- Surgical Team Communication Educator — Rami Popov
+- Outpatient Surgery Center Navigator — Tomas Usman
+- Surgical Complication Red Flag Educator — Zola Bianchi
+- Surgical Nutrition Prehab Coach — Aisha Dubois
+- Surgical DVT Prevention Educator — Arjun Joshi
+- Surgical Scar Management Advisor — Dalia Martinez
+- Surgical Telehealth Follow-Up Coach — Elias Oliveira
 
 ## Medical · Pediatrics & Neonatal (`medical-pediatrics-neonatal`) — 22 roles
 *Medical informational disclaimer required*
@@ -1115,7 +1115,7 @@ Crew members: **1823**
 - Newborn Care Skills Educator — Luna Jensen
 - Pediatric Pain Management Literacy Guide — Naomi Mansour
 - Youth Sports Safety Advisor — Rafael Okafor
-- Pediatric Palliative Family Navigator — Tariq Silva
+- Neonatal Pediatric Palliative Navigator — Tariq Silva
 - Child Abuse Recognition Trainer — Zara Abdi
 - Pediatric Telehealth Coach — Aiko Costa
 
@@ -1364,7 +1364,7 @@ Crew members: **1823**
 - Pandemic Preparedness Planner — Akira Rao
 - Health Department Accreditation Coach — Aya Volkov
 - Syndromic Surveillance Explainer — Daniel Brooks
-- One Health Zoonosis Educator — Emre Fernandez
+- Public Health One Health Zoonosis Educator — Emre Fernandez
 - Climate Health Adaptation Advisor — Hana Khan
 - Community Needs Assessment Facilitator — Iris Mensah
 - Public Health Data Dashboard Coach — Kavya Patel
@@ -1439,7 +1439,7 @@ Crew members: **1823**
 - Sickle Cell Crisis Plan Educator — Esra Costa
 - Hemophilia Home Care Advisor — Haruto Haddad
 - Anemia Workup Literacy Coach — Ishan Lee
-- Bone Marrow Transplant Educator — Keiko Nasser
+- Oncology Bone Marrow Transplant Educator — Keiko Nasser
 - Cancer Pain Management Literacy Guide — Luca Rao
 - Oncofertility Preservation Educator — Nadia Volkov
 - Cancer Financial Toxicity Navigator — Priya Brooks
@@ -1765,13 +1765,13 @@ Crew members: **1823**
 - Constituent Services Manager — Yuki Sharma
 - Mayor's Office Policy Advisor — Adaeze Zhang
 - Parliamentary Procedure Educator — Amir Chen
-- Municipal Budget Analyst — Camila Gupta
+- City Municipal Budget Analyst — Camila Gupta
 - Public-Private Partnership Advisor — Diego Laurent
 - Ethics & Conflicts Counselor — Felix Nakamura
 - Lobbying Disclosure Compliance Coach — Hugo Rahman
 - Election Administration Advisor — Jia Vega
 - Redistricting Policy Educator — Kwame Boateng
-- Intergovernmental Relations Specialist — Maya Farouk
+- Legislative Intergovernmental Relations Specialist — Maya Farouk
 - State Agency Program Auditor — Nia Kaur
 - Federal Grants Compliance Coach — Rami Mehta
 - Legislative Staff Researcher — Tomas Park
@@ -1884,7 +1884,7 @@ Crew members: **1823**
 - Intellectual Property Strategist — Liam Watanabe
 - Patent Prosecution Advisor — Miguel Campbell
 - Trademark Portfolio Counsel — Omar Fischer
-- Employment Law Advisor — Santiago Kim
+- Employment Law Practice Advisor — Santiago Kim
 - Labor Relations Counsel — Yara Mori
 - Real Estate Transaction Attorney — Abena Petrov
 - Landlord-Tenant Law Educator — Amara Torres
@@ -1965,7 +1965,7 @@ Crew members: **1823**
 - Veterinary Dentistry Educator — Kwame Petrov
 - Animal Behavior Modification Coach — Maya Torres
 - Veterinary Telemedicine Advisor — Nia Anderson
-- One Health Zoonosis Educator — Rami Diallo
+- Veterinary One Health Zoonosis Educator — Rami Diallo
 - Pet Nutrition Formulation Coach — Tomas Jensen
 - Veterinary Practice Management Advisor — Zola Mansour
 - Animal Rehabilitation Therapist Educator — Aisha Okafor
@@ -2020,3 +2020,3149 @@ Crew members: **1823**
 - Data Curation Specialist — Luca Popov
 - Taxonomy & Ontology Designer — Nadia Usman
 - Citizen Science Library Liaison — Priya Bianchi
+
+## Medical · Allergy & Immunology (`medical-allergy-immunology`) — 22 roles
+*Medical informational disclaimer required*
+- Allergy & Immunology Educator — Sophia Dubois
+- Seasonal Allergy Management Coach — Zainab Joshi
+- Food Allergy Action Plan Advisor — Aditya Martinez
+- Drug Allergy Documentation Educator — Anika Oliveira
+- Asthma-Allergy Overlap Navigator — Chidi Singh
+- Eosinophilic Disorder Literacy Guide — Efe Adeyemi
+- Urticaria & Angioedema Educator — Freya Cruz
+- Immunodeficiency Screening Navigator — Idris Hassan
+- Allergy Immunotherapy Journey Coach — Jonas Lindberg
+- Anaphylaxis Emergency Plan Educator — Layla Nguyen
+- Pediatric Allergy Family Advisor — Meera Rossi
+- Occupational Allergy Exposure Coach — Noah Watanabe
+- Contact Allergen Avoidance Educator — Rina Campbell
+- Allergic Rhinitis Treatment Options Guide — Valentina Fischer
+- Atopic Dermatitis Allergy Link Educator — Aarav Kim
+- Venom Allergy Desensitization Educator — Akira Mori
+- Latex Allergy Workplace Advisor — Aya Petrov
+- Autoimmune vs Allergy Literacy Coach — Daniel Torres
+- Allergy Testing Interpretation Educator — Emre Anderson
+- Biologic Therapy for Allergy Educator — Hana Diallo
+- Allergy Clinic Referral Navigator — Iris Jensen
+- Immune Tolerance Research Literacy Advisor — Kavya Mansour
+
+## Medical · Anesthesiology (`medical-anesthesiology`) — 22 roles
+*Medical informational disclaimer required*
+- Anesthesiology Pre-Op Educator — Linh Okafor
+- General Anesthesia Expectation Coach — Mina Silva
+- Regional Anesthesia Options Advisor — Paloma Abdi
+- Spinal Epidural Labor Educator — Sofia Costa
+- Sedation for Procedures Coach — Yuki Haddad
+- Anesthesia Risk Assessment Literacy Guide — Adaeze Lee
+- NPO Pre-Surgery Fasting Educator — Amir Nasser
+- Post-Anesthesia Recovery Coach — Camila Rao
+- PONV Nausea Prevention Educator — Diego Volkov
+- Anesthesia for Pediatric Surgery Advisor — Felix Brooks
+- Geriatric Anesthesia Risk Educator — Hugo Fernandez
+- Obstructive Sleep Apnea Anesthesia Coach — Jia Khan
+- Malignant Hyperthermia Family Educator — Kwame Mensah
+- Chronic Pain & Anesthesia Planning Advisor — Maya Patel
+- Cardiac Anesthesia Literacy Guide — Nia Tanaka
+- Neuroanesthesia Patient Educator — Rami Alvarez
+- Ambulatory Surgery Anesthesia Coach — Tomas Desai
+- Anesthesia Awareness Concerns Educator — Zola Iyer
+- Opioid-Sparing Anesthesia Options Advisor — Aisha Malik
+- Anesthesia Consent Process Educator — Arjun Nwosu
+- ICU Sedation Family Advisor — Dalia Sharma
+- Anesthesia Quality & Safety Literacy Coach — Elias Zhang
+
+## Medical · Cardiology & Vascular Medicine (`medical-cardiology-vascular`) — 22 roles
+*Medical informational disclaimer required*
+- Cardiology Heart Failure Educator — Giulia Chen
+- Coronary Artery Disease Lifestyle Coach — Ines Gupta
+- Arrhythmia Monitoring Advisor — Karim Laurent
+- Atrial Fibrillation Anticoagulation Educator — Liam Nakamura
+- Hypertension Cardiology Coach — Miguel Rahman
+- Valvular Heart Disease Navigator — Omar Vega
+- Cardiac Rehabilitation Phase Educator — Santiago Boateng
+- Interventional Cardiology Prep Advisor — Yara Farouk
+- Electrophysiology Ablation Educator — Abena Kaur
+- Lipid Management Cardiology Coach — Amara Mehta
+- Peripheral Artery Disease Walker Educator — Callum Park
+- Cardiac Device Pacemaker Advisor — Deepa Svensson
+- ICD Defibrillator Lifestyle Educator — Fatima Ahmed
+- Congenital Heart Disease Adult Transition Coach — Helena Dahl
+- Cardiomyopathy Family Navigator — Jaden Ibrahim
+- Cardiac Imaging Stress Test Educator — Khalid Lopez
+- Women's Heart Health Advisor — Luna Novak
+- Sports Cardiology Clearance Educator — Naomi Santos
+- Cardiac Transplant Candidacy Navigator — Rafael Williams
+- Pulmonary Hypertension Cardiology Coach — Tariq Chang
+- Syncope Evaluation Literacy Guide — Zara Garcia
+- Cardiovascular Prevention Program Designer — Aiko Kowalski
+
+## Medical · Gastroenterology & Hepatology (`medical-gastroenterology-hepatology`) — 22 roles
+*Medical informational disclaimer required*
+- Gastroenterology IBD Educator — Anya Muller
+- Crohn's Disease Flare Coach — Clara Popov
+- Ulcerative Colitis Management Advisor — Elena Usman
+- GERD Lifestyle Modification Educator — Gabriel Bianchi
+- Celiac Disease Gluten-Free Coach — Imani Dubois
+- Irritable Bowel Syndrome Navigator — Kaito Joshi
+- Colonoscopy Prep Educator — Leila Martinez
+- Endoscopy Procedure Expectation Coach — Mei Oliveira
+- Hepatitis B & C Literacy Advisor — Noura Singh
+- Cirrhosis Complication Prevention Educator — Sana Adeyemi
+- Fatty Liver Disease Lifestyle Coach — Wei Cruz
+- Pancreatitis Recovery Advisor — Aaliyah Hassan
+- GI Bleeding Red Flag Educator — Alina Lindberg
+- Barrett's Esophagus Surveillance Coach — Beatriz Nguyen
+- Diverticulitis Diet Educator — Dante Rossi
+- Gallbladder Disease Surgical Options Advisor — Esra Watanabe
+- Motility Disorder Educator — Haruto Campbell
+- Liver Transplant Evaluation Navigator — Ishan Fischer
+- Pediatric GI Nutrition Coach — Keiko Kim
+- GI Cancer Screening Educator — Luca Mori
+- Microbiome Health Literacy Advisor — Nadia Petrov
+- Enteral & Parenteral Nutrition GI Coach — Priya Torres
+
+## Medical · Pulmonology & Critical Care (`medical-pulmonology-critical-care`) — 22 roles
+*Medical informational disclaimer required*
+- Pulmonology COPD Action Plan Coach — Sophia Anderson
+- Asthma Controller Medication Educator — Zainab Diallo
+- Pulmonary Fibrosis Support Navigator — Aditya Jensen
+- Sleep-Disordered Breathing Pulmonology Advisor — Anika Mansour
+- Lung Cancer Screening Educator — Chidi Okafor
+- Pulmonary Rehab Enrollment Coach — Efe Silva
+- Mechanical Ventilation Family Educator — Freya Abdi
+- ARDS ICU Literacy Advisor — Idris Costa
+- Pleural Effusion Procedure Educator — Jonas Haddad
+- Bronchiectasis Airway Clearance Coach — Layla Lee
+- Pulmonary Hypertension Medication Educator — Meera Nasser
+- Occupational Lung Disease Advisor — Noah Rao
+- Cystic Fibrosis Adult Transition Coach — Rina Volkov
+- Home Oxygen Therapy Educator — Valentina Brooks
+- Pulmonary Function Test Explainer — Aarav Fernandez
+- Critical Care Sedation Weaning Educator — Akira Khan
+- Sepsis ICU Recovery Advisor — Aya Mensah
+- Tracheostomy Care Home Coach — Daniel Patel
+- Lung Transplant Candidacy Navigator — Emre Tanaka
+- Interstitial Lung Disease Support Educator — Hana Alvarez
+- Pulmonary Embolism Prevention Coach — Iris Desai
+- Long COVID Pulmonary Recovery Advisor — Kavya Iyer
+
+## Medical · Nephrology (`medical-nephrology`) — 22 roles
+*Medical informational disclaimer required*
+- Nephrology CKD Stage Educator — Linh Malik
+- Dialysis Modality Selection Coach — Mina Nwosu
+- Hemodialysis Access Care Advisor — Paloma Sharma
+- Peritoneal Dialysis Home Training Educator — Sofia Zhang
+- Kidney Transplant Evaluation Navigator — Yuki Chen
+- Electrolyte Disorder Literacy Coach — Adaeze Gupta
+- Glomerulonephritis Patient Educator — Amir Laurent
+- Kidney Stone Prevention Advisor — Camila Nakamura
+- Hypertension Renal Link Educator — Diego Rahman
+- Anemia of CKD Management Coach — Felix Vega
+- Mineral Bone Disorder Educator — Hugo Boateng
+- Nephrotic Syndrome Diet Advisor — Jia Farouk
+- Acute Kidney Injury Recovery Educator — Kwame Kaur
+- Contrast Nephropathy Prevention Coach — Maya Mehta
+- Pediatric Nephrology Family Advisor — Nia Park
+- Polycystic Kidney Disease Navigator — Rami Svensson
+- Lupus Nephritis Monitoring Educator — Tomas Ahmed
+- Diabetic Nephropathy Prevention Coach — Zola Dahl
+- Renal Diet Sodium Potassium Educator — Aisha Ibrahim
+- Home Dialysis Supply Logistics Coach — Arjun Lopez
+- Nephrology Telehealth Follow-Up Advisor — Dalia Novak
+- Kidney Palliative Care Planning Educator — Elias Santos
+
+## Medical · Endocrinology & Metabolism (`medical-endocrinology-metabolism`) — 22 roles
+*Medical informational disclaimer required*
+- Endocrinology Diabetes Technology Coach — Giulia Williams
+- Type 1 Diabetes Carb Counting Educator — Ines Chang
+- Type 2 Diabetes Remission Lifestyle Advisor — Karim Garcia
+- Thyroid Nodule Evaluation Navigator — Liam Kowalski
+- Hypothyroidism Medication Timing Coach — Miguel Muller
+- Hyperthyroidism Treatment Options Educator — Omar Popov
+- Adrenal Insufficiency Sick Day Educator — Santiago Usman
+- Cushing Syndrome Recovery Advisor — Yara Bianchi
+- PCOS Endocrine Management Coach — Abena Dubois
+- Osteoporosis Bone Health Educator — Amara Joshi
+- Calcium & Vitamin D Optimization Advisor — Callum Martinez
+- Pituitary Tumor Literacy Navigator — Deepa Oliveira
+- Growth Hormone Deficiency Educator — Fatima Singh
+- Male Hypogonadism Counseling Coach — Helena Adeyemi
+- Menopause Hormone Therapy Educator — Jaden Cruz
+- Metabolic Syndrome Intervention Advisor — Khalid Hassan
+- Lipid Endocrine Disorder Educator — Luna Lindberg
+- Diabetes in Pregnancy Coach — Naomi Nguyen
+- Continuous Glucose Monitor Training Educator — Rafael Rossi
+- Insulin Pump Onboarding Coach — Tariq Watanabe
+- Rare Endocrine Disorder Family Navigator — Zara Campbell
+- Endocrine Telemedicine Monitoring Advisor — Aiko Fischer
+
+## Medical · Rheumatology & Autoimmune Disease (`medical-rheumatology-autoimmune`) — 22 roles
+*Medical informational disclaimer required*
+- Rheumatology Rheumatoid Arthritis Coach — Anya Kim
+- Lupus Flare Recognition Educator — Clara Mori
+- Psoriatic Arthritis Joint Protection Advisor — Elena Petrov
+- Ankylosing Spondylitis Mobility Coach — Gabriel Torres
+- Gout Diet & Urate Educator — Imani Anderson
+- Osteoarthritis Pain Management Advisor — Kaito Diallo
+- Fibromyalgia Pacing Skills Educator — Leila Jensen
+- Vasculitis Treatment Literacy Navigator — Mei Mansour
+- Sjogren Syndrome Dryness Coach — Noura Okafor
+- Scleroderma Raynaud Educator — Sana Silva
+- Myositis Weakness Management Advisor — Wei Abdi
+- Biologic Therapy Injection Coach — Aaliyah Costa
+- DMARD Monitoring Lab Educator — Alina Haddad
+- Rheumatology Infusion Center Navigator — Beatriz Lee
+- Juvenile Arthritis Parent Educator — Dante Nasser
+- Autoimmune Fatigue Coping Coach — Esra Rao
+- Rheumatology Telehealth Monitoring Advisor — Haruto Volkov
+- Joint Injection Expectation Educator — Ishan Brooks
+- Rheumatoid Lung Involvement Navigator — Keiko Fernandez
+- Osteoporosis Fracture Prevention Coach — Luca Khan
+- Polymyalgia Rheumatica Educator — Nadia Mensah
+- Rheumatic Disease Pregnancy Planning Advisor — Priya Patel
+
+## Medical · Infectious Disease (`medical-infectious-disease-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Infectious Disease Antibiotic Stewardship Educator — Sophia Tanaka
+- HIV PrEP & Treatment Literacy Coach — Zainab Alvarez
+- Tuberculosis Latent Infection Advisor — Aditya Desai
+- Sepsis Recovery & Prevention Educator — Anika Iyer
+- MRSA Decolonization Home Coach — Chidi Malik
+- C difficile Recurrence Prevention Advisor — Efe Nwosu
+- Travel Vaccine & Prophylaxis Educator — Freya Sharma
+- Tropical Disease Return Travel Navigator — Idris Zhang
+- Fungal Infection Immunocompromised Coach — Jonas Chen
+- Endocarditis Prophylaxis Educator — Layla Gupta
+- Bone & Joint Infection Recovery Advisor — Meera Laurent
+- Healthcare Associated Infection Prevention Coach — Noah Nakamura
+- Sexually Transmitted Infection Screening Educator — Rina Rahman
+- Hepatitis Co-Infection Management Advisor — Valentina Vega
+- Opportunistic Infection Transplant Educator — Aarav Boateng
+- COVID Long-Term Immunity Literacy Coach — Akira Farouk
+- Mpox & Emerging Virus Educator — Aya Kaur
+- Antimicrobial Resistance Awareness Advisor — Daniel Mehta
+- Infection Control Home Care Educator — Emre Park
+- Pediatric Infectious Disease Family Navigator — Hana Svensson
+- Occupational Exposure PEP Educator — Iris Ahmed
+- Infectious Disease Teleconsult Navigator — Kavya Dahl
+
+## Medical · Hematology (`medical-hematology`) — 22 roles
+*Medical informational disclaimer required*
+- Hematology Anemia Workup Educator — Linh Ibrahim
+- Iron Deficiency Oral vs IV Coach — Mina Lopez
+- Sickle Cell Crisis Plan Advisor — Paloma Novak
+- Thalassemia Transfusion Navigator — Sofia Santos
+- Hemophilia Home Factor Educator — Yuki Williams
+- Deep Vein Thrombosis Anticoagulation Coach — Adaeze Chang
+- Pulmonary Embolism Recovery Educator — Amir Garcia
+- Myeloma Treatment Pathway Advisor — Camila Kowalski
+- Leukemia Induction Literacy Coach — Diego Muller
+- Lymphoma Staging Education Navigator — Felix Popov
+- Bone Marrow Transplant Hematology Educator — Hugo Usman
+- Bleeding Disorder Workup Advisor — Jia Bianchi
+- ITP Platelet Management Coach — Kwame Dubois
+- Polycythemia Vera Monitoring Educator — Maya Joshi
+- Aplastic Anemia Support Navigator — Nia Martinez
+- Hemochromatosis Therapeutic Phlebotomy Coach — Rami Oliveira
+- von Willebrand Disease Educator — Tomas Singh
+- Antiphospholipid Syndrome Advisor — Zola Adeyemi
+- Hematology Lab Result Literacy Coach — Aisha Cruz
+- Pediatric Hematology Family Educator — Arjun Hassan
+- Hematology Clinical Trial Navigator — Dalia Lindberg
+- Blood Product Transfusion Consent Educator — Elias Nguyen
+
+## Medical · Medical Genetics & Genomics (`medical-medical-genetics`) — 22 roles
+*Medical informational disclaimer required*
+- Medical Genetics Hereditary Cancer Educator — Giulia Rossi
+- BRCA Risk & Screening Navigator — Ines Watanabe
+- Lynch Syndrome Family Coach — Karim Campbell
+- Rare Disease Diagnosis Journey Advisor — Liam Fischer
+- Chromosomal Microarray Result Educator — Miguel Kim
+- Whole Exome Sequencing Literacy Coach — Omar Mori
+- Pharmacogenomics Medication Match Educator — Santiago Petrov
+- Newborn Screening Follow-Up Navigator — Yara Torres
+- Carrier Screening Preconception Advisor — Abena Anderson
+- Mitochondrial Disease Family Educator — Amara Diallo
+- Connective Tissue Disorder Genetics Coach — Callum Jensen
+- Neurogenetic Syndrome Navigator — Deepa Mansour
+- Inborn Errors of Metabolism Educator — Fatima Okafor
+- Genetic Cardiomyopathy Screening Advisor — Helena Silva
+- Familial Hypercholesterolemia Coach — Jaden Abdi
+- Genetic Counseling Referral Navigator — Khalid Costa
+- Direct-to-Consumer Genetic Test Educator — Luna Haddad
+- Genomic Research Consent Advisor — Naomi Lee
+- Pediatric Genetics Development Coach — Rafael Nasser
+- Adult-Onset Genetic Condition Educator — Tariq Rao
+- Genetic Registry Enrollment Navigator — Zara Volkov
+- Genomic Equity & Access Advisor — Aiko Brooks
+
+## Medical · Nuclear Medicine (`medical-nuclear-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Nuclear Medicine PET Scan Educator — Anya Fernandez
+- Radioactive Tracer Safety Advisor — Clara Khan
+- Thyroid Uptake Scan Explainer — Elena Mensah
+- Bone Scan Metastasis Literacy Coach — Gabriel Patel
+- Cardiac Nuclear Stress Test Educator — Imani Tanaka
+- Renal MAG3 Scan Prep Advisor — Kaito Alvarez
+- Hepatobiliary HIDA Scan Educator — Leila Desai
+- Lung Ventilation Perfusion Scan Coach — Mei Iyer
+- Neuro PET Dementia Imaging Educator — Noura Malik
+- Theranostic Lutetium Therapy Advisor — Sana Nwosu
+- I-131 Thyroid Therapy Prep Educator — Wei Sharma
+- Pediatric Nuclear Medicine Sedation Coach — Aaliyah Zhang
+- Pregnancy & Breastfeeding Imaging Safety Advisor — Alina Chen
+- Radiopharmacy Dose Preparation Literacy Educator — Beatriz Gupta
+- Nuclear Medicine Radiation Dose Coach — Dante Laurent
+- Oncology PET Response Criteria Educator — Esra Nakamura
+- Sentinel Node Mapping Explainer — Haruto Rahman
+- Gallium Infection Imaging Advisor — Ishan Vega
+- Nuclear Cardiology Viability Educator — Keiko Boateng
+- Therapy Isolation Precautions Coach — Luca Farouk
+- Nuclear Medicine Research Trial Navigator — Nadia Kaur
+- Molecular Imaging Clinical Trial Educator — Priya Mehta
+
+## Medical · Preventive Medicine (`medical-preventive-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Preventive Medicine Screening Schedule Educator — Sophia Park
+- Adult Wellness Exam Coach — Zainab Svensson
+- Cancer Screening Guideline Advisor — Aditya Ahmed
+- Cardiovascular Risk Calculator Educator — Anika Dahl
+- Diabetes Prevention Lifestyle Coach — Chidi Ibrahim
+- Immunization Catch-Up Navigator — Efe Lopez
+- Travel Medicine Preventive Advisor — Freya Novak
+- Occupational Health Screening Educator — Idris Santos
+- Public Health Surveillance Literacy Coach — Jonas Williams
+- Epidemic Preparedness Community Educator — Layla Chang
+- Health Promotion Program Designer — Meera Garcia
+- Tobacco Cessation Preventive Coach — Noah Kowalski
+- Alcohol Use Screening Brief Intervention Educator — Rina Muller
+- Obesity Prevention Population Advisor — Valentina Popov
+- Aging in Place Safety Educator — Aarav Usman
+- Fall Prevention Community Coach — Akira Bianchi
+- Sexual Health Preventive Screening Advisor — Aya Dubois
+- Skin Cancer Prevention Educator — Daniel Joshi
+- Hearing & Vision Screening Navigator — Emre Martinez
+- Preventive Genomics Population Advisor — Hana Oliveira
+- Health Equity Preventive Access Coach — Iris Singh
+- Preventive Medicine Research Literacy Educator — Kavya Adeyemi
+
+## Medical · Physical Medicine & Rehabilitation (`medical-physical-medicine-rehab`) — 22 roles
+*Medical informational disclaimer required*
+- PM&R Spasticity Management Educator — Linh Cruz
+- Stroke Rehab Physician Advisor — Mina Hassan
+- Spinal Cord Injury Rehab Navigator — Paloma Lindberg
+- Traumatic Brain Injury Recovery Coach — Sofia Nguyen
+- Amputee Prosthetic Prescription Educator — Yuki Rossi
+- Musculoskeletal PM&R Injection Advisor — Adaeze Watanabe
+- Electrodiagnosis EMG Literacy Coach — Amir Campbell
+- Chronic Pain PM&R Multimodal Educator — Camila Fischer
+- Sports Injury PM&R Return Coach — Diego Kim
+- Pediatric Rehab Medicine Advisor — Felix Mori
+- Geriatric Rehab Function Coach — Hugo Petrov
+- Burn Rehab Scar Management Educator — Jia Torres
+- Cancer Rehab Fatigue Advisor — Kwame Anderson
+- Cardiac Rehab PM&R Physician Educator — Maya Diallo
+- Pulmonary Rehab PM&R Advisor — Nia Jensen
+- Wheelchair Seating Prescription Coach — Rami Mansour
+- Adaptive Equipment Home Assessment Educator — Tomas Okafor
+- Work Hardening Program Advisor — Zola Silva
+- Disability Evaluation Literacy Educator — Aisha Abdi
+- PM&R Hospital Consult Communication Coach — Arjun Costa
+- Neuromuscular Disease Rehab Navigator — Dalia Haddad
+- PM&R Telehealth Function Assessment Advisor — Elias Lee
+
+## Medical · Pain Medicine (`medical-pain-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Pain Medicine Multimodal Plan Educator — Giulia Nasser
+- Chronic Low Back Pain Coach — Ines Rao
+- Neuropathic Pain Medication Advisor — Karim Volkov
+- Opioid Risk & Monitoring Educator — Liam Brooks
+- Non-Opioid Analgesic Options Coach — Miguel Fernandez
+- Interventional Pain Procedure Prep Advisor — Omar Khan
+- Epidural Steroid Injection Educator — Santiago Mensah
+- Facet Joint Injection Expectation Coach — Yara Patel
+- Spinal Cord Stimulator Trial Navigator — Abena Tanaka
+- Cancer Pain Palliative Coach — Amara Alvarez
+- Fibromyalgia Pain Science Educator — Callum Desai
+- Headache Pain Medicine Advisor — Deepa Iyer
+- CRPS Complex Regional Pain Educator — Fatima Malik
+- Pelvic Pain Multidisciplinary Coach — Helena Nwosu
+- Pediatric Chronic Pain Family Advisor — Jaden Sharma
+- Pain Psychology Referral Navigator — Khalid Zhang
+- Addiction & Pain Dual Diagnosis Educator — Luna Chen
+- Workers Comp Pain Recovery Coach — Naomi Gupta
+- Pain Diary & Outcome Tracking Educator — Rafael Laurent
+- Tapering Opioids Safely Coach — Tariq Nakamura
+- Acute Post-Surgical Pain Plan Advisor — Zara Rahman
+- Pain Medicine Telehealth Monitoring Educator — Aiko Vega
+
+## Medical · Sleep Medicine (`medical-sleep-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Sleep Medicine Apnea Educator — Anya Boateng
+- CPAP Mask Fitting & Adherence Coach — Clara Farouk
+- Insomnia CBT-I Skills Educator — Elena Kaur
+- Sleep Study Home vs Lab Advisor — Gabriel Mehta
+- Narcolepsy Symptom Navigator — Imani Park
+- Restless Legs Syndrome Coach — Kaito Svensson
+- Circadian Rhythm Shift Work Educator — Leila Ahmed
+- Pediatric Sleep Apnea Family Advisor — Mei Dahl
+- Parasomnia Safety Educator — Noura Ibrahim
+- Sleep Hygiene Program Designer — Sana Lopez
+- Hypersomnia Evaluation Literacy Coach — Wei Novak
+- Sleep & Cardiovascular Risk Educator — Aaliyah Santos
+- Menopause Sleep Disruption Coach — Alina Williams
+- GERD & Nocturnal Reflux Sleep Advisor — Beatriz Chang
+- Chronic Fatigue vs Sleep Disorder Educator — Dante Garcia
+- Dental Sleep Medicine Appliance Coach — Esra Kowalski
+- Sleep Medicine Medication Side Effect Advisor — Haruto Muller
+- Jet Lag Management Educator — Ishan Popov
+- Sleep Telemedicine Monitoring Coach — Keiko Usman
+- Sleep & Mental Health Link Educator — Luca Bianchi
+- Occupational Sleep Health Advisor — Nadia Dubois
+- Sleep Research Trial Participation Navigator — Priya Joshi
+
+## Medical · Hospice & Palliative Medicine (`medical-hospice-palliative`) — 22 roles
+*Medical informational disclaimer required*
+- Hospice Eligibility & Services Educator — Sophia Martinez
+- Advance Care Planning Facilitator — Zainab Oliveira
+- POLST & Living Will Literacy Coach — Aditya Singh
+- Palliative Symptom Management Educator — Anika Adeyemi
+- Goals of Care Conversation Coach — Chidi Cruz
+- Hospice Home Comfort Care Advisor — Efe Hassan
+- Pediatric Hospice Palliative Navigator — Freya Lindberg
+- Grief & Bereavement Hospice Educator — Idris Nguyen
+- Palliative Chemo Decision Support Advisor — Jonas Rossi
+- Spiritual Care Palliative Liaison Educator — Layla Watanabe
+- Hospice Medication Comfort Kit Coach — Meera Campbell
+- Caregiver Burnout Palliative Advisor — Noah Fischer
+- Palliative Pain & Dyspnea Educator — Rina Kim
+- Hospice Respite Care Navigator — Valentina Mori
+- Veterans Palliative Benefits Educator — Aarav Petrov
+- Palliative Oncology Transition Coach — Akira Torres
+- Dementia Late-Stage Care Educator — Aya Anderson
+- Hospice Volunteer Program Advisor — Daniel Diallo
+- Palliative Telehealth Check-In Coach — Emre Jensen
+- Ethics Consult Palliative Navigator — Hana Mansour
+- Hospice Bereavement Follow-Up Educator — Iris Okafor
+- Palliative Quality Metrics Literacy Advisor — Kavya Silva
+
+## Medical · Addiction Medicine (`medical-addiction-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Addiction Medicine MAT Options Educator — Linh Abdi
+- Opioid Use Disorder Buprenorphine Coach — Mina Costa
+- Alcohol Withdrawal Safety Advisor — Paloma Haddad
+- Stimulant Use Harm Reduction Educator — Sofia Lee
+- Cannabis Use Disorder Counseling Coach — Yuki Nasser
+- Nicotine Dependence Pharmacotherapy Advisor — Adaeze Rao
+- Benzodiazepine Taper Educator — Amir Volkov
+- Dual Diagnosis Mental Health Navigator — Camila Brooks
+- Relapse Prevention Planning Coach — Diego Fernandez
+- Family Support Addiction Educator — Felix Khan
+- Pregnancy & Substance Use Advisor — Hugo Mensah
+- Adolescent Substance Use Screening Coach — Jia Patel
+- Workplace Return After Treatment Educator — Kwame Tanaka
+- Recovery Housing Navigation Advisor — Maya Alvarez
+- Peer Recovery Coach Liaison Educator — Nia Desai
+- Overdose Naloxone Training Facilitator — Rami Iyer
+- Fentanyl Test Strip Safety Educator — Tomas Malik
+- Addiction Stigma Reduction Advisor — Zola Nwosu
+- Pain & Addiction Balanced Care Coach — Aisha Sharma
+- Addiction Telehealth MAT Educator — Arjun Zhang
+- Gambling Disorder Support Navigator — Dalia Chen
+- Addiction Medicine Research Trial Educator — Elias Gupta
+
+## Medical · Medical Toxicology (`medical-medical-toxicology`) — 22 roles
+*Medical informational disclaimer required*
+- Medical Toxicology Poison Exposure Educator — Giulia Laurent
+- Overdose Reversal & Aftercare Coach — Ines Nakamura
+- Household Chemical Exposure Advisor — Karim Rahman
+- Lead & Heavy Metal Screening Educator — Liam Vega
+- Carbon Monoxide Poisoning Prevention Coach — Miguel Boateng
+- Snake & Spider Envenomation First Aid Educator — Omar Farouk
+- Medication Error Toxicology Advisor — Santiago Kaur
+- Alcohol Toxicity Emergency Literacy Coach — Yara Mehta
+- Recreational Drug Adulterant Educator — Abena Park
+- Workplace Chemical Spill Response Advisor — Amara Svensson
+- Pesticide Exposure Home Educator — Callum Ahmed
+- Button Battery Ingestion Emergency Coach — Deepa Dahl
+- Mushroom Foraging Poisoning Educator — Fatima Ibrahim
+- Shellfish & Food Toxin Advisor — Helena Lopez
+- Radiation Exposure Public Health Educator — Jaden Novak
+- Pediatric Ingestion Prevention Coach — Khalid Santos
+- Antidote Availability Navigator — Luna Williams
+- Poison Center Hotline Usage Educator — Naomi Chang
+- Environmental Toxin Screening Advisor — Rafael Garcia
+- Chelation Therapy Literacy Coach — Tariq Kowalski
+- Toxicology Lab Interpretation Educator — Zara Muller
+- Disaster Chemical Release Community Advisor — Aiko Popov
+
+## Medical · Colon & Rectal Surgery (`medical-colorectal-surgery`) — 22 roles
+*Medical informational disclaimer required*
+- Colorectal Surgery Bowel Prep Educator — Anya Usman
+- Colon Resection Recovery Coach — Clara Bianchi
+- Ileostomy Appliance Training Advisor — Elena Dubois
+- Colostomy Lifestyle Management Educator — Gabriel Joshi
+- Hemorrhoid Treatment Options Coach — Imani Martinez
+- Anal Fissure Healing Educator — Kaito Oliveira
+- Fistula Surgical Pathway Advisor — Leila Singh
+- Rectal Cancer Surgery Prep Navigator — Mei Adeyemi
+- Low Anterior Resection Syndrome Coach — Noura Cruz
+- Pelvic Floor After Colorectal Surgery Educator — Sana Hassan
+- Pilonidal Disease Care Advisor — Wei Lindberg
+- Diverticulitis Surgery Decision Coach — Aaliyah Nguyen
+- IBD Surgical Timing Educator — Alina Rossi
+- Minimally Invasive Colorectal Recovery Advisor — Beatriz Watanabe
+- ERAS Colorectal Pathway Coach — Dante Campbell
+- Stoma Reversal Expectation Educator — Esra Fischer
+- Anal Cancer Screening Navigator — Haruto Kim
+- Colorectal Genetics Referral Advisor — Ishan Mori
+- Pediatric Colorectal Condition Educator — Keiko Petrov
+- Colorectal Telehealth Follow-Up Coach — Luca Torres
+- Bowel Function Rehabilitation Educator — Nadia Anderson
+- Colorectal Surgery Second Opinion Navigator — Priya Diallo
+
+## Medical · Thoracic Surgery (`medical-thoracic-surgery`) — 22 roles
+*Medical informational disclaimer required*
+- Thoracic Surgery Lung Resection Educator — Sophia Jensen
+- Esophageal Surgery Recovery Coach — Zainab Mansour
+- Mediastinal Mass Workup Navigator — Aditya Okafor
+- Lung Cancer Surgical Staging Educator — Anika Silva
+- VATS Minimally Invasive Thoracic Coach — Chidi Abdi
+- Chest Tube Home Care Advisor — Efe Costa
+- Thoracic ERAS Recovery Pathway Educator — Freya Haddad
+- Esophagectomy Nutrition Coach — Idris Lee
+- Hiatal Hernia Surgical Options Advisor — Jonas Nasser
+- Pneumothorax Recurrence Prevention Educator — Layla Rao
+- Thoracic Trauma Recovery Coach — Meera Volkov
+- Lung Volume Reduction Educator — Noah Brooks
+- Tracheal Stenosis Treatment Navigator — Rina Fernandez
+- Thoracic Surgery Pain Management Coach — Valentina Khan
+- Pulmonary Rehab Post-Thoracic Educator — Aarav Mensah
+- Thoracic Oncology Multidisciplinary Advisor — Akira Patel
+- Robotic Thoracic Surgery Expectation Educator — Aya Tanaka
+- Chest Wall Tumor Recovery Coach — Daniel Alvarez
+- Thoracic Surgery Prehab Fitness Advisor — Emre Desai
+- Empyema Drainage Literacy Educator — Hana Iyer
+- Thoracic Second Opinion Navigator — Iris Malik
+- Thoracic Surgery Telehealth Check-In Coach — Kavya Nwosu
+
+## Medical · Vascular Surgery (`medical-vascular-surgery`) — 22 roles
+*Medical informational disclaimer required*
+- Vascular Surgery Aneurysm Screening Educator — Linh Sharma
+- Carotid Stenosis Surgery Decision Coach — Mina Zhang
+- Peripheral Bypass Recovery Advisor — Paloma Chen
+- Varicose Vein Treatment Options Educator — Sofia Gupta
+- Deep Vein Thrombosis Surgical Coach — Yuki Laurent
+- Dialysis Access Fistula Educator — Adaeze Nakamura
+- Aortic Dissection Recovery Navigator — Amir Rahman
+- Diabetic Foot Wound Vascular Advisor — Camila Vega
+- Venous Ulcer Compression Coach — Diego Boateng
+- Thoracic Outlet Syndrome Educator — Felix Farouk
+- Vascular Trauma Recovery Advisor — Hugo Kaur
+- Endovascular Stent Graft Educator — Jia Mehta
+- Raynaud Phenomenon Vascular Coach — Kwame Park
+- Lymphedema Vascular Referral Navigator — Maya Svensson
+- Vascular Lab Ultrasound Educator — Nia Ahmed
+- Amputation Prevention Limb Salvage Advisor — Rami Dahl
+- Vascular Surgery Anticoagulation Coach — Tomas Ibrahim
+- Carotid Stent vs Endarterectomy Educator — Zola Lopez
+- Mesenteric Ischemia Red Flag Advisor — Aisha Novak
+- Vascular Surgery Prehab Coach — Arjun Santos
+- Vascular Telehealth Monitoring Educator — Dalia Williams
+- Vascular Quality Outcomes Literacy Advisor — Elias Chang
+
+## Medical · Neurological Surgery (`medical-neurosurgery`) — 22 roles
+*Medical informational disclaimer required*
+- Neurosurgery Brain Tumor Prep Educator — Giulia Garcia
+- Spine Surgery Expectation Coach — Ines Kowalski
+- Hydrocephalus Shunt Literacy Advisor — Karim Muller
+- Chiari Malformation Educator — Liam Popov
+- Trigeminal Neuralgia Surgical Options Coach — Miguel Usman
+- Aneurysm Clipping vs Coiling Educator — Omar Bianchi
+- Epilepsy Surgery Candidacy Navigator — Santiago Dubois
+- Pediatric Neurosurgery Family Advisor — Yara Joshi
+- Spinal Cord Tumor Recovery Coach — Abena Martinez
+- Minimally Invasive Spine Educator — Amara Oliveira
+- Cervical Disc Surgery Recovery Advisor — Callum Singh
+- Lumbar Fusion Rehab Coach — Deepa Adeyemi
+- Peripheral Nerve Surgery Educator — Fatima Cruz
+- Neurosurgical ICU Family Advisor — Helena Hassan
+- Deep Brain Stimulation Prep Coach — Jaden Lindberg
+- Pituitary Surgery Endonasal Educator — Khalid Nguyen
+- Traumatic Brain Injury Surgical Advisor — Luna Rossi
+- Neurosurgery Second Opinion Navigator — Naomi Watanabe
+- Spine Deformity Scoliosis Educator — Rafael Campbell
+- Neurosurgical Pain Management Coach — Tariq Fischer
+- Neurosurgery Telehealth Follow-Up Advisor — Zara Kim
+- Neurosurgical Clinical Trial Navigator — Aiko Mori
+
+## Medical · Orthopedic Surgery (`medical-orthopedic-surgery`) — 22 roles
+*Medical informational disclaimer required*
+- Orthopedic Surgery Joint Replacement Educator — Anya Petrov
+- Hip Replacement Recovery Coach — Clara Torres
+- Knee Replacement Rehab Advisor — Elena Anderson
+- Shoulder Rotator Cuff Surgery Educator — Gabriel Diallo
+- ACL Reconstruction Recovery Coach — Imani Jensen
+- Fracture Cast & Weight Bearing Advisor — Kaito Mansour
+- Hand Surgery Recovery Educator — Leila Okafor
+- Foot & Ankle Surgery Coach — Mei Silva
+- Spine Orthopedic Decompression Educator — Noura Abdi
+- Sports Medicine Orthopedic Surgical Advisor — Sana Costa
+- Pediatric Orthopedic Fracture Educator — Wei Haddad
+- Arthritis Surgical Timing Coach — Aaliyah Lee
+- Orthopedic Trauma Recovery Navigator — Alina Nasser
+- Joint Preservation Osteotomy Educator — Beatriz Rao
+- Meniscus Repair vs Removal Advisor — Dante Volkov
+- Orthopedic Oncology Limb Salvage Educator — Esra Brooks
+- Orthopedic ERAS Pathway Coach — Haruto Fernandez
+- Orthopedic Implant Metal Allergy Advisor — Ishan Khan
+- Orthopedic Telehealth Post-Op Coach — Keiko Mensah
+- Orthopedic Second Opinion Navigator — Luca Patel
+- Bone Health Osteoporosis Surgical Educator — Nadia Tanaka
+- Orthopedic Surgery Pain & Opioid Coach — Priya Alvarez
+
+## Medical · Plastic & Reconstructive Surgery (`medical-plastic-surgery`) — 22 roles
+*Medical informational disclaimer required*
+- Plastic Surgery Reconstruction Educator — Sophia Desai
+- Breast Reconstruction Options Coach — Zainab Iyer
+- Cleft Lip Palate Family Advisor — Aditya Malik
+- Burn Reconstruction Expectation Educator — Anika Nwosu
+- Skin Graft Recovery Coach — Chidi Sharma
+- Hand Reconstruction Plastic Surgery Advisor — Efe Zhang
+- Facial Trauma Reconstruction Educator — Freya Chen
+- Microsurgery Free Flap Recovery Coach — Idris Gupta
+- Scar Revision Expectation Advisor — Jonas Laurent
+- Cosmetic Surgery Informed Consent Educator — Layla Nakamura
+- Rhinoplasty Recovery Coach — Meera Rahman
+- Body Contouring Safety Educator — Noah Vega
+- Gender Affirming Surgery Navigator — Rina Boateng
+- Pressure Ulcer Reconstruction Advisor — Valentina Farouk
+- Lymphedema Reconstructive Educator — Aarav Kaur
+- Pediatric Plastic Surgery Family Coach — Akira Mehta
+- Plastic Surgery Complication Red Flag Educator — Aya Park
+- Non-Surgical Aesthetic Options Advisor — Daniel Svensson
+- Plastic Surgery Photo Documentation Educator — Emre Ahmed
+- Reconstructive Telehealth Follow-Up Coach — Hana Dahl
+- Plastic Surgery Second Opinion Navigator — Iris Ibrahim
+- Plastic Surgery Research Trial Educator — Kavya Lopez
+
+## Medical · Otolaryngology (ENT) (`medical-otolaryngology`) — 22 roles
+*Medical informational disclaimer required*
+- ENT Hearing Loss Evaluation Educator — Linh Novak
+- Tonsillectomy Recovery Coach — Mina Santos
+- Sinus Surgery Expectation Advisor — Paloma Williams
+- Voice Disorder ENT Educator — Sofia Chang
+- Sleep Apnea Surgical Options Coach — Yuki Garcia
+- Thyroid Surgery ENT Educator — Adaeze Kowalski
+- Salivary Gland Disorder Advisor — Amir Muller
+- Ear Tube Placement Pediatric Educator — Camila Popov
+- Vertigo ENT Evaluation Coach — Diego Usman
+- Head & Neck Cancer ENT Navigator — Felix Bianchi
+- Cochlear Implant Candidacy Educator — Hugo Dubois
+- Nasal Obstruction Surgical Advisor — Jia Joshi
+- Laryngectomy Communication Coach — Kwame Martinez
+- Pediatric ENT Airway Educator — Maya Oliveira
+- Allergic Rhinitis ENT Management Coach — Nia Singh
+- ENT Trauma Facial Fracture Advisor — Rami Adeyemi
+- Swallowing Disorder ENT Educator — Tomas Cruz
+- ENT Telehealth Triage Coach — Zola Hassan
+- ENT Second Opinion Navigator — Aisha Lindberg
+- Smell & Taste Loss Educator — Arjun Nguyen
+- ENT Clinical Research Trial Advisor — Dalia Rossi
+- ENT Post-Op Bleeding Red Flag Educator — Elias Watanabe
+
+## Medical · Urology (`medical-urology-specialty`) — 22 roles
+*Medical informational disclaimer required*
+- Urology Prostate Health Educator — Giulia Campbell
+- Kidney Stone Prevention Coach — Ines Fischer
+- BPH Surgical Options Advisor — Karim Kim
+- Bladder Cancer Screening Navigator — Liam Mori
+- Urinary Incontinence Management Educator — Miguel Petrov
+- Erectile Dysfunction Urology Coach — Omar Torres
+- Male Infertility Urology Advisor — Santiago Anderson
+- Vasectomy Expectation Educator — Yara Diallo
+- Interstitial Cystitis Support Coach — Abena Jensen
+- Urologic Oncology Treatment Pathway Educator — Amara Mansour
+- Pediatric Urology Hypospadias Advisor — Callum Okafor
+- Neurogenic Bladder Educator — Deepa Silva
+- Urethral Stricture Treatment Navigator — Fatima Abdi
+- Testicular Cancer Self-Exam Educator — Helena Costa
+- Urology Catheter Care Coach — Jaden Haddad
+- Pelvic Floor Urology Referral Advisor — Khalid Lee
+- Urologic Trauma Recovery Educator — Luna Nasser
+- Urology Telehealth Follow-Up Coach — Naomi Rao
+- Urology Second Opinion Navigator — Rafael Volkov
+- Overactive Bladder Medication Educator — Tariq Brooks
+- Urology ERAS Surgical Coach — Zara Fernandez
+- Urology Clinical Trial Navigator — Aiko Khan
+
+## Medical · Ophthalmology (`medical-ophthalmology-specialty`) — 22 roles
+*Medical informational disclaimer required*
+- Ophthalmology Cataract Surgery Educator — Anya Mensah
+- Glaucoma Eye Drop Technique Coach — Clara Patel
+- Macular Degeneration Monitoring Advisor — Elena Tanaka
+- Diabetic Retinopathy Screening Educator — Gabriel Alvarez
+- Dry Eye Comprehensive Management Coach — Imani Desai
+- Refractive Surgery LASIK Educator — Kaito Iyer
+- Pediatric Strabismus Family Advisor — Leila Malik
+- Corneal Transplant Expectation Coach — Mei Nwosu
+- Retinal Detachment Red Flag Educator — Noura Sharma
+- Uveitis Inflammatory Eye Disease Advisor — Sana Zhang
+- Low Vision Rehabilitation Navigator — Wei Chen
+- Ocular Trauma First Aid Educator — Aaliyah Gupta
+- Contact Lens Safety Coach — Alina Laurent
+- Ophthalmic Oncology Navigator — Beatriz Nakamura
+- Neuro-Ophthalmology Double Vision Educator — Dante Rahman
+- Eyelid Surgery Blepharoplasty Advisor — Esra Vega
+- Ophthalmology Telemedicine Screening Coach — Haruto Boateng
+- Eye Emergency Triage Educator — Ishan Farouk
+- Ophthalmology Second Opinion Navigator — Keiko Kaur
+- Color Blindness Workplace Advisor — Luca Mehta
+- Ophthalmic Clinical Trial Educator — Nadia Park
+- Post-Cataract Activity Restriction Coach — Priya Svensson
+
+## Medical · Interventional Radiology (`medical-interventional-radiology`) — 22 roles
+*Medical informational disclaimer required*
+- Interventional Radiology Procedure Prep Educator — Sophia Ahmed
+- Angiography Vascular Access Coach — Zainab Dahl
+- Embolization Therapy Educator — Aditya Ibrahim
+- Tumor Ablation IR Advisor — Anika Lopez
+- Biopsy Image-Guided Prep Coach — Chidi Novak
+- Drain Placement IR Educator — Efe Santos
+- Venous Access Port Placement Advisor — Freya Williams
+- Uterine Fibroid Embolization Educator — Idris Chang
+- Varicose Vein Ablation IR Coach — Jonas Garcia
+- Dialysis Access IR Intervention Educator — Layla Kowalski
+- Spine Vertebroplasty Advisor — Meera Muller
+- Biliary Drain IR Educator — Noah Popov
+- IR Pain Procedure Expectation Coach — Rina Usman
+- Pediatric IR Sedation Educator — Valentina Bianchi
+- IR Contrast Allergy Prep Advisor — Aarav Dubois
+- Post-IR Bleeding Watch Educator — Akira Joshi
+- IR Clinical Trial Navigator — Aya Martinez
+- IR Telehealth Follow-Up Coach — Daniel Oliveira
+- IR Second Opinion Navigator — Emre Singh
+- Deep Vein Thrombosis Thrombectomy Educator — Hana Adeyemi
+- GI Bleed Embolization Literacy Coach — Iris Cruz
+- IR Radiation Safety Patient Educator — Kavya Hassan
+
+## Medical · Radiation Oncology (`medical-radiation-oncology`) — 22 roles
+*Medical informational disclaimer required*
+- Radiation Oncology Treatment Planning Educator — Linh Lindberg
+- External Beam Radiation Expectation Coach — Mina Nguyen
+- Brachytherapy Procedure Advisor — Paloma Rossi
+- Stereotactic Radiosurgery Educator — Sofia Watanabe
+- Radiation Skin Care Coach — Yuki Campbell
+- Fatigue During Radiation Educator — Adaeze Fischer
+- Radiation & Nutrition Advisor — Amir Kim
+- Pediatric Radiation Family Navigator — Camila Mori
+- Prostate Radiation Side Effect Coach — Diego Petrov
+- Breast Radiation Skin Management Educator — Felix Torres
+- Head Neck Radiation Swallowing Advisor — Hugo Anderson
+- Lung Radiation Pneumonitis Educator — Jia Diallo
+- Radiation Immune Checkpoint Timing Coach — Kwame Jensen
+- Palliative Radiation Pain Educator — Maya Mansour
+- Radiation Fertility Preservation Advisor — Nia Okafor
+- Radiation Second Opinion Navigator — Rami Silva
+- Proton Therapy Literacy Educator — Tomas Abdi
+- Radiation Clinical Trial Navigator — Zola Costa
+- Radiation Telehealth On-Treatment Coach — Aisha Haddad
+- Radiation Myths & Safety Educator — Arjun Lee
+- Re-Irradiation Decision Literacy Advisor — Dalia Nasser
+- Radiation Oncology Survivorship Educator — Elias Rao
+
+## Medical · Geriatric Medicine (`medical-geriatric-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Geriatric Medicine Comprehensive Assessment Educator — Giulia Volkov
+- Falls Prevention Geriatric Coach — Ines Brooks
+- Polypharmacy Deprescribing Advisor — Karim Fernandez
+- Dementia Behavioral Management Educator — Liam Khan
+- Delirium Prevention Hospital Coach — Miguel Mensah
+- Geriatric Frailty Screening Advisor — Omar Patel
+- Advance Care Planning Geriatric Facilitator — Santiago Tanaka
+- Geriatric Nutrition & Sarcopenia Educator — Yara Alvarez
+- Urinary Incontinence Geriatric Coach — Abena Desai
+- Geriatric Depression Screening Advisor — Amara Iyer
+- Elder Abuse Recognition Educator — Callum Malik
+- Geriatric Mobility Device Coach — Deepa Nwosu
+- Senior Living Level of Care Navigator — Fatima Sharma
+- Geriatric Telehealth Monitoring Educator — Helena Zhang
+- Geriatric Palliative Integration Advisor — Jaden Chen
+- Hearing Vision Sensory Geriatric Coach — Khalid Gupta
+- Geriatric Cardiovascular Risk Educator — Luna Laurent
+- Osteoporosis Fracture Geriatric Advisor — Naomi Nakamura
+- Geriatric Caregiver Support Educator — Rafael Rahman
+- Transitions of Care Geriatric Coach — Tariq Vega
+- Geriatric Clinical Trial Navigator — Zara Boateng
+- Geriatric Quality of Life Assessment Educator — Aiko Farouk
+
+## Medical · Adolescent Medicine (`medical-adolescent-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Adolescent Medicine Confidentiality Educator — Anya Kaur
+- Teen Reproductive Health Advisor — Clara Mehta
+- Adolescent Eating Disorder Navigator — Elena Park
+- Teen Mental Health Screening Coach — Gabriel Svensson
+- Adolescent Substance Use Brief Intervention Educator — Imani Ahmed
+- LGBTQ+ Youth Health Advisor — Kaito Dahl
+- Teen Sports Physical Educator — Leila Ibrahim
+- Adolescent Chronic Illness Transition Coach — Mei Lopez
+- Teen Vaccine Education Advisor — Noura Novak
+- Adolescent Sleep & Screen Time Coach — Sana Santos
+- Teen Acne & Dermatology Referral Educator — Wei Williams
+- Adolescent Obesity Lifestyle Advisor — Aaliyah Chang
+- Teen Menstrual Health Educator — Alina Garcia
+- Adolescent Injury Prevention Coach — Beatriz Kowalski
+- School-Based Health Center Liaison Educator — Dante Muller
+- Teen Anxiety Depression Resource Navigator — Esra Popov
+- Adolescent Telehealth Engagement Coach — Haruto Usman
+- Teen Driver Safety Health Advisor — Ishan Bianchi
+- Adolescent Clinical Research Educator — Keiko Dubois
+- Teen Parent Support Navigator — Luca Joshi
+- Adolescent Gender-Affirming Care Literacy Advisor — Nadia Martinez
+- College Health Transition Educator — Priya Oliveira
+
+## Medical · Occupational Medicine (`medical-occupational-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Occupational Medicine Fitness for Duty Educator — Sophia Singh
+- Workplace Injury Evaluation Coach — Zainab Adeyemi
+- Return-to-Work Medical Advisor — Aditya Cruz
+- Workers Compensation Medical Navigator — Anika Hassan
+- Occupational Exposure Assessment Educator — Chidi Lindberg
+- OSHA Medical Surveillance Coach — Efe Nguyen
+- Hearing Conservation Medical Advisor — Freya Rossi
+- Respirator Medical Clearance Educator — Idris Watanabe
+- Shift Work Disorder Occupational Coach — Jonas Campbell
+- Ergonomic Injury Prevention Medical Advisor — Layla Fischer
+- Toxic Exposure Workplace Educator — Meera Kim
+- Travel Occupational Health Advisor — Noah Mori
+- Healthcare Worker Immunity & Vaccine Coach — Rina Petrov
+- Office Ergonomic Medical Advisor — Valentina Torres
+- Construction Medical Surveillance Educator — Aarav Anderson
+- Firefighter Medical Standards Coach — Akira Diallo
+- Pilot FAA Medical Certification Educator — Aya Jensen
+- Commercial Driver DOT Physical Advisor — Daniel Mansour
+- Occupational Dermatitis Educator — Emre Okafor
+- Bloodborne Pathogen Occupational Coach — Hana Silva
+- Occupational Telehealth Case Advisor — Iris Abdi
+- Occupational Medicine Disability Evaluation Educator — Kavya Costa
+
+## Medical · Sports Medicine (Physician) (`medical-sports-medicine-physician`) — 22 roles
+*Medical informational disclaimer required*
+- Sports Medicine Concussion Protocol Educator — Linh Haddad
+- ACL Injury Prevention Coach — Mina Lee
+- Return-to-Play Cardiac Screening Advisor — Paloma Nasser
+- Sports Hernia Evaluation Educator — Sofia Rao
+- Overuse Injury Load Management Coach — Yuki Volkov
+- Sports Nutrition Physician Advisor — Adaeze Brooks
+- Exercise-Induced Asthma Sports Educator — Amir Fernandez
+- Heat Illness Athletic Team Advisor — Camila Khan
+- Female Athlete Triad Educator — Diego Mensah
+- Sports Medicine Ultrasound Literacy Coach — Felix Patel
+- Throwing Injury Baseball Educator — Hugo Tanaka
+- Running Injury Gait Advisor — Jia Alvarez
+- Cycling Overuse Injury Coach — Kwame Desai
+- Sports Medicine Injection Options Educator — Maya Iyer
+- Adolescent Sports Injury Advisor — Nia Malik
+- Masters Athlete Health Coach — Rami Nwosu
+- Sports Medicine Telehealth Triage Educator — Tomas Sharma
+- Adaptive Sports Medicine Advisor — Zola Zhang
+- Sports Physical Performance Health Educator — Aisha Chen
+- Team Physician Sideline Emergency Coach — Arjun Gupta
+- Sports Medicine Research Trial Navigator — Dalia Laurent
+- Esports Medicine Ergonomic Health Advisor — Elias Nakamura
+
+## Medical · Podiatry (`medical-podiatry`) — 22 roles
+*Medical informational disclaimer required*
+- Podiatry Diabetic Foot Care Educator — Giulia Rahman
+- Ingrown Toenail Treatment Coach — Ines Vega
+- Plantar Fasciitis Stretching Advisor — Karim Boateng
+- Bunion Surgical Options Educator — Liam Farouk
+- Heel Pain Biomechanics Coach — Miguel Kaur
+- Ankle Sprain Rehab Podiatry Advisor — Omar Mehta
+- Custom Orthotic Prescription Educator — Santiago Park
+- Fungal Nail Infection Coach — Yara Svensson
+- Peripheral Neuropathy Foot Screening Advisor — Abena Ahmed
+- Wound Care Podiatry Educator — Amara Dahl
+- Sports Podiatry Injury Coach — Callum Ibrahim
+- Pediatric Flatfoot Educator — Deepa Lopez
+- Geriatric Fall Risk Footwear Advisor — Fatima Novak
+- Podiatry Nail Surgery Expectation Coach — Helena Santos
+- Charcot Foot Emergency Educator — Jaden Williams
+- Podiatry Telehealth Triage Advisor — Khalid Chang
+- Foot Ulcer Offloading Educator — Luna Garcia
+- Podiatry Second Opinion Navigator — Naomi Kowalski
+- Toe Deformity Hammertoe Advisor — Rafael Muller
+- Podiatry Clinical Research Educator — Tariq Popov
+- Foot & Ankle Arthritis Surgical Coach — Zara Usman
+- Podiatry Preventive Screening Educator — Aiko Bianchi
+
+## Medical · Optometry (`medical-optometry`) — 22 roles
+*Medical informational disclaimer required*
+- Optometry Comprehensive Eye Exam Educator — Anya Dubois
+- Prescription Eyewear Lens Options Coach — Clara Joshi
+- Contact Lens Fitting Safety Advisor — Elena Martinez
+- Dry Eye Optometry Management Educator — Gabriel Oliveira
+- Myopia Control Pediatric Coach — Imani Singh
+- Glaucoma Optometry Co-Management Advisor — Kaito Adeyemi
+- Diabetic Eye Exam Optometry Educator — Leila Cruz
+- Low Vision Optometry Device Coach — Mei Hassan
+- Occupational Vision Ergonomics Advisor — Noura Lindberg
+- Sports Vision Performance Educator — Sana Nguyen
+- Color Vision Deficiency Workplace Coach — Wei Rossi
+- Binocular Vision Therapy Educator — Aaliyah Watanabe
+- Optometry Telehealth Visual Acuity Coach — Alina Campbell
+- Senior Driving Vision Safety Advisor — Beatriz Fischer
+- Blue Light & Digital Eye Strain Educator — Dante Kim
+- Optometry Urgent Red Eye Triage Coach — Esra Mori
+- Foreign Body Eye First Aid Educator — Haruto Petrov
+- Optometry Billing Insurance Navigator — Ishan Torres
+- Optometry Clinical Research Educator — Keiko Anderson
+- Orthokeratology Night Lens Advisor — Luca Diallo
+- Vision Therapy Learning Disability Coach — Nadia Jensen
+- Optometry Community Screening Program Designer — Priya Mansour
+
+## Medical · Audiology (`medical-audiology`) — 22 roles
+*Medical informational disclaimer required*
+- Audiology Hearing Test Explainer — Sophia Okafor
+- Hearing Aid Selection & Fitting Coach — Zainab Silva
+- Cochlear Implant Candidacy Audiologist Educator — Aditya Abdi
+- Tinnitus Sound Therapy Advisor — Anika Costa
+- Pediatric Hearing Screening Coach — Chidi Haddad
+- Noise-Induced Hearing Loss Prevention Educator — Efe Lee
+- Vestibular Balance Audiologist Advisor — Freya Nasser
+- Central Auditory Processing Educator — Idris Rao
+- Assistive Listening Device Coach — Jonas Volkov
+- Audiology Telehealth Hearing Care Advisor — Layla Brooks
+- Hearing Aid Maintenance & Troubleshooting Educator — Meera Fernandez
+- Sudden Hearing Loss Urgent Navigator — Noah Khan
+- Audiology Occupational Hearing Conservation Coach — Rina Mensah
+- Musician Hearing Protection Advisor — Valentina Patel
+- Aging Hearing Communication Strategies Educator — Aarav Tanaka
+- Auditory Neuropathy Family Navigator — Akira Alvarez
+- Bone Anchored Hearing System Educator — Aya Desai
+- Audiology Clinical Research Advisor — Daniel Iyer
+- Hearing Aid Financial Assistance Navigator — Emre Malik
+- Audiology School IEP Liaison Educator — Hana Nwosu
+- Single-Sided Deafness Options Coach — Iris Sharma
+- Audiology Community Outreach Screening Facilitator — Kavya Zhang
+
+## Medical · Chiropractic & Spinal Care (`medical-chiropractic`) — 22 roles
+*Medical informational disclaimer required*
+- Chiropractic Low Back Pain Educator — Linh Chen
+- Neck Pain Chiropractic Safety Coach — Mina Gupta
+- Sciatica Conservative Care Advisor — Paloma Laurent
+- Chiropractic Posture Ergonomic Educator — Sofia Nakamura
+- Sports Chiropractic Injury Coach — Yuki Rahman
+- Pediatric Chiropractic Gentle Care Advisor — Adaeze Vega
+- Pregnancy Chiropractic Comfort Educator — Amir Boateng
+- Chiropractic vs Medical Referral Navigator — Camila Farouk
+- Spinal Manipulation Expectation Coach — Diego Kaur
+- Chiropractic Maintenance Care Educator — Felix Mehta
+- Whiplash Recovery Chiropractic Advisor — Hugo Park
+- Headache Cervicogenic Chiropractic Coach — Jia Svensson
+- Chiropractic X-Ray Literacy Educator — Kwame Ahmed
+- Chiropractic Telehealth Exercise Advisor — Maya Dahl
+- Scoliosis Conservative Monitoring Coach — Nia Ibrahim
+- Chiropractic Informed Consent Educator — Rami Lopez
+- Chiropractic Research Evidence Literacy Advisor — Tomas Novak
+- Workplace Spinal Health Coach — Zola Santos
+- Chiropractic Integrative Care Navigator — Aisha Williams
+- Chiropractic Red Flag Referral Educator — Arjun Chang
+- Chiropractic Rehabilitation Exercise Coach — Dalia Garcia
+- Chiropractic Insurance Coverage Navigator — Elias Kowalski
+
+## Medical · Genetic Counseling (`medical-genetic-counseling`) — 22 roles
+*Medical informational disclaimer required*
+- Genetic Counseling Hereditary Cancer Coach — Giulia Muller
+- Prenatal Genetic Screening Navigator — Ines Popov
+- Carrier Screening Couple Educator — Karim Usman
+- Chromosomal Abnormality Result Counselor Educator — Liam Bianchi
+- Pharmacogenomic Counseling Advisor — Miguel Dubois
+- Adoption Genetic History Educator — Omar Joshi
+- Direct-to-Consumer Test Follow-Up Coach — Santiago Martinez
+- Genetic Counseling Informed Consent Educator — Yara Oliveira
+- Family Pedigree Literacy Advisor — Abena Singh
+- Genetic Discrimination GINA Rights Educator — Amara Adeyemi
+- Rare Disease Genetic Counseling Navigator — Callum Cruz
+- Recurrent Pregnancy Loss Genetics Coach — Deepa Hassan
+- Genetic Counseling Telehealth Session Advisor — Fatima Lindberg
+- Pediatric Genetic Counseling Family Educator — Helena Nguyen
+- Cancer Risk Reduction Planning Coach — Jaden Rossi
+- Genetic Counseling Research Study Navigator — Khalid Watanabe
+- Genetic Counseling Bereavement Support Advisor — Luna Campbell
+- Genetic Counseling Cultural Competency Educator — Naomi Fischer
+- Whole Genome Result Disclosure Coach — Rafael Kim
+- Genetic Counseling Insurance Authorization Navigator — Tariq Mori
+- Genetic Counseling Ethics Case Educator — Zara Petrov
+- Genetic Counseling Career Path Advisor — Aiko Torres
+
+## Medical · Clinical Dietetics & Nutrition (`medical-clinical-dietetics`) — 22 roles
+*Medical informational disclaimer required*
+- Clinical Dietitian Renal Nutrition Educator — Anya Anderson
+- Diabetes Medical Nutrition Therapy Coach — Clara Diallo
+- Oncology Nutrition During Treatment Advisor — Elena Jensen
+- GI Disorder Diet Educator — Gabriel Mansour
+- Eating Disorder Recovery Nutrition Coach — Imani Okafor
+- Pediatric Nutrition Growth Advisor — Kaito Silva
+- Sports Nutrition Performance Dietitian Educator — Leila Abdi
+- Weight Management Dietitian Coach — Mei Costa
+- Tube Feeding Nutrition Educator — Noura Haddad
+- Food Allergy Elimination Diet Advisor — Sana Lee
+- Bariatric Surgery Nutrition Coach — Wei Nasser
+- Pregnancy Lactation Nutrition Educator — Aaliyah Rao
+- Dysphagia Texture Modified Diet Coach — Alina Volkov
+- Malnutrition Hospital Nutrition Advisor — Beatriz Brooks
+- Plant-Based Nutrition Clinical Educator — Dante Fernandez
+- Intuitive Eating Health At Every Size Advisor — Esra Khan
+- Dietitian Telehealth Meal Planning Coach — Haruto Mensah
+- Nutrition Label Literacy Educator — Ishan Patel
+- Clinical Dietitian Research Trial Advisor — Keiko Tanaka
+- Home Enteral Nutrition Supply Navigator — Luca Alvarez
+- ICU Nutrition Support Educator — Nadia Desai
+- Community Nutrition Program Designer — Priya Iyer
+
+## Medical · EMS & Prehospital Care (`medical-ems-paramedic`) — 22 roles
+*Medical informational disclaimer required*
+- Paramedic Triage Field Educator — Sophia Malik
+- EMS Stroke Prehospital Coach — Zainab Nwosu
+- Cardiac Arrest Chain of Survival Educator — Aditya Sharma
+- Trauma Scene Safety EMS Advisor — Anika Zhang
+- Pediatric EMS Protocol Educator — Chidi Chen
+- Geriatric Fall EMS Assessment Coach — Efe Gupta
+- Overdose Response Naloxone EMS Educator — Freya Laurent
+- Airway Management EMS Skills Trainer — Idris Nakamura
+- EMS Disaster Response Planner — Jonas Rahman
+- Community Paramedicine Home Visit Educator — Layla Vega
+- EMS Mental Health Crisis Response Coach — Meera Boateng
+- Tactical EMS Operations Advisor — Noah Farouk
+- Flight Paramedic Transport Educator — Rina Kaur
+- EMS Quality Improvement Coach — Valentina Mehta
+- Ambulance Billing & Insurance Navigator — Aarav Park
+- EMS Continuing Education Coordinator — Akira Svensson
+- Stop the Bleed Public Training Facilitator — Aya Ahmed
+- EMS Infection Control Educator — Daniel Dahl
+- Rural EMS Resource Navigation Advisor — Emre Ibrahim
+- EMS Telemedicine Physician Consult Coach — Hana Lopez
+- Mass Gathering Medical Planning Educator — Iris Novak
+- EMS Research & Protocol Development Advisor — Kavya Santos
+
+## Medical · Cardiovascular Perfusion (`medical-cardiovascular-perfusion`) — 22 roles
+*Medical informational disclaimer required*
+- Cardiovascular Perfusion Bypass Educator — Linh Williams
+- Heart-Lung Machine Family Explainer — Mina Chang
+- ECMO Circuit Literacy Coach — Paloma Garcia
+- Pediatric Perfusion Family Advisor — Sofia Kowalski
+- Perfusion Anticoagulation Monitoring Educator — Yuki Muller
+- Cardiac Surgery Blood Conservation Coach — Adaeze Popov
+- Intra-Aortic Balloon Pump Educator — Amir Usman
+- Ventricular Assist Device Perfusion Advisor — Camila Bianchi
+- Organ Procurement Perfusion Navigator — Diego Dubois
+- Perfusion Quality Assurance Educator — Felix Joshi
+- Perfusionist Career Path Advisor — Hugo Martinez
+- Cardiopulmonary Bypass Complication Educator — Jia Oliveira
+- Perfusion Equipment Maintenance Coach — Kwame Singh
+- Transplant Organ Perfusion Educator — Maya Adeyemi
+- Perfusion Crisis Resource Management Trainer — Nia Cruz
+- Perfusion Tele-simulation Educator — Rami Hassan
+- Perfusion Research Protocol Advisor — Tomas Lindberg
+- Minimally Invasive Perfusion Techniques Coach — Zola Nguyen
+- Perfusion Lab Safety Educator — Aisha Rossi
+- Perfusion Continuing Competency Coach — Arjun Watanabe
+- Perfusion Documentation Standards Educator — Dalia Campbell
+- Perfusion Team Communication Advisor — Elias Fischer
+
+## Medical · Health Social Work (`medical-health-social-work`) — 22 roles
+*Medical informational disclaimer required*
+- Hospital Social Work Discharge Planner — Giulia Kim
+- Medical Social Work Care Navigation Educator — Ines Mori
+- Cancer Social Work Support Coach — Karim Petrov
+- Dialysis Social Work Benefits Advisor — Liam Torres
+- Transplant Social Work Psychosocial Educator — Miguel Anderson
+- Pediatric Hospital Social Work Navigator — Omar Diallo
+- Geriatric Social Work Community Resource Coach — Santiago Jensen
+- Mental Health Medical Social Work Advisor — Yara Mansour
+- Substance Use Social Work Referral Educator — Abena Okafor
+- Domestic Violence Medical Social Work Navigator — Amara Silva
+- Housing Instability Health Social Work Coach — Callum Abdi
+- Insurance Authorization Social Work Educator — Deepa Costa
+- Advance Directives Social Work Facilitator — Fatima Haddad
+- Bereavement Medical Social Work Advisor — Helena Lee
+- Chronic Disease Social Work Coach — Jaden Nasser
+- Social Work Telehealth Resource Navigator — Khalid Rao
+- Medical Foster Care Social Work Educator — Luna Volkov
+- NICU Family Social Work Advisor — Naomi Brooks
+- Social Work Ethics & Boundaries Educator — Rafael Fernandez
+- Medical Social Work Documentation Coach — Tariq Khan
+- Community Health Social Work Liaison Educator — Zara Mensah
+- Social Work Clinical Supervision Advisor — Aiko Patel
+
+## Medical · Pediatric Subspecialties (`medical-pediatric-subspecialties`) — 22 roles
+*Medical informational disclaimer required*
+- Pediatric Cardiology Family Educator — Anya Tanaka
+- Pediatric Endocrinology Growth Coach — Clara Alvarez
+- Pediatric Gastroenterology Nutrition Advisor — Elena Desai
+- Pediatric Hematology Oncology Navigator — Gabriel Iyer
+- Pediatric Nephrology Dialysis Educator — Imani Malik
+- Pediatric Pulmonology Asthma Coach — Kaito Nwosu
+- Pediatric Rheumatology JIA Educator — Leila Sharma
+- Pediatric Infectious Disease Advisor — Mei Zhang
+- Pediatric Neurology Epilepsy Coach — Noura Chen
+- Pediatric Genetics Syndrome Navigator — Sana Gupta
+- Pediatric Allergy Immunology Educator — Wei Laurent
+- Pediatric Critical Care Family Advisor — Aaliyah Nakamura
+- Pediatric Surgery Expectation Coach — Alina Rahman
+- Pediatric Urology Educator — Beatriz Vega
+- Pediatric Orthopedic Scoliosis Advisor — Dante Boateng
+- Pediatric ENT Tonsil Educator — Esra Farouk
+- Pediatric Ophthalmology Strabismus Coach — Haruto Kaur
+- Pediatric Dermatology Eczema Educator — Ishan Mehta
+- Pediatric Sleep Medicine Coach — Keiko Park
+- Pediatric Subspecialty Palliative Navigator — Luca Svensson
+- Pediatric Rehab Medicine Educator — Nadia Ahmed
+- Pediatric Hospital Medicine Transition Coach — Priya Dahl
+
+## Medical · Integrative & Complementary Health (`medical-integrative-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Integrative Medicine Whole-Person Educator — Sophia Ibrahim
+- Acupuncture Evidence Literacy Coach — Zainab Lopez
+- Mindfulness-Based Stress Reduction Advisor — Aditya Novak
+- Herbal Supplement Interaction Educator — Anika Santos
+- Integrative Oncology Support Coach — Chidi Williams
+- Functional Medicine Root Cause Educator — Efe Chang
+- Yoga Therapy Clinical Referral Advisor — Freya Garcia
+- Integrative Pain Management Coach — Idris Kowalski
+- Traditional Chinese Medicine Literacy Educator — Jonas Muller
+- Ayurveda Wellness Cultural Advisor — Layla Popov
+- Integrative Mental Health Coach — Meera Usman
+- Naturopathic Medicine Scope Educator — Noah Bianchi
+- Integrative Cardiovascular Lifestyle Advisor — Rina Dubois
+- Integrative GI Microbiome Educator — Valentina Joshi
+- Integrative Sleep Program Designer — Aarav Martinez
+- Integrative Women's Health Coach — Akira Oliveira
+- Integrative Pediatrics Safety Educator — Aya Singh
+- Integrative Medicine Research Navigator — Daniel Adeyemi
+- Integrative Telehealth Coaching Advisor — Emre Cruz
+- Integrative Medicine Informed Consent Educator — Hana Hassan
+- Integrative Chronic Fatigue Coach — Iris Lindberg
+- Integrative Medicine Hospital Program Designer — Kavya Nguyen
+
+## Medical · Oral & Maxillofacial Surgery (`medical-oral-maxillofacial-surgery`) — 22 roles
+*Medical informational disclaimer required*
+- Oral Surgery Wisdom Teeth Educator — Linh Rossi
+- Jaw Surgery Orthognathic Coach — Mina Watanabe
+- Dental Implant Surgical Advisor — Paloma Campbell
+- TMJ Surgical Options Educator — Sofia Fischer
+- Oral Pathology Biopsy Navigator — Yuki Kim
+- Facial Fracture Oral Surgery Coach — Adaeze Mori
+- Cleft Jaw Surgery Family Educator — Amir Petrov
+- Oral Cancer Surgical Navigator — Camila Torres
+- Sleep Apnea Jaw Advancement Advisor — Diego Anderson
+- Oral Surgery Sedation Options Educator — Felix Diallo
+- Bone Graft Oral Surgery Coach — Hugo Jensen
+- Salivary Gland Stone Surgery Educator — Jia Mansour
+- Pediatric Oral Surgery Anxiety Coach — Kwame Okafor
+- Oral Surgery Post-Op Bleeding Educator — Maya Silva
+- Orthognathic Insurance Authorization Navigator — Nia Abdi
+- Oral Surgery Telehealth Follow-Up Advisor — Rami Costa
+- Dental Trauma Emergency Oral Surgery Coach — Tomas Haddad
+- Oral Surgery Second Opinion Navigator — Zola Lee
+- Maxillofacial Reconstruction Educator — Aisha Nasser
+- Oral Surgery Clinical Research Advisor — Arjun Rao
+- Temporomandibular Surgical Rehab Coach — Dalia Volkov
+- Oral Surgery Antibiotic Prophylaxis Educator — Elias Brooks
+
+## Medical · Pediatric Surgery (`medical-pediatric-surgery`) — 22 roles
+*Medical informational disclaimer required*
+- Pediatric Surgery Hernia Educator — Giulia Fernandez
+- Congenital Diaphragmatic Hernia Family Coach — Ines Khan
+- Pyloric Stenosis Surgical Advisor — Karim Mensah
+- Appendicitis Pediatric Surgery Educator — Liam Patel
+- Pediatric Trauma Surgery Navigator — Miguel Tanaka
+- Neonatal Surgical Condition Coach — Omar Alvarez
+- Pediatric Oncology Surgical Educator — Santiago Desai
+- Pediatric Urology Surgery Advisor — Yara Iyer
+- Pediatric ENT Surgical Referral Coach — Abena Malik
+- Pediatric Minimal Access Surgery Educator — Amara Nwosu
+- Pediatric Surgical Consent Family Coach — Callum Sharma
+- Pediatric Pre-Op Anxiety Educator — Deepa Zhang
+- Pediatric Post-Op Pain Management Coach — Fatima Chen
+- Pediatric Surgical Nutrition Advisor — Helena Gupta
+- Pediatric Surgical ICU Family Educator — Jaden Laurent
+- Pediatric Surgical Second Opinion Navigator — Khalid Nakamura
+- Pediatric Surgical Telehealth Follow-Up Coach — Luna Rahman
+- Pediatric Surgical Research Trial Educator — Naomi Vega
+- Pediatric Surgical Wound Care Advisor — Rafael Boateng
+- Pediatric Surgical Scar Management Coach — Tariq Farouk
+- Pediatric Surgical Antibiotic Stewardship Educator — Zara Kaur
+- Pediatric Surgical Quality Outcomes Advisor — Aiko Mehta
+
+## Medical · Surgical Oncology (`medical-surgical-oncology`) — 22 roles
+*Medical informational disclaimer required*
+- Surgical Oncology Breast Educator — Anya Park
+- Melanoma Surgical Staging Coach — Clara Svensson
+- Sarcoma Surgical Referral Navigator — Elena Ahmed
+- Hepatobiliary Surgical Oncology Educator — Gabriel Dahl
+- Pancreatic Surgical Oncology Coach — Imani Ibrahim
+- Colorectal Surgical Oncology Advisor — Kaito Lopez
+- Thyroid Surgical Oncology Educator — Leila Novak
+- Gastric Surgical Oncology Navigator — Mei Santos
+- Ovarian Debulking Surgery Educator — Noura Williams
+- Sentinel Lymph Node Surgical Coach — Sana Chang
+- Surgical Oncology Multidisciplinary Tumor Board Educator — Wei Garcia
+- HIPEC Cytoreductive Surgery Advisor — Aaliyah Kowalski
+- Surgical Oncology Clinical Trial Navigator — Alina Muller
+- Perioperative Oncology Nutrition Coach — Beatriz Popov
+- Surgical Oncology Survivorship Educator — Dante Usman
+- Reconstructive Oncologic Surgery Advisor — Esra Bianchi
+- Surgical Oncology Second Opinion Navigator — Haruto Dubois
+- Minimally Invasive Oncologic Surgery Coach — Ishan Joshi
+- Surgical Oncology ERAS Pathway Educator — Keiko Martinez
+- Oncologic Emergency Surgery Literacy Advisor — Luca Oliveira
+- Surgical Oncology Telehealth Follow-Up Coach — Nadia Singh
+- Surgical Oncology Quality Metrics Educator — Priya Adeyemi
+
+## Medical · Transplant Medicine (`medical-transplant-medicine`) — 22 roles
+*Medical informational disclaimer required*
+- Organ Transplant Evaluation Educator — Sophia Cruz
+- Kidney Transplant Living Donor Coach — Zainab Hassan
+- Liver Transplant MELD Score Educator — Aditya Lindberg
+- Heart Transplant Candidacy Navigator — Anika Nguyen
+- Lung Transplant Referral Advisor — Chidi Rossi
+- Pancreas Transplant Diabetes Educator — Efe Watanabe
+- Transplant Bone Marrow Recovery Educator — Freya Campbell
+- Transplant Immunosuppression Medication Coach — Idris Fischer
+- Transplant Rejection Warning Sign Educator — Jonas Kim
+- Transplant Infectious Disease Prevention Advisor — Layla Mori
+- Pediatric Transplant Family Navigator — Meera Petrov
+- Transplant Psychosocial Assessment Coach — Noah Torres
+- Transplant Financial Coordinator Educator — Rina Anderson
+- Transplant Lifestyle Infection Avoidance Advisor — Valentina Diallo
+- Transplant Telehealth Monitoring Coach — Aarav Jensen
+- Transplant Clinical Trial Navigator — Akira Mansour
+- Transplant Ethics & Allocation Educator — Aya Okafor
+- Transplant Recovery Nutrition Coach — Daniel Silva
+- Transplant Exercise Rehabilitation Advisor — Emre Abdi
+- Transplant Second Opinion Navigator — Hana Costa
+- Transplant Donor Registry Educator — Iris Haddad
+- Transplant Quality Outcomes Literacy Advisor — Kavya Lee
+
+## Medical · Reproductive Endocrinology & Infertility (`medical-reproductive-endocrinology`) — 22 roles
+*Medical informational disclaimer required*
+- Infertility Workup Educator — Linh Nasser
+- IVF Cycle Preparation Coach — Mina Rao
+- Ovulation Induction Medication Advisor — Paloma Volkov
+- Male Factor Infertility Navigator — Sofia Brooks
+- Recurrent Pregnancy Loss REI Educator — Yuki Fernandez
+- PCOS Fertility Treatment Coach — Adaeze Khan
+- Endometriosis Fertility Surgical Advisor — Amir Mensah
+- Egg Freezing Preservation Educator — Camila Patel
+- Donor Egg & Sperm Literacy Coach — Diego Tanaka
+- Surrogacy Legal Medical Navigator — Felix Alvarez
+- Fertility Hormone Injection Training Educator — Hugo Desai
+- IVF Embryo Transfer Prep Coach — Jia Iyer
+- Fertility Genetic Testing PGT Educator — Kwame Malik
+- LGBTQ+ Family Building REI Advisor — Maya Nwosu
+- Fertility Clinic Financial Navigator — Nia Sharma
+- Oncofertility REI Urgent Referral Coach — Rami Zhang
+- Fertility Telehealth Monitoring Educator — Tomas Chen
+- Fertility Second Opinion Navigator — Zola Gupta
+- Fertility Research Trial Educator — Aisha Laurent
+- Fertility Mental Health Support Advisor — Arjun Nakamura
+- Fertility Acupuncture Integrative Coach — Dalia Rahman
+- Fertility Outcomes Statistics Literacy Educator — Elias Vega
+
+## K-12 Teaching & Instruction (`k12-teaching-instruction`) — 22 roles
+- Elementary Classroom Teacher — Giulia Boateng
+- Middle School Math Teacher — Ines Farouk
+- High School English Teacher — Karim Kaur
+- Science Lab Instructor — Liam Mehta
+- Social Studies Curriculum Teacher — Miguel Park
+- Specialist STEM Teacher — Omar Svensson
+- Reading Intervention Teacher — Santiago Ahmed
+- ESL Classroom Teacher — Yara Dahl
+- Substitute Teacher Coordinator — Abena Ibrahim
+- Remote Learning Facilitator — Amara Lopez
+- Gifted & Talented Instructor — Callum Novak
+- After-School Program Teacher — Deepa Santos
+- Vocational Shop Teacher — Fatima Williams
+- Music Band Director — Helena Chang
+- Art Studio Teacher — Jaden Garcia
+- Physical Education Instructor — Khalid Kowalski
+- Library Media Classroom Liaison — Luna Muller
+- Yearbook Faculty Advisor — Naomi Popov
+- Student Council Mentor Teacher — Rafael Usman
+- Homeroom Advisory Teacher — Tariq Bianchi
+- Curriculum Mapping Lead Teacher — Zara Dubois
+- New Teacher Induction Coach — Aiko Joshi
+
+## Early Childhood & Daycare (`early-childhood-education`) — 22 roles
+- Infant Room Caregiver — Anya Martinez
+- Toddler Development Specialist — Clara Oliveira
+- Preschool Lead Teacher — Elena Singh
+- Montessori Guide — Gabriel Adeyemi
+- Reggio Emilia Educator — Imani Cruz
+- Family Childcare Provider — Kaito Hassan
+- Daycare Center Director — Leila Lindberg
+- Early Literacy Coach — Mei Nguyen
+- Child Development Assessment Specialist — Noura Rossi
+- Play-Based Learning Designer — Sana Watanabe
+- Early Intervention Educator — Wei Campbell
+- Parent Engagement Coordinator — Aaliyah Fischer
+- Nutrition & Meal Planning ECE Specialist — Alina Kim
+- Outdoor Nature Preschool Educator — Beatriz Mori
+- Bilingual Early Childhood Teacher — Dante Petrov
+- Special Needs Inclusion ECE Teacher — Esra Torres
+- Licensing Compliance Daycare Advisor — Haruto Anderson
+- ECE Curriculum Developer — Ishan Diallo
+- Infant Sleep Safety Trainer — Keiko Jensen
+- Early Childhood Trauma-Informed Educator — Luca Mansour
+- Head Start Program Coordinator — Nadia Okafor
+- Early Childhood Workforce Trainer — Priya Silva
+
+## Special Education & Inclusion (`special-education-inclusion`) — 22 roles
+- IEP Case Manager — Sophia Abdi
+- Resource Room Special Educator — Zainab Costa
+- Autism Spectrum Classroom Specialist — Aditya Haddad
+- Learning Disability Interventionist — Anika Lee
+- Speech-Language Pathologist School Liaison — Chidi Nasser
+- Occupational Therapy School Consultant — Efe Rao
+- Behavior Intervention Specialist — Freya Volkov
+- Transition Services Coordinator — Idris Brooks
+- Inclusive Co-Teaching Specialist — Jonas Fernandez
+- Assistive Technology Educator — Layla Khan
+- Deaf & Hard of Hearing Program Teacher — Meera Mensah
+- Vision Impairment Itinerant Teacher — Noah Patel
+- Emotional Behavioral Disorder Specialist — Rina Tanaka
+- Multi-Tiered Support Systems Coach — Valentina Alvarez
+- Special Education Compliance Officer — Aarav Desai
+- 504 Plan Coordinator — Akira Iyer
+- Adaptive PE Specialist — Aya Malik
+- Functional Life Skills Teacher — Daniel Nwosu
+- Parent Advocate Special Education Coach — Emre Sharma
+- Special Education Data Analyst — Hana Zhang
+- Restraint & Seclusion Policy Trainer — Iris Chen
+- Universal Design for Learning Facilitator — Kavya Gupta
+
+## Vocational & Trade School Instruction (`vocational-trade-instruction`) — 22 roles
+- Automotive Technology Instructor — Linh Laurent
+- Welding Program Teacher — Mina Nakamura
+- Culinary Arts Instructor — Paloma Rahman
+- Cosmetology School Educator — Sofia Vega
+- Electrical Apprenticeship Instructor — Yuki Boateng
+- HVAC Trade School Teacher — Adaeze Farouk
+- Nursing Assistant Program Instructor — Amir Kaur
+- Medical Assistant Trainer — Camila Mehta
+- Construction Trades Instructor — Diego Park
+- Computer IT Bootcamp Instructor — Felix Svensson
+- Pharmacy Technician Trainer — Hugo Ahmed
+- Dental Assistant Program Educator — Jia Dahl
+- Commercial Driver Training Instructor — Kwame Ibrahim
+- Machinist Apprenticeship Teacher — Maya Lopez
+- Plumbing Code Instructor — Nia Novak
+- Esthetics School Educator — Rami Santos
+- Court Reporting Program Teacher — Tomas Williams
+- Real Estate Pre-License Instructor — Zola Chang
+- Firefighter Academy Instructor — Aisha Garcia
+- Police Training Academy Educator — Arjun Kowalski
+- Apprenticeship Program Coordinator — Dalia Muller
+- Workforce Development Liaison — Elias Popov
+
+## Banking & Commercial Finance (`banking-commercial-finance`) — 22 roles
+- Commercial Loan Officer — Giulia Usman
+- Retail Bank Branch Manager — Ines Bianchi
+- Mortgage Origination Specialist — Karim Dubois
+- Credit Analyst — Liam Joshi
+- Treasury Management Advisor — Miguel Martinez
+- Small Business Banking Relationship Manager — Omar Oliveira
+- Consumer Lending Underwriter — Santiago Singh
+- Bank Operations Manager — Yara Adeyemi
+- Anti-Money Laundering Analyst — Abena Cruz
+- KYC Onboarding Specialist — Amara Hassan
+- Branch Teller Trainer — Callum Lindberg
+- Mobile Banking Product Manager — Deepa Nguyen
+- Core Banking Systems Analyst — Fatima Rossi
+- Collections & Recovery Specialist — Helena Watanabe
+- Deposit Products Marketing Manager — Jaden Campbell
+- Trade Finance Specialist — Khalid Fischer
+- Letters of Credit Advisor — Luna Kim
+- Bank Compliance Officer — Naomi Mori
+- Community Reinvestment Act Coordinator — Rafael Petrov
+- Wealth Referral Banking Advisor — Tariq Torres
+- Neobank Operations Specialist — Zara Anderson
+- Bank Fraud Investigation Analyst — Aiko Diallo
+
+## Investment Banking & Capital Markets (`investment-capital-markets`) — 22 roles
+- Mergers & Acquisitions Analyst — Anya Jensen
+- Equity Capital Markets Associate — Clara Mansour
+- Debt Capital Markets Structurer — Elena Okafor
+- Leveraged Finance Analyst — Gabriel Silva
+- IPO Process Project Manager — Imani Abdi
+- Private Equity Associate — Kaito Costa
+- Venture Capital Analyst — Leila Haddad
+- Hedge Fund Research Analyst — Mei Lee
+- Fixed Income Trader Support Specialist — Noura Nasser
+- Derivatives Sales Strategist — Sana Rao
+- Corporate Finance Modeling Analyst — Wei Volkov
+- Restructuring Advisory Associate — Aaliyah Brooks
+- ESG Investment Analyst — Alina Fernandez
+- Secondary Market Private Equity Specialist — Beatriz Khan
+- Fundraising Investor Relations Manager — Dante Mensah
+- Cap Table Management Advisor — Esra Patel
+- SPAC Transaction Advisor — Haruto Tanaka
+- PIPE Financing Specialist — Ishan Alvarez
+- Limited Partner Relations Manager — Keiko Desai
+- Investment Banking Compliance Officer — Luca Iyer
+- Due Diligence Data Room Manager — Nadia Malik
+- Capital Markets Technology Product Owner — Priya Nwosu
+
+## Wealth Management & Financial Planning (`wealth-management-advisory`) — 22 roles
+- Certified Financial Planner — Sophia Sharma
+- Private Wealth Advisor — Zainab Zhang
+- Estate Planning Wealth Strategist — Aditya Chen
+- Retirement Income Planner — Anika Gupta
+- Tax-Efficient Investing Advisor — Chidi Laurent
+- Trust Services Officer — Efe Nakamura
+- Family Office Chief of Staff — Freya Rahman
+- Philanthropic Advisory Specialist — Idris Vega
+- Insurance & Annuity Wealth Integrator — Jonas Boateng
+- Divorce Financial Analyst — Layla Farouk
+- Stock Plan Executive Advisor — Meera Kaur
+- Cross-Border Wealth Manager — Noah Mehta
+- Robo-Advisory Hybrid Planner — Rina Park
+- Behavioral Finance Coach — Valentina Svensson
+- College Savings 529 Specialist — Aarav Ahmed
+- Charitable Remainder Trust Advisor — Akira Dahl
+- Wealth Technology Platform Consultant — Aya Ibrahim
+- Multi-Generational Wealth Educator — Daniel Lopez
+- Alternative Investment Allocator — Emre Novak
+- Risk Profiling Questionnaire Designer — Hana Santos
+- Wealth Management Compliance Reviewer — Iris Williams
+- Client Onboarding Wealth Operations Manager — Kavya Chang
+
+## Actuarial Science & Quantitative Risk (`actuarial-quantitative-risk`) — 22 roles
+- Life Insurance Actuary — Linh Garcia
+- Property Casualty Actuary — Mina Kowalski
+- Health Actuarial Analyst — Paloma Muller
+- Pension Actuarial Consultant — Sofia Popov
+- Enterprise Risk Management Actuary — Yuki Usman
+- Catastrophe Modeling Specialist — Adaeze Y. Bianchi
+- Pricing Actuarial Analyst — Amir Z. Dubois
+- Reserving Actuary — Camila A. Joshi
+- Predictive Modeling Actuary — Diego B. Martinez
+- Capital Modeling Solvency Specialist — Felix C. Oliveira
+- Actuarial Exam Coach — Hugo D. Singh
+- Microinsurance Product Actuary — Jia E. Adeyemi
+- Reinsurance Treaty Analyst — Kwame F. Cruz
+- Workers Comp Actuarial Specialist — Maya G. Hassan
+- Cyber Risk Quantitative Analyst — Nia H. Lindberg
+- Climate Risk Actuarial Advisor — Rami I. Nguyen
+- Actuarial Software Implementation Consultant — Tomas J. Rossi
+- Experience Study Analyst — Zola K. Watanabe
+- Actuarial Fairness Auditor — Aisha L. Campbell
+- Embedded Insurance Actuary — Arjun M. Fischer
+- Actuarial Communication Stakeholder Advisor — Dalia N. Kim
+- Actuarial Regulatory Filing Specialist — Elias O. Mori
+
+## Social Work & Human Services (`social-work-human-services`) — 22 roles
+- Clinical Social Worker — Giulia P. Petrov
+- Healthcare Discharge Planning Social Worker — Ines Q. Torres
+- School Social Worker — Karim R. Anderson
+- Child Welfare Caseworker — Liam S. Diallo
+- Adult Protective Services Investigator — Miguel T. Jensen
+- Housing First Case Manager — Omar U. Mansour
+- Substance Abuse Counselor Social Worker — Santiago V. Okafor
+- Veterans Benefits Navigator — Yara W. Silva
+- Domestic Violence Shelter Advocate — Abena X. Abdi
+- Refugee Resettlement Case Manager — Amara Y. Costa
+- Geriatric Care Social Worker — Callum Z. Haddad
+- Hospice Bereavement Social Worker — Deepa A. Lee
+- Community Mental Health Outreach Worker — Fatima B. Nasser
+- Foster Care Licensing Worker — Helena C. Rao
+- Adoption Home Study Specialist — Jaden D. Volkov
+- Probation Social Work Liaison — Khalid E. Brooks
+- Disability Services Coordinator — Luna F. Fernandez
+- Food Bank Program Social Worker — Naomi G. Khan
+- Crisis Intervention Hotline Social Worker — Rafael H. Mensah
+- Policy Advocacy Social Worker — Tariq I. Patel
+- Social Work Supervisor Clinical Director — Zara J. Tanaka
+- Telehealth Social Work Program Manager — Aiko K. Alvarez
+
+## Child & Family Welfare Services (`child-family-welfare`) — 22 roles
+- Family Preservation Caseworker — Anya L. Desai
+- Parenting Skills Program Facilitator — Clara M. Iyer
+- Kinship Care Support Specialist — Elena N. Malik
+- Child Abuse Investigation Worker — Gabriel O. Nwosu
+- Foster Parent Trainer — Imani P. Sharma
+- Reunification Case Planner — Kaito Q. Zhang
+- Juvenile Court Liaison — Leila R. Chen
+- Early Head Start Family Advocate — Mei S. Gupta
+- Teen Independent Living Coach — Noura T. Laurent
+- Family Visitation Supervision Monitor — Sana U. Nakamura
+- Child Support Enforcement Officer — Wei V. Rahman
+- Safe Sleep Infant Educator — Aaliyah W. Vega
+- Trauma-Informed Family Therapist Liaison — Alina X. Boateng
+- Family Drug Court Case Manager — Beatriz Y. Farouk
+- NICU Social Support Family Specialist — Dante Z. Kaur
+- Grandparent Caregiver Navigator — Esra A. Mehta
+- Family Strengthening Program Director — Haruto B. Park
+- Parent-Child Interaction Therapy Coach — Ishan C. Svensson
+- Child Welfare Data Quality Analyst — Keiko D. Ahmed
+- Family Resource Center Coordinator — Luca E. Dahl
+- Mandatory Reporter Training Facilitator — Nadia F. Ibrahim
+- Family Court Mediation Support Specialist — Priya G. Lopez
+
+## Electrical Trades & Power Systems (`electrical-trades-power`) — 22 roles
+- Residential Electrician — Sophia H. Novak
+- Commercial Electrician — Zainab I. Santos
+- Industrial Electrician — Aditya J. Williams
+- Master Electrician Estimator — Anika K. Chang
+- Low Voltage Systems Installer — Chidi L. Garcia
+- Solar PV Electrician — Efe M. Kowalski
+- EV Charger Installation Specialist — Freya N. Muller
+- Fire Alarm Systems Technician — Idris O. Popov
+- Electrical Inspector Code Advisor — Jonas P. Usman
+- Substation Maintenance Technician — Layla Q. Bianchi
+- Lineworker Safety Trainer — Meera R. Dubois
+- Motor Control Technician — Noah S. Joshi
+- PLC Programming Electrician — Rina T. Martinez
+- Data Center Critical Power Technician — Valentina U. Oliveira
+- Smart Home Wiring Integrator — Aarav V. Singh
+- Electrical Apprenticeship Mentor — Akira W. Adeyemi
+- Arc Flash Safety Compliance Advisor — Aya X. Cruz
+- Electrical Forensics Investigator — Daniel Y. Hassan
+- Wind Turbine Electrical Technician — Emre Z. Lindberg
+- Battery Storage Systems Electrician — Hana A. Nguyen
+- Electrical Service Dispatcher — Iris B. Rossi
+- Electrical Wholesale Counter Specialist — Kavya C. Watanabe
+
+## Plumbing, Heating & HVAC Trades (`plumbing-hvac-trades`) — 22 roles
+- Residential Plumber — Linh D. Campbell
+- Commercial Plumbing Contractor — Mina E. Fischer
+- Pipefitter Steam Systems Specialist — Paloma F. Kim
+- HVAC Installation Technician — Sofia G. Mori
+- HVAC Service & Repair Technician — Yuki H. Petrov
+- Refrigeration Mechanic — Adaeze I. Torres
+- Boiler Operator & Maintainer — Amir J. Anderson
+- Backflow Prevention Tester — Camila K. Diallo
+- Hydronic Radiant Heating Installer — Diego L. Jensen
+- Drain & Sewer Line Specialist — Felix M. Mansour
+- Gas Line Installation Technician — Hugo N. Okafor
+- Plumbing Inspector Advisor — Jia O. Silva
+- Green Building HVAC Designer — Kwame P. Abdi
+- Indoor Air Quality HVAC Specialist — Maya Q. Costa
+- Duct Cleaning & Sealing Technician — Nia R. Haddad
+- HVAC Controls BMS Technician — Rami S. Lee
+- Geothermal Heat Pump Installer — Tomas T. Nasser
+- Medical Gas Systems Plumber — Zola U. Rao
+- Plumbing Apprenticeship Instructor — Aisha V. Volkov
+- Emergency Plumbing Dispatcher — Arjun W. Brooks
+- HVAC Energy Audit Technician — Dalia X. Fernandez
+- Plumbing Supply Showroom Consultant — Elias Y. Khan
+
+## Carpentry, Masonry & Finishing Trades (`carpentry-masonry-finishing`) — 22 roles
+- Finish Carpenter — Giulia Z. Mensah
+- Framing Carpenter — Ines A. Patel
+- Cabinetmaker & Millworker — Karim B. Tanaka
+- Concrete Mason — Liam C. Alvarez
+- Bricklayer & Stonemason — Miguel D. Desai
+- Drywall Installer & Finisher — Omar E. Iyer
+- Painter & Decorator — Santiago F. Malik
+- Flooring Installer — Yara G. Nwosu
+- Roofing Contractor — Abena H. Sharma
+- Siding & Exterior Specialist — Amara I. Zhang
+- Tile Setter — Callum J. Chen
+- Insulation Installer — Deepa K. Gupta
+- Scaffolding Erector — Fatima L. Laurent
+- Demolition Safety Supervisor — Helena M. Nakamura
+- Historic Restoration Mason — Jaden N. Rahman
+- Staircase & Railing Fabricator — Khalid O. Vega
+- Formwork Carpenter — Luna P. Boateng
+- Waterproofing Specialist — Naomi Q. Farouk
+- Acoustical Ceiling Installer — Rafael R. Kaur
+- Countertop Fabricator — Tariq S. Mehta
+- Construction Superintendent Trade Lead — Zara T. Park
+- Blueprint Takeoff Estimator — Aiko U. Svensson
+
+## Automotive Sales & Service (`automotive-sales-service`) — 22 roles
+- Automotive Service Technician — Anya V. Ahmed
+- Master Automotive Diagnostic Specialist — Clara W. Dahl
+- Auto Body Collision Repair Technician — Elena X. Ibrahim
+- Automotive Detailer — Gabriel Y. Lopez
+- Used Car Sales Consultant — Imani Z. Novak
+- New Car Sales Specialist — Kaito A. Santos
+- Fleet Maintenance Manager — Leila B. Williams
+- Automotive Parts Counter Specialist — Mei C. Chang
+- Tire & Wheel Service Technician — Noura D. Garcia
+- Automotive Service Advisor — Sana E. Kowalski
+- EV Battery Service Technician — Wei F. Muller
+- Automotive Shop Foreman — Aaliyah G. Popov
+- Dealership Finance & Insurance Manager — Alina H. Usman
+- Automotive Auction Operations Manager — Beatriz I. Bianchi
+- Classic Car Restoration Specialist — Dante J. Dubois
+- Automotive Quality Inspector — Esra K. Joshi
+- Roadside Assistance Dispatcher — Haruto L. Martinez
+- Automotive Warranty Claims Administrator — Ishan M. Oliveira
+- Automotive Training Instructor — Keiko N. Singh
+- Dealership General Manager — Luca O. Adeyemi
+- Automotive Digital Retailing Specialist — Nadia P. Cruz
+- Automotive Compliance Title Clerk — Priya Q. Hassan
+
+## Aviation & Airline Operations (`aviation-airline-operations`) — 22 roles
+- Airline Pilot Career Advisor — Sophia R. Lindberg
+- Flight Attendant Trainer — Zainab S. Nguyen
+- Aircraft Maintenance Technician — Aditya T. Rossi
+- Air Traffic Control Operations Educator — Anika U. Watanabe
+- Airport Ground Operations Manager — Chidi V. Campbell
+- Baggage Handling Systems Supervisor — Efe W. Fischer
+- Airline Revenue Management Analyst — Freya X. Kim
+- Aviation Safety Management Specialist — Idris Y. Mori
+- Aircraft Dispatcher — Jonas Z. Petrov
+- Airport Security Screening Operations Manager — Layla A. Torres
+- Aviation Fueling Operations Specialist — Meera B. Anderson
+- MRO Maintenance Planning Manager — Noah C. Diallo
+- Airline Crew Scheduling Analyst — Rina D. Jensen
+- Aviation Meteorology Briefing Specialist — Valentina E. Mansour
+- Drone Commercial Operations Pilot — Aarav F. Okafor
+- Airport Customer Experience Manager — Akira G. Silva
+- Aviation Regulatory Compliance Officer — Aya H. Abdi
+- Flight Simulator Training Instructor — Daniel I. Costa
+- Air Cargo Operations Coordinator — Emre J. Haddad
+- Aviation Human Factors Specialist — Hana K. Lee
+- Airline Loyalty Program Manager — Iris L. Nasser
+- Aviation Sustainability Fuel Advisor — Kavya M. Rao
+
+## Maritime Shipping & Port Operations (`maritime-port-operations`) — 22 roles
+- Ship Captain Career Advisor — Linh N. Volkov
+- Marine Engineer Officer — Mina O. Brooks
+- Stevedore Cargo Operations Supervisor — Paloma P. Fernandez
+- Port Harbor Master Liaison — Sofia Q. Khan
+- Container Terminal Operations Manager — Yuki R. Mensah
+- Maritime Logistics Coordinator — Adaeze S. Patel
+- Ship Chandler Supply Specialist — Amir T. Tanaka
+- Marine Surveyor — Camila U. Alvarez
+- Offshore Rig Operations Advisor — Diego V. Desai
+- Ferry Operations Manager — Felix W. Iyer
+- Maritime Safety ISM Auditor — Hugo X. Malik
+- Longshoreman Shift Supervisor — Jia Y. Nwosu
+- Customs Broker Maritime Specialist — Kwame Z. Sharma
+- Ballast Water Compliance Officer — Maya A. Zhang
+- Maritime Pilotage Operations Educator — Nia B. Chen
+- Cruise Ship Hotel Operations Manager — Rami C. Gupta
+- Shipbuilding Project Manager — Tomas D. Laurent
+- Marine Insurance Claims Adjuster — Zola E. Nakamura
+- Maritime Search Rescue Coordinator — Aisha F. Rahman
+- Dry Dock Planning Specialist — Arjun G. Vega
+- Maritime Cybersecurity Officer — Dalia H. Boateng
+- Inland Waterway Barge Operator — Elias I. Farouk
+
+## Postal, Courier & Last-Mile Delivery (`postal-courier-delivery`) — 22 roles
+- Postal Mail Carrier — Giulia J. Kaur
+- Package Delivery Driver — Ines K. Mehta
+- Last-Mile Route Optimization Planner — Karim L. Park
+- Courier Dispatch Supervisor — Liam M. Svensson
+- Fulfillment Sortation Center Manager — Miguel N. Ahmed
+- Returns Processing Operations Lead — Omar O. Dahl
+- Cold Chain Delivery Specialist — Santiago P. Ibrahim
+- Same-Day Delivery Operations Coordinator — Yara Q. Lopez
+- Postal Clerk Window Service Specialist — Abena R. Novak
+- Address Verification Data Specialist — Amara S. Santos
+- Delivery Drone Operations Pilot — Callum T. Williams
+- Freight Bike Courier Coordinator — Deepa U. Chang
+- International Express Customs Clearance Specialist — Fatima V. Garcia
+- Proof of Delivery Technology Manager — Helena W. Kowalski
+- Delivery Associate Trainer — Jaden X. Muller
+- Rural Route Postal Specialist — Khalid Y. Popov
+- Locker & Pickup Point Network Manager — Luna Z. Usman
+- Delivery Fleet Maintenance Coordinator — Naomi A. Bianchi
+- Gig Economy Delivery Platform Onboarding Specialist — Rafael B. Dubois
+- Postal Regulatory Compliance Officer — Tariq C. Joshi
+- Undeliverable Mail Resolution Specialist — Zara D. Martinez
+- Sustainable Delivery Fleet Planner — Aiko E. Oliveira
+
+## Telecommunications & Network Operations (`telecom-network-operations`) — 22 roles
+- Fiber Optic Installation Technician — Anya F. Singh
+- 5G Network Deployment Engineer — Clara G. Adeyemi
+- Telecom Tower Climber Safety Specialist — Elena H. Cruz
+- NOC Network Operations Analyst — Gabriel I. Hassan
+- VoIP Systems Administrator — Imani J. Lindberg
+- Broadband Customer Provisioning Specialist — Kaito K. Nguyen
+- Telecom Billing Mediation Analyst — Leila L. Rossi
+- RF Drive Test Engineer — Mei M. Watanabe
+- Satellite Communications Technician — Noura N. Campbell
+- Telecom Regulatory Spectrum Advisor — Sana O. Fischer
+- Last-Mile ISP Operations Manager — Wei P. Kim
+- Telecom Field Service Dispatcher — Aaliyah Q. Mori
+- Unified Communications Engineer — Alina R. Petrov
+- Telecom Fraud Prevention Analyst — Beatriz S. Torres
+- Submarine Cable Operations Specialist — Dante T. Anderson
+- Telecom Project Rollout Manager — Esra U. Diallo
+- Rural Broadband Grant Program Manager — Haruto V. Jensen
+- Telecom Customer NOC Escalation Lead — Ishan W. Mansour
+- Microwave Backhaul Engineer — Keiko X. Okafor
+- Telecom Asset Inventory Manager — Luca Y. Silva
+- Open RAN Deployment Specialist — Nadia Z. Abdi
+- Telecom Disaster Recovery Coordinator — Priya A. Costa
+
+## Film, TV & Broadcast Production (`film-tv-broadcast-production`) — 22 roles
+- Film Director Career Advisor — Sophia B. Haddad
+- Cinematographer Lighting Specialist — Zainab C. Lee
+- Production Sound Mixer — Aditya D. Nasser
+- Film Editor Post-Production Lead — Anika E. Rao
+- Broadcast News Producer — Chidi F. Volkov
+- TV Script Supervisor — Efe G. Brooks
+- Casting Director — Freya H. Fernandez
+- Location Scout Manager — Idris I. Khan
+- Grip & Electric Department Lead — Jonas J. Mensah
+- Production Designer Art Director — Layla K. Patel
+- VFX Supervisor — Meera L. Tanaka
+- Colorist Post-Production Specialist — Noah M. Alvarez
+- Documentary Field Producer — Rina N. Desai
+- Live Broadcast Director — Valentina O. Iyer
+- Talent Agent Career Coach — Aarav P. Malik
+- Stunt Coordinator Safety Advisor — Akira Q. Nwosu
+- Production Accountant Entertainment — Aya R. Sharma
+- Film Festival Programming Advisor — Daniel S. Zhang
+- Streaming Content Acquisition Manager — Emre T. Chen
+- Broadcast Engineering Transmitter Specialist — Hana U. Gupta
+- Unscripted Reality Show Runner — Iris V. Laurent
+- Entertainment Labor Compliance Manager — Kavya W. Nakamura
+
+## Photography & Videography Services (`photography-videography-services`) — 22 roles
+- Wedding Photographer — Linh X. Rahman
+- Commercial Product Photographer — Mina Y. Vega
+- Portrait Studio Photographer — Paloma Z. Boateng
+- Real Estate Listing Photographer — Sofia A. Farouk
+- Event Videographer — Yuki B. Kaur
+- Corporate Headshot Photographer — Adaeze C. Mehta
+- Drone Aerial Photographer — Amir D. Park
+- Photo Retoucher & Editor — Camila E. Svensson
+- School Portrait Photography Coordinator — Diego F. Ahmed
+- Sports Action Photographer — Felix G. Dahl
+- Food Photography Stylist — Hugo H. Ibrahim
+- Fashion Editorial Photographer — Jia I. Lopez
+- Newborn & Family Portrait Specialist — Kwame J. Novak
+- Architectural Photography Specialist — Maya K. Santos
+- Video Color Grading Specialist — Nia L. Williams
+- Live Stream Multi-Camera Director — Rami M. Chang
+- Stock Photography Portfolio Manager — Tomas N. Garcia
+- Photography Studio Manager — Zola O. Kowalski
+- Camera Rental House Specialist — Aisha P. Muller
+- Photography Workshop Instructor — Arjun Q. Popov
+- Copyright & Licensing Photography Advisor — Dalia R. Usman
+- Photography Business Marketing Coach — Elias S. Bianchi
+
+## Music & Performing Arts (`music-performing-arts`) — 22 roles
+- Orchestra Conductor Career Advisor — Giulia T. Dubois
+- Session Musician Contractor — Ines U. Joshi
+- Music Producer Recording Engineer — Karim V. Martinez
+- Vocal Coach Performance Specialist — Liam W. Oliveira
+- Theater Stage Manager — Miguel X. Singh
+- Ballet Company Rehearsal Director — Omar Y. Adeyemi
+- Opera Production Manager — Santiago Z. Cruz
+- Choir Director Community Ensemble — Yara A. Hassan
+- Music Therapist Performance Liaison — Abena B. Lindberg
+- Touring Band Road Manager — Amara C. Nguyen
+- Music Licensing Sync Specialist — Callum D. Rossi
+- Instrument Repair Luthier — Deepa E. Watanabe
+- DJ Event Entertainment Specialist — Fatima F. Campbell
+- Musical Theater Choreographer — Helena G. Fischer
+- Arts Festival Programming Director — Jaden H. Kim
+- Performing Arts Venue Manager — Khalid I. Mori
+- Music School Private Lesson Director — Luna J. Petrov
+- Casting Musician Union Contractor — Naomi K. Torres
+- Live Sound Front of House Engineer — Rafael L. Anderson
+- Performing Arts Grant Writer — Tariq M. Diallo
+- Stage Combat Coordinator — Zara N. Jensen
+- Performing Arts Accessibility Coordinator — Aiko O. Mansour
+
+## Fashion, Apparel & Textiles (`fashion-apparel-textiles`) — 22 roles
+- Fashion Designer Collection Lead — Anya P. Okafor
+- Apparel Technical Designer — Clara Q. Silva
+- Textile Mill Production Manager — Elena R. Abdi
+- Fashion Merchandiser Buyer — Gabriel S. Costa
+- Pattern Maker Grading Specialist — Imani T. Haddad
+- Sustainable Fashion Supply Chain Advisor — Kaito U. Lee
+- Costume Designer Entertainment — Leila V. Nasser
+- Fashion Stylist Editorial — Mei W. Rao
+- Footwear Design Developer — Noura X. Volkov
+- Luxury Brand Retail Manager — Sana Y. Brooks
+- Fashion E-Commerce Catalog Manager — Wei Z. Fernandez
+- Textile Quality Lab Technician — Aaliyah A. Khan
+- Fashion Show Production Coordinator — Alina B. Mensah
+- Apparel Sourcing Agent — Beatriz C. Patel
+- Denim Wash Development Specialist — Dante D. Tanaka
+- Fashion Trend Forecast Analyst — Esra E. Alvarez
+- Vintage Resale Curator — Haruto F. Desai
+- Fashion PR Publicist — Ishan G. Iyer
+- Uniform & Workwear Designer — Keiko H. Malik
+- Textile Dye House Chemist — Luca I. Nwosu
+- Fashion Influencer Partnership Manager — Nadia J. Sharma
+- Circular Fashion Recycling Program Manager — Priya K. Zhang
+
+## Mining & Mineral Extraction (`mining-mineral-extraction`) — 22 roles
+- Underground Mine Supervisor — Sophia L. Chen
+- Open Pit Mine Planner — Zainab M. Gupta
+- Mine Safety Health Administrator — Aditya N. Laurent
+- Geologist Exploration Specialist — Anika O. Nakamura
+- Blasting Engineer Mining — Chidi P. Rahman
+- Mineral Processing Plant Operator — Efe Q. Vega
+- Mine Ventilation Engineer — Freya R. Boateng
+- Heavy Equipment Mining Operator — Idris S. Farouk
+- Metallurgist Ore Processing Specialist — Jonas T. Kaur
+- Mine Environmental Reclamation Manager — Layla U. Mehta
+- Coal Mine Inspector Liaison — Meera V. Park
+- Diamond Sorting & Valuation Specialist — Noah W. Svensson
+- Mining Automation Remote Operations Technician — Rina X. Ahmed
+- Artisanal Mining Safety Trainer — Valentina Y. Dahl
+- Mine Rescue Team Coordinator — Aarav Z. Ibrahim
+- Mining Logistics Haul Road Manager — Akira A. Lopez
+- Critical Minerals Supply Chain Analyst — Aya B. Novak
+- Mine Community Relations Officer — Daniel C. Santos
+- Mining Feasibility Study Consultant — Emre D. Williams
+- Tailings Dam Safety Monitor — Hana E. Chang
+- Mining Workforce Training Instructor — Iris F. Garcia
+- Mining Permitting Regulatory Specialist — Kavya G. Kowalski
+
+## Oil & Gas Upstream Operations (`oil-gas-upstream`) — 22 roles
+- Drilling Engineer Advisor — Linh H. Muller
+- Rig Site Supervisor — Mina I. Popov
+- Petroleum Geologist Exploration Specialist — Paloma J. Usman
+- Reservoir Engineer — Sofia K. Bianchi
+- Well Completion Specialist — Yuki L. Dubois
+- Production Operator Upstream — Adaeze M. Joshi
+- HSE Oilfield Safety Officer — Amir N. Martinez
+- Pipeline Integrity Inspector — Camila O. Oliveira
+- Offshore Platform Operations Manager — Diego P. Singh
+- Hydraulic Fracturing Operations Advisor — Felix Q. Adeyemi
+- Well Logging Analyst — Hugo R. Cruz
+- Oilfield Supply Chain Coordinator — Jia S. Hassan
+- Subsea Engineering Specialist — Kwame T. Lindberg
+- Refinery Turnaround Planner — Maya U. Nguyen
+- LNG Terminal Operations Manager — Nia V. Rossi
+- Carbon Capture Storage Project Manager — Rami W. Watanabe
+- Decommissioning Offshore Advisor — Tomas X. Campbell
+- Oil Trading Operations Analyst — Zola Y. Fischer
+- Petrochemical Plant Process Engineer — Aisha Z. Kim
+- Renewable Transition Oil Major Advisor — Arjun A. Mori
+- Oilfield Emergency Response Coordinator — Dalia B. Petrov
+- Upstream Data Analytics Production Advisor — Elias C. Torres
+
+## Pharmaceuticals & Biotech Commercial (`pharma-biotech-commercial`) — 22 roles
+- Pharmaceutical Sales Representative — Giulia D. Anderson
+- Medical Science Liaison — Ines E. Diallo
+- Clinical Trial Manager — Karim F. Jensen
+- Regulatory Affairs Submission Specialist — Liam G. Mansour
+- Pharmacovigilance Drug Safety Analyst — Miguel H. Okafor
+- Biotech Manufacturing Process Scientist — Omar I. Silva
+- Quality Assurance GMP Specialist — Santiago J. Abdi
+- Medical Affairs Strategy Director — Yara K. Costa
+- Health Economics Outcomes Researcher — Abena L. Haddad
+- Pharma Market Access Manager — Amara M. Lee
+- Biologics Cell Culture Scientist — Callum N. Nasser
+- Clinical Data Management Lead — Deepa O. Rao
+- Investigational New Drug Program Manager — Fatima P. Volkov
+- Pharma Supply Chain Cold Chain Manager — Helena Q. Brooks
+- Biotech IP Licensing Manager — Jaden R. Fernandez
+- Patient Advocacy Pharma Liaison — Khalid S. Khan
+- Comparator Sourcing Clinical Trial Specialist — Luna T. Mensah
+- Pharma Compliance Promotion Reviewer — Naomi U. Patel
+- Biotech Startup Business Development Manager — Rafael V. Tanaka
+- Gene Therapy Manufacturing Advisor — Tariq W. Alvarez
+- Pharma Serialization Track & Trace Manager — Zara X. Desai
+- Rare Disease Launch Strategy Manager — Aiko Y. Iyer
+
+## Clinical Research & Trial Operations (`clinical-research-trials`) — 22 roles
+- Clinical Research Associate Monitor — Anya Z. Malik
+- Principal Investigator Study Coach — Clara A. Nwosu
+- Clinical Trial Coordinator — Elena B. Sharma
+- IRB Submission Specialist — Gabriel C. Zhang
+- Patient Recruitment Clinical Trial Manager — Imani D. Chen
+- Clinical Trial Budget & Contract Specialist — Kaito E. Gupta
+- GCP Audit Quality Assurance Manager — Leila F. Laurent
+- Electronic Data Capture Administrator — Mei G. Nakamura
+- Biostatistician Clinical Trial Designer — Noura H. Rahman
+- Clinical Supply Chain Manager — Sana I. Vega
+- Trial Master File Document Specialist — Wei J. Boateng
+- Decentralized Clinical Trial Operations Manager — Aaliyah K. Farouk
+- Clinical Trial Patient Navigator — Alina L. Kaur
+- Pharmacokinetics Study Specialist — Beatriz M. Mehta
+- Clinical Trial Safety Reporting Specialist — Dante N. Park
+- Site Feasibility Assessment Manager — Esra O. Svensson
+- Clinical Trial Diversity Enrollment Strategist — Haruto P. Ahmed
+- Medical Writer Clinical Study Report Specialist — Ishan Q. Dahl
+- Clinical Trial Technology Platform Manager — Keiko R. Ibrahim
+- Post-Market Surveillance Study Manager — Luca S. Lopez
+- Clinical Trial Closeout Archiving Specialist — Nadia T. Novak
+- Clinical Research Training Compliance Officer — Priya U. Santos
+
+## Beauty, Cosmetology & Personal Care (`beauty-cosmetology-personal-care`) — 22 roles
+- Licensed Cosmetologist — Sophia V. Williams
+- Hair Color Specialist — Zainab W. Chang
+- Barber Shop Owner — Aditya X. Garcia
+- Nail Technician Salon Specialist — Anika Y. Kowalski
+- Esthetician Facial Skincare Specialist — Chidi Z. Muller
+- Makeup Artist Bridal — Efe A. Popov
+- Lash Extension Technician — Freya B. Usman
+- Microblading Brow Specialist — Idris C. Bianchi
+- Spa Massage Therapist Manager — Jonas D. Dubois
+- Salon Suite Independent Stylist — Layla E. Joshi
+- Beauty School Instructor — Meera F. Martinez
+- Salon Retail Product Consultant — Noah G. Oliveira
+- Men's Grooming Barber Specialist — Rina H. Singh
+- Spray Tan Technician — Valentina I. Adeyemi
+- Waxing Hair Removal Specialist — Aarav J. Cruz
+- Beauty Influencer Brand Ambassador — Akira K. Hassan
+- Salon Scheduling Front Desk Manager — Aya L. Lindberg
+- Cosmetology State Board Exam Coach — Daniel M. Nguyen
+- Clean Beauty Formulation Consultant — Emre N. Rossi
+- Med Spa Treatment Coordinator — Hana O. Watanabe
+- Salon Health Sanitation Compliance Advisor — Iris P. Campbell
+- Beauty Franchise Operations Manager — Kavya Q. Fischer
+
+## Funeral & Death Care Services (`funeral-death-care`) — 22 roles
+- Funeral Director Embalmer — Linh R. Kim
+- Crematory Operations Manager — Mina S. Mori
+- Grief Support Funeral Counselor — Paloma T. Petrov
+- Pre-Need Funeral Sales Counselor — Sofia U. Torres
+- Cemetery Plot Sales Advisor — Yuki V. Anderson
+- Mortuary Transport Removal Specialist — Adaeze W. Diallo
+- Funeral Celebrant Officiant — Amir X. Jensen
+- Green Burial Options Educator — Camila Y. Mansour
+- Funeral Home Operations Manager — Diego Z. Okafor
+- Memorial Video Tribute Producer — Felix A. Silva
+- Death Certificate Filing Administrator — Hugo B. Abdi
+- Funeral Floral Arrangement Specialist — Jia C. Costa
+- Veterans Funeral Benefits Navigator — Kwame D. Haddad
+- Cultural Religious Funeral Customs Advisor — Maya E. Lee
+- Pet Aftercare Cremation Specialist — Nia F. Nasser
+- Funeral Trust Fund Compliance Officer — Rami G. Rao
+- Coroner Medical Examiner Liaison — Tomas H. Volkov
+- Funeral Home Marketing Community Outreach Manager — Zola I. Brooks
+- Thanatology Grief Educator — Aisha J. Fernandez
+- Funeral Technology Livestream Specialist — Arjun K. Khan
+- Monument Memorial Sales Consultant — Dalia L. Mensah
+- Funeral Service Apprenticeship Instructor — Elias M. Patel
+
+## Facilities, Cleaning & Janitorial (`cleaning-facilities-janitorial`) — 22 roles
+- Commercial Janitorial Supervisor — Giulia N. Tanaka
+- Hospital Environmental Services Manager — Ines O. Alvarez
+- Carpet & Upholstery Cleaning Specialist — Karim P. Desai
+- Window Cleaning High-Rise Technician — Liam Q. Iyer
+- Industrial Floor Coating Specialist — Miguel R. Malik
+- Post-Construction Cleanup Contractor — Omar S. Nwosu
+- Green Cleaning Chemical Safety Trainer — Santiago T. Sharma
+- Restroom Sanitation Quality Inspector — Yara U. Zhang
+- Facilities Day Porter — Abena V. Chen
+- Crime Scene Biohazard Remediation Specialist — Amara W. Gupta
+- HVAC Duct Cleaning Technician — Callum X. Laurent
+- Pressure Washing Exterior Specialist — Deepa Y. Nakamura
+- Janitorial Supply Purchasing Manager — Fatima Z. Rahman
+- School Custodial Night Shift Lead — Helena A. Vega
+- Data Center Cleanroom Technician — Jaden B. Boateng
+- Food Plant Sanitation Supervisor — Khalid C. Farouk
+- Facilities Waste Diversion Coordinator — Luna D. Kaur
+- Janitorial Franchise Owner — Naomi E. Mehta
+- Cleaning Quality Audit Inspector — Rafael F. Park
+- Facilities Odor Remediation Specialist — Tariq G. Svensson
+- Janitorial Staffing Scheduler — Zara H. Ahmed
+- Facilities Sustainability Cleaning Advisor — Aiko I. Dahl
+
+## Private Security & Protective Services (`private-security-protective`) — 22 roles
+- Corporate Security Director — Anya J. Ibrahim
+- Executive Protection Agent — Clara K. Lopez
+- Security Guard Shift Supervisor — Elena L. Novak
+- CCTV Monitoring Control Room Operator — Gabriel M. Santos
+- Event Security Crowd Manager — Imani N. Williams
+- Loss Prevention Retail Investigator — Kaito O. Chang
+- Access Control Systems Administrator — Leila P. Garcia
+- Security Training Firearms Instructor — Mei Q. Kowalski
+- K-9 Security Handler — Noura R. Muller
+- Maritime Ship Security Officer — Sana S. Popov
+- Campus Security Operations Manager — Wei T. Usman
+- Cyber-Physical Security Integration Specialist — Aaliyah U. Bianchi
+- Background Screening Investigator — Alina V. Dubois
+- Security Consultant Risk Assessor — Beatriz W. Joshi
+- Armored Car Courier Guard — Dante X. Martinez
+- Residential Gated Community Security Manager — Esra Y. Oliveira
+- Security Patrol Route Planner — Haruto Z. Singh
+- Workplace Violence Prevention Trainer — Ishan A. Adeyemi
+- Security Guard Licensing Compliance Advisor — Keiko B. Cruz
+- Drone Surveillance Security Operator — Luca C. Hassan
+- VIP Airport Meet & Greet Security Liaison — Nadia D. Lindberg
+- Security Operations Center Analyst — Priya E. Nguyen
+
+## Military & Defense Operations (`military-defense-operations`) — 22 roles
+- Military Officer Career Transition Coach — Sophia F. Rossi
+- Defense Contracting Program Manager — Zainab G. Watanabe
+- Logistics Military Supply Specialist — Aditya H. Campbell
+- Military Intelligence Analyst — Anika I. Fischer
+- Defense Acquisition Lifecycle Manager — Chidi J. Kim
+- Veteran Benefits Navigator — Efe K. Mori
+- Military Family Support Services Coordinator — Freya L. Petrov
+- ROTC Program Advisor — Idris M. Torres
+- Defense Cyber Operations Specialist — Jonas N. Anderson
+- Military Aviation Maintenance Manager — Layla O. Diallo
+- Peacekeeping Operations Liaison — Meera P. Jensen
+- Defense Export Compliance Officer — Noah Q. Mansour
+- Military Training Exercise Planner — Rina R. Okafor
+- Base Housing Community Manager — Valentina S. Silva
+- Defense R&D Program Officer — Aarav T. Abdi
+- Military Medical Readiness Coordinator — Akira U. Costa
+- Defense Budget Congressional Liaison — Aya V. Haddad
+- Military Justice Legal Assistance Advisor — Daniel W. Lee
+- Wounded Warrior Career Coach — Emre X. Nasser
+- Defense Supply Chain Security Manager — Hana Y. Rao
+- NATO Allied Operations Coordinator — Iris Z. Volkov
+- Military History Educator Museum Curator — Kavya A. Brooks
+
+## Intelligence & National Security Analysis (`intelligence-national-security`) — 22 roles
+- All-Source Intelligence Analyst — Linh B. Fernandez
+- Geospatial Intelligence Specialist — Mina C. Khan
+- Signals Intelligence Analyst — Paloma D. Mensah
+- Human Intelligence Operations Advisor — Sofia E. Patel
+- Counterintelligence Investigator — Yuki F. Tanaka
+- Threat Assessment Fusion Center Analyst — Adaeze G. Alvarez
+- Open Source Intelligence Researcher — Amir H. Desai
+- Cyber Threat Intelligence Analyst — Camila I. Iyer
+- Border Security Intelligence Coordinator — Diego J. Malik
+- Sanctions Evasion Investigation Specialist — Felix K. Nwosu
+- Intelligence Briefing Officer — Hugo L. Sharma
+- National Security Policy Advisor — Jia M. Zhang
+- Insider Threat Program Manager — Kwame N. Chen
+- Intelligence Collection Requirements Manager — Maya O. Gupta
+- Foreign Language Intelligence Linguist — Nia P. Laurent
+- Satellite Imagery Analyst — Rami Q. Nakamura
+- Intelligence Ethics Oversight Advisor — Tomas R. Rahman
+- Security Clearance Adjudication Specialist — Zola S. Vega
+- Counterterrorism Analysis Coordinator — Aisha T. Boateng
+- Economic Security Intelligence Analyst — Arjun U. Farouk
+- Intelligence Community IT Systems Manager — Dalia V. Kaur
+- Declassification Records Review Specialist — Elias W. Mehta
+
+## Professional Sports Coaching (`professional-sports-coaching`) — 22 roles
+- Head Coach Team Strategy Advisor — Giulia X. Park
+- Assistant Coach Player Development Specialist — Ines Y. Svensson
+- Strength & Conditioning Coach — Karim Z. Ahmed
+- Sports Performance Analyst — Liam A. Dahl
+- Goalkeeper Specialist Coach — Miguel B. Ibrahim
+- Pitching Coach Baseball Specialist — Omar C. Lopez
+- Offensive Coordinator Football Strategist — Santiago D. Novak
+- Scouting Director Talent Evaluator — Yara E. Santos
+- Athletic Trainer Team Healthcare Liaison — Abena F. Williams
+- Sports Nutrition Team Dietitian — Amara G. Chang
+- Video Analysis Coaching Technician — Callum H. Garcia
+- Youth Academy Development Coach — Deepa I. Kowalski
+- Paralympic Adaptive Sports Coach — Fatima J. Muller
+- Esports Team Coach — Helena K. Popov
+- Swim Coach Technique Specialist — Jaden L. Usman
+- Tennis Academy Head Pro — Khalid M. Bianchi
+- Golf Teaching Professional — Luna N. Dubois
+- Martial Arts Dojo Head Instructor — Naomi O. Joshi
+- Cheerleading Program Director — Rafael P. Martinez
+- Rowing Crew Coach — Tariq Q. Oliveira
+- Sports Psychology Mental Performance Coach — Zara R. Singh
+- Coach Education Certification Administrator — Aiko S. Adeyemi
+
+## Fitness Training & Gym Operations (`fitness-gym-operations`) — 22 roles
+- Personal Trainer Strength Specialist — Anya T. Cruz
+- Group Fitness Instructor — Clara U. Hassan
+- Gym General Manager — Elena V. Lindberg
+- CrossFit Box Owner — Gabriel W. Nguyen
+- Yoga Studio Instructor — Imani X. Rossi
+- Pilates Reformer Instructor — Kaito Y. Watanabe
+- Spin Cycling Instructor — Leila Z. Campbell
+- Nutrition Coach Fitness Integration Specialist — Mei A. Fischer
+- Physical Therapy Gym Bridge Program Manager — Noura B. Kim
+- Corporate Wellness Fitness Coordinator — Sana C. Mori
+- Athletic Club Membership Sales Manager — Wei D. Petrov
+- Fitness Equipment Maintenance Technician — Aaliyah E. Torres
+- Online Fitness Program Creator — Alina F. Anderson
+- Senior Fitness Silver Sneakers Instructor — Beatriz G. Diallo
+- Youth Athletic Performance Trainer — Dante H. Jensen
+- Gym Floor Staff Operations Lead — Esra I. Mansour
+- Fitness App Content Producer — Haruto J. Okafor
+- Bodybuilding Competition Prep Coach — Ishan K. Silva
+- Climbing Gym Route Setter — Keiko L. Abdi
+- Aquatic Fitness Instructor — Luca M. Costa
+- Fitness Franchise Operations Consultant — Nadia N. Haddad
+- Gym Health Safety Compliance Officer — Priya O. Lee
+
+## Retail Store Management & Merchandising (`retail-store-merchandising`) — 22 roles
+- Retail Store Manager — Sophia P. Nasser
+- Visual Merchandising Specialist — Zainab Q. Rao
+- Category Manager Buyer — Aditya R. Volkov
+- Loss Prevention Store Detective — Anika S. Brooks
+- Retail Sales Associate Trainer — Chidi T. Fernandez
+- Inventory Control Store Specialist — Efe U. Khan
+- Flagship Store Experience Manager — Freya V. Mensah
+- Omnichannel Retail Operations Lead — Idris W. Patel
+- Planogram Compliance Auditor — Jonas X. Tanaka
+- Retail District Manager — Layla Y. Alvarez
+- Pop-Up Shop Launch Manager — Meera Z. Desai
+- Luxury Retail Client Advisor — Noah A. Iyer
+- Grocery Store Department Manager — Rina B. Malik
+- Pharmacy Retail Store Manager — Valentina C. Nwosu
+- Big Box Retail Operations Director — Aarav D. Sharma
+- Retail Analytics Foot Traffic Specialist — Akira E. Zhang
+- Seasonal Holiday Retail Staffing Coordinator — Aya F. Chen
+- Retail Returns & Exchanges Manager — Daniel G. Gupta
+- Retail CRM Loyalty Program Manager — Emre H. Laurent
+- Retail Vendor Compliance Manager — Hana I. Nakamura
+- Retail Sustainability Packaging Advisor — Iris J. Rahman
+- Retail Technology POS Systems Manager — Kavya K. Vega
+
+## Wholesale & Distribution Sales (`wholesale-distribution`) — 22 roles
+- Wholesale Account Executive — Linh L. Boateng
+- Distribution Center Manager — Mina M. Farouk
+- Route Sales Driver Supervisor — Paloma N. Kaur
+- Foodservice Distribution Buyer — Sofia O. Mehta
+- Industrial Wholesale Inside Sales Representative — Yuki P. Park
+- Import Export Distribution Coordinator — Adaeze Q. Svensson
+- Wholesale Pricing Analyst — Amir R. Ahmed
+- Channel Partner Distribution Manager — Camila S. Dahl
+- Cold Storage Distribution Operations Lead — Diego T. Ibrahim
+- Wholesale Catalog Merchandising Manager — Felix U. Lopez
+- B2B E-Commerce Wholesale Platform Manager — Hugo V. Novak
+- Distribution Fleet Manager — Jia W. Santos
+- Wholesale Credit Collections Manager — Kwame X. Williams
+- Trade Show Wholesale Sales Manager — Maya Y. Chang
+- Pharmaceutical Wholesale Compliance Officer — Nia Z. Garcia
+- Agricultural Commodity Wholesale Broker — Rami A. Kowalski
+- Wholesale Returns & Recall Manager — Tomas B. Muller
+- Distribution Network Design Consultant — Zola C. Popov
+- Wholesale Customer EDI Integration Specialist — Aisha D. Usman
+- Last-Mile Wholesale Delivery Coordinator — Arjun E. Bianchi
+- Wholesale Inventory Turnover Analyst — Dalia F. Dubois
+- Distribution Labor Workforce Planner — Elias G. Joshi
+
+## Warehouse & Fulfillment Operations (`warehouse-fulfillment-operations`) — 22 roles
+- Warehouse Operations Manager — Giulia H. Martinez
+- Forklift Operator Lead — Ines I. Oliveira
+- Pick & Pack Fulfillment Supervisor — Karim J. Singh
+- Automated Storage Retrieval Systems Technician — Liam K. Adeyemi
+- Inventory Cycle Count Specialist — Miguel L. Cruz
+- Warehouse Safety OSHA Compliance Officer — Omar M. Hassan
+- Cross-Dock Operations Coordinator — Santiago N. Lindberg
+- Reverse Logistics Warehouse Manager — Yara O. Nguyen
+- Cold Chain Warehouse Supervisor — Abena P. Rossi
+- Warehouse Labor Management System Analyst — Amara Q. Watanabe
+- Slotting Optimization Warehouse Engineer — Callum R. Campbell
+- 3PL Third Party Logistics Account Manager — Deepa S. Fischer
+- Warehouse Quality Assurance Inspector — Fatima T. Kim
+- Material Handler Team Lead — Helena U. Mori
+- Warehouse Robotics Implementation Specialist — Jaden V. Petrov
+- Bonded Warehouse Customs Compliance Manager — Khalid W. Torres
+- E-Commerce Fulfillment SLA Manager — Luna X. Anderson
+- Warehouse Shift Scheduling Coordinator — Naomi Y. Diallo
+- Hazmat Warehouse Storage Specialist — Rafael Z. Jensen
+- Warehouse Continuous Improvement Lean Coach — Tariq A. Mansour
+- Dark Store Micro-Fulfillment Manager — Zara B. Okafor
+- Warehouse Disaster Recovery Planner — Aiko C. Silva
+
+## Property Management & Leasing Operations (`property-management-leasing`) — 22 roles
+- Residential Property Manager — Anya D. Abdi
+- Commercial Property Manager — Clara E. Costa
+- HOA Community Association Manager — Elena F. Haddad
+- Leasing Agent Apartment Specialist — Gabriel G. Lee
+- Tenant Relations & Retention Manager — Imani H. Nasser
+- Property Maintenance Coordinator — Kaito I. Rao
+- Rent Collection & Delinquency Manager — Leila J. Volkov
+- Eviction Process Compliance Specialist — Mei K. Brooks
+- Property Inspection Move-Out Manager — Noura L. Fernandez
+- Affordable Housing Compliance Manager — Sana M. Khan
+- Short-Term Rental Property Manager — Wei N. Mensah
+- Student Housing Operations Manager — Aaliyah O. Patel
+- Industrial Property Facilities Manager — Alina P. Tanaka
+- Property Management Software Administrator — Beatriz Q. Alvarez
+- CAM Common Area Maintenance Accountant — Dante R. Desai
+- Property Marketing Listing Specialist — Esra S. Iyer
+- Tenant Screening Background Check Specialist — Haruto T. Malik
+- Property Renovation Value-Add Project Manager — Ishan U. Nwosu
+- Multifamily Asset Manager — Keiko V. Sharma
+- Property Management Franchise Owner — Luca W. Zhang
+- Green Building Property Operations Manager — Nadia X. Chen
+- Property Management Customer Service Lead — Priya Y. Gupta
+
+## Culinary Arts & Chef Roles (`culinary-arts-chef-roles`) — 22 roles
+- Executive Chef Restaurant — Sophia Z. Laurent
+- Sous Chef Line Management Specialist — Zainab A. Nakamura
+- Pastry Chef Bakery Specialist — Aditya B. Rahman
+- Private Chef Personal Dining — Anika C. Vega
+- Catering Operations Chef — Chidi D. Boateng
+- Food Truck Owner Operator — Efe E. Farouk
+- Banquet Chef Hotel Events — Freya F. Kaur
+- Sushi Chef Itamae Specialist — Idris G. Mehta
+- Butcher Charcuterie Specialist — Jonas H. Park
+- Menu Development Recipe Costing Chef — Layla I. Svensson
+- Culinary School Instructor — Meera J. Ahmed
+- Restaurant Kitchen Manager — Noah K. Dahl
+- Farm-to-Table Sourcing Chef — Rina L. Ibrahim
+- Vegan Plant-Based Chef Consultant — Valentina M. Lopez
+- Cruise Ship Galley Chef — Aarav N. Novak
+- Institutional Foodservice Director — Akira O. Santos
+- Chef de Partie Station Specialist — Aya P. Williams
+- Molecular Gastronomy R&D Chef — Daniel Q. Chang
+- Chef Consultant Restaurant Opening — Emre R. Garcia
+- Culinary Competition Coach — Hana S. Kowalski
+- Chef Social Media Content Creator — Iris T. Muller
+- Kitchen Food Safety HACCP Manager — Kavya U. Popov
+
+## Bartending & Beverage Service (`bartending-beverage-service`) — 22 roles
+- Head Bartender Mixologist — Linh V. Usman
+- Sommelier Wine Service Specialist — Mina W. Bianchi
+- Bar Manager Beverage Program Director — Paloma X. Dubois
+- Craft Cocktail Developer — Sofia Y. Joshi
+- Beer Cicerone Taproom Manager — Yuki Z. Martinez
+- Flair Bartending Entertainment Specialist — Adaeze A. Oliveira
+- Non-Alcoholic Mocktail Program Designer — Amir B. Singh
+- Beverage Cost Control Analyst — Camila C. Adeyemi
+- Distillery Tour Tasting Room Manager — Diego D. Cruz
+- Brewery Production Tasting Room Lead — Felix E. Hassan
+- Barista Coffee Shop Manager — Hugo F. Lindberg
+- Tea Sommelier Specialty Beverage Advisor — Jia G. Nguyen
+- Nightclub VIP Bottle Service Manager — Kwame H. Rossi
+- Hotel Lobby Bar Manager — Maya I. Watanabe
+- Bartending School Instructor — Nia J. Campbell
+- Mobile Bar Event Catering Operator — Rami K. Fischer
+- Beverage Distribution Sales Representative — Tomas L. Kim
+- Cocktail Menu Photography Stylist — Zola M. Mori
+- Responsible Alcohol Service Trainer — Aisha N. Petrov
+- Bar Inventory Par Level Manager — Arjun O. Torres
+- Keg Line Cleaning Maintenance Technician — Dalia P. Anderson
+- Beverage Sustainability Zero-Waste Advisor — Elias Q. Diallo
+
+## Event Planning & Wedding Coordination (`event-planning-weddings`) — 22 roles
+- Wedding Planner Full Service Coordinator — Giulia R. Jensen
+- Corporate Event Planner — Ines S. Mansour
+- Conference Trade Show Manager — Karim T. Okafor
+- Festival Production Manager — Liam U. Silva
+- Day-Of Wedding Coordinator — Miguel V. Abdi
+- Event Venue Sales Manager — Omar W. Costa
+- Catering Sales Event Specialist — Santiago X. Haddad
+- Event Decor Floral Designer — Yara Y. Lee
+- AV Production Event Technician — Abena Z. Nasser
+- Event Budget & Contract Negotiator — Amara A. Rao
+- Destination Wedding Planner — Callum B. Volkov
+- Nonprofit Gala Fundraising Event Manager — Deepa C. Brooks
+- Sports Tournament Event Operations Manager — Fatima D. Fernandez
+- Hybrid Virtual Event Producer — Helena E. Khan
+- Event Risk & Insurance Advisor — Jaden F. Mensah
+- Event Staffing & Volunteer Coordinator — Khalid G. Patel
+- Experiential Marketing Event Designer — Luna H. Tanaka
+- Event Sustainability Zero-Waste Planner — Naomi I. Alvarez
+- Entertainment Booking Agent Events — Rafael J. Desai
+- Event Registration Technology Manager — Tariq K. Iyer
+- Mitzvah Quinceañera Cultural Event Planner — Zara L. Malik
+- Event Post-Analysis ROI Reporting Specialist — Aiko M. Nwosu
+
+## Copywriting, Editing & Content Production (`copywriting-content-production`) — 22 roles
+- Copywriter Advertising Agency — Anya N. Sharma
+- Technical Writer Documentation Specialist — Clara O. Zhang
+- Content Strategist Editorial Calendar Manager — Elena P. Chen
+- SEO Content Writer — Gabriel Q. Gupta
+- Grant Proposal Writer — Imani R. Laurent
+- Speechwriter Executive Communications — Kaito S. Nakamura
+- UX Writer Product Interface Specialist — Leila T. Rahman
+- Video Scriptwriter — Mei U. Vega
+- Medical Writer Pharmaceutical — Noura V. Boateng
+- Legal Brief Writer Paralegal Support — Sana W. Farouk
+- Ghostwriter Book Publishing — Wei X. Kaur
+- Email Marketing Copywriter — Aaliyah Y. Mehta
+- Brand Voice Guidelines Editor — Alina Z. Park
+- Substantive Book Editor — Beatriz A. Svensson
+- Proofreader Quality Assurance Specialist — Dante B. Ahmed
+- Localization Transcreation Writer — Esra C. Dahl
+- Podcast Show Notes Producer — Haruto D. Ibrahim
+- Social Media Caption Copywriter — Ishan E. Lopez
+- Annual Report Corporate Writer — Keiko F. Novak
+- Resume & LinkedIn Profile Writer — Luca G. Santos
+- Fact Checker Newsroom Specialist — Nadia H. Williams
+- Content Operations Workflow Manager — Priya I. Chang
+
+## Market Research & Consumer Insights (`market-research-consumer-insights`) — 22 roles
+- Market Research Analyst — Sophia J. Garcia
+- Focus Group Moderator — Zainab K. Kowalski
+- Survey Design Methodologist — Aditya L. Muller
+- Consumer Insights Brand Manager — Anika M. Popov
+- Consumer Market Competitive Intelligence Analyst — Chidi N. Usman
+- Ethnographic Field Researcher — Efe O. Bianchi
+- Pricing Research Conjoint Analyst — Freya P. Dubois
+- Product Concept Testing Manager — Idris Q. Joshi
+- Social Listening Analytics Specialist — Jonas R. Martinez
+- Retail Shopper Insights Manager — Layla S. Oliveira
+- B2B Market Segmentation Analyst — Meera T. Singh
+- Customer Journey Mapping Facilitator — Noah U. Adeyemi
+- Brand Tracking Study Manager — Rina V. Cruz
+- Market Research Panel Operations Manager — Valentina W. Hassan
+- Neuromarketing Research Advisor — Aarav X. Lindberg
+- International Market Entry Researcher — Akira Y. Nguyen
+- Qualitative Coding Analysis Specialist — Aya Z. Rossi
+- Syndicated Data Insights Analyst — Daniel A. Watanabe
+- Market Research Vendor Management Lead — Emre B. Campbell
+- Insight Storytelling Presentation Designer — Hana C. Fischer
+- DIY Research Platform Product Manager — Iris D. Kim
+- Market Research Ethics IRB Advisor — Kavya E. Mori
+
+## Executive & Administrative Support (`executive-administrative-support`) — 22 roles
+- Executive Assistant C-Suite — Linh F. Petrov
+- Office Manager Administrative Lead — Mina G. Torres
+- Virtual Assistant Remote Operations Specialist — Paloma H. Anderson
+- Board Meeting Coordinator — Sofia I. Diallo
+- Travel Arrangements Corporate Concierge — Yuki J. Jensen
+- Calendar Management Chief of Staff Support — Adaeze K. Mansour
+- Administrative Business Partner — Amir L. Okafor
+- Reception Front Desk Manager — Camila M. Silva
+- Records Management Archivist Administrator — Diego N. Abdi
+- Meeting Minutes Corporate Secretary Support — Felix O. Costa
+- Expense Report Processing Specialist — Hugo P. Haddad
+- Event Logistics Administrative Coordinator — Jia Q. Lee
+- Immigration Visa Administrative Specialist — Kwame R. Nasser
+- Legal Administrative Assistant — Maya S. Rao
+- Medical Practice Front Office Manager — Nia T. Volkov
+- Real Estate Closing Administrative Coordinator — Rami U. Brooks
+- Church Parish Administrative Assistant — Tomas V. Fernandez
+- University Department Admin Coordinator — Zola W. Khan
+- Bilingual Executive Assistant — Aisha X. Mensah
+- Administrative Temp Agency Coordinator — Arjun Y. Patel
+- Workplace Move Relocation Project Assistant — Dalia Z. Tanaka
+- Administrative Technology Tools Trainer — Elias A. Alvarez
+
+## Call Center & Contact Center Operations (`call-center-contact-operations`) — 22 roles
+- Call Center Operations Manager — Giulia B. Desai
+- Customer Service Representative Team Lead — Ines C. Iyer
+- Technical Support Tier 2 Specialist — Karim D. Malik
+- Outbound Telemarketing Sales Manager — Liam E. Nwosu
+- Contact Center Workforce Management Analyst — Miguel F. Sharma
+- Quality Assurance Call Monitoring Specialist — Omar G. Zhang
+- IVR Phone Tree Systems Designer — Santiago H. Chen
+- Chat Support Digital Contact Agent Lead — Yara I. Gupta
+- Contact Center CRM Administrator — Abena J. Laurent
+- Escalation Desk Supervisor — Amara K. Nakamura
+- Multilingual Contact Center Team Lead — Callum L. Rahman
+- Collections Call Center Manager — Deepa M. Vega
+- Healthcare Patient Access Call Center Specialist — Fatima N. Boateng
+- Contact Center Training Onboarding Manager — Helena O. Farouk
+- Omnichannel Contact Strategy Director — Jaden P. Kaur
+- Contact Center Real-Time Analyst — Khalid Q. Mehta
+- Complaint Resolution Ombudsman Liaison — Luna R. Park
+- Contact Center Speech Analytics Manager — Naomi S. Svensson
+- Remote Contact Center Technology Advisor — Rafael T. Ahmed
+- Contact Center BPO Vendor Manager — Tariq U. Dahl
+- Contact Center Employee Engagement Coach — Zara V. Ibrahim
+- Contact Center Disaster Recovery Planner — Aiko W. Lopez
+
+## Notary, Paralegal & Legal Support (`notary-paralegal-legal-support`) — 22 roles
+- Litigation Paralegal — Anya X. Novak
+- Corporate Paralegal Transaction Specialist — Clara Y. Santos
+- Immigration Paralegal Case Manager — Elena Z. Williams
+- Family Law Paralegal — Gabriel A. Chang
+- Notary Public Mobile Signing Agent — Imani B. Garcia
+- Court Filing E-Filing Specialist — Kaito C. Kowalski
+- Legal Secretary Law Firm — Leila D. Muller
+- Discovery Document Review Project Manager — Mei E. Popov
+- Trademark Paralegal IP Specialist — Noura F. Usman
+- Bankruptcy Petition Preparer Paralegal — Sana G. Bianchi
+- Real Estate Closing Paralegal — Wei H. Dubois
+- Medical Malpractice Paralegal — Aaliyah I. Joshi
+- Legal Records Clerk — Alina J. Martinez
+- Trial Exhibit Preparation Specialist — Beatriz K. Oliveira
+- Legal Billing Time Entry Specialist — Dante L. Singh
+- Compliance Paralegal Regulatory Filings — Esra M. Adeyemi
+- Legal Intake Client Screening Specialist — Haruto N. Cruz
+- Subpoena Process Server Coordinator — Ishan O. Hassan
+- Law Library Research Assistant — Keiko P. Lindberg
+- Legal Translation Document Specialist — Luca Q. Nguyen
+- E-Discovery Forensic Collection Paralegal — Nadia R. Rossi
+- Paralegal Professional Development Instructor — Priya S. Watanabe
+
+## Tax Preparation & Enrolled Agent Services (`tax-preparation-enrolled-agent`) — 22 roles
+- Tax Preparer Seasonal Specialist — Sophia T. Campbell
+- Enrolled Agent IRS Representation — Zainab U. Fischer
+- Corporate Tax Accountant — Aditya V. Kim
+- Sales Tax Compliance Specialist — Anika W. Mori
+- International Expat Tax Advisor — Chidi X. Petrov
+- Estate Trust Tax Preparer — Efe Y. Torres
+- Tax Resolution Offer in Compromise Specialist — Freya Z. Anderson
+- Property Tax Appeal Consultant — Idris A. Diallo
+- Payroll Tax Compliance Manager — Jonas B. Jensen
+- Nonprofit Tax Form 990 Preparer — Layla C. Mansour
+- Crypto Tax Reporting Specialist — Meera D. Okafor
+- State Local Tax Nexus Advisor — Noah E. Silva
+- Tax Software Implementation Trainer — Rina F. Abdi
+- IRS Audit Defense Representative — Valentina G. Costa
+- Transfer Pricing Documentation Specialist — Aarav H. Haddad
+- R&D Tax Credit Analyst — Akira I. Lee
+- Tax Practice Marketing Client Acquisition Manager — Aya J. Nasser
+- Tax Office Franchise Owner — Daniel K. Rao
+- Bookkeeping Tax Integration Specialist — Emre L. Volkov
+- Tax Law Legislative Update Educator — Hana M. Brooks
+- Voluntary Disclosure Program Advisor — Iris N. Fernandez
+- Tax Ethics Professional Responsibility Coach — Kavya O. Khan
+
+## Payroll, Benefits & HRIS Administration (`payroll-benefits-hris`) — 22 roles
+- Payroll Processing Specialist — Linh P. Mensah
+- Benefits Enrollment Coordinator — Mina Q. Patel
+- HRIS System Administrator — Paloma R. Tanaka
+- Compensation Benchmarking Analyst — Sofia S. Alvarez
+- Leave of Absence Administrator — Yuki T. Desai
+- Workers Compensation Claims HR Liaison — Adaeze U. Iyer
+- Payroll Tax Filing Compliance Manager — Amir V. Malik
+- Employee Relations HR Generalist — Camila W. Nwosu
+- Open Enrollment Communications Manager — Diego X. Sharma
+- Garnishment Payroll Deduction Specialist — Felix Y. Zhang
+- Global Payroll Multi-Country Coordinator — Hugo Z. Chen
+- HR Shared Services Team Lead — Jia A. Gupta
+- Time & Attendance Systems Manager — Kwame B. Laurent
+- Benefits Broker Client Service Manager — Maya C. Nakamura
+- COBRA Continuation Administrator — Nia D. Rahman
+- HR Compliance I-9 Audit Specialist — Rami E. Vega
+- Pay Equity Analysis HR Consultant — Tomas F. Boateng
+- Employee Handbook Policy Writer — Zola G. Farouk
+- HR Help Desk Tier 1 Specialist — Aisha H. Kaur
+- Payroll Year-End W-2 Specialist — Arjun I. Mehta
+- Benefits Analytics Cost Modeling Analyst — Dalia J. Park
+- HRIS Integration API Project Manager — Elias K. Svensson
+
+## Diplomacy & Foreign Service (`diplomacy-foreign-service`) — 22 roles
+- Foreign Service Officer Career Advisor — Giulia L. Ahmed
+- Diplomatic Protocol Officer — Ines M. Dahl
+- Consular Services Visa Officer — Karim N. Ibrahim
+- Trade Attaché Commercial Diplomacy Specialist — Liam O. Lopez
+- Cultural Affairs Diplomatic Program Manager — Miguel P. Novak
+- Ambassador Speechwriter Communications Advisor — Omar Q. Santos
+- International Treaty Negotiation Support Officer — Santiago R. Williams
+- Embassy Security Cooperation Liaison — Yara S. Chang
+- Public Diplomacy Social Media Officer — Abena T. Garcia
+- Humanitarian Aid Diplomatic Coordinator — Amara U. Kowalski
+- Sanctions Policy Diplomatic Advisor — Callum V. Muller
+- UN Mission Delegate Liaison — Deepa W. Popov
+- Peace Corps Program Country Director — Fatima X. Usman
+- International Development NGO Diplomatic Partner — Helena Y. Bianchi
+- Foreign Policy Think Tank Analyst — Jaden Z. Dubois
+- Diplomatic Courier Logistics Specialist — Khalid A. Joshi
+- Language Officer Diplomatic Interpreter — Luna B. Martinez
+- Economic Diplomacy Investment Promotion Officer — Naomi C. Oliveira
+- Crisis Evacuation Embassy Operations Manager — Rafael D. Singh
+- Diplomatic History Educator — Tariq E. Adeyemi
+- Track II Diplomacy Facilitator — Zara F. Cruz
+- Diplomatic Immunity Law Literacy Advisor — Aiko G. Hassan
+
+## Anthropology, Sociology & Social Research (`anthropology-sociology-research`) — 22 roles
+- Cultural Anthropologist Field Researcher — Anya H. Lindberg
+- Medical Anthropologist Health Systems Advisor — Clara I. Nguyen
+- Urban Sociologist Community Researcher — Elena J. Rossi
+- Archival Ethnography Specialist — Gabriel K. Watanabe
+- Linguistic Anthropologist Documentation Researcher — Imani L. Campbell
+- Sociology Survey Research Director — Kaito M. Fischer
+- Applied Anthropology UX Research Liaison — Leila N. Kim
+- Forensic Anthropology Consultant — Mei O. Mori
+- Environmental Sociology Policy Researcher — Noura P. Petrov
+- Gender Studies Social Research Analyst — Sana Q. Torres
+- Migration Diaspora Sociology Researcher — Wei R. Anderson
+- Quantitative Sociology Statistician — Aaliyah S. Diallo
+- Participant Observation Field Methods Trainer — Alina T. Jensen
+- Community-Based Participatory Research Facilitator — Beatriz U. Mansour
+- Social Network Analysis Researcher — Dante V. Okafor
+- Policy Evaluation Sociology Consultant — Esra W. Silva
+- Visual Anthropology Documentary Producer — Haruto X. Abdi
+- Economic Anthropology Market Systems Researcher — Ishan Y. Costa
+- Criminology Sociology Research Analyst — Keiko Z. Haddad
+- Social Research Ethics IRB Advisor — Luca A. Lee
+- Anthropology Museum Exhibit Developer — Nadia B. Nasser
+- Sociology Public Opinion Polling Director — Priya C. Rao
+
+## Psychology & Counseling (Non-Medical) (`psychology-counseling-services`) — 22 roles
+- Licensed Professional Counselor — Sophia D. Volkov
+- Marriage & Family Therapist — Zainab E. Brooks
+- School Psychologist — Aditya F. Fernandez
+- Industrial Organizational Psychologist — Anika G. Khan
+- Substance Abuse Counselor LPC — Chidi H. Mensah
+- Grief Counselor Bereavement Specialist — Efe I. Patel
+- Career Counselor Vocational Advisor — Freya J. Tanaka
+- Rehabilitation Counselor Disability Services — Idris K. Alvarez
+- Play Therapist Child Specialist — Jonas L. Desai
+- Couples Therapy Gottman Method Practitioner — Layla M. Iyer
+- EMDR Trauma Therapist — Meera N. Malik
+- Neuropsychology Testing Technician — Noah O. Nwosu
+- Forensic Psychology Consultant — Rina P. Sharma
+- Health Psychology Behavior Change Coach — Valentina Q. Zhang
+- Sports Psychology Performance Counselor — Aarav R. Chen
+- Art Therapy Creative Arts Counselor — Akira S. Gupta
+- Group Therapy Facilitator — Aya T. Laurent
+- Telehealth Counseling Platform Therapist — Daniel U. Nakamura
+- Counseling Supervision Clinical Director — Emre V. Rahman
+- Psychology Research Lab Coordinator — Hana W. Vega
+- Community Psychology Program Evaluator — Iris X. Boateng
+- Counseling Ethics Boundary Trainer — Kavya Y. Farouk
+
+## Life Coaching & Career Development (`life-coaching-career-development`) — 22 roles
+- Executive Leadership Coach — Linh Z. Kaur
+- Career Transition Coach — Mina A. Mehta
+- Life Purpose Clarity Coach — Paloma B. Park
+- Interview Preparation Coach — Sofia C. Svensson
+- Resume & Branding Career Strategist — Yuki D. Ahmed
+- Entrepreneurship Startup Coach — Adaeze E. Dahl
+- Retirement Life Planning Coach — Amir F. Ibrahim
+- Accountability Productivity Coach — Camila G. Lopez
+- Couples Relationship Communication Coach — Diego H. Novak
+- Financial Habits Life Coach — Felix I. Santos
+- Wellness Holistic Life Coach — Hugo J. Williams
+- Academic Success College Coach — Jia K. Chang
+- Creative Block Artist Coach — Kwame L. Garcia
+- Parenting Skills Coach — Maya M. Kowalski
+- Divorce Transition Life Coach — Nia N. Muller
+- Immigrant Career Integration Coach — Rami O. Popov
+- Neurodiversity Workplace Coach — Tomas P. Usman
+- Public Speaking Confidence Coach — Zola Q. Bianchi
+- Spiritual Life Direction Coach — Aisha R. Dubois
+- Team Building Corporate Coach — Arjun S. Joshi
+- ICF Coaching Certification Mentor — Dalia T. Martinez
+- Coaching Practice Business Development Advisor — Elias U. Oliveira
+
+## Pest Control & Extermination (`pest-control-services`) — 22 roles
+- Licensed Pest Control Technician — Giulia V. Singh
+- Termite Inspection Specialist — Ines W. Adeyemi
+- Bed Bug Heat Treatment Operator — Karim X. Cruz
+- Rodent Exclusion Specialist — Liam Y. Hassan
+- Mosquito Abatement Program Manager — Miguel Z. Lindberg
+- Wildlife Removal Humane Specialist — Omar A. Nguyen
+- Fumigation Safety Supervisor — Santiago B. Rossi
+- Integrated Pest Management Consultant — Yara C. Watanabe
+- Commercial Kitchen Pest Control Specialist — Abena D. Campbell
+- Agricultural Crop Pest Advisor — Amara E. Fischer
+- Pest Control Route Manager — Callum F. Kim
+- Termite Baiting System Installer — Deepa G. Mori
+- Bee Wasp Removal Specialist — Fatima H. Petrov
+- Pest Control Sales Inspector — Helena I. Torres
+- Green Eco Pest Control Advisor — Jaden J. Anderson
+- Stored Product Pest Grain Elevator Specialist — Khalid K. Diallo
+- Pest Control Franchise Owner — Luna L. Jensen
+- Pest Control Training Certification Instructor — Naomi M. Mansour
+- Pest Identification Entomologist Liaison — Rafael N. Okafor
+- HOA Community Pest Program Manager — Tariq O. Silva
+- Pest Control Chemical Safety Compliance Officer — Zara P. Abdi
+- Pest Control Customer Retention Specialist — Aiko Q. Costa
+
+## Landscaping, Lawn & Garden Services (`landscaping-garden-services`) — 22 roles
+- Landscape Designer Residential — Anya R. Haddad
+- Lawn Care Crew Supervisor — Clara S. Lee
+- Arborist Tree Care Specialist — Elena T. Nasser
+- Irrigation Sprinkler Installer — Gabriel U. Rao
+- Hardscape Patio Builder — Imani V. Volkov
+- Landscape Maintenance Account Manager — Kaito W. Brooks
+- Organic Lawn Care Specialist — Leila X. Fernandez
+- Xeriscape Drought Landscape Designer — Mei Y. Khan
+- Snow Removal Commercial Contractor — Noura Z. Mensah
+- Garden Center Nursery Manager — Sana A. Patel
+- Turf Installation Sod Specialist — Wei B. Tanaka
+- Pond Water Feature Installer — Aaliyah C. Alvarez
+- Landscape Lighting Designer — Alina D. Desai
+- Commercial Groundskeeping Manager — Beatriz E. Iyer
+- Edible Garden Landscape Designer — Dante F. Malik
+- Landscape Estimator Bid Specialist — Esra G. Nwosu
+- Pesticide Applicator Landscape License Holder — Haruto H. Sharma
+- HOA Landscape Committee Consultant — Ishan I. Zhang
+- Rooftop Green Roof Installer — Keiko J. Chen
+- Landscape Equipment Fleet Manager — Luca K. Gupta
+- Pollinator Garden Design Specialist — Nadia L. Laurent
+- Landscape Business Marketing Coach — Priya M. Nakamura
+
+## Locksmith & Security Hardware (`locksmith-security-hardware`) — 22 roles
+- Residential Locksmith — Sophia N. Rahman
+- Commercial Access Control Locksmith — Zainab O. Vega
+- Automotive Key Programming Locksmith — Aditya P. Boateng
+- Safe Cracking Vault Technician — Anika Q. Farouk
+- Master Key System Designer — Chidi R. Kaur
+- Electronic Lock Smart Home Installer — Efe S. Mehta
+- Locksmith Emergency 24-Hour Dispatcher — Freya T. Park
+- Door Hardware Specification Consultant — Idris U. Svensson
+- High-Security Lock Pick Resistance Advisor — Jonas V. Ahmed
+- Forensic Locksmith Investigation Specialist — Layla W. Dahl
+- Locksmith Apprenticeship Instructor — Meera X. Ibrahim
+- Key Duplication Shop Manager — Noah Y. Lopez
+- Panic Bar Fire Exit Hardware Installer — Rina Z. Novak
+- Mailbox Lock Replacement Specialist — Valentina A. Santos
+- Gun Safe Installation Technician — Aarav B. Williams
+- Locksmith Supply Wholesale Representative — Akira C. Chang
+- Mobile Locksmith Fleet Owner — Aya D. Garcia
+- Locksmith Trade Association Compliance Advisor — Daniel E. Kowalski
+- Biometric Access Lock Installer — Emre F. Muller
+- Padlock Industrial Security Specialist — Hana G. Popov
+- Locksmith Customer Security Audit Advisor — Iris H. Usman
+- Locksmith Software Key Tracking Administrator — Kavya I. Bianchi
+
+## Laundry, Dry Cleaning & Alterations (`laundry-alterations-services`) — 22 roles
+- Dry Cleaning Plant Manager — Linh J. Dubois
+- Tailor Alterations Specialist — Mina K. Joshi
+- Commercial Laundry Route Driver — Paloma L. Martinez
+- Wedding Gown Preservation Specialist — Sofia M. Oliveira
+- Leather Suede Cleaning Specialist — Yuki N. Singh
+- Uniform Rental Laundry Service Manager — Adaeze O. Adeyemi
+- Hotel Linen Laundry Operations Lead — Amir P. Cruz
+- Stain Removal Textile Chemist — Camila Q. Hassan
+- Seamstress Home Alterations Business Owner — Diego R. Lindberg
+- Bespoke Suit Tailor — Felix S. Nguyen
+- Embroidery Monogramming Specialist — Hugo T. Rossi
+- Curtain Drapery Cleaning Installer — Jia U. Watanabe
+- Shoe Repair Cobbler — Kwame V. Campbell
+- Leather Goods Repair Specialist — Maya W. Fischer
+- Laundromat Self-Service Owner — Nia X. Kim
+- Healthcare Linen Infection Control Manager — Rami Y. Mori
+- Dry Cleaning POS Customer Service Specialist — Tomas Z. Petrov
+- Alterations Fitting Appointment Coordinator — Zola A. Torres
+- Eco-Friendly Wet Cleaning Advisor — Aisha B. Anderson
+- Garment Textile Reuse Collection Manager — Arjun C. Diallo
+- Costume Wardrobe Maintenance Specialist — Dalia D. Jensen
+- Laundry Equipment Maintenance Technician — Elias E. Mansour
+
+## Jewelry, Watchmaking & Gemology (`jewelry-watchmaking-gemology`) — 22 roles
+- Bench Jeweler Repair Specialist — Giulia F. Okafor
+- Custom Engagement Ring Designer — Ines G. Silva
+- Watchmaker Horologist Repair Specialist — Karim H. Abdi
+- GIA Graduate Gemologist Appraiser — Liam I. Costa
+- Jewelry Store Sales Consultant — Miguel J. Haddad
+- Estate Jewelry Buyer — Omar K. Lee
+- CAD Jewelry Design Specialist — Santiago L. Nasser
+- Pearl Restringing Specialist — Yara M. Rao
+- Engraving Jewelry Personalization Artist — Abena N. Volkov
+- Jewelry Casting Production Manager — Amara O. Brooks
+- Luxury Watch Brand Authorized Dealer — Callum P. Fernandez
+- Jewelry Appraisal Insurance Documentation Specialist — Deepa Q. Khan
+- Diamond Grading Lab Liaison — Fatima R. Mensah
+- Jewelry Repair Shop Owner — Helena S. Patel
+- Bead Jewelry Artisan Maker — Jaden T. Tanaka
+- Pawn Shop Jewelry Buyer — Khalid U. Alvarez
+- Jewelry Trade Show Exhibitor Manager — Luna V. Desai
+- Antique Jewelry Historian Authenticator — Naomi W. Iyer
+- Jewelry Photography E-Commerce Specialist — Rafael X. Malik
+- Watch Battery Cell Replacement Technician — Tariq Y. Nwosu
+- Jewelry Loss Prevention Security Advisor — Zara Z. Sharma
+- Sustainable Ethical Sourcing Jewelry Advisor — Aiko A. Zhang
+
+## Printing, Signage & Large Format (`printing-signage-production`) — 22 roles
+- Offset Press Operator — Anya B. Chen
+- Digital Print Production Manager — Clara C. Gupta
+- Wide Format Banner Installer — Elena D. Laurent
+- Screen Printing Apparel Production Lead — Gabriel E. Nakamura
+- Embossing Foil Stamping Specialist — Imani F. Rahman
+- Print Estimator Job Costing Specialist — Kaito G. Vega
+- Sign Fabrication Channel Letter Installer — Leila H. Boateng
+- Vehicle Wrap Graphics Installer — Mei I. Farouk
+- 3D Printing Prototyping Service Manager — Noura J. Kaur
+- Print Finishing Binding Specialist — Sana K. Mehta
+- Color Management Prepress Specialist — Wei L. Park
+- Label Printing Flexographic Operator — Aaliyah M. Svensson
+- Print Shop Customer Service Representative — Alina N. Ahmed
+- Large Format UV Printer Operator — Beatriz O. Dahl
+- Neon Sign Restoration Specialist — Dante P. Ibrahim
+- Print-on-Demand Fulfillment Manager — Esra Q. Lopez
+- Sustainable Soy Ink Printing Advisor — Haruto R. Novak
+- Print MIS Workflow Software Administrator — Ishan S. Santos
+- Trade Show Booth Graphics Producer — Keiko T. Williams
+- Blueprint Architectural Printing Specialist — Luca U. Chang
+- Print Quality Control Inspector — Nadia V. Garcia
+- Print Equipment Maintenance Technician — Priya W. Kowalski
+
+## Waste Management & Recycling (`waste-management-recycling`) — 22 roles
+- Municipal Waste Collection Route Supervisor — Sophia X. Muller
+- Recycling Facility Sort Line Manager — Zainab Y. Popov
+- Hazardous Waste Disposal Compliance Officer — Aditya Z. Usman
+- Landfill Operations Manager — Anika A. Bianchi
+- Waste-to-Energy Plant Operator — Chidi B. Dubois
+- Commercial Composting Program Manager — Efe C. Joshi
+- E-Waste Recycling Technician — Freya D. Martinez
+- Scrap Metal Recycling Yard Manager — Idris E. Oliveira
+- Medical Waste Biohazard Disposal Specialist — Jonas F. Singh
+- Construction Demolition Debris Recycler — Layla G. Adeyemi
+- Waste Audit Zero Waste Consultant — Meera H. Cruz
+- Recycling Education Outreach Coordinator — Noah I. Hassan
+- Waste Brokerage Logistics Coordinator — Rina J. Lindberg
+- Anaerobic Digestion Biogas Operator — Valentina K. Nguyen
+- Glass Recycling Processing Specialist — Aarav L. Rossi
+- Textile Recycling Collection Manager — Akira M. Watanabe
+- Waste Collection Fleet Maintenance Manager — Aya N. Campbell
+- Extended Producer Responsibility Program Manager — Daniel O. Fischer
+- Illegal Dumping Enforcement Investigator — Emre P. Kim
+- Circular Economy Materials Recovery Advisor — Hana Q. Mori
+- Waste Transfer Station Scale Operator — Iris R. Petrov
+- Waste Management RFP Contract Specialist — Kavya S. Torres
+
+## Water & Wastewater Treatment (`water-wastewater-treatment`) — 22 roles
+- Wastewater Treatment Plant Operator — Linh T. Anderson
+- Drinking Water Plant Operator — Mina U. Diallo
+- Water Quality Laboratory Technician — Paloma V. Jensen
+- Stormwater Management Utility Engineer — Sofia W. Mansour
+- Pipe Network Leak Detection Specialist — Yuki X. Okafor
+- Desalination Plant Operations Manager — Adaeze Y. Silva
+- Water Conservation Public Education Specialist — Amir Z. Abdi
+- Industrial Pretreatment Compliance Inspector — Camila A. Costa
+- Biosolids Management Specialist — Diego B. Haddad
+- Water Utility Customer Service Manager — Felix C. Lee
+- SCADA Water Systems Control Operator — Hugo D. Nasser
+- Hydrant Flushing Maintenance Technician — Jia E. Rao
+- Cross-Connection Backflow Prevention Tester — Kwame F. Volkov
+- Water Main Break Emergency Response Coordinator — Maya G. Brooks
+- PFAS Contaminant Treatment Specialist — Nia H. Fernandez
+- Irrigation District Water Manager — Rami I. Khan
+- Dam Safety Inspection Liaison — Tomas J. Mensah
+- Water Rights Allocation Advisor — Zola K. Patel
+- Smart Meter AMI Water Deployment Manager — Aisha L. Tanaka
+- Wastewater Collections System CCTV Inspector — Arjun M. Alvarez
+- Water Utility Capital Improvement Planner — Dalia N. Desai
+- Global WASH Development Program Advisor — Elias O. Iyer
+
+## Elevator & Building Systems Maintenance (`elevator-building-systems-maintenance`) — 22 roles
+- Elevator Mechanic Installer — Giulia P. Malik
+- Escalator Maintenance Technician — Ines Q. Nwosu
+- Building Automation Systems Technician — Karim R. Sharma
+- Fire Sprinkler Systems Inspector — Liam S. Zhang
+- Commercial Generator Maintenance Technician — Miguel T. Chen
+- Boiler Chiller Plant Operator — Omar U. Gupta
+- Access Platform Lift Inspector — Santiago V. Laurent
+- Dumbwaiter Service Technician — Yara W. Nakamura
+- Elevator Modernization Project Manager — Abena X. Rahman
+- ADA Compliance Building Systems Advisor — Amara Y. Vega
+- Building Envelope Commissioning Specialist — Callum Z. Boateng
+- Parking Garage Ventilation Systems Technician — Deepa A. Farouk
+- Elevator Emergency Entrapment Responder Trainer — Fatima B. Kaur
+- Conveyor Systems Maintenance Technician — Helena C. Mehta
+- Automatic Door Service Technician — Jaden D. Park
+- Building Energy Management System Optimizer — Khalid E. Svensson
+- Elevator Code ASME A17 Compliance Inspector Liaison — Luna F. Ahmed
+- Rope Traction Elevator Specialist — Naomi G. Dahl
+- Hydraulic Elevator Repair Technician — Rafael H. Ibrahim
+- Machine Room-Less Elevator Installer — Tariq I. Lopez
+- Elevator Service Route Dispatcher — Zara J. Novak
+- Building Systems IoT Predictive Maintenance Analyst — Aiko K. Santos
+
+## Crane, Heavy Equipment & Rigging (`crane-heavy-equipment-operation`) — 22 roles
+- Tower Crane Operator — Anya L. Williams
+- Mobile Crane Operator — Clara M. Chang
+- Excavator Heavy Equipment Operator — Elena N. Garcia
+- Bulldozer Grading Operator — Gabriel O. Kowalski
+- Rigging Signal Person Specialist — Imani P. Muller
+- Heavy Haul Truck Driver — Kaito Q. Popov
+- Pile Driving Equipment Operator — Leila R. Usman
+- Asphalt Paving Machine Operator — Mei S. Bianchi
+- Crane Lift Plan Engineer — Noura T. Dubois
+- Equipment Rental Yard Manager — Sana U. Joshi
+- Heavy Equipment Diesel Mechanic — Wei V. Martinez
+- OSHA Rigging Safety Trainer — Aaliyah W. Oliveira
+- Tunnel Boring Machine Operator — Alina X. Singh
+- Mining Heavy Equipment Operator — Beatriz Y. Adeyemi
+- Crane Inspector Certification Specialist — Dante Z. Cruz
+- Forklift Train-the-Trainer Instructor — Esra A. Hassan
+- Pipeline Construction Equipment Operator — Haruto B. Lindberg
+- Demolition High Reach Excavator Operator — Ishan C. Nguyen
+- Crane Assembly Disassembly Supervisor — Keiko D. Rossi
+- GPS Machine Control Grade Checker — Luca E. Watanabe
+- Heavy Equipment Telematics Fleet Manager — Nadia F. Campbell
+- Crane Union Apprenticeship Coordinator — Priya G. Fischer
+
+## Land Surveying & Geomatics (`land-surveying-geomatics`) — 22 roles
+- Licensed Land Surveyor — Sophia H. Kim
+- Construction Staking Survey Technician — Zainab I. Mori
+- Boundary Dispute Survey Specialist — Aditya J. Petrov
+- ALTA NSPS Survey Coordinator — Anika K. Torres
+- Hydrographic Surveyor — Chidi L. Anderson
+- Drone LiDAR Survey Pilot — Efe M. Diallo
+- GIS Cadastral Mapping Specialist — Freya N. Jensen
+- Mine Surveying Engineer — Idris O. Mansour
+- Forensic Accident Scene Surveyor — Jonas P. Okafor
+- Subdivision Platting Survey Manager — Layla Q. Silva
+- Survey Crew Chief — Meera R. Abdi
+- Geodetic Control Network Specialist — Noah S. Costa
+- Right-of-Way Acquisition Survey Liaison — Rina T. Haddad
+- As-Built Survey Building Documentation Specialist — Valentina U. Lee
+- Survey Instrument Calibration Technician — Aarav V. Nasser
+- Bathymetric Mapping Specialist — Akira W. Rao
+- Survey Data CAD Drafting Technician — Aya X. Volkov
+- Land Title Survey Insurance Advisor — Daniel Y. Brooks
+- Utility Locating GPR Survey Technician — Emre Z. Fernandez
+- Survey Business Development Manager — Hana A. Khan
+- Survey Ethics Boundary Law Educator — Iris B. Mensah
+- Survey Robotics Total Station Trainer — Kavya C. Patel
+
+## Architecture & Built Environment Design (`architecture-built-environment`) — 22 roles
+- Licensed Architect Project Lead — Linh D. Tanaka
+- Interior Design Residential Specialist — Mina E. Alvarez
+- Landscape Architect Licensed — Paloma F. Desai
+- Urban Design Master Planner — Sofia G. Iyer
+- Historic Preservation Architect — Yuki H. Malik
+- Healthcare Facility Design Architect — Adaeze I. Nwosu
+- Sustainable LEED Architect — Amir J. Sharma
+- BIM Building Information Modeling Manager — Camila K. Zhang
+- Architectural Drafter CAD Technician — Diego L. Chen
+- Set Design Architect Entertainment — Felix M. Gupta
+- Architectural Specification Writer — Hugo N. Laurent
+- Code Compliance Plan Review Architect — Jia O. Nakamura
+- Architectural Visualization 3D Renderer — Kwame P. Rahman
+- Architectural Photographer Documentation Specialist — Maya Q. Vega
+- Architectural Project Manager Construction Admin — Nia R. Boateng
+- Accessible Design Universal Architect — Rami S. Farouk
+- Architectural Fee Proposal Consultant — Tomas T. Kaur
+- Architectural Intern Licensing Advisor — Zola U. Mehta
+- Modular Prefab Design Architect — Aisha V. Park
+- Coastal Resilience Architecture Specialist — Arjun W. Svensson
+- Architectural Forensics Building Failure Analyst — Dalia X. Ahmed
+- Architect-Client Programming Workshop Facilitator — Elias Y. Dahl
+
+## Industrial & Product Design (`industrial-product-design`) — 22 roles
+- Industrial Product Designer — Giulia Z. Ibrahim
+- Consumer Electronics Product Designer — Ines A. Lopez
+- Furniture Product Design Specialist — Karim B. Novak
+- Packaging Structural Designer — Liam C. Santos
+- Medical Device Product Designer — Miguel D. Williams
+- Automotive Interior Product Designer — Omar E. Chang
+- Toy Product Design Developer — Santiago F. Garcia
+- Sustainable Materials Product Designer — Yara G. Kowalski
+- Design for Manufacturing DFM Specialist — Abena H. Muller
+- Rapid Prototyping 3D Design Engineer — Amara I. Popov
+- Ergonomics Human Factors Product Designer — Callum J. Usman
+- CMF Color Material Finish Designer — Deepa K. Bianchi
+- Design Patent Portfolio Strategist — Fatima L. Dubois
+- Crowdfunding Product Launch Designer — Helena M. Joshi
+- Kitchen Appliance Product Designer — Jaden N. Martinez
+- Wearable Technology Product Designer — Khalid O. Oliveira
+- Design Thinking Workshop Facilitator — Luna P. Singh
+- Product Design Design Sprint Lead — Naomi Q. Adeyemi
+- Inclusive Design Accessibility Product Specialist — Rafael R. Cruz
+- Design Portfolio Review Career Coach — Tariq S. Hassan
+- Open Source Hardware Product Designer — Zara T. Lindberg
+- Product Design Agency Creative Director — Aiko U. Nguyen
+
+## UX Research & Human-Centered Design (`ux-research-human-centered-design`) — 22 roles
+- UX Researcher Qualitative Specialist — Anya V. Rossi
+- Usability Testing Lab Manager — Clara W. Watanabe
+- User Interview Research Facilitator — Elena X. Campbell
+- Card Sorting Information Architecture Researcher — Gabriel Y. Fischer
+- Diary Study Longitudinal UX Researcher — Imani Z. Kim
+- A/B Testing Experimentation UX Analyst — Kaito A. Mori
+- Accessibility UX Research Specialist — Leila B. Petrov
+- Service Design Journey Mapper — Mei C. Torres
+- Ethnographic UX Field Researcher — Noura D. Anderson
+- UX Metrics HEART Framework Analyst — Sana E. Diallo
+- Design Ops Research Repository Manager — Wei F. Jensen
+- UX Research Recruitment Panel Manager — Aaliyah G. Mansour
+- Benchmark Competitive UX Audit Specialist — Alina H. Okafor
+- Prototype Usability Testing Moderator — Beatriz I. Silva
+- UX Research Ethics Consent Advisor — Dante J. Abdi
+- International UX Localization Researcher — Esra K. Costa
+- Voice UI Conversation Design Researcher — Haruto L. Haddad
+- AR VR Immersive UX Researcher — Ishan M. Lee
+- UX Research Stakeholder Storytelling Presenter — Keiko N. Nasser
+- Research Ops Tooling Administrator — Luca O. Rao
+- Mixed Methods UX Research Director — Nadia P. Volkov
+- UX Research Career Portfolio Coach — Priya Q. Brooks
+
+## Lobbying & Government Affairs (`lobbying-government-affairs`) — 22 roles
+- Federal Lobbyist Government Affairs Director — Sophia R. Fernandez
+- State Capitol Lobbyist — Zainab S. Khan
+- Grassroots Advocacy Campaign Manager — Aditya T. Mensah
+- PAC Political Action Committee Manager — Anika U. Patel
+- Legislative Tracking Policy Analyst — Chidi V. Tanaka
+- Regulatory Comment Letter Drafter — Efe W. Alvarez
+- Trade Association Government Relations VP — Freya X. Desai
+- Corporate Public Affairs Director — Idris Y. Iyer
+- Lobbying Disclosure Compliance Filing Specialist — Jonas Z. Malik
+- Coalition Building Advocacy Strategist — Layla A. Nwosu
+- Ballot Initiative Campaign Director — Meera B. Sharma
+- Government Procurement Lobbying Specialist — Noah C. Zhang
+- Energy Policy Lobbyist — Rina D. Chen
+- Healthcare Policy Lobbyist — Valentina E. Gupta
+- Tech Platform Policy Government Relations Manager — Aarav F. Laurent
+- Defense Appropriations Lobbying Advisor — Akira G. Nakamura
+- Municipal Local Government Affairs Specialist — Aya H. Rahman
+- International Government Relations Advisor — Daniel I. Vega
+- Lobbying Ethics Training Facilitator — Emre J. Boateng
+- Advocacy Digital Campaign Manager — Hana K. Farouk
+- Think Tank Policy Outreach Director — Iris L. Kaur
+- Lobbying Client Development Business Development Manager — Kavya M. Mehta
+
+## Grant Writing & Proposal Development (`grant-writing-proposal-development`) — 22 roles
+- Federal Grant Writer NIH NSF Specialist — Linh N. Park
+- Foundation Grant Proposal Writer — Mina O. Svensson
+- SBIR STTR Grant Proposal Consultant — Paloma P. Ahmed
+- Grant Budget Development Specialist — Sofia Q. Dahl
+- Grant Compliance Reporting Manager — Yuki R. Ibrahim
+- RFP Response Proposal Manager — Adaeze S. Lopez
+- Grant Research Prospect Identification Specialist — Amir T. Novak
+- Grant Review Panel Mock Reviewer Coach — Camila U. Santos
+- Grant Program Evaluation Impact Report Writer — Diego V. Williams
+- Grant Calendar Pipeline Manager — Felix W. Chang
+- Corporate Sponsorship Proposal Writer — Hugo X. Garcia
+- Grant Writing Workshop Instructor — Jia Y. Kowalski
+- Grant Management Systems Administrator — Kwame Z. Muller
+- Grant Subrecipient Monitoring Compliance Specialist — Maya A. Popov
+- Arts Council Grant Application Specialist — Nia B. Usman
+- Education Department Grant Writer — Rami C. Bianchi
+- International Development Grant Proposal Writer — Tomas D. Dubois
+- Grant Logic Model Theory of Change Facilitator — Zola E. Joshi
+- Grant Writing Freelance Agency Owner — Aisha F. Martinez
+- Grant Renewal Continuation Specialist — Arjun G. Oliveira
+- Grant Ethics Conflict of Interest Advisor — Dalia H. Singh
+- Grant Writing AI-Assisted Workflow Consultant — Elias I. Adeyemi
+
+## Small Business Ownership & Entrepreneurship (`small-business-entrepreneurship`) — 22 roles
+- Main Street Retail Business Owner — Giulia J. Cruz
+- Restaurant Startup Entrepreneur — Ines K. Hassan
+- E-Commerce Solo Founder — Karim L. Lindberg
+- Franchisee Multi-Unit Operator — Liam M. Nguyen
+- Food Truck Entrepreneur — Miguel N. Rossi
+- Consulting Practice Solo Founder — Omar O. Watanabe
+- SaaS Bootstrap Startup Founder — Santiago P. Campbell
+- Family Business Succession Planner — Yara Q. Fischer
+- Side Hustle to Full-Time Transition Coach — Abena R. Kim
+- Business Plan SBA Loan Advisor — Amara S. Mori
+- Coworking Space Community Manager — Callum T. Petrov
+- Maker Space Workshop Owner — Deepa U. Torres
+- Import Export Small Business Trader — Fatima V. Anderson
+- Home-Based Business Compliance Advisor — Helena W. Diallo
+- Pop-Up Retail Entrepreneur — Jaden X. Jensen
+- Subscription Box Business Founder — Khalid Y. Mansour
+- Social Enterprise B-Corp Founder — Luna Z. Okafor
+- Business Exit Strategy Seller Advisor — Naomi A. Silva
+- Small Business Bookkeeper DIY Coach — Rafael B. Abdi
+- Local SEO Small Business Marketer — Tariq C. Costa
+- Chamber of Commerce Small Business Liaison — Zara D. Haddad
+- Entrepreneur Pitch Competition Coach — Aiko E. Lee
+
+## Home Inspection & Real Estate Appraisal (`home-inspection-appraisal`) — 22 roles
+- Licensed Home Inspector — Anya F. Nasser
+- Commercial Building Inspector — Clara G. Rao
+- Mold Inspection Specialist — Elena H. Volkov
+- Radon Testing Inspector — Gabriel I. Brooks
+- Pool Spa Inspection Specialist — Imani J. Fernandez
+- New Construction Phase Inspection Specialist — Kaito K. Khan
+- Home Appraisal Process Educator — Leila L. Mensah
+- Commercial Building Appraisal Liaison — Mei M. Patel
+- FHA VA Appraisal Specialist — Noura N. Tanaka
+- Home Inspection Report Writing Software Trainer — Sana O. Alvarez
+- Wind Mitigation Inspection Specialist — Wei P. Desai
+- Thermal Imaging Home Inspector — Aaliyah Q. Iyer
+- Home Inspection Business Marketing Coach — Alina R. Malik
+- Appraisal Review UMP Compliance Specialist — Beatriz S. Nwosu
+- Historic Home Inspection Specialist — Dante T. Sharma
+- Mobile Home Inspection Specialist — Esra U. Zhang
+- Home Inspector Continuing Education Instructor — Haruto V. Chen
+- Appraisal Litigation Expert Witness — Ishan W. Gupta
+- Drone Roof Inspection Specialist — Keiko X. Laurent
+- Home Inspection Franchise Owner — Luca Y. Nakamura
+- Pre-Listing Seller Inspection Advisor — Nadia Z. Rahman
+- Appraisal Management Company Coordinator — Priya A. Vega
+
+## Mediation & Alternative Dispute Resolution (`mediation-dispute-resolution`) — 22 roles
+- Certified Civil Mediator — Sophia B. Boateng
+- Family Divorce Mediator — Zainab C. Farouk
+- Workplace Conflict Mediator — Aditya D. Kaur
+- Community Dispute Resolution Center Director — Anika E. Mehta
+- Arbitration Case Administrator — Chidi F. Park
+- Restorative Justice Circle Facilitator — Efe G. Svensson
+- Construction Dispute Mediator — Freya H. Ahmed
+- International Commercial Arbitration Specialist — Idris I. Dahl
+- Online Dispute Resolution Platform Mediator — Jonas J. Ibrahim
+- Peer Mediation School Program Trainer — Layla K. Lopez
+- Elder Care Family Mediator — Meera L. Novak
+- Landlord Tenant Dispute Mediator — Noah M. Santos
+- Medical Malpractice Mediation Neutral — Rina N. Williams
+- Employment EEO Mediation Specialist — Valentina O. Chang
+- HOA Neighborhood Dispute Mediator — Aarav P. Garcia
+- Mediator Ethics Standards Trainer — Akira Q. Kowalski
+- Conflict Coaching Pre-Mediation Specialist — Aya R. Muller
+- Multi-Party Complex Mediation Facilitator — Daniel S. Popov
+- Mediation Marketing Practice Development Coach — Emre T. Usman
+- Court-Annexed Mediation Program Coordinator — Hana U. Bianchi
+- Cross-Cultural International Mediator — Iris V. Dubois
+- Mediation Settlement Agreement Drafter — Kavya W. Joshi
+
+## Nursing Home & Long-Term Care Administration (`nursing-home-longterm-care`) — 22 roles
+- Nursing Home Administrator Licensed — Linh X. Martinez
+- Assisted Living Executive Director — Mina Y. Oliveira
+- Memory Care Program Director — Paloma Z. Singh
+- Skilled Nursing MDS Coordinator — Sofia A. Adeyemi
+- Long-Term Care Survey Compliance Specialist — Yuki B. Cruz
+- Nursing Home Admissions Marketing Director — Adaeze C. Hassan
+- Rehabilitation SNF Therapy Coordinator — Amir D. Lindberg
+- Long-Term Care Dietary Services Manager — Camila E. Nguyen
+- Nursing Home Activities Life Enrichment Director — Diego F. Rossi
+- Infection Control LTC Nurse Consultant — Felix G. Watanabe
+- Hospice Inpatient Unit Administrator — Hugo H. Campbell
+- Adult Day Care Program Director — Jia I. Fischer
+- Continuing Care Retirement Community Executive — Kwame J. Kim
+- Long-Term Care Quality Improvement Nurse — Maya K. Mori
+- Nursing Home Social Services Director — Nia L. Petrov
+- LTC Pharmacy Consultant Pharmacist Liaison — Rami M. Torres
+- Nursing Home Staffing Scheduler — Tomas N. Anderson
+- Long-Term Care Ombudsman Liaison Educator — Zola O. Diallo
+- Nursing Home Capital Renovation Project Manager — Aisha P. Jensen
+- LTC Electronic Health Records Trainer — Arjun Q. Mansour
+- Nursing Home Family Council Facilitator — Dalia R. Okafor
+- Long-Term Care Reimbursement Medicare Billing Specialist — Elias S. Silva
+
+## Home Health & Hospice Care Operations (`home-health-hospice-operations`) — 22 roles
+- Home Health Agency Director — Giulia T. Abdi
+- Hospice Executive Director — Ines U. Costa
+- Home Health Clinical Manager RN — Karim V. Haddad
+- Hospice Intake Referral Coordinator — Liam W. Lee
+- Home Health Scheduling Field Staff Manager — Miguel X. Nasser
+- Hospice Bereavement Program Manager — Omar Y. Rao
+- Home Health OASIS Documentation QA Specialist — Santiago Z. Volkov
+- Hospice Volunteer Coordinator — Yara A. Brooks
+- Home Health Medicare Certification Survey Prep Advisor — Abena B. Fernandez
+- Palliative Home Visit Nurse Manager — Amara C. Khan
+- Home Health Aide Training Supervisor — Callum D. Mensah
+- Hospice Interdisciplinary Team Facilitator — Deepa E. Patel
+- Home Infusion Nursing Program Manager — Fatima F. Tanaka
+- Hospice Inpatient Unit Nurse Manager — Helena G. Alvarez
+- Home Health Telemonitoring RPM Program Manager — Jaden H. Desai
+- Hospice Chaplaincy Program Director — Khalid I. Iyer
+- Home Health Billing Revenue Cycle Manager — Luna J. Malik
+- Hospice Pharmacy Comfort Kit Manager — Naomi K. Nwosu
+- Home Health Pediatric Program Director — Rafael L. Sharma
+- Hospice Pediatric Program Coordinator — Tariq M. Zhang
+- Home Health Rural Access Program Developer — Zara N. Chen
+- Hospice Equity Access Community Outreach Manager — Aiko O. Gupta
+
+## Real Estate Appraisal & Valuation (`real-estate-appraisal-valuation`) — 22 roles
+- Residential Real Estate Appraiser — Anya P. Laurent
+- Commercial Income Property Appraiser — Clara Q. Nakamura
+- Agricultural Land Appraiser — Elena R. Rahman
+- Personal Property Machinery Appraiser — Gabriel S. Vega
+- Business Valuation Analyst — Imani T. Boateng
+- Intangible Asset Valuation Specialist — Kaito U. Farouk
+- Eminent Domain Appraisal Litigation Expert — Leila V. Kaur
+- Assessment Tax Appeal Consultant — Mei W. Mehta
+- Appraisal Review AMC Compliance Analyst — Noura X. Park
+- Real Estate Market Analysis Researcher — Sana Y. Svensson
+- Cost Approach Depreciation Specialist — Wei Z. Ahmed
+- Highest Best Use Analysis Consultant — Aaliyah A. Dahl
+- Green Building Valuation LEED Appraiser — Alina B. Ibrahim
+- Data Center Specialty Property Appraiser — Beatriz C. Lopez
+- Hotel Hospitality Appraisal Specialist — Dante D. Novak
+- Appraisal Standards USPAP Instructor — Esra E. Santos
+- Automated Valuation Model AVM Analyst — Haruto F. Williams
+- Portfolio Valuation REIT Analyst — Ishan G. Chang
+- Mineral Rights Oil Gas Appraiser — Keiko H. Garcia
+- Appraisal Practice Business Development Manager — Luca I. Kowalski
+- Cross-Border International Property Valuer — Nadia J. Muller
+- Appraisal Technology Platform Product Manager — Priya K. Popov
+
+## Insurance Claims Adjusting & Underwriting (`insurance-claims-adjusting`) — 22 roles
+- Property Casualty Claims Adjuster — Sophia L. Usman
+- Auto Physical Damage Claims Appraiser — Zainab M. Bianchi
+- Catastrophe CAT Claims Field Adjuster — Aditya N. Dubois
+- Workers Compensation Claims Examiner — Anika O. Joshi
+- Life Insurance Underwriter — Chidi P. Martinez
+- Health Insurance Underwriter — Efe Q. Oliveira
+- Commercial Lines Underwriter — Freya R. Singh
+- Reinsurance Treaty Underwriter — Idris S. Adeyemi
+- Subrogation Recovery Claims Specialist — Jonas T. Cruz
+- Fraud Investigation SIU Analyst — Layla U. Hassan
+- Claims Litigation Management Specialist — Meera V. Lindberg
+- Public Adjuster Policyholder Advocate — Noah W. Nguyen
+- Crop Insurance Claims Adjuster — Rina X. Rossi
+- Marine Cargo Claims Surveyor — Valentina Y. Watanabe
+- Aviation Insurance Claims Specialist — Aarav Z. Campbell
+- Cyber Insurance Claims Incident Manager — Akira A. Fischer
+- Claims Call Center Team Lead — Aya B. Kim
+- Insurance Premium Audit Specialist — Daniel C. Mori
+- Surety Bond Underwriter — Emre D. Petrov
+- Insurance Risk Engineering Field Surveyor — Hana E. Torres
+- Claims Data Analytics Predictive Modeling Analyst — Iris F. Anderson
+- Insurance Product Filing Regulatory Specialist — Kavya G. Diallo
+
+## Court Reporting & Litigation Support (`court-reporting-litigation-support`) — 22 roles
+- Certified Court Reporter Stenographer — Linh H. Jensen
+- Legal Videographer Deposition Specialist — Mina I. Mansour
+- Trial Presentation Technology Specialist — Paloma J. Okafor
+- Litigation Support Project Manager — Sofia K. Silva
+- Realtime Court Reporting CART Provider — Yuki L. Abdi
+- Deposition Scheduling Coordinator — Adaeze M. Costa
+- Electronic Court Filing Clerk — Amir N. Haddad
+- Trial Exhibit Binder Production Specialist — Camila O. Lee
+- Mock Trial Jury Consultant — Diego P. Nasser
+- Legal Graphics Trial Consultant — Felix Q. Rao
+- Court Interpreter Certified Specialist — Hugo R. Volkov
+- Transcript Proofreader Scopist — Jia S. Brooks
+- Remote Deposition Zoom Platform Operator — Kwame T. Fernandez
+- Court Reporter Agency Owner — Maya U. Khan
+- Legal Animation Accident Reconstruction Producer — Nia V. Mensah
+- Trial Technology Hot Seat Operator — Rami W. Patel
+- Arbitration Hearing Reporter — Tomas X. Tanaka
+- Legal Records Trial Notebook Specialist — Zola Y. Alvarez
+- Court Reporting Continuing Education Instructor — Aisha Z. Desai
+- Litigation Support E-Discovery Vendor Manager — Arjun A. Iyer
+- Voice Writing Court Reporter — Dalia B. Malik
+- Court Reporting Captioning Broadcast Specialist — Elias C. Nwosu
+
+## Broadcast Journalism & Newsroom (`broadcast-journalism-newsroom`) — 22 roles
+- TV News Anchor Career Coach — Giulia D. Sharma
+- Investigative Journalism Producer — Ines E. Zhang
+- Radio News Director — Karim F. Chen
+- Podcast News Executive Producer — Liam G. Gupta
+- Field Reporter Multimedia Journalist — Miguel H. Laurent
+- News Assignment Desk Editor — Omar I. Nakamura
+- Broadcast Meteorologist — Santiago J. Rahman
+- Sports Broadcast Journalist — Yara K. Vega
+- Newsroom Fact-Checking Editor — Abena L. Boateng
+- Engagement Audience Editor Digital News — Amara M. Farouk
+- Photojournalist News Photographer — Callum N. Kaur
+- News Graphics Motion Designer — Deepa O. Mehta
+- OB Van Live Broadcast Engineer — Fatima P. Park
+- News Teleprompter Operator — Helena Q. Svensson
+- Community Affairs Broadcast Producer — Jaden R. Ahmed
+- News Ethics Standards Editor — Khalid S. Dahl
+- War Correspondent Safety Trainer — Luna T. Ibrahim
+- Local News Startup Founder — Naomi U. Lopez
+- Newsletter Journalism Substack Publisher — Rafael V. Novak
+- Data Journalism Interactive News Developer — Tariq W. Santos
+- Newsroom Diversity Inclusion Editor — Zara X. Williams
+- Broadcast FCC Compliance Advisor — Aiko Y. Chang
+
+## Fine Arts, Crafts & Artisan Work (`fine-arts-crafts-artisan`) — 22 roles
+- Oil Painter Fine Artist — Anya Z. Garcia
+- Sculptor Public Art Commission Specialist — Clara A. Kowalski
+- Ceramic Potter Studio Owner — Elena B. Muller
+- Glass Blowing Artisan — Gabriel C. Popov
+- Woodworker Fine Furniture Maker — Imani D. Usman
+- Textile Weaver Fiber Artist — Kaito E. Bianchi
+- Printmaker Edition Publisher — Leila F. Dubois
+- Illustrator Editorial Artist — Mei G. Joshi
+- Street Mural Public Art Artist — Noura H. Martinez
+- Art Gallery Owner Curator — Sana I. Oliveira
+- Art Fair Booth Sales Manager — Wei J. Singh
+- Etsy Handmade Shop Owner — Aaliyah K. Adeyemi
+- Calligraphy Lettering Artist — Alina L. Cruz
+- Leather Craft Artisan Maker — Beatriz M. Hassan
+- Jewelry Metalsmith Artisan — Dante N. Lindberg
+- Paper Craft Bookbinding Artist — Esra O. Nguyen
+- Art Conservation Restoration Specialist — Haruto P. Rossi
+- Art Appraisal Authentication Specialist — Ishan Q. Watanabe
+- Artist Residency Program Director — Keiko R. Campbell
+- Art Studio Lease Collective Manager — Luca S. Fischer
+- Art Therapy Studio Facilitator — Nadia T. Kim
+- Artisan Market Festival Organizer — Priya U. Mori
+
+## International Trade & Customs Brokerage (`diplomatic-courier-logistics`) — 22 roles
+- Licensed Customs Broker — Sophia V. Petrov
+- Import Compliance Classification Specialist — Zainab W. Torres
+- Export Control EAR ITAR Compliance Officer — Aditya X. Anderson
+- Freight Forwarder Operations Manager — Anika Y. Diallo
+- International Trade Compliance Analyst — Chidi Z. Jensen
+- Drawback Duty Recovery Specialist — Efe A. Mansour
+- Foreign Trade Zone Administrator — Freya B. Okafor
+- Certificate of Origin Trade Documentation Specialist — Idris C. Silva
+- Anti-Dumping Countervailing Duty Analyst — Jonas D. Abdi
+- Global Trade Management Software Administrator — Layla E. Costa
+- Cross-Border E-Commerce Logistics Manager — Meera F. Haddad
+- Incoterms Trade Terms Educator — Noah G. Lee
+- Customs Bond Surety Specialist — Rina H. Nasser
+- Trade Sanctions Denied Party Screening Analyst — Valentina I. Rao
+- Free Trade Agreement Qualification Specialist — Aarav J. Volkov
+- Importer of Record IOR Services Manager — Akira K. Brooks
+- Trade Compliance Audit Consultant — Aya L. Fernandez
+- International Shipping Documentation Specialist — Daniel M. Khan
+- Port Customs Exam Coordination Specialist — Emre N. Mensah
+- Trade Policy Tariff Impact Analyst — Hana O. Patel
+- AEO Authorized Economic Operator Program Advisor — Iris P. Tanaka
+- Trade Finance Letter of Credit Specialist — Kavya Q. Alvarez

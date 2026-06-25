@@ -17,10 +17,12 @@ import {
   buildInstructionForMode,
   runAgentTurnAsync,
   isCrewPrivateSessionRecord,
+  loadTurnFeedbackForSession,
+  recordTurnFeedback,
 } from './chat-helpers.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
-import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema } from './validation.js';
+import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema } from './validation.js';
 import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
 import crypto from 'node:crypto';
@@ -876,11 +878,6 @@ app.post('/api/session/mode', (req, res) => {
       res.status(409).json({ error: 'hyperdrive-active', message: 'Exit Hyperdrive before switching to Plan mode' });
       return;
     }
-    const activeSess = eng.sessionManager.getActiveSession?.();
-    if (isCrewPrivateSessionRecord(activeSess) && mode === 'plan') {
-      res.status(409).json({ error: 'crew-private-agent-only', message: 'Crew private chats always run in Agent mode.' });
-      return;
-    }
     sessionSettings.mode = mode;
     if (eng.agent) {
       eng.agent.setPlanMode(mode === 'plan');
@@ -900,20 +897,6 @@ app.post('/api/session/mode', (req, res) => {
   } catch (e: unknown) {
     getLogger().error('SESSION_MODE', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'mode-failed' });
-  }
-});
-
-app.post('/api/plan/respond', (req, res) => {
-  try {
-    const { approved } = req.body as { approved: boolean };
-    const eng = getEngine();
-    const agent = eng.agent;
-    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
-    (agent as unknown as { respondToPlan: (a: boolean) => void }).respondToPlan(!!approved);
-    res.json({ ok: true, approved: !!approved });
-  } catch (e) {
-    getLogger().error('PLAN_RESPOND', e instanceof Error ? e : String(e));
-    res.status(500).json({ error: 'plan-respond-failed' });
   }
 });
 
@@ -1361,7 +1344,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
     const fullText = buildFullText(text, attachments);
     const activeSess = eng.sessionManager.getActiveSession?.();
     const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
-    const instruction = crewPrivateChat ? undefined : buildInstructionForMode(mode);
+    const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
 
     // Auto-checkpoint
     try {
@@ -1502,7 +1485,7 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     const fullText = buildFullText(text, attachments);
     const activeSess = eng.sessionManager.getActiveSession?.();
     const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
-    const instruction = crewPrivateChat ? undefined : buildInstructionForMode(mode);
+    const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
 
     // Auto-checkpoint before each user turn — enables /undo to roll back this turn
     try {
@@ -1617,7 +1600,7 @@ app.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
     const fullText = buildFullText(text, attachments);
     const activeSess = eng.sessionManager.getActiveSession?.();
     const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
-    const instruction = crewPrivateChat ? undefined : buildInstructionForMode(mode);
+    const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
     runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid);
@@ -1657,9 +1640,13 @@ app.post('/api/chat/stop-and-send', validate(chatSteerSchema), async (req, res) 
     ensureSubscribed();
     const mode = applySessionModeToAgent(agent);
     const fullText = buildFullText(text, attachments);
-    const instruction = mode === 'plan'
-      ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
-      : buildInstructionForMode(mode);
+    const activeSess = eng.sessionManager.getActiveSession?.();
+    const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
+    const instruction = crewPrivateChat
+      ? buildInstructionForMode(mode, { crewPrivate: true })
+      : (mode === 'plan'
+        ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
+        : buildInstructionForMode(mode));
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
     runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid);
@@ -1850,6 +1837,14 @@ app.post('/api/mode/hyperdrive', (_req, res) => {
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    const activeSess = eng.sessionManager.getActiveSession?.();
+    if (isCrewPrivateSessionRecord(activeSess)) {
+      res.status(409).json({
+        error: 'crew-private-no-hyperdrive',
+        message: 'Hyperdrive is not available in crew private chats.',
+      });
+      return;
+    }
     const enabled = agent.toggleHyperdriveMode();
     if (enabled) {
       _preHyperdriveMode = sessionSettings.mode;
@@ -2542,16 +2537,17 @@ app.post('/api/sessions/:id/restore', (req, res) => {
     destroyAgent();
     const session = eng.sessionManager.restoreSession(sessionId);
     if (!session) { res.status(404).json({ error: 'not-found' }); return; }
-    // Restore saved session mode (defaults to 'plan'); crew private is always agent
-    if (isCrewPrivateSessionRecord(session)) {
-      session.mode = 'agent';
-      sessionSettings.mode = 'agent';
-    } else {
-      sessionSettings.mode = session.mode || 'plan';
+    // Restore saved session mode (defaults to 'plan')
+    sessionSettings.mode = session.mode || 'plan';
+    if (isCrewPrivateSessionRecord(session) && session.hyperdrive) {
+      try {
+        eng.sessionManager.updateSession({ hyperdrive: false } as never);
+        session.hyperdrive = false;
+      } catch { /* best-effort */ }
     }
     createAgent(undefined, session);
-    // Restore hyperdrive overlay from DB (persists build agent + auto-approve while engaged)
-    if (session.hyperdrive) {
+    // Restore hyperdrive overlay from DB (Agent-X sessions only — not crew private)
+    if (!isCrewPrivateSessionRecord(session) && session.hyperdrive) {
       try {
         _preHyperdriveMode = session.mode || 'plan';
         sessionSettings.mode = 'agent';
@@ -2658,10 +2654,63 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       }
     }
 
-    res.json({ session, messages, parts: [], crewStates, scopePath: session.scopePath, interruptedTask });
+    res.json({ session, messages, parts: [], crewStates, scopePath: session.scopePath, interruptedTask, turnFeedback: loadTurnFeedbackForSession(eng, sessionId) });
   } catch (e: unknown) {
     getLogger().error('RESTORE_SESSION', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
+  }
+});
+
+app.get('/api/sessions/:id/feedback', (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const eng = getEngine();
+    const session = eng.sessionManager.getSessionById(sessionId);
+    if (!session) { res.status(404).json({ error: 'not-found' }); return; }
+    res.json({ feedback: loadTurnFeedbackForSession(eng, sessionId) });
+  } catch (e: unknown) {
+    getLogger().error('GET_SESSION_FEEDBACK', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'feedback-load-failed' });
+  }
+});
+
+app.post('/api/sessions/:id/feedback', validate(turnFeedbackSchema), (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const eng = getEngine();
+    const session = eng.sessionManager.getSessionById(sessionId);
+    if (!session) { res.status(404).json({ error: 'not-found' }); return; }
+
+    const { messageId, rating, turnSummary, metadata } = req.body as {
+      messageId: string;
+      rating: 'positive' | 'negative' | 'skipped';
+      turnSummary?: string;
+      metadata?: Record<string, unknown>;
+    };
+
+    const contextKind = (session.contextKind ?? 'agent_x') as 'agent_x' | 'crew_private';
+    const crewId = contextKind === 'crew_private'
+      ? ((session as { hostCrewId?: string }).hostCrewId ?? (metadata?.crewId as string | undefined) ?? null)
+      : ((metadata?.crewId as string | undefined) ?? null);
+
+    const result = recordTurnFeedback({
+      sessionId,
+      messageId,
+      rating,
+      contextKind,
+      crewId,
+      turnSummary: turnSummary ?? null,
+      metadata: metadata ?? null,
+    });
+
+    if (!result.ok) {
+      res.status(500).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true, messageId, rating });
+  } catch (e: unknown) {
+    getLogger().error('POST_SESSION_FEEDBACK', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'feedback-failed' });
   }
 });
 

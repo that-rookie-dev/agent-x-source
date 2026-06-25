@@ -8,10 +8,11 @@ import type {
   AgentPersonaConfig,
   RemediationAction,
   Plan,
-  PlanStep,
   PermissionRule,
   PermissionDecision,
-  ClarificationRequestMeta,
+  QuestionnairePayload,
+  ClarificationSource,
+  QuestionnaireRecord,
 } from '@agentx/shared';
 import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
@@ -39,7 +40,7 @@ import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createSqliteNeuralDb, createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
@@ -72,7 +73,7 @@ import { ReflectionLoop } from './ReflectionLoop.js';
 import { SkillRegistry } from './SkillRegistry.js';
 import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
 import { ResearchEngine } from '../reasoning/ResearchEngine.js';
-import { CrewOrchestrator, type CrewMember } from './CrewOrchestrator.js';
+import { CrewOrchestrator, buildCrewPrivateFastReplyPrompt, type CrewMember } from './CrewOrchestrator.js';
 import {
   assessCrewNeed,
   autoComposeCrewMembers,
@@ -85,6 +86,7 @@ import { setCrewMissionDeps } from '../tools/builtin/spawn-crew-workers.js';
 import { isMissionInProgress } from './crew-mission-registry.js';
 import { evaluateCrewDelegation } from './crew-delegation-guard.js';
 import { ContextTracker } from './ContextTracker.js';
+import { TurnFeedbackService } from '../feedback/TurnFeedbackService.js';
 import { AutonomousDiagnosticsSystem, type SessionContext } from './AutonomousDiagnosticsSystem.js';
 
 import { TodoManager } from './TodoManager.js';
@@ -100,12 +102,11 @@ import { AuthProfileManager } from '../providers/AuthProfileManager.js';
 import { VisualEventBridge } from '../communication/visuals/VisualEventBridge.js';
 import { CommandQueue } from '../communication/CommandQueue.js';
 import { RunStateManager } from '../agent/RunStateManager.js';
-import { TurnStateManager } from './TurnStateManager.js';
+import { TurnStateManager, type TurnPhase } from './TurnStateManager.js';
 import { ToolLedger } from './ToolLedger.js';
 import {
   isWriteTool,
   shouldEscalateForExecution,
-  shouldGeneratePlan,
   shouldUseInteractivePlanGates,
 } from './plan-mode-utils.js';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
@@ -219,6 +220,7 @@ export class Agent {
   // ─── Neural Engines (lazy-init)
   private _experienceEngine: ExperienceEngine | null = null;
   private _growthEngine: GrowthEngine | null = null;
+  private _turnFeedbackService: TurnFeedbackService | null = null;
   private _neuralDb: any = null;
   private _pgPool: any = null;
 
@@ -252,7 +254,6 @@ export class Agent {
   private _missionEventSeq = 0;
   private missionContextProvider?: () => { revision: number; block: string };
   private lastMissionContextRevision = -1;
-  private pendingPlanApproval: ((approved: boolean) => void) | null = null;
   private pendingStepApproval: ((stepId: string, approved: boolean, description?: string) => void) | null = null;
   private pendingModeEscalation: ((accepted: boolean) => void) | null = null;
   private pendingStepCap: ((continueRun: boolean) => void) | null = null;
@@ -262,6 +263,7 @@ export class Agent {
   private partialTurnContent = '';
   private currentTurnId: string | null = null;
   private readonly maxCompletionSteps = 25;
+  private readonly crewPrivateCompletionSteps = 40;
   private stepCapExtra = 0;
 
   // ─── Lazy-init getters ───
@@ -315,6 +317,7 @@ export class Agent {
 
   // Anti-duplicate: prevents double message_received within a single turn
   private _turnMessageEmitted = false;
+  private activeStreamHandler: { discardCurrentStepText: () => void } | null = null;
   // Anti-duplicate: prevents repeated model capability warnings per session
   private _capabilityWarningEmitted = false;
   // ─── LAZY PIPELINE MODULES (created on first access) ───
@@ -398,6 +401,125 @@ export class Agent {
     if (this.clarificationResolve) {
       this.clarificationResolve(response);
     }
+  }
+
+  private clarificationSource(): ClarificationSource | undefined {
+    if (this.options.promptProfile === 'crew_private' && this.options.crewPrivateHost) {
+      return {
+        kind: 'crew',
+        name: this.options.crewPrivateHost.name,
+        callsign: this.options.crewPrivateHost.callsign,
+      };
+    }
+    if (this.options.promptProfile !== 'crew_worker') {
+      return { kind: 'agent', name: 'Agent-X' };
+    }
+    return undefined;
+  }
+
+  private discardStreamPreambleBeforeQuestionnaire(): void {
+    this.activeStreamHandler?.discardCurrentStepText();
+  }
+
+  private async waitForQuestionnaireResponse(questionnaire: QuestionnairePayload): Promise<string> {
+    const payload: QuestionnairePayload = questionnaire.source
+      ? questionnaire
+      : { ...questionnaire, source: this.clarificationSource() };
+    this.turnState.setPhase('awaiting_permission', 'clarification');
+
+    // Drop any assistant preamble streamed before ask_clarification in this step
+    this.discardStreamPreambleBeforeQuestionnaire();
+
+    const messageId = generateMessageId();
+    const record: QuestionnaireRecord = { payload, status: 'pending' };
+    const questionnaireMsg = this.buildQuestionnaireMessage(messageId, record);
+    this.persistQuestionnaireMessage(questionnaireMsg);
+    this.emit({ type: 'clarification_required', questionnaire: payload });
+    this.emit({ type: 'message_received', message: questionnaireMsg, elapsed: 0 });
+
+    const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
+    this.clarificationResolve = null;
+
+    const answered: QuestionnaireRecord = {
+      payload,
+      status: response === '(skipped)' ? 'skipped' : 'answered',
+      answer: response,
+      answeredAt: new Date().toISOString(),
+    };
+    const updatedMsg = this.buildQuestionnaireMessage(messageId, answered);
+    this.updateQuestionnaireMessage(messageId, answered);
+    this.emit({ type: 'message_received', message: updatedMsg, elapsed: 0, isUpdate: true });
+
+    if (response && response !== '(skipped)') {
+      // Keep answer in agent memory for subsequent turns — do not surface as a user chat bubble
+      this.messages.push({ role: 'user', content: response });
+    }
+
+    this.discardStreamPreambleBeforeQuestionnaire();
+    this.turnState.setPhase('running', 'resuming');
+    this.emit({
+      type: 'loading_start',
+      stage: this.options.promptProfile === 'crew_private' ? 'crew_private' : 'thinking',
+    });
+    return response;
+  }
+
+  private buildQuestionnaireMessage(messageId: string, record: QuestionnaireRecord): Message {
+    const host = this.options.crewPrivateHost;
+    const crew = this.options.promptProfile === 'crew_private' && host
+      ? {
+        crewId: host.id,
+        name: host.name,
+        callsign: host.callsign,
+        color: host.color,
+        icon: host.icon,
+      }
+      : undefined;
+    return {
+      id: messageId,
+      sessionId: this.sessionId,
+      role: 'assistant',
+      content: '',
+      toolCalls: null,
+      createdAt: new Date().toISOString(),
+      tokenCount: 0,
+      crew,
+      parts: [{ type: 'questionnaire', id: record.payload.id, questionnaire: record }],
+    };
+  }
+
+  private getMessageStore(): {
+    insertMessage?: (msg: Record<string, unknown>) => string | void;
+    updateMessage?: (sessionId: string, messageId: string, patch: Record<string, unknown>) => void;
+  } | null {
+    return (this.sessionManager as unknown as { store?: {
+      insertMessage?: (msg: Record<string, unknown>) => string | void;
+      updateMessage?: (sessionId: string, messageId: string, patch: Record<string, unknown>) => void;
+    } } | null)?.store ?? null;
+  }
+
+  private persistQuestionnaireMessage(msg: Message): void {
+    const store = this.getMessageStore();
+    if (!store?.insertMessage) return;
+    try {
+      store.insertMessage({
+        id: msg.id,
+        sessionId: msg.sessionId,
+        role: msg.role,
+        content: msg.content,
+        parts: msg.parts,
+        tokenCount: msg.tokenCount ?? 0,
+        metadata: msg.crew
+          ? { crewId: msg.crew.crewId, crewName: msg.crew.name, callsign: msg.crew.callsign }
+          : undefined,
+      });
+    } catch { /* best-effort */ }
+  }
+
+  private updateQuestionnaireMessage(messageId: string, record: QuestionnaireRecord): void {
+    const store = this.getMessageStore();
+    const parts = [{ type: 'questionnaire', id: record.payload.id, questionnaire: record }];
+    store?.updateMessage?.(this.sessionId, messageId, { parts });
   }
 
   constructor(options: AgentOptions) {
@@ -535,20 +657,8 @@ export class Agent {
       toolRegistry: this.toolRegistry!,
       toolExecutor: this.toolExecutor!,
       apiKey: this.getApiKey(),
-      waitForClarification: async (question: string, options: string[], allowFreeform: boolean, meta?: ClarificationRequestMeta) => {
-        this.emit({
-          type: 'clarification_required',
-          question,
-          options,
-          allowFreeform,
-          recommended: meta?.recommended,
-          allowChooseAll: meta?.allowChooseAll,
-          selectionMode: meta?.selectionMode,
-          fields: meta?.fields,
-        });
-        const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
-        this.clarificationResolve = null;
-        return response;
+      waitForClarification: async (questionnaire: QuestionnairePayload) => {
+        return this.waitForQuestionnaireResponse(questionnaire);
       },
       runSubAgent: async (instruction, toolsList, timeout, background) => {
         const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents);
@@ -797,6 +907,15 @@ export class Agent {
     if (!this._growthEngine) { const db = this.getNeuralDb(); this._growthEngine = new GrowthEngine(db); }
     return this._growthEngine;
   }
+
+  get turnFeedbackService(): TurnFeedbackService {
+    if (!this._turnFeedbackService) {
+      this._turnFeedbackService = new TurnFeedbackService(() => {
+        return (this.sessionManager as unknown as { store?: import('../feedback/TurnFeedbackService.js').TurnFeedbackStore })?.store ?? null;
+      });
+    }
+    return this._turnFeedbackService;
+  }
   private getNeuralDb(): any {
     if (!this._neuralDb) {
       try {
@@ -839,6 +958,10 @@ export class Agent {
   cancel(): void {
     this.runStateMgr.cancel(this.sessionId);
     this.commandQueue.cancelSession(this.sessionId);
+    this.stopTurnHeartbeat();
+    this.turnState.cancel();
+    this.emitTurnState('cancelled');
+    this.emit({ type: 'loading_end' });
     if (this.scope) {
       this.scope.dispose();
       this.scope = null;
@@ -981,14 +1104,6 @@ export class Agent {
     return this.currentPlan;
   }
 
-  respondToPlan(approved: boolean): void {
-    if (this.pendingPlanApproval) {
-      this.pendingPlanApproval(approved);
-      this.pendingPlanApproval = null;
-      this.turnState.setPhase(approved ? 'running' : 'done', approved ? 'plan_approved' : 'plan_rejected');
-    }
-  }
-
   respondToModeEscalation(accepted: boolean): void {
     if (this.pendingModeEscalation) {
       if (accepted) {
@@ -1021,12 +1136,28 @@ export class Agent {
     return this.toolLedger.formatForHistory();
   }
 
+  private completionStepBudget(): number {
+    const base = this.options.promptProfile === 'crew_private'
+      ? this.crewPrivateCompletionSteps
+      : this.maxCompletionSteps;
+    return base * (1 + this.stepCapExtra);
+  }
+
+  private emitTurnState(phase: TurnPhase): void {
+    const snap = this.turnState.getSnapshot();
+    this.emit({ type: 'turn_state', phase, stage: snap.stage, step: snap.step });
+  }
+
   private startTurnHeartbeat(stage: string): void {
     this.stopTurnHeartbeat();
     this.turnState.setStage(stage);
     this.heartbeatTimer = setInterval(() => {
       const snap = this.turnState.getSnapshot();
-      const elapsedMs = snap.startedAt ? Date.now() - snap.startedAt : 0;
+      if (snap.phase === 'awaiting_permission' || snap.phase === 'awaiting_plan'
+        || snap.phase === 'awaiting_mode' || snap.phase === 'awaiting_step_cap') {
+        return;
+      }
+      const elapsedMs = this.turnState.getElapsedMs();
       this.emit({
         type: 'turn_heartbeat',
         stage: snap.stage || stage,
@@ -1058,20 +1189,12 @@ export class Agent {
 
   private waitForStepCap(currentSteps: number): Promise<boolean> {
     this.turnState.setPhase('awaiting_step_cap', `steps:${currentSteps}`);
-    this.emit({ type: 'step_cap_reached', currentSteps, maxSteps: this.maxCompletionSteps * (1 + this.stepCapExtra) });
+    this.emit({ type: 'step_cap_reached', currentSteps, maxSteps: this.completionStepBudget() });
     return new Promise((resolve) => {
       this.pendingStepCap = (cont) => {
         if (cont) this.stepCapExtra++;
         resolve(cont);
       };
-    });
-  }
-
-  private waitForPlanApproval(plan: Plan, userRequest: string): Promise<boolean> {
-    this.turnState.setPhase('awaiting_plan', 'plan_review');
-    this.emit({ type: 'plan_approval_required', plan, userRequest });
-    return new Promise((resolve) => {
-      this.pendingPlanApproval = resolve;
     });
   }
 
@@ -1109,64 +1232,6 @@ export class Agent {
         ],
       });
       return false;
-    }
-  }
-
-  private async generatePlan(userRequest: string): Promise<Plan> {
-    const planPrompt = `You are a planning assistant. Given the user's request, create a step-by-step plan.
-Each step should be a clear, actionable description of what needs to be done.
-
-User request: "${userRequest}"
-
-Return a JSON array of plan steps, each with a "description" field.
-Example: [{"description": "Step 1 description"}, {"description": "Step 2 description"}]
-Return ONLY valid JSON, no other text.`;
-
-    try {
-      let text = '';
-      const stream = this.provider.complete({
-        messages: [{ role: 'user', content: planPrompt }],
-        model: this.config.provider.activeModel,
-        maxTokens: 2000,
-        stream: true,
-      });
-      for await (const chunk of stream) {
-        if (chunk.type === 'text_delta' && chunk.content) {
-          text += chunk.content;
-        }
-      }
-
-      text = text.trim();
-      const jsonStart = text.indexOf('[');
-      const jsonEnd = text.lastIndexOf(']');
-      if (jsonStart === -1 || jsonEnd === -1) throw new Error('No JSON array found in plan response');
-
-      const steps: Array<{ description: string }> = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
-      const planSteps: PlanStep[] = steps.map((s, i) => ({
-        id: `step-${i + 1}`,
-        description: s.description,
-        status: 'pending' as const,
-      }));
-
-      const plan: Plan = {
-        id: `plan-${Date.now()}`,
-        title: userRequest.slice(0, 80),
-        steps: planSteps,
-        createdAt: new Date().toISOString(),
-      };
-
-      this.currentPlan = plan;
-      return plan;
-    } catch (error) {
-      getLogger().error('PLAN_GEN', error);
-      const fallbackPlan: Plan = {
-        id: `plan-${Date.now()}`,
-        title: userRequest.slice(0, 80),
-        steps: [{ id: 'step-1', description: `Execute: ${userRequest}`, status: 'pending' }],
-        createdAt: new Date().toISOString(),
-      };
-      this.currentPlan = fallbackPlan;
-      return fallbackPlan;
     }
   }
 
@@ -1294,9 +1359,6 @@ Return ONLY valid JSON, no other text.`;
     this.turnApprovedAll = false;
 
     const isCrewPrivate = this.options.promptProfile === 'crew_private';
-    if (isCrewPrivate && this.planMode) {
-      this.setPlanMode(false);
-    }
 
     // ─── DECISION ENGINE (heuristic — zero LLM calls) ───
     const conversationLen = this.messages.filter(m => m.role === 'user').length;
@@ -1386,31 +1448,43 @@ Return ONLY valid JSON, no other text.`;
     }
     }
 
-    // ─── Fast-reply cache hit → minimal LLM call, no tools (Agent-X only; crew private uses full loop) ───
-    if (this.options.promptProfile !== 'crew_private' && decision.executionPath === 'fast_reply') {
-      let identityBlock = '';
-      try { identityBlock = this.secretSauce?.identity?.getMergedIdentity?.(this.persona)?.name ?? ''; } catch { /* test env */ }
-      const fastPrompt = this.decisionEngine.buildFastReplyPrompt(identityBlock);
-      const callsign = this.config.user?.callsign;
-      const userNote = callsign ? `\nThe user's name is "${callsign}".` : '';
-      const fastMessages = [
-        { role: 'system' as const, content: fastPrompt + userNote },
-        ...this.messages.slice(-3).filter(m => m.role !== 'system'),
-        { role: 'user' as const, content: cleanContent },
-      ];
-      try {
-        const model = createAiSdkModel(this.config, this.getApiKey());
-        const r = await streamText({ model, messages: fastMessages as any, maxOutputTokens: 256 });
-        let text = '';
-        for await (const chunk of r.textStream) { text += chunk; }
-        const msg: Message = { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant', content: text || 'Hey! How can I help?', toolCalls: null, createdAt: new Date().toISOString(), tokenCount: Math.ceil((text || '').length / 4) };
-        this.messages.push({ role: 'assistant', content: msg.content });
-        this.emit({ type: 'message_received', message: msg, elapsed: Date.now() - startTime });
-        this.lifecycle.forceTransition('idle'); this.scope = null;
-        this.runStateMgr.release(this.sessionId); this.commandQueue.release(this.sessionId);
-        return msg;
-      } catch {
-        // Fast reply failed — fall through to standard LLM path
+    // ─── Fast-reply → minimal LLM call, no tools (greetings / thanks / small talk) ───
+    if (decision.executionPath === 'fast_reply') {
+      const crewHost = this.options.promptProfile === 'crew_private' ? this.options.crewPrivateHost : undefined;
+      const useAgentFastReply = !crewHost && this.options.promptProfile !== 'crew_worker';
+      if (crewHost || useAgentFastReply) {
+        let fastPrompt: string;
+        let userNote = '';
+        if (crewHost) {
+          fastPrompt = buildCrewPrivateFastReplyPrompt(crewHost);
+        } else {
+          let identityBlock = '';
+          try { identityBlock = this.secretSauce?.identity?.getMergedIdentity?.(this.persona)?.name ?? ''; } catch { /* test env */ }
+          fastPrompt = this.decisionEngine.buildFastReplyPrompt(identityBlock);
+          const callsign = this.config.user?.callsign;
+          userNote = callsign ? `\nThe user's name is "${callsign}".` : '';
+        }
+        const fastMessages = [
+          { role: 'system' as const, content: fastPrompt + userNote },
+          ...this.messages.slice(-3).filter(m => m.role !== 'system'),
+          { role: 'user' as const, content: cleanContent },
+        ];
+        try {
+          const model = createAiSdkModel(this.config, this.getApiKey());
+          const r = await streamText({ model, messages: fastMessages as any, maxOutputTokens: 256 });
+          let text = '';
+          for await (const chunk of r.textStream) { text += chunk; }
+          const fallback = crewHost ? `Hey — ${crewHost.name} here.` : 'Hey! How can I help?';
+          const msg: Message = { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant', content: text || fallback, toolCalls: null, createdAt: new Date().toISOString(), tokenCount: Math.ceil((text || '').length / 4) };
+          this.messages.push({ role: 'assistant', content: msg.content });
+          this.contextTracker.record('assistant', msg.content, crewHost?.name);
+          this.emit({ type: 'message_received', message: msg, elapsed: Date.now() - startTime });
+          this.lifecycle.forceTransition('idle'); this.scope = null;
+          this.runStateMgr.release(this.sessionId); this.commandQueue.release(this.sessionId);
+          return msg;
+        } catch {
+          // Fast reply failed — fall through to standard LLM path
+        }
       }
     }
 
@@ -1503,60 +1577,8 @@ Return ONLY valid JSON, no other text.`;
         return assistantMessage;
       }
 
-      // Plan mode (main session only): interactive plan approval before execution.
-      // Delegated workers skip this — they deliver analysis/plans as markdown using read-only tools.
-      if (shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker, this.options.promptProfile ?? 'default')) {
-        const requiresPlan = shouldGeneratePlan(content, decision.messageClass);
-
-        if (requiresPlan) {
-          this.turnState.setStage('planning');
-          this.emit({ type: 'loading_start', stage: 'planning' });
-          const plan = await this.generatePlan(content);
-          this.emit({ type: 'plan_generated', plan, userRequest: content });
-
-          const approved = await this.waitForPlanApproval(plan, content);
-
-          if (!approved) {
-            this.emit({ type: 'plan_rejected', planId: plan.id });
-            const rejectedMessage: Message = {
-              id: generateMessageId(),
-              sessionId: this.sessionId,
-              role: 'assistant',
-              content: '⏹ Plan rejected. No actions taken.',
-              toolCalls: null,
-              createdAt: new Date().toISOString(),
-              tokenCount: 0,
-            };
-            this.stopTurnHeartbeat();
-            this.turnState.complete();
-            this.emit({ type: 'loading_end' });
-            this.emit({ type: 'message_received', message: rejectedMessage, elapsed: Date.now() - startTime });
-            return rejectedMessage;
-          }
-
-          this.emit({ type: 'plan_approved', planId: plan.id });
-
-          const planMessage: Message = {
-            id: generateMessageId(),
-            sessionId: this.sessionId,
-            role: 'assistant',
-            content: `✓ Plan approved. Switch to **Agent mode** to execute this plan.\n\n**Plan:** ${plan.title}\n${plan.steps.map((s, i) => `${i + 1}. ${s.description}`).join('\n')}`,
-            toolCalls: null,
-            createdAt: new Date().toISOString(),
-            tokenCount: 0,
-          };
-          this.messages.push({ role: 'assistant', content: planMessage.content });
-          this.stopTurnHeartbeat();
-          this.turnState.complete();
-          this.emit({ type: 'loading_end' });
-          this.emit({ type: 'message_received', message: planMessage, elapsed: Date.now() - startTime });
-          return planMessage;
-        }
-
-        this.pendingInstruction = null;
-      }
-
-      // Proactive mode escalation: main session only (workers respond with read-only findings instead)
+      // Proactive mode escalation (Agent-X only): optional UI prompt before write-capable work.
+      // Plans are never user-approved in a modal — the completion loop delivers markdown in chat.
       if (
         shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker, this.options.promptProfile ?? 'default')
         && shouldEscalateForExecution(content, decision.messageClass)
@@ -1580,6 +1602,7 @@ Return ONLY valid JSON, no other text.`;
           };
           this.stopTurnHeartbeat();
           this.turnState.complete();
+          this.emitTurnState('done');
           this.emit({ type: 'loading_end' });
           this.emit({ type: 'message_received', message: declinedMessage, elapsed: Date.now() - startTime });
           return declinedMessage;
@@ -1593,8 +1616,7 @@ Return ONLY valid JSON, no other text.`;
        let assistantMessage = await this.runCompletionLoop(startTime);
 
        // ─── CRITICAL: Server-side validation for mode restriction transparency ───
-       // Detect if agent is fabricating success on restricted operations
-       if (this.planMode) {
+       if (this.planMode && this.options.promptProfile !== 'crew_private') {
          const validationResult = this.validateModeRestrictionTransparency(assistantMessage.content, this.toolCallLogForReflection);
          if (!validationResult.isTransparent) {
            getLogger().warn('AGENT', `Detected fabricated success in plan mode. Triggering refactored response.`);
@@ -1640,11 +1662,13 @@ Return ONLY valid JSON, no other text.`;
       this.toolCallLogForReflection = [];
       this.stopTurnHeartbeat();
       this.turnState.complete();
+      this.emitTurnState('done');
       this.emit({ type: 'loading_end' });
       return assistantMessage;
     } catch (error) {
       this.stopTurnHeartbeat();
       this.turnState.cancel();
+      this.emitTurnState('cancelled');
       this.emit({ type: 'loading_end' });
 
       // ─── UNIFIED: Classify error via ErrorClassifier ───
@@ -1762,25 +1786,11 @@ Return ONLY valid JSON, no other text.`;
       executor,
       this.sessionId,
       emit,
-      async (question: string, options: string[], allowFreeform: boolean, meta?: ClarificationRequestMeta) => {
+      async (questionnaire: QuestionnairePayload) => {
         if (this.isDelegatedWorker) {
-          return options?.[0] ?? 'Proceed with your best judgment using available read-only tools and context.';
+          return 'Proceed with your best judgment using available read-only tools and context.';
         }
-        this.turnState.setPhase('awaiting_permission', 'clarification');
-        this.emit({
-          type: 'clarification_required',
-          question,
-          options,
-          allowFreeform,
-          recommended: meta?.recommended,
-          allowChooseAll: meta?.allowChooseAll,
-          selectionMode: meta?.selectionMode,
-          fields: meta?.fields,
-        });
-        const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
-        this.clarificationResolve = null;
-        this.turnState.setPhase('running', 'resuming');
-        return response;
+        return this.waitForQuestionnaireResponse(questionnaire);
       },
       async (instruction, toolsList, timeout) => {
         const subAgent = new SmartSubAgent({
@@ -1793,7 +1803,7 @@ Return ONLY valid JSON, no other text.`;
         return subAgent.execute();
       },
       this.planMode,
-      this.isDelegatedWorker
+      this.options.promptProfile === 'crew_private'
         ? undefined
         : (toolId, reason) => this.waitForModeEscalation(toolId, reason),
       (toolId, success, output, elapsed, args) => {
@@ -1802,6 +1812,7 @@ Return ONLY valid JSON, no other text.`;
         this.toolCallLogForReflection.push({ name: toolId, success, output, elapsed });
         this.turnState.touch();
       },
+      this.options.promptProfile ?? 'default',
     );
 
     if (this.options.promptProfile === 'crew_private') {
@@ -1868,6 +1879,7 @@ Return ONLY valid JSON, no other text.`;
       this.tokenTracker.inputTokenCount,
       this.tokenTracker.outputTokenCount,
     );
+    this.activeStreamHandler = streamHandler;
 
     try {
       this.turnState.setStage('thinking');
@@ -1878,7 +1890,8 @@ Return ONLY valid JSON, no other text.`;
       getLogger().info('AGENT', `Starting streamText with ${toolCount} tools, model: ${this.config.provider.activeModel}, mode: ${this.planMode ? 'plan' : 'agent'}`);
 
       let stepCapContinuations = 0;
-      const stepLimit = () => this.maxCompletionSteps * (1 + this.stepCapExtra);
+      const stepBudget = this.completionStepBudget();
+      const stepLimit = () => stepBudget;
       const result = streamText({
         model,
         messages: aiMessages,
@@ -1889,7 +1902,10 @@ Return ONLY valid JSON, no other text.`;
         toolChoice: 'auto',
         prepareStep: async ({ stepNumber, messages }) => {
           this.turnState.setStage('execution', stepNumber);
-          if (stepNumber > 0 && stepNumber % this.maxCompletionSteps === 0 && stepNumber >= this.maxCompletionSteps) {
+          const stepBudgetBase = this.options.promptProfile === 'crew_private'
+            ? this.crewPrivateCompletionSteps
+            : this.maxCompletionSteps;
+          if (stepNumber > 0 && stepNumber % stepBudgetBase === 0 && stepNumber >= stepBudgetBase) {
             const cont = await this.waitForStepCap(stepNumber);
             if (!cont) throw new Error('STEP_CAP_STOP');
             stepCapContinuations++;
@@ -2052,6 +2068,8 @@ Return ONLY valid JSON, no other text.`;
       getLogger().error('COMPLETION', `AI SDK streamText failed: ${errorMsg}`);
       this.emit({ type: 'error', code: 'AI_SDK_ERROR', message: errorMsg, recoverable: false });
       throw error;
+    } finally {
+      this.activeStreamHandler = null;
     }
   }
 
@@ -2155,6 +2173,7 @@ Return ONLY valid JSON, no other text.`;
       personaName: this.persona?.name || 'Agent-X',
       experienceEngine: { getProvenContext: () => this.experienceEngine.getProvenContext(), getCautionContext: () => this.experienceEngine.getCautionContext() },
       growthEngine: { getGrowthContext: () => this.growthEngine.getGrowthContext() },
+      turnFeedbackService: { buildPromptContext: () => this.turnFeedbackService.buildPromptContext(this.sessionId) },
     };
   }
 
@@ -2163,6 +2182,7 @@ Return ONLY valid JSON, no other text.`;
       const ctx = this.createSectionContext();
       this.promptAssembly
         .register(createRulesSection())
+        .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx));
       if (systemOverride) {
@@ -2174,7 +2194,8 @@ Return ONLY valid JSON, no other text.`;
     if (this.options.promptProfile === 'crew_private') {
       const ctx = this.createSectionContext();
       this.promptAssembly
-        .register(createRulesSection())
+        .register(createCrewPrivateConductSection())
+        .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx))
         .register(createWorkingDirectorySection(ctx))
@@ -2182,6 +2203,7 @@ Return ONLY valid JSON, no other text.`;
         .register(createSkillsSection(ctx))
         .register(createFormalSkillsSection(ctx))
         .register(createSessionNarrativeSection(ctx))
+        .register(createTurnFeedbackSection(ctx))
         .register(createUserSection(ctx))
         .register(createSoulSection(ctx))
         .register(createNeuralSection(ctx))
@@ -2198,6 +2220,7 @@ Return ONLY valid JSON, no other text.`;
       .register(createIdentitySection(ctx))
       .register(createWorkingDirectorySection(ctx))
       .register(createRulesSection())
+      .register(createQuestionnaireGuideSection())
       .register(createChatMarkdownSection())
       .register(createCurrentTimeSection(ctx))
       .register(createSchedulingSection())
@@ -2209,6 +2232,7 @@ Return ONLY valid JSON, no other text.`;
       .register(createMultiCrewSection(ctx))
       .register(createUserSection(ctx))
       .register(createSessionNarrativeSection(ctx))
+      .register(createTurnFeedbackSection(ctx))
       .register(createTaskPanelSection())
       .register(createSoulSection(ctx))
       .register(createNeuralSection(ctx))
@@ -2822,7 +2846,8 @@ Only include specialists that are actually needed for this task.`;
     };
   }
 
-  private emit(event: EngineEvent, isUpdate?: boolean): void {
+  private emit(event: EngineEvent, isUpdateFlag?: boolean): void {
+    const isUpdate = isUpdateFlag === true || (event as { isUpdate?: boolean }).isUpdate === true;
     if (event.type === 'message_received') {
       const raw = event as { message?: Message };
       if (raw.message?.role === 'assistant') {
@@ -2837,8 +2862,14 @@ Only include specialists that are actually needed for this task.`;
         this.eventBus.emit(event);
         return;
       }
-      if (this._turnMessageEmitted) return;
-      this._turnMessageEmitted = true;
+      const parts = crewMsg?.parts as Array<{ type?: string }> | undefined;
+      const questionnaireOnly = crewMsg?.role === 'assistant'
+        && !(crewMsg.content?.trim())
+        && parts?.some((p) => p.type === 'questionnaire');
+      if (!questionnaireOnly) {
+        if (this._turnMessageEmitted) return;
+        this._turnMessageEmitted = true;
+      }
     }
     this.eventBus.emit(event);
   }
@@ -3095,20 +3126,8 @@ Only include specialists that are actually needed for this task.`;
       sessionId: this.sessionId,
       mainSystemPrompt: typeof systemMsg?.content === 'string' ? systemMsg.content : '',
       crewOrchestrator: this.crewOrchestrator ?? undefined,
-      waitForClarification: async (question: string, options?: string[], allowFreeform?: boolean, meta?: ClarificationRequestMeta) => {
-        this.emit({
-          type: 'clarification_required',
-          question,
-          options: options ?? [],
-          allowFreeform: allowFreeform ?? true,
-          recommended: meta?.recommended,
-          allowChooseAll: meta?.allowChooseAll,
-          selectionMode: meta?.selectionMode,
-          fields: meta?.fields,
-        });
-        const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
-        this.clarificationResolve = null;
-        return response;
+      waitForClarification: async (questionnaire: QuestionnairePayload) => {
+        return this.waitForQuestionnaireResponse(questionnaire);
       },
       onMissionEvent: (payload) => {
         if (!this.onSessionEvent) return;

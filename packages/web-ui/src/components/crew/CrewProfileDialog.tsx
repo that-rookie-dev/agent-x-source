@@ -15,8 +15,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import type { PrebuiltCrew } from './CrewHubDialog';
 import { crewDialogPaperSx, crewHubScanlineSx, crewOverlineSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
-import { MedicalProfileIdentityFrame } from './MedicalDisclaimerBanner';
-import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
+import { MedicalDisclaimerSectorCard, MedicalProfileIdentityFrame, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
 
 export interface RosterProfileActions {
   enabled: boolean;
@@ -202,10 +201,11 @@ export function CrewProfileDialog({
   const accent = accentColor ?? getCrewAccent(undefined, crew.callsign);
   const isRoster = !!rosterActions;
   const rosterActive = rosterActions?.enabled !== false;
-  const showMedicalDisclaimer = crewRequiresMedicalDisclaimer({
+  const showMedicalDisclaimer = isMedicalCrewDisplay({
     categoryId: crew.categoryId,
     requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
     catalogId: crew.catalogId,
+    callsign: crew.callsign,
   });
 
   return (
@@ -250,6 +250,9 @@ export function CrewProfileDialog({
       </Box>
 
       <DialogContent sx={{ px: 2, pt: '16px !important', pb: 2 }}>
+        {showMedicalDisclaimer && (
+          <MedicalDisclaimerSectorCard sx={{ mb: 1.5 }} />
+        )}
         {/* Redacted identity block — no photo */}
         {showMedicalDisclaimer ? (
           <MedicalProfileIdentityFrame>

@@ -194,6 +194,19 @@ CREATE TABLE IF NOT EXISTS crew_feedback (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS turn_feedback (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL,
+  context_kind TEXT NOT NULL DEFAULT 'agent_x',
+  crew_id TEXT,
+  rating TEXT NOT NULL,
+  turn_summary TEXT,
+  metadata TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(session_id, message_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_parts_session ON message_parts(session_id);
 CREATE INDEX IF NOT EXISTS idx_token_logs_session ON token_logs(session_id);
@@ -203,6 +216,8 @@ CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_
 CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id);
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id);
 CREATE INDEX IF NOT EXISTS idx_crew_feedback_crew ON crew_feedback(crew_id);
+CREATE INDEX IF NOT EXISTS idx_turn_feedback_session ON turn_feedback(session_id);
+CREATE INDEX IF NOT EXISTS idx_turn_feedback_crew ON turn_feedback(crew_id);
 CREATE INDEX IF NOT EXISTS idx_session_crew_states_session ON session_crew_states(session_id);
 
 CREATE TABLE IF NOT EXISTS agent_persona (
@@ -300,6 +315,7 @@ interface CacheState {
   tokenLogs: Map<string, StorableTokenLog[]>;
   permissions: Map<string, StorablePermission[]>;
   crewFeedback: Map<string, Array<Record<string, unknown>>>;
+  turnFeedback: Map<string, Array<Record<string, unknown>>>;
   permissionRules: Map<string, Array<Record<string, unknown>>>;
   taskSnapshots: Map<string, Record<string, unknown>>;
 }
@@ -311,7 +327,7 @@ export interface PostgresConfig extends PoolConfig {
 export class PostgresStorageAdapter implements StorageAdapter {
   private pool: Pool;
   private connected = false;
-  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
+  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
 
   constructor(config: PostgresConfig) {
     this.pool = new Pool(config);
@@ -386,6 +402,22 @@ export class PostgresStorageAdapter implements StorageAdapter {
       await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS context_kind TEXT NOT NULL DEFAULT 'agent_x'`);
       await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS host_crew_id TEXT`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_crew_private ON sessions(host_crew_id, context_kind)`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS turn_feedback (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          message_id TEXT NOT NULL,
+          context_kind TEXT NOT NULL DEFAULT 'agent_x',
+          crew_id TEXT,
+          rating TEXT NOT NULL,
+          turn_summary TEXT,
+          metadata TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE(session_id, message_id)
+        )
+      `);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_turn_feedback_session ON turn_feedback(session_id)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_turn_feedback_crew ON turn_feedback(crew_id)`);
       await client.query(`
         INSERT INTO child_sessions (id, parent_session_id, kind, label, status, created_at, updated_at)
         SELECT id, parent_id, 'sub_agent', title, status, created_at, updated_at
@@ -502,11 +534,21 @@ export class PostgresStorageAdapter implements StorageAdapter {
       }
 
       const messages = await this.pool.query(
-        `SELECT id,session_id as "sessionId",role,content,tool_calls as "toolCalls",token_count as "tokenCount",created_at as "createdAt"
+        `SELECT id,session_id as "sessionId",role,content,tool_calls as "toolCalls",
+                token_count as "tokenCount",parts,metadata,created_at as "createdAt"
          FROM messages ORDER BY created_at ASC`,
       );
       for (const row of messages.rows) {
-        const msg = row as StorableMessage;
+        const raw = row as Record<string, unknown>;
+        let parts = raw['parts'];
+        if (typeof parts === 'string') {
+          try { parts = JSON.parse(parts); } catch { parts = undefined; }
+        }
+        let metadata = raw['metadata'];
+        if (typeof metadata === 'string') {
+          try { metadata = JSON.parse(metadata); } catch { metadata = undefined; }
+        }
+        const msg = { ...raw, parts, metadata } as StorableMessage;
         const msgs = this.cache.messages.get(msg.sessionId) ?? [];
         msgs.push(msg);
         this.cache.messages.set(msg.sessionId, msgs);
@@ -572,6 +614,14 @@ export class PostgresStorageAdapter implements StorageAdapter {
         const arr = this.cache.crewFeedback.get(cid) ?? [];
         arr.push(r);
         this.cache.crewFeedback.set(cid, arr);
+      }
+      const turnFeedback = await this.pool.query('SELECT * FROM turn_feedback ORDER BY created_at ASC');
+      for (const row of turnFeedback.rows) {
+        const r = row as Record<string, unknown>;
+        const sid = r['session_id'] as string;
+        const arr = this.cache.turnFeedback.get(sid) ?? [];
+        arr.push(r);
+        this.cache.turnFeedback.set(sid, arr);
       }
       const permissionRules = await this.pool.query('SELECT * FROM permission_rules ORDER BY created_at ASC');
       for (const row of permissionRules.rows) {
@@ -721,6 +771,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.permissions.delete(id);
     this.cache.permissionRules.delete(id);
     this.cache.taskSnapshots.delete(id);
+    this.cache.turnFeedback.delete(id);
   }
 
   deleteSession(id: string): void {
@@ -921,6 +972,34 @@ export class PostgresStorageAdapter implements StorageAdapter {
         msg.metadata ? JSON.stringify(msg.metadata) : null,
       ]
     );
+  }
+
+  updateMessage(sessionId: string, messageId: string, patch: {
+    content?: string;
+    parts?: Array<Record<string, unknown>>;
+    metadata?: Record<string, unknown>;
+  }): void {
+    const msgs = this.cache.messages.get(sessionId) ?? [];
+    const idx = msgs.findIndex((m) => m.id === messageId);
+    if (idx >= 0) {
+      const cur = msgs[idx]!;
+      msgs[idx] = {
+        ...cur,
+        content: patch.content ?? cur.content,
+        parts: patch.parts ?? cur.parts,
+        metadata: patch.metadata ?? cur.metadata,
+      };
+      this.cache.messages.set(sessionId, msgs);
+    }
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    let n = 1;
+    if (patch.content !== undefined) { sets.push(`content = $${n++}`); vals.push(patch.content); }
+    if (patch.parts !== undefined) { sets.push(`parts = $${n++}`); vals.push(JSON.stringify(patch.parts)); }
+    if (patch.metadata !== undefined) { sets.push(`metadata = $${n++}`); vals.push(JSON.stringify(patch.metadata)); }
+    if (sets.length === 0) return;
+    vals.push(messageId, sessionId);
+    this.write(`UPDATE messages SET ${sets.join(', ')} WHERE id = $${n} AND session_id = $${n + 1}`, vals);
   }
 
   insertPart(sessionId: string, part: {
@@ -1358,6 +1437,59 @@ export class PostgresStorageAdapter implements StorageAdapter {
     return this.cache.crewFeedback.get(crewId) ?? [];
   }
 
+  upsertTurnFeedback(feedback: {
+    id: string;
+    sessionId: string;
+    messageId: string;
+    contextKind: string;
+    crewId?: string | null;
+    rating: string;
+    turnSummary?: string | null;
+    metadata?: Record<string, unknown> | null;
+    createdAt: string;
+  }): void {
+    const entry: Record<string, unknown> = {
+      id: feedback.id,
+      session_id: feedback.sessionId,
+      message_id: feedback.messageId,
+      context_kind: feedback.contextKind,
+      crew_id: feedback.crewId ?? null,
+      rating: feedback.rating,
+      turn_summary: feedback.turnSummary ?? null,
+      metadata: feedback.metadata ? JSON.stringify(feedback.metadata) : null,
+      created_at: feedback.createdAt,
+    };
+    const arr = this.cache.turnFeedback.get(feedback.sessionId) ?? [];
+    const idx = arr.findIndex((e) => e['message_id'] === feedback.messageId);
+    if (idx >= 0) arr[idx] = entry;
+    else arr.push(entry);
+    this.cache.turnFeedback.set(feedback.sessionId, arr);
+    this.write(
+      `INSERT INTO turn_feedback (id,session_id,message_id,context_kind,crew_id,rating,turn_summary,metadata,created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (session_id, message_id) DO UPDATE SET
+         rating = EXCLUDED.rating,
+         turn_summary = EXCLUDED.turn_summary,
+         metadata = EXCLUDED.metadata,
+         created_at = EXCLUDED.created_at`,
+      [
+        feedback.id,
+        feedback.sessionId,
+        feedback.messageId,
+        feedback.contextKind,
+        feedback.crewId ?? null,
+        feedback.rating,
+        feedback.turnSummary ?? null,
+        feedback.metadata ? JSON.stringify(feedback.metadata) : null,
+        feedback.createdAt,
+      ],
+    );
+  }
+
+  getTurnFeedbackBySession(sessionId: string): Array<Record<string, unknown>> {
+    return this.cache.turnFeedback.get(sessionId) ?? [];
+  }
+
   // ─── Crew CRUD ─────────────────────────────────────────────────
 
   listCrews(): Crew[] {
@@ -1550,6 +1682,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.tokenLogs.clear();
     this.cache.permissions.clear();
     this.cache.crewFeedback.clear();
+    this.cache.turnFeedback.clear();
     this.cache.permissionRules.clear();
     this.cache.taskSnapshots.clear();
     this.write('TRUNCATE sessions CASCADE');

@@ -7,6 +7,7 @@ import { catalogLikePattern, mergeCatalogSearchHits } from './catalog-search.js'
 import { mergeCategoryIconIds } from './catalog-categories.js';
 import { catalogEntryToSummary } from './catalog-summary.js';
 import { markCatalogSeedProgress } from './catalog-seed-state.js';
+import { dedupePgCatalogTitles, prunePgCatalogOrphans } from './catalog-prune.js';
 import type { CrewCatalogStore } from './CrewSuggestionService.js';
 
 export const PG_CREW_CATALOG_SCHEMA = `
@@ -173,6 +174,8 @@ export async function seedPgCatalog(
        ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`,
       [String(manifest.revision)],
     );
+    await prunePgCatalogOrphans(client, manifest);
+    await dedupePgCatalogTitles(client, manifest);
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');

@@ -13,14 +13,19 @@ interface ChatMessageListProps {
   onResend: (text: string) => void;
   bottomRef: React.RefObject<HTMLDivElement>;
   onOpenChildSession?: (props: { childSessionId: string; label: string; kind: 'sub_agent' | 'crew_worker'; status: 'running' | 'done' | 'error'; task?: string }) => void;
+  onQuestionnaireRespond?: (messageId: string, response: string) => void;
+  pendingFeedbackMessageId?: string | null;
+  onTurnFeedback?: (messageId: string, rating: import('@agentx/shared/browser').TurnFeedbackRating) => void;
+  feedbackSubmitting?: boolean;
 }
 
 /** Virtual-ish message list — content-visibility keeps long sessions smooth. */
-export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession }: ChatMessageListProps) {
+export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting }: ChatMessageListProps) {
   const renderMessage = useCallback((msg: UIMessage, idx: number) => {
     const isLast = idx === items.length - 1;
     const hasText = !!(msg.content?.trim() || msg.parts?.some((p) => p.type === 'text' && p.content?.trim()));
-    const showLoading = isLast && msg.streaming && !hasText;
+    const hasQuestionnaire = msg.parts?.some((p) => p.type === 'questionnaire');
+    const showLoading = isLast && msg.streaming && !hasText && !hasQuestionnaire;
 
     if (msg.isModeChange) {
       return <ChatModeChangeChip from={msg.isModeChange.from} to={msg.isModeChange.to} />;
@@ -28,8 +33,18 @@ export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOp
     if (msg.role === 'user') {
       return <ChatUserMessage message={msg} />;
     }
-    return <ChatMessageTurn message={msg} loadingSteps={showLoading ? loadingSteps : null} onOpenChildSession={onOpenChildSession} />;
-  }, [items.length, loadingSteps, onOpenChildSession]);
+    return (
+      <ChatMessageTurn
+        message={msg}
+        loadingSteps={showLoading ? loadingSteps : null}
+        onOpenChildSession={onOpenChildSession}
+        onQuestionnaireRespond={onQuestionnaireRespond}
+        showFeedback={pendingFeedbackMessageId === msg.id}
+        onTurnFeedback={onTurnFeedback}
+        feedbackSubmitting={feedbackSubmitting}
+      />
+    );
+  }, [items.length, loadingSteps, onOpenChildSession, onQuestionnaireRespond, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting]);
 
   return (
     <>

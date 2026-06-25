@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import { colors } from '../theme';
 
-/** Tick every second between server heartbeats so the counter doesn't jump 40 → 42. */
+/** Tick every second between server heartbeats; resync anchor on each heartbeat. */
 function useSmoothElapsedSec(elapsedMs?: number): number | undefined {
   const [displaySec, setDisplaySec] = useState<number | undefined>(() =>
     elapsedMs != null ? Math.floor(elapsedMs / 1000) : undefined,
@@ -12,17 +12,18 @@ function useSmoothElapsedSec(elapsedMs?: number): number | undefined {
   useEffect(() => {
     if (elapsedMs == null) {
       setDisplaySec(undefined);
+      syncRef.current = { baseMs: 0, syncAt: 0 };
       return;
     }
 
     const serverSec = Math.floor(elapsedMs / 1000);
     syncRef.current = { baseMs: elapsedMs, syncAt: Date.now() };
-    setDisplaySec((prev) => (prev == null ? serverSec : Math.max(prev, serverSec)));
+    setDisplaySec(serverSec);
 
     const tick = () => {
       const { baseMs, syncAt } = syncRef.current;
       const computed = Math.floor((baseMs + Date.now() - syncAt) / 1000);
-      setDisplaySec((prev) => Math.max(prev ?? 0, computed));
+      setDisplaySec(computed);
     };
 
     tick();

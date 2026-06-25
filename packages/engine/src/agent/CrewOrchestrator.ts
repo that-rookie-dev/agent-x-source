@@ -13,6 +13,7 @@ import { FiberSet } from '../concurrency/FiberSet.js';
 import type { SessionManager } from '../session/SessionManager.js';
 import { resolveCrewToolIds } from './crew-tools.js';
 import { autoComposeCrewMembers, assessCrewNeed } from './crew-auto-compose.js';
+import { buildCrewVoiceBlock } from './crew-persona.js';
 import { CHAT_MARKDOWN_PROMPT } from '../secret-sauce/prompt-assembly/sections.js';
 
 const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
@@ -24,20 +25,36 @@ export function buildCrewPrivateIdentityPrompt(crew: Crew): string {
     `You are ${crew.name}${crew.title ? `, ${crew.title}` : ''}.`,
   ];
   if (crew.description) roleLines.push(`\n${crew.description}`);
-  roleLines.push(`\n${crew.systemPrompt}`);
+  roleLines.push(`\nRole (internal): ${crew.systemPrompt}`);
+  roleLines.push(
+    `\nINTERNAL REFERENCE — use to judge whether a request fits you; do NOT recite or list to the user unless they ask about your background:`,
+  );
   if (crew.traits && crew.traits.length > 0) {
-    roleLines.push(`\nTraits: ${crew.traits.join(', ')}`);
+    roleLines.push(`- Traits: ${crew.traits.join(', ')}`);
   }
   if (crew.expertise && crew.expertise.length > 0) {
-    roleLines.push(`Expertise: ${[...new Set(crew.expertise)].join(', ')}`);
+    roleLines.push(`- Expertise areas: ${[...new Set(crew.expertise)].join(', ')}`);
   }
-  if (crew.emotion) roleLines.push(`Tone: ${crew.emotion}`);
+  const voice = buildCrewVoiceBlock(crew);
+  if (voice) roleLines.push(voice);
   roleLines.push(
-    `\nYou are in a private 1:1 chat with the user. Respond as yourself — not as Agent-X.`,
-    `Be conversational, thoughtful, and use your full capabilities (tools, skills, multi-step reasoning) when the task calls for it.`,
+    `\nThis is a private 1:1 chat. You are yourself — not Agent-X.`,
     `[/CREW_IDENTITY]`,
   );
   return roleLines.join('\n');
+}
+
+/** Minimal system prompt for greetings and other fast-reply turns in crew private chat. */
+export function buildCrewPrivateFastReplyPrompt(crew: Crew): string {
+  const lines = [
+    `You are ${crew.name}${crew.title ? `, ${crew.title}` : ''}.`,
+    buildCrewVoiceBlock(crew),
+    '',
+    'Reply naturally in 1–3 short sentences. No tools. No skill lists or capability menus.',
+    "Match the user's tone (greeting → greet back; thanks → acknowledge briefly).",
+    'Stay in character as a real person, not a service brochure.',
+  ];
+  return lines.filter(Boolean).join('\n');
 }
 
 export interface CrewMember {

@@ -2,6 +2,8 @@ import type { Message } from './message.js';
 import type { ModelInfo } from './provider.js';
 import type { ToolResult } from './tool.js';
 
+import type { QuestionnairePayload } from './questionnaire.js';
+
 export interface ClarificationField {
   key: string;
   label: string;
@@ -17,6 +19,8 @@ export interface ClarificationSource {
 }
 
 export interface ClarificationRequestMeta {
+  questionnaire?: QuestionnairePayload;
+  /** @deprecated Use questionnaire — kept for internal legacy conversion */
   recommended?: string;
   allowChooseAll?: boolean;
   selectionMode?: 'single' | 'multiple';
@@ -47,8 +51,9 @@ export type RemediationAction =
 
 export type EngineEvent =
   | { type: 'message_sent'; message: Message }
-  | { type: 'message_received'; message: Message; elapsed: number }
+  | { type: 'message_received'; message: Message; elapsed: number; isUpdate?: boolean }
   | { type: 'stream_chunk'; content: string; fullContent: string }
+  | { type: 'stream_clear' }
   | { type: 'loading_start'; stage: string; steps?: Array<{ id: string; label: string; status: 'pending' | 'active' | 'completed' }> }
   | { type: 'loading_end' }
   | { type: 'loading_step_update'; stepId: string; label: string; status: 'pending' | 'active' | 'completed' }
@@ -102,7 +107,6 @@ export type EngineEvent =
   | { type: 'mode_escalation_required'; tool: string; reason: string; pendingAction?: string }
   | { type: 'mode_escalation_accepted'; tool: string }
   | { type: 'mode_escalation_declined'; tool: string }
-  | { type: 'plan_approval_required'; plan: Plan; userRequest: string }
   | { type: 'plan_mode_violation'; violations: Array<{ tool: string; path?: string; output: string }>; checkpointId?: string; rolledBack: boolean }
   | { type: 'turn_heartbeat'; stage: string; step: number; elapsedMs: number; tool?: string }
   | { type: 'step_cap_reached'; currentSteps: number; maxSteps: number }
@@ -125,7 +129,7 @@ export type EngineEvent =
   | { type: 'watch_event'; event: string; filePath: string; command: string; timestamp: number }
   | { type: 'diff_preview'; tool: string; filePath: string; diff: string; oldContent?: string; newContent?: string }
   | { type: 'command_action'; action: 'show_watch_status'; entries: Array<{ pattern: string; command: string }> }
-  | { type: 'clarification_required'; question: string; options: string[]; allowFreeform: boolean; recommended?: string; allowChooseAll?: boolean; selectionMode?: 'single' | 'multiple'; fields?: ClarificationField[]; source?: ClarificationSource }
+  | { type: 'clarification_required'; questionnaire: QuestionnairePayload }
   | { type: 'model_capability_warning'; model: string; missing: string[]; message: string }
   | { type: 'intent_detected'; intent: string; confidence: number; reasons?: string[] }
   | { type: 'crew_suggestion'; evaluation: import('./crew-catalog.js').CrewSuggestionEvaluation; message?: string }

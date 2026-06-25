@@ -1,5 +1,6 @@
 import { getLogger } from '@agentx/shared';
 import { syncCatalogFromManifest } from '../crew/catalog-sync.js';
+import { catalogNeedsManifestSync } from '../crew/catalog-prune.js';
 import { loadCatalogManifest } from '../crew/catalog-manifest.js';
 import { getCrewCatalogStoreFromEngine } from '../crew/get-crew-store.js';
 import { runSqliteCrewCatalogMigration } from '../crew/sqlite-crew-catalog.js';
@@ -113,7 +114,7 @@ async function catalogNeedsSync(store: NonNullable<ReturnType<typeof getCrewCata
       store.getCatalogCount(),
       store.getCatalogRevision(),
     ]);
-    return count < manifest.crews.length || rev < manifest.revision;
+    return catalogNeedsManifestSync(count, rev, manifest);
   } catch (e) {
     if (isMissingTableError(e)) return true;
     throw e;

@@ -121,9 +121,15 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
             {displayTitle}
           </Typography>
           <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", mt: 0.2 }}>
-            {isCrewPrivate && session.hostCrewTitle ? `${session.hostCrewTitle} · ` : ''}
-            {isCrewPrivate && session.hostCrewCallsign ? `@${session.hostCrewCallsign} · ` : ''}
-            {formatDate(session.createdAt)} · {formatTime(session.createdAt)}
+            {isCrewPrivate ? (
+              <>
+                {session.hostCrewTitle ? `${session.hostCrewTitle}` : ''}
+                {session.hostCrewTitle && session.hostCrewCallsign ? ' · ' : ''}
+                {session.hostCrewCallsign ? `@${session.hostCrewCallsign}` : ''}
+              </>
+            ) : (
+              <>{formatDate(session.createdAt)} · {formatTime(session.createdAt)}</>
+            )}
           </Typography>
         </Box>
         <IconButton
@@ -135,49 +141,38 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         </IconButton>
       </Box>
 
+      {!isCrewPrivate && (
       <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-        {isCrewPrivate ? (
+        {isActive && (
           <Box sx={{
             px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
             fontFamily: "'JetBrains Mono', monospace", fontWeight: 700,
-            bgcolor: crewAccent + '15', color: crewAccent,
-            border: `1px solid ${crewAccent}30`,
+            bgcolor: colors.accent.green + '15', color: colors.accent.green,
+            border: `1px solid ${colors.accent.green}30`,
           }}>
-            PRIVATE
+            LIVE
           </Box>
-        ) : (
-          <>
-            {isActive && (
-              <Box sx={{
-                px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
-                fontFamily: "'JetBrains Mono', monospace", fontWeight: 700,
-                bgcolor: colors.accent.green + '15', color: colors.accent.green,
-                border: `1px solid ${colors.accent.green}30`,
-              }}>
-                LIVE
-              </Box>
-            )}
-            <Box sx={{
-              px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
-              fontFamily: "'JetBrains Mono', monospace",
-              bgcolor: mode === 'agent' ? colors.accent.orange + '12' : colors.accent.blue + '10',
-              color: mode === 'agent' ? colors.accent.orange : colors.accent.blue,
-              border: `1px solid ${mode === 'agent' ? colors.accent.orange + '25' : colors.accent.blue + '25'}`,
-            }}>
-              {mode.toUpperCase()}
-            </Box>
-            {session.hyperdrive && (
-              <Box sx={{
-                px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
-                fontFamily: "'JetBrains Mono', monospace",
-                bgcolor: '#ff00ff12', color: '#ff00ff',
-              }}>
-                HYPER
-              </Box>
-            )}
-          </>
+        )}
+        <Box sx={{
+          px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          bgcolor: mode === 'agent' ? colors.accent.orange + '12' : colors.accent.blue + '10',
+          color: mode === 'agent' ? colors.accent.orange : colors.accent.blue,
+          border: `1px solid ${mode === 'agent' ? colors.accent.orange + '25' : colors.accent.blue + '25'}`,
+        }}>
+          {mode.toUpperCase()}
+        </Box>
+        {session.hyperdrive && (
+          <Box sx={{
+            px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
+            fontFamily: "'JetBrains Mono', monospace",
+            bgcolor: '#ff00ff12', color: '#ff00ff',
+          }}>
+            HYPER
+          </Box>
         )}
       </Box>
+      )}
 
       <Box sx={{
         display: 'grid',
@@ -187,7 +182,7 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         <KpiCell label="Msgs" value={session.messageCount ?? 0} />
         {isCrewPrivate ? (
           <>
-            <KpiCell label="Mode" value={(session.mode ?? 'agent').toUpperCase()} accent={crewAccent} />
+            <KpiCell label="Current Mode" value={(session.mode ?? 'agent').toUpperCase()} accent={crewAccent} />
             <KpiCell label="Type" value="1:1" />
           </>
         ) : (
@@ -225,21 +220,29 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
       </Box>
 
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 0.5, mt: 'auto' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4, minWidth: 0, flex: 1 }}>
-          <GroupsIcon sx={{ fontSize: 11, color: colors.text.dim, flexShrink: 0 }} />
+        {isCrewPrivate ? (
           <Typography sx={{
             fontSize: '0.5rem',
-            color: isCrewPrivate ? crewAccent : crewCount ? colors.text.secondary : colors.text.dim,
+            color: colors.text.dim,
             fontFamily: "'JetBrains Mono', monospace",
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
           }}>
-            {isCrewPrivate
-              ? `Direct · ${session.hostCrewName ?? 'Crew member'}`
-              : crewCount ? `${crewCount} crew${crewCount === 1 ? '' : 's'}` : 'No crews'}
+            {formatDate(session.updatedAt ?? session.createdAt)} · {formatTime(session.updatedAt ?? session.createdAt)}
           </Typography>
-        </Box>
+        ) : (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4, minWidth: 0, flex: 1 }}>
+            <GroupsIcon sx={{ fontSize: 11, color: colors.text.dim, flexShrink: 0 }} />
+            <Typography sx={{
+              fontSize: '0.5rem',
+              color: crewCount ? colors.text.secondary : colors.text.dim,
+              fontFamily: "'JetBrains Mono', monospace",
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {crewCount ? `${crewCount} crew${crewCount === 1 ? '' : 's'}` : 'No crews'}
+            </Typography>
+          </Box>
+        )}
         {(session.totalCostUsd ?? 0) > 0 && (
           <Typography sx={{
             fontSize: '0.48rem',

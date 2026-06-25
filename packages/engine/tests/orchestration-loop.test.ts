@@ -61,16 +61,12 @@ describe('plan-mode-utils', () => {
     expect(isReadOnlyTool('doc_markdown')).toBe(false);
   });
 
-  it('shouldUseInteractivePlanGates skips delegated workers', () => {
+  it('shouldUseInteractivePlanGates enables mode-escalation UI for Agent-X plan mode only', () => {
     expect(shouldUseInteractivePlanGates(true, false)).toBe(true);
     expect(shouldUseInteractivePlanGates(true, true)).toBe(false);
     expect(shouldUseInteractivePlanGates(false, false)).toBe(false);
-  });
-
-  it('shouldUseInteractivePlanGates skips crew private and crew worker profiles', () => {
     expect(shouldUseInteractivePlanGates(true, false, 'crew_private')).toBe(false);
     expect(shouldUseInteractivePlanGates(true, false, 'crew_worker')).toBe(false);
-    expect(shouldUseInteractivePlanGates(true, false, 'default')).toBe(true);
   });
 });
 

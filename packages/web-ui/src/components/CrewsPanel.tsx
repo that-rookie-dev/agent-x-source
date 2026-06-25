@@ -63,6 +63,9 @@ function crewToProfile(crew: Crew): PrebuiltCrew {
     tone: crew.tone ?? 'professional',
     expertise: crew.expertise ?? [],
     traits: crew.traits ?? [],
+    catalogId: crew.catalogId ?? (crew.callsign ? `hub-${crew.callsign}` : undefined),
+    categoryId: crew.categoryId,
+    requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
   };
 }
 

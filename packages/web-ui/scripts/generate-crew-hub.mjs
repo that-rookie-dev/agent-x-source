@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expansionCategoryDefinitions } from './crew-hub-expansion-domains.mjs';
+import { medicalSpecialtyCategoryDefinitions } from './crew-hub-medical-specialties.mjs';
+import { worldOccupationCategoryDefinitions } from './crew-hub-world-occupations.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HUB_DIR = join(__dirname, '../src/data/crew-hub');
@@ -40,11 +42,25 @@ const usedNames = new Set();
 let nameCounter = 0;
 
 function takeGeneratedName() {
-  while (nameCounter < FIRST_NAMES.length * LAST_NAMES.length * 2) {
+  const maxAttempts = FIRST_NAMES.length * LAST_NAMES.length * 8;
+  while (nameCounter < maxAttempts) {
     const first = FIRST_NAMES[(nameCounter * 7 + 3) % FIRST_NAMES.length];
     const last = LAST_NAMES[(nameCounter * 11 + 5) % LAST_NAMES.length];
+  const middle = nameCounter >= FIRST_NAMES.length * LAST_NAMES.length
+      ? ` ${String.fromCharCode(65 + (nameCounter % 26))}.`
+      : '';
     nameCounter += 1;
-    const candidate = `${first} ${last}`;
+    const candidate = `${first}${middle} ${last}`;
+    if (!usedNames.has(candidate)) {
+      usedNames.add(candidate);
+      return candidate;
+    }
+  }
+  while (nameCounter < maxAttempts + 50000) {
+    const first = FIRST_NAMES[nameCounter % FIRST_NAMES.length];
+    const last = LAST_NAMES[(nameCounter * 13 + 7) % LAST_NAMES.length];
+    nameCounter += 1;
+    const candidate = `${first} ${last} ${nameCounter}`;
     if (!usedNames.has(candidate)) {
       usedNames.add(candidate);
       return candidate;
@@ -513,7 +529,7 @@ const categoryDefinitions = [
       role('Performance Test Engineer', 'load, stress, and endurance testing'),
       role('Accessibility QA Engineer', 'inclusive usability and assistive tech validation'),
       role('Security Test Engineer', 'security regression and adversarial testing'),
-      role('Mobile QA Engineer', 'multi-device validation and app quality'),
+      role('Mobile App QA Engineer', 'multi-device validation and app quality'),
       role('API Test Engineer', 'contract and integration test coverage'),
       role('Data Quality Test Engineer', 'data correctness and pipeline testing'),
       role('Release Validation Engineer', 'go-live readiness and rollback confidence'),
@@ -1149,7 +1165,7 @@ const categoryDefinitions = [
       role('Assembly Line Balancer', 'takt time, line balancing, and bottlenecks'),
       role('Packaging Operations Manager', 'pack-out lines, labeling, and compliance'),
       role('ISO 9001 Implementation Advisor', 'quality manual, procedures, and internal audits'),
-      role('Capacity Planning Engineer', 'bottleneck analysis and capital requests'),
+      role('Manufacturing Capacity Planning Engineer', 'bottleneck analysis and capital requests'),
       role('Manufacturing Cost Analyst', 'standard costs, variances, and margin improvement'),
       role('New Product Introduction Manager', 'pilot builds, PPAP, and scale-up readiness'),
     ],
@@ -1633,7 +1649,12 @@ const categoryDefinitions = [
   },
 ];
 
-const allCategoryDefinitions = [...categoryDefinitions, ...expansionCategoryDefinitions()];
+const allCategoryDefinitions = [
+  ...categoryDefinitions,
+  ...expansionCategoryDefinitions(),
+  ...medicalSpecialtyCategoryDefinitions(),
+  ...worldOccupationCategoryDefinitions(),
+];
 
 for (const category of allCategoryDefinitions) {
   if (category.roles.length < 20) {
@@ -1664,6 +1685,9 @@ const categories = allCategoryDefinitions.map((category) => {
 });
 
 const allCallsigns = new Set();
+function normalizeJobTitle(title) {
+  return title.toLowerCase().replace(/\s+/g, ' ').trim();
+}
 for (const category of categories) {
   for (const crew of category.crews) {
     if (allCallsigns.has(crew.callsign)) {
@@ -1671,6 +1695,20 @@ for (const category of categories) {
     }
     allCallsigns.add(crew.callsign);
   }
+}
+const titleCounts = new Map();
+for (const category of categories) {
+  for (const crew of category.crews) {
+    const titleKey = normalizeJobTitle(crew.title);
+    const existing = titleCounts.get(titleKey) ?? [];
+    existing.push(`${category.id}`);
+    titleCounts.set(titleKey, existing);
+  }
+}
+const dupEntries = [...titleCounts.entries()].filter(([, cats]) => cats.length > 1);
+if (dupEntries.length > 0) {
+  const lines = dupEntries.slice(0, 40).map(([title, cats]) => `  "${title}" in ${cats.join(', ')}`);
+  throw new Error(`Duplicate job titles detected (${dupEntries.length}):\n${lines.join('\n')}${dupEntries.length > 40 ? `\n  ...and ${dupEntries.length - 40} more` : ''}`);
 }
 
 const categoryIconIds = Array.from(new Set(categories.map((category) => category.iconId)));

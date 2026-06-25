@@ -11,10 +11,13 @@ export interface PersistedToolCall {
   metadata?: Record<string, unknown>;
 }
 
+import type { QuestionnaireRecord } from '../types/questionnaire.js';
+
 export interface MessagePart {
-  type: 'text' | 'tool' | 'subagent';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire';
   id: string;
   content?: string;
+  questionnaire?: QuestionnaireRecord;
   tool?: PersistedToolCall;
   agent?: {
     id: string;
@@ -306,6 +309,7 @@ export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts
         return { ...p, content: repairStreamTextGlitches(stripToolNoise(p.content, { trim: false })) };
       }
       if (p.type === 'tool' && p.tool) return { ...p, tool: { ...p.tool, status: p.tool.status || 'done' } };
+      if (p.type === 'questionnaire' && p.questionnaire) return p;
       return p;
     }), true);
     if (!shouldRebuildStoredParts(content, mapped, toolCalls)) {

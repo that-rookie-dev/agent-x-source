@@ -145,7 +145,7 @@ export class SessionManager {
     );
     session.contextKind = 'crew_private';
     session.hostCrewId = crew.id;
-    session.mode = 'agent';
+    session.mode = 'plan';
     this.createSessionRecord(session);
     return session;
   }
