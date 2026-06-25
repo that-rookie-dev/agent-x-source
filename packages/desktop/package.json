@@ -71,10 +71,6 @@
         ]
       },
       {
-        "from": "../engine/data/crew-catalog.manifest.json",
-        "to": "web-api/data/crew-catalog.manifest.json"
-      },
-      {
         "from": "build",
         "to": "build",
         "filter": [
