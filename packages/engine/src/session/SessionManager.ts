@@ -3,7 +3,7 @@ import type { StorageAdapter } from '@agentx/shared';
 import { generateSessionId, generateId } from '@agentx/shared';
 import { SessionStore } from './SessionStore.js';
 import { TokenTracker } from './TokenTracker.js';
-import { normalizeSessionUpdates, EMPTY_SESSION_KPIS } from './session-field-utils.js';
+import { normalizeSessionUpdates, EMPTY_SESSION_KPIS, hostCrewSnapshotFromInput, hostCrewSnapshotPatch } from './session-field-utils.js';
 import type { SessionListKpis } from './session-field-utils.js';
 
 export interface SessionManagerOptions {
@@ -60,6 +60,14 @@ export class SessionManager {
         hyperdrive: session.hyperdrive,
         tokenUsed: session.tokenUsed,
         tokenAvailable: session.tokenAvailable,
+        contextKind: session.contextKind ?? 'agent_x',
+        hostCrewId: session.hostCrewId ?? null,
+        hostCrewName: session.hostCrewName ?? null,
+        hostCrewCallsign: session.hostCrewCallsign ?? null,
+        hostCrewTitle: session.hostCrewTitle ?? null,
+        hostCrewColor: session.hostCrewColor ?? null,
+        hostCrewCatalogId: session.hostCrewCatalogId ?? null,
+        hostCrewCategoryId: session.hostCrewCategoryId ?? null,
       });
     } else {
       this.getSessionStore().createSession({
@@ -72,6 +80,16 @@ export class SessionManager {
         scopePath: session.scopePath,
         tokensUsed: session.tokenUsed,
         tokenAvailable: session.tokenAvailable,
+        mode: session.mode,
+        hyperdrive: session.hyperdrive,
+        contextKind: session.contextKind ?? 'agent_x',
+        hostCrewId: session.hostCrewId ?? null,
+        hostCrewName: session.hostCrewName ?? null,
+        hostCrewCallsign: session.hostCrewCallsign ?? null,
+        hostCrewTitle: session.hostCrewTitle ?? null,
+        hostCrewColor: session.hostCrewColor ?? null,
+        hostCrewCatalogId: session.hostCrewCatalogId ?? null,
+        hostCrewCategoryId: session.hostCrewCategoryId ?? null,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       });
@@ -109,6 +127,64 @@ export class SessionManager {
     this.tokenTracker = new TokenTracker(session.tokenAvailable || 128_000);
     this.startAutoSave();
     return session;
+  }
+
+  /** One lifelong private chat session per crew — returns existing or null. */
+  findCrewPrivateSession(crewId: string): Session | null {
+    return this.listSessions(500).find((s) =>
+      !s.parentId
+      && s.contextKind === 'crew_private'
+      && s.hostCrewId === crewId,
+    ) ?? null;
+  }
+
+  createCrewPrivateSession(
+    providerId: string,
+    modelId: string,
+    scopePath: string,
+    crew: {
+      id: string;
+      name: string;
+      callsign: string;
+      title?: string;
+      color?: string;
+      catalogId?: string;
+      categoryId?: string;
+      expertise?: string[];
+      requiresMedicalDisclaimer?: boolean;
+      honorsDoctorate?: boolean;
+    },
+  ): Session {
+    const existing = this.findCrewPrivateSession(crew.id);
+    if (existing) {
+      const patch = hostCrewSnapshotPatch(existing, crew);
+      if (Object.keys(patch).length > 0) {
+        this.patchSession(existing.id, patch as Partial<Session>);
+      }
+      return { ...existing, ...patch };
+    }
+
+    const session = this.buildSessionRecord(
+      providerId,
+      modelId,
+      scopePath,
+      undefined,
+      undefined,
+      crew.name,
+    );
+    session.contextKind = 'crew_private';
+    session.hostCrewId = crew.id;
+    session.mode = 'plan';
+    Object.assign(session, hostCrewSnapshotFromInput(crew));
+    this.createSessionRecord(session);
+    return session;
+  }
+
+  patchSession(sessionId: string, updates: Partial<Session>): void {
+    this.updateSessionRecord(sessionId, updates);
+    if (this.activeSession?.id === sessionId) {
+      this.activeSession = { ...this.activeSession, ...updates, updatedAt: new Date().toISOString() };
+    }
   }
 
   /** Register a child session without switching the active parent session. */
@@ -266,6 +342,11 @@ export class SessionManager {
       return session;
     }
     return null;
+  }
+
+  /** Load session metadata without switching the active Agent-X session pointer. */
+  getSessionById(sessionId: string): Session | null {
+    return this.getSessionRecord(sessionId);
   }
 
   replayEvents(sessionId: string, sinceSequence?: number): Generator<SessionEvent, void, undefined> {

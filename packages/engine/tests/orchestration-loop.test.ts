@@ -39,6 +39,12 @@ describe('plan-mode-utils', () => {
     expect(shouldGeneratePlan('need a roadmap', 'task')).toBe(true);
   });
 
+  it('shouldGeneratePlan skips conversational travel/lifestyle planning', () => {
+    expect(shouldGeneratePlan('Can you help me plan the itinerary?')).toBe(false);
+    expect(shouldGeneratePlan('I am planning a vacation with my family')).toBe(false);
+    expect(shouldGeneratePlan('create a plan for the auth microservice migration')).toBe(true);
+  });
+
   it('isWriteTool covers denied tools', () => {
     expect(isWriteTool('file_write')).toBe(true);
     expect(isWriteTool('doc_markdown')).toBe(true);
@@ -55,10 +61,12 @@ describe('plan-mode-utils', () => {
     expect(isReadOnlyTool('doc_markdown')).toBe(false);
   });
 
-  it('shouldUseInteractivePlanGates skips delegated workers', () => {
+  it('shouldUseInteractivePlanGates enables mode-escalation UI for Agent-X plan mode only', () => {
     expect(shouldUseInteractivePlanGates(true, false)).toBe(true);
     expect(shouldUseInteractivePlanGates(true, true)).toBe(false);
     expect(shouldUseInteractivePlanGates(false, false)).toBe(false);
+    expect(shouldUseInteractivePlanGates(true, false, 'crew_private')).toBe(false);
+    expect(shouldUseInteractivePlanGates(true, false, 'crew_worker')).toBe(false);
   });
 });
 

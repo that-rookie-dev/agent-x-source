@@ -1,4 +1,5 @@
 import { CREW_DOMAIN_KEYWORDS } from '@agentx/shared';
+import { explicitCrewRequest } from '@agentx/shared';
 import type { CrewMember } from './CrewOrchestrator.js';
 
 export interface CrewNeedAssessment {
@@ -14,6 +15,7 @@ const DOMAIN_HINTS: Array<{ pattern: RegExp; keywords: string[] }> = [
   { pattern: /\b(api|backend|server|database|microservice|endpoint|graphql|rest)\b/i, keywords: ['backend', 'api', 'database', 'distributed', 'microservices', 'node'] },
   { pattern: /\b(frontend|react|css|ui|ux|design|dashboard|component|tailwind)\b/i, keywords: ['frontend', 'react', 'design', 'ui', 'ux', 'css'] },
   { pattern: /\b(deploy|docker|kubernetes|ci\/cd|devops|infra|pipeline|helm)\b/i, keywords: ['devops', 'docker', 'kubernetes', 'ci/cd', 'infrastructure', 'cloud'] },
+  { pattern: /\b(aws|amazon web services|azure|gcp|google cloud|cloud\s+(architect|engineer|infra)|ec2|s3|lambda|iam)\b/i, keywords: ['aws', 'cloud', 'azure', 'gcp', 'devops', 'infrastructure'] },
   { pattern: /\b(security|audit|vulnerability|owasp|penetration|encrypt|auth)\b/i, keywords: ['security', 'audit', 'owasp', 'threat'] },
   { pattern: /\b(legal|contract|compliance|regulation|law|gdpr|privacy)\b/i, keywords: ['legal', 'compliance', 'law', 'regulation', 'contract'] },
   { pattern: /\b(marketing|seo|content|copywrit|brand|campaign|social media)\b/i, keywords: ['marketing', 'seo', 'content', 'brand'] },
@@ -21,6 +23,7 @@ const DOMAIN_HINTS: Array<{ pattern: RegExp; keywords: string[] }> = [
   { pattern: /\b(mobile|ios|android|swift|kotlin|flutter|react native)\b/i, keywords: ['mobile', 'ios', 'android'] },
   { pattern: /\b(test|qa|quality|regression|e2e|unit test)\b/i, keywords: ['testing', 'qa', 'test', 'quality'] },
   { pattern: /\b(write|essay|blog|document|documentation|readme)\b/i, keywords: ['documentation', 'writing', 'content'] },
+  { pattern: /\b(trip|travel|vacation|itinerary|beach|hotel|flight|tourism|holiday)\b/i, keywords: ['travel', 'tourism', 'hospitality', 'planning', 'logistics'] },
 ];
 
 const TASK_ACTION_SIGNALS = /\b(create|build|fix|debug|implement|design|write|draft|analyze|review|audit|plan|prepare|optimize|deploy|configure|set up|setup|calculate|estimate|research|investigate|troubleshoot|refactor|migrate|test|automate|improve|recommend|suggest|help me|need help|can you|could you|please|figure out|work on|look into|set up)\b/i;
@@ -34,6 +37,13 @@ const AGENT_X_DIRECT_QUERIES = /\b(agent[- ]?x|this system|system spec|machine s
 const ADDRESS_AGENT_X = /\b(message|talk to|ask|tell)\s+agent[- ]?x\b/i;
 
 const SOCIAL_ONLY = /^(hi|hey|hello|thanks|thank you|bye|goodbye|ok|okay|sure|got it|cool|great|nice)\b/i;
+
+/** User defers decisions to the agent/crew — deliver a plan with stated assumptions. */
+const USER_DEFERS_TO_AGENT = /\b(plan it yourself|you decide|you suggest|figure it out|just plan|surprise me|choose for me|pick for me|on your own|your call|up to you|not sure|do it yourself|plan on your own)\b/i;
+
+export function userDeferredToAgent(text: string): boolean {
+  return USER_DEFERS_TO_AGENT.test(text.trim());
+}
 
 /** Skip autonomous crew routing for host/session/meta questions directed at Agent-X. */
 export function shouldSkipAutonomousCrewRouting(message: string): boolean {
@@ -118,12 +128,8 @@ export function buildTaskContextForCrewRouting(
   if (priorUserMessages.length === 0) return current;
 
   if (shouldSkipAutonomousCrewRouting(current)) return current;
-
-  const hasContinuationCue = CONTINUATION_SIGNALS.test(current) || CONTINUATION_DEICTIC.test(current);
-  const shortFollowUp = current.split(/\s+/).length <= 10
-    && (hasContinuationCue || !TASK_ACTION_SIGNALS.test(current));
-
-  if (!shortFollowUp) return current;
+  if (explicitCrewRequest(current)) return current;
+  if (isDistinctNewRequirement(current, priorUserMessages)) return current;
 
   const substantive = priorUserMessages
     .map((m) => m.trim())
@@ -131,7 +137,18 @@ export function buildTaskContextForCrewRouting(
     .slice(-2);
 
   if (substantive.length === 0) return current;
-  return `${substantive.join(' ')} ${current}`.trim();
+
+  const hasContinuationCue = CONTINUATION_SIGNALS.test(current) || CONTINUATION_DEICTIC.test(current);
+  const shortFollowUp = current.split(/\s+/).length <= 12
+    && (hasContinuationCue || !TASK_ACTION_SIGNALS.test(current));
+  const defersToAgent = userDeferredToAgent(current);
+  const lacksStandaloneDomain = !DOMAIN_HINTS.some((h) => h.pattern.test(current));
+
+  if (defersToAgent || shortFollowUp || (lacksStandaloneDomain && substantive.length > 0)) {
+    return `${substantive.join(' ')} ${current}`.trim();
+  }
+
+  return current;
 }
 
 export function isContinuationMessage(text: string): boolean {
@@ -139,6 +156,100 @@ export function isContinuationMessage(text: string): boolean {
   if (shouldSkipAutonomousCrewRouting(trimmed)) return false;
   return trimmed.split(/\s+/).length <= 10
     && (CONTINUATION_SIGNALS.test(trimmed) || CONTINUATION_DEICTIC.test(trimmed));
+}
+
+const CREW_SEARCH_STOP_WORDS = new Set([
+  'the', 'and', 'for', 'with', 'can', 'you', 'help', 'me', 'please', 'could', 'would',
+  'this', 'that', 'are', 'was', 'were', 'have', 'has', 'had', 'am', 'is', 'my', 'our',
+  'your', 'his', 'her', 'their', 'who', 'what', 'when', 'where', 'how', 'why', 'also',
+  'just', 'need', 'want', 'like', 'some', 'any', 'all', 'very', 'really',
+  'skilled', 'person', 'people', 'hire', 'hiring', 'workforce', 'specialist', 'expert',
+  'someone', 'talent', 'resource', 'resources', 'qualified', 'experienced', 'looking',
+]);
+
+/** Build a focused catalog FTS query — avoids OR-matching every crew on filler tokens. */
+export function buildCrewSuggestionSearchQuery(task: string): string {
+  const trimmed = task.trim();
+  if (!trimmed) return trimmed;
+
+  const domainKeys = extractDomainKeywords(trimmed);
+  const tokens = trimmed
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !CREW_SEARCH_STOP_WORDS.has(w));
+
+  const parts: string[] = [];
+  for (const d of domainKeys) parts.push(d);
+  for (const t of tokens) {
+    if (!parts.includes(t)) parts.push(t);
+  }
+
+  const query = parts.slice(0, 8).join(' ');
+  return query.length >= 3 ? query : trimmed.slice(0, 120);
+}
+
+export function extractDomainKeywords(text: string): Set<string> {
+  const keys = new Set<string>();
+  const lower = text.toLowerCase();
+  for (const hint of DOMAIN_HINTS) {
+    if (hint.pattern.test(lower)) {
+      for (const kw of hint.keywords) keys.add(kw);
+    }
+  }
+  for (const kw of CREW_DOMAIN_KEYWORDS) {
+    if (lower.includes(kw)) keys.add(kw);
+  }
+  return keys;
+}
+
+/** Skip routing to already-enabled crew when the user is searching for new specialists. */
+export function shouldBypassActiveCrewRouting(
+  message: string,
+  opts?: { crewSuggestionResolved?: boolean; hasDelegateCrewIds?: boolean },
+): boolean {
+  if (opts?.hasDelegateCrewIds) return false;
+  if (opts?.crewSuggestionResolved) return true;
+  return explicitCrewRequest(message.trim());
+}
+
+/** True when the message introduces a domain not covered by recent user turns. */
+export function isDistinctNewRequirement(
+  message: string,
+  priorUserMessages: string[] = [],
+): boolean {
+  const current = message.trim();
+  if (!current || priorUserMessages.length === 0) return false;
+
+  const currentDomains = extractDomainKeywords(current);
+  if (currentDomains.size === 0) return false;
+
+  const priorText = priorUserMessages.slice(-3).join(' ');
+  const priorDomains = extractDomainKeywords(priorText);
+  if (priorDomains.size === 0) return true;
+
+  let overlap = 0;
+  for (const d of currentDomains) {
+    if (priorDomains.has(d)) overlap++;
+  }
+  return overlap === 0 || currentDomains.size >= priorDomains.size + 2;
+}
+
+/** True when the user is continuing the current task — not opening a new requirement. */
+export function isActiveCrewContinuation(
+  message: string,
+  priorUserMessages: string[] = [],
+): boolean {
+  const current = message.trim();
+  if (priorUserMessages.length === 0) return false;
+  if (userDeferredToAgent(current) || isContinuationMessage(current)) return true;
+
+  const merged = buildTaskContextForCrewRouting(current, priorUserMessages);
+  if (merged !== current && merged.includes(current)) return true;
+
+  if (current.split(/\s+/).length <= 8 && extractDomainKeywords(current).size === 0) return true;
+
+  return false;
 }
 
 /** True when the text looks like work a specialist should handle (not pure social chat). */

@@ -6,7 +6,7 @@ import type {
 const CORE_TOOL_PATTERNS = [
   /^file_/, /^folder_/, /^shell_/, /^git_/, /^code_/, /^package_/,
   /^test_/, /^http_/, /^web_/, /^system_/, /^container_/, /^db_/,
-  /^ask_clarification/, /^delegate_to/, /^todo/,
+  /^ask_clarification/, /^delegate_to/, /^todo/, /^search_crew_hub/,
 ];
 
 const DISCLOSURE_THRESHOLD = 40;

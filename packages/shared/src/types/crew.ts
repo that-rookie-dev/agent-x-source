@@ -21,6 +21,8 @@ export interface CrewResourceQuota {
 
 import type { PermissionRule } from './permission.js';
 
+export type CrewSource = 'custom' | 'hub';
+
 export interface Crew {
   id: string;
   name: string;
@@ -29,6 +31,14 @@ export interface Crew {
   systemPrompt: string;
   description?: string;
   emotion?: CrewEmotion;
+  /** Provenance: user-created or recruited from Hub catalog. */
+  source?: CrewSource;
+  /** FK to crew_catalog when source is hub. */
+  catalogId?: string;
+  /** Denormalized search blob for FTS. */
+  searchText?: string;
+  /** When false, excluded from automatic crew suggestions. */
+  suggestable?: boolean;
   isDefault: boolean;
   enabled: boolean;
   expertise?: string[];
@@ -56,6 +66,10 @@ export interface CrewCreateInput {
   systemPrompt: string;
   description?: string;
   emotion?: CrewEmotion;
+  source?: CrewSource;
+  catalogId?: string;
+  searchText?: string;
+  suggestable?: boolean;
   isDefault?: boolean;
   enabled?: boolean;
   expertise?: string[];

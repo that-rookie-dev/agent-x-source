@@ -5,8 +5,12 @@ import LinearProgress from '@mui/material/LinearProgress';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GroupsIcon from '@mui/icons-material/Groups';
+import ForumIcon from '@mui/icons-material/Forum';
 import type { SessionInfo } from '../api';
 import { colors } from '../theme';
+import { getCrewAccent } from '../styles/crew-theme';
+import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './crew/MedicalDisclaimerBanner';
+import { sessionHostCrewDisplay } from '../utils/crew-display';
 
 interface SessionGridCardProps {
   session: SessionInfo;
@@ -57,45 +61,77 @@ function KpiCell({ label, value, accent }: { label: string; value: string | numb
 }
 
 export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardProps) {
+  const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
   const isActive = session.status === 'active';
   const mode = session.mode ?? 'plan';
   const tokenPct = session.tokenUsagePct ?? 0;
   const crewCount = session.crewCount ?? session.crewCallsigns?.length ?? 0;
+  const hostCallsignRaw = session.hostCrewCallsign ?? '';
+  const hostTitle = session.hostCrewTitle ?? '';
+  const { displayName: hostName, displayCallsign: hostCallsign } = sessionHostCrewDisplay(session);
+  const crewAccent = getCrewAccent(session.hostCrewColor, hostCallsign || hostName);
+  const isMedical = isCrewPrivate && isMedicalCrewDisplay({
+    categoryId: session.hostCrewCategoryId,
+    catalogId: session.hostCrewCatalogId,
+    callsign: hostCallsignRaw,
+    crewId: session.hostCrewId,
+  });
+  const displayTitle = isCrewPrivate ? hostName : (session.title || `Session ${session.id.slice(0, 8)}`);
 
   return (
     <Box
       onClick={() => onOpen(session)}
       sx={{
+        position: 'relative',
         borderRadius: '10px',
-        border: `1px solid ${isActive ? colors.accent.green + '35' : colors.border.subtle}`,
+        border: `1px solid ${isCrewPrivate ? crewAccent + '35' : isActive ? colors.accent.green + '35' : colors.border.subtle}`,
         bgcolor: colors.bg.secondary,
-        p: 1.25,
+        overflow: 'hidden',
         cursor: 'pointer',
         display: 'flex',
         flexDirection: 'column',
-        gap: 0.85,
         minHeight: 148,
         transition: 'border-color 0.15s, transform 0.15s, box-shadow 0.15s',
         '&:hover': {
-          borderColor: colors.accent.blue + '50',
+          borderColor: (isCrewPrivate ? crewAccent : colors.accent.blue) + '50',
           transform: 'translateY(-1px)',
-          boxShadow: `0 6px 20px ${colors.accent.blue}12`,
+          boxShadow: `0 6px 20px ${(isCrewPrivate ? crewAccent : colors.accent.blue)}12`,
         },
       }}
     >
+      {isMedical && (
+        <Box
+          aria-hidden
+          sx={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 1,
+            pointerEvents: 'none',
+          }}
+        >
+          <MedicalCrewCardStripe />
+        </Box>
+      )}
+      <Box sx={{ p: 1.25, flex: 1, display: 'flex', flexDirection: 'column', gap: 0.85 }}>
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75 }}>
         <Box sx={{
           width: 28,
           height: 28,
           borderRadius: '6px',
           flexShrink: 0,
-          bgcolor: colors.bg.tertiary,
-          border: `1px solid ${colors.border.default}`,
+          bgcolor: isCrewPrivate ? crewAccent + '12' : colors.bg.tertiary,
+          border: `1px solid ${isCrewPrivate ? crewAccent + '30' : colors.border.default}`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
         }}>
-          <SmartToyIcon sx={{ fontSize: 14, color: isActive ? colors.accent.green : colors.text.dim }} />
+          {isCrewPrivate ? (
+            <ForumIcon sx={{ fontSize: 14, color: crewAccent }} />
+          ) : (
+            <SmartToyIcon sx={{ fontSize: 14, color: isActive ? colors.accent.green : colors.text.dim }} />
+          )}
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography sx={{
@@ -107,11 +143,28 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}>
-            {session.title || `Session ${session.id.slice(0, 8)}`}
+            {displayTitle}
           </Typography>
           <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", mt: 0.2 }}>
-            {formatDate(session.createdAt)} · {formatTime(session.createdAt)}
+            {isCrewPrivate ? (
+              hostTitle || 'Crew specialist'
+            ) : (
+              <>{formatDate(session.createdAt)} · {formatTime(session.createdAt)}</>
+            )}
           </Typography>
+          {isCrewPrivate && hostCallsign && (
+            <Typography sx={{
+              fontSize: '0.48rem',
+              color: crewAccent,
+              fontFamily: "'JetBrains Mono', monospace",
+              mt: 0.15,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              @{hostCallsign}
+            </Typography>
+          )}
         </Box>
         <IconButton
           size="small"
@@ -122,6 +175,7 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         </IconButton>
       </Box>
 
+      {!isCrewPrivate && (
       <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
         {isActive && (
           <Box sx={{
@@ -152,6 +206,7 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
           </Box>
         )}
       </Box>
+      )}
 
       <Box sx={{
         display: 'grid',
@@ -159,8 +214,17 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         gap: 0.75,
       }}>
         <KpiCell label="Msgs" value={session.messageCount ?? 0} />
-        <KpiCell label="Compact" value={session.compactionCount ?? 0} accent={session.compactionCount ? colors.accent.orange : undefined} />
-        <KpiCell label="Workers" value={session.childSessionCount ?? 0} />
+        {isCrewPrivate ? (
+          <>
+            <KpiCell label="Current Mode" value={(session.mode ?? 'agent').toUpperCase()} accent={crewAccent} />
+            <KpiCell label="Type" value="1:1" />
+          </>
+        ) : (
+          <>
+            <KpiCell label="Compact" value={session.compactionCount ?? 0} accent={session.compactionCount ? colors.accent.orange : undefined} />
+            <KpiCell label="Workers" value={session.childSessionCount ?? 0} />
+          </>
+        )}
       </Box>
 
       <Box>
@@ -182,7 +246,7 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
             borderRadius: 2,
             bgcolor: colors.bg.tertiary,
             '& .MuiLinearProgress-bar': {
-              bgcolor: tokenPct > 85 ? colors.accent.red : tokenPct > 65 ? colors.accent.orange : colors.accent.blue,
+              bgcolor: tokenPct > 85 ? colors.accent.red : tokenPct > 65 ? colors.accent.orange : (isCrewPrivate ? crewAccent : colors.accent.blue),
               borderRadius: 2,
             },
           }}
@@ -190,16 +254,29 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
       </Box>
 
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 0.5, mt: 'auto' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4, minWidth: 0, flex: 1 }}>
-          <GroupsIcon sx={{ fontSize: 11, color: colors.text.dim, flexShrink: 0 }} />
+        {isCrewPrivate ? (
           <Typography sx={{
             fontSize: '0.5rem',
-            color: crewCount ? colors.text.secondary : colors.text.dim,
+            color: colors.text.dim,
             fontFamily: "'JetBrains Mono', monospace",
           }}>
-            {crewCount ? `${crewCount} crew${crewCount === 1 ? '' : 's'}` : 'No crews'}
+            {formatDate(session.updatedAt ?? session.createdAt)} · {formatTime(session.updatedAt ?? session.createdAt)}
           </Typography>
-        </Box>
+        ) : (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4, minWidth: 0, flex: 1 }}>
+            <GroupsIcon sx={{ fontSize: 11, color: colors.text.dim, flexShrink: 0 }} />
+            <Typography sx={{
+              fontSize: '0.5rem',
+              color: crewCount ? colors.text.secondary : colors.text.dim,
+              fontFamily: "'JetBrains Mono', monospace",
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {crewCount ? `${crewCount} crew${crewCount === 1 ? '' : 's'}` : 'No crews'}
+            </Typography>
+          </Box>
+        )}
         {(session.totalCostUsd ?? 0) > 0 && (
           <Typography sx={{
             fontSize: '0.48rem',
@@ -210,6 +287,7 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
             ${session.totalCostUsd!.toFixed(3)}
           </Typography>
         )}
+      </Box>
       </Box>
     </Box>
   );

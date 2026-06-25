@@ -4,6 +4,8 @@ export interface RecordMeta {
   updatedAt?: string;
 }
 
+import type { SessionContextKind } from './session-context.js';
+
 export interface StorableSession extends RecordMeta {
   title: string;
   status: string;
@@ -12,6 +14,15 @@ export interface StorableSession extends RecordMeta {
   scopePath: string;
   mode?: string;
   parentId?: string | null;
+  contextKind?: SessionContextKind;
+  hostCrewId?: string | null;
+  /** Denormalized host crew display — survives roster removal / hub-only chats */
+  hostCrewName?: string | null;
+  hostCrewCallsign?: string | null;
+  hostCrewTitle?: string | null;
+  hostCrewColor?: string | null;
+  hostCrewCatalogId?: string | null;
+  hostCrewCategoryId?: string | null;
   hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;

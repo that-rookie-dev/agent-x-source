@@ -11,10 +11,15 @@ export interface PersistedToolCall {
   metadata?: Record<string, unknown>;
 }
 
+import type { QuestionnaireRecord } from '../types/questionnaire.js';
+import type { CrewRosterPickerRecord } from '../types/crew-roster-picker.js';
+
 export interface MessagePart {
-  type: 'text' | 'tool' | 'subagent';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker';
   id: string;
   content?: string;
+  questionnaire?: QuestionnaireRecord;
+  crewRosterPicker?: CrewRosterPickerRecord;
   tool?: PersistedToolCall;
   agent?: {
     id: string;
@@ -306,6 +311,8 @@ export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts
         return { ...p, content: repairStreamTextGlitches(stripToolNoise(p.content, { trim: false })) };
       }
       if (p.type === 'tool' && p.tool) return { ...p, tool: { ...p.tool, status: p.tool.status || 'done' } };
+      if (p.type === 'questionnaire' && p.questionnaire) return p;
+      if (p.type === 'crew_roster_picker' && p.crewRosterPicker) return p;
       return p;
     }), true);
     if (!shouldRebuildStoredParts(content, mapped, toolCalls)) {

@@ -148,20 +148,159 @@ export const crews = {
   generateMetadata: (systemPrompt?: string, title?: string, name?: string, description?: string) => request<{ expertise: string[]; traits: string[]; revisedPrompt: string }>('/crew/generate-metadata', { method: 'POST', body: JSON.stringify({ systemPrompt, title, name, description }) }),
 };
 
+// ─── Crew private chat (1:1, no Agent-X) ───
+export interface CrewChatCrewInfo {
+  id: string;
+  name: string;
+  title?: string;
+  callsign: string;
+  color?: string;
+  icon?: string;
+  catalogId?: string;
+  categoryId?: string;
+  description?: string;
+  expertise?: string[];
+  traits?: string[];
+  emotion?: string;
+  tone?: string;
+}
+
+export interface CrewChatSessionInfo {
+  id: string;
+  title?: string;
+  contextKind?: 'agent_x' | 'crew_private';
+  hostCrewId?: string;
+  crewId?: string;
+  crewName?: string;
+  crewCallsign?: string;
+  scopePath?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const crewChat = {
+  /** Create or return the crew-private session; open via `/console/chat/{sessionId}`. */
+  startSession: (body: {
+    crewId?: string;
+    scopePath?: string;
+    recruit?: {
+      id?: string;
+      name: string;
+      title?: string;
+      callsign?: string;
+      systemPrompt: string;
+      description?: string;
+      tone?: string;
+      expertise?: string[];
+      traits?: string[];
+      tools?: string[];
+      source?: string;
+      catalogId?: string;
+      categoryId?: string;
+      color?: string;
+    };
+  }) => request<{
+    sessionId: string;
+    created: boolean;
+    crew: CrewChatCrewInfo;
+    session: CrewChatSessionInfo;
+  }>('/crew-chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
+};
+
+export const crewSuggestions = {
+  evaluate: (text: string, sessionId: string, priorUserMessages?: string[]) =>
+    request<CrewSuggestionEvaluation>('/crew-suggestions/evaluate', {
+      method: 'POST',
+      body: JSON.stringify({ text, sessionId, priorUserMessages }),
+    }),
+  resolve: (payload: {
+    sessionId: string;
+    action: 'deploy' | 'skip' | 'dismiss';
+    dismissForSession?: boolean;
+    selectedCandidateIds?: string[];
+    candidates?: CrewMatchCandidate[];
+  }) => request<{ ok: boolean; deployedCrewIds: string[]; deployedPrimaryCrewId?: string }>('/crew-suggestions/resolve', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  clearDismiss: (sessionId: string) =>
+    request<{ ok: boolean }>('/crew-suggestions/clear-dismiss', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId }),
+    }),
+  getCatalogEntry: (id: string) =>
+    request<{ entry: CatalogEntry }>(`/crew-catalog/${encodeURIComponent(id)}`),
+  offerRosterPicker: (sessionId: string, body: {
+    userText: string;
+    evaluation: CrewSuggestionEvaluation;
+    attachments?: Array<{ name: string }>;
+  }) => request<{ ok: boolean; userMessageId: string; pickerMessageId: string; pickerPartId: string }>(
+    `/sessions/${sessionId}/crew-roster-picker`,
+    { method: 'POST', body: JSON.stringify(body) },
+  ),
+  updateRosterPicker: (sessionId: string, body: {
+    pickerMessageId: string;
+    status: 'answered' | 'skipped';
+    selectedCandidateIds?: string[];
+    evaluation: CrewSuggestionEvaluation;
+    pendingUserText: string;
+    pickerPartId?: string;
+  }) => request<{ ok: boolean }>(`/sessions/${sessionId}/crew-roster-picker`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  }),
+};
+
+export const crewCatalog = {
+  seedStatus: () => request<CatalogSeedStatusResponse>('/crew-catalog/seed-status'),
+  listCategories: () => request<{ categories: CatalogCategorySummary[] }>('/crew-catalog/categories'),
+  listByCategory: (categoryId: string, limit = 500) =>
+    request<{ crews: CatalogSummary[] }>(`/crew-catalog/by-category/${encodeURIComponent(categoryId)}?limit=${limit}`),
+  search: (q: string, limit = 40) =>
+    request<{ crews: CatalogSummary[] }>(`/crew-catalog/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+};
+
 // ─── Chat ───
 async function postChatAsync(path: string, body: Record<string, unknown>) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   const response = await fetch(`${BASE}${path}`, { method: 'POST', credentials: 'include', headers, body: JSON.stringify(body) });
   if (response.status === 401) { onUnauthorized?.(); throw new Error('Unauthorized'); }
-  const data = await response.json().catch(() => ({})) as { ok?: boolean; message?: ChatMessage; turnId?: string; async?: boolean; error?: string; clarification?: boolean };
+  const data = await response.json().catch(() => ({})) as {
+    ok?: boolean;
+    message?: ChatMessage;
+    turnId?: string;
+    async?: boolean;
+    error?: string;
+    clarification?: boolean;
+    crewSuggestionRequired?: boolean;
+    evaluation?: CrewSuggestionEvaluation;
+  };
   if (!response.ok && response.status !== 202) throw new Error(data.error || `HTTP ${response.status}`);
   return data;
 }
 
 export const chat = {
-  send: (text: string, attachments?: { name: string; content: string }[], retry?: boolean) =>
-    postChatAsync('/chat/message', { text, attachments, retry }),
+  send: (
+    text: string,
+    attachments?: { name: string; content: string }[],
+    retry?: boolean,
+    delegateCrewIds?: string[],
+    crewSuggestionResolved?: boolean,
+    priorUserMessages?: string[],
+    crewIntakeFromPicker?: boolean,
+    primaryCrewId?: string,
+  ) =>
+    postChatAsync('/chat/message', {
+      text,
+      attachments,
+      retry,
+      delegateCrewIds,
+      crewSuggestionResolved,
+      priorUserMessages,
+      crewIntakeFromPicker,
+      primaryCrewId,
+    }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
   
@@ -170,7 +309,11 @@ export const chat = {
     text: string,
     onProgress: (event: { type: string; data: unknown }) => void,
     attachments?: { name: string; content: string }[],
-    retry?: boolean
+    retry?: boolean,
+    delegateCrewIds?: string[],
+    crewSuggestionResolved?: boolean,
+    crewIntakeFromPicker?: boolean,
+    primaryCrewId?: string,
   ): Promise<{ ok: boolean; message?: ChatMessage; clarification?: boolean; error?: string }> => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -184,7 +327,7 @@ export const chat = {
         method: 'POST',
         credentials: 'include',
         headers,
-        body: JSON.stringify({ text, attachments, retry }),
+        body: JSON.stringify({ text, attachments, retry, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId }),
       });
 
       if (response.status === 401) {
@@ -286,7 +429,32 @@ export const sessions = {
   create: (scopePath?: string) => request<{ sessionId: string }>('/sessions', { method: 'POST', body: scopePath ? JSON.stringify({ scopePath }) : undefined }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
-  restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; parts?: Array<Record<string, unknown>>; crewStates?: Array<{ crewId: string; enabled: boolean }>; scopePath?: string }>(`/sessions/${id}/restore`, { method: 'POST' }),
+  restore: (id: string, opts?: { perRole?: number }) =>
+    request<{
+      session: SessionInfo;
+      messages: ChatMessage[];
+      parts?: Array<Record<string, unknown>>;
+      crewStates?: Array<{ crewId: string; enabled: boolean }>;
+      scopePath?: string;
+      turnFeedback?: Array<Record<string, unknown>>;
+      resumeState?: Record<string, unknown> | null;
+      messagesMeta?: { total: number; truncated: boolean; perRole: number };
+    }>(`/sessions/${id}/restore`, {
+      method: 'POST',
+      body: JSON.stringify(opts?.perRole ? { perRole: opts.perRole } : {}),
+    }),
+  submitTurnFeedback: (id: string, body: { messageId: string; rating: 'positive' | 'negative' | 'skipped'; turnSummary?: string; metadata?: Record<string, unknown> }) =>
+    request<{ ok: boolean; messageId: string; rating: string }>(`/sessions/${id}/feedback`, { method: 'POST', body: JSON.stringify(body) }),
+  listTurnFeedback: (id: string) => request<{ feedback: Array<Record<string, unknown>> }>(`/sessions/${id}/feedback`),
+  getMessagesPage: (id: string, opts?: { limit?: number; before?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.before) params.set('before', opts.before);
+    const qs = params.toString();
+    return request<{ messages: ChatMessage[]; total: number; hasMore: boolean }>(
+      `/sessions/${id}/messages${qs ? `?${qs}` : ''}`,
+    );
+  },
   context: (id: string) => request<SessionContext>(`/sessions/${id}/context`),
   compact: (id: string) => request<{ ok: boolean; summary: string }>(`/sessions/${id}/compact`, { method: 'POST' }),
   checkpoint: (id: string, label?: string) => request<{ checkpointId: string; label: string }>(`/sessions/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ label }) }),
@@ -592,15 +760,22 @@ export interface Crew {
   tools?: string[];
   color?: string;
   icon?: string;
+  catalogId?: string;
+  categoryId?: string;
+  requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
 }
 
 export interface CrewInput {
+  id?: string;
   name: string;
   title?: string;
   callsign: string;
   systemPrompt: string;
   description?: string;
   tone?: string;
+  source?: 'custom' | 'hub';
+  catalogId?: string;
   expertise?: string[];
   traits?: string[];
   tools?: string[];
@@ -608,9 +783,95 @@ export interface CrewInput {
   icon?: string;
 }
 
+export interface CatalogSeedStatusResponse {
+  status: 'idle' | 'seeding' | 'ready' | 'error';
+  table: 'crew_catalog';
+  ftsTable: 'crew_catalog_fts' | 'crew_catalog.search_tsv';
+  seededCount: number;
+  expectedCount: number;
+  manifestRevision: number;
+  storedRevision: number;
+  percent: number;
+  processedInRun: number;
+  error?: string;
+}
+
+export interface CatalogCategorySummary {
+  id: string;
+  label: string;
+  iconId?: string;
+  crewCount: number;
+}
+
+export interface CatalogSummary {
+  id: string;
+  callsign: string;
+  name: string;
+  title: string;
+  categoryId: string;
+  categoryLabel: string;
+  description: string;
+  expertise: string[];
+  traits: string[];
+  tone?: string;
+  tools?: string[];
+  requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
+}
+
+export interface CatalogEntry {
+  id: string;
+  callsign: string;
+  name: string;
+  title: string;
+  categoryId: string;
+  categoryLabel: string;
+  description: string;
+  systemPrompt: string;
+  tone?: string;
+  expertise: string[];
+  traits: string[];
+  tools?: string[];
+  searchText: string;
+  hubRevision: number;
+  active: boolean;
+  requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
+}
+
+export interface CrewMatchCandidate {
+  id: string;
+  origin: 'hub_catalog' | 'custom' | 'hub_roster';
+  callsign: string;
+  name: string;
+  title: string;
+  description: string;
+  expertise: string[];
+  traits: string[];
+  matchScore: number;
+  reasons: string[];
+  onRoster: boolean;
+  enabled?: boolean;
+  catalogId?: string;
+  categoryId?: string;
+  categoryLabel?: string;
+  tone?: string;
+  requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
+}
+
+export interface CrewSuggestionEvaluation {
+  shouldSuggest: boolean;
+  dismissed: boolean;
+  confidence: number;
+  taskSummary: string;
+  candidates: CrewMatchCandidate[];
+  reasons: string[];
+}
+
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'part';
   content: string;
   timestamp?: string;
   tokenCount?: number;
@@ -630,6 +891,14 @@ export interface SessionInfo {
   provider: string;
   model: string;
   crewId?: string;
+  contextKind?: 'agent_x' | 'crew_private';
+  hostCrewId?: string;
+  hostCrewName?: string;
+  hostCrewCallsign?: string;
+  hostCrewTitle?: string;
+  hostCrewColor?: string;
+  hostCrewCatalogId?: string;
+  hostCrewCategoryId?: string;
   mode?: 'agent' | 'plan';
   messageCount: number;
   status?: string;
@@ -950,10 +1219,11 @@ export const agent = {
   autonomyStatus: () => request<AutonomyStatus>('/agent/autonomy-status'),
   resetCircuitBreaker: (tool?: string) =>
     request<{ ok: boolean }>('/agent/circuit-breaker/reset', { method: 'POST', body: JSON.stringify(tool ? { tool } : {}) }),
-  respondToPlan: (approved: boolean) =>
-    request<{ ok: boolean }>('/plan/respond', { method: 'POST', body: JSON.stringify({ approved }) }),
-  respondToClarification: (response: string) =>
-    request<{ ok: boolean }>('/clarification/respond', { method: 'POST', body: JSON.stringify({ response }) }),
+  respondToClarification: (response: string, sessionId?: string) =>
+    request<{ ok: boolean; resumed?: boolean }>('/clarification/respond', {
+      method: 'POST',
+      body: JSON.stringify({ response, ...(sessionId ? { sessionId } : {}) }),
+    }),
   respondToModeEscalation: (accepted: boolean) =>
     request<{ ok: boolean }>('/agent/mode-escalation', { method: 'POST', body: JSON.stringify({ accepted }) }),
   respondToStepCap: (continueRun: boolean) =>

@@ -8,12 +8,13 @@ import type {
   AgentPersonaConfig,
   RemediationAction,
   Plan,
-  PlanStep,
   PermissionRule,
   PermissionDecision,
-  ClarificationRequestMeta,
+  QuestionnairePayload,
+  ClarificationSource,
+  QuestionnaireRecord,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, buildTextQuestionnaire } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { Mutex } from '../concurrency/Mutex.js';
 import { join, resolve, normalize } from 'node:path';
@@ -33,13 +34,18 @@ import { setTaskManagerInstance } from '../commands/builtin/tasks.js';
 import { registerSessionTodoManager } from '../tools/TodoAccess.js';
 import { setSubAgentManagerInstance } from '../tools/builtin/subagent.js';
 import { setCrewDelegator } from '../tools/builtin/delegate-to-crew.js';
+import { setCrewHubSearcher } from '../tools/builtin/search-crew-hub.js';
+import { buildCrewRosterHintBlock } from '../crew/crew-roster-hint.js';
+import { getCrewSuggestionService } from '../crew/get-crew-store.js';
+import { buildCrewSuggestionSearchQuery } from './crew-auto-compose.js';
+import { scoreMatchCandidates, type RawMatchRow } from '../crew/CrewMatchService.js';
 import { setToolRegistryInstance } from '../commands/builtin/tools.js';
 import { SecretSauceManager } from '../secret-sauce/index.js';
 import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createSqliteNeuralDb, createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
@@ -72,12 +78,18 @@ import { ReflectionLoop } from './ReflectionLoop.js';
 import { SkillRegistry } from './SkillRegistry.js';
 import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
 import { ResearchEngine } from '../reasoning/ResearchEngine.js';
-import { CrewOrchestrator, type CrewMember } from './CrewOrchestrator.js';
+import { CrewOrchestrator, buildCrewPrivateFastReplyPrompt, type CrewMember } from './CrewOrchestrator.js';
+import {
+  assessCrewNeed,
+  buildTaskContextForCrewRouting,
+  shouldBypassActiveCrewRouting,
+} from './crew-auto-compose.js';
 import { CrewMissionOrchestrator, type CrewMissionOptions, type CrewMissionResult } from './CrewMissionOrchestrator.js';
 import { setCrewMissionDeps } from '../tools/builtin/spawn-crew-workers.js';
 import { isMissionInProgress } from './crew-mission-registry.js';
 import { evaluateCrewDelegation } from './crew-delegation-guard.js';
 import { ContextTracker } from './ContextTracker.js';
+import { TurnFeedbackService } from '../feedback/TurnFeedbackService.js';
 import { AutonomousDiagnosticsSystem, type SessionContext } from './AutonomousDiagnosticsSystem.js';
 
 import { TodoManager } from './TodoManager.js';
@@ -93,12 +105,11 @@ import { AuthProfileManager } from '../providers/AuthProfileManager.js';
 import { VisualEventBridge } from '../communication/visuals/VisualEventBridge.js';
 import { CommandQueue } from '../communication/CommandQueue.js';
 import { RunStateManager } from '../agent/RunStateManager.js';
-import { TurnStateManager } from './TurnStateManager.js';
+import { TurnStateManager, type TurnPhase } from './TurnStateManager.js';
 import { ToolLedger } from './ToolLedger.js';
 import {
   isWriteTool,
   shouldEscalateForExecution,
-  shouldGeneratePlan,
   shouldUseInteractivePlanGates,
 } from './plan-mode-utils.js';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
@@ -132,7 +143,9 @@ export interface AgentOptions {
   /** Live crew mission context — injected between agentic steps when revision advances */
   missionContextProvider?: () => { revision: number; block: string };
   /** Slim prompt stack for crew workers (no Agent-X identity bleed). */
-  promptProfile?: 'default' | 'crew_worker';
+  promptProfile?: 'default' | 'crew_worker' | 'crew_private';
+  /** Host crew for 1:1 private chat sessions. */
+  crewPrivateHost?: import('@agentx/shared').Crew;
   /** Background worker (sub-agent / crew) — skip interactive plan approval & mode escalation UI gates. */
   delegatedWorker?: boolean;
 }
@@ -151,6 +164,7 @@ export class Agent {
   private scope: Scope | null = null;
   private _abortSignalController: AbortController | null = null;
   private pendingInstruction: string | null = null;
+  private pendingDelegateCrewIds: string[] | null = null;
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
   private todoManager: TodoManager;
@@ -209,6 +223,7 @@ export class Agent {
   // ─── Neural Engines (lazy-init)
   private _experienceEngine: ExperienceEngine | null = null;
   private _growthEngine: GrowthEngine | null = null;
+  private _turnFeedbackService: TurnFeedbackService | null = null;
   private _neuralDb: any = null;
   private _pgPool: any = null;
 
@@ -239,10 +254,17 @@ export class Agent {
 
   // ─── Clarification & Approval
   private clarificationResolve: ((response: string) => void) | null = null;
+  private activeClarificationResume: {
+    kind: 'questionnaire' | 'crew_intake';
+    questionnaireMessageId: string;
+    userText?: string;
+    delegateCrewIds?: string[];
+    primaryCrewId?: string;
+    crewIntakeFromPicker?: boolean;
+  } | null = null;
   private _missionEventSeq = 0;
   private missionContextProvider?: () => { revision: number; block: string };
   private lastMissionContextRevision = -1;
-  private pendingPlanApproval: ((approved: boolean) => void) | null = null;
   private pendingStepApproval: ((stepId: string, approved: boolean, description?: string) => void) | null = null;
   private pendingModeEscalation: ((accepted: boolean) => void) | null = null;
   private pendingStepCap: ((continueRun: boolean) => void) | null = null;
@@ -252,6 +274,7 @@ export class Agent {
   private partialTurnContent = '';
   private currentTurnId: string | null = null;
   private readonly maxCompletionSteps = 25;
+  private readonly crewPrivateCompletionSteps = 40;
   private stepCapExtra = 0;
 
   // ─── Lazy-init getters ───
@@ -305,6 +328,7 @@ export class Agent {
 
   // Anti-duplicate: prevents double message_received within a single turn
   private _turnMessageEmitted = false;
+  private activeStreamHandler: { discardCurrentStepText: () => void } | null = null;
   // Anti-duplicate: prevents repeated model capability warnings per session
   private _capabilityWarningEmitted = false;
   // ─── LAZY PIPELINE MODULES (created on first access) ───
@@ -355,7 +379,8 @@ export class Agent {
   onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number; crewId?: string }) => void) | null = null;
   onSessionEvent: ((event: SessionEvent) => void) | null = null;
 
-  setContextPersistDir(_dir: string, scopePath?: string): void {
+  setContextPersistDir(dir: string, scopePath?: string): void {
+    this.contextTracker.setPersistDir(dir);
     if (scopePath) this.contextTracker.setScopePath(scopePath);
   }
   private maxSubAgents = 5;
@@ -370,6 +395,7 @@ export class Agent {
       scopePath?: string,
       meta?: { kind?: string; label?: string },
     ) => unknown;
+    saveCrewState?: (crewId: string, enabled: boolean, messageCount?: number) => void;
   } | null = null;
   private enabledCrewSessionIds: Set<string> = new Set();
 
@@ -381,11 +407,177 @@ export class Agent {
 
   /**
    * Respond to a pending clarification request.
+   * @returns true when a waiter was active and the response was delivered.
    */
-  respondToClarification(response: string): void {
+  respondToClarification(response: string): boolean {
     if (this.clarificationResolve) {
       this.clarificationResolve(response);
+      return true;
     }
+    return false;
+  }
+
+  isAwaitingClarification(): boolean {
+    return this.clarificationResolve != null;
+  }
+
+  getClarificationResumeState(): {
+    kind: 'questionnaire' | 'crew_intake';
+    messageId: string;
+    questionnaireMessageId?: string;
+    userText?: string;
+    delegateCrewIds?: string[];
+    primaryCrewId?: string;
+    crewIntakeFromPicker?: boolean;
+    createdAt: string;
+  } | null {
+    if (!this.activeClarificationResume) return null;
+    return {
+      kind: this.activeClarificationResume.kind,
+      messageId: this.activeClarificationResume.questionnaireMessageId,
+      questionnaireMessageId: this.activeClarificationResume.questionnaireMessageId,
+      userText: this.activeClarificationResume.userText,
+      delegateCrewIds: this.activeClarificationResume.delegateCrewIds,
+      primaryCrewId: this.activeClarificationResume.primaryCrewId,
+      crewIntakeFromPicker: this.activeClarificationResume.crewIntakeFromPicker,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  clearClarificationResumeState(): void {
+    this.activeClarificationResume = null;
+  }
+
+  recordCrewFeedback(crewId: string, positive: boolean): void {
+    this.crewOrchestrator.recordFeedback(crewId, positive);
+  }
+
+  private clarificationSource(): ClarificationSource | undefined {
+    if (this.options.promptProfile === 'crew_private' && this.options.crewPrivateHost) {
+      return {
+        kind: 'crew',
+        name: this.options.crewPrivateHost.name,
+        callsign: this.options.crewPrivateHost.callsign,
+      };
+    }
+    if (this.options.promptProfile !== 'crew_worker') {
+      return { kind: 'agent', name: 'Agent-X' };
+    }
+    return undefined;
+  }
+
+  private discardStreamPreambleBeforeQuestionnaire(): void {
+    this.activeStreamHandler?.discardCurrentStepText();
+  }
+
+  private async waitForQuestionnaireResponse(questionnaire: QuestionnairePayload): Promise<string> {
+    const payload: QuestionnairePayload = questionnaire.source
+      ? questionnaire
+      : { ...questionnaire, source: this.clarificationSource() };
+    this.turnState.setPhase('awaiting_permission', 'clarification');
+
+    // Drop any assistant preamble streamed before ask_clarification in this step
+    this.discardStreamPreambleBeforeQuestionnaire();
+
+    const messageId = generateMessageId();
+    const record: QuestionnaireRecord = { payload, status: 'pending' };
+    const questionnaireMsg = this.buildQuestionnaireMessage(messageId, record);
+    this.persistQuestionnaireMessage(questionnaireMsg);
+    this.activeClarificationResume = {
+      kind: this.activeClarificationResume?.kind ?? 'questionnaire',
+      questionnaireMessageId: messageId,
+      userText: this.activeClarificationResume?.userText,
+      delegateCrewIds: this.activeClarificationResume?.delegateCrewIds,
+      primaryCrewId: this.activeClarificationResume?.primaryCrewId,
+      crewIntakeFromPicker: this.activeClarificationResume?.crewIntakeFromPicker,
+    };
+    this.emit({ type: 'clarification_required', questionnaire: payload });
+    this.emit({ type: 'message_received', message: questionnaireMsg, elapsed: 0 });
+
+    const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
+    this.clarificationResolve = null;
+    this.activeClarificationResume = null;
+
+    const answered: QuestionnaireRecord = {
+      payload,
+      status: response === '(skipped)' ? 'skipped' : 'answered',
+      answer: response,
+      answeredAt: new Date().toISOString(),
+    };
+    const updatedMsg = this.buildQuestionnaireMessage(messageId, answered);
+    this.updateQuestionnaireMessage(messageId, answered);
+    this.emit({ type: 'message_received', message: updatedMsg, elapsed: 0, isUpdate: true });
+
+    if (response && response !== '(skipped)') {
+      // Keep answer in agent memory for subsequent turns — do not surface as a user chat bubble
+      this.messages.push({ role: 'user', content: response });
+    }
+
+    this.discardStreamPreambleBeforeQuestionnaire();
+    this.turnState.setPhase('running', 'resuming');
+    this.emit({
+      type: 'loading_start',
+      stage: this.options.promptProfile === 'crew_private' ? 'crew_private' : 'thinking',
+    });
+    return response;
+  }
+
+  private buildQuestionnaireMessage(messageId: string, record: QuestionnaireRecord): Message {
+    const host = this.options.crewPrivateHost;
+    const crew = this.options.promptProfile === 'crew_private' && host
+      ? {
+        crewId: host.id,
+        name: host.name,
+        callsign: host.callsign,
+        color: host.color,
+        icon: host.icon,
+      }
+      : undefined;
+    return {
+      id: messageId,
+      sessionId: this.sessionId,
+      role: 'assistant',
+      content: '',
+      toolCalls: null,
+      createdAt: new Date().toISOString(),
+      tokenCount: 0,
+      crew,
+      parts: [{ type: 'questionnaire', id: record.payload.id, questionnaire: record }],
+    };
+  }
+
+  private getMessageStore(): {
+    insertMessage?: (msg: Record<string, unknown>) => string | void;
+    updateMessage?: (sessionId: string, messageId: string, patch: Record<string, unknown>) => void;
+  } | null {
+    return (this.sessionManager as unknown as { store?: {
+      insertMessage?: (msg: Record<string, unknown>) => string | void;
+      updateMessage?: (sessionId: string, messageId: string, patch: Record<string, unknown>) => void;
+    } } | null)?.store ?? null;
+  }
+
+  private persistQuestionnaireMessage(msg: Message): void {
+    const store = this.getMessageStore();
+    if (!store?.insertMessage) return;
+    try {
+      store.insertMessage({
+        id: msg.id,
+        sessionId: msg.sessionId,
+        role: msg.role,
+        content: msg.content,
+        parts: msg.parts,
+        tokenCount: msg.tokenCount ?? 0,
+        metadata: msg.crew
+          ? { crewId: msg.crew.crewId, crewName: msg.crew.name, callsign: msg.crew.callsign }
+          : undefined,
+      });
+    } catch { /* best-effort */ }
+  }
+
+  private updateQuestionnaireMessage(messageId: string, record: QuestionnaireRecord): void {
+    const store = this.getMessageStore();
+    const parts = [{ type: 'questionnaire', id: record.payload.id, questionnaire: record }];
+    store?.updateMessage?.(this.sessionId, messageId, { parts });
   }
 
   constructor(options: AgentOptions) {
@@ -398,7 +590,12 @@ export class Agent {
     }
     this.sessionId = options.sessionId;
     this.scopePath = normalize(resolve(options.scopePath!));
-    this.contextTracker = new ContextTracker(null as any, this.sessionId);
+    const crewHost = options.crewPrivateHost;
+    this.contextTracker = new ContextTracker(null as any, this.sessionId,
+      crewHost && options.promptProfile === 'crew_private'
+        ? { kind: 'crew_private', hostCrewId: crewHost.id, hostCrewName: crewHost.name, hostCrewCallsign: crewHost.callsign }
+        : undefined,
+    );
     this.eventBus = options.eventBus ?? new AgentEventBus();
     this._onPart = options.onPart;
 
@@ -410,7 +607,6 @@ export class Agent {
     this.subAgents.setParentAgent(this);
     setSubAgentManagerInstance(this.subAgents);
 
-    // Crew delegation: Agent-X delegates via tool calls (validated by LLM guard)
     setCrewDelegator(async (crewName: string, taskDescription: string) => {
       if (!this.crewOrchestrator) return { success: false, output: 'No crews available.' };
       if (isMissionInProgress(this.sessionId)) {
@@ -442,6 +638,77 @@ export class Agent {
           : (result.synthesized || `${member.crew.name} completed the task.`),
       };
     });
+
+    setCrewHubSearcher(async (query, _sessionId, limit = 5) => {
+      const store = (this.sessionManager as unknown as { store?: unknown })?.store;
+      const service = getCrewSuggestionService(store);
+      if (!service) return [];
+      await service.ensureReady();
+      type CatalogSearchStore = {
+        searchCatalog: (q: string, n: number) => Promise<Array<Record<string, unknown> & { ftsRank: number }>>;
+        searchRosterCrews: (q: string, n: number) => Promise<Array<Record<string, unknown> & { ftsRank: number }>>;
+        listRecruitedCatalogIds: () => Promise<Set<string>>;
+      };
+      const catalogStore = (store as { getCrewCatalogStore?: () => CatalogSearchStore | null })
+        ?.getCrewCatalogStore?.() ?? null;
+      if (!catalogStore) return [];
+
+      const searchQuery = buildCrewSuggestionSearchQuery(query);
+      const recruited = await catalogStore.listRecruitedCatalogIds();
+      const catalogHits = await catalogStore.searchCatalog(searchQuery, 20);
+      const rosterHits = await catalogStore.searchRosterCrews(searchQuery, 20);
+      const rows: RawMatchRow[] = [];
+
+      for (const hit of catalogHits) {
+        if (recruited.has(String(hit.id))) continue;
+        rows.push({
+          id: String(hit.id),
+          origin: 'hub_catalog',
+          callsign: String(hit.callsign ?? ''),
+          name: String(hit.name ?? ''),
+          title: String(hit.title ?? ''),
+          categoryLabel: hit.categoryLabel as string | undefined,
+          description: String(hit.description ?? ''),
+          expertise: (hit.expertise as string[]) ?? [],
+          traits: (hit.traits as string[]) ?? [],
+          catalogId: String(hit.id),
+          onRoster: false,
+          ftsRank: hit.ftsRank,
+          systemPrompt: hit.systemPrompt as string | undefined,
+        });
+      }
+      for (const crew of rosterHits) {
+        rows.push({
+          id: String(crew.id),
+          origin: crew.source === 'custom' ? 'custom' : 'hub_roster',
+          callsign: String(crew.callsign ?? ''),
+          name: String(crew.name ?? ''),
+          title: String(crew.title ?? ''),
+          description: String(crew.description ?? ''),
+          expertise: (crew.expertise as string[]) ?? [],
+          traits: (crew.traits as string[]) ?? [],
+          catalogId: crew.catalogId as string | undefined,
+          onRoster: true,
+          enabled: crew.enabled as boolean | undefined,
+          ftsRank: crew.ftsRank,
+          systemPrompt: crew.systemPrompt as string | undefined,
+        });
+      }
+
+      const scored = scoreMatchCandidates(searchQuery, rows);
+      return scored.slice(0, limit).map((c) => ({
+        id: c.id,
+        callsign: c.callsign,
+        name: c.name,
+        title: c.title,
+        matchScore: c.matchScore,
+        expertise: c.expertise,
+        onRoster: c.onRoster,
+        origin: c.origin,
+        categoryLabel: c.categoryLabel,
+      }));
+    });
+
     this.taskManager = new TaskManager(this.eventBus);
     setTaskManagerInstance(this.taskManager);
     this.todoManager = new TodoManager(this.eventBus);
@@ -518,20 +785,8 @@ export class Agent {
       toolRegistry: this.toolRegistry!,
       toolExecutor: this.toolExecutor!,
       apiKey: this.getApiKey(),
-      waitForClarification: async (question: string, options: string[], allowFreeform: boolean, meta?: ClarificationRequestMeta) => {
-        this.emit({
-          type: 'clarification_required',
-          question,
-          options,
-          allowFreeform,
-          recommended: meta?.recommended,
-          allowChooseAll: meta?.allowChooseAll,
-          selectionMode: meta?.selectionMode,
-          fields: meta?.fields,
-        });
-        const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
-        this.clarificationResolve = null;
-        return response;
+      waitForClarification: async (questionnaire: QuestionnairePayload) => {
+        return this.waitForQuestionnaireResponse(questionnaire);
       },
       runSubAgent: async (instruction, toolsList, timeout, background) => {
         const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents);
@@ -671,7 +926,9 @@ export class Agent {
     // skillGenerator and reflectionLoop are lazy-init (created on first access)
 
     // Register this agent on the bus with persona identity
-    const identity = this.persona?.name || 'Agent-X';
+    const identity = this.options.promptProfile === 'crew_private' && this.options.crewPrivateHost
+      ? this.options.crewPrivateHost.name
+      : (this.persona?.name || 'Agent-X');
     this.agentBus.registerAgent(this.sessionId, [identity]);
 
     // ─── LAZY PIPELINE — components created on first access via getters ───
@@ -778,6 +1035,15 @@ export class Agent {
     if (!this._growthEngine) { const db = this.getNeuralDb(); this._growthEngine = new GrowthEngine(db); }
     return this._growthEngine;
   }
+
+  get turnFeedbackService(): TurnFeedbackService {
+    if (!this._turnFeedbackService) {
+      this._turnFeedbackService = new TurnFeedbackService(() => {
+        return (this.sessionManager as unknown as { store?: import('../feedback/TurnFeedbackService.js').TurnFeedbackStore })?.store ?? null;
+      });
+    }
+    return this._turnFeedbackService;
+  }
   private getNeuralDb(): any {
     if (!this._neuralDb) {
       try {
@@ -820,6 +1086,10 @@ export class Agent {
   cancel(): void {
     this.runStateMgr.cancel(this.sessionId);
     this.commandQueue.cancelSession(this.sessionId);
+    this.stopTurnHeartbeat();
+    this.turnState.cancel();
+    this.emitTurnState('cancelled');
+    this.emit({ type: 'loading_end' });
     if (this.scope) {
       this.scope.dispose();
       this.scope = null;
@@ -962,14 +1232,6 @@ export class Agent {
     return this.currentPlan;
   }
 
-  respondToPlan(approved: boolean): void {
-    if (this.pendingPlanApproval) {
-      this.pendingPlanApproval(approved);
-      this.pendingPlanApproval = null;
-      this.turnState.setPhase(approved ? 'running' : 'done', approved ? 'plan_approved' : 'plan_rejected');
-    }
-  }
-
   respondToModeEscalation(accepted: boolean): void {
     if (this.pendingModeEscalation) {
       if (accepted) {
@@ -1002,12 +1264,28 @@ export class Agent {
     return this.toolLedger.formatForHistory();
   }
 
+  private completionStepBudget(): number {
+    const base = this.options.promptProfile === 'crew_private'
+      ? this.crewPrivateCompletionSteps
+      : this.maxCompletionSteps;
+    return base * (1 + this.stepCapExtra);
+  }
+
+  private emitTurnState(phase: TurnPhase): void {
+    const snap = this.turnState.getSnapshot();
+    this.emit({ type: 'turn_state', phase, stage: snap.stage, step: snap.step });
+  }
+
   private startTurnHeartbeat(stage: string): void {
     this.stopTurnHeartbeat();
     this.turnState.setStage(stage);
     this.heartbeatTimer = setInterval(() => {
       const snap = this.turnState.getSnapshot();
-      const elapsedMs = snap.startedAt ? Date.now() - snap.startedAt : 0;
+      if (snap.phase === 'awaiting_permission' || snap.phase === 'awaiting_plan'
+        || snap.phase === 'awaiting_mode' || snap.phase === 'awaiting_step_cap') {
+        return;
+      }
+      const elapsedMs = this.turnState.getElapsedMs();
       this.emit({
         type: 'turn_heartbeat',
         stage: snap.stage || stage,
@@ -1039,20 +1317,12 @@ export class Agent {
 
   private waitForStepCap(currentSteps: number): Promise<boolean> {
     this.turnState.setPhase('awaiting_step_cap', `steps:${currentSteps}`);
-    this.emit({ type: 'step_cap_reached', currentSteps, maxSteps: this.maxCompletionSteps * (1 + this.stepCapExtra) });
+    this.emit({ type: 'step_cap_reached', currentSteps, maxSteps: this.completionStepBudget() });
     return new Promise((resolve) => {
       this.pendingStepCap = (cont) => {
         if (cont) this.stepCapExtra++;
         resolve(cont);
       };
-    });
-  }
-
-  private waitForPlanApproval(plan: Plan, userRequest: string): Promise<boolean> {
-    this.turnState.setPhase('awaiting_plan', 'plan_review');
-    this.emit({ type: 'plan_approval_required', plan, userRequest });
-    return new Promise((resolve) => {
-      this.pendingPlanApproval = resolve;
     });
   }
 
@@ -1093,65 +1363,7 @@ export class Agent {
     }
   }
 
-  private async generatePlan(userRequest: string): Promise<Plan> {
-    const planPrompt = `You are a planning assistant. Given the user's request, create a step-by-step plan.
-Each step should be a clear, actionable description of what needs to be done.
-
-User request: "${userRequest}"
-
-Return a JSON array of plan steps, each with a "description" field.
-Example: [{"description": "Step 1 description"}, {"description": "Step 2 description"}]
-Return ONLY valid JSON, no other text.`;
-
-    try {
-      let text = '';
-      const stream = this.provider.complete({
-        messages: [{ role: 'user', content: planPrompt }],
-        model: this.config.provider.activeModel,
-        maxTokens: 2000,
-        stream: true,
-      });
-      for await (const chunk of stream) {
-        if (chunk.type === 'text_delta' && chunk.content) {
-          text += chunk.content;
-        }
-      }
-
-      text = text.trim();
-      const jsonStart = text.indexOf('[');
-      const jsonEnd = text.lastIndexOf(']');
-      if (jsonStart === -1 || jsonEnd === -1) throw new Error('No JSON array found in plan response');
-
-      const steps: Array<{ description: string }> = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
-      const planSteps: PlanStep[] = steps.map((s, i) => ({
-        id: `step-${i + 1}`,
-        description: s.description,
-        status: 'pending' as const,
-      }));
-
-      const plan: Plan = {
-        id: `plan-${Date.now()}`,
-        title: userRequest.slice(0, 80),
-        steps: planSteps,
-        createdAt: new Date().toISOString(),
-      };
-
-      this.currentPlan = plan;
-      return plan;
-    } catch (error) {
-      getLogger().error('PLAN_GEN', error);
-      const fallbackPlan: Plan = {
-        id: `plan-${Date.now()}`,
-        title: userRequest.slice(0, 80),
-        steps: [{ id: 'step-1', description: `Execute: ${userRequest}`, status: 'pending' }],
-        createdAt: new Date().toISOString(),
-      };
-      this.currentPlan = fallbackPlan;
-      return fallbackPlan;
-    }
-  }
-
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1221,6 +1433,37 @@ Return ONLY valid JSON, no other text.`;
 
     // Store the per-message instruction for injection during completion (not in history)
     this.pendingInstruction = options?.instruction || null;
+    this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
+
+    if (!options?.retry && this.options.promptProfile !== 'crew_private' && !options?.delegateCrewIds?.length) {
+      try {
+        const priorUserMessages = this.messages
+          .filter((m) => m.role === 'user')
+          .map((m) => (typeof m.content === 'string' ? m.content : ''))
+          .slice(-3);
+        const store = (this.sessionManager as unknown as { store?: unknown })?.store;
+        const rosterHint = await buildCrewRosterHintBlock({
+          message: cleanContent,
+          sessionId: this.sessionId,
+          store,
+          priorUserMessages,
+          crewSuggestionResolved: options?.crewSuggestionResolved,
+        });
+        if (rosterHint) {
+          this.pendingInstruction = this.pendingInstruction
+            ? `${this.pendingInstruction}\n\n${rosterHint}`
+            : rosterHint;
+        }
+      } catch (e) {
+        getLogger().warn('CREW_ROSTER_HINT', e instanceof Error ? e.message : String(e));
+      }
+    }
+
+    if (options?.retry) {
+      while (this.messages.length > 0 && this.messages[this.messages.length - 1]?.role === 'assistant') {
+        this.messages.pop();
+      }
+    }
 
     // Add user message (clean, without instruction)
     if (!options?.retry) {
@@ -1232,6 +1475,8 @@ Return ONLY valid JSON, no other text.`;
 
     // Record in context tracker
     this.contextTracker.record('user', cleanContent);
+
+    const turnContext = this.prepareTurnContext(cleanContent);
 
     const userMessage: Message = {
       id: generateMessageId(),
@@ -1271,6 +1516,8 @@ Return ONLY valid JSON, no other text.`;
     // Reset turn-level permission auto-approve from any prior batch approval
     this.turnApprovedAll = false;
 
+    const isCrewPrivate = this.options.promptProfile === 'crew_private';
+
     // ─── DECISION ENGINE (heuristic — zero LLM calls) ───
     const conversationLen = this.messages.filter(m => m.role === 'user').length;
     const decision = this.decisionEngine.classify(cleanContent, conversationLen);
@@ -1293,6 +1540,20 @@ Return ONLY valid JSON, no other text.`;
     // Build a natural-language context summary for crew routing (passed to crew LLM calls)
     const classificationContext = `[Classified as "${decision.messageClass}" (confidence: ${decision.confidence}) — ${decision.reasoning}]`;
 
+    // ─── RESUME CREW INTAKE after session restore (questionnaire already answered) ───
+    if (options?.resumeCrewIntake && this.crewOrchestrator) {
+      const { originalUserText, intakeAnswer, delegateCrewIds } = options.resumeCrewIntake;
+      const delegatedMembers = this.crewOrchestrator.getMembers().filter((m) =>
+        delegateCrewIds.includes(m.crew.id) && m.crew.enabled !== false,
+      );
+      if (delegatedMembers.length > 0) {
+        const missionTask = intakeAnswer.trim()
+          ? `${originalUserText}\n\n[User clarified their request]\n${intakeAnswer.trim()}`
+          : originalUserText;
+        return await this.executeCrewMission(delegatedMembers, missionTask, startTime, classificationContext);
+      }
+    }
+
     getLogger().info('CLASSIFY', `class=${decision.messageClass} conf=${decision.confidence} msg="${cleanContent.slice(0, 60)}"`);
 
     // Emit as the general decision event for UI consumption
@@ -1304,7 +1565,8 @@ Return ONLY valid JSON, no other text.`;
       reasoning: decision.reasoning,
     } as unknown as EngineEvent);
 
-    // ─── @MENTION ROUTING — direct crew invocation ───
+    // ─── @MENTION ROUTING — direct crew invocation (Agent-X sessions only) ───
+    if (this.options.promptProfile !== 'crew_private') {
     const mentionedCrewIds = this.detectAtMentions(cleanContent);
     if (mentionedCrewIds.length > 0 && this.crewOrchestrator) {
       const members = this.crewOrchestrator.getMembers();
@@ -1316,39 +1578,121 @@ Return ONLY valid JSON, no other text.`;
       }
     }
 
-    // ─── Fast-reply cache hit → minimal LLM call, no tools ───
+    // ─── USER-APPROVED CREW SUGGESTION — deploy selected specialists ───
+    if (this.pendingDelegateCrewIds?.length && this.crewOrchestrator) {
+      const delegateIds = this.pendingDelegateCrewIds;
+      const intakeFromPicker = options?.crewIntakeFromPicker ?? false;
+      const primaryCrewId = options?.primaryCrewId;
+      this.pendingDelegateCrewIds = null;
+      const members = this.crewOrchestrator.getMembers();
+      const delegatedMembers = members.filter((m) =>
+        delegateIds.includes(m.crew.id) && m.crew.enabled !== false,
+      );
+      if (delegatedMembers.length > 0) {
+        if (intakeFromPicker) {
+          const lead = primaryCrewId
+            ? delegatedMembers.find((m) => m.crew.id === primaryCrewId) ?? delegatedMembers[0]!
+            : delegatedMembers[0]!;
+          this.activeClarificationResume = {
+            kind: 'crew_intake',
+            questionnaireMessageId: '',
+            userText: cleanContent,
+            delegateCrewIds: delegateIds,
+            primaryCrewId,
+            crewIntakeFromPicker: true,
+          };
+          const intakeAnswer = await this.waitForQuestionnaireResponse(buildTextQuestionnaire({
+            title: lead.crew.name,
+            prompt: `What specific help or support do you need from me as your ${lead.crew.title || 'specialist'}?`,
+            source: { kind: 'crew', name: lead.crew.name, callsign: lead.crew.callsign } satisfies ClarificationSource,
+          }));
+          const missionTask = intakeAnswer.trim()
+            ? `${cleanContent}\n\n[User clarified their request]\n${intakeAnswer.trim()}`
+            : cleanContent;
+          return await this.executeCrewMission(delegatedMembers, missionTask, startTime, classificationContext);
+        }
+        return await this.executeCrewMission(delegatedMembers, cleanContent, startTime, classificationContext);
+      }
+      getLogger().warn('AGENT', `Crew deploy failed: no enabled members for ids ${delegateIds.join(', ')}`);
+      this.emit({
+        type: 'error',
+        code: 'crew_deploy_failed',
+        message: 'Selected crew specialists could not be attached to this session. Continuing with Agent-X.',
+        recoverable: true,
+      });
+    }
+
+    // ─── ACTIVE CREW CONTINUATION — route follow-ups to deployed specialists ───
+    const activeCrew = this.getActiveCrewMembers();
+    if (activeCrew.length > 0 && this.crewOrchestrator) {
+      const bypassActiveCrew = shouldBypassActiveCrewRouting(cleanContent, {
+        crewSuggestionResolved: options?.crewSuggestionResolved,
+        hasDelegateCrewIds: Boolean(options?.delegateCrewIds?.length),
+      });
+
+      if (!bypassActiveCrew) {
+        const priorUserMessages = this.messages
+          .filter((m) => m.role === 'user')
+          .map((m) => (typeof m.content === 'string' ? m.content : ''))
+          .slice(0, -1);
+        const routingTask = turnContext.needsContextMerge
+          ? turnContext.mergedTask
+          : buildTaskContextForCrewRouting(cleanContent, priorUserMessages);
+        const assessment = assessCrewNeed(routingTask, activeCrew);
+
+        if (assessment.shouldRoute && assessment.members.length > 0) {
+          return await this.executeCrewMission(assessment.members, routingTask, startTime, classificationContext);
+        }
+      }
+    }
+    }
+
+    // ─── Fast-reply → minimal LLM call, no tools (greetings / thanks / small talk) ───
     if (decision.executionPath === 'fast_reply') {
-      let identityBlock = '';
-      try { identityBlock = this.secretSauce?.identity?.getMergedIdentity?.(this.persona)?.name ?? ''; } catch { /* test env */ }
-      const fastPrompt = this.decisionEngine.buildFastReplyPrompt(identityBlock);
-      const callsign = this.config.user?.callsign;
-      const userNote = callsign ? `\nThe user's name is "${callsign}".` : '';
-      const fastMessages = [
-        { role: 'system' as const, content: fastPrompt + userNote },
-        ...this.messages.slice(-3).filter(m => m.role !== 'system'),
-        { role: 'user' as const, content: cleanContent },
-      ];
-      try {
-        const model = createAiSdkModel(this.config, this.getApiKey());
-        const r = await streamText({ model, messages: fastMessages as any, maxOutputTokens: 256 });
-        let text = '';
-        for await (const chunk of r.textStream) { text += chunk; }
-        const msg: Message = { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant', content: text || 'Hey! How can I help?', toolCalls: null, createdAt: new Date().toISOString(), tokenCount: Math.ceil((text || '').length / 4) };
-        this.messages.push({ role: 'assistant', content: msg.content });
-        this.emit({ type: 'message_received', message: msg, elapsed: Date.now() - startTime });
-        this.lifecycle.forceTransition('idle'); this.scope = null;
-        this.runStateMgr.release(this.sessionId); this.commandQueue.release(this.sessionId);
-        return msg;
-      } catch {
-        // Fast reply failed — fall through to standard LLM path
+      const crewHost = this.options.promptProfile === 'crew_private' ? this.options.crewPrivateHost : undefined;
+      const useAgentFastReply = !crewHost && this.options.promptProfile !== 'crew_worker';
+      if (crewHost || useAgentFastReply) {
+        let fastPrompt: string;
+        let userNote = '';
+        if (crewHost) {
+          fastPrompt = buildCrewPrivateFastReplyPrompt(crewHost);
+        } else {
+          let identityBlock = '';
+          try { identityBlock = this.secretSauce?.identity?.getMergedIdentity?.(this.persona)?.name ?? ''; } catch { /* test env */ }
+          fastPrompt = this.decisionEngine.buildFastReplyPrompt(identityBlock);
+          const callsign = this.config.user?.callsign;
+          userNote = callsign ? `\nThe user's name is "${callsign}".` : '';
+        }
+        const fastMessages = [
+          { role: 'system' as const, content: fastPrompt + userNote },
+          ...this.messages.slice(-3).filter(m => m.role !== 'system'),
+          { role: 'user' as const, content: cleanContent },
+        ];
+        try {
+          const model = createAiSdkModel(this.config, this.getApiKey());
+          const r = await streamText({ model, messages: fastMessages as any, maxOutputTokens: 256 });
+          let text = '';
+          for await (const chunk of r.textStream) { text += chunk; }
+          const fallback = crewHost ? `Hey — ${crewHost.name} here.` : 'Hey! How can I help?';
+          const msg: Message = { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant', content: text || fallback, toolCalls: null, createdAt: new Date().toISOString(), tokenCount: Math.ceil((text || '').length / 4) };
+          this.messages.push({ role: 'assistant', content: msg.content });
+          this.contextTracker.record('assistant', msg.content, crewHost?.name);
+          this.emit({ type: 'message_received', message: msg, elapsed: Date.now() - startTime });
+          this.lifecycle.forceTransition('idle'); this.scope = null;
+          this.runStateMgr.release(this.sessionId); this.commandQueue.release(this.sessionId);
+          return msg;
+        } catch {
+          // Fast reply failed — fall through to standard LLM path
+        }
       }
     }
 
     // ─── LLM PATH: every message → LLM with all tools → LLM decides ───
     const loadSteps = getLoadingSteps(decision.messageClass);
+    const loadingStage = isCrewPrivate ? 'crew_private' : decision.messageClass;
     this.emit({
       type: 'loading_start',
-      stage: decision.messageClass,
+      stage: loadingStage,
       steps: loadSteps.map(s => ({ ...s, status: 'pending' as const })),
     });
     // Step 1: classify → already done
@@ -1432,62 +1776,10 @@ Return ONLY valid JSON, no other text.`;
         return assistantMessage;
       }
 
-      // Plan mode (main session only): interactive plan approval before execution.
-      // Delegated workers skip this — they deliver analysis/plans as markdown using read-only tools.
-      if (shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker)) {
-        const requiresPlan = shouldGeneratePlan(content, decision.messageClass);
-
-        if (requiresPlan) {
-          this.turnState.setStage('planning');
-          this.emit({ type: 'loading_start', stage: 'planning' });
-          const plan = await this.generatePlan(content);
-          this.emit({ type: 'plan_generated', plan, userRequest: content });
-
-          const approved = await this.waitForPlanApproval(plan, content);
-
-          if (!approved) {
-            this.emit({ type: 'plan_rejected', planId: plan.id });
-            const rejectedMessage: Message = {
-              id: generateMessageId(),
-              sessionId: this.sessionId,
-              role: 'assistant',
-              content: '⏹ Plan rejected. No actions taken.',
-              toolCalls: null,
-              createdAt: new Date().toISOString(),
-              tokenCount: 0,
-            };
-            this.stopTurnHeartbeat();
-            this.turnState.complete();
-            this.emit({ type: 'loading_end' });
-            this.emit({ type: 'message_received', message: rejectedMessage, elapsed: Date.now() - startTime });
-            return rejectedMessage;
-          }
-
-          this.emit({ type: 'plan_approved', planId: plan.id });
-
-          const planMessage: Message = {
-            id: generateMessageId(),
-            sessionId: this.sessionId,
-            role: 'assistant',
-            content: `✓ Plan approved. Switch to **Agent mode** to execute this plan.\n\n**Plan:** ${plan.title}\n${plan.steps.map((s, i) => `${i + 1}. ${s.description}`).join('\n')}`,
-            toolCalls: null,
-            createdAt: new Date().toISOString(),
-            tokenCount: 0,
-          };
-          this.messages.push({ role: 'assistant', content: planMessage.content });
-          this.stopTurnHeartbeat();
-          this.turnState.complete();
-          this.emit({ type: 'loading_end' });
-          this.emit({ type: 'message_received', message: planMessage, elapsed: Date.now() - startTime });
-          return planMessage;
-        }
-
-        this.pendingInstruction = null;
-      }
-
-      // Proactive mode escalation: main session only (workers respond with read-only findings instead)
+      // Proactive mode escalation (Agent-X only): optional UI prompt before write-capable work.
+      // Plans are never user-approved in a modal — the completion loop delivers markdown in chat.
       if (
-        shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker)
+        shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker, this.options.promptProfile ?? 'default')
         && shouldEscalateForExecution(content, decision.messageClass)
       ) {
         this.emit({
@@ -1509,6 +1801,7 @@ Return ONLY valid JSON, no other text.`;
           };
           this.stopTurnHeartbeat();
           this.turnState.complete();
+          this.emitTurnState('done');
           this.emit({ type: 'loading_end' });
           this.emit({ type: 'message_received', message: declinedMessage, elapsed: Date.now() - startTime });
           return declinedMessage;
@@ -1522,8 +1815,7 @@ Return ONLY valid JSON, no other text.`;
        let assistantMessage = await this.runCompletionLoop(startTime);
 
        // ─── CRITICAL: Server-side validation for mode restriction transparency ───
-       // Detect if agent is fabricating success on restricted operations
-       if (this.planMode) {
+       if (this.planMode && this.options.promptProfile !== 'crew_private') {
          const validationResult = this.validateModeRestrictionTransparency(assistantMessage.content, this.toolCallLogForReflection);
          if (!validationResult.isTransparent) {
            getLogger().warn('AGENT', `Detected fabricated success in plan mode. Triggering refactored response.`);
@@ -1543,7 +1835,11 @@ Return ONLY valid JSON, no other text.`;
       }
 
       // Record assistant response in context tracker
-      this.contextTracker.record('assistant', assistantMessage.content);
+      this.contextTracker.record(
+        'assistant',
+        assistantMessage.content,
+        this.options.crewPrivateHost?.name,
+      );
 
       // Extract bulleted tasks from response and push to task panel
       this.extractTasksFromResponse(assistantMessage.content);
@@ -1565,11 +1861,13 @@ Return ONLY valid JSON, no other text.`;
       this.toolCallLogForReflection = [];
       this.stopTurnHeartbeat();
       this.turnState.complete();
+      this.emitTurnState('done');
       this.emit({ type: 'loading_end' });
       return assistantMessage;
     } catch (error) {
       this.stopTurnHeartbeat();
       this.turnState.cancel();
+      this.emitTurnState('cancelled');
       this.emit({ type: 'loading_end' });
 
       // ─── UNIFIED: Classify error via ErrorClassifier ───
@@ -1674,6 +1972,8 @@ Return ONLY valid JSON, no other text.`;
    * - Structured events for UI visualization
    */
   private async runCompletionLoop(startTime: number): Promise<Message> {
+    await this.reconcileSystemPrompt();
+
     const emit = (e: EngineEvent) => this.emit(e);
     const registry = this.toolRegistry;
     const executor = this.toolExecutor;
@@ -1685,25 +1985,11 @@ Return ONLY valid JSON, no other text.`;
       executor,
       this.sessionId,
       emit,
-      async (question: string, options: string[], allowFreeform: boolean, meta?: ClarificationRequestMeta) => {
+      async (questionnaire: QuestionnairePayload) => {
         if (this.isDelegatedWorker) {
-          return options?.[0] ?? 'Proceed with your best judgment using available read-only tools and context.';
+          return 'Proceed with your best judgment using available read-only tools and context.';
         }
-        this.turnState.setPhase('awaiting_permission', 'clarification');
-        this.emit({
-          type: 'clarification_required',
-          question,
-          options,
-          allowFreeform,
-          recommended: meta?.recommended,
-          allowChooseAll: meta?.allowChooseAll,
-          selectionMode: meta?.selectionMode,
-          fields: meta?.fields,
-        });
-        const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
-        this.clarificationResolve = null;
-        this.turnState.setPhase('running', 'resuming');
-        return response;
+        return this.waitForQuestionnaireResponse(questionnaire);
       },
       async (instruction, toolsList, timeout) => {
         const subAgent = new SmartSubAgent({
@@ -1716,7 +2002,7 @@ Return ONLY valid JSON, no other text.`;
         return subAgent.execute();
       },
       this.planMode,
-      this.isDelegatedWorker
+      this.options.promptProfile === 'crew_private'
         ? undefined
         : (toolId, reason) => this.waitForModeEscalation(toolId, reason),
       (toolId, success, output, elapsed, args) => {
@@ -1725,7 +2011,15 @@ Return ONLY valid JSON, no other text.`;
         this.toolCallLogForReflection.push({ name: toolId, success, output, elapsed });
         this.turnState.touch();
       },
+      this.options.promptProfile ?? 'default',
     );
+
+    if (this.options.promptProfile === 'crew_private') {
+      const denyCrewOrchestration = new Set(['spawn_crew_workers', 'delegate_to_crew', 'crew_response']);
+      for (const key of Object.keys(tools)) {
+        if (denyCrewOrchestration.has(key)) delete tools[key];
+      }
+    }
 
     const model = createAiSdkModel(this.config, this.getApiKey());
 
@@ -1742,6 +2036,20 @@ Return ONLY valid JSON, no other text.`;
         aiMessages[userIdx] = { role: 'user', content: `${userMsg.content}\n\n[INSTRUCTION]\n${this.pendingInstruction}\n[/INSTRUCTION]` };
       }
       this.pendingInstruction = null;
+    }
+
+    // Prepend turn context so short follow-ups retain session intent
+    const lastUserMsg = [...this.messages].reverse().find((m) => m.role === 'user');
+    const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+    if (lastUserText) {
+      const turnCtx = this.prepareTurnContext(lastUserText.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim());
+      if (turnCtx.block) {
+        const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+        const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+        if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
+          aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
+        }
+      }
     }
 
     // Prepend RAG context to last user message
@@ -1770,6 +2078,7 @@ Return ONLY valid JSON, no other text.`;
       this.tokenTracker.inputTokenCount,
       this.tokenTracker.outputTokenCount,
     );
+    this.activeStreamHandler = streamHandler;
 
     try {
       this.turnState.setStage('thinking');
@@ -1780,7 +2089,8 @@ Return ONLY valid JSON, no other text.`;
       getLogger().info('AGENT', `Starting streamText with ${toolCount} tools, model: ${this.config.provider.activeModel}, mode: ${this.planMode ? 'plan' : 'agent'}`);
 
       let stepCapContinuations = 0;
-      const stepLimit = () => this.maxCompletionSteps * (1 + this.stepCapExtra);
+      const stepBudget = this.completionStepBudget();
+      const stepLimit = () => stepBudget;
       const result = streamText({
         model,
         messages: aiMessages,
@@ -1791,7 +2101,10 @@ Return ONLY valid JSON, no other text.`;
         toolChoice: 'auto',
         prepareStep: async ({ stepNumber, messages }) => {
           this.turnState.setStage('execution', stepNumber);
-          if (stepNumber > 0 && stepNumber % this.maxCompletionSteps === 0 && stepNumber >= this.maxCompletionSteps) {
+          const stepBudgetBase = this.options.promptProfile === 'crew_private'
+            ? this.crewPrivateCompletionSteps
+            : this.maxCompletionSteps;
+          if (stepNumber > 0 && stepNumber % stepBudgetBase === 0 && stepNumber >= stepBudgetBase) {
             const cont = await this.waitForStepCap(stepNumber);
             if (!cont) throw new Error('STEP_CAP_STOP');
             stepCapContinuations++;
@@ -1900,7 +2213,15 @@ Return ONLY valid JSON, no other text.`;
       this.messages.push({ role: 'assistant', content });
       await this.compactContext();
 
-      return { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant' as const, content, toolCalls: null, createdAt: new Date().toISOString(), tokenCount };
+      return this.tagCrewPrivateAssistant({
+        id: generateMessageId(),
+        sessionId: this.sessionId,
+        role: 'assistant' as const,
+        content,
+        toolCalls: null,
+        createdAt: new Date().toISOString(),
+        tokenCount,
+      });
     } catch (error) {
       if (error instanceof Error && error.message === 'MODE_ESCALATION_DECLINED') {
         const declinedMessage: Message = {
@@ -1946,6 +2267,8 @@ Return ONLY valid JSON, no other text.`;
       getLogger().error('COMPLETION', `AI SDK streamText failed: ${errorMsg}`);
       this.emit({ type: 'error', code: 'AI_SDK_ERROR', message: errorMsg, recoverable: false });
       throw error;
+    } finally {
+      this.activeStreamHandler = null;
     }
   }
 
@@ -2049,6 +2372,7 @@ Return ONLY valid JSON, no other text.`;
       personaName: this.persona?.name || 'Agent-X',
       experienceEngine: { getProvenContext: () => this.experienceEngine.getProvenContext(), getCautionContext: () => this.experienceEngine.getCautionContext() },
       growthEngine: { getGrowthContext: () => this.growthEngine.getGrowthContext() },
+      turnFeedbackService: { buildPromptContext: () => this.turnFeedbackService.buildPromptContext(this.sessionId) },
     };
   }
 
@@ -2057,8 +2381,32 @@ Return ONLY valid JSON, no other text.`;
       const ctx = this.createSectionContext();
       this.promptAssembly
         .register(createRulesSection())
+        .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx));
+      if (systemOverride) {
+        this.promptAssembly.register(createSystemOverrideSection(systemOverride));
+      }
+      return;
+    }
+
+    if (this.options.promptProfile === 'crew_private') {
+      const ctx = this.createSectionContext();
+      this.promptAssembly
+        .register(createCrewPrivateConductSection())
+        .register(createQuestionnaireGuideSection())
+        .register(createChatMarkdownSection())
+        .register(createCurrentTimeSection(ctx))
+        .register(createWorkingDirectorySection(ctx))
+        .register(createLearningsSection(ctx))
+        .register(createSkillsSection(ctx))
+        .register(createFormalSkillsSection(ctx))
+        .register(createSessionNarrativeSection(ctx))
+        .register(createTurnFeedbackSection(ctx))
+        .register(createUserSection(ctx))
+        .register(createSoulSection(ctx))
+        .register(createNeuralSection(ctx))
+        .register(createInstructionsSection(ctx.scopePath));
       if (systemOverride) {
         this.promptAssembly.register(createSystemOverrideSection(systemOverride));
       }
@@ -2071,6 +2419,7 @@ Return ONLY valid JSON, no other text.`;
       .register(createIdentitySection(ctx))
       .register(createWorkingDirectorySection(ctx))
       .register(createRulesSection())
+      .register(createQuestionnaireGuideSection())
       .register(createChatMarkdownSection())
       .register(createCurrentTimeSection(ctx))
       .register(createSchedulingSection())
@@ -2080,7 +2429,10 @@ Return ONLY valid JSON, no other text.`;
       .register(createHyperdriveSection(ctx))
       .register(createChannelFocusSection(ctx))
       .register(createMultiCrewSection(ctx))
+      .register(createCrewRosterGuideSection())
       .register(createUserSection(ctx))
+      .register(createSessionNarrativeSection(ctx))
+      .register(createTurnFeedbackSection(ctx))
       .register(createTaskPanelSection())
       .register(createSoulSection(ctx))
       .register(createNeuralSection(ctx))
@@ -2329,7 +2681,10 @@ Return ONLY valid JSON, no other text.`;
    */
   addToHistory(msg: { role: 'user' | 'assistant' | 'system'; content: string }): void {
     this.messages.push({ role: msg.role, content: msg.content });
-    if (msg.role !== 'system') {
+    if (msg.role === 'system') return;
+    if (msg.role === 'assistant' && this.options.promptProfile === 'crew_private' && this.options.crewPrivateHost) {
+      this.contextTracker.record('assistant', msg.content, this.options.crewPrivateHost.name);
+    } else {
       this.contextTracker.record(msg.role, msg.content);
     }
   }
@@ -2676,7 +3031,29 @@ Only include specialists that are actually needed for this task.`;
     } catch { /* best-effort */ }
   }
 
-  private emit(event: EngineEvent, isUpdate?: boolean): void {
+  private tagCrewPrivateAssistant(msg: Message): Message {
+    const host = this.options.crewPrivateHost;
+    if (this.options.promptProfile !== 'crew_private' || !host || msg.crew) return msg;
+    return {
+      ...msg,
+      crew: {
+        crewId: host.id,
+        name: host.name,
+        callsign: host.callsign,
+        color: host.color,
+        icon: host.icon,
+      },
+    };
+  }
+
+  private emit(event: EngineEvent, isUpdateFlag?: boolean): void {
+    const isUpdate = isUpdateFlag === true || (event as { isUpdate?: boolean }).isUpdate === true;
+    if (event.type === 'message_received') {
+      const raw = event as { message?: Message };
+      if (raw.message?.role === 'assistant') {
+        event = { ...event, message: this.tagCrewPrivateAssistant(raw.message) } as EngineEvent;
+      }
+    }
     // Guard against duplicate message_received — only first one wins per turn
     // Pass isUpdate=true to allow re-emitting an updated message (e.g. crew delegation)
     if (event.type === 'message_received' && !isUpdate) {
@@ -2685,8 +3062,14 @@ Only include specialists that are actually needed for this task.`;
         this.eventBus.emit(event);
         return;
       }
-      if (this._turnMessageEmitted) return;
-      this._turnMessageEmitted = true;
+      const parts = crewMsg?.parts as Array<{ type?: string }> | undefined;
+      const questionnaireOnly = crewMsg?.role === 'assistant'
+        && !(crewMsg.content?.trim())
+        && parts?.some((p) => p.type === 'questionnaire');
+      if (!questionnaireOnly) {
+        if (this._turnMessageEmitted) return;
+        this._turnMessageEmitted = true;
+      }
     }
     this.eventBus.emit(event);
   }
@@ -2881,70 +3264,48 @@ Only include specialists that are actually needed for this task.`;
       if (crew && this.crewOrchestrator) {
         this.crewOrchestrator.addMember(crew);
       }
+      this.sessionManager?.saveCrewState?.(crewId, true);
     } else {
       this.enabledCrewSessionIds.delete(crewId);
       this.crewOrchestrator?.removeMember(crewId);
+      this.sessionManager?.saveCrewState?.(crewId, false);
     }
     this.rebuildSystemPrompt();
   }
 
   /**
    * Build a concise session context summary for agentic delegation.
-   * Used when routing to crew members, sub-agents, or research queries —
-   * gives them just enough context to understand the session without
-   * overwhelming them with full history.
+   * Used when routing to crew members, sub-agents, or research queries.
    */
   buildAgenticContext(): string {
-    const recent = this.messages.slice(-12);
-    if (recent.length <= 1) return '';
+    const lastUser = [...this.messages].reverse().find((m) => m.role === 'user');
+    const current = typeof lastUser?.content === 'string'
+      ? lastUser.content.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim()
+      : '';
+    if (!current) return '';
 
-    const parts: string[] = [];
+    const turn = this.prepareTurnContext(current);
+    return turn.block;
+  }
 
-    // Workspace path so delegated agents can explore from the right directory
-    if (this.scopePath) {
-      parts.push(`Working directory: ${this.scopePath}`);
-    }
-    const userMsgs = recent.filter(m => m.role === 'user');
-    const assistantMsgs = recent.filter(m => m.role === 'assistant');
-    const toolMsgs = recent.filter(m => m.role === 'tool');
-    const systemMsgs = recent.filter(m => m.role === 'system' && typeof m.content === 'string' && !(m.content as string).startsWith('[tool]') && (m.content as string).length > 20);
+  /** Realtime context block for the current user turn. */
+  prepareTurnContext(currentUserMessage: string) {
+    return this.contextTracker.getHandler().buildTurnInjection(
+      this.messages.map((m) => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+      })),
+      currentUserMessage,
+      this.contextMemoryChars,
+    );
+  }
 
-    // What the user has been asking
-    const lastUser = userMsgs[userMsgs.length - 1];
-    if (lastUser && typeof lastUser.content === 'string') {
-      const stripped = lastUser.content.replace(/@\w+/g, '').trim();
-      if (stripped) parts.push(`User is working on: "${stripped.slice(0, 200)}"`);
-    }
+  /** Per-session memory budget for injected context (chars). Tunable via setContextMemoryLimits. */
+  contextMemoryChars = 2200;
 
-    // What's been done so far
-    if (toolMsgs.length > 0) {
-      const toolsUsed = [...new Set(toolMsgs.map(m => {
-        const c = typeof m.content === 'string' ? m.content : '';
-        const m2 = c.match(/\[tool\]\s*(\w+)/);
-        return m2 ? m2[1] : '';
-      }).filter(Boolean))];
-      if (toolsUsed.length > 0) {
-        parts.push(`Tools used: ${toolsUsed.join(', ')}`);
-      }
-    }
-
-    // Key assistant responses
-    const keyResponses = assistantMsgs
-      .filter(m => typeof m.content === 'string' && (m.content as string).length > 10 && (m.content as string).length < 300)
-      .slice(-2);
-    for (const r of keyResponses) {
-      const text = (typeof r.content === 'string' ? r.content : '').replace(/\n/g, ' ').slice(0, 200);
-      if (text) parts.push(`Progress: ${text}`);
-    }
-
-    // Relevant system context (directory creation, project init, etc.)
-    for (const s of systemMsgs.slice(-3)) {
-      const text = (typeof s.content === 'string' ? s.content : '').slice(0, 200);
-      if (text) parts.push(`Context: ${text}`);
-    }
-
-    if (parts.length === 0) return '';
-    return `[SESSION CONTEXT]\n${parts.join('\n')}\n[/SESSION CONTEXT]`;
+  setContextMemoryLimits(opts: { maxHistoryMessages?: number; maxHistoryChars?: number; maxBlockChars?: number }): void {
+    if (opts.maxBlockChars !== undefined) this.contextMemoryChars = opts.maxBlockChars;
+    this.contextTracker.setLimits(opts);
   }
 
   /**
@@ -2965,20 +3326,8 @@ Only include specialists that are actually needed for this task.`;
       sessionId: this.sessionId,
       mainSystemPrompt: typeof systemMsg?.content === 'string' ? systemMsg.content : '',
       crewOrchestrator: this.crewOrchestrator ?? undefined,
-      waitForClarification: async (question: string, options?: string[], allowFreeform?: boolean, meta?: ClarificationRequestMeta) => {
-        this.emit({
-          type: 'clarification_required',
-          question,
-          options: options ?? [],
-          allowFreeform: allowFreeform ?? true,
-          recommended: meta?.recommended,
-          allowChooseAll: meta?.allowChooseAll,
-          selectionMode: meta?.selectionMode,
-          fields: meta?.fields,
-        });
-        const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
-        this.clarificationResolve = null;
-        return response;
+      waitForClarification: async (questionnaire: QuestionnairePayload) => {
+        return this.waitForQuestionnaireResponse(questionnaire);
       },
       onMissionEvent: (payload) => {
         if (!this.onSessionEvent) return;
@@ -3010,6 +3359,7 @@ Only include specialists that are actually needed for this task.`;
       `@${w.callsign} (${w.crewName}) [${w.success ? 'ok' : 'failed'}]:\n${w.output.slice(0, 2000)}`,
     ).join('\n\n---\n\n');
 
+    const turnCtx = this.prepareTurnContext(cleanContent);
     const reviewPrompt = `${systemContent}\n\n[CREW SUPERVISOR]\nYou are Agent-X, the project manager supervising a crew mission. Review worker outputs, resolve conflicts, and deliver the final cohesive answer to the user. If the mission failed or needs user input, say so clearly and concisely.\n[/CREW SUPERVISOR]`;
 
     try {
@@ -3020,7 +3370,7 @@ Only include specialists that are actually needed for this task.`;
           { role: 'system', content: reviewPrompt },
           {
             role: 'user',
-            content: `User request: ${cleanContent}\n\nMission success: ${mission.success}\n\nCrew outputs:\n${workerSummary}\n\nProvide your final supervised response:`,
+            content: `${turnCtx.block}\n\nUser request: ${turnCtx.mergedTask}\n\nMission success: ${mission.success}\n\nCrew outputs:\n${workerSummary}\n\nProvide your final supervised response:`,
           },
         ],
         maxOutputTokens: 4096,
@@ -3095,6 +3445,15 @@ Only include specialists that are actually needed for this task.`;
       this.buildCrewMissionOptions(members, task, options?.extraContext),
     );
 
+    for (const m of members) {
+      this.contextTracker.getHandler().registerCrew({
+        crewId: m.crew.id,
+        name: m.crew.name,
+        callsign: m.crew.callsign,
+        relationship: 'deployed',
+      });
+    }
+
     this.publishCrewMissionResponses(mission, members, startTime);
     return mission;
   }
@@ -3105,7 +3464,11 @@ Only include specialists that are actually needed for this task.`;
     startTime: number,
   ): void {
     for (const r of mission.responses) {
-      const crewMember = members.find((m) => m.crew.id === r.crewId) ?? members[0]!;
+      const crewMember = members.find((m) => m.crew.id === r.crewId);
+      if (!crewMember) {
+        getLogger().warn('CREW_MISSION', `Response crewId ${r.crewId} not in mission members — skipping misattributed publish`);
+        continue;
+      }
       const msg: Message = {
         id: generateMessageId(),
         sessionId: this.sessionId,

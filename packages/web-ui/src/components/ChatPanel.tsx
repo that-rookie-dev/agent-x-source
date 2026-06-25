@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -33,6 +33,7 @@ import RouteIcon from '@mui/icons-material/Route';
 import SearchIcon from '@mui/icons-material/Search';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import HistoryIcon from '@mui/icons-material/History';
+import ForumIcon from '@mui/icons-material/Forum';
 import DownloadIcon from '@mui/icons-material/Download';
 
 import {
@@ -43,24 +44,30 @@ import {
   CheckpointDrawer,
   type PaletteAction,
 } from './ChatEnhancements';
-import { chat, sessions, todos, tools, models, crews, providers, system, sessionSettings, agent, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState } from '../api';
+import { chat, sessions, todos, tools, models, crews, crewSuggestions, providers, system, sessionSettings, agent, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate } from '../api';
 import { colors } from '../theme';
-import PlanApprovalModal from './PlanApprovalModal';
 import ModeEscalationModal from './ModeEscalationModal';
 import StepCapModal from './StepCapModal';
 import ModeSuggestionModal, { DISMISS_KEY, shouldSuggestMode } from './ModeSuggestionModal';
-import { ChatInputBar } from './ChatInputBar';
+import CrewSuggestionModal from './crew/CrewSuggestionModal';
+import { CrewProfileDialog } from './crew/CrewProfileDialog';
+import type { PrebuiltCrew } from './crew/CrewHubDialog';
+import { ChatInputBar, type ChatInputBarHandle } from './ChatInputBar';
 import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
-import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, mapRestoreHistoryMessage } from '../chat/utils';
+import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard } from '../chat/utils';
+import { CHAT_INITIAL_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
+import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
+import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer, explicitCrewRequest } from '@agentx/shared/browser';
+import type { TurnFeedbackRating } from '@agentx/shared/browser';
+import { MedicalDisclaimerChatSessionStrip } from './crew/MedicalDisclaimerBanner';
 import { CrewMissionCard, type CrewInterMessage } from './CrewMissionCard';
 import type { CrewWorkerState } from './CrewWorkerPanel';
 import { SessionGridCard } from './SessionGridCard';
 import { FolderPickerModal } from './FolderPickerModal';
-import { ClarificationPrompt, type ClarificationData } from './ClarificationPrompt';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -98,6 +105,27 @@ if (!document.getElementById(styleId)) {
   document.head.appendChild(style);
 }
 
+/** Shared height for chat header and right-sidebar section headers. */
+const CHAT_HEADER_HEIGHT = 36;
+
+const panelHeaderRowSx = {
+  px: 1.5,
+  py: 0.5,
+  height: CHAT_HEADER_HEIGHT,
+  boxSizing: 'border-box' as const,
+  borderBottom: `1px solid ${colors.border.default}`,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 0.5,
+  flexShrink: 0,
+};
+
+const sidebarSectionHeaderSx = {
+  ...panelHeaderRowSx,
+  cursor: 'pointer',
+  '&:hover': { bgcolor: colors.bg.tertiary + '40' },
+};
+
 interface UIMessage extends ChatMessage {
   thinking?: string;
   thinkingStartedAt?: number;
@@ -114,21 +142,17 @@ interface UIMessage extends ChatMessage {
   crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
   parts?: PartEntry[];
   isModeChange?: { from: string; to: string };
-}
-
-function parseModeChange(content?: string): { from: string; to: string } | null {
-  if (!content) return null;
-  const match = content.match(/^\[MODE_CHANGE\]\s*(\w+)\s*→\s*(\w+)/);
-  if (!match) return null;
-  return { from: match[1]!, to: match[2]! };
+  turnFeedback?: { rating: TurnFeedbackRating };
 }
 
 interface PartEntry {
-  type: 'text' | 'tool' | 'subagent';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker';
   id: string;
   content?: string;
   tool?: ToolCall;
   agent?: SubAgent;
+  questionnaire?: import('@agentx/shared/browser').QuestionnaireRecord;
+  crewRosterPicker?: import('./crew/CrewRosterPickerMessage').CrewRosterPickerRecord;
 }
 
 interface ToolCall {
@@ -157,6 +181,7 @@ interface FileAttachment {
 }
 
 type ChatView = 'sessions' | 'chat';
+type SessionListTab = 'agent_x' | 'crew_private';
 
 interface ChatPanelProps {
   sessionId?: string;
@@ -164,16 +189,34 @@ interface ChatPanelProps {
 
 export function ChatPanel({ sessionId }: ChatPanelProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sessionListTab: SessionListTab = searchParams.get('tab') === 'crew' ? 'crew_private' : 'agent_x';
+  const setSessionListTab = useCallback((tab: SessionListTab) => {
+    if (tab === 'crew_private') setSearchParams({ tab: 'crew' });
+    else setSearchParams({});
+  }, [setSearchParams]);
   const [view, setView] = useState<ChatView>(sessionId ? 'chat' : 'sessions');
   const [sessionList, setSessionList] = useState<SessionInfo[]>([]);
   const [currentSessionTitle, setCurrentSessionTitle] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(sessionId ?? null);
+  const [isCrewPrivateSession, setIsCrewPrivateSession] = useState(false);
+  const [crewPrivateHost, setCrewPrivateHost] = useState<{ name: string; callsign: string; title?: string } | null>(null);
+  const [privateHostCrewId, setPrivateHostCrewId] = useState<string | null>(null);
+  const isCrewPrivateRef = useRef(false);
+  const crewPrivateHostRef = useRef<{ name: string; callsign: string; title?: string } | null>(null);
+  const chatReturnToRef = useRef<'crew_tab' | '/console/crews' | null>(null);
   const [copiedSessionId, setCopiedSessionId] = useState(false);
   const [parentSessionId, setParentSessionId] = useState<string | null>(null);
   const [childSessionDrawer, setChildSessionDrawer] = useState<ChildSessionDrawerState | null>(null);
   const currentSessionIdRef = useRef<string | null>(sessionId ?? null);
 
+  useEffect(() => { isCrewPrivateRef.current = isCrewPrivateSession; }, [isCrewPrivateSession]);
+  useEffect(() => { crewPrivateHostRef.current = crewPrivateHost; }, [crewPrivateHost]);
+
   // Chat state
+  const [sessionRestoring, setSessionRestoring] = useState(!!sessionId);
+  const sessionRestoringRef = useRef(!!sessionId);
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [inputClearSignal] = useState(0);
   const [crewWorkers, setCrewWorkers] = useState<CrewWorkerState[]>([]);
@@ -189,6 +232,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputBarRef = useRef<ChatInputBarHandle>(null);
   const disconnectRef = useRef<(() => void) | null>(null);
   const skipRestoreRef = useRef(false);
   const streamChunkRAFRef = useRef<number | null>(null);
@@ -202,7 +246,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [warnings, setWarnings] = useState<string[]>([]);
 
   // Clarification prompt — only shown while agent is actively waiting (streaming)
-  const [clarification, setClarification] = useState<ClarificationData | null>(null);
   const providerErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rateLimitSeenRef = useRef(false);
 
@@ -260,11 +303,44 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setCurrentSessionId(sessionId);
       setShowJumpPill(false);
       prevRealCountRef.current = 0;
-      isAtBottomRef.current = true;
+      isAtBottomRef.current = false;
+      paginationReadyRef.current = false;
+      needsInitialScrollRef.current = true;
+      lastScrollTopRef.current = 0;
       setInitialScrollDone(false);
+      initialScrollDoneRef.current = false;
+      paginationAnchorRef.current = null;
+      paginationAnchorMessageIdRef.current = null;
+      paginationAnchorOffsetRef.current = null;
       titleGeneratedRef.current = false;
-      sessions.restore(sessionId).then(async ({ messages: historyMsgs, session, scopePath }) => {
+      setHasOlderMessages(false);
+      setSessionRestoring(true);
+      sessionRestoringRef.current = true;
+      isInitialLoadRef.current = true;
+      setPendingFeedbackMessageId(null);
+      lastTurnFeedbackCandidateRef.current = null;
+      setMessages([]);
+
+      void sessions.get(sessionId).then((sessionInfo) => {
+        if (currentSessionIdRef.current !== sessionId) return;
+        const shell = buildSessionShellPatch(sessionInfo);
+        setIsCrewPrivateSession(shell.crewPrivate);
+        setCrewPrivateHost(shell.privateHost);
+        setPrivateHostCrewId(shell.privateHostCrewId);
+        if (shell.agentMode) setAgentMode(shell.agentMode);
+        setCurrentSessionTitle(shell.title);
+        if (shell.crewPrivate) {
+          const navState = location.state as { fromCrews?: boolean } | null;
+          chatReturnToRef.current = navState?.fromCrews ? '/console/crews' : 'crew_tab';
+        }
+      }).catch(() => { /* full restore follows */ });
+
+      sessions.restore(sessionId, { perRole: CHAT_INITIAL_MESSAGES_PER_ROLE }).then(async ({ messages: historyMsgs, session, scopePath, turnFeedback, messagesMeta }) => {
+        if (currentSessionIdRef.current !== sessionId) return;
         if (session.parentId) {
+          setSessionRestoring(false);
+          sessionRestoringRef.current = false;
+          isInitialLoadRef.current = false;
           setChildSessionDrawer({
             childSessionId: sessionId,
             label: session.title ?? 'Background work',
@@ -274,58 +350,89 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           return;
         }
         const resolvedScope = scopePath || session.scopePath;
-        const visible = historyMsgs.filter((m: any) => m.role !== 'part' && m.role !== 'system');
-        const mapped = visible.map((m: any) => {
-          const modeChange = parseModeChange(m.content);
-          const restored = mapRestoreHistoryMessage(m);
-          return {
-            ...restored,
-            id: m.id || crypto.randomUUID(),
-            streaming: false,
-            subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
-            plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
-            ...(modeChange ? { isModeChange: modeChange } : {}),
-          };
-        }) as unknown as UIMessage[];
-        const hydrated = await hydrateCrewDeliverables(sessionId, mapped, crewList);
-        setMessages(hydrated.messages);
-        if (hydrated.crewWorkers.length > 0) {
-          setCrewWorkers(hydrated.crewWorkers);
-          setCrewMissionSessionId(sessionId);
-          crewMissionSessionIdRef.current = sessionId;
+        const mapped = mapHistoryToUiMessages(historyMsgs);
+        const shell = buildSessionShellPatch(session);
+
+        let feedbackRows = turnFeedback ?? [];
+        if (!feedbackRows.length) {
+          try {
+            const fb = await sessions.listTurnFeedback(sessionId);
+            feedbackRows = fb.feedback;
+          } catch { /* best-effort */ }
         }
-        setCurrentSessionTitle(session.title ?? `Session ${sessionId.slice(0, 8)}`);
-        if (!session.title || session.title === 'New Session' || session.title === 'Child Session') {
-          generateTitle(sessionId, visible);
+        const withFeedback = applyTurnFeedbackRows(mapped, feedbackRows);
+
+        setMessages(withFeedback);
+        setHasOlderMessages(messagesMeta?.truncated ?? false);
+        setIsCrewPrivateSession(shell.crewPrivate);
+        setCrewPrivateHost(shell.privateHost);
+        setPrivateHostCrewId(shell.privateHostCrewId);
+        if (shell.agentMode) setAgentMode(shell.agentMode);
+        setCurrentSessionTitle(shell.title);
+        if (shell.crewPrivate) {
+          const navState = location.state as { fromCrews?: boolean } | null;
+          chatReturnToRef.current = navState?.fromCrews ? '/console/crews' : 'crew_tab';
         }
         setParentSessionId(session.parentId ?? null);
+        const visible = historyMsgs.filter((m) => m.role !== 'part' && m.role !== 'system');
         const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
         const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
-        const persistedUsed = (session as any).tokenUsed ?? session.tokensUsed ?? 0;
-        const tokenAvail = Number((session as any).tokenAvailable ?? (session as any).token_available ?? 0);
+        const persistedUsed = (session as { tokenUsed?: number; tokensUsed?: number }).tokenUsed ?? session.tokensUsed ?? 0;
+        const tokenAvail = Number((session as { tokenAvailable?: number; token_available?: number }).tokenAvailable ?? (session as { token_available?: number }).token_available ?? 0);
         if (tokenAvail > 0) setTokenTotal(tokenAvail);
         setTokenUsed(persistedUsed > 0 ? persistedUsed : inputEst + outputEst);
-        setCompactionCount((session as any).compactionCount ?? 0);
+        setCompactionCount((session as { compactionCount?: number }).compactionCount ?? 0);
         setTokenInput(inputEst);
         setTokenOutput(outputEst);
         tokenInputRef.current = inputEst;
         tokenOutputRef.current = outputEst;
         if (resolvedScope) setCwd(resolvedScope);
-        // Restore saved session mode from DB (do not re-send to server)
-        if (session.mode === 'plan' || session.mode === 'agent') {
-          setAgentMode(session.mode);
-        }
         loadTodos();
+        setSessionRestoring(false);
+        sessionRestoringRef.current = false;
         isInitialLoadRef.current = false;
+        if (!session.title || session.title === 'New Session' || session.title === 'Child Session') {
+          generateTitle(sessionId, visible);
+        }
+
+        if (!shell.crewPrivate) {
+          void (async () => {
+            try {
+              let roster = crewList;
+              if (!roster.length) {
+                roster = await crews.list();
+                setCrewList(roster);
+              }
+              const hydrated = await hydrateCrewDeliverables(sessionId, withFeedback, roster);
+              if (hydrated.crewWorkers.length > 0) {
+                setCrewWorkers(hydrated.crewWorkers);
+                setCrewMissionSessionId(sessionId);
+                crewMissionSessionIdRef.current = sessionId;
+              }
+              setMessages(applyTurnFeedbackRows(hydrated.messages, feedbackRows));
+              if (isAtBottomRef.current) {
+                requestAnimationFrame(() => {
+                  const el = messagesContainerRef.current;
+                  if (el) el.scrollTop = el.scrollHeight;
+                });
+              }
+            } catch { /* best-effort */ }
+          })();
+        }
       }).catch((err) => {
         console.error('Failed to restore session on mount:', err);
         setWarnings([`Failed to restore session: ${err instanceof Error ? err.message : 'Unknown error'}`]);
+        setSessionRestoring(false);
+        sessionRestoringRef.current = false;
         isInitialLoadRef.current = false;
       });
     } else {
       setView('sessions');
+      setIsCrewPrivateSession(false);
+      setCrewPrivateHost(null);
+      setPrivateHostCrewId(null);
     }
-  }, [sessionId]);
+  }, [sessionId, location.state, navigate]);
 
   // Right sidebar state
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
@@ -441,24 +548,115 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const pendingFolderActionRef = useRef<'newSession' | 'changeCwd' | null>(null);
 
   // Agent gate modals (plan approval, mode escalation, step cap)
-  const [planApproval, setPlanApproval] = useState<{ title: string; steps: { id: string; description: string }[] } | null>(null);
   const [modeEscalation, setModeEscalation] = useState<{ tool: string; reason: string } | null>(null);
   const [stepCapPrompt, setStepCapPrompt] = useState<{ currentSteps: number; maxSteps: number } | null>(null);
   const [turnActivity, setTurnActivity] = useState<{ stage: string; step: number; elapsedMs: number } | null>(null);
+  const [pendingFeedbackMessageId, setPendingFeedbackMessageId] = useState<string | null>(null);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const lastTurnFeedbackCandidateRef = useRef<{ messageId: string; elapsedMs: number } | null>(null);
   const activeTurnIdRef = useRef<string | null>(null);
+  const turnActiveRef = useRef(false);
   const resendInProgressRef = useRef(false);
   const lastActivityRef = useRef<number>(Date.now());
   const isTimeoutWarning = (msg: string) => /timeout|timed out|aborted due to timeout/i.test(msg);
   const clearTimeoutWarnings = useCallback((prev: string[]) => prev.filter(w => !isTimeoutWarning(w)), []);
   const isAgentRecentlyActive = useCallback((withinMs = 45000) => Date.now() - lastActivityRef.current < withinMs, []);
+
+  const endTurnUi = useCallback(() => {
+    turnActiveRef.current = false;
+    activeTurnIdRef.current = null;
+    resendInProgressRef.current = false;
+    setStreaming(false);
+    setTurnActivity(null);
+    setTokenStreaming(0);
+  }, []);
+
+  const beginTurnUi = useCallback(() => {
+    turnActiveRef.current = true;
+    setStreaming(true);
+    setPendingFeedbackMessageId(null);
+  }, []);
   const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
+  const [crewSuggestOpen, setCrewSuggestOpen] = useState(false);
+  const [crewEvaluation, setCrewEvaluation] = useState<CrewSuggestionEvaluation | null>(null);
+  const [crewDossierOpen, setCrewDossierOpen] = useState(false);
+  const [crewDossierCrew, setCrewDossierCrew] = useState<PrebuiltCrew | null>(null);
   const pendingSendTextRef = useRef<string | null>(null);
+  const pendingCrewCandidatesRef = useRef<CrewMatchCandidate[]>([]);
+  const crewSuggestionHandledRef = useRef(false);
+
+  const handleTurnFeedback = useCallback(async (messageId: string, rating: TurnFeedbackRating) => {
+    const sessionId = currentSessionIdRef.current;
+    if (!sessionId) return;
+    setFeedbackSubmitting(true);
+    setPendingFeedbackMessageId(null);
+    const msg = messages.find((m) => m.id === messageId);
+    const turnSummary = summarizeMessageForTurnFeedback({ content: msg?.content, parts: msg?.parts });
+    const prevRating = msg?.turnFeedback?.rating;
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, turnFeedback: { rating } } : m)));
+    try {
+      await sessions.submitTurnFeedback(sessionId, {
+        messageId,
+        rating,
+        turnSummary: turnSummary || undefined,
+        metadata: msg?.crew ? { crewId: msg.crew.crewId } : undefined,
+      });
+    } catch (err) {
+      setMessages((prev) => prev.map((m) => (
+        m.id === messageId ? { ...m, turnFeedback: prevRating ? { rating: prevRating } : undefined } : m
+      )));
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to save feedback'));
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  }, [messages, replaceWarning]);
+
+  useEffect(() => {
+    sessionRestoringRef.current = sessionRestoring;
+  }, [sessionRestoring]);
+
+  useEffect(() => {
+    const candidate = lastTurnFeedbackCandidateRef.current;
+    if (!candidate || sessionRestoringRef.current) return;
+    const msg = messages.find((m) => m.id === candidate.messageId);
+    lastTurnFeedbackCandidateRef.current = null;
+    if (!msg || msg.turnFeedback || msg.streaming || msg.isModeChange) return;
+    if (isTurnFeedbackEligible({
+      role: 'assistant',
+      content: msg.content,
+      parts: msg.parts,
+      toolCalls: msg.toolCalls,
+      elapsedMs: candidate.elapsedMs,
+    })) {
+      setPendingFeedbackMessageId(candidate.messageId);
+    }
+  }, [messages]);
+
+  const openCrewSuggestionFromEvaluation = useCallback((evaluation: CrewSuggestionEvaluation, text: string) => {
+    if (!evaluation.shouldSuggest || evaluation.candidates.length === 0) return;
+    pendingSendTextRef.current = text;
+    pendingCrewCandidatesRef.current = evaluation.candidates;
+    setCrewEvaluation(evaluation);
+    setCrewSuggestOpen(true);
+  }, []);
 
   // Smart auto-scroll state
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef<boolean>(true);
   const jumpSuppressScrollTopRef = useRef<number | null>(null);
   const [showJumpPill, setShowJumpPill] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const loadingOlderRef = useRef(false);
+  const paginationAnchorRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null);
+  const paginationAnchorMessageIdRef = useRef<string | null>(null);
+  const paginationAnchorOffsetRef = useRef<number | null>(null);
+  const paginationCooldownUntilRef = useRef(0);
+  const initialScrollDoneRef = useRef(false);
+  const paginationReadyRef = useRef(false);
+  const needsInitialScrollRef = useRef(false);
+  const lastScrollTopRef = useRef(0);
+  const [freezeMessageLayout, setFreezeMessageLayout] = useState(false);
 
   // RAF-batched tool event accumulator (prevents render storm on long-running tasks)
   const toolBatchRef = useRef<TelemetryEvent[]>([]);
@@ -475,11 +673,76 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }
   }, []);
 
+  const loadOlderMessages = useCallback(async () => {
+    const sessionId = currentSessionIdRef.current;
+    if (!sessionId || loadingOlderRef.current || !hasOlderMessages) return;
+    if (!paginationReadyRef.current) return;
+    if (Date.now() < paginationCooldownUntilRef.current) return;
+    const first = messages.find((m) => m.role === 'user' || m.role === 'assistant');
+    if (!first?.id) return;
+    loadingOlderRef.current = true;
+    setLoadingOlderMessages(true);
+    setFreezeMessageLayout(true);
+    const el = messagesContainerRef.current;
+    if (el) {
+      const anchorEl = el.querySelector(`[data-message-id="${first.id}"]`);
+      if (anchorEl) {
+        paginationAnchorMessageIdRef.current = first.id;
+        paginationAnchorOffsetRef.current = anchorEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      } else {
+        paginationAnchorMessageIdRef.current = null;
+        paginationAnchorOffsetRef.current = null;
+        paginationAnchorRef.current = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight };
+      }
+    }
+    paginationCooldownUntilRef.current = Date.now() + 1000;
+    try {
+      const page = await sessions.getMessagesPage(sessionId, { limit: 20, before: first.id });
+      const older = mapHistoryToUiMessages(page.messages);
+      if (older.length === 0) {
+        setHasOlderMessages(false);
+        paginationAnchorMessageIdRef.current = null;
+        paginationAnchorOffsetRef.current = null;
+        paginationAnchorRef.current = null;
+        return;
+      }
+      setMessages((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        const prepend = older.filter((m) => !seen.has(m.id));
+        return prepend.length ? [...prepend, ...prev] : prev;
+      });
+      setHasOlderMessages(page.hasMore);
+    } catch {
+      paginationAnchorMessageIdRef.current = null;
+      paginationAnchorOffsetRef.current = null;
+      paginationAnchorRef.current = null;
+      /* best-effort */
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlderMessages(false);
+      window.setTimeout(() => setFreezeMessageLayout(false), 120);
+    }
+  }, [hasOlderMessages, messages]);
+
   // ─── Smart auto-scroll: track user scroll position ───
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
     const onScroll = () => {
+      const prevTop = lastScrollTopRef.current;
+      const scrolledUp = el.scrollTop < prevTop - 4;
+      lastScrollTopRef.current = el.scrollTop;
+
+      if (
+        paginationReadyRef.current
+        && scrolledUp
+        && Date.now() >= paginationCooldownUntilRef.current
+        && el.scrollTop < 64
+        && hasOlderMessages
+        && !loadingOlderRef.current
+      ) {
+        void loadOlderMessages();
+      }
       const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       const atBottom = distanceFromBottom < 80;
       isAtBottomRef.current = atBottom;
@@ -502,19 +765,75 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [view]);
+  }, [view, hasOlderMessages, loadOlderMessages]);
 
   // Auto-scroll to bottom on session load/restore
   const [initialScrollDone, setInitialScrollDone] = useState(false);
   useEffect(() => {
-    if (!initialScrollDone && messages.length > 0) {
-      const timer = setTimeout(() => {
-        scrollMessagesToBottom('instant');
-        setInitialScrollDone(true);
-      }, 100);
-      return () => clearTimeout(timer);
+    initialScrollDoneRef.current = initialScrollDone;
+  }, [initialScrollDone]);
+
+  useLayoutEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+
+    const anchorId = paginationAnchorMessageIdRef.current;
+    const anchorOffset = paginationAnchorOffsetRef.current;
+    if (anchorId && anchorOffset != null) {
+      const anchorEl = el.querySelector(`[data-message-id="${anchorId}"]`);
+      if (anchorEl) {
+        const nextOffset = anchorEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
+        el.scrollTop += nextOffset - anchorOffset;
+      }
+      paginationAnchorMessageIdRef.current = null;
+      paginationAnchorOffsetRef.current = null;
+      paginationCooldownUntilRef.current = Date.now() + 400;
+      return;
     }
-  }, [messages.length, initialScrollDone, scrollMessagesToBottom]);
+
+    const anchor = paginationAnchorRef.current;
+    if (anchor) {
+      paginationAnchorRef.current = null;
+      const delta = el.scrollHeight - anchor.scrollHeight;
+      el.scrollTop = anchor.scrollTop + delta;
+      paginationCooldownUntilRef.current = Date.now() + 400;
+      return;
+    }
+
+    if (needsInitialScrollRef.current && messages.length > 0) {
+      el.scrollTop = el.scrollHeight;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      if (atBottom) {
+        needsInitialScrollRef.current = false;
+        initialScrollDoneRef.current = true;
+        setInitialScrollDone(true);
+        paginationReadyRef.current = true;
+        isAtBottomRef.current = true;
+        lastScrollTopRef.current = el.scrollTop;
+        paginationCooldownUntilRef.current = Date.now() + 600;
+      }
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    if (!needsInitialScrollRef.current || messages.length === 0) return;
+    const timer = window.setTimeout(() => {
+      const el = messagesContainerRef.current;
+      if (!el || !needsInitialScrollRef.current) return;
+      scrollMessagesToBottom('instant');
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      if (atBottom) {
+        needsInitialScrollRef.current = false;
+        initialScrollDoneRef.current = true;
+        setInitialScrollDone(true);
+        paginationReadyRef.current = true;
+        isAtBottomRef.current = true;
+        lastScrollTopRef.current = el.scrollTop;
+        paginationCooldownUntilRef.current = Date.now() + 600;
+      }
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [messages.length, scrollMessagesToBottom]);
 
   // Auto-scroll only when user is at bottom — also on streaming content updates
   const prevRealCountRef = useRef(0);
@@ -543,6 +862,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const loadSessions = useCallback(() => {
     sessions.list().then((list) => setSessionList(list.filter((s) => !s.parentId))).catch(() => {});
   }, []);
+
+  const filteredSessionList = useMemo(() => {
+    return sessionList.filter((s) => {
+      const kind = s.contextKind ?? 'agent_x';
+      return sessionListTab === 'crew_private' ? kind === 'crew_private' : kind !== 'crew_private';
+    });
+  }, [sessionList, sessionListTab]);
+
+  const agentSessionCount = useMemo(
+    () => sessionList.filter((s) => (s.contextKind ?? 'agent_x') !== 'crew_private').length,
+    [sessionList],
+  );
+  const crewPrivateSessionCount = useMemo(
+    () => sessionList.filter((s) => (s.contextKind ?? 'agent_x') === 'crew_private').length,
+    [sessionList],
+  );
 
   const openChildSession = useCallback((props: {
     childSessionId: string;
@@ -596,7 +931,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
     system.cwd().then((r) => { if (r.cwd) setCwd(r.cwd); }).catch(() => {});
-    sessionSettings.get().then((s) => { if (s.mode === 'agent' || s.mode === 'plan') setAgentMode(s.mode); }).catch(() => {});
+    sessionSettings.get().then((s) => { if (!sessionId && (s.mode === 'agent' || s.mode === 'plan')) setAgentMode(s.mode); }).catch(() => {});
     // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
       .then(r => r.json())
@@ -682,7 +1017,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // Connect SSE for streaming events
   useEffect(() => {
-
+    const stopTurnIndicator = () => {
+      turnActiveRef.current = false;
+      activeTurnIdRef.current = null;
+      resendInProgressRef.current = false;
+      setStreaming(false);
+      setTurnActivity(null);
+      setTokenStreaming(0);
+    };
 
     // Pure function to apply a single tool event to messages state (used by RAF batch)
     const applyToolEvent = (prev: UIMessage[], ev: TelemetryEvent): UIMessage[] => {
@@ -801,6 +1143,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'loading_start': {
             // Ignore stale loading_start events replayed from telemetry buffer on page load
             if (isInitialLoadRef.current) { return prev; }
+            if (!turnActiveRef.current) return prev;
             streamChunkPendingRef.current = null;
             if (streamChunkRAFRef.current !== null) {
               cancelAnimationFrame(streamChunkRAFRef.current);
@@ -808,10 +1151,40 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             }
             setLoadingSteps(null);
             const loadingStage = (ev as { stage?: string }).stage;
-            // Crew missions stream crew-attributed messages — no Agent-X placeholder bubble
-            if (loadingStage === 'crew_mission') {
+            // Crew missions / private chats stream crew-attributed messages — no Agent-X placeholder
+            if (loadingStage === 'crew_mission' || loadingStage === 'crew_private') {
               setStreaming(true);
+              if (loadingStage === 'crew_mission') return prev;
+              if (last?.role === 'user' && isCrewPrivateRef.current && crewPrivateHostRef.current) {
+                const host = crewPrivateHostRef.current;
+                return [...prev, {
+                  id: crypto.randomUUID(),
+                  role: 'assistant',
+                  content: '',
+                  streaming: true,
+                  crew: { crewId: '', name: host.name, callsign: host.callsign },
+                }];
+              }
+              if (lastMessageIsQuestionnaireCard(prev) && isCrewPrivateRef.current && last?.crew) {
+                return [...prev, {
+                  id: crypto.randomUUID(),
+                  role: 'assistant',
+                  content: '',
+                  streaming: true,
+                  crew: last.crew,
+                }];
+              }
               return prev;
+            }
+            if (lastMessageIsQuestionnaireCard(prev)) {
+              setStreaming(true);
+              return [...prev, {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: '',
+                streaming: true,
+                ...(last?.crew ? { crew: last.crew } : {}),
+              }];
             }
             // Only create a placeholder when a user message just arrived (new turn).
             // If the last message is a completed assistant (race with handleSend),
@@ -847,10 +1220,23 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'stream_chunk': {
             // Ignore stale stream chunks replayed from telemetry buffer on page load
             if (isInitialLoadRef.current) return prev;
+            if (!turnActiveRef.current) return prev;
+            setStreaming(true);
             const rawDelta = (ev.content as string) ?? '';
             if (/Calling:|✅ Result:|\[STEP \d+\]/.test(rawDelta)) return prev;
             const rawFull = (ev.fullContent as string) ?? '';
             if (!rawFull && !rawDelta) return prev;
+            if (last?.role === 'assistant' && lastMessageIsQuestionnaireCard(prev)) {
+              const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: rawFull || rawDelta };
+              return [...prev, {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: rawFull || rawDelta,
+                streaming: true,
+                parts: [textPart],
+                ...(last.crew ? { crew: last.crew } : {}),
+              }];
+            }
             if (last?.role === 'assistant') {
               streamChunkPendingRef.current = rawFull || null;
               if (streamChunkRAFRef.current === null) {
@@ -904,22 +1290,92 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'message_received': {
             // Ignore stale message_received events replayed from telemetry buffer on page load
             if (isInitialLoadRef.current) return prev;
-            setTurnActivity(null);
-            activeTurnIdRef.current = null;
-            resendInProgressRef.current = false;
-            setClarification(null);
-            setTokenStreaming(0);
-            const msg = ev.message as { id?: string; content?: string; role?: string; parts?: PartEntry[]; toolCalls?: ToolCall[]; crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] }; tokenCount?: number } | undefined;
+            const isUpdate = (ev as { isUpdate?: boolean }).isUpdate === true;
+            const msg = ev.message as {
+              id?: string;
+              content?: string;
+              role?: string;
+              parts?: PartEntry[];
+              toolCalls?: ToolCall[];
+              crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
+              tokenCount?: number;
+            } | undefined;
             const crew = msg?.crew;
-            setStreaming(false);
+            const msgId = msg?.id || crypto.randomUUID();
+            const hasQuestionnaire = msg?.parts?.some((p) => p.type === 'questionnaire');
+            const hasCrewPicker = msg?.parts?.some((p) => p.type === 'crew_roster_picker');
+            const questionnairePending = hasQuestionnaire
+              && msg?.parts?.some((p) => p.type === 'questionnaire' && p.questionnaire?.status === 'pending');
+            const crewPickerPending = hasCrewPicker
+              && msg?.parts?.some((p) => p.type === 'crew_roster_picker' && p.crewRosterPicker?.status === 'pending');
+            const interactionPending = questionnairePending || crewPickerPending;
+            const turnContinues = isUpdate || interactionPending;
+
+            if (!turnContinues) {
+              stopTurnIndicator();
+              if (msg?.role === 'assistant') {
+                lastTurnFeedbackCandidateRef.current = {
+                  messageId: msgId,
+                  elapsedMs: (ev as { elapsed?: number }).elapsed ?? turnActivity?.elapsedMs ?? 0,
+                };
+              }
+            } else {
+              setTokenStreaming(0);
+            }
+
+            if (msgId && prev.some((m) => m.id === msgId)) {
+              const idx = prev.findIndex((m) => m.id === msgId);
+              if (idx >= 0 && msg) {
+                if (isUpdate && !interactionPending) {
+                  setStreaming(true);
+                } else if (interactionPending) {
+                  setStreaming(false);
+                } else {
+                  setStreaming(false);
+                }
+                const text = repairStreamTextGlitches(stripToolNoise(msg.content ?? ''));
+                const updated: UIMessage = {
+                  ...prev[idx]!,
+                  content: text || prev[idx]!.content,
+                  parts: msg.parts ?? prev[idx]!.parts,
+                  streaming: false,
+                  ...(crew ? { crew } : {}),
+                };
+                return [...prev.slice(0, idx), updated, ...prev.slice(idx + 1)];
+              }
+            }
+
+            if (msg?.role === 'user' && msg.content?.trim()) {
+              // User turns are added locally on send; engine emits message_sent, not message_received.
+              setStreaming(false);
+              return prev;
+            }
+
             if (!msg || msg.role === 'system') return prev;
             const text = repairStreamTextGlitches(stripToolNoise(msg.content ?? ''));
+            if (msg.role === 'assistant' && (hasQuestionnaire || hasCrewPicker)) {
+              setStreaming(interactionPending ? false : true);
+              const base = stripTrailingStreamPreamble(prev);
+              return [...base, {
+                id: msgId,
+                role: 'assistant' as const,
+                content: '',
+                streaming: false,
+                parts: msg.parts,
+                timestamp: new Date().toISOString(),
+                ...(crew ? { crew } : {}),
+              } as UIMessage];
+            }
+
+            setStreaming(false);
             if (last?.role === 'assistant') {
               const incomingCrewId = crew?.crewId;
               const lastCrewId = last.crew?.crewId;
-              const sameSpeaker = incomingCrewId
-                ? incomingCrewId === lastCrewId
-                : !lastCrewId;
+              const crewPrivateMerge = isCrewPrivateRef.current && last.streaming;
+              const sameSpeaker = crewPrivateMerge
+                || (incomingCrewId
+                  ? incomingCrewId === lastCrewId
+                  : !lastCrewId);
               const shouldMerge = sameSpeaker && (last.streaming || (!text && !!last.content));
               if (shouldMerge) {
                 const mergedParts = (last.parts && last.parts.length > 0) ? last.parts : msg.parts;
@@ -1042,19 +1498,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return updateLastMessage(prev, { streaming: false });
           }
 
-          case 'clarification_required': {
-            setStreaming(true);
-            setClarification({
-              question: (ev.question as string) ?? 'Could you clarify?',
-              options: (ev.options as string[]) ?? [],
-              recommended: (ev.recommended as string) ?? undefined,
-              allowChooseAll: (ev.allowChooseAll as boolean) ?? false,
-              allowFreeform: (ev.allowFreeform as boolean) ?? true,
-              selectionMode: (ev as { selectionMode?: 'single' | 'multiple' }).selectionMode,
-              fields: (ev as { fields?: ClarificationData['fields'] }).fields,
-            });
+          case 'clarification_required':
+            setStreaming(false);
             return prev;
-          }
+
+          case 'stream_clear':
+            return stripTrailingStreamPreamble(prev);
 
           case 'error': {
             // Suppress cascaded errors after a rate-limit — only show the first warning
@@ -1105,15 +1554,34 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             // Do not auto-switch — ModeEscalationModal handles user choice
             return prev;
 
-          case 'plan_approval_required': {
-            const plan = (ev as { plan?: { title?: string; steps?: { id: string; description: string }[] } }).plan;
-            if (plan?.steps) {
-              setPlanApproval({ title: plan.title ?? 'Plan', steps: plan.steps });
+          case 'crew_suggestion': {
+            // Ignore stale crew_suggestion replayed from telemetry buffer on page load / SSE reconnect
+            if (isInitialLoadRef.current) return prev;
+            if (crewSuggestionHandledRef.current || crewSuggestOpen) return prev;
+            const evaluation = (ev as { evaluation?: CrewSuggestionEvaluation }).evaluation;
+            const message = (ev as { message?: string }).message;
+            if (evaluation?.shouldSuggest && message) {
+              crewSuggestionHandledRef.current = true;
+              openCrewSuggestionFromEvaluation(evaluation, message);
+            }
+            return prev;
+          }
+
+          case 'crew_suggestion_required': {
+            if (isCrewPrivateRef.current) return prev;
+            if (crewSuggestionHandledRef.current || crewSuggestOpen) return prev;
+            const evaluation = (ev as { evaluation?: CrewSuggestionEvaluation }).evaluation;
+            const message = (ev as { message?: string }).message;
+            if (evaluation?.shouldSuggest && message) {
+              setStreaming(false);
+              crewSuggestionHandledRef.current = true;
+              openCrewSuggestionFromEvaluation(evaluation, message);
             }
             return prev;
           }
 
           case 'mode_escalation_required': {
+            if (isCrewPrivateRef.current) return prev;
             const tool = (ev as { tool?: string }).tool ?? 'tool';
             const reason = (ev as { reason?: string }).reason ?? 'Plan mode blocks this operation.';
             setModeEscalation({ tool, reason });
@@ -1121,6 +1589,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
 
           case 'mode_escalation_accepted':
+            if (isCrewPrivateRef.current) return prev;
             setAgentMode('agent');
             sessionSettings.setMode('agent').catch(() => {});
             setModeEscalation(null);
@@ -1143,12 +1612,27 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           }
 
           case 'turn_heartbeat': {
+            if (!turnActiveRef.current) return prev;
             setTurnActivity({
               stage: (ev as { stage?: string }).stage ?? 'working',
               step: (ev as { step?: number }).step ?? 0,
               elapsedMs: (ev as { elapsedMs?: number }).elapsedMs ?? 0,
             });
+            setStreaming(true);
             setWarnings(clearTimeoutWarnings);
+            return prev;
+          }
+
+          case 'turn_state': {
+            const phase = (ev as { phase?: string }).phase;
+            if (phase === 'running') {
+              if (turnActiveRef.current) setStreaming(true);
+            } else if (phase === 'awaiting_permission' || phase === 'awaiting_plan'
+              || phase === 'awaiting_mode' || phase === 'awaiting_step_cap') {
+              setStreaming(false);
+            } else if (phase === 'done' || phase === 'cancelled' || phase === 'idle') {
+              stopTurnIndicator();
+            }
             return prev;
           }
 
@@ -1350,7 +1834,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             .then(r => r.json())
             .then(data => {
               if (data.processing) {
+                turnActiveRef.current = true;
                 setStreaming(true);
+              } else {
+                stopTurnIndicator();
               }
             })
             .catch(() => {});
@@ -1442,19 +1929,40 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               return p;
             });
           }
-          setStreaming(false);
-          activeTurnIdRef.current = null;
+          endTurnUi();
         } else if (record.status === 'complete' || record.status === 'cancelled') {
-          activeTurnIdRef.current = null;
+          endTurnUi();
         }
       }).catch(() => {});
     }, 5000);
     return () => clearInterval(poll);
-  }, [streaming]);
+  }, [streaming, endTurnUi]);
 
   // Compute whether send is blocked due to missing provider/model
+  const questionnairePending = useMemo(() => hasPendingChatInteraction(messages), [messages]);
+
+  const showMedicalSessionDisclaimer = useMemo(() => {
+    const rosterCrew = privateHostCrewId ? crewList.find((c) => c.id === privateHostCrewId) : undefined;
+    if (isCrewPrivateSession && crewPrivateHost) {
+      const catalogId = rosterCrew?.catalogId
+        ?? (crewPrivateHost.callsign ? `hub-${crewPrivateHost.callsign}` : undefined);
+      return crewRequiresMedicalDisclaimer({
+        catalogId,
+        crewId: rosterCrew?.id,
+        categoryId: (rosterCrew as Crew & { categoryId?: string })?.categoryId,
+      });
+    }
+    return messages.some((m) => {
+      if (m.role !== 'assistant' || !m.crew) return false;
+      const catalogId = m.crew.callsign ? `hub-${m.crew.callsign}` : undefined;
+      return crewRequiresMedicalDisclaimer({ catalogId, crewId: m.crew.crewId || undefined });
+    });
+  }, [isCrewPrivateSession, crewPrivateHost, privateHostCrewId, crewList, messages]);
+
   const sendBlocked = !currentProvider || !currentModel;
-  const sendBlockedReason = !currentProvider ? 'Select a provider before sending' : !currentModel ? 'Select a model before sending' : '';
+  const sendBlockedReason = !currentProvider
+    ? 'Select a provider before sending'
+    : !currentModel ? 'Select a model before sending' : '';
 
   // Keep refs in sync so send handlers never capture stale session/cwd from closures.
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
@@ -1485,28 +1993,195 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return null;
   }, [navigate]);
 
-  const executeSend = useCallback(async (text: string) => {
+  const maybeOfferCrewSuggestion = useCallback(async (text: string): Promise<boolean> => {
+    if (isCrewPrivateSession) return false;
+    const hasMention = /(?<!\w)@([\w][\w.-]*)/.test(text);
+    if (hasMention) return false;
+    const sessionId = await ensureSession();
+    if (!sessionId) return false;
+    try {
+      const priorUserMessages = messages
+        .filter((m) => m.role === 'user')
+        .map((m) => m.content)
+        .slice(-3);
+      const evaluation = await crewSuggestions.evaluate(text, sessionId, priorUserMessages);
+      if (evaluation.reasons.includes('catalog-unavailable')) {
+        setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
+      }
+      if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
+        crewSuggestionHandledRef.current = true;
+        openCrewSuggestionFromEvaluation(evaluation, text);
+        return true;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Crew suggestion check failed';
+      if (import.meta.env.DEV) {
+        setWarnings((prev) => replaceWarning(prev, `Crew suggestion: ${msg}`));
+      }
+    }
+    return false;
+  }, [messages, ensureSession, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
+
+  const evaluateCrewForMessage = useCallback(async (text: string) => {
+    const sessionId = await ensureSession();
+    if (!sessionId) return null;
+    const priorUserMessages = messages
+      .filter((m) => m.role === 'user')
+      .map((m) => m.content)
+      .slice(-3);
+    return crewSuggestions.evaluate(text, sessionId, priorUserMessages);
+  }, [messages, ensureSession]);
+
+  const offerInlineCrewRoster = useCallback(async (text: string, evaluation: CrewSuggestionEvaluation): Promise<boolean> => {
+    if (isCrewPrivateSession) return false;
+    if (evaluation.candidates.length === 0) return false;
+    if (!explicitCrewRequest(text) && evaluation.shouldSuggest) return false;
+
     const trimmed = sanitizeForJson(text.trim());
-    if ((!trimmed && attachments.length === 0)) return;
+    if (!trimmed) return false;
+    const sessionId = await ensureSession();
+    if (!sessionId) return false;
+
+    try {
+      const persisted = await crewSuggestions.offerRosterPicker(sessionId, {
+        userText: trimmed,
+        evaluation,
+        attachments: attachments.map((a) => ({ name: a.name })),
+      });
+
+      const pickerRecord = {
+        id: persisted.pickerPartId,
+        status: 'pending' as const,
+        evaluation,
+        pendingUserText: trimmed,
+      };
+      const userMsg: UIMessage = {
+        id: persisted.userMessageId,
+        role: 'user',
+        content: trimmed,
+        streaming: false,
+        attachments: attachments.map((a) => ({ name: a.name })),
+      };
+      const pickerMsg: UIMessage = {
+        id: persisted.pickerMessageId,
+        role: 'assistant',
+        content: '',
+        streaming: false,
+        parts: [{
+          type: 'crew_roster_picker',
+          id: persisted.pickerPartId,
+          crewRosterPicker: pickerRecord,
+        }],
+      };
+      setMessages((prev) => [...prev, userMsg, pickerMsg]);
+      inputBarRef.current?.clear();
+      setAttachments([]);
+      return true;
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to offer crew roster'));
+      return false;
+    }
+  }, [attachments, isCrewPrivateSession, ensureSession, replaceWarning]);
+
+  const handleViewCrewDossier = useCallback(async (candidate: CrewMatchCandidate) => {
+    if (candidate.onRoster || candidate.origin === 'custom' || candidate.origin === 'hub_roster') {
+      const roster = crewList.find((c) => c.id === candidate.id);
+      if (roster) {
+        setCrewDossierCrew({
+          name: roster.name,
+          title: roster.title ?? '',
+          callsign: roster.callsign,
+          description: roster.description,
+          systemPrompt: roster.systemPrompt,
+          tone: roster.tone ?? '',
+          expertise: roster.expertise ?? [],
+          traits: roster.traits ?? [],
+          tools: roster.tools,
+        });
+        setCrewDossierOpen(true);
+        return;
+      }
+    }
+    try {
+      const { entry } = await crewSuggestions.getCatalogEntry(candidate.catalogId ?? candidate.id);
+      setCrewDossierCrew({
+        name: entry.name,
+        title: entry.title,
+        callsign: entry.callsign,
+        description: entry.description,
+        systemPrompt: entry.systemPrompt,
+        tone: entry.tone ?? '',
+        expertise: entry.expertise,
+        traits: entry.traits,
+        tools: entry.tools,
+      });
+      setCrewDossierOpen(true);
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to load crew dossier'));
+    }
+  }, [crewList]);
+
+  const executeSend = useCallback(async (
+    text: string,
+    delegateCrewIds?: string[],
+    options?: {
+      crewSuggestionResolved?: boolean;
+      crewIntakeFromPicker?: boolean;
+      primaryCrewId?: string;
+      skipUserMessage?: boolean;
+    },
+  ) => {
+    const trimmed = sanitizeForJson(text.trim());
+    if ((!trimmed && attachments.length === 0) && !options?.skipUserMessage) return;
     if (!currentProvider || !currentModel) return;
     rateLimitSeenRef.current = false;
     if (!(await ensureSession())) return;
 
-    setStreaming(true);
-    const userMsg: UIMessage = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: trimmed,
-      streaming: false,
-      attachments: attachments.map((a) => ({ name: a.name })),
-    };
-    setMessages((prev) => [...prev, userMsg]);
+    const priorUserMessages = messages
+      .filter((m) => m.role === 'user')
+      .map((m) => m.content)
+      .slice(-3);
+
+    beginTurnUi();
+    if (!options?.skipUserMessage) {
+      const userMsg: UIMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: trimmed,
+        streaming: false,
+        attachments: attachments.map((a) => ({ name: a.name })),
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      inputBarRef.current?.clear();
+    }
 
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
 
+    const crewResolved = options?.crewSuggestionResolved ?? Boolean(delegateCrewIds?.length);
+
     try {
-      const result = await chat.send(trimmed, fileRefs);
+      const result = await chat.send(
+        trimmed,
+        fileRefs,
+        undefined,
+        delegateCrewIds,
+        crewResolved,
+        priorUserMessages,
+        options?.crewIntakeFromPicker,
+        options?.primaryCrewId,
+      );
+      if (result?.crewSuggestionRequired && result.evaluation) {
+        endTurnUi();
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'user' && last.content === trimmed) return prev.slice(0, -1);
+          return prev;
+        });
+        crewSuggestionHandledRef.current = true;
+        openCrewSuggestionFromEvaluation(result.evaluation, trimmed);
+        return;
+      }
       if (result?.turnId) activeTurnIdRef.current = result.turnId;
       if (result?.async) return;
       if (result?.message) {
@@ -1521,7 +2196,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           return prev;
         });
       }
-      setStreaming(false);
+      endTurnUi();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
@@ -1538,20 +2213,57 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         if (last?.role === 'assistant' && last.streaming) return prev.slice(0, -1);
         return prev;
       });
-      setStreaming(false);
+      endTurnUi();
     }
-  }, [attachments, currentProvider, currentModel, agentMode, ensureSession]);
+  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, openCrewSuggestionFromEvaluation, beginTurnUi, endTurnUi]);
+
+  const sendAfterModeChoice = useCallback(async (text: string, switchToAgent: boolean) => {
+    if (switchToAgent) {
+      setAgentMode('agent');
+      await sessionSettings.setMode('agent').catch(() => {});
+    }
+    if (await maybeOfferCrewSuggestion(text)) return;
+    await executeSend(text, undefined, { crewSuggestionResolved: true });
+  }, [maybeOfferCrewSuggestion, executeSend]);
 
   const handleSend = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if ((!trimmed && attachments.length === 0)) return;
+    crewSuggestionHandledRef.current = false;
     if (agentMode === 'plan' && shouldSuggestMode(trimmed) && !localStorage.getItem(DISMISS_KEY)) {
       pendingSendTextRef.current = trimmed;
       setModeSuggestOpen(true);
       return;
     }
+
+    if (!isCrewPrivateSession && !/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) {
+      try {
+        const evaluation = await evaluateCrewForMessage(trimmed);
+        if (evaluation) {
+          if (evaluation.reasons.includes('catalog-unavailable')) {
+            setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
+          }
+          const workforceIntent = explicitCrewRequest(trimmed);
+          if (workforceIntent && evaluation.candidates.length > 0) {
+            crewSuggestionHandledRef.current = true;
+            if (await offerInlineCrewRoster(trimmed, evaluation)) return;
+          }
+          if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
+            crewSuggestionHandledRef.current = true;
+            openCrewSuggestionFromEvaluation(evaluation, trimmed);
+            return;
+          }
+          if (await offerInlineCrewRoster(trimmed, evaluation)) return;
+        }
+      } catch {
+        if (await maybeOfferCrewSuggestion(trimmed)) return;
+      }
+    } else if (await maybeOfferCrewSuggestion(trimmed)) {
+      return;
+    }
+
     await executeSend(trimmed);
-  }, [attachments.length, agentMode, executeSend]);
+  }, [attachments.length, agentMode, executeSend, maybeOfferCrewSuggestion, evaluateCrewForMessage, offerInlineCrewRoster, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
 
   // Retry last user message — re-sends without duplicating the user message,
   // replaces the existing assistant response on success.
@@ -1560,7 +2272,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     if (!(await ensureSession())) return;
 
     resendInProgressRef.current = true;
-    setStreaming(true);
+    beginTurnUi();
 
     // Remove the old assistant response — SSE will update the placeholder
     setMessages(prev => {
@@ -1582,7 +2294,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }
         return prev;
       });
-      setStreaming(false);
+      endTurnUi();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
@@ -1602,20 +2314,122 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }
         return prev;
       });
-      setStreaming(false);
+      endTurnUi();
     }
-  }, [streaming, currentProvider, currentModel, ensureSession]);
+  }, [streaming, currentProvider, currentModel, ensureSession, beginTurnUi, endTurnUi]);
 
   // --- Clarification response ---
-  const handleClarifyRespond = useCallback(async (response: string) => {
-    setClarification(null);
-    try {
-      await agent.respondToClarification(response);
-      setStreaming(true);
-    } catch {
-      setWarnings((prev) => replaceWarning(prev, 'Failed to send clarification response'));
-    }
+  const markCrewRosterPickerResolved = useCallback((
+    messageId: string,
+    status: 'answered' | 'skipped',
+    selectedCandidateIds?: string[],
+  ) => {
+    setMessages((prev) => prev.map((m) => {
+      if (m.id !== messageId || !m.parts) return m;
+      return {
+        ...m,
+        parts: m.parts.map((p) => {
+          if (p.type !== 'crew_roster_picker' || !p.crewRosterPicker) return p;
+          return {
+            ...p,
+            crewRosterPicker: {
+              ...p.crewRosterPicker,
+              status,
+              selectedCandidateIds,
+            },
+          };
+        }),
+      };
+    }));
   }, []);
+
+  const handleCrewRosterPickerSubmit = useCallback(async (messageId: string, selected: CrewMatchCandidate[]) => {
+    const pickerMsg = messages.find((m) => m.id === messageId);
+    const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
+    const record = pickerPart?.crewRosterPicker;
+    if (!record || record.status !== 'pending') return;
+
+    const text = record.pendingUserText;
+    const pickerPartId = pickerPart?.id;
+
+    try {
+      const sessionId = await ensureSession();
+      if (!sessionId) return;
+      const result = await crewSuggestions.resolve({
+        sessionId,
+        action: 'deploy',
+        selectedCandidateIds: selected.map((c) => c.id),
+        candidates: record.evaluation.candidates,
+      });
+      if (!result.deployedCrewIds?.length) {
+        setWarnings((prev) => replaceWarning(prev, 'Selected specialists could not be recruited or enabled.'));
+        await crewSuggestions.updateRosterPicker(sessionId, {
+          pickerMessageId: messageId,
+          status: 'skipped',
+          evaluation: record.evaluation,
+          pendingUserText: text,
+          pickerPartId,
+        });
+        markCrewRosterPickerResolved(messageId, 'skipped');
+        await executeSend(text, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+        return;
+      }
+      const primaryCrewId = result.deployedPrimaryCrewId
+        ?? result.deployedCrewIds[0];
+      await crewSuggestions.updateRosterPicker(sessionId, {
+        pickerMessageId: messageId,
+        status: 'answered',
+        selectedCandidateIds: selected.map((c) => c.id),
+        evaluation: record.evaluation,
+        pendingUserText: text,
+        pickerPartId,
+      });
+      markCrewRosterPickerResolved(messageId, 'answered', selected.map((c) => c.id));
+      await executeSend(text, result.deployedCrewIds, {
+        crewSuggestionResolved: true,
+        crewIntakeFromPicker: true,
+        primaryCrewId,
+        skipUserMessage: true,
+      });
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to deploy crew'));
+    }
+  }, [messages, markCrewRosterPickerResolved, ensureSession, executeSend, replaceWarning]);
+
+  const handleCrewRosterPickerSkip = useCallback(async (messageId: string) => {
+    const pickerMsg = messages.find((m) => m.id === messageId);
+    const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
+    const record = pickerPart?.crewRosterPicker;
+    if (!record || record.status !== 'pending') return;
+
+    try {
+      const sessionId = await ensureSession();
+      if (sessionId) {
+        await crewSuggestions.updateRosterPicker(sessionId, {
+          pickerMessageId: messageId,
+          status: 'skipped',
+          evaluation: record.evaluation,
+          pendingUserText: record.pendingUserText,
+          pickerPartId: pickerPart?.id,
+        });
+      }
+      markCrewRosterPickerResolved(messageId, 'skipped');
+      await executeSend(record.pendingUserText, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to skip crew picker'));
+    }
+  }, [messages, markCrewRosterPickerResolved, ensureSession, executeSend, replaceWarning]);
+
+  const handleQuestionnaireRespond = useCallback(async (_messageId: string, response: string) => {
+    try {
+      const result = await agent.respondToClarification(response, currentSessionId ?? undefined);
+      if (result.ok) {
+        setStreaming(true);
+      }
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to send questionnaire response'));
+    }
+  }, [replaceWarning, currentSessionId]);
 
   const resetCrewMissionState = useCallback(() => {
     setCrewWorkers([]);
@@ -1632,15 +2446,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return bound != null && current != null && bound === current;
   }, []);
 
-  useEffect(() => { setClarification(null); }, [currentSessionId]);
+  useEffect(() => {
+    setCrewSuggestOpen(false);
+    setCrewEvaluation(null);
+    pendingSendTextRef.current = null;
+    pendingCrewCandidatesRef.current = [];
+    crewSuggestionHandledRef.current = false;
+  }, [currentSessionId]);
   useEffect(() => { resetCrewMissionState(); }, [currentSessionId, resetCrewMissionState]);
-  useEffect(() => { if (!streaming) setClarification(null); }, [streaming]);
 
   const handleCancel = useCallback(async () => {
+    endTurnUi();
     try { await chat.cancel(); } catch { /* ignore */ }
-    setClarification(null);
-    setStreaming(false);
-  }, []);
+  }, [endTurnUi]);
 
   // ─── Slash command handler ───
   // ─── Global keyboard shortcuts ───
@@ -1655,6 +2473,18 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // ─── Hyperdrive toggle ───
   const engageHyperdrive = useCallback(async (skipDisclaimer = false) => {
+    if (isCrewPrivateRef.current) {
+      if (hyperdriveMode) {
+        try {
+          const res = await fetch('/api/mode/hyperdrive', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
+          const data = await res.json();
+          setHyperdriveMode(false);
+          if (data.mode) setAgentMode(data.mode);
+          else setAgentMode(prevModeBeforeHyperdrive.current);
+        } catch { /* best-effort */ }
+      }
+      return;
+    }
     if (hyperdriveMode) {
       // Deactivate hyperdrive — restore previous mode
       try {
@@ -1698,9 +2528,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     } catch {}
   }, [agentMode]);
 
-  // Check hyperdrive mode on mount
+  // Check hyperdrive mode on mount (disabled for crew private chats)
   useEffect(() => {
-    hyperdrivePromptShownRef.current = false; // reset on session change
+    hyperdrivePromptShownRef.current = false;
+    if (isCrewPrivateSession) {
+      setHyperdriveMode(false);
+      fetch('/api/mode/hyperdrive', { credentials: 'include' })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.hyperdriveMode) {
+            return fetch('/api/mode/hyperdrive', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          return undefined;
+        })
+        .catch(() => {});
+      return;
+    }
     fetch('/api/mode/hyperdrive', { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
@@ -1710,7 +2557,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }
       })
       .catch(() => {});
-  }, [currentSessionId]);
+  }, [currentSessionId, isCrewPrivateSession]);
 
   // Refresh context data when session loads or changes
   useEffect(() => {
@@ -1730,12 +2577,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         // Hyperdrive active → TAB deactivates it, restores previous mode
         if (hyperdriveMode) {
           e.preventDefault();
-          engageHyperdrive(); // toggles off (hyperdriveMode is true → deactivates)
+          engageHyperdrive();
           return;
         }
         e.preventDefault();
         handleToggleMode();
       } else if (e.key === 'Shift') {
+        if (isCrewPrivateRef.current) return;
         // Double-Shift → engage/disengage hyperdrive
         const now = Date.now();
         if (now - lastShiftRef.current < 500) {
@@ -1787,7 +2635,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
     if (!(await ensureSession())) return;
-    setStreaming(true);
+    beginTurnUi();
     const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: trimmed, streaming: false, attachments: attachments.map((a) => ({ name: a.name })) };
     setMessages((prev) => [...prev, userMsg, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }]);
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
@@ -1806,8 +2654,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         });
       }
     } catch { /* handled by SSE */ }
-    setStreaming(false);
-  }, [attachments, ensureSession]);
+    endTurnUi();
+  }, [attachments, ensureSession, beginTurnUi, endTurnUi]);
 
   const handleAddToQueue = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -1821,7 +2669,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
     if (!(await ensureSession())) return;
-    setStreaming(true);
+    beginTurnUi();
     const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: `↑ ${trimmed}`, streaming: false };
     setMessages((prev) => [...prev, userMsg, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }]);
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
@@ -1840,8 +2688,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         });
       }
     } catch { /* handled by SSE */ }
-    setStreaming(false);
-  }, [attachments, ensureSession]);
+    endTurnUi();
+  }, [attachments, ensureSession, beginTurnUi, endTurnUi]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -1863,16 +2711,50 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const handleShowSessions = () => {
     setStreaming(false);
     loadSessions();
-    navigate('/console/chat');
+    const returnTo = chatReturnToRef.current;
+    chatReturnToRef.current = null;
+    if (returnTo === '/console/crews') {
+      navigate('/console/crews');
+    } else if (returnTo === 'crew_tab' || isCrewPrivateSession) {
+      navigate('/console/chat?tab=crew');
+    } else {
+      navigate('/console/chat');
+    }
   };
 
   const handleSelectSession = async (s: SessionInfo) => {
     setWarnings([]);
     rateLimitSeenRef.current = false;
     setStreaming(false);
+    setHasOlderMessages(false);
+    setInitialScrollDone(false);
+    initialScrollDoneRef.current = false;
+    paginationReadyRef.current = false;
+    needsInitialScrollRef.current = true;
+    lastScrollTopRef.current = 0;
+    isAtBottomRef.current = false;
+    paginationAnchorRef.current = null;
+    paginationAnchorMessageIdRef.current = null;
+    paginationAnchorOffsetRef.current = null;
+    setSessionRestoring(true);
+    sessionRestoringRef.current = true;
+    isInitialLoadRef.current = true;
+    setPendingFeedbackMessageId(null);
+    lastTurnFeedbackCandidateRef.current = null;
+    setMessages([]);
+    const previewShell = buildSessionShellPatch(s);
+    setIsCrewPrivateSession(previewShell.crewPrivate);
+    setCrewPrivateHost(previewShell.privateHost);
+    setPrivateHostCrewId(previewShell.privateHostCrewId);
+    if (previewShell.agentMode) setAgentMode(previewShell.agentMode);
+    setCurrentSessionTitle(previewShell.title);
+    if (previewShell.crewPrivate) chatReturnToRef.current = 'crew_tab';
     try {
-      const { messages: historyMsgs, session, scopePath } = await sessions.restore(s.id);
+      const { messages: historyMsgs, session, scopePath, turnFeedback, messagesMeta } = await sessions.restore(s.id, { perRole: CHAT_INITIAL_MESSAGES_PER_ROLE });
       if (session?.parentId || s.parentId) {
+        setSessionRestoring(false);
+        sessionRestoringRef.current = false;
+        isInitialLoadRef.current = false;
         const parentId = session?.parentId ?? s.parentId!;
         setChildSessionDrawer({
           childSessionId: s.id,
@@ -1882,50 +2764,76 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         navigate(`/console/chat/${parentId}`);
         return;
       }
-      const visible = historyMsgs.filter((m: any) => m.role !== 'part' && m.role !== 'system');
-      const mapped = visible.map((m: any) => {
-        const modeChange = parseModeChange(m.content);
-        const restored = mapRestoreHistoryMessage(m);
-        return {
-          ...restored,
-          id: m.id || crypto.randomUUID(), streaming: false,
-          subAgents: m.subAgents?.map((sa: any) => ({ ...sa, status: 'done' as const })),
-          plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
-          ...(modeChange ? { isModeChange: modeChange } : {}),
-        };
-      }) as unknown as UIMessage[];
-      const hydrated = await hydrateCrewDeliverables(s.id, mapped, crewList);
-      setMessages(hydrated.messages);
-      if (hydrated.crewWorkers.length > 0) {
-        setCrewWorkers(hydrated.crewWorkers);
-        setCrewMissionSessionId(s.id);
-        crewMissionSessionIdRef.current = s.id;
+      const mapped = mapHistoryToUiMessages(historyMsgs);
+      const shell = buildSessionShellPatch({ ...s, ...session, id: s.id });
+      let feedbackRows = turnFeedback ?? [];
+      if (!feedbackRows.length) {
+        try {
+          const fb = await sessions.listTurnFeedback(s.id);
+          feedbackRows = fb.feedback;
+        } catch { /* best-effort */ }
       }
-      setCurrentSessionTitle(s.title ?? `Session ${s.id.slice(0, 8)}`);
+      const withFeedback = applyTurnFeedbackRows(mapped, feedbackRows);
+      setMessages(withFeedback);
+      setHasOlderMessages(messagesMeta?.truncated ?? false);
+      setIsCrewPrivateSession(shell.crewPrivate);
+      setCrewPrivateHost(shell.privateHost);
+      setPrivateHostCrewId(shell.privateHostCrewId);
+      if (shell.agentMode) setAgentMode(shell.agentMode);
+      setCurrentSessionTitle(shell.title);
+      if (shell.crewPrivate) chatReturnToRef.current = 'crew_tab';
       setParentSessionId(session?.parentId ?? s.parentId ?? null);
       setCurrentSessionId(s.id);
       setShowJumpPill(false);
       jumpSuppressScrollTopRef.current = null;
+      const visible = historyMsgs.filter((m) => m.role !== 'part' && m.role !== 'system');
       const inputEst = visible.filter(m => m.role === 'user').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
       const outputEst = visible.filter(m => m.role === 'assistant').reduce((acc, m) => acc + (m.tokenCount ?? Math.ceil((m.content?.length ?? 0) / 4)), 0);
-      const persistedUsed = (s as any).tokenUsed ?? s.tokensUsed ?? 0;
-      const tokenAvail = Number((s as any).tokenAvailable ?? (s as any).token_available ?? 0);
+      const persistedUsed = (s as { tokenUsed?: number; tokensUsed?: number }).tokenUsed ?? s.tokensUsed ?? 0;
+      const tokenAvail = Number((s as { tokenAvailable?: number; token_available?: number }).tokenAvailable ?? (s as { token_available?: number }).token_available ?? 0);
       if (tokenAvail > 0) setTokenTotal(tokenAvail);
       setTokenUsed(persistedUsed > 0 ? persistedUsed : inputEst + outputEst);
-      setCompactionCount((s as any).compactionCount ?? s.compactionCount ?? 0);
+      setCompactionCount((s as { compactionCount?: number }).compactionCount ?? 0);
       setTokenInput(inputEst);
       setTokenOutput(outputEst);
       tokenInputRef.current = inputEst;
       tokenOutputRef.current = outputEst;
       const restoredCwd = scopePath || session?.scopePath || '';
       if (restoredCwd) setCwd(restoredCwd);
-      // Restore saved session mode from DB (do not re-send to server)
-      if (session?.mode === 'plan' || session?.mode === 'agent') {
-        setAgentMode(session.mode);
-      }
       loadTodos();
+      setSessionRestoring(false);
+      sessionRestoringRef.current = false;
+      isInitialLoadRef.current = false;
       navigate(`/console/chat/${s.id}`);
+
+      if (!shell.crewPrivate) {
+        void (async () => {
+          try {
+            let roster = crewList;
+            if (!roster.length) {
+              roster = await crews.list();
+              setCrewList(roster);
+            }
+            const hydrated = await hydrateCrewDeliverables(s.id, withFeedback, roster);
+            if (hydrated.crewWorkers.length > 0) {
+              setCrewWorkers(hydrated.crewWorkers);
+              setCrewMissionSessionId(s.id);
+              crewMissionSessionIdRef.current = s.id;
+            }
+            setMessages(applyTurnFeedbackRows(hydrated.messages, feedbackRows));
+            if (isAtBottomRef.current) {
+              requestAnimationFrame(() => {
+                const el = messagesContainerRef.current;
+                if (el) el.scrollTop = el.scrollHeight;
+              });
+            }
+          } catch { /* best-effort */ }
+        })();
+      }
     } catch (e) {
+      setSessionRestoring(false);
+      sessionRestoringRef.current = false;
+      isInitialLoadRef.current = false;
       setWarnings([`Failed to restore session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
     }
   };
@@ -2034,10 +2942,39 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 SESSIONS
               </Typography>
             </Box>
+            <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
+              {([
+                { id: 'agent_x' as const, label: 'AGENT-X', count: agentSessionCount },
+                { id: 'crew_private' as const, label: 'CREW PRIVATE', count: crewPrivateSessionCount },
+              ]).map((tab) => (
+                <Button
+                  key={tab.id}
+                  size="small"
+                  onClick={() => setSessionListTab(tab.id)}
+                  sx={{
+                    minWidth: 0,
+                    px: 1.25,
+                    py: 0.35,
+                    fontSize: '0.55rem',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    letterSpacing: '1px',
+                    color: sessionListTab === tab.id ? colors.accent.blue : colors.text.dim,
+                    bgcolor: sessionListTab === tab.id ? colors.accent.blue + '12' : 'transparent',
+                    border: `1px solid ${sessionListTab === tab.id ? colors.accent.blue + '40' : colors.border.subtle}`,
+                    borderRadius: '4px',
+                    '&:hover': { bgcolor: colors.accent.blue + '18', borderColor: colors.accent.blue + '50' },
+                  }}
+                >
+                  {tab.label}
+                  <Box component="span" sx={{ ml: 0.75, opacity: 0.7 }}>({tab.count})</Box>
+                </Button>
+              ))}
+            </Box>
             <Box sx={{ flex: 1 }} />
             <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', color: colors.text.dim }}>
-              {sessionList.length} SESSION{sessionList.length !== 1 ? 'S' : ''}
+              {filteredSessionList.length} SHOWN
             </Typography>
+            {sessionListTab === 'agent_x' && (
             <Button
               size="small"
               startIcon={<AddIcon sx={{ fontSize: 12 }} />}
@@ -2050,11 +2987,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             >
               NEW SESSION
             </Button>
+            )}
+            {sessionListTab === 'crew_private' && (
+            <Button
+              size="small"
+              startIcon={<ForumIcon sx={{ fontSize: 12 }} />}
+              onClick={() => navigate('/console/crews')}
+              sx={{
+                color: colors.accent.blue, fontSize: '0.6rem', textTransform: 'none', fontFamily: "'JetBrains Mono', monospace",
+                border: `1px solid ${colors.accent.blue}30`, px: 1.5, py: 0.4, borderRadius: '4px',
+                '&:hover': { bgcolor: colors.accent.blue + '15', borderColor: colors.accent.blue + '60' },
+              }}
+            >
+              OPEN CREWS
+            </Button>
+            )}
           </Box>
 
           {/* Session list */}
           <Box sx={{ flex: 1, overflow: 'auto', p: 2, position: 'relative', zIndex: 1 }}>
-            {sessionList.length === 0 ? (
+            {filteredSessionList.length === 0 ? (
               <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 2 }}>
                 <Box sx={{
                   width: 64, height: 64, borderRadius: '50%',
@@ -2062,26 +3014,45 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   bgcolor: colors.bg.tertiary,
                 }}>
-                  <SmartToyIcon sx={{ fontSize: 28, color: colors.text.dim, opacity: 0.5 }} />
+                  {sessionListTab === 'crew_private' ? (
+                    <ForumIcon sx={{ fontSize: 28, color: colors.text.dim, opacity: 0.5 }} />
+                  ) : (
+                    <SmartToyIcon sx={{ fontSize: 28, color: colors.text.dim, opacity: 0.5 }} />
+                  )}
                 </Box>
                 <Box sx={{ textAlign: 'center' }}>
                   <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.dim, letterSpacing: '2px', mb: 0.5 }}>
-                    NO SESSIONS
+                    {sessionListTab === 'crew_private' ? 'NO CREW PRIVATE CHATS' : 'NO SESSIONS'}
                   </Typography>
                   <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, opacity: 0.6 }}>
-                    Send a message to start your first session
+                    {sessionListTab === 'crew_private'
+                      ? 'Start a private 1:1 chat from the crew roster or Crew Hub'
+                      : 'Send a message to start your first session'}
                   </Typography>
                 </Box>
-                <Button
-                  size="small"
-                  onClick={() => handleNewSession()}
-                  sx={{
-                    mt: 1, color: colors.accent.blue, textTransform: 'none', fontSize: '0.65rem',
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}
-                >
-                  NEW SESSION
-                </Button>
+                {sessionListTab === 'crew_private' ? (
+                  <Button
+                    size="small"
+                    onClick={() => navigate('/console/crews')}
+                    sx={{
+                      mt: 1, color: colors.accent.blue, textTransform: 'none', fontSize: '0.65rem',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    GO TO CREWS
+                  </Button>
+                ) : (
+                  <Button
+                    size="small"
+                    onClick={() => handleNewSession()}
+                    sx={{
+                      mt: 1, color: colors.accent.blue, textTransform: 'none', fontSize: '0.65rem',
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    NEW SESSION
+                  </Button>
+                )}
               </Box>
             ) : (
               <Box sx={{
@@ -2089,7 +3060,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
                 gap: 1.25,
               }}>
-                {sessionList.map((s) => (
+                {filteredSessionList.map((s) => (
                   <SessionGridCard
                     key={s.id}
                     session={s}
@@ -2137,8 +3108,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         )}
         {/* Header */}
         <Box sx={{
-          px: 1.5, py: 0.5, borderBottom: `1px solid ${hyperdriveMode ? '#ff00ff20' : colors.border.default}`,
-          display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 36, position: 'relative', zIndex: 1,
+          ...panelHeaderRowSx,
+          borderBottom: `1px solid ${hyperdriveMode ? '#ff00ff20' : colors.border.default}`,
+          position: 'relative',
+          zIndex: 1,
           transition: 'border-color 0.6s ease',
         }}>
           <IconButton size="small" onClick={handleShowSessions} sx={{ color: colors.text.dim, p: 0.5 }}>
@@ -2195,6 +3168,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           </Button>
         </Box>
 
+        {showMedicalSessionDisclaimer && <MedicalDisclaimerChatSessionStrip />}
+
         {/* Messages */}
         <Box
           ref={messagesContainerRef}
@@ -2209,7 +3184,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             '&::-webkit-scrollbar': { display: 'none' },
           }}
         >
-          {visibleMessagesWithFlags.length === 0 && !streaming && (
+          {sessionRestoring && visibleMessagesWithFlags.length === 0 && (
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+              <CircularProgress size={22} sx={{ color: colors.text.dim }} />
+            </Box>
+          )}
+
+          {visibleMessagesWithFlags.length === 0 && !streaming && !sessionRestoring && (
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
               <Box sx={{ textAlign: 'center', maxWidth: 300 }}>
                 <SmartToyIcon sx={{ fontSize: 36, color: colors.border.strong, mb: 1 }} />
@@ -2221,12 +3202,31 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             </Box>
           )}
 
+          {(loadingOlderMessages || hasOlderMessages) && visibleMessagesWithFlags.length > 0 && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 0.75 }}>
+              {loadingOlderMessages ? (
+                <CircularProgress size={14} sx={{ color: colors.text.dim }} />
+              ) : (
+                <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim }}>Scroll up for older messages</Typography>
+              )}
+            </Box>
+          )}
+
           <ChatMessageList
             items={visibleMessagesWithFlags}
             loadingSteps={loadingSteps}
             onResend={handleResend}
             bottomRef={bottomRef}
             onOpenChildSession={openChildSession}
+            onQuestionnaireRespond={handleQuestionnaireRespond}
+            onCrewRosterPickerSubmit={handleCrewRosterPickerSubmit}
+            onCrewRosterPickerSkip={handleCrewRosterPickerSkip}
+            onViewCrewDossier={handleViewCrewDossier}
+            pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
+            onTurnFeedback={handleTurnFeedback}
+            feedbackSubmitting={feedbackSubmitting}
+            planMode={agentMode === 'plan'}
+            freezeLayout={freezeMessageLayout || loadingOlderMessages}
           />
 
           {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
@@ -2322,7 +3322,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           )}
 
           {/* Crew mission status — scoped to the session that started it */}
-          {crewMissionSessionId === currentSessionId && (
+          {!isCrewPrivateSession && crewMissionSessionId === currentSessionId && (
           <CrewMissionCard
             workers={crewWorkers}
             missionActive={crewMissionActive}
@@ -2337,13 +3337,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           />
           )}
 
-          {clarification && streaming && (
-            <ClarificationPrompt
-              data={clarification}
-              onRespond={handleClarifyRespond}
-            />
-          )}
-
           {/* Single unified box: input + toolbar — border tinted by mode */}
           <Box sx={{
             position: 'relative',
@@ -2352,8 +3345,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             borderRadius: '14px',
             bgcolor: colors.bg.tertiary,
             backgroundImage: hyperdriveMode ? 'linear-gradient(#ff00ff08, #ff00ff08)' : agentMode === 'agent' ? `linear-gradient(${colors.accent.orange}08, ${colors.accent.orange}08)` : 'none',
-            transition: 'border-color 0.2s, background-color 0.2s',
-            '&:focus-within': { borderColor: hyperdriveMode ? '#ff00ff90' : agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
+            transition: 'border-color 0.2s, background-color 0.2s, opacity 0.2s ease',
+            opacity: questionnairePending || sessionRestoring ? 0.42 : 1,
+            pointerEvents: questionnairePending || sessionRestoring ? 'none' : 'auto',
+            '&:focus-within': questionnairePending ? {} : { borderColor: hyperdriveMode ? '#ff00ff90' : agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
           }}>
             {streaming && (
               <Box sx={{ px: 1.25, pt: 0.75, pb: 0.25 }}>
@@ -2377,11 +3372,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             )}
             <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
             <ChatInputBar
+              ref={inputBarRef}
               streaming={streaming}
-              sendBlocked={sendBlocked}
+              inputDisabled={questionnairePending}
+              sendBlocked={sendBlocked || questionnairePending}
               sendBlockedReason={sendBlockedReason}
               hasAttachments={attachments.length > 0}
               crewList={crewList}
+              disableMentions={isCrewPrivateSession}
+              placeholder={
+                isCrewPrivateSession && crewPrivateHost
+                  ? `Message ${crewPrivateHost.name}...`
+                  : undefined
+              }
               onSend={handleSend}
               onCancel={handleCancel}
               onStopAndSend={handleStopAndSend}
@@ -2403,6 +3406,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </Tooltip>
 
               {/* Hyperdrive */}
+              {!isCrewPrivateSession && (
               <Tooltip title={hyperdriveMode ? 'HYPERDRIVE ENGAGED — Full autonomous mode. All permissions bypassed.' : 'Engage Hyperdrive — full autonomous mode (no permission prompts)'} arrow>
                 <Chip
                   size="small"
@@ -2430,9 +3434,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   }}
                 />
               </Tooltip>
+              )}
 
-              {/* Agent Mode — hidden when hyperdriving */}
-              {!hyperdriveMode && (
+              {/* Agent Mode — hidden for crew private and while hyperdriving */}
+              {!hyperdriveMode && !isCrewPrivateSession && (
               <Tooltip title={agentMode === 'agent' ? 'Agent — full access, executes tools freely' : 'Plan — outlines steps, no write access'} arrow>
                 <Chip
                   size="small"
@@ -2606,10 +3611,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       }}>
 
         {/* ─── Context ─── */}
-        <Box sx={{ borderBottom: `1px solid ${colors.border.default}` }}>
+        <Box>
           <Box
             onClick={() => setContextExpanded(!contextExpanded)}
-            sx={{ px: 1.5, pt: 1.5, pb: contextExpanded ? 1.5 : 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 0.5, '&:hover': { bgcolor: colors.bg.tertiary + '40' } }}
+            sx={sidebarSectionHeaderSx}
           >
             <ArticleIcon sx={{ fontSize: 12, color: '#00bcd4' }} />
               <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -2622,7 +3627,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 size="small"
                 onClick={(e) => { e.stopPropagation(); handleRebuildContext(); }}
                 disabled={rebuildingContext}
-                sx={{ p: 0.25, color: rebuildingContext ? colors.accent.blue : colors.text.dim, '&:hover': { color: '#00bcd4' } }}
+                sx={{ p: 0.25, width: 20, height: 20, color: rebuildingContext ? colors.accent.blue : colors.text.dim, '&:hover': { color: '#00bcd4' } }}
               >
                 <ReplayIcon sx={{ fontSize: 12, animation: rebuildingContext ? 'agentx-spin 1s linear infinite' : 'none' }} />
               </IconButton>
@@ -2643,10 +3648,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         </Box>
 
         {/* ─── Token usage ─── */}
-        <Box sx={{ borderBottom: `1px solid ${colors.border.default}` }}>
+        <Box>
           <Box
             onClick={() => setTokenExpanded(!tokenExpanded)}
-            sx={{ px: 1.5, pt: 1.5, pb: tokenExpanded ? 0.75 : 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 0.5, '&:hover': { bgcolor: colors.bg.tertiary + '40' } }}
+            sx={sidebarSectionHeaderSx}
           >
             <AutoGraphIcon sx={{ fontSize: 12, color: '#4caf50' }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -2758,7 +3763,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         <Box sx={{ flex: 1, overflow: 'auto' }}>
           <Box
             onClick={() => setTasksExpanded(!tasksExpanded)}
-            sx={{ px: 1.5, pt: 1.5, pb: tasksExpanded ? 0.75 : 1.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 0.5, '&:hover': { bgcolor: colors.bg.tertiary + '40' } }}
+            sx={sidebarSectionHeaderSx}
           >
             <ChecklistIcon sx={{ fontSize: 12, color: colors.accent.blue }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -2831,21 +3836,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }}
         onCancel={() => { setFolderPickerOpen(false); setFolderPickerCallback(null); }}
       />
-      <PlanApprovalModal
-        open={!!planApproval}
-        title={planApproval?.title ?? 'Plan'}
-        steps={planApproval?.steps ?? []}
-        onApprove={() => {
-          agent.respondToPlan(true).catch(() => {});
-          setPlanApproval(null);
-        }}
-        onReject={() => {
-          agent.respondToPlan(false).catch(() => {});
-          setPlanApproval(null);
-        }}
-      />
       <ModeEscalationModal
-        open={!!modeEscalation}
+        open={!!modeEscalation && !isCrewPrivateSession}
         tool={modeEscalation?.tool ?? ''}
         reason={modeEscalation?.reason ?? ''}
         onSwitch={() => {
@@ -2861,21 +3853,104 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           setStreaming(false);
         }}
       />
+      {!isCrewPrivateSession && (
+      <CrewSuggestionModal
+        open={crewSuggestOpen}
+        evaluation={crewEvaluation}
+        planMode={agentMode === 'plan'}
+        onViewDossier={(candidate) => { void handleViewCrewDossier(candidate); }}
+        onReenableSuggestions={() => {
+          const sessionId = currentSessionIdRef.current;
+          if (!sessionId) return;
+          void crewSuggestions.clearDismiss(sessionId).then(() => {
+            setWarnings((prev) => replaceWarning(prev, 'Crew suggestions re-enabled for this session.'));
+          }).catch(() => {
+            setWarnings((prev) => replaceWarning(prev, 'Failed to re-enable crew suggestions.'));
+          });
+        }}
+        onDeploy={async (selected, dismissForSession) => {
+          setCrewSuggestOpen(false);
+          const text = pendingSendTextRef.current;
+          const candidates = pendingCrewCandidatesRef.current;
+          const sessionId = currentSessionIdRef.current;
+          pendingSendTextRef.current = null;
+          pendingCrewCandidatesRef.current = [];
+          setCrewEvaluation(null);
+          if (!text || !sessionId) return;
+          try {
+            const result = await crewSuggestions.resolve({
+              sessionId,
+              action: 'deploy',
+              dismissForSession,
+              selectedCandidateIds: selected.map((c) => c.id),
+              candidates,
+            });
+            if (!result.deployedCrewIds?.length) {
+              setWarnings((prev) => replaceWarning(prev, 'Crew deploy failed — no specialists were attached. Continuing with Agent-X.'));
+              await executeSend(text, undefined, { crewSuggestionResolved: true });
+              return;
+            }
+            const primaryCrewId = result.deployedPrimaryCrewId ?? result.deployedCrewIds[0];
+            await executeSend(text, result.deployedCrewIds, {
+              crewSuggestionResolved: true,
+              crewIntakeFromPicker: true,
+              primaryCrewId,
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Crew deploy failed';
+            setWarnings((prev) => replaceWarning(prev, msg.includes('crew-deploy') ? 'Crew deploy failed — continuing with Agent-X only.' : msg));
+            await executeSend(text, undefined, { crewSuggestionResolved: true });
+          }
+        }}
+        onSkip={async (dismissForSession) => {
+          setCrewSuggestOpen(false);
+          const text = pendingSendTextRef.current;
+          const sessionId = currentSessionIdRef.current;
+          pendingSendTextRef.current = null;
+          pendingCrewCandidatesRef.current = [];
+          setCrewEvaluation(null);
+          if (sessionId) {
+            try {
+              await crewSuggestions.resolve({
+                sessionId,
+                action: dismissForSession ? 'dismiss' : 'skip',
+                dismissForSession,
+              });
+            } catch { /* best-effort */ }
+          }
+          if (text) await executeSend(text, undefined, { crewSuggestionResolved: true });
+        }}
+        onClose={() => {
+          setCrewSuggestOpen(false);
+          setCrewEvaluation(null);
+          pendingSendTextRef.current = null;
+          pendingCrewCandidatesRef.current = [];
+          crewSuggestionHandledRef.current = false;
+        }}
+      />
+      )}
+      <CrewProfileDialog
+        open={crewDossierOpen}
+        crew={crewDossierCrew}
+        imported={false}
+        importLoading={false}
+        onClose={() => { setCrewDossierOpen(false); setCrewDossierCrew(null); }}
+        onImport={() => {}}
+        onRemove={() => {}}
+      />
       <ModeSuggestionModal
         open={modeSuggestOpen}
         onSwitch={() => {
           setModeSuggestOpen(false);
-          setAgentMode('agent');
-          sessionSettings.setMode('agent').catch(() => {});
           const text = pendingSendTextRef.current;
           pendingSendTextRef.current = null;
-          if (text) void executeSend(text);
+          if (text) void sendAfterModeChoice(text, true);
         }}
         onStay={() => {
           setModeSuggestOpen(false);
           const text = pendingSendTextRef.current;
           pendingSendTextRef.current = null;
-          if (text) void executeSend(text);
+          if (text) void sendAfterModeChoice(text, false);
         }}
         onClose={() => {
           setModeSuggestOpen(false);

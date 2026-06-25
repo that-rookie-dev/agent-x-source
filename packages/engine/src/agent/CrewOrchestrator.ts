@@ -13,9 +13,49 @@ import { FiberSet } from '../concurrency/FiberSet.js';
 import type { SessionManager } from '../session/SessionManager.js';
 import { resolveCrewToolIds } from './crew-tools.js';
 import { autoComposeCrewMembers, assessCrewNeed } from './crew-auto-compose.js';
+import { buildCrewVoiceBlock } from './crew-persona.js';
 import { CHAT_MARKDOWN_PROMPT } from '../secret-sauce/prompt-assembly/sections.js';
 
 const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
+
+/** Identity prompt for 1:1 crew private chat (Agent path — conversational, not mission EXECUTE). */
+export function buildCrewPrivateIdentityPrompt(crew: Crew): string {
+  const roleLines: string[] = [
+    `[CREW_IDENTITY]`,
+    `You are ${crew.name}${crew.title ? `, ${crew.title}` : ''}.`,
+  ];
+  if (crew.description) roleLines.push(`\n${crew.description}`);
+  roleLines.push(`\nRole (internal): ${crew.systemPrompt}`);
+  roleLines.push(
+    `\nINTERNAL REFERENCE — use to judge whether a request fits you; do NOT recite or list to the user unless they ask about your background:`,
+  );
+  if (crew.traits && crew.traits.length > 0) {
+    roleLines.push(`- Traits: ${crew.traits.join(', ')}`);
+  }
+  if (crew.expertise && crew.expertise.length > 0) {
+    roleLines.push(`- Expertise areas: ${[...new Set(crew.expertise)].join(', ')}`);
+  }
+  const voice = buildCrewVoiceBlock(crew);
+  if (voice) roleLines.push(voice);
+  roleLines.push(
+    `\nThis is a private 1:1 chat. You are yourself — not Agent-X.`,
+    `[/CREW_IDENTITY]`,
+  );
+  return roleLines.join('\n');
+}
+
+/** Minimal system prompt for greetings and other fast-reply turns in crew private chat. */
+export function buildCrewPrivateFastReplyPrompt(crew: Crew): string {
+  const lines = [
+    `You are ${crew.name}${crew.title ? `, ${crew.title}` : ''}.`,
+    buildCrewVoiceBlock(crew),
+    '',
+    'Reply naturally in 1–3 short sentences. No tools. No skill lists or capability menus.',
+    "Match the user's tone (greeting → greet back; thanks → acknowledge briefly).",
+    'Stay in character as a real person, not a service brochure.',
+  ];
+  return lines.filter(Boolean).join('\n');
+}
 
 export interface CrewMember {
   crew: Crew;
@@ -209,6 +249,8 @@ export class CrewOrchestrator {
     _mainSystemPrompt: string,
     contextText?: string,
     planMode = false,
+    onChunk?: (delta: string) => void,
+    shouldAbort?: () => boolean,
   ): Promise<{ content: string; elapsed: number }> {
     const roleLines: string[] = [
       `[CREW_IDENTITY]`,
@@ -251,7 +293,7 @@ export class CrewOrchestrator {
 
     if (this.toolRegistry && this.toolExecutor && this.config) {
       try {
-        return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit, planMode);
+        return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit, planMode, onChunk, shouldAbort);
       } catch (err) {
         // Fall through to legacy path on error
       }
@@ -269,7 +311,11 @@ export class CrewOrchestrator {
 
     let content = '';
     for await (const chunk of completion) {
-      if (chunk.content) content += chunk.content;
+      if (shouldAbort?.()) break;
+      if (chunk.content) {
+        content += chunk.content;
+        onChunk?.(chunk.content);
+      }
     }
 
     const parsed = this.parseJsonAnswer(content);
@@ -303,6 +349,8 @@ export class CrewOrchestrator {
     startTime: number,
     emit: (e: EngineEvent) => void,
     planMode = false,
+    onChunk?: (delta: string) => void,
+    shouldAbort?: () => boolean,
   ): Promise<{ content: string; elapsed: number }> {
     const { ToolRegistry: TR } = await import('../tools/ToolRegistry.js');
     const filteredRegistry = new TR();
@@ -433,10 +481,12 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
 
     let content = '';
     for await (const chunk of result.fullStream) {
+      if (shouldAbort?.()) break;
       switch (chunk.type) {
         case 'text-delta': {
           const delta = extractStreamTextDelta(chunk as Record<string, unknown>);
           content = appendStreamText(content, delta);
+          onChunk?.(delta);
           emit({ type: 'stream_chunk', content: delta, fullContent: content });
           break;
         }
@@ -903,6 +953,26 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     const recent = this.conversation.slice(-10);
     if (recent.length === 0) return '';
     return recent.map(m => `[${m.from}]: ${m.content.slice(0, 200)}`).join('\n');
+  }
+
+  /** Direct 1:1 crew response — used by crew private chat (no Agent-X mission path). */
+  async respondDirect(
+    crewId: string,
+    userMessage: string,
+    contextText?: string,
+    opts?: { onChunk?: (delta: string) => void; shouldAbort?: () => boolean },
+  ): Promise<{ content: string; elapsed: number; inputTokens: number; outputTokens: number; costUsd: number }> {
+    const member = this.members.find((m) => m.crew.id === crewId) ?? this.members[0];
+    if (!member) throw new Error('crew-not-loaded');
+    const result = await this.callCrew(member, userMessage, '', contextText, false, opts?.onChunk, opts?.shouldAbort);
+    if (opts?.shouldAbort?.()) throw new Error('crew-chat-cancelled');
+    const inputTokens = countInputTokens((contextText ?? '') + userMessage);
+    const outputTokens = estimateOutputTokens(result.content);
+    let costUsd = 0;
+    if (this.tokenTracker) {
+      costUsd = (inputTokens * this.tokenTracker.inputPrice + outputTokens * this.tokenTracker.outputPrice) / 1_000_000;
+    }
+    return { ...result, inputTokens, outputTokens, costUsd };
   }
 
   private extractExpertise(systemPrompt: string): string[] {

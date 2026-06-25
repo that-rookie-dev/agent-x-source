@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && mkdir -p dist/data && cp -f ../engine/data/crew-catalog.manifest.json dist/data/crew-catalog.manifest.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",

@@ -46,7 +46,7 @@ export const PLAN_ALLOWED_TOOL_IDS = new Set([
   // Project detection
   'project_detect',
   // Agent meta (clarify + inspect sub-agents only)
-  'ask_clarification', 'sub_agent_status', 'sub_agent_cancel', 'todo_read',
+  'ask_clarification', 'sub_agent_status', 'sub_agent_cancel', 'todo_read', 'search_crew_hub',
   // Scheduler read
   'reminder_list',
 ]);
@@ -101,15 +101,37 @@ export function isReadOnlyTool(toolId: string): boolean {
   return isToolAllowedInPlanMode(toolId);
 }
 
-/** Interactive plan approval / mode-escalation modals — main session only, not background workers. */
-export function shouldUseInteractivePlanGates(planMode: boolean, delegatedWorker: boolean): boolean {
+export type PlanGatePromptProfile = 'default' | 'crew_worker' | 'crew_private';
+
+/** Proactive mode-escalation UI gates — Agent-X main session only (not crew private/worker). */
+export function shouldUseInteractivePlanGates(
+  planMode: boolean,
+  delegatedWorker: boolean,
+  promptProfile: PlanGatePromptProfile = 'default',
+): boolean {
+  if (promptProfile === 'crew_worker' || promptProfile === 'crew_private') return false;
   return planMode && !delegatedWorker;
 }
 
 const PLAN_INTENT_RE =
   /\b(plan|create a plan|make a plan|outline|roadmap|strategy|steps|milestone|break\s*down|step-by-step)\b/i;
 
+/** Software / repo work — interactive plan approval applies. */
+const CODE_TASK_SIGNALS =
+  /\b(code|codebase|repo|repository|api|backend|frontend|react|deploy|docker|kubernetes|microservice|database|sql|typescript|javascript|python|refactor|migration|scaffold|npm|git|ci\/cd|endpoint|component|bug|debug|unit test|e2e|pull request|pr\b|sprint|feature|module|service|infra)\b/i;
+
+/** Personal / lifestyle planning — answer in chat; prefer crew specialists over plan gates. */
+const CONVERSATIONAL_PLANNING_RE =
+  /\b(vacation|itinerary|trip|travel|holiday|tourism|hotel|flight|beach|honeymoon|wedding|party|meal plan|diet plan|workout plan|study plan|lesson plan|reading list|gift list|packing list|road trip|weekend getaway|family trip|newborn|new born|baby shower|birthday party)\b/i;
+
+export function isConversationalPlanningRequest(content: string): boolean {
+  const lower = content.toLowerCase().trim();
+  if (!CONVERSATIONAL_PLANNING_RE.test(lower)) return false;
+  return !CODE_TASK_SIGNALS.test(lower);
+}
+
 export function requiresPlanIntent(content: string): boolean {
+  if (isConversationalPlanningRequest(content)) return false;
   return PLAN_INTENT_RE.test(content);
 }
 
@@ -137,9 +159,47 @@ export function shouldEscalateForExecution(content: string, messageClass?: strin
   return requiresExecutionIntent(content) && !requiresPlanIntent(content);
 }
 
-/** Plan intent from message text + optional classifier (task messages with plan keywords). */
+/** @deprecated Interactive plan approval removed — plans are markdown in the completion loop. */
 export function shouldGeneratePlan(content: string, messageClass?: string): boolean {
+  if (isConversationalPlanningRequest(content)) return false;
   if (requiresPlanIntent(content)) return true;
-  if (messageClass === 'task' && /\b(plan|planning|roadmap|outline)\b/i.test(content)) return true;
+  if (messageClass === 'task' && /\b(plan|planning|roadmap|outline)\b/i.test(content)) {
+    return !isConversationalPlanningRequest(content);
+  }
   return false;
+}
+
+/** Tool-result hint when a mutating tool is blocked in plan mode. */
+export function buildPlanModeRestrictedToolHint(
+  toolId: string,
+  systemOutput: string,
+  promptProfile: PlanGatePromptProfile = 'default',
+): string {
+  if (promptProfile === 'crew_private') {
+    return [
+      `The "${toolId}" tool is not available in this private chat turn.`,
+      systemOutput,
+      'Do NOT ask the user to switch to Agent mode or open any approval UI.',
+      'Continue the conversation: deliver your complete answer as markdown in chat.',
+      'Only mention filesystem tools if they explicitly asked to modify files on their machine.',
+    ].join('\n');
+  }
+
+  return `🚨 CRITICAL RESTRICTION 🚨
+
+The "${toolId}" tool FAILED with error: MODE_RESTRICTED
+
+The user is in Plan Mode (read-only). The "${toolId}" tool requires Agent Mode and CANNOT be executed right now.
+
+YOUR RESPONSE MUST:
+1. ❌ NEVER claim you created/edited/deleted/executed anything. The action FAILED.
+2. ❌ NEVER show fake code or fake output. It didn't actually run.
+3. ✅ TELL the user the action failed and why: you're in Plan Mode and need Agent Mode
+4. ✅ EXPLAIN which specific action you tried to perform and why it failed
+5. ✅ SUGGEST the user click the Agent Mode button in the UI to switch modes
+6. ✅ TELL them what you'll do once they switch modes
+
+This is NOT a suggestion - it's an instruction. If you claim the tool succeeded when it failed, you're deceiving the user.
+
+ERROR MESSAGE FROM SYSTEM: ${systemOutput}`;
 }

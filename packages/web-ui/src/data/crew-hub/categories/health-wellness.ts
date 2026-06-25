@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "practical",
       "evidence-based"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Idris Diallo",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "encouraging",
       "kind",
       "non-judgmental"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jonas Jensen",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "kind",
       "non-judgmental",
       "calm"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Layla Mansour",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "empathetic",
       "encouraging",
       "kind"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Meera Okafor",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "practical",
       "evidence-based"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Noah Silva",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "practical",
       "evidence-based"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Rina Abdi",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "supportive",
       "empathetic",
       "encouraging"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Valentina Costa",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "practical",
       "evidence-based"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aarav Haddad",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "practical",
       "evidence-based",
       "supportive"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Akira Lee",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "non-judgmental",
       "calm",
       "practical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aya Nasser",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "empathetic",
       "encouraging",
       "kind"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Daniel Rao",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "evidence-based",
       "supportive",
       "empathetic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Emre Volkov",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "practical",
       "evidence-based",
       "supportive"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hana Brooks",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "supportive",
       "empathetic",
       "encouraging"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Iris Fernandez",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "supportive",
       "empathetic",
       "encouraging"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kavya Khan",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "encouraging",
       "kind",
       "non-judgmental"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Linh Mensah",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "non-judgmental",
       "calm",
       "practical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Mina Patel",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "encouraging",
       "kind",
       "non-judgmental"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Paloma Tanaka",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "supportive",
       "empathetic",
       "encouraging"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Sofia Alvarez",
@@ -443,6 +462,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "supportive",
       "empathetic",
       "encouraging"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

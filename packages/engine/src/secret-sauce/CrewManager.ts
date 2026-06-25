@@ -72,7 +72,7 @@ export class CrewManager {
                 this.store.updateCrew(crew.id, crew);
               }
             } else if (typeof this.store.createCrew === 'function') {
-              this.store.createCrew(crew);
+              this.store.createCrew(this.crewToCreateInput(crew));
             }
           }
         }
@@ -84,15 +84,44 @@ export class CrewManager {
     }
   }
 
+  private crewToCreateInput(crew: Crew): CrewCreateInput {
+    return {
+      id: crew.id,
+      name: crew.name,
+      title: crew.title,
+      callsign: crew.callsign,
+      systemPrompt: crew.systemPrompt,
+      description: crew.description,
+      emotion: crew.emotion,
+      source: crew.source,
+      catalogId: crew.catalogId,
+      searchText: crew.searchText,
+      suggestable: crew.suggestable,
+      isDefault: crew.isDefault,
+      enabled: crew.enabled,
+      expertise: crew.expertise,
+      traits: crew.traits,
+      toolPreferences: crew.toolPreferences,
+      tools: crew.tools,
+      permissions: crew.permissions,
+      model: crew.model,
+      protocol: crew.protocol,
+      quotas: crew.quotas,
+      color: crew.color,
+      icon: crew.icon,
+    };
+  }
+
   private persist(): void {
     if (this.store) {
       for (const crew of this.crews) {
+        const input = this.crewToCreateInput(crew);
         if (typeof this.store.getCrew === 'function' && this.store.getCrew(crew.id)) {
           if (typeof this.store.updateCrew === 'function') {
             this.store.updateCrew(crew.id, crew);
           }
         } else if (typeof this.store.createCrew === 'function') {
-          this.store.createCrew(crew);
+          this.store.createCrew(input);
         }
       }
     }
@@ -144,6 +173,10 @@ export class CrewManager {
       systemPrompt: input.systemPrompt,
       description: input.description,
       emotion: input.emotion,
+      source: input.source ?? (input.catalogId ? 'hub' : 'custom'),
+      catalogId: input.catalogId,
+      searchText: input.searchText,
+      suggestable: input.suggestable ?? true,
       isDefault: input.isDefault ?? false,
       enabled: input.enabled ?? true,
       expertise: input.expertise,

@@ -35,6 +35,8 @@ export class DefaultStorageAdapter implements StorageAdapter {
       id, ...input,
       mode: (inputAny['mode'] as string) ?? 'plan',
       parentId: (inputAny['parentId'] as string) ?? null,
+      contextKind: (inputAny['contextKind'] as StorableSession['contextKind']) ?? 'agent_x',
+      hostCrewId: (inputAny['hostCrewId'] as string | null) ?? null,
       hyperdrive: !!(inputAny['hyperdrive']),
       createdAt: now, updatedAt: now,
     };
@@ -50,6 +52,14 @@ export class DefaultStorageAdapter implements StorageAdapter {
       tokenAvailable: session.tokenAvailable,
       mode: session.mode,
       hyperdrive: session.hyperdrive,
+      contextKind: session.contextKind ?? 'agent_x',
+      hostCrewId: session.hostCrewId ?? null,
+      hostCrewName: session.hostCrewName ?? null,
+      hostCrewCallsign: session.hostCrewCallsign ?? null,
+      hostCrewTitle: session.hostCrewTitle ?? null,
+      hostCrewColor: session.hostCrewColor ?? null,
+      hostCrewCatalogId: session.hostCrewCatalogId ?? null,
+      hostCrewCategoryId: session.hostCrewCategoryId ?? null,
       createdAt: session.createdAt!,
       updatedAt: session.updatedAt!,
     });
@@ -72,6 +82,14 @@ export class DefaultStorageAdapter implements StorageAdapter {
       tokenUsed: (row['tokensUsed'] as number) ?? 0,
       tokenAvailable: (row['tokenAvailable'] as number) ?? 128_000,
       compactionCount: (row['compactionCount'] as number) ?? 0,
+      contextKind: (row['contextKind'] as StorableSession['contextKind']) ?? 'agent_x',
+      hostCrewId: (row['hostCrewId'] as string | null) ?? null,
+      hostCrewName: (row['hostCrewName'] as string | null) ?? null,
+      hostCrewCallsign: (row['hostCrewCallsign'] as string | null) ?? null,
+      hostCrewTitle: (row['hostCrewTitle'] as string | null) ?? null,
+      hostCrewColor: (row['hostCrewColor'] as string | null) ?? null,
+      hostCrewCatalogId: (row['hostCrewCatalogId'] as string | null) ?? null,
+      hostCrewCategoryId: (row['hostCrewCategoryId'] as string | null) ?? null,
       createdAt: row['createdAt'] as string,
       updatedAt: row['updatedAt'] as string,
     };
@@ -143,6 +161,14 @@ export class DefaultStorageAdapter implements StorageAdapter {
       tokenUsed: (row['tokensUsed'] as number) ?? 0,
       tokenAvailable: (row['tokenAvailable'] as number) ?? 128_000,
       compactionCount: (row['compactionCount'] as number) ?? 0,
+      contextKind: (row['contextKind'] as StorableSession['contextKind']) ?? 'agent_x',
+      hostCrewId: (row['hostCrewId'] as string | null) ?? null,
+      hostCrewName: (row['hostCrewName'] as string | null) ?? null,
+      hostCrewCallsign: (row['hostCrewCallsign'] as string | null) ?? null,
+      hostCrewTitle: (row['hostCrewTitle'] as string | null) ?? null,
+      hostCrewColor: (row['hostCrewColor'] as string | null) ?? null,
+      hostCrewCatalogId: (row['hostCrewCatalogId'] as string | null) ?? null,
+      hostCrewCategoryId: (row['hostCrewCategoryId'] as string | null) ?? null,
       createdAt: row['createdAt'] as string,
       updatedAt: row['updatedAt'] as string,
     };
@@ -173,6 +199,8 @@ export class DefaultStorageAdapter implements StorageAdapter {
       content: row['content'] as string,
       tokenCount: (row['token_count'] as number) ?? 0,
       toolCalls: row['tool_calls'] as string | undefined,
+      parts: row['parts'] as StorableMessage['parts'],
+      metadata: row['metadata'] as StorableMessage['metadata'],
       createdAt: row['created_at'] as string,
     }));
   }
@@ -183,6 +211,29 @@ export class DefaultStorageAdapter implements StorageAdapter {
 
   getMessageCount(sessionId: string): number {
     return this.store.getMessageCount(sessionId);
+  }
+
+  getMessagesPage(
+    sessionId: string,
+    opts: { limit?: number; before?: string },
+  ): { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean } {
+    const fn = (this.store as {
+      getMessagesPage?: (id: string, opts: { limit?: number; before?: string }) => {
+        messages: Array<Record<string, unknown>>;
+        total: number;
+        hasMore: boolean;
+      };
+    }).getMessagesPage;
+    if (fn) return fn.call(this.store, sessionId, opts);
+    const all = this.getMessages(sessionId).filter((m) => m.role === 'user' || m.role === 'assistant');
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    let slice = all;
+    if (opts.before) {
+      const idx = all.findIndex((m) => m.id === opts.before);
+      slice = idx > 0 ? all.slice(0, idx) : [];
+    }
+    const page = slice.slice(-limit);
+    return { messages: page as unknown as Array<Record<string, unknown>>, total: all.length, hasMore: slice.length > page.length };
   }
 
   saveTaskSnapshot(snapshot: {

@@ -7,6 +7,7 @@ import type { Crew } from '../api';
 export interface MentionInputHandle {
   getValue: () => string;
   clear: () => void;
+  setValue: (text: string) => void;
   focus: () => void;
   insertMention: (callsign: string) => void;
 }
@@ -172,9 +173,21 @@ const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputP
     el.focus();
   }, [onMentionQuery, onTextChange]);
 
+  const setValue = useCallback((text: string) => {
+    const el = editorRef.current;
+    if (!el) return;
+    plainRef.current = text;
+    el.innerHTML = text ? buildHtmlFromPlain(text, crewList) + '\u200B' : '';
+    setIsEmpty(text.trim().length === 0);
+    onTextChange?.(text);
+    onMentionQuery(null);
+    mentionOriginRef.current = null;
+  }, [crewList, onMentionQuery, onTextChange]);
+
   useImperativeHandle(ref, () => ({
     getValue: () => plainRef.current,
     clear,
+    setValue,
     focus: () => editorRef.current?.focus(),
     insertMention,
   }), [clear, insertMention]);

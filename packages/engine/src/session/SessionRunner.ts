@@ -15,7 +15,7 @@ export interface SessionRunnerOptions {
   toolRegistry: ToolRegistry;
   toolExecutor: ToolExecutor;
   apiKey?: string;
-  waitForClarification?: (question: string, options: string[], allowFreeform: boolean, meta?: import('@agentx/shared').ClarificationRequestMeta) => Promise<string>;
+  waitForClarification?: (questionnaire: import('@agentx/shared').QuestionnairePayload) => Promise<string>;
   runSubAgent?: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }>;
   onTokenUsage?: (input: number, output: number) => void;
   onBackgroundTask?: (taskId: string, result: string) => void;

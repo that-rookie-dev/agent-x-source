@@ -21,6 +21,10 @@ export class DefaultTelemetryBus implements TelemetryBus {
   // don't lose critical events like message_received or loading_end.
   private replayBuffer: TelemetryEvent[] = [];
   private static readonly REPLAY_SIZE = 50;
+  /** Ephemeral UI events — live subscribers only; must not replay on SSE reconnect. */
+  private static readonly NON_REPLAYABLE_TYPES = new Set([
+    'crew_suggestion',
+  ]);
 
   constructor(config?: Partial<TelemetryConfig>) {
     this.config = {
@@ -69,10 +73,13 @@ export class DefaultTelemetryBus implements TelemetryBus {
   emit(event: TelemetryEvent): void {
     if (!this.config.enabled) return;
 
-    // Push into replay ring buffer (replace oldest when full)
-    this.replayBuffer.push(event);
-    if (this.replayBuffer.length > DefaultTelemetryBus.REPLAY_SIZE) {
-      this.replayBuffer.shift();
+    const eventType = String((event as { type?: string }).type ?? '');
+    if (!DefaultTelemetryBus.NON_REPLAYABLE_TYPES.has(eventType)) {
+      // Push into replay ring buffer (replace oldest when full)
+      this.replayBuffer.push(event);
+      if (this.replayBuffer.length > DefaultTelemetryBus.REPLAY_SIZE) {
+        this.replayBuffer.shift();
+      }
     }
 
     for (const handler of this.eventHandlers) {

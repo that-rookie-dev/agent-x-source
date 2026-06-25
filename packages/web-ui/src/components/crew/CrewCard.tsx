@@ -7,14 +7,19 @@ import CircularProgress from '@mui/material/CircularProgress';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import ForumIcon from '@mui/icons-material/Forum';
 import type { Crew } from '../../api';
 import { crewCardSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
 import { SkillChips } from './SkillChips';
+import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
+import { crewDisplayFields } from '../../utils/crew-display';
 
 interface CrewCardProps {
   crew: Crew;
   regenerating: boolean;
   onOpen: (crew: Crew) => void;
+  onPrivateChat?: (crew: Crew) => void;
+  privateChatLoading?: boolean;
   onToggle: (id: string, enabled: boolean) => void;
   onEdit: (crew: Crew) => void;
   onDelete: (id: string) => void;
@@ -25,16 +30,35 @@ export function CrewCard({
   crew,
   regenerating,
   onOpen,
+  onPrivateChat,
+  privateChatLoading,
   onToggle,
   onEdit,
   onDelete,
   onRegenerate,
 }: CrewCardProps) {
   const enabled = crew.enabled !== false;
-  const accent = getCrewAccent(crew.color, crew.callsign);
+  const { displayName, displayCallsign } = crewDisplayFields({
+    name: crew.name,
+    callsign: crew.callsign,
+    title: crew.title,
+    categoryId: crew.categoryId,
+    expertise: crew.expertise,
+    requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    honorsDoctorate: crew.honorsDoctorate,
+  });
+  const accent = getCrewAccent(crew.color, displayCallsign);
+  const isMedical = isMedicalCrewDisplay({
+    categoryId: crew.categoryId,
+    requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    catalogId: crew.catalogId,
+    callsign: crew.callsign,
+    crewId: crew.id,
+  });
 
   return (
     <Box onClick={() => onOpen(crew)} sx={crewCardSx(accent, enabled)}>
+      {isMedical && <MedicalCrewCardStripe />}
       <Box sx={{ p: 1.75 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 0.85 }}>
           <Box sx={{
@@ -45,14 +69,14 @@ export function CrewCard({
             fontFamily: "'JetBrains Mono', monospace",
             fontSize: '0.6rem', fontWeight: 700, color: accent,
           }}>
-            {(crew.callsign.slice(0, 2) || 'CX').toUpperCase()}
+            {(displayCallsign.slice(0, 2) || 'CX').toUpperCase()}
           </Box>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography sx={{
               fontWeight: 700, fontSize: '0.85rem', color: crewTheme.text.primary,
               lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
-              {crew.name}
+              {displayName}
             </Typography>
             {crew.title && (
               <Typography sx={{
@@ -65,7 +89,7 @@ export function CrewCard({
             <Typography sx={{
               fontSize: '0.58rem', color: accent, fontFamily: "'JetBrains Mono', monospace", mt: 0.25,
             }}>
-              @{crew.callsign}
+              @{displayCallsign}
             </Typography>
           </Box>
           {crew.tone && (
@@ -108,6 +132,18 @@ export function CrewCard({
             {enabled ? 'ACTIVE' : 'STANDBY'}
           </Typography>
           <Box sx={{ flex: 1 }} />
+          {onPrivateChat && (
+            <Tooltip title="Private chat">
+              <IconButton
+                size="small"
+                disabled={privateChatLoading}
+                onClick={(e) => { e.stopPropagation(); onPrivateChat(crew); }}
+                sx={{ p: 0.35, color: accent, '&:hover': { color: crewTheme.text.primary, bgcolor: accent + '15' } }}
+              >
+                {privateChatLoading ? <CircularProgress size={12} /> : <ForumIcon sx={{ fontSize: 14 }} />}
+              </IconButton>
+            </Tooltip>
+          )}
           <Switch
             size="small"
             checked={enabled}

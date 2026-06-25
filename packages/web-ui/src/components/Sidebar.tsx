@@ -23,6 +23,7 @@ import type { PanelId } from '../pages/Console';
 interface Props {
   active: PanelId;
   onNavigate: (id: PanelId) => void;
+  highlightCrews?: boolean;
 }
 
 const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
@@ -39,7 +40,7 @@ const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
   // { id: 'channels', icon: CellTowerIcon, label: 'Channels' },
 ];
 
-export function Sidebar({ active, onNavigate }: Props) {
+export function Sidebar({ active, onNavigate, highlightCrews }: Props) {
   const { setAuthenticated } = useApp();
   const navigate = useNavigate();
 
@@ -70,8 +71,8 @@ export function Sidebar({ active, onNavigate }: Props) {
             onClick={() => onNavigate(item.id)}
             sx={{
               mb: 0.5, width: 34, height: 34, borderRadius: 1,
-              color: active === item.id ? colors.text.primary : colors.text.dim,
-              bgcolor: active === item.id ? colors.border.default : 'transparent',
+              color: (active === item.id || (highlightCrews && item.id === 'crews')) ? colors.text.primary : colors.text.dim,
+              bgcolor: (active === item.id || (highlightCrews && item.id === 'crews')) ? colors.border.default : 'transparent',
               '&:hover': { bgcolor: colors.border.default, color: colors.text.primary },
             }}
           >

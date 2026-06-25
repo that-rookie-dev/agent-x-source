@@ -248,6 +248,7 @@ export class PromptAssembly {
 
   private toJson(value: unknown): unknown {
     if (value === null || value === undefined) return null;
+    if (value instanceof Set) return [...value];
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
     if (typeof value === 'object') {
       if (Array.isArray(value)) return value.map(v => this.toJson(v));

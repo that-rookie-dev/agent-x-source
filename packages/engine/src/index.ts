@@ -4,6 +4,7 @@ export { ConfigManager } from './config/index.js';
 export * from './tools/platform.js';
 export { SessionStore } from './session/SessionStore.js';
 export { SessionManager } from './session/SessionManager.js';
+export { hostCrewSnapshotPatch, hostCrewSnapshotFromInput } from './session/session-field-utils.js';
 export { TokenTracker } from './session/TokenTracker.js';
 export { CrashRecovery } from './session/CrashRecovery.js';
 export { GitManager } from './session/GitManager.js';
@@ -74,13 +75,31 @@ export { agentXConfigSchema } from './config/ConfigSchema.js';
 export * from './config/paths.js';
 export { SecretSauceManager, CrewManager, SoulManager, MemoryManager, DiaryManager, IdentityManager } from './secret-sauce/index.js';
 export { ExperienceEngine } from './neural/ExperienceEngine.js';
+export { TurnFeedbackService } from './feedback/index.js';
+export type { TurnFeedbackStore } from './feedback/index.js';
 export { EmotionEngine } from './neural/EmotionEngine.js';
 export { GrowthEngine } from './neural/GrowthEngine.js';
 export type { GrowthState } from './neural/GrowthEngine.js';
 export type { EmotionalState } from './neural/EmotionEngine.js';
 export { createSqliteNeuralDb, createPgNeuralDb } from './neural/NeuralDbAdapter.js';
 export type { NeuralDb, NeuralStatement } from './neural/NeuralDbAdapter.js';
-export { CrewOrchestrator } from './agent/CrewOrchestrator.js';
+export { CrewOrchestrator, buildCrewPrivateIdentityPrompt, buildCrewPrivateFastReplyPrompt } from './agent/CrewOrchestrator.js';
+export { CrewSuggestionService } from './crew/CrewSuggestionService.js';
+export type { CrewCatalogStore } from './crew/CrewSuggestionService.js';
+export { catalogEntryToSummary } from './crew/catalog-summary.js';
+export { getCrewSuggestionService, getCrewCatalogStoreFromEngine } from './crew/get-crew-store.js';
+export { startBackgroundCatalogSeed, getCatalogSeedStatus } from './crew/catalog-seed-runner.js';
+export type { CatalogSeedSnapshot, CatalogSeedStatus } from './crew/catalog-seed-state.js';
+export {
+  healDatabaseStore,
+  startPeriodicDatabaseHeal,
+  stopPeriodicDatabaseHeal,
+  isMissingTableError,
+  CRITICAL_DB_TABLES,
+} from './db/database-healer.js';
+export type { DatabaseHealResult } from './db/database-healer.js';
+export { repairSqliteFullSchema } from './session/SessionStore.js';
+export { recruitCandidatesForMission } from './crew/crew-mission-deploy.js';
 export { CrewMissionOrchestrator } from './agent/CrewMissionOrchestrator.js';
 export { CrewWorker } from './agent/CrewWorker.js';
 export type { CrewWorkerResult } from './agent/CrewWorker.js';
@@ -88,6 +107,14 @@ export { CrewMissionContext } from './agent/CrewMissionContext.js';
 export type { CrewMember, CrewMessage, OrchestratorEvent } from './agent/CrewOrchestrator.js';
 export { ContextTracker } from './agent/ContextTracker.js';
 export type { ContextEntry } from './agent/ContextTracker.js';
+export {
+  SessionContextHandler,
+  createSessionContextHandler,
+  createCrewPrivateContextHandler,
+  SessionNarrativeStore,
+  globalNarrativeStore,
+} from './context/index.js';
+export type { SessionContextHandlerConfig, TurnInjectionResult } from './context/index.js';
 export { OrchestrationPlanner } from './agent/OrchestrationPlanner.js';
 export type { PlannedTask, ExecutionPhase, ExecutionPlan } from './agent/OrchestrationPlanner.js';
 export { TelegramBridge, TelegramStore } from './telegram/index.js';

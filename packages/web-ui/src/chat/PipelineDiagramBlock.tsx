@@ -1,143 +1,125 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { colors } from '../theme';
-import { formatPipelineForCopy, parsePipelineDiagram } from './pipeline-diagram';
+import { CodeBlockChrome, CodeBlockBody, CODE_BLOCK_TOKENS } from './code-block-chrome';
+import { formatHorizontalPipelineForCopy, formatPipelineStepLabel, parsePipelineDiagram } from './pipeline-diagram';
 
 const MONO = "'JetBrains Mono', monospace";
-
-const cellSx = { px: 1.15, py: 0.65 };
+const SANS = "'Inter', sans-serif";
 
 export function PipelineDiagramBlock({ code }: { code: string }) {
   const diagram = useMemo(() => parsePipelineDiagram(code), [code]);
-  const copyText = useMemo(() => formatPipelineForCopy(diagram), [diagram]);
-  const [copied, setCopied] = useState(false);
-
-  const { timingWidth, hasTimingCol } = useMemo(() => {
-    const timings = diagram.steps.map((s) => s.timing).filter(Boolean) as string[];
-    const footer = diagram.footer?.trim();
-    const widest = Math.max(0, ...timings.map((t) => t.length), footer?.length ?? 0);
-    const timingWidth = widest > 0 ? `${Math.max(widest * 0.42 + 0.5, 3.5)}rem` : '0px';
-    return { timingWidth, hasTimingCol: widest > 0 };
-  }, [diagram]);
+  const copyText = useMemo(() => formatHorizontalPipelineForCopy(diagram), [diagram]);
 
   if (diagram.steps.length === 0) return null;
 
-  const gridColumns = hasTimingCol ? `minmax(0, 1fr) ${timingWidth}` : 'minmax(0, 1fr)';
-
   return (
-    <Box sx={{
-      my: 1.25,
-      border: `1px solid ${colors.border.default}`,
-      borderRadius: 1.25,
-      overflow: 'hidden',
-      bgcolor: colors.bg.primary,
-    }}>
-      <Box sx={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        px: 1.25, py: 0.5, bgcolor: colors.bg.secondary, borderBottom: `1px solid ${colors.border.default}`,
-      }}>
-        <Typography sx={{
-          fontSize: '0.55rem', fontWeight: 700, color: colors.text.secondary,
-          fontFamily: MONO, letterSpacing: '0.04em', textTransform: 'uppercase',
+    <CodeBlockChrome title="Pipeline" copyText={copyText}>
+      <CodeBlockBody sx={{ py: CODE_BLOCK_TOKENS.bodyPy - 0.15 }}>
+        <Box sx={{
+          display: 'flex',
+          alignItems: 'center',
+          overflowX: 'auto',
+          gap: 0,
+          mx: -0.25,
+          scrollbarWidth: 'thin',
+          '&::-webkit-scrollbar': { height: 4 },
+          '&::-webkit-scrollbar-thumb': { bgcolor: colors.border.default, borderRadius: 2 },
         }}>
-          Pipeline
-        </Typography>
-        <Box
-          component="button"
-          onClick={() => {
-            navigator.clipboard.writeText(copyText).catch(() => {});
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
-          sx={{
-            bgcolor: 'transparent', border: `1px solid ${colors.border.subtle}`, borderRadius: '6px',
-            cursor: 'pointer', px: 0.85, py: 0.2, color: copied ? colors.accent.green : colors.text.dim,
-            fontSize: '0.52rem', fontFamily: MONO, transition: 'color 0.15s',
-            '&:hover': { borderColor: colors.border.strong, color: colors.text.secondary },
-          }}
-        >
-          {copied ? '✓ Copied' : 'Copy'}
-        </Box>
-      </Box>
-
-      <Box sx={{
-        mx: 1.25, my: 1.1,
-        border: `1px solid ${colors.border.subtle}`,
-        borderRadius: 1,
-        bgcolor: colors.bg.secondary,
-        overflow: 'hidden',
-        display: 'grid',
-        gridTemplateColumns: gridColumns,
-        columnGap: 1.25,
-        alignItems: 'center',
-      }}>
-        {diagram.steps.map((step, i) => (
-          <Box key={i} sx={{ display: 'contents' }}>
-            {i > 0 && (
+        {diagram.steps.map((step, i) => {
+          const label = formatPipelineStepLabel(step.label);
+          return (
+            <Fragment key={i}>
+              {i > 0 && (
+                <Box sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexShrink: 0,
+                  px: 0.25,
+                  color: colors.text.dim,
+                }}>
+                  <Box sx={{ width: 10, height: 1, bgcolor: colors.border.default }} />
+                  <Typography sx={{
+                    fontSize: '0.5rem',
+                    lineHeight: 1,
+                    px: 0.2,
+                    fontFamily: MONO,
+                    userSelect: 'none',
+                  }}>
+                    ›
+                  </Typography>
+                  <Box sx={{ width: 10, height: 1, bgcolor: colors.border.default }} />
+                </Box>
+              )}
               <Box sx={{
-                gridColumn: '1 / -1',
-                display: 'flex',
-                justifyContent: 'center',
-                py: 0.25,
+                flexShrink: 0,
+                minWidth: 72,
+                maxWidth: 148,
+                px: 0.65,
+                py: 0.4,
+                borderRadius: 0.75,
+                border: `1px solid ${colors.border.subtle}`,
                 bgcolor: colors.bg.primary,
-                borderTop: `1px solid ${colors.border.subtle}`,
               }}>
                 <Typography sx={{
-                  fontSize: '0.7rem', lineHeight: 1, color: colors.accent.purple,
-                  fontFamily: MONO, userSelect: 'none',
+                  fontSize: CODE_BLOCK_TOKENS.sansFontSize,
+                  lineHeight: CODE_BLOCK_TOKENS.sansLineHeight,
+                  fontFamily: SANS,
+                  color: colors.text.secondary,
+                  fontWeight: 500,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
                 }}>
-                  ↓
+                  {label}
                 </Typography>
+                {step.timing && (
+                  <Typography sx={{
+                    fontSize: CODE_BLOCK_TOKENS.timingFontSize,
+                    fontFamily: MONO,
+                    color: colors.accent.green,
+                    fontWeight: 500,
+                    mt: 0.15,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {step.timing}
+                  </Typography>
+                )}
               </Box>
-            )}
-            <Typography sx={{
-              ...cellSx,
-              fontSize: '0.68rem', fontFamily: MONO,
-              color: colors.text.primary, fontWeight: 500, minWidth: 0,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>
-              {step.label}
-            </Typography>
-            {hasTimingCol && (
-              <Typography sx={{
-                ...cellSx,
-                fontSize: '0.58rem', fontFamily: MONO,
-                color: colors.accent.green, fontWeight: 600,
-                textAlign: 'right', whiteSpace: 'nowrap',
-              }}>
-                {step.timing ?? ''}
-              </Typography>
-            )}
-          </Box>
-        ))}
+            </Fragment>
+          );
+        })}
+        </Box>
 
         {diagram.footer && (
-          <Box sx={{ display: 'contents' }}>
+          <Box sx={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: 0.75,
+            pt: 0.5,
+            mt: 0.35,
+            borderTop: `1px solid ${colors.border.subtle}`,
+          }}>
             <Typography sx={{
-              ...cellSx,
-              fontSize: '0.58rem', fontFamily: MONO,
-              color: colors.text.dim, textTransform: 'uppercase', letterSpacing: '0.06em',
-              borderTop: `1px solid ${colors.border.default}`,
-              bgcolor: colors.bg.primary,
+              fontSize: CODE_BLOCK_TOKENS.timingFontSize,
+              fontFamily: MONO,
+              color: colors.text.dim,
             }}>
               Total
             </Typography>
-            {hasTimingCol && (
-              <Typography sx={{
-                ...cellSx,
-                fontSize: '0.68rem', fontFamily: MONO,
-                color: colors.accent.cyan, fontWeight: 700,
-                textAlign: 'right', whiteSpace: 'nowrap',
-                borderTop: `1px solid ${colors.border.default}`,
-                bgcolor: colors.bg.primary,
-              }}>
-                {diagram.footer}
-              </Typography>
-            )}
+            <Typography sx={{
+              fontSize: CODE_BLOCK_TOKENS.monoFontSize,
+              fontFamily: MONO,
+              color: colors.accent.cyan,
+              fontWeight: 600,
+            }}>
+              {diagram.footer}
+            </Typography>
           </Box>
         )}
-      </Box>
-    </Box>
+      </CodeBlockBody>
+    </CodeBlockChrome>
   );
 }

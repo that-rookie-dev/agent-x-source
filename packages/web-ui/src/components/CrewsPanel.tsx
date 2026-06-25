@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -16,13 +17,13 @@ import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import HubIcon from '@mui/icons-material/Hub';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import { crews as crewsApi, type Crew, type CrewInput } from '../api';
+import { crews as crewsApi, crewChat, type Crew, type CrewInput } from '../api';
 import { CrewCard } from './crew/CrewCard';
 import { CrewScreenHeader } from './crew/CrewScreenHeader';
 import { CrewHubDialog, type PrebuiltCategory, type PrebuiltCrew } from './crew/CrewHubDialog';
 import { CrewProfileDialog } from './crew/CrewProfileDialog';
 import { crewTheme, getCrewAccent } from '../styles/crew-theme';
-import { loadPrebuiltCategoryIndex, ensureCategoryCrews, prefetchHubCatalog } from '../data/crew-hub/loadPrebuiltCategories';
+import { loadHubCategoryIndex, ensureHubCategoryCrews, prefetchHubCatalog } from '../data/crew-hub/loadHubCatalog';
 
 const EMOTIONS = ['professional', 'friendly', 'witty', 'kind', 'funny', 'sarcastic', 'arrogant', 'flirty', 'happy', 'sad'] as const;
 
@@ -62,10 +63,15 @@ function crewToProfile(crew: Crew): PrebuiltCrew {
     tone: crew.tone ?? 'professional',
     expertise: crew.expertise ?? [],
     traits: crew.traits ?? [],
+    catalogId: crew.catalogId ?? (crew.callsign ? `hub-${crew.callsign}` : undefined),
+    categoryId: crew.categoryId,
+    requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    honorsDoctorate: crew.honorsDoctorate,
   };
 }
 
 export function CrewsPanel() {
+  const navigate = useNavigate();
   const [crews, setCrews] = useState<Crew[]>([]);
   const [detailCrew, setDetailCrew] = useState<Crew | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -86,6 +92,7 @@ export function CrewsPanel() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [expertiseInput, setExpertiseInput] = useState('');
   const [traitInput, setTraitInput] = useState('');
+  const [privateChatLoading, setPrivateChatLoading] = useState(false);
   const importGuardRef = useRef<Set<string>>(new Set());
 
   const load = useCallback(async () => {
@@ -112,7 +119,7 @@ export function CrewsPanel() {
     setHubCategoriesLoading(true);
     setHubCategoriesError('');
 
-    loadPrebuiltCategoryIndex()
+    loadHubCategoryIndex()
       .then((categories) => {
         if (!cancelled) {
           setHubCategories(categories);
@@ -141,7 +148,7 @@ export function CrewsPanel() {
     let cancelled = false;
     setHubSectorLoading(true);
 
-    ensureCategoryCrews(hubCategories, importCategory)
+    ensureHubCategoryCrews(hubCategories, importCategory)
       .then((categories) => {
         if (!cancelled) setHubCategories(categories);
       })
@@ -262,12 +269,15 @@ export function CrewsPanel() {
     setImportLoading(crew.callsign);
     try {
       await crewsApi.create({
+        id: `hub-${crew.callsign}`,
         name: crew.name,
         title: crew.title,
         callsign: crew.callsign,
         systemPrompt: crew.systemPrompt,
         description: crew.description || undefined,
         tone: crew.tone,
+        source: 'hub',
+        catalogId: `hub-${crew.callsign}`,
         expertise: crew.expertise,
         traits: crew.traits,
         tools: crew.tools,
@@ -278,6 +288,41 @@ export function CrewsPanel() {
     } finally {
       importGuardRef.current.delete(crew.callsign);
       setImportLoading(null);
+    }
+  };
+
+  const startPrivateChat = async (opts: { crewId?: string; recruit?: PrebuiltCrew }) => {
+    setPrivateChatLoading(true);
+    setError('');
+    try {
+      const body = opts.recruit
+        ? {
+            crewId: opts.crewId,
+            recruit: {
+              id: `hub-${opts.recruit.callsign}`,
+              name: opts.recruit.name,
+              title: opts.recruit.title,
+              callsign: opts.recruit.callsign,
+              systemPrompt: opts.recruit.systemPrompt,
+              description: opts.recruit.description || undefined,
+              tone: opts.recruit.tone,
+              source: 'hub',
+              catalogId: opts.recruit.catalogId ?? `hub-${opts.recruit.callsign}`,
+              categoryId: opts.recruit.categoryId,
+              expertise: opts.recruit.expertise,
+              traits: opts.recruit.traits,
+              tools: opts.recruit.tools,
+            },
+          }
+        : { crewId: opts.crewId! };
+      const result = await crewChat.startSession(body);
+      await load();
+      setDetailCrew(null);
+      navigate(`/console/chat/${result.sessionId}`, { state: { fromCrews: true } });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start private chat');
+    } finally {
+      setPrivateChatLoading(false);
     }
   };
 
@@ -376,6 +421,8 @@ export function CrewsPanel() {
                 crew={c}
                 regenerating={regenerating === c.id}
                 onOpen={setDetailCrew}
+                onPrivateChat={(crew) => startPrivateChat({ crewId: crew.id })}
+                privateChatLoading={privateChatLoading}
                 onToggle={handleToggle}
                 onEdit={openEdit}
                 onDelete={setDeleteConfirmId}
@@ -404,6 +451,8 @@ export function CrewsPanel() {
           onRegenerate: () => handleRegenerateCrew(detailCrew),
           regenerating: regenerating === detailCrew.id,
         } : undefined}
+        onPrivateChat={detailCrew ? () => startPrivateChat({ crewId: detailCrew.id }) : undefined}
+        privateChatLoading={privateChatLoading}
       />
 
       {/* Create / Edit Modal */}
@@ -570,6 +619,10 @@ export function CrewsPanel() {
         importLoading={importLoading}
         onImport={handleImportCrew}
         onRemove={(id) => handleDelete(id)}
+        onPrivateChat={(crew, rosterCrewId) => {
+          startPrivateChat({ crewId: rosterCrewId, recruit: crew });
+        }}
+        privateChatLoading={privateChatLoading}
       />
 
       {/* Delete Confirmation Dialog */}

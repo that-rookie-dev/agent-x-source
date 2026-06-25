@@ -85,6 +85,68 @@ export function displayContent(message: { content?: string; parts?: Array<{ type
   return partsText || contentText;
 }
 
+/** True when any assistant message has a pending questionnaire part. */
+export function hasPendingQuestionnaire(messages: Array<{ parts?: Array<{ type?: string; questionnaire?: { status?: string } }> }>): boolean {
+  for (const m of messages) {
+    for (const p of m.parts ?? []) {
+      if (p.type === 'questionnaire' && p.questionnaire?.status === 'pending') return true;
+    }
+  }
+  return false;
+}
+
+/** True when in-chat crew roster picker is awaiting user selection. */
+export function hasPendingCrewRosterPicker(messages: Array<{ parts?: Array<{ type?: string; crewRosterPicker?: { status?: string } }> }>): boolean {
+  for (const m of messages) {
+    for (const p of m.parts ?? []) {
+      if (p.type === 'crew_roster_picker' && p.crewRosterPicker?.status === 'pending') return true;
+    }
+  }
+  return false;
+}
+
+export function hasPendingChatInteraction(messages: Parameters<typeof hasPendingQuestionnaire>[0]): boolean {
+  return hasPendingQuestionnaire(messages) || hasPendingCrewRosterPicker(messages);
+}
+
+/** Remove a trailing streaming/text-only assistant bubble before a questionnaire card. */
+export function stripTrailingStreamPreamble<T extends {
+  role?: string;
+  streaming?: boolean;
+  content?: string;
+  parts?: Array<{ type?: string }>;
+}>(messages: T[]): T[] {
+  const last = messages[messages.length - 1];
+  if (last?.role !== 'assistant') return messages;
+  const hasQuestionnaire = last.parts?.some((p) => p.type === 'questionnaire');
+  const hasTools = last.parts?.some((p) => p.type === 'tool');
+  if (hasQuestionnaire || hasTools) return messages;
+  if (last.streaming || last.content?.trim()) {
+    return messages.slice(0, -1);
+  }
+  return messages;
+}
+
+/** True when the last assistant message is a non-streaming questionnaire card. */
+export function lastMessageIsQuestionnaireCard(messages: Array<{
+  role?: string;
+  streaming?: boolean;
+  parts?: Array<{ type?: string; questionnaire?: { status?: string } }>;
+}>): boolean {
+  const last = messages[messages.length - 1];
+  return last?.role === 'assistant'
+    && !last.streaming
+    && (last.parts?.some((p) => p.type === 'questionnaire') ?? false);
+}
+
+/** Parse legacy [MODE_CHANGE] system rows into chip metadata. */
+export function parseModeChange(content?: string): { from: string; to: string } | null {
+  if (!content) return null;
+  const match = content.match(/^\[MODE_CHANGE\]\s*(\w+)\s*→\s*(\w+)/);
+  if (!match) return null;
+  return { from: match[1]!, to: match[2]! };
+}
+
 /** Normalize one restored history row (assistant parts/toolCalls reconciliation). */
 export function mapRestoreHistoryMessage(m: Record<string, unknown>): Record<string, unknown> {
   const toolCalls = Array.isArray(m.toolCalls)
@@ -97,11 +159,12 @@ export function mapRestoreHistoryMessage(m: Record<string, unknown>): Record<str
     ?? repairStreamTextGlitches(stripToolNoise(String(m.content || '')));
   const parts = normalized?.parts
     ?? (Array.isArray(m.parts)
-      ? (m.parts as Array<Record<string, unknown>>).map((p) => (
-        p.type === 'text' && p.content
-          ? { ...p, content: repairStreamTextGlitches(stripToolNoise(String(p.content), { trim: false })) }
-          : p
-      ))
+      ? (m.parts as Array<Record<string, unknown>>).map((p) => {
+        if (p.type === 'text' && p.content) {
+          return { ...p, content: repairStreamTextGlitches(stripToolNoise(String(p.content), { trim: false })) };
+        }
+        return p;
+      })
       : undefined);
   return {
     ...m,

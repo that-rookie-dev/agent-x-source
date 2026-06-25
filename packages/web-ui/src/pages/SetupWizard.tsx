@@ -61,7 +61,7 @@ function clearProgress() {
 }
 
 export function SetupWizard() {
-  const { setConfig, setAuthState } = useApp();
+  const { setConfig, setAuthState, setView } = useApp();
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const { showError, clearError } = useGlobalError();
@@ -208,12 +208,18 @@ export function SetupWizard() {
     try {
       if (selectedBackend === 'postgres') {
         const connStr = buildPgConnStr();
-        if (connStr) { try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {} }
+        if (connStr) {
+          try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {}
+        }
       }
       try { await personaApi.save(persona); } catch {}
       const r = await config.update({ setupComplete: true, user: { callsign } });
       if (!r.ok) { showError('Failed to save setup.'); setLoading(false); return; }
-      const cfg = await config.get(); setConfig(cfg); setAuthState('authenticated'); clearProgress(); navigate('/');
+      clearProgress();
+      setAuthState('authenticated');
+      setView('docking');
+      navigate('/', { replace: true });
+      void config.get().then((cfg) => setConfig(cfg)).catch(() => {});
     } catch (err) { showError(err instanceof Error ? err.message : 'Setup could not be saved.'); }
     finally { setLoading(false); }
   };

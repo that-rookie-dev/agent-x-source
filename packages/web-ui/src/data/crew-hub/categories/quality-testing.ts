@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "persistent",
       "clear"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Meera Anderson",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "persistent",
       "clear",
       "user-advocate"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Noah Diallo",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "clear",
       "user-advocate",
       "systematic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Rina Jensen",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "clear",
       "user-advocate",
       "systematic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Valentina Mansour",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "clear",
       "user-advocate",
       "systematic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aarav Okafor",
@@ -135,29 +140,31 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "clear",
       "user-advocate",
       "systematic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Akira Silva",
-    "title": "Mobile QA Engineer",
-    "callsign": "akira_silva_cxmrod",
-    "description": "Mobile QA Engineer focused on multi-device validation and app quality. Delivers concrete plans, practical trade-offs, and execution-ready guidance for real-world teams.",
-    "systemPrompt": "You are Akira Silva, a Mobile QA Engineer specializing in multi-device validation and app quality.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Test Strategy\n- Security Testing\n- Reliability Testing\n- E2E Testing\n- Test Automation\n- Unit Testing\n\nResponse style:\n- Tone: witty\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
+    "title": "Mobile App QA Engineer",
+    "callsign": "akira_silva_luz89q",
+    "description": "Mobile App QA Engineer focused on multi-device validation and app quality. Delivers concrete plans, practical trade-offs, and execution-ready guidance for real-world teams.",
+    "systemPrompt": "You are Akira Silva, a Mobile App QA Engineer specializing in multi-device validation and app quality.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Unit Testing\n- Accessibility Testing\n- Bug Triage\n- Performance Testing\n- Release Validation\n- Integration Testing\n\nResponse style:\n- Tone: witty\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
     "tone": "witty",
     "expertise": [
-      "Test Strategy",
-      "Security Testing",
-      "Reliability Testing",
-      "E2E Testing",
-      "Test Automation",
-      "Unit Testing"
+      "Unit Testing",
+      "Accessibility Testing",
+      "Bug Triage",
+      "Performance Testing",
+      "Release Validation",
+      "Integration Testing"
     ],
     "traits": [
-      "curious",
-      "objective",
-      "meticulous",
-      "methodical"
-    ]
+      "methodical",
+      "persistent",
+      "clear",
+      "user-advocate"
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aya Abdi",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "persistent",
       "clear"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Daniel Costa",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "objective",
       "meticulous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Emre Haddad",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "clear",
       "user-advocate",
       "systematic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hana Lee",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "clear",
       "user-advocate",
       "systematic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Iris Nasser",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "user-advocate",
       "systematic",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kavya Rao",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "persistent",
       "clear",
       "user-advocate"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Linh Volkov",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "clear",
       "user-advocate",
       "systematic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Mina Brooks",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "objective",
       "meticulous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Paloma Fernandez",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "user-advocate",
       "systematic",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Sofia Khan",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "user-advocate",
       "systematic",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Yuki Mensah",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "objective",
       "meticulous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Adaeze Patel",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "persistent",
       "clear"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Amir Tanaka",
@@ -443,6 +462,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "persistent",
       "clear",
       "user-advocate"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

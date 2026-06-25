@@ -1,13 +1,19 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { expansionCategoryDefinitions } from './crew-hub-expansion-domains.mjs';
+import { medicalSpecialtyCategoryDefinitions } from './crew-hub-medical-specialties.mjs';
+import { worldOccupationCategoryDefinitions } from './crew-hub-world-occupations.mjs';
+import { certificationCategoryDefinitions } from './crew-hub-certification-specialists.mjs';
+import { applyDrHonorificIfQualified } from './crew-doctor-honorific.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HUB_DIR = join(__dirname, '../src/data/crew-hub');
 const CATEGORIES_DIR = join(HUB_DIR, 'categories');
 const INDEX_PATH = join(HUB_DIR, 'prebuilt-crews-index.ts');
 const SEARCH_INDEX_PATH = join(HUB_DIR, 'search-index.ts');
+const MANIFEST_PATH = join(__dirname, '../../engine/data/crew-catalog.manifest.json');
 const LEGACY_PATH = join(HUB_DIR, 'prebuilt-crews.ts');
 
 const TONES = ['professional', 'friendly', 'witty', 'kind'];
@@ -38,11 +44,25 @@ const usedNames = new Set();
 let nameCounter = 0;
 
 function takeGeneratedName() {
-  while (nameCounter < FIRST_NAMES.length * LAST_NAMES.length * 2) {
+  const maxAttempts = FIRST_NAMES.length * LAST_NAMES.length * 8;
+  while (nameCounter < maxAttempts) {
     const first = FIRST_NAMES[(nameCounter * 7 + 3) % FIRST_NAMES.length];
     const last = LAST_NAMES[(nameCounter * 11 + 5) % LAST_NAMES.length];
+  const middle = nameCounter >= FIRST_NAMES.length * LAST_NAMES.length
+      ? ` ${String.fromCharCode(65 + (nameCounter % 26))}.`
+      : '';
     nameCounter += 1;
-    const candidate = `${first} ${last}`;
+    const candidate = `${first}${middle} ${last}`;
+    if (!usedNames.has(candidate)) {
+      usedNames.add(candidate);
+      return candidate;
+    }
+  }
+  while (nameCounter < maxAttempts + 50000) {
+    const first = FIRST_NAMES[nameCounter % FIRST_NAMES.length];
+    const last = LAST_NAMES[(nameCounter * 13 + 7) % LAST_NAMES.length];
+    nameCounter += 1;
+    const candidate = `${first} ${last} ${nameCounter}`;
     if (!usedNames.has(candidate)) {
       usedNames.add(candidate);
       return candidate;
@@ -176,9 +196,60 @@ function buildComplianceAuditorCrew(categoryId, role, roleIndex) {
   };
 }
 
-function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCategory = false, clinicalCategory = false) {
+function buildCertPrepCrew(categoryId, skillBank, traitBank, role, roleIndex) {
+  const name = role.name ? reserveName(role.name) : takeGeneratedName();
+  const title = role.title;
+  const callsign = toCallsign(name, title, categoryId);
+  const tone = role.tone ?? TONES[roleIndex % TONES.length];
+  const domainExpertise = role.examDomains ?? [];
+  const extraFromBank = pickUnique(skillBank, Math.max(0, 6 - domainExpertise.length), `${categoryId}:${title}:expertise`);
+  const expertise = role.expertise ?? [...domainExpertise, ...extraFromBank].slice(0, 12);
+  const traits = role.traits ?? pickUnique(traitBank, 4, `${categoryId}:${title}:traits`);
+  const specialty = role.specialty;
+  const secondaryLine = role.secondaryCerts?.length
+    ? ` Also credentialed in: ${role.secondaryCerts.join(', ')}.`
+    : '';
+  const description = `${title} — ${role.certBody} (${role.examCode}) certification study coach. ${specialty}.${secondaryLine} Helps learners map exam domains, build study schedules, practice scenario questions, and close knowledge gaps. Not an official exam proxy or pass guarantee.`;
+  const systemPrompt = [
+    `You are ${name}, a ${title} specializing in ${specialty}.`,
+    '',
+    `Primary credential: ${role.certBody} — ${role.examCode}`,
+    ...(role.secondaryCerts?.length ? [`Additional credentials: ${role.secondaryCerts.join(', ')}`] : []),
+    '',
+    'Exam domains you coach:',
+    ...role.examDomains.map((d) => `- ${d}`),
+    '',
+    'Study coaching workflow:',
+    '1. Baseline: assess the learner\'s current knowledge against each exam domain.',
+    '2. Plan: build a week-by-week study schedule with weights aligned to the official blueprint.',
+    '3. Teach: explain concepts with real-world scenarios, diagrams, and decision frameworks.',
+    '4. Practice: run scenario questions, case studies, and "explain your reasoning" drills.',
+    '5. Review: track weak domains, adjust the plan, and recommend hands-on labs where applicable.',
+    '6. Exam readiness: mock exam strategy, time management, and anxiety/confidence coaching.',
+    '',
+    'Domain strengths:',
+    ...expertise.map((item) => `- ${item}`),
+    '',
+    'Important:',
+    '- You provide certification study coaching — not official exam items, brain dumps, or guaranteed pass claims.',
+    '- Encourage learners to use official vendor documentation, practice exams, and hands-on labs.',
+    '- When licensed professional practice is required beyond the exam, recommend qualified practitioners.',
+    '',
+    'Response style:',
+    `- Tone: ${tone}`,
+    '- Be structured, encouraging, and exam-blueprint aligned.',
+    '- Prefer checklists, domain maps, and practice question walkthroughs over generic advice.',
+  ].join('\n');
+  const base = { name, title, callsign, description, systemPrompt, tone, expertise, traits };
+  return applyDrHonorificIfQualified(base, { medicalCategory: false, scienceCategory: false, categoryId });
+}
+
+function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCategory = false, clinicalCategory = false, medicalCategory = false, scienceCategory = false) {
   if (role.compliance) {
     return buildComplianceAuditorCrew(categoryId, role, roleIndex);
+  }
+  if (role.certPrep) {
+    return buildCertPrepCrew(categoryId, skillBank, traitBank, role, roleIndex);
   }
   const name = role.name ? reserveName(role.name) : takeGeneratedName();
   const title = role.title;
@@ -187,12 +258,24 @@ function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCa
   const expertise = role.expertise ?? pickUnique(skillBank, 6, `${categoryId}:${title}:expertise`);
   const traits = role.traits ?? pickUnique(traitBank, 4, `${categoryId}:${title}:traits`);
   const specialty = role.specialty;
-  const description = clinicalCategory
-    ? `${title} focused on ${specialty}. Provides operational and educational health guidance — not diagnosis or treatment.`
-    : businessCategory
-      ? `${title} focused on ${specialty}. Delivers actionable plans, measurable outcomes, and execution-ready guidance for business teams.`
-      : `${title} focused on ${specialty}. Delivers concrete plans, practical trade-offs, and execution-ready guidance for real-world teams.`;
-  const clinicalDisclaimers = clinicalCategory
+  const description = medicalCategory
+    ? `${title} focused on ${specialty}. Informational health education only — not diagnosis, treatment, or emergency care.`
+    : clinicalCategory
+      ? `${title} focused on ${specialty}. Provides operational and educational health guidance — not diagnosis or treatment.`
+      : businessCategory
+        ? `${title} focused on ${specialty}. Delivers actionable plans, measurable outcomes, and execution-ready guidance for business teams.`
+        : `${title} focused on ${specialty}. Delivers concrete plans, practical trade-offs, and execution-ready guidance for real-world teams.`;
+  const medicalDisclaimers = medicalCategory
+    ? [
+        '',
+        'CRITICAL MEDICAL DISCLAIMER:',
+        '- You provide general health information and education ONLY — never medical advice, diagnosis, treatment, or emergency triage.',
+        '- AI and language models can be wrong, omit context, or hallucinate. Users must verify with licensed clinicians.',
+        '- Tell users to call emergency services for urgent symptoms and to consult qualified healthcare professionals for care decisions.',
+        '- Do not recommend specific drugs, doses, or discontinuation of prescribed therapy.',
+      ]
+    : [];
+  const clinicalDisclaimers = clinicalCategory && !medicalCategory
     ? [
         '',
         'Important:',
@@ -201,26 +284,29 @@ function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCa
         '- Recommend consulting qualified healthcare professionals for clinical care decisions.',
       ]
     : [];
-  const systemPrompt = (businessCategory || clinicalCategory)
+  const systemPrompt = (businessCategory || clinicalCategory || medicalCategory)
     ? [
         `You are ${name}, a ${title} specializing in ${specialty}.`,
         '',
         'Operating principles:',
-        '- Clarify business goals, audience, budget, constraints, and success metrics.',
-        '- Provide step-by-step plans with owners, timelines, and measurable KPIs.',
-        clinicalCategory
-          ? '- Ground recommendations in clinical workflows, safety protocols, and regulatory awareness.'
-          : '- Ground recommendations in market context, stakeholder needs, and practical trade-offs.',
+        '- Clarify goals, constraints, audience, and success metrics.',
+        '- Provide step-by-step plans with owners, timelines, and measurable outcomes.',
+        medicalCategory
+          ? '- Ground responses in evidence-informed health literacy, care navigation, and risk communication — never substitute for clinical judgment.'
+          : clinicalCategory
+            ? '- Ground recommendations in clinical workflows, safety protocols, and regulatory awareness.'
+            : '- Ground recommendations in market context, stakeholder needs, and practical trade-offs.',
         '',
         'Domain strengths:',
         ...expertise.map((item) => `- ${item}`),
         '',
         'Response style:',
         `- Tone: ${tone}`,
-        '- Be specific, actionable, and commercially aware.',
+        '- Be specific, actionable, and clear.',
         '- Prefer frameworks, templates, and decision checklists over generic advice.',
-        '- When legal, tax, or licensed professional advice is required, recommend consulting qualified professionals.',
+        '- When licensed professional advice is required, recommend consulting qualified professionals.',
         ...clinicalDisclaimers,
+        ...medicalDisclaimers,
       ].join('\n')
     : [
         `You are ${name}, a ${title} specializing in ${specialty}.`,
@@ -238,7 +324,8 @@ function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCa
         '- Be specific, pragmatic, and technically accurate.',
         '- Prefer examples, checklists, and decision frameworks over generic advice.',
       ].join('\n');
-  return { name, title, callsign, description, systemPrompt, tone, expertise, traits };
+  const base = { name, title, callsign, description, systemPrompt, tone, expertise, traits };
+  return applyDrHonorificIfQualified(base, { medicalCategory, scienceCategory, categoryId });
 }
 
 function role(title, specialty, name, tone) {
@@ -283,7 +370,7 @@ const categoryDefinitions = [
   {
     id: 'frontend-engineering',
     label: 'Frontend Engineering',
-    iconId: 'code',
+    iconId: 'web',
     skillBank: ['React', 'TypeScript', 'Modern CSS', 'Accessibility', 'Web Performance', 'State Management', 'Component Architecture', 'UI Testing', 'Design Systems', 'SSR/SSG', 'Security Hardening', 'Internationalization'],
     traitBank: sharedTechTraits,
     roles: [
@@ -312,7 +399,7 @@ const categoryDefinitions = [
   {
     id: 'platform-fullstack',
     label: 'Platform & Fullstack',
-    iconId: 'code',
+    iconId: 'layers',
     skillBank: ['Fullstack Architecture', 'Monorepos', 'API Gateway Patterns', 'Developer Experience', 'CI Tooling', 'Feature Flags', 'Internal Tooling', 'GraphQL', 'BFF Patterns', 'Release Engineering', 'Observability', 'Platform Governance'],
     traitBank: sharedTechTraits,
     roles: [
@@ -341,7 +428,7 @@ const categoryDefinitions = [
   {
     id: 'devops-cloud-sre',
     label: 'DevOps, Cloud & SRE',
-    iconId: 'storage',
+    iconId: 'cloud',
     skillBank: ['Kubernetes', 'Terraform', 'CI/CD Pipelines', 'Incident Response', 'SLO/SLI', 'Cloud Networking', 'Linux Operations', 'Observability', 'Infrastructure as Code', 'Disaster Recovery', 'Cost Optimization', 'Release Automation'],
     traitBank: sharedOpsTraits,
     roles: [
@@ -399,7 +486,7 @@ const categoryDefinitions = [
   {
     id: 'mobile-embedded-iot',
     label: 'Mobile, Embedded & IoT',
-    iconId: 'code',
+    iconId: 'devices',
     skillBank: ['iOS Development', 'Android Development', 'React Native', 'Flutter', 'Firmware', 'RTOS', 'Bluetooth', 'Sensor Integration', 'Edge Computing', 'Power Optimization', 'Mobile Security', 'Device Lifecycle'],
     traitBank: sharedTechTraits,
     roles: [
@@ -428,7 +515,7 @@ const categoryDefinitions = [
   {
     id: 'data-engineering-analytics',
     label: 'Data Engineering & Analytics',
-    iconId: 'storage',
+    iconId: 'analytics',
     skillBank: ['ETL/ELT', 'Data Warehousing', 'Spark', 'Streaming Data', 'Data Modeling', 'Analytics Engineering', 'Data Quality', 'Airflow', 'dbt', 'BI Tooling', 'SQL Optimization', 'Data Governance'],
     traitBank: sharedTechTraits,
     roles: [
@@ -486,7 +573,7 @@ const categoryDefinitions = [
   {
     id: 'quality-testing',
     label: 'Quality & Testing',
-    iconId: 'verified',
+    iconId: 'bug_report',
     skillBank: ['Test Strategy', 'Unit Testing', 'Integration Testing', 'E2E Testing', 'Performance Testing', 'Security Testing', 'Accessibility Testing', 'Mutation Testing', 'Test Automation', 'Release Validation', 'Reliability Testing', 'Bug Triage'],
     traitBank: ['meticulous', 'systematic', 'persistent', 'objective', 'user-advocate', 'methodical', 'curious', 'clear'],
     roles: [
@@ -496,7 +583,7 @@ const categoryDefinitions = [
       role('Performance Test Engineer', 'load, stress, and endurance testing'),
       role('Accessibility QA Engineer', 'inclusive usability and assistive tech validation'),
       role('Security Test Engineer', 'security regression and adversarial testing'),
-      role('Mobile QA Engineer', 'multi-device validation and app quality'),
+      role('Mobile App QA Engineer', 'multi-device validation and app quality'),
       role('API Test Engineer', 'contract and integration test coverage'),
       role('Data Quality Test Engineer', 'data correctness and pipeline testing'),
       role('Release Validation Engineer', 'go-live readiness and rollback confidence'),
@@ -515,7 +602,7 @@ const categoryDefinitions = [
   {
     id: 'database-infrastructure',
     label: 'Database Infrastructure',
-    iconId: 'storage',
+    iconId: 'database',
     skillBank: ['PostgreSQL', 'MySQL', 'NoSQL', 'Replication', 'Sharding', 'Backup and Recovery', 'Query Optimization', 'Schema Design', 'Data Security', 'High Availability', 'Capacity Planning', 'Migration Strategy'],
     traitBank: sharedTechTraits,
     roles: [
@@ -544,7 +631,7 @@ const categoryDefinitions = [
   {
     id: 'game-graphics-realtime',
     label: 'Game, Graphics & Realtime',
-    iconId: 'code',
+    iconId: 'videogame',
     skillBank: ['Unity', 'Unreal Engine', 'Rendering Pipelines', 'Shaders', 'Physics Systems', 'Gameplay Systems', 'Realtime Networking', 'Optimization', 'Asset Pipelines', 'Procedural Generation', 'Audio Systems', 'Engine Tooling'],
     traitBank: ['creative', 'performance-minded', 'iterative', 'detail-oriented', 'visual-thinker', 'player-focused', 'experimental', 'systematic'],
     roles: [
@@ -573,7 +660,7 @@ const categoryDefinitions = [
   {
     id: 'networking-systems',
     label: 'Networking & Systems',
-    iconId: 'storage',
+    iconId: 'lan',
     skillBank: ['TCP/IP', 'DNS', 'Load Balancing', 'Network Security', 'Routing', 'Linux Systems', 'Distributed Systems', 'Protocol Design', 'Observability', 'Edge Networking', 'Capacity Planning', 'Troubleshooting'],
     traitBank: sharedOpsTraits,
     roles: [
@@ -1132,7 +1219,7 @@ const categoryDefinitions = [
       role('Assembly Line Balancer', 'takt time, line balancing, and bottlenecks'),
       role('Packaging Operations Manager', 'pack-out lines, labeling, and compliance'),
       role('ISO 9001 Implementation Advisor', 'quality manual, procedures, and internal audits'),
-      role('Capacity Planning Engineer', 'bottleneck analysis and capital requests'),
+      role('Manufacturing Capacity Planning Engineer', 'bottleneck analysis and capital requests'),
       role('Manufacturing Cost Analyst', 'standard costs, variances, and margin improvement'),
       role('New Product Introduction Manager', 'pilot builds, PPAP, and scale-up readiness'),
     ],
@@ -1616,25 +1703,48 @@ const categoryDefinitions = [
   },
 ];
 
-for (const category of categoryDefinitions) {
+const allCategoryDefinitions = [
+  ...categoryDefinitions,
+  ...expansionCategoryDefinitions(),
+  ...medicalSpecialtyCategoryDefinitions(),
+  ...worldOccupationCategoryDefinitions(),
+  ...certificationCategoryDefinitions(),
+];
+
+for (const category of allCategoryDefinitions) {
   if (category.roles.length < 20) {
     throw new Error(`${category.id} must contain at least 20 role templates`);
   }
 }
 
-const categories = categoryDefinitions.map((category) => {
+const categories = allCategoryDefinitions.map((category) => {
   const crews = category.roles.map((entry, index) =>
-    buildCrew(category.id, category.skillBank, category.traitBank, entry, index, category.businessCategory, category.clinicalCategory),
+    buildCrew(
+      category.id,
+      category.skillBank,
+      category.traitBank,
+      entry,
+      index,
+      category.businessCategory,
+      category.clinicalCategory,
+      category.medicalCategory,
+      category.scienceCategory,
+    ),
   );
   return {
     id: category.id,
     label: category.label,
     iconId: category.iconId,
+    medicalCategory: !!category.medicalCategory,
+    scienceCategory: !!category.scienceCategory,
     crews,
   };
 });
 
 const allCallsigns = new Set();
+function normalizeJobTitle(title) {
+  return title.toLowerCase().replace(/\s+/g, ' ').trim();
+}
 for (const category of categories) {
   for (const crew of category.crews) {
     if (allCallsigns.has(crew.callsign)) {
@@ -1642,6 +1752,20 @@ for (const category of categories) {
     }
     allCallsigns.add(crew.callsign);
   }
+}
+const titleCounts = new Map();
+for (const category of categories) {
+  for (const crew of category.crews) {
+    const titleKey = normalizeJobTitle(crew.title);
+    const existing = titleCounts.get(titleKey) ?? [];
+    existing.push(`${category.id}`);
+    titleCounts.set(titleKey, existing);
+  }
+}
+const dupEntries = [...titleCounts.entries()].filter(([, cats]) => cats.length > 1);
+if (dupEntries.length > 0) {
+  const lines = dupEntries.slice(0, 40).map(([title, cats]) => `  "${title}" in ${cats.join(', ')}`);
+  throw new Error(`Duplicate job titles detected (${dupEntries.length}):\n${lines.join('\n')}${dupEntries.length > 40 ? `\n  ...and ${dupEntries.length - 40} more` : ''}`);
 }
 
 const categoryIconIds = Array.from(new Set(categories.map((category) => category.iconId)));
@@ -1661,6 +1785,7 @@ export type PrebuiltCrewData = {
   expertise: string[];
   traits: string[];
   tools?: string[];
+  honorsDoctorate?: boolean;
 };
 
 export type CategoryIconId = ${categoryIconIds.map((id) => `'${id}'`).join(' | ')};
@@ -1723,6 +1848,90 @@ export const CREW_SEARCH_INDEX: CrewSearchIndexEntry[] = ${JSON.stringify(search
 `;
 writeFileSync(SEARCH_INDEX_PATH, searchIndexContents, 'utf8');
 
+const manifestCrews = [];
+for (const category of categories) {
+  for (const crew of category.crews) {
+    const searchText = [
+      crew.name,
+      crew.title,
+      crew.callsign,
+      crew.description,
+      crew.tone,
+      ...crew.expertise,
+      ...crew.traits,
+    ].join(' ').toLowerCase();
+    manifestCrews.push({
+      id: `hub-${crew.callsign}`,
+      categoryId: category.id,
+      categoryLabel: category.label,
+      name: crew.name,
+      title: crew.title,
+      callsign: crew.callsign,
+      description: crew.description,
+      systemPrompt: crew.systemPrompt,
+      tone: crew.tone,
+      expertise: crew.expertise,
+      traits: crew.traits,
+      tools: crew.tools,
+      searchText,
+      requiresMedicalDisclaimer: !!category.medicalCategory,
+      honorsDoctorate: !!crew.honorsDoctorate,
+    });
+  }
+}
+
+let catalogRevision = 2;
+if (existsSync(MANIFEST_PATH)) {
+  try {
+    const prev = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+    catalogRevision = Math.max(2, Number(prev.revision ?? 1) + 1);
+  } catch {
+    catalogRevision = 2;
+  }
+}
+
+const manifest = {
+  revision: catalogRevision,
+  categories: categories.map(({ id, label, iconId, medicalCategory }) => ({
+    id,
+    label,
+    iconId,
+    requiresMedicalDisclaimer: !!medicalCategory,
+  })),
+  crews: manifestCrews,
+};
+mkdirSync(dirname(MANIFEST_PATH), { recursive: true });
+writeFileSync(MANIFEST_PATH, JSON.stringify(manifest), 'utf8');
+
+const medicalCategoryIds = categories.filter((c) => c.medicalCategory).map((c) => c.id);
+const medicalCatalogIds = manifestCrews.filter((c) => c.requiresMedicalDisclaimer).map((c) => c.id);
+const sharedMedicalPath = join(__dirname, '../../shared/src/constants/medical-hub.generated.ts');
+writeFileSync(sharedMedicalPath, `/** AUTO-GENERATED — run: node scripts/generate-crew-hub.mjs */
+export const MEDICAL_HUB_CATEGORY_IDS_GENERATED: readonly string[] = ${JSON.stringify(medicalCategoryIds, null, 2)};
+export const MEDICAL_HUB_CATALOG_IDS_GENERATED: readonly string[] = ${JSON.stringify(medicalCatalogIds, null, 2)};
+`, 'utf8');
+
+const catalogIndexPath = join(__dirname, '../../engine/data/crew-hub-catalog-index.md');
+const indexLines = [
+  `# Crew Hub Catalog Index`,
+  ``,
+  `Revision: **${catalogRevision}**`,
+  `Categories: **${categories.length}**`,
+  `Crew members: **${manifestCrews.length}**`,
+  ``,
+  `> Existing installs pick up new crews automatically when manifest revision advances (background catalog seed).`,
+  ``,
+];
+for (const category of categories) {
+  indexLines.push(`## ${category.label} (\`${category.id}\`) — ${category.crews.length} roles`);
+  if (category.medicalCategory) indexLines.push(`*Medical informational disclaimer required*`);
+  for (const crew of category.crews) {
+    indexLines.push(`- ${crew.title} — ${crew.name}`);
+  }
+  indexLines.push('');
+}
+writeFileSync(catalogIndexPath, indexLines.join('\n'), 'utf8');
+
 for (const category of categories) {
   const categoryPath = join(CATEGORIES_DIR, `${category.id}.ts`);
   const categoryContents = `/**
@@ -1743,6 +1952,6 @@ if (existsSync(LEGACY_PATH)) {
 const perCategoryCounts = categories.map((category) => `${category.id}: ${category.crews.length}`);
 const total = categories.reduce((acc, category) => acc + category.crews.length, 0);
 
-console.log(`Generated ${INDEX_PATH}, ${SEARCH_INDEX_PATH}, and ${categories.length} category files`);
+console.log(`Generated ${INDEX_PATH}, ${SEARCH_INDEX_PATH}, ${MANIFEST_PATH}, and ${categories.length} category files`);
 console.log(perCategoryCounts.join('\n'));
 console.log(`grand-total: ${total}`);

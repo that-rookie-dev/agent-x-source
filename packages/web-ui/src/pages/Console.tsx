@@ -135,7 +135,7 @@ export function Console() {
     <Box ref={containerRef} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Main content + right-side logs */}
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0, minWidth: 0 }}>
-        <Sidebar active={activePanel} onNavigate={handleNavigate} />
+        <Sidebar active={activePanel} onNavigate={handleNavigate} highlightCrews={false} />
         <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', flexDirection: isVertical ? 'row' : 'column' }}>
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
             <PanelErrorBoundary key={activePanel}>
