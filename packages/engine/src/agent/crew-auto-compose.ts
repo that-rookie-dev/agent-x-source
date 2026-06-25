@@ -24,6 +24,11 @@ const DOMAIN_HINTS: Array<{ pattern: RegExp; keywords: string[] }> = [
   { pattern: /\b(test|qa|quality|regression|e2e|unit test)\b/i, keywords: ['testing', 'qa', 'test', 'quality'] },
   { pattern: /\b(write|essay|blog|document|documentation|readme)\b/i, keywords: ['documentation', 'writing', 'content'] },
   { pattern: /\b(trip|travel|vacation|itinerary|beach|hotel|flight|tourism|holiday)\b/i, keywords: ['travel', 'tourism', 'hospitality', 'planning', 'logistics'] },
+  { pattern: /\b(blackhole|black hole|blackholes|cosmos|cosmolog|universe|galaxy|galaxies|nebula|supernova)\b/i, keywords: ['astrophysics', 'astronomy', 'space', 'cosmology', 'physics'] },
+  { pattern: /\b(astronom|astrophys|planet|orbital|telescope|space mission|spacecraft)\b/i, keywords: ['astronomy', 'astrophysics', 'space', 'planetary', 'orbital'] },
+  { pattern: /\b(physicist|physics|quantum|relativity|particle|thermodynamic)\b/i, keywords: ['physics', 'theoretical', 'quantum', 'physical sciences'] },
+  { pattern: /\b(biolog|genetic|ecolog|evolution|microbiolog|neuroscience)\b/i, keywords: ['biology', 'life sciences', 'genetics', 'ecology'] },
+  { pattern: /\b(chemist|molecule|organic chemistry|biochem)\b/i, keywords: ['chemistry', 'materials', 'science'] },
 ];
 
 const TASK_ACTION_SIGNALS = /\b(create|build|fix|debug|implement|design|write|draft|analyze|review|audit|plan|prepare|optimize|deploy|configure|set up|setup|calculate|estimate|research|investigate|troubleshoot|refactor|migrate|test|automate|improve|recommend|suggest|help me|need help|can you|could you|please|figure out|work on|look into|set up)\b/i;
@@ -106,8 +111,11 @@ function scoreMember(taskLower: string, member: CrewMember): { score: number; re
     }
   }
 
-  for (const word of taskLower.split(/\s+/)) {
-    if (word.length > 4 && blob.includes(word)) score += 0.5;
+  const taskDomains = extractDomainKeywords(taskLower);
+  if (taskDomains.size === 0) {
+    for (const word of taskLower.split(/\s+/)) {
+      if (word.length > 4 && blob.includes(word)) score += 0.5;
+    }
   }
 
   if (TASK_ACTION_SIGNALS.test(taskLower) && reasons.length > 0) {
@@ -117,6 +125,31 @@ function scoreMember(taskLower: string, member: CrewMember): { score: number; re
 
   if (member.active !== false) score += 0.5;
   return { score, reasons: [...new Set(reasons)] };
+}
+
+/** True when a crew member's profile overlaps the task's domain keywords. */
+export function memberMatchesTaskDomains(task: string, member: CrewMember): boolean {
+  const taskLower = task.toLowerCase();
+  const taskDomains = extractDomainKeywords(task);
+  if (taskDomains.size === 0) {
+    const { score, reasons } = scoreMember(taskLower, member);
+    return score >= 3 && reasons.some((r) => r.startsWith('expertise:') || r.startsWith('domain:'));
+  }
+  const blob = memberProfileBlob(member);
+  for (const kw of taskDomains) {
+    if (blob.includes(kw)) return true;
+  }
+  return false;
+}
+
+/** Domain-aware task string for active-crew routing — never merges unrelated session intent. */
+export function buildRoutingTaskForActiveCrew(
+  currentMessage: string,
+  priorUserMessages: string[] = [],
+): string {
+  const current = currentMessage.trim();
+  if (isDistinctNewRequirement(current, priorUserMessages)) return current;
+  return buildTaskContextForCrewRouting(current, priorUserMessages);
 }
 
 /** Merge prior user turns when the latest message is a short follow-up. */
@@ -158,35 +191,48 @@ export function isContinuationMessage(text: string): boolean {
     && (CONTINUATION_SIGNALS.test(trimmed) || CONTINUATION_DEICTIC.test(trimmed));
 }
 
-const CREW_SEARCH_STOP_WORDS = new Set([
+export const CREW_SEARCH_STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'can', 'you', 'help', 'me', 'please', 'could', 'would',
   'this', 'that', 'are', 'was', 'were', 'have', 'has', 'had', 'am', 'is', 'my', 'our',
   'your', 'his', 'her', 'their', 'who', 'what', 'when', 'where', 'how', 'why', 'also',
   'just', 'need', 'want', 'like', 'some', 'any', 'all', 'very', 'really',
   'skilled', 'person', 'people', 'hire', 'hiring', 'workforce', 'specialist', 'expert',
   'someone', 'talent', 'resource', 'resources', 'qualified', 'experienced', 'looking',
+  'know', 'about', 'tell', 'explain', 'learn', 'understand', 'information', 'question',
 ]);
 
-/** Build a focused catalog FTS query — avoids OR-matching every crew on filler tokens. */
-export function buildCrewSuggestionSearchQuery(task: string): string {
-  const trimmed = task.trim();
-  if (!trimmed) return trimmed;
-
-  const domainKeys = extractDomainKeywords(trimmed);
-  const tokens = trimmed
+/** Subject-matter tokens used to validate catalog hits — excludes filler and workforce phrasing. */
+export function extractSubstantiveSearchTokens(
+  task: string,
+  extraKeywords: string[] = [],
+): string[] {
+  const domainKeys = [...extractDomainKeywords(task)];
+  const tokens = task
     .toLowerCase()
     .replace(/[^\w\s-]/g, ' ')
     .split(/\s+/)
     .filter((w) => w.length >= 3 && !CREW_SEARCH_STOP_WORDS.has(w));
 
-  const parts: string[] = [];
-  for (const d of domainKeys) parts.push(d);
-  for (const t of tokens) {
-    if (!parts.includes(t)) parts.push(t);
+  const merged = [...domainKeys, ...extraKeywords, ...tokens];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of merged) {
+    const key = part.toLowerCase().trim();
+    if (key.length < 3 || CREW_SEARCH_STOP_WORDS.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
   }
+  return out.slice(0, 10);
+}
 
+/** Build a focused catalog FTS query — domain keys first, then substantive subject tokens only. */
+export function buildCrewSuggestionSearchQuery(task: string, extraKeywords: string[] = []): string {
+  const trimmed = task.trim();
+  if (!trimmed) return trimmed;
+
+  const parts = extractSubstantiveSearchTokens(trimmed, extraKeywords);
   const query = parts.slice(0, 8).join(' ');
-  return query.length >= 3 ? query : trimmed.slice(0, 120);
+  return query.length >= 3 ? query : '';
 }
 
 export function extractDomainKeywords(text: string): Set<string> {
@@ -207,10 +253,13 @@ export function extractDomainKeywords(text: string): Set<string> {
 export function shouldBypassActiveCrewRouting(
   message: string,
   opts?: { crewSuggestionResolved?: boolean; hasDelegateCrewIds?: boolean },
+  priorUserMessages: string[] = [],
 ): boolean {
   if (opts?.hasDelegateCrewIds) return false;
   if (opts?.crewSuggestionResolved) return true;
-  return explicitCrewRequest(message.trim());
+  const trimmed = message.trim();
+  if (priorUserMessages.length > 0 && isDistinctNewRequirement(trimmed, priorUserMessages)) return true;
+  return explicitCrewRequest(trimmed);
 }
 
 /** True when the message introduces a domain not covered by recent user turns. */
@@ -272,6 +321,7 @@ export function assessCrewNeed(task: string, availableMembers: CrewMember[]): Cr
       const { score, reasons } = scoreMember(taskLower, member);
       return { member, score, reasons };
     })
+    .filter(({ member, score }) => score > 0 && memberMatchesTaskDomains(task, member))
     .sort((a, b) => b.score - a.score);
 
   const best = scored[0];

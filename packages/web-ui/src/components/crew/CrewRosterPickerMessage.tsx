@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
@@ -23,6 +23,103 @@ export interface CrewRosterPickerMessageProps {
   onViewDossier?: (candidate: CrewMatchCandidate) => void;
 }
 
+function CompactCrewRow({
+  candidate,
+  selected,
+  dimmed,
+}: {
+  candidate: CrewMatchCandidate;
+  selected?: boolean;
+  dimmed?: boolean;
+}) {
+  return (
+    <Box sx={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 0.75,
+      py: 0.45,
+      px: 0.65,
+      borderRadius: '4px',
+      bgcolor: selected ? 'rgba(255,255,255,0.04)' : 'transparent',
+      opacity: dimmed ? 0.42 : 0.9,
+      border: selected ? `1px solid ${crewTheme.border.default}` : '1px solid transparent',
+    }}>
+      {selected && (
+        <Typography sx={{ fontSize: '0.55rem', color: crewTheme.accent.tactical, lineHeight: 1 }}>✓</Typography>
+      )}
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography sx={{ fontSize: '0.62rem', color: crewTheme.text.primary, fontWeight: 600, lineHeight: 1.3 }}>
+          {candidate.name}
+        </Typography>
+        <Typography sx={{ fontSize: '0.55rem', color: crewTheme.text.dim, lineHeight: 1.3 }}>
+          {candidate.title} · @{candidate.callsign}
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+
+function ResolvedCrewRosterPicker({
+  record,
+  status,
+  selectedCandidateIds,
+}: {
+  record: CrewRosterPickerRecord;
+  status: 'answered' | 'skipped';
+  selectedCandidateIds?: string[];
+}) {
+  const candidates = record.evaluation.candidates.slice(0, 5);
+  const picked = candidates.filter((c) => selectedCandidateIds?.includes(c.id));
+  const skipped = status === 'skipped';
+
+  return (
+    <Box sx={{
+      border: `1px solid ${crewTheme.border.subtle}`,
+      borderRadius: '8px',
+      bgcolor: crewTheme.bg.void,
+      p: 1.1,
+      opacity: 0.88,
+      pointerEvents: 'none',
+      userSelect: 'none',
+    }}>
+      <Typography sx={{
+        fontSize: '0.58rem',
+        color: crewTheme.text.dim,
+        fontFamily: "'JetBrains Mono', monospace",
+        letterSpacing: '1px',
+        mb: 0.65,
+      }}>
+        CREW ROSTER · {skipped ? 'CONTINUED WITH AGENT-X' : 'DEPLOYED'}
+      </Typography>
+
+      {skipped ? (
+        <>
+          <Typography sx={{ fontSize: '0.6rem', color: crewTheme.text.secondary, mb: 0.75, lineHeight: 1.45 }}>
+            Agent-X is handling this request. Suggested specialists were not added to the session.
+          </Typography>
+          {candidates.length > 0 && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.15 }}>
+              {candidates.map((c) => (
+                <CompactCrewRow key={c.id} candidate={c} dimmed />
+              ))}
+            </Box>
+          )}
+        </>
+      ) : picked.length > 0 ? (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.15 }}>
+          {picked.map((c) => (
+            <CompactCrewRow key={c.id} candidate={c} selected />
+          ))}
+        </Box>
+      ) : (
+        <Typography sx={{ fontSize: '0.62rem', color: crewTheme.text.secondary }}>
+          No crew selected — Agent-X handled this turn.
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
 export function CrewRosterPickerMessage({
   record,
   planMode = false,
@@ -31,8 +128,19 @@ export function CrewRosterPickerMessage({
   onViewDossier,
 }: CrewRosterPickerMessageProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [localResolved, setLocalResolved] = useState<{
+    status: 'answered' | 'skipped';
+    selectedCandidateIds?: string[];
+  } | null>(null);
+
   const candidates = record.evaluation.candidates.slice(0, 5);
-  const readonly = record.status !== 'pending';
+  const effectiveStatus = localResolved?.status ?? record.status;
+  const effectiveSelectedIds = localResolved?.selectedCandidateIds ?? record.selectedCandidateIds;
+  const readonly = effectiveStatus !== 'pending';
+
+  useEffect(() => {
+    if (record.status !== 'pending') setLocalResolved(null);
+  }, [record.status]);
 
   const toggle = (id: string) => {
     if (readonly) return;
@@ -44,28 +152,26 @@ export function CrewRosterPickerMessage({
     });
   };
 
+  const handleSubmit = () => {
+    const picked = candidates.filter((c) => selected.has(c.id));
+    if (picked.length === 0) return;
+    const ids = picked.map((c) => c.id);
+    setLocalResolved({ status: 'answered', selectedCandidateIds: ids });
+    onSubmit?.(picked);
+  };
+
+  const handleSkip = () => {
+    setLocalResolved({ status: 'skipped' });
+    onSkip?.();
+  };
+
   if (readonly) {
-    const picked = candidates.filter((c) => record.selectedCandidateIds?.includes(c.id));
     return (
-      <Box sx={{
-        border: `1px solid ${crewTheme.border.subtle}`,
-        borderRadius: '8px',
-        bgcolor: crewTheme.bg.void,
-        p: 1.25,
-      }}>
-        <Typography sx={{ fontSize: '0.58rem', color: crewTheme.text.dim, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px', mb: 0.5 }}>
-          CREW ROSTER · {record.status === 'skipped' ? 'CONTINUED WITH AGENT-X' : 'DEPLOYED'}
-        </Typography>
-        {record.status === 'answered' && picked.length > 0 ? (
-          <Typography sx={{ fontSize: '0.62rem', color: crewTheme.text.secondary }}>
-            Selected: {picked.map((c) => `@${c.callsign}`).join(', ')}
-          </Typography>
-        ) : (
-          <Typography sx={{ fontSize: '0.62rem', color: crewTheme.text.secondary }}>
-            No crew selected — Agent-X handled this turn.
-          </Typography>
-        )}
-      </Box>
+      <ResolvedCrewRosterPicker
+        record={record}
+        status={effectiveStatus as 'answered' | 'skipped'}
+        selectedCandidateIds={effectiveSelectedIds}
+      />
     );
   }
 
@@ -137,7 +243,7 @@ export function CrewRosterPickerMessage({
       }}>
         <Button
           size="small"
-          onClick={onSkip}
+          onClick={handleSkip}
           sx={{ fontSize: '0.62rem', color: crewTheme.text.secondary, textTransform: 'none' }}
         >
           Continue with Agent-X
@@ -146,7 +252,7 @@ export function CrewRosterPickerMessage({
           size="small"
           variant="contained"
           disabled={selected.size === 0}
-          onClick={() => onSubmit?.(candidates.filter((c) => selected.has(c.id)))}
+          onClick={handleSubmit}
           sx={{
             fontSize: '0.62rem',
             textTransform: 'none',

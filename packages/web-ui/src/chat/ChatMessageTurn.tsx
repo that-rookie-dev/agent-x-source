@@ -97,6 +97,7 @@ function renderParts(
             return part.tool ? <InlineToolCall key={part.id} tool={part.tool} /> : null;
           case 'subagent':
             if (!part.agent) return null;
+            if (part.agent.kind === 'crew_worker') return null;
             if (onOpenChildSession && part.agent.id && part.agent.id !== 'subagent') {
               const agent = part.agent;
               return (
@@ -183,7 +184,9 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     </Box>
   );
 
-  const subAgentCards = (message.subAgents ?? []).filter((a) => a.id && a.id !== 'subagent');
+  const subAgentCards = (message.subAgents ?? []).filter(
+    (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker',
+  );
 
   return (
     <Box sx={{ mb: 3, animation: 'agentx-fadeIn 0.25s ease-out' }}>
@@ -293,7 +296,13 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
       const pp = prevParts[i]!;
       const np = nextParts[i]!;
       if (pp.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
-      if (pp.type === 'crew_roster_picker' && pp.crewRosterPicker?.status !== np.crewRosterPicker?.status) return false;
+      if (pp.type === 'crew_roster_picker') {
+        if (pp.crewRosterPicker?.status !== np.crewRosterPicker?.status) return false;
+        const prevIds = pp.crewRosterPicker?.selectedCandidateIds;
+        const nextIds = np.crewRosterPicker?.selectedCandidateIds;
+        if ((prevIds?.length ?? 0) !== (nextIds?.length ?? 0)) return false;
+        if (prevIds?.some((id, i) => id !== nextIds?.[i])) return false;
+      }
     }
   } else if (prevParts !== nm.parts) {
     return false;

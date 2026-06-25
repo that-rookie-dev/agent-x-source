@@ -4,6 +4,7 @@ import type {
   CatalogCategorySummary,
   CatalogSummary,
   Crew,
+  CrewMatchCandidate,
   CrewSuggestionEvaluation,
   SessionCrewPreferences,
 } from '@agentx/shared';
@@ -11,6 +12,7 @@ import { crewRequiresMedicalDisclaimer, isWorkforceOrSpecialistNeed } from '@age
 import type { RawMatchRow } from './CrewMatchService.js';
 import {
   buildCrewSuggestionSearchQuery,
+  extractSubstantiveSearchTokens,
   isActiveCrewContinuation,
   isDistinctNewRequirement,
 } from '../agent/crew-auto-compose.js';
@@ -21,6 +23,12 @@ import {
   taskSummaryFromMessage,
   CREW_MATCH_THRESHOLDS,
 } from './CrewMatchService.js';
+import { filterSubstantiveMatches } from './crew-match-quality.js';
+import {
+  buildExpandedSearchQuery,
+  isExpertiseOpinionQuery,
+  type CrewKeywordExpandFn,
+} from './crew-keyword-expander.js';
 import { loadCatalogManifest } from './catalog-manifest.js';
 import { syncCatalogFromManifest } from './catalog-sync.js';
 
@@ -56,6 +64,7 @@ export class CrewSuggestionService {
     priorUserMessages?: string[];
     hasAtMention?: boolean;
     explicitCrewRequest?: boolean;
+    expandKeywords?: CrewKeywordExpandFn;
   }): Promise<CrewSuggestionEvaluation> {
     await this.ensureReady();
 
@@ -83,14 +92,126 @@ export class CrewSuggestionService {
     if (!gate.pass) return empty;
 
     const recruited = await this.store.listRecruitedCatalogIds();
-    const searchQuery = buildCrewSuggestionSearchQuery(gate.task);
-    const catalogHits = await this.store.searchCatalog(searchQuery, 20);
-    const rosterHits = await this.store.searchRosterCrews(searchQuery, 20);
+    const sessionCounts = await this.store.getSessionCrewMessageCounts(input.sessionId);
+    const enabledCrewIds = await this.store.getSessionEnabledCrewIds(input.sessionId);
+    const priorMessages = input.priorUserMessages ?? [];
+    const rosterFirst = (input.explicitCrewRequest ?? false) || isWorkforceOrSpecialistNeed(input.message);
+
+    // Phase 1 — domain hints + substantive user tokens only
+    const phase1Tokens = extractSubstantiveSearchTokens(gate.task);
+    const phase1Query = buildCrewSuggestionSearchQuery(gate.task);
+    let matchReason = 'matched-specialists';
+
+    let candidates = await this.searchAndScore({
+      task: gate.task,
+      searchQuery: phase1Query,
+      matchTokens: phase1Tokens,
+      recruited,
+      sessionCounts,
+    });
+
+    // Phase 2 — LLM keyword expansion for expertise questions when phase 1 is empty
+    if (
+      candidates.length === 0
+      && input.expandKeywords
+      && isExpertiseOpinionQuery(gate.task)
+    ) {
+      const expanded = await input.expandKeywords(gate.task);
+      const expandedQuery = buildExpandedSearchQuery(expanded);
+      if (expandedQuery) {
+        candidates = await this.searchAndScore({
+          task: gate.task,
+          searchQuery: expandedQuery,
+          matchTokens: expanded,
+          recruited,
+          sessionCounts,
+        });
+        if (candidates.length > 0) matchReason = 'llm-keyword-match';
+      }
+    }
+
+    if (candidates.length === 0) {
+      return {
+        ...empty,
+        reasons: phase1Query
+          ? ['no-keyword-match']
+          : ['no-substantive-tokens'],
+      };
+    }
+
+    if (enabledCrewIds.length > 0 && !rosterFirst) {
+      const isContinuation = isActiveCrewContinuation(input.message, priorMessages);
+      const isNewRequirement = isDistinctNewRequirement(input.message, priorMessages);
+
+      if (isContinuation && !isNewRequirement) {
+        return {
+          ...empty,
+          reasons: ['active-crew-continuation'],
+        };
+      }
+
+      const filtered = candidates.filter((c) => !enabledCrewIds.includes(c.id));
+      if (filtered.length === 0) {
+        return {
+          ...empty,
+          reasons: ['no-new-specialists'],
+        };
+      }
+
+      const threshold = isNewRequirement
+        ? CREW_MATCH_THRESHOLDS.minSuggestConfidence
+        : CREW_MATCH_THRESHOLDS.minSuggestWithActiveCrew;
+      const shouldSuggest = shouldShowSuggestion(filtered, threshold);
+      const confidence = filtered[0]?.matchScore ?? 0;
+
+      return {
+        shouldSuggest,
+        dismissed: prefs.suggestionsDismissed,
+        confidence,
+        taskSummary: taskSummaryFromMessage(gate.task),
+        candidates: filtered,
+        reasons: shouldSuggest
+          ? [matchReason, isNewRequirement ? 'new-requirement' : 'elevated-threshold']
+          : ['below-threshold-active-crew'],
+      };
+    }
+
+    const shouldSuggest = shouldShowSuggestion(
+      candidates,
+      CREW_MATCH_THRESHOLDS.minSuggestConfidence,
+    );
+    const confidence = candidates[0]?.matchScore ?? 0;
+
+    return {
+      shouldSuggest,
+      dismissed: prefs.suggestionsDismissed,
+      confidence,
+      taskSummary: taskSummaryFromMessage(gate.task),
+      candidates,
+      reasons: shouldSuggest
+        ? [matchReason, ...(rosterFirst ? ['workforce-intent'] : [])]
+        : ['below-threshold'],
+    };
+  }
+
+  private async searchAndScore(input: {
+    task: string;
+    searchQuery: string;
+    matchTokens: string[];
+    recruited: Set<string>;
+    sessionCounts: Map<string, number>;
+  }): Promise<CrewMatchCandidate[]> {
+    if (!input.searchQuery.trim() || input.matchTokens.length === 0) return [];
+
+    const [catalogHits, rosterHits] = await Promise.all([
+      this.store.searchCatalog(input.searchQuery, 20),
+      this.store.searchRosterCrews(input.searchQuery, 20),
+    ]);
 
     const rows: RawMatchRow[] = [];
 
     for (const hit of catalogHits) {
-      if (recruited.has(hit.id)) continue;
+      if (input.recruited.has(hit.id)) continue;
       rows.push({
         id: hit.id,
         origin: 'hub_catalog',
@@ -139,67 +260,8 @@ export class CrewSuggestionService {
       });
     }
 
-    const sessionCounts = await this.store.getSessionCrewMessageCounts(input.sessionId);
-    const enabledCrewIds = await this.store.getSessionEnabledCrewIds(input.sessionId);
-    const priorMessages = input.priorUserMessages ?? [];
-    const candidates = scoreMatchCandidates(gate.task, rows, { sessionMessageCounts: sessionCounts });
-    const rosterFirst = (input.explicitCrewRequest ?? false) || isWorkforceOrSpecialistNeed(input.message);
-
-    if (enabledCrewIds.length > 0 && !rosterFirst) {
-      const isContinuation = isActiveCrewContinuation(input.message, priorMessages);
-      const isNewRequirement = isDistinctNewRequirement(input.message, priorMessages);
-
-      if (isContinuation && !isNewRequirement) {
-        return {
-          ...empty,
-          reasons: ['active-crew-continuation'],
-        };
-      }
-
-      const filtered = candidates.filter((c) => !enabledCrewIds.includes(c.id));
-      if (filtered.length === 0) {
-        return {
-          ...empty,
-          reasons: ['no-new-specialists'],
-        };
-      }
-
-      const threshold = rosterFirst
-        ? CREW_MATCH_THRESHOLDS.minCandidateScore
-        : isNewRequirement
-          ? CREW_MATCH_THRESHOLDS.minSuggestConfidence
-          : CREW_MATCH_THRESHOLDS.minSuggestWithActiveCrew;
-      const shouldSuggest = shouldShowSuggestion(filtered, threshold);
-      const confidence = filtered[0]?.matchScore ?? 0;
-
-      return {
-        shouldSuggest,
-        dismissed: prefs.suggestionsDismissed,
-        confidence,
-        taskSummary: taskSummaryFromMessage(gate.task),
-        candidates: filtered,
-        reasons: shouldSuggest
-          ? ['matched-specialists', isNewRequirement ? 'new-requirement' : 'elevated-threshold']
-          : ['below-threshold-active-crew'],
-      };
-    }
-
-    const suggestThreshold = rosterFirst
-      ? CREW_MATCH_THRESHOLDS.minCandidateScore
-      : CREW_MATCH_THRESHOLDS.minSuggestConfidence;
-    const shouldSuggest = shouldShowSuggestion(candidates, suggestThreshold);
-    const confidence = candidates[0]?.matchScore ?? 0;
-
-    return {
-      shouldSuggest,
-      dismissed: prefs.suggestionsDismissed,
-      confidence,
-      taskSummary: taskSummaryFromMessage(gate.task),
-      candidates,
-      reasons: shouldSuggest
-        ? ['matched-specialists', ...(rosterFirst ? ['workforce-intent'] : [])]
-        : [rosterFirst ? 'below-threshold-workforce' : 'below-threshold'],
-    };
+    const substantive = filterSubstantiveMatches(rows, input.matchTokens);
+    return scoreMatchCandidates(input.task, substantive, { sessionMessageCounts: input.sessionCounts });
   }
 
   async resolve(input: {

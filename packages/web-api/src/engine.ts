@@ -379,10 +379,14 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     agent.addCrewMember(crewPrivateHost);
     agent.setCrewEnabled(crewPrivateHost.id, true);
   } else {
-    const enabledCrews = eng.crewManager.listEnabled();
-    for (const crew of enabledCrews) {
-      agent.addCrewMember(crew);
-      agent.setCrewEnabled(crew.id, true);
+    const sessionCrewStates = eng.sessionManager.loadCrewStates(session.id);
+    for (const state of sessionCrewStates) {
+      if (!state.enabled) continue;
+      const crew = eng.crewManager.get(state.crewId);
+      if (crew) {
+        agent.addCrewMember(crew);
+        agent.setCrewEnabled(crew.id, true);
+      }
     }
   }
 

@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   assessCrewNeed,
   autoComposeCrewMembers,
+  buildRoutingTaskForActiveCrew,
   buildTaskContextForCrewRouting,
   hasTaskSignals,
   isActiveCrewContinuation,
   isDistinctNewRequirement,
+  memberMatchesTaskDomains,
   shouldBypassActiveCrewRouting,
   shouldSkipAutonomousCrewRouting,
 } from '../src/agent/crew-auto-compose.js';
@@ -242,5 +244,45 @@ describe('travel crew must not answer AWS workforce requests', () => {
     );
     const assessment = assessCrewNeed(task, [mockMember(jonas)]);
     expect(assessment.shouldRoute).toBe(false);
+  });
+});
+
+describe('astrophysics must not route to travel crew on follow-up', () => {
+  const jonas = mockCrew({
+    id: 'jonas-travel',
+    name: 'Jonas Park',
+    callsign: 'jonas_park',
+    systemPrompt: 'Travel planner specializing in itineraries and tourism.',
+    expertise: ['travel', 'tourism', 'planning', 'logistics'],
+  });
+
+  const hugo = mockCrew({
+    id: 'hugo-astro',
+    name: 'Hugo Garcia',
+    callsign: 'hugo_garcia',
+    systemPrompt: 'Astrophysics theory coach specializing in black holes and cosmology.',
+    expertise: ['astrophysics', 'astronomy', 'cosmology', 'physics'],
+  });
+
+  const prior = [
+    'I need to know about blackholes. Who can help me?',
+    'Tell me more about event horizons',
+  ];
+
+  it('does not route blackhole follow-up to travel planner when both are session-enabled', () => {
+    const task = buildRoutingTaskForActiveCrew('what happens inside a black hole?', prior);
+    expect(task).not.toContain('vacation');
+    const assessment = assessCrewNeed(task, [mockMember(jonas), mockMember(hugo)]);
+    expect(assessment.shouldRoute).toBe(true);
+    expect(assessment.members[0]?.crew.id).toBe('hugo-astro');
+  });
+
+  it('bypasses active crew routing for distinct new domain after travel session', () => {
+    const travelPrior = ['Plan a beach vacation with my family'];
+    expect(
+      shouldBypassActiveCrewRouting('I want crew members who have AWS skills', {}, travelPrior),
+    ).toBe(true);
+    expect(memberMatchesTaskDomains('what are blackholes?', mockMember(jonas))).toBe(false);
+    expect(memberMatchesTaskDomains('what are blackholes?', mockMember(hugo))).toBe(true);
   });
 });

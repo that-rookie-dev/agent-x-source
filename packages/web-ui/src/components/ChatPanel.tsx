@@ -57,7 +57,7 @@ import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
-import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard } from '../chat/utils';
+import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard, mergeIncomingMessageParts } from '../chat/utils';
 import { CHAT_INITIAL_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
 import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
@@ -990,6 +990,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     kind: 'sub_agent' | 'crew_worker',
     task = '',
   ): UIMessage[] => {
+    if (kind === 'crew_worker') return prev;
     const last = prev[prev.length - 1];
     if (last?.role !== 'assistant') return prev;
     const existing = last.subAgents ?? [];
@@ -1337,7 +1338,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 const updated: UIMessage = {
                   ...prev[idx]!,
                   content: text || prev[idx]!.content,
-                  parts: msg.parts ?? prev[idx]!.parts,
+                  parts: mergeIncomingMessageParts(prev[idx]!.parts, msg.parts) ?? prev[idx]!.parts,
                   streaming: false,
                   ...(crew ? { crew } : {}),
                 };
@@ -1755,6 +1756,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'child_session_started': {
             const c = ev as unknown as { childSessionId: string; label: string; kind: 'sub_agent' | 'crew_worker' };
             if (!c.childSessionId) return prev;
+            // Crew mission panel above the input already tracks workers — skip duplicate inline cards.
+            if (c.kind === 'crew_worker') return prev;
             return attachChildSessionToAssistant(prev, c.childSessionId, c.label || 'Background work', c.kind ?? 'sub_agent');
           }
 
@@ -2035,7 +2038,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const offerInlineCrewRoster = useCallback(async (text: string, evaluation: CrewSuggestionEvaluation): Promise<boolean> => {
     if (isCrewPrivateSession) return false;
     if (evaluation.candidates.length === 0) return false;
-    if (!explicitCrewRequest(text) && evaluation.shouldSuggest) return false;
+    // High-confidence matches use the modal — never duplicate with in-chat picker cards.
+    if (evaluation.shouldSuggest) return false;
 
     const trimmed = sanitizeForJson(text.trim());
     if (!trimmed) return false;
@@ -2243,15 +2247,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           if (evaluation.reasons.includes('catalog-unavailable')) {
             setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
           }
-          const workforceIntent = explicitCrewRequest(trimmed);
-          if (workforceIntent && evaluation.candidates.length > 0) {
-            crewSuggestionHandledRef.current = true;
-            if (await offerInlineCrewRoster(trimmed, evaluation)) return;
-          }
+          // Modal first for high-confidence specialist matches — one UI surface only.
           if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
             crewSuggestionHandledRef.current = true;
             openCrewSuggestionFromEvaluation(evaluation, trimmed);
             return;
+          }
+          const workforceIntent = explicitCrewRequest(trimmed);
+          if (workforceIntent && evaluation.candidates.length > 0) {
+            crewSuggestionHandledRef.current = true;
+            if (await offerInlineCrewRoster(trimmed, evaluation)) return;
           }
           if (await offerInlineCrewRoster(trimmed, evaluation)) return;
         }
@@ -2343,6 +2348,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }));
   }, []);
 
+  const revertCrewRosterPickerPending = useCallback((messageId: string) => {
+    setMessages((prev) => prev.map((m) => {
+      if (m.id !== messageId || !m.parts) return m;
+      return {
+        ...m,
+        parts: m.parts.map((p) => {
+          if (p.type !== 'crew_roster_picker' || !p.crewRosterPicker) return p;
+          return {
+            ...p,
+            crewRosterPicker: {
+              ...p.crewRosterPicker,
+              status: 'pending' as const,
+              selectedCandidateIds: undefined,
+            },
+          };
+        }),
+      };
+    }));
+  }, []);
+
   const handleCrewRosterPickerSubmit = useCallback(async (messageId: string, selected: CrewMatchCandidate[]) => {
     const pickerMsg = messages.find((m) => m.id === messageId);
     const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
@@ -2351,14 +2376,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
     const text = record.pendingUserText;
     const pickerPartId = pickerPart?.id;
+    const selectedIds = selected.map((c) => c.id);
+    markCrewRosterPickerResolved(messageId, 'answered', selectedIds);
 
     try {
       const sessionId = await ensureSession();
-      if (!sessionId) return;
+      if (!sessionId) {
+        revertCrewRosterPickerPending(messageId);
+        return;
+      }
       const result = await crewSuggestions.resolve({
         sessionId,
         action: 'deploy',
-        selectedCandidateIds: selected.map((c) => c.id),
+        selectedCandidateIds: selectedIds,
         candidates: record.evaluation.candidates,
       });
       if (!result.deployedCrewIds?.length) {
@@ -2379,28 +2409,30 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       await crewSuggestions.updateRosterPicker(sessionId, {
         pickerMessageId: messageId,
         status: 'answered',
-        selectedCandidateIds: selected.map((c) => c.id),
+        selectedCandidateIds: selectedIds,
         evaluation: record.evaluation,
         pendingUserText: text,
         pickerPartId,
       });
-      markCrewRosterPickerResolved(messageId, 'answered', selected.map((c) => c.id));
+      crews.list().then((list) => setCrewList(list)).catch(() => {});
       await executeSend(text, result.deployedCrewIds, {
         crewSuggestionResolved: true,
-        crewIntakeFromPicker: true,
         primaryCrewId,
         skipUserMessage: true,
       });
     } catch (err) {
+      revertCrewRosterPickerPending(messageId);
       setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to deploy crew'));
     }
-  }, [messages, markCrewRosterPickerResolved, ensureSession, executeSend, replaceWarning]);
+  }, [messages, markCrewRosterPickerResolved, revertCrewRosterPickerPending, ensureSession, executeSend, replaceWarning]);
 
   const handleCrewRosterPickerSkip = useCallback(async (messageId: string) => {
     const pickerMsg = messages.find((m) => m.id === messageId);
     const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
     const record = pickerPart?.crewRosterPicker;
     if (!record || record.status !== 'pending') return;
+
+    markCrewRosterPickerResolved(messageId, 'skipped');
 
     try {
       const sessionId = await ensureSession();
@@ -2413,15 +2445,37 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           pickerPartId: pickerPart?.id,
         });
       }
-      markCrewRosterPickerResolved(messageId, 'skipped');
       await executeSend(record.pendingUserText, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
     } catch (err) {
+      revertCrewRosterPickerPending(messageId);
       setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to skip crew picker'));
     }
-  }, [messages, markCrewRosterPickerResolved, ensureSession, executeSend, replaceWarning]);
+  }, [messages, markCrewRosterPickerResolved, revertCrewRosterPickerPending, ensureSession, executeSend, replaceWarning]);
 
-  const handleQuestionnaireRespond = useCallback(async (_messageId: string, response: string) => {
+  const handleQuestionnaireRespond = useCallback(async (messageId: string, response: string) => {
+    const markAnswered = () => {
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== messageId || !m.parts) return m;
+        return {
+          ...m,
+          parts: m.parts.map((p) => {
+            if (p.type !== 'questionnaire' || !p.questionnaire) return p;
+            return {
+              ...p,
+              questionnaire: {
+                ...p.questionnaire,
+                status: 'answered' as const,
+                answer: response,
+                answeredAt: new Date().toISOString(),
+              },
+            };
+          }),
+        };
+      }));
+    };
+
     try {
+      markAnswered();
       const result = await agent.respondToClarification(response, currentSessionId ?? undefined);
       if (result.ok) {
         setStreaming(true);
@@ -3891,9 +3945,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               return;
             }
             const primaryCrewId = result.deployedPrimaryCrewId ?? result.deployedCrewIds[0];
+            crews.list().then((list) => setCrewList(list)).catch(() => {});
             await executeSend(text, result.deployedCrewIds, {
               crewSuggestionResolved: true,
-              crewIntakeFromPicker: true,
               primaryCrewId,
             });
           } catch (err) {

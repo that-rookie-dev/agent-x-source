@@ -96,6 +96,53 @@ export function hasPendingQuestionnaire(messages: Array<{ parts?: Array<{ type?:
 }
 
 /** True when in-chat crew roster picker is awaiting user selection. */
+type CrewRosterPickerPartLike = {
+  type?: string;
+  id?: string;
+  crewRosterPicker?: {
+    id?: string;
+    status?: 'pending' | 'answered' | 'skipped';
+    selectedCandidateIds?: string[];
+  };
+};
+
+/** Keep resolved crew roster picker state when streaming replays stale pending parts. */
+export function mergeIncomingMessageParts<T extends CrewRosterPickerPartLike>(
+  prevParts: T[] | undefined,
+  incomingParts: T[] | undefined,
+): T[] | undefined {
+  if (!incomingParts?.length) return prevParts;
+  if (!prevParts?.length) return incomingParts;
+  return incomingParts.map((incoming) => {
+    if (incoming.type !== 'crew_roster_picker' || !incoming.crewRosterPicker) return incoming;
+    const prev = prevParts.find((p) => {
+      if (p.type !== 'crew_roster_picker' || !p.crewRosterPicker) return false;
+      if (incoming.id && p.id === incoming.id) return true;
+      return Boolean(
+        incoming.crewRosterPicker?.id
+        && p.crewRosterPicker.id === incoming.crewRosterPicker.id,
+      );
+    });
+    if (
+      prev?.crewRosterPicker?.status
+      && prev.crewRosterPicker.status !== 'pending'
+      && incoming.crewRosterPicker.status === 'pending'
+    ) {
+      return {
+        ...incoming,
+        crewRosterPicker: {
+          ...incoming.crewRosterPicker,
+          status: prev.crewRosterPicker.status,
+          selectedCandidateIds:
+            prev.crewRosterPicker.selectedCandidateIds
+            ?? incoming.crewRosterPicker.selectedCandidateIds,
+        },
+      };
+    }
+    return incoming;
+  });
+}
+
 export function hasPendingCrewRosterPicker(messages: Array<{ parts?: Array<{ type?: string; crewRosterPicker?: { status?: string } }> }>): boolean {
   for (const m of messages) {
     for (const p of m.parts ?? []) {

@@ -7,6 +7,7 @@ import { medicalSpecialtyCategoryDefinitions } from './crew-hub-medical-specialt
 import { worldOccupationCategoryDefinitions } from './crew-hub-world-occupations.mjs';
 import { certificationCategoryDefinitions } from './crew-hub-certification-specialists.mjs';
 import { applyDrHonorificIfQualified } from './crew-doctor-honorific.mjs';
+import { buildCrewSearchText } from './crew-search-text.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HUB_DIR = join(__dirname, '../src/data/crew-hub');
@@ -1735,6 +1736,8 @@ const categories = allCategoryDefinitions.map((category) => {
     id: category.id,
     label: category.label,
     iconId: category.iconId,
+    skillBank: category.skillBank,
+    traitBank: category.traitBank,
     medicalCategory: !!category.medicalCategory,
     scienceCategory: !!category.scienceCategory,
     crews,
@@ -1816,15 +1819,7 @@ for (const category of categories) {
       name: crew.name,
       title: crew.title,
       expertise: crew.expertise.slice(0, 2),
-      searchText: [
-        crew.name,
-        crew.title,
-        crew.callsign,
-        crew.description,
-        crew.tone,
-        ...crew.expertise,
-        ...crew.traits,
-      ].join(' ').toLowerCase(),
+      searchText: buildCrewSearchText({ crew, category }),
     });
   }
 }
@@ -1851,15 +1846,7 @@ writeFileSync(SEARCH_INDEX_PATH, searchIndexContents, 'utf8');
 const manifestCrews = [];
 for (const category of categories) {
   for (const crew of category.crews) {
-    const searchText = [
-      crew.name,
-      crew.title,
-      crew.callsign,
-      crew.description,
-      crew.tone,
-      ...crew.expertise,
-      ...crew.traits,
-    ].join(' ').toLowerCase();
+    const searchText = buildCrewSearchText({ crew, category });
     manifestCrews.push({
       id: `hub-${crew.callsign}`,
       categoryId: category.id,

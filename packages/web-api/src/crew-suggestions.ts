@@ -6,7 +6,10 @@ import {
   catalogEntryToSummary,
   getCatalogSeedStatus,
   healDatabaseStore,
+  ProviderFactory,
+  createCrewKeywordExpander,
   type CrewCatalogStore,
+  type CrewKeywordExpandFn,
 } from '@agentx/engine';
 import type { CrewMatchCandidate, CrewSuggestionEvaluation, CatalogEntry } from '@agentx/shared';
 import { explicitCrewRequest } from '@agentx/shared';
@@ -50,6 +53,23 @@ export function emitCrewSuggestionTelemetry(
   } catch { /* best-effort */ }
 }
 
+function resolveKeywordExpander(eng: ReturnType<typeof getEngine>): CrewKeywordExpandFn | undefined {
+  if (!eng.configured) return undefined;
+  try {
+    const cfg = eng.configManager.load();
+    const providerId = cfg.provider.activeProvider;
+    const providerCfg = cfg.provider.providers[providerId];
+    if (!providerCfg?.configured) return undefined;
+    const provider = ProviderFactory.create(providerId, providerCfg.apiKey, providerCfg.baseUrl);
+    return createCrewKeywordExpander({
+      provider,
+      model: cfg.provider.activeModel,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 export async function evaluateCrewSuggestionForMessage(input: {
   text: string;
   sessionId: string;
@@ -66,6 +86,7 @@ export async function evaluateCrewSuggestionForMessage(input: {
     priorUserMessages: prior,
     hasAtMention: hasAtMention(input.text),
     explicitCrewRequest: explicitCrewRequest(input.text),
+    expandKeywords: resolveKeywordExpander(eng),
   });
 }
 
@@ -151,6 +172,7 @@ export async function postCrewSuggestionEvaluate(req: Request, res: Response): P
       priorUserMessages,
       hasAtMention: hasAtMention(text),
       explicitCrewRequest: explicitCrewRequest(text),
+      expandKeywords: resolveKeywordExpander(eng),
     });
 
     emitCrewSuggestionTelemetry(eng, evaluation, text);
