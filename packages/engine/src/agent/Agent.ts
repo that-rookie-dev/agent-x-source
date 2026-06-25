@@ -1980,7 +1980,7 @@ export class Agent {
     if (!registry) throw new Error('Tool registry not initialized');
     if (!executor) throw new Error('Tool executor not initialized');
 
-    let tools = createAiSdkTools(
+    const tools = createAiSdkTools(
       registry,
       executor,
       this.sessionId,
