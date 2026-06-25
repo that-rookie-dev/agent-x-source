@@ -32,12 +32,14 @@ import {
   startPeriodicDatabaseHeal,
   buildCrewPrivateIdentityPrompt,
 } from '@agentx/engine';
-import type { AgentXConfig, ProviderId, TelemetryBus, Session, Crew } from '@agentx/shared';
+import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { getDataDir, getLogger } from '@agentx/shared';
+import { resolveCrewPrivateHostForAgent } from './host-crew-session.js';
+import { persistClarificationResumeFromAgent } from './clarification-resume.js';
 
 export interface EngineState {
   configManager: ConfigManager;
@@ -287,11 +289,12 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
   const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
   const hostCrewId = session.hostCrewId;
+  const store = (eng.sessionManager as unknown as { store?: unknown }).store;
   const crewPrivateHost = isCrewPrivate && hostCrewId
-    ? eng.crewManager.get(hostCrewId) ?? undefined
+    ? resolveCrewPrivateHostForAgent(eng.crewManager, session, store)
     : undefined;
-  if (isCrewPrivate && !crewPrivateHost) {
-    throw new Error('Crew private session host crew not found on roster.');
+  if (isCrewPrivate && hostCrewId && !crewPrivateHost) {
+    throw new Error('Crew private session is missing host crew identity.');
   }
 
   const agent = new Agent({
@@ -468,6 +471,11 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   agent.events.on((event) => {
     eng.telemetry.emit(event as any);
     const ev = event as Record<string, unknown>;
+    if (ev['type'] === 'clarification_required') {
+      try {
+        persistClarificationResumeFromAgent(agent, session.id);
+      } catch { /* best-effort */ }
+    }
     if (ev['type'] === 'token_usage') {
       const totalTokens = (ev['totalTokens'] as number) ?? 0;
       const inputTokens = (ev['inputTokens'] as number) ?? 0;

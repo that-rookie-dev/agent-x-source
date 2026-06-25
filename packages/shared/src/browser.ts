@@ -23,6 +23,17 @@ export {
   crewRequiresMedicalDisclaimer,
 } from './constants/medical-hub.js';
 
+export {
+  formatCrewDisplayName,
+  formatCrewDisplayCallsign,
+  crewQualifiesForDrHonorific,
+  formatHostCrewIdentity,
+  drHonorificInputFromHostCrew,
+  isScienceHubCategory,
+} from './constants/doctorate-honorific.js';
+
+export type { DrHonorificInput, HostCrewIdentityInput } from './constants/doctorate-honorific.js';
+
 export type {
   CrewMatchCandidate,
   CrewSuggestionEvaluation,
@@ -62,3 +73,8 @@ export {
   summarizeTurnForFeedback,
   buildTurnFeedbackContext,
 } from './utils/turn-feedback.js';
+
+export { summarizeMessageForTurnFeedback, displayTextForTurnFeedback } from './utils/turn-display.js';
+
+export type { CrewRosterPickerRecord, CrewRosterPickerStatus } from './types/crew-roster-picker.js';
+export type { SessionResumeState, SessionResumeKind } from './types/session-resume.js';

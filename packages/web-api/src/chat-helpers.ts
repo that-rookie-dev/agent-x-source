@@ -129,6 +129,17 @@ export function runAgentTurnAsync(
   onComplete?: (message: unknown) => void,
   onError?: (error: string, partial?: string) => void,
   delegateCrewIds?: string[],
+  crewSuggestionResolved?: boolean,
+  crewIntakeFromPicker?: boolean,
+  primaryCrewId?: string,
+  extra?: {
+    resumeCrewIntake?: {
+      originalUserText: string;
+      intakeAnswer: string;
+      delegateCrewIds: string[];
+      primaryCrewId?: string;
+    };
+  },
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const onTimeout = () => {
@@ -157,6 +168,10 @@ export function runAgentTurnAsync(
     ...(instruction ? { instruction } : {}),
     ...(retry ? { retry: true } : {}),
     ...(delegateCrewIds?.length ? { delegateCrewIds } : {}),
+    ...(crewSuggestionResolved ? { crewSuggestionResolved: true } : {}),
+    ...(crewIntakeFromPicker ? { crewIntakeFromPicker: true } : {}),
+    ...(primaryCrewId ? { primaryCrewId } : {}),
+    ...(extra?.resumeCrewIntake ? { resumeCrewIntake: extra.resumeCrewIntake } : {}),
   })
     .then((message) => {
       if (timeoutId) clearTimeout(timeoutId);
@@ -196,6 +211,45 @@ export function getSessionStore(): TurnFeedbackStoreLike | null {
   return (eng.sessionManager as unknown as { store?: TurnFeedbackStoreLike })?.store ?? null;
 }
 
+type MessagePageStore = {
+  getMessagesPage?: (
+    sessionId: string,
+    opts: { limit?: number; before?: string },
+  ) => { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean };
+  getMessages?: (sessionId: string) => Array<Record<string, unknown>>;
+  getParts?: (sessionId: string) => Array<Record<string, unknown>>;
+};
+
+export function getMessageStore(): MessagePageStore | null {
+  const eng = getEngine();
+  return (eng.sessionManager as unknown as { store?: MessagePageStore })?.store ?? null;
+}
+
+export function loadSessionMessagesPage(
+  sessionId: string,
+  opts: { limit?: number; before?: string },
+): { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean } {
+  const store = getMessageStore();
+  if (!store) return { messages: [], total: 0, hasMore: false };
+
+  if (store.getMessagesPage) {
+    return store.getMessagesPage(sessionId, opts);
+  }
+
+  const all = (store.getMessages?.(sessionId) ?? [])
+    .filter((m) => m['role'] === 'user' || m['role'] === 'assistant');
+  const total = all.length;
+  let slice = all;
+  if (opts.before) {
+    const idx = all.findIndex((m) => m['id'] === opts.before);
+    slice = idx > 0 ? all.slice(0, idx) : all;
+  }
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const messages = slice.slice(-limit);
+  const hasMore = slice.length > limit || (opts.before ? all.findIndex((m) => m['id'] === opts.before) > limit : total > limit);
+  return { messages, total, hasMore };
+}
+
 export function loadTurnFeedbackForSession(_eng: ReturnType<typeof getEngine>, sessionId: string): Array<Record<string, unknown>> {
   const store = getSessionStore();
   if (!store?.getTurnFeedbackBySession) return [];
@@ -215,24 +269,42 @@ export function recordTurnFeedback(input: {
   turnSummary?: string | null;
   metadata?: Record<string, unknown> | null;
 }): { ok: true } | { ok: false; error: string } {
-  const store = getSessionStore();
-  if (!store?.upsertTurnFeedback) return { ok: false, error: 'store-unavailable' };
-
-  store.upsertTurnFeedback({
-    id: generateId(),
-    sessionId: input.sessionId,
-    messageId: input.messageId,
-    contextKind: input.contextKind,
-    crewId: input.crewId ?? null,
-    rating: input.rating,
-    turnSummary: input.turnSummary ?? null,
-    metadata: input.metadata ?? null,
-    createdAt: new Date().toISOString(),
-  });
+  const eng = getEngine();
+  const agent = eng.agent as Agent | null;
+  const service = agent?.turnFeedbackService;
+  if (!service) {
+    const store = getSessionStore();
+    if (!store?.upsertTurnFeedback) return { ok: false, error: 'store-unavailable' };
+    store.upsertTurnFeedback({
+      id: generateId(),
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      contextKind: input.contextKind,
+      crewId: input.crewId ?? null,
+      rating: input.rating,
+      turnSummary: input.turnSummary ?? null,
+      metadata: input.metadata ?? null,
+      createdAt: new Date().toISOString(),
+    });
+  } else {
+    service.record({
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      contextKind: input.contextKind,
+      crewId: input.crewId ?? null,
+      rating: input.rating,
+      turnSummary: input.turnSummary ?? null,
+      metadata: input.metadata ?? null,
+    });
+  }
 
   if (input.rating === 'positive' || input.rating === 'negative') {
+    if (input.crewId) {
+      try {
+        (agent as Agent & { recordCrewFeedback?: (crewId: string, positive: boolean) => void })?.recordCrewFeedback?.(input.crewId, input.rating === 'positive');
+      } catch { /* best-effort */ }
+    }
     try {
-      const agent = getEngine().agent as Agent | null;
       const exp = agent as unknown as { experienceEngine?: { recordTrial: (sid: string, trial: Record<string, unknown>) => void } } | null;
       exp?.experienceEngine?.recordTrial(input.sessionId, {
         category: 'user_feedback',

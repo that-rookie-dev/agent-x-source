@@ -57,9 +57,11 @@ import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
-import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, mapRestoreHistoryMessage, hasPendingQuestionnaire, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard } from '../chat/utils';
+import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, mapRestoreHistoryMessage, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard } from '../chat/utils';
+import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
-import { isTurnFeedbackEligible, summarizeTurnForFeedback, crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
+import { sessionHostCrewDisplay } from '../utils/crew-display';
+import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
 import { MedicalDisclaimerChatSessionStrip } from './crew/MedicalDisclaimerBanner';
 import { CrewMissionCard, type CrewInterMessage } from './CrewMissionCard';
@@ -151,12 +153,13 @@ function parseModeChange(content?: string): { from: string; to: string } | null 
 }
 
 interface PartEntry {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker';
   id: string;
   content?: string;
   tool?: ToolCall;
   agent?: SubAgent;
   questionnaire?: import('@agentx/shared/browser').QuestionnaireRecord;
+  crewRosterPicker?: import('./crew/CrewRosterPickerMessage').CrewRosterPickerRecord;
 }
 
 interface ToolCall {
@@ -332,14 +335,31 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             ...(modeChange ? { isModeChange: modeChange } : {}),
           };
         }) as unknown as UIMessage[];
-        const hydrated = await hydrateCrewDeliverables(sessionId, mapped, crewList);
-        const withFeedback = applyTurnFeedbackRows(hydrated.messages, turnFeedback);
+        let roster = crewList;
+        if (!roster.length) {
+          try {
+            roster = await crews.list();
+            setCrewList(roster);
+          } catch { /* best-effort */ }
+        }
+        let feedbackRows = turnFeedback;
+        if (!feedbackRows?.length) {
+          try {
+            const fb = await sessions.listTurnFeedback(sessionId);
+            feedbackRows = fb.feedback;
+          } catch { /* best-effort */ }
+        }
+        const hydrated = await hydrateCrewDeliverables(sessionId, mapped, roster);
+        const withFeedback = applyTurnFeedbackRows(hydrated.messages, feedbackRows);
         const crewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
-        const privateHost = crewPrivate ? {
-          name: session.hostCrewName ?? session.title ?? 'Crew member',
-          callsign: session.hostCrewCallsign ?? '',
-          title: session.hostCrewTitle,
-        } : null;
+        const privateHost = crewPrivate ? (() => {
+          const { displayName, displayCallsign } = sessionHostCrewDisplay(session);
+          return {
+            name: displayName,
+            callsign: displayCallsign,
+            title: session.hostCrewTitle,
+          };
+        })() : null;
         setMessages(withFeedback);
         if (hydrated.crewWorkers.length > 0) {
           setCrewWorkers(hydrated.crewWorkers);
@@ -567,7 +587,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setFeedbackSubmitting(true);
     setPendingFeedbackMessageId(null);
     const msg = messages.find((m) => m.id === messageId);
-    const turnSummary = summarizeTurnForFeedback(msg?.content ?? '');
+    const turnSummary = summarizeMessageForTurnFeedback({ content: msg?.content, parts: msg?.parts });
+    const prevRating = msg?.turnFeedback?.rating;
     setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, turnFeedback: { rating } } : m)));
     try {
       await sessions.submitTurnFeedback(sessionId, {
@@ -576,12 +597,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         turnSummary: turnSummary || undefined,
         metadata: msg?.crew ? { crewId: msg.crew.crewId } : undefined,
       });
-    } catch {
-      /* best-effort — local state already updated */
+    } catch (err) {
+      setMessages((prev) => prev.map((m) => (
+        m.id === messageId ? { ...m, turnFeedback: prevRating ? { rating: prevRating } : undefined } : m
+      )));
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to save feedback'));
     } finally {
       setFeedbackSubmitting(false);
     }
-  }, [messages]);
+  }, [messages, replaceWarning]);
 
   useEffect(() => {
     const candidate = lastTurnFeedbackCandidateRef.current;
@@ -1138,9 +1162,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             const crew = msg?.crew;
             const msgId = msg?.id || crypto.randomUUID();
             const hasQuestionnaire = msg?.parts?.some((p) => p.type === 'questionnaire');
+            const hasCrewPicker = msg?.parts?.some((p) => p.type === 'crew_roster_picker');
             const questionnairePending = hasQuestionnaire
               && msg?.parts?.some((p) => p.type === 'questionnaire' && p.questionnaire?.status === 'pending');
-            const turnContinues = isUpdate || questionnairePending;
+            const crewPickerPending = hasCrewPicker
+              && msg?.parts?.some((p) => p.type === 'crew_roster_picker' && p.crewRosterPicker?.status === 'pending');
+            const interactionPending = questionnairePending || crewPickerPending;
+            const turnContinues = isUpdate || interactionPending;
 
             if (!turnContinues) {
               stopTurnIndicator();
@@ -1157,9 +1185,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             if (msgId && prev.some((m) => m.id === msgId)) {
               const idx = prev.findIndex((m) => m.id === msgId);
               if (idx >= 0 && msg) {
-                if (isUpdate && !questionnairePending) {
+                if (isUpdate && !interactionPending) {
                   setStreaming(true);
-                } else if (questionnairePending) {
+                } else if (interactionPending) {
                   setStreaming(false);
                 } else {
                   setStreaming(false);
@@ -1177,20 +1205,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             }
 
             if (msg?.role === 'user' && msg.content?.trim()) {
+              // User turns are added locally on send; engine emits message_sent, not message_received.
               setStreaming(false);
-              if (prev.some((m) => m.id === msgId)) return prev;
-              return [...prev, {
-                id: msgId,
-                role: 'user' as const,
-                content: msg.content.trim(),
-                timestamp: new Date().toISOString(),
-              }];
+              return prev;
             }
 
             if (!msg || msg.role === 'system') return prev;
             const text = repairStreamTextGlitches(stripToolNoise(msg.content ?? ''));
-            if (msg.role === 'assistant' && hasQuestionnaire) {
-              setStreaming(questionnairePending ? false : true);
+            if (msg.role === 'assistant' && (hasQuestionnaire || hasCrewPicker)) {
+              setStreaming(interactionPending ? false : true);
               const base = stripTrailingStreamPreamble(prev);
               return [...base, {
                 id: msgId,
@@ -1775,7 +1798,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   }, [streaming, endTurnUi]);
 
   // Compute whether send is blocked due to missing provider/model
-  const questionnairePending = useMemo(() => hasPendingQuestionnaire(messages), [messages]);
+  const questionnairePending = useMemo(() => hasPendingChatInteraction(messages), [messages]);
 
   const showMedicalSessionDisclaimer = useMemo(() => {
     const rosterCrew = privateHostCrewId ? crewList.find((c) => c.id === privateHostCrewId) : undefined;
@@ -1858,6 +1881,66 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return false;
   }, [messages, ensureSession, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
 
+  const evaluateCrewForMessage = useCallback(async (text: string) => {
+    const sessionId = await ensureSession();
+    if (!sessionId) return null;
+    const priorUserMessages = messages
+      .filter((m) => m.role === 'user')
+      .map((m) => m.content)
+      .slice(-3);
+    return crewSuggestions.evaluate(text, sessionId, priorUserMessages);
+  }, [messages, ensureSession]);
+
+  const offerInlineCrewRoster = useCallback(async (text: string, evaluation: CrewSuggestionEvaluation): Promise<boolean> => {
+    if (isCrewPrivateSession) return false;
+    if (evaluation.shouldSuggest || evaluation.candidates.length === 0) return false;
+
+    const trimmed = sanitizeForJson(text.trim());
+    if (!trimmed) return false;
+    const sessionId = await ensureSession();
+    if (!sessionId) return false;
+
+    try {
+      const persisted = await crewSuggestions.offerRosterPicker(sessionId, {
+        userText: trimmed,
+        evaluation,
+        attachments: attachments.map((a) => ({ name: a.name })),
+      });
+
+      const pickerRecord = {
+        id: persisted.pickerPartId,
+        status: 'pending' as const,
+        evaluation,
+        pendingUserText: trimmed,
+      };
+      const userMsg: UIMessage = {
+        id: persisted.userMessageId,
+        role: 'user',
+        content: trimmed,
+        streaming: false,
+        attachments: attachments.map((a) => ({ name: a.name })),
+      };
+      const pickerMsg: UIMessage = {
+        id: persisted.pickerMessageId,
+        role: 'assistant',
+        content: '',
+        streaming: false,
+        parts: [{
+          type: 'crew_roster_picker',
+          id: persisted.pickerPartId,
+          crewRosterPicker: pickerRecord,
+        }],
+      };
+      setMessages((prev) => [...prev, userMsg, pickerMsg]);
+      inputBarRef.current?.clear();
+      setAttachments([]);
+      return true;
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to offer crew roster'));
+      return false;
+    }
+  }, [attachments, isCrewPrivateSession, ensureSession, replaceWarning]);
+
   const handleViewCrewDossier = useCallback(async (candidate: CrewMatchCandidate) => {
     if (candidate.onRoster || candidate.origin === 'custom' || candidate.origin === 'hub_roster') {
       const roster = crewList.find((c) => c.id === candidate.id);
@@ -1899,10 +1982,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const executeSend = useCallback(async (
     text: string,
     delegateCrewIds?: string[],
-    options?: { crewSuggestionResolved?: boolean },
+    options?: {
+      crewSuggestionResolved?: boolean;
+      crewIntakeFromPicker?: boolean;
+      primaryCrewId?: string;
+      skipUserMessage?: boolean;
+    },
   ) => {
     const trimmed = sanitizeForJson(text.trim());
-    if ((!trimmed && attachments.length === 0)) return;
+    if ((!trimmed && attachments.length === 0) && !options?.skipUserMessage) return;
     if (!currentProvider || !currentModel) return;
     rateLimitSeenRef.current = false;
     if (!(await ensureSession())) return;
@@ -1913,15 +2001,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       .slice(-3);
 
     beginTurnUi();
-    const userMsg: UIMessage = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: trimmed,
-      streaming: false,
-      attachments: attachments.map((a) => ({ name: a.name })),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    inputBarRef.current?.clear();
+    if (!options?.skipUserMessage) {
+      const userMsg: UIMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: trimmed,
+        streaming: false,
+        attachments: attachments.map((a) => ({ name: a.name })),
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      inputBarRef.current?.clear();
+    }
 
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
@@ -1936,6 +2026,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         delegateCrewIds,
         crewResolved,
         priorUserMessages,
+        options?.crewIntakeFromPicker,
+        options?.primaryCrewId,
       );
       if (result?.crewSuggestionRequired && result.evaluation) {
         endTurnUi();
@@ -2002,10 +2094,29 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       return;
     }
 
-    if (await maybeOfferCrewSuggestion(trimmed)) return;
+    if (!isCrewPrivateSession && !/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) {
+      try {
+        const evaluation = await evaluateCrewForMessage(trimmed);
+        if (evaluation) {
+          if (evaluation.reasons.includes('catalog-unavailable')) {
+            setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
+          }
+          if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
+            crewSuggestionHandledRef.current = true;
+            openCrewSuggestionFromEvaluation(evaluation, trimmed);
+            return;
+          }
+          if (await offerInlineCrewRoster(trimmed, evaluation)) return;
+        }
+      } catch {
+        if (await maybeOfferCrewSuggestion(trimmed)) return;
+      }
+    } else if (await maybeOfferCrewSuggestion(trimmed)) {
+      return;
+    }
 
     await executeSend(trimmed);
-  }, [attachments.length, agentMode, executeSend, maybeOfferCrewSuggestion]);
+  }, [attachments.length, agentMode, executeSend, maybeOfferCrewSuggestion, evaluateCrewForMessage, offerInlineCrewRoster, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
 
   // Retry last user message — re-sends without duplicating the user message,
   // replaces the existing assistant response on success.
@@ -2061,14 +2172,117 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   }, [streaming, currentProvider, currentModel, ensureSession, beginTurnUi, endTurnUi]);
 
   // --- Clarification response ---
+  const markCrewRosterPickerResolved = useCallback((
+    messageId: string,
+    status: 'answered' | 'skipped',
+    selectedCandidateIds?: string[],
+  ) => {
+    setMessages((prev) => prev.map((m) => {
+      if (m.id !== messageId || !m.parts) return m;
+      return {
+        ...m,
+        parts: m.parts.map((p) => {
+          if (p.type !== 'crew_roster_picker' || !p.crewRosterPicker) return p;
+          return {
+            ...p,
+            crewRosterPicker: {
+              ...p.crewRosterPicker,
+              status,
+              selectedCandidateIds,
+            },
+          };
+        }),
+      };
+    }));
+  }, []);
+
+  const handleCrewRosterPickerSubmit = useCallback(async (messageId: string, selected: CrewMatchCandidate[]) => {
+    const pickerMsg = messages.find((m) => m.id === messageId);
+    const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
+    const record = pickerPart?.crewRosterPicker;
+    if (!record || record.status !== 'pending') return;
+
+    const text = record.pendingUserText;
+    const pickerPartId = pickerPart?.id;
+
+    try {
+      const sessionId = await ensureSession();
+      if (!sessionId) return;
+      const result = await crewSuggestions.resolve({
+        sessionId,
+        action: 'deploy',
+        selectedCandidateIds: selected.map((c) => c.id),
+        candidates: record.evaluation.candidates,
+      });
+      if (!result.deployedCrewIds?.length) {
+        setWarnings((prev) => replaceWarning(prev, 'Selected specialists could not be recruited or enabled.'));
+        await crewSuggestions.updateRosterPicker(sessionId, {
+          pickerMessageId: messageId,
+          status: 'skipped',
+          evaluation: record.evaluation,
+          pendingUserText: text,
+          pickerPartId,
+        });
+        markCrewRosterPickerResolved(messageId, 'skipped');
+        await executeSend(text, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+        return;
+      }
+      const primaryCrewId = result.deployedPrimaryCrewId
+        ?? result.deployedCrewIds[0];
+      await crewSuggestions.updateRosterPicker(sessionId, {
+        pickerMessageId: messageId,
+        status: 'answered',
+        selectedCandidateIds: selected.map((c) => c.id),
+        evaluation: record.evaluation,
+        pendingUserText: text,
+        pickerPartId,
+      });
+      markCrewRosterPickerResolved(messageId, 'answered', selected.map((c) => c.id));
+      await executeSend(text, result.deployedCrewIds, {
+        crewSuggestionResolved: true,
+        crewIntakeFromPicker: true,
+        primaryCrewId,
+        skipUserMessage: true,
+      });
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to deploy crew'));
+    }
+  }, [messages, markCrewRosterPickerResolved, ensureSession, executeSend, replaceWarning]);
+
+  const handleCrewRosterPickerSkip = useCallback(async (messageId: string) => {
+    const pickerMsg = messages.find((m) => m.id === messageId);
+    const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
+    const record = pickerPart?.crewRosterPicker;
+    if (!record || record.status !== 'pending') return;
+
+    try {
+      const sessionId = await ensureSession();
+      if (sessionId) {
+        await crewSuggestions.updateRosterPicker(sessionId, {
+          pickerMessageId: messageId,
+          status: 'skipped',
+          evaluation: record.evaluation,
+          pendingUserText: record.pendingUserText,
+          pickerPartId: pickerPart?.id,
+        });
+      }
+      markCrewRosterPickerResolved(messageId, 'skipped');
+      await executeSend(record.pendingUserText, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to skip crew picker'));
+    }
+  }, [messages, markCrewRosterPickerResolved, ensureSession, executeSend, replaceWarning]);
+
   const handleQuestionnaireRespond = useCallback(async (_messageId: string, response: string) => {
     try {
-      await agent.respondToClarification(response);
-      setStreaming(true);
-    } catch {
-      setWarnings((prev) => replaceWarning(prev, 'Failed to send questionnaire response'));
+      const result = await agent.respondToClarification(response);
+      if (result.ok) {
+        setStreaming(true);
+      }
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to send questionnaire response'));
     }
-  }, []);
+  }, [replaceWarning]);
 
   const resetCrewMissionState = useCallback(() => {
     setCrewWorkers([]);
@@ -2389,14 +2603,37 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           ...(modeChange ? { isModeChange: modeChange } : {}),
         };
       }) as unknown as UIMessage[];
-      const hydrated = await hydrateCrewDeliverables(s.id, mapped, crewList);
-      const withFeedback = applyTurnFeedbackRows(hydrated.messages, turnFeedback);
+      let roster = crewList;
+      if (!roster.length) {
+        try {
+          roster = await crews.list();
+          setCrewList(roster);
+        } catch { /* best-effort */ }
+      }
+      let feedbackRows = turnFeedback;
+      if (!feedbackRows?.length) {
+        try {
+          const fb = await sessions.listTurnFeedback(s.id);
+          feedbackRows = fb.feedback;
+        } catch { /* best-effort */ }
+      }
+      const hydrated = await hydrateCrewDeliverables(s.id, mapped, roster);
+      const withFeedback = applyTurnFeedbackRows(hydrated.messages, feedbackRows);
       const crewPrivate = (session?.contextKind ?? s.contextKind ?? 'agent_x') === 'crew_private';
-      const privateHost = crewPrivate ? {
-        name: s.hostCrewName ?? session?.hostCrewName ?? s.title ?? 'Crew member',
-        callsign: s.hostCrewCallsign ?? session?.hostCrewCallsign ?? '',
-        title: s.hostCrewTitle ?? session?.hostCrewTitle,
-      } : null;
+      const privateHost = crewPrivate ? (() => {
+        const { displayName, displayCallsign } = sessionHostCrewDisplay({
+          hostCrewName: s.hostCrewName ?? session?.hostCrewName,
+          hostCrewCallsign: s.hostCrewCallsign ?? session?.hostCrewCallsign,
+          hostCrewTitle: s.hostCrewTitle ?? session?.hostCrewTitle,
+          hostCrewCategoryId: s.hostCrewCategoryId ?? session?.hostCrewCategoryId,
+          title: s.title ?? session?.title,
+        });
+        return {
+          name: displayName,
+          callsign: displayCallsign,
+          title: s.hostCrewTitle ?? session?.hostCrewTitle,
+        };
+      })() : null;
       setMessages(withFeedback);
       if (hydrated.crewWorkers.length > 0) {
         setCrewWorkers(hydrated.crewWorkers);
@@ -2807,9 +3044,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             bottomRef={bottomRef}
             onOpenChildSession={openChildSession}
             onQuestionnaireRespond={handleQuestionnaireRespond}
+            onCrewRosterPickerSubmit={handleCrewRosterPickerSubmit}
+            onCrewRosterPickerSkip={handleCrewRosterPickerSkip}
+            onViewCrewDossier={handleViewCrewDossier}
             pendingFeedbackMessageId={pendingFeedbackMessageId}
             onTurnFeedback={handleTurnFeedback}
             feedbackSubmitting={feedbackSubmitting}
+            planMode={agentMode === 'plan'}
           />
 
           {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
@@ -3473,7 +3714,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               await executeSend(text, undefined, { crewSuggestionResolved: true });
               return;
             }
-            await executeSend(text, result.deployedCrewIds, { crewSuggestionResolved: true });
+            const primaryCrewId = result.deployedPrimaryCrewId ?? result.deployedCrewIds[0];
+            await executeSend(text, result.deployedCrewIds, {
+              crewSuggestionResolved: true,
+              crewIntakeFromPicker: true,
+              primaryCrewId,
+            });
           } catch (err) {
             const msg = err instanceof Error ? err.message : 'Crew deploy failed';
             setWarnings((prev) => replaceWarning(prev, msg.includes('crew-deploy') ? 'Crew deploy failed — continuing with Agent-X only.' : msg));

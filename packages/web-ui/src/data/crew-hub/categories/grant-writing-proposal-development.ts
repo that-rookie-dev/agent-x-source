@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "organized",
       "strategic",
       "detail-oriented"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Mina O. Svensson",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "adaptable",
       "results-driven",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Paloma P. Ahmed",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "adaptable",
       "results-driven",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Sofia Q. Dahl",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "organized",
       "strategic",
       "detail-oriented"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Yuki R. Ibrahim",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "strategic",
       "detail-oriented",
       "adaptable"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Adaeze S. Lopez",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "adaptable",
       "results-driven",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Amir T. Novak",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "strategic",
       "detail-oriented",
       "adaptable"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Camila U. Santos",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "adaptable",
       "results-driven"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Diego V. Williams",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "results-driven",
       "communicative",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Felix W. Chang",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "adaptable",
       "results-driven"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hugo X. Garcia",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "adaptable",
       "results-driven",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jia Y. Kowalski",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "communicative",
       "organized",
       "strategic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kwame Z. Muller",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "communicative",
       "organized",
       "strategic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Maya A. Popov",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "organized",
       "strategic",
       "detail-oriented"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Nia B. Usman",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "adaptable",
       "results-driven",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Rami C. Bianchi",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "adaptable",
       "results-driven"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Tomas D. Dubois",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "communicative",
       "organized",
       "strategic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Zola E. Joshi",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "adaptable",
       "results-driven"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aisha F. Martinez",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "adaptable",
       "results-driven"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Arjun G. Oliveira",
@@ -443,7 +462,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "communicative",
       "organized",
       "strategic"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Dalia H. Singh",
@@ -465,7 +485,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "adaptable",
       "results-driven"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Elias I. Adeyemi",
@@ -487,6 +508,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "results-driven",
       "communicative",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

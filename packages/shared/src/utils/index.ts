@@ -8,3 +8,4 @@ export * from './message-parts.js';
 export * from './crew-search-text.js';
 export * from './questionnaire.js';
 export * from './turn-feedback.js';
+export * from './crew-roster-intent.js';

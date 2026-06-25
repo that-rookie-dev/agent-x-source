@@ -15,6 +15,25 @@ export const HAZARD_STRIPE_BG = `repeating-linear-gradient(
 
 export const MEDICAL_YELLOW = '#f4c430';
 
+/** Distinct warning typography — sans-serif + heavy weight (chat body uses Inter regular). */
+export const medicalWarningTextSx = {
+  fontFamily: "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif",
+  fontWeight: 800,
+  fontSize: '0.68rem',
+  letterSpacing: '0.02em',
+  lineHeight: 1.5,
+  color: '#1a1200',
+} as const;
+
+export const medicalWarningChatStripSx = {
+  ...medicalWarningTextSx,
+  fontSize: '0.7rem',
+  fontWeight: 700,
+  letterSpacing: '0.015em',
+  lineHeight: 1.55,
+  textAlign: 'center' as const,
+} as const;
+
 /** Thin yellow/black hazard stripe band (2–5px). */
 export function MedicalDisclaimerStripe({ height = 3 }: { height?: number }) {
   return (
@@ -64,10 +83,8 @@ export function MedicalDisclaimerSectorCard({ sx }: { sx?: SxProps<Theme> }) {
       <MedicalDisclaimerStripe height={5} />
       <Box sx={{ px: 1.25, py: 0.9, bgcolor: MEDICAL_YELLOW }}>
         <Typography sx={{
+          ...medicalWarningTextSx,
           fontSize: '0.62rem',
-          fontFamily: "'JetBrains Mono', monospace",
-          color: '#1a1200',
-          lineHeight: 1.5,
         }}>
           {MEDICAL_INFORMATIONAL_DISCLAIMER}
         </Typography>
@@ -113,13 +130,20 @@ export function MedicalDisclaimerChatSessionStrip() {
     >
       <MedicalDisclaimerStripe height={3} />
       <Box sx={{ px: 1.25, py: 0.75, bgcolor: MEDICAL_YELLOW }}>
-        <Typography sx={{
-          fontSize: '0.8125rem',
-          fontFamily: "'Inter', sans-serif",
-          color: '#1a1200',
-          lineHeight: 1.65,
-          textAlign: 'center',
-        }}>
+        <Typography
+          component="p"
+          sx={{
+            ...medicalWarningChatStripSx,
+            mb: 0.35,
+            fontSize: '0.52rem',
+            letterSpacing: '0.14em',
+            textTransform: 'uppercase',
+            opacity: 0.92,
+          }}
+        >
+          Medical information notice
+        </Typography>
+        <Typography component="p" sx={medicalWarningChatStripSx}>
           {MEDICAL_INFORMATIONAL_DISCLAIMER}
         </Typography>
       </Box>
@@ -156,10 +180,8 @@ export function MedicalDisclaimerBanner({
         <Box sx={{ px: 1.25, py: 1 }}>{children}</Box>
         <Box sx={{ px: 1.25, py: 0.75, bgcolor: MEDICAL_YELLOW }}>
           <Typography sx={{
+            ...medicalWarningTextSx,
             fontSize: compact ? '0.55rem' : '0.58rem',
-            fontFamily: "'JetBrains Mono', monospace",
-            color: '#1a1200',
-            lineHeight: 1.45,
           }}>
             {text}
           </Typography>
@@ -174,10 +196,8 @@ export function MedicalDisclaimerBanner({
         <MedicalDisclaimerStripe height={3} />
         <Box sx={{ px: 0.75, py: 0.5, bgcolor: MEDICAL_YELLOW }}>
           <Typography sx={{
+            ...medicalWarningTextSx,
             fontSize: '0.5rem',
-            fontFamily: "'JetBrains Mono', monospace",
-            color: '#1a1200',
-            lineHeight: 1.35,
           }}>
             {text}
           </Typography>

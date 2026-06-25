@@ -2,7 +2,7 @@ import type { CatalogEntry, CatalogManifest, Crew, SessionCrewPreferences } from
 import { buildCrewSearchText } from '@agentx/shared';
 import { loadCatalogManifest } from './catalog-manifest.js';
 import { buildSqliteHubFtsMatch } from './fts-query.js';
-import { catalogLikePattern, mergeCatalogSearchHits } from './catalog-search.js';
+import { catalogLikePattern, mergeCatalogSearchHits, searchManifestCatalog } from './catalog-search.js';
 import { mergeCategoryIconIds } from './catalog-categories.js';
 import { catalogEntryToSummary } from './catalog-summary.js';
 import { markCatalogSeedProgress } from './catalog-seed-state.js';
@@ -312,9 +312,12 @@ export function createSqliteCrewCatalogStore(
     },
 
     async searchCatalog(query: string, limit: number) {
-      if (!db || memMode) return [];
       const trimmed = query.trim();
       if (!trimmed) return [];
+      if (memMode || !db) {
+        const manifest = loadCatalogManifest();
+        return manifest ? searchManifestCatalog(manifest, trimmed, limit) : [];
+      }
 
       let ftsHits: Array<CatalogEntry & { ftsRank: number }> = [];
       const fts = escapeFtsQuery(trimmed);

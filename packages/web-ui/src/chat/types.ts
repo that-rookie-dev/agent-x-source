@@ -25,12 +25,13 @@ export interface SubAgent {
 import type { QuestionnaireRecord } from '@agentx/shared/browser';
 
 export interface PartEntry {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker';
   id: string;
   content?: string;
   tool?: ToolCall;
   agent?: SubAgent;
   questionnaire?: QuestionnaireRecord;
+  crewRosterPicker?: import('../components/crew/CrewRosterPickerMessage').CrewRosterPickerRecord;
 }
 
 export interface UIMessage extends ChatMessage {

@@ -9,6 +9,8 @@ import ForumIcon from '@mui/icons-material/Forum';
 import type { SessionInfo } from '../api';
 import { colors } from '../theme';
 import { getCrewAccent } from '../styles/crew-theme';
+import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './crew/MedicalDisclaimerBanner';
+import { sessionHostCrewDisplay } from '../utils/crew-display';
 
 interface SessionGridCardProps {
   session: SessionInfo;
@@ -64,10 +66,17 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
   const mode = session.mode ?? 'plan';
   const tokenPct = session.tokenUsagePct ?? 0;
   const crewCount = session.crewCount ?? session.crewCallsigns?.length ?? 0;
-  const crewAccent = getCrewAccent(undefined, session.hostCrewCallsign ?? session.hostCrewName);
-  const displayTitle = isCrewPrivate
-    ? (session.hostCrewName ?? session.title ?? 'Crew member')
-    : (session.title || `Session ${session.id.slice(0, 8)}`);
+  const hostCallsignRaw = session.hostCrewCallsign ?? '';
+  const hostTitle = session.hostCrewTitle ?? '';
+  const { displayName: hostName, displayCallsign: hostCallsign } = sessionHostCrewDisplay(session);
+  const crewAccent = getCrewAccent(session.hostCrewColor, hostCallsign || hostName);
+  const isMedical = isCrewPrivate && isMedicalCrewDisplay({
+    categoryId: session.hostCrewCategoryId,
+    catalogId: session.hostCrewCatalogId,
+    callsign: hostCallsignRaw,
+    crewId: session.hostCrewId,
+  });
+  const displayTitle = isCrewPrivate ? hostName : (session.title || `Session ${session.id.slice(0, 8)}`);
 
   return (
     <Box
@@ -76,11 +85,10 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         borderRadius: '10px',
         border: `1px solid ${isCrewPrivate ? crewAccent + '35' : isActive ? colors.accent.green + '35' : colors.border.subtle}`,
         bgcolor: colors.bg.secondary,
-        p: 1.25,
+        overflow: 'hidden',
         cursor: 'pointer',
         display: 'flex',
         flexDirection: 'column',
-        gap: 0.85,
         minHeight: 148,
         transition: 'border-color 0.15s, transform 0.15s, box-shadow 0.15s',
         '&:hover': {
@@ -90,6 +98,8 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         },
       }}
     >
+      {isMedical && <MedicalCrewCardStripe />}
+      <Box sx={{ p: 1.25, flex: 1, display: 'flex', flexDirection: 'column', gap: 0.85 }}>
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75 }}>
         <Box sx={{
           width: 28,
@@ -123,9 +133,8 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
           <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", mt: 0.2 }}>
             {isCrewPrivate ? (
               <>
-                {session.hostCrewTitle ? `${session.hostCrewTitle}` : ''}
-                {session.hostCrewTitle && session.hostCrewCallsign ? ' · ' : ''}
-                {session.hostCrewCallsign ? `@${session.hostCrewCallsign}` : ''}
+                {hostTitle || 'Crew specialist'}
+                {hostCallsign ? ` · @${hostCallsign}` : ''}
               </>
             ) : (
               <>{formatDate(session.createdAt)} · {formatTime(session.createdAt)}</>
@@ -253,6 +262,7 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
             ${session.totalCostUsd!.toFixed(3)}
           </Typography>
         )}
+      </Box>
       </Box>
     </Box>
   );

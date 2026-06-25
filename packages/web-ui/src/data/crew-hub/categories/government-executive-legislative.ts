@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "procedural",
       "accountable",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Mina Iyer",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "accountable",
       "communicative",
       "thorough"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Paloma Malik",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "impartial",
       "procedural",
       "accountable"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Sofia Nwosu",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "procedural",
       "accountable",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Yuki Sharma",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "thorough",
       "policy-aware",
       "impartial"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Adaeze Zhang",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "communicative",
       "thorough",
       "policy-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Amir Chen",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "impartial",
       "procedural",
       "accountable"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Camila Gupta",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "procedural",
       "accountable",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Diego Laurent",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "thorough",
       "policy-aware",
       "impartial"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Felix Nakamura",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "thorough",
       "policy-aware",
       "impartial"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hugo Rahman",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "policy-aware",
       "impartial",
       "procedural"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jia Vega",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "thorough",
       "policy-aware",
       "impartial"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kwame Boateng",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "policy-aware",
       "impartial",
       "procedural"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Maya Farouk",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "accountable",
       "communicative",
       "thorough"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Nia Kaur",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "procedural",
       "accountable",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Rami Mehta",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "thorough",
       "policy-aware",
       "impartial"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Tomas Park",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "thorough",
       "policy-aware",
       "impartial"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Zola Svensson",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "communicative",
       "thorough",
       "policy-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aisha Ahmed",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "accountable",
       "communicative",
       "thorough"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Arjun Dahl",
@@ -443,7 +462,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "accountable",
       "communicative",
       "thorough"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Dalia Ibrahim",
@@ -465,7 +485,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "communicative",
       "thorough",
       "policy-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Elias Lopez",
@@ -487,6 +508,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "procedural",
       "accountable",
       "communicative"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

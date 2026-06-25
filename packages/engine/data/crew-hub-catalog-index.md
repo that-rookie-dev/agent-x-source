@@ -1,8 +1,8 @@
 # Crew Hub Catalog Index
 
-Revision: **4**
-Categories: **216**
-Crew members: **4661**
+Revision: **7**
+Categories: **227**
+Crew members: **4900**
 
 > Existing installs pick up new crews automatically when manifest revision advances (background catalog seed).
 
@@ -1021,458 +1021,458 @@ Crew members: **4661**
 
 ## Medical · Primary Care (`medical-primary-care`) — 22 roles
 *Medical informational disclaimer required*
-- Family Medicine Advisor — Anya Lindberg
-- General Practice Educator — Clara Nguyen
-- Preventive Care Coach — Elena Rossi
-- Adult Wellness Navigator — Gabriel Watanabe
-- Geriatric Primary Care Guide — Imani Campbell
-- Adolescent Health Educator — Kaito Fischer
-- Travel Medicine Advisor — Leila Kim
-- Occupational Health Screener — Mei Mori
-- Vaccination Education Specialist — Noura Petrov
-- Chronic Care Panel Manager — Sana Torres
-- Hypertension Education Coach — Wei Anderson
-- Diabetes Lifestyle Educator — Aaliyah Diallo
-- Asthma Action Plan Advisor — Alina Jensen
-- Smoking Cessation Coach — Beatriz Mansour
-- Weight Management Counselor — Dante Okafor
-- Sleep Health Educator — Esra Silva
-- Men's Health Advisor — Haruto Abdi
-- Women's Health Primary Advisor — Ishan Costa
-- Palliative Primary Care Navigator — Keiko Haddad
-- Rural Primary Care Planner — Luca Lee
-- Telehealth Primary Care Coach — Nadia Nasser
-- Health Screening Scheduler — Priya Rao
+- Family Medicine Advisor — Dr. Anya Lindberg
+- General Practice Educator — Dr. Clara Nguyen
+- Preventive Care Coach — Dr. Elena Rossi
+- Adult Wellness Navigator — Dr. Gabriel Watanabe
+- Geriatric Primary Care Guide — Dr. Imani Campbell
+- Adolescent Health Educator — Dr. Kaito Fischer
+- Travel Medicine Advisor — Dr. Leila Kim
+- Occupational Health Screener — Dr. Mei Mori
+- Vaccination Education Specialist — Dr. Noura Petrov
+- Chronic Care Panel Manager — Dr. Sana Torres
+- Hypertension Education Coach — Dr. Wei Anderson
+- Diabetes Lifestyle Educator — Dr. Aaliyah Diallo
+- Asthma Action Plan Advisor — Dr. Alina Jensen
+- Smoking Cessation Coach — Dr. Beatriz Mansour
+- Weight Management Counselor — Dr. Dante Okafor
+- Sleep Health Educator — Dr. Esra Silva
+- Men's Health Advisor — Dr. Haruto Abdi
+- Women's Health Primary Advisor — Dr. Ishan Costa
+- Palliative Primary Care Navigator — Dr. Keiko Haddad
+- Rural Primary Care Planner — Dr. Luca Lee
+- Telehealth Primary Care Coach — Dr. Nadia Nasser
+- Health Screening Scheduler — Dr. Priya Rao
 
 ## Medical · Internal Medicine (`medical-internal-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Internal Medicine Hospitalist Advisor — Sophia Volkov
-- General Internist Educator — Zainab Brooks
-- Hospital Medicine Flow Coach — Aditya Fernandez
-- Anticoagulation Education Advisor — Anika Khan
-- Fever Workup Literacy Guide — Chidi Mensah
-- Polypharmacy Review Educator — Efe Patel
-- Metabolic Syndrome Coach — Freya Tanaka
-- Internal Medicine Board Prep Tutor — Idris Alvarez
-- Multimorbidity Care Coordinator — Jonas Desai
-- Complex Chronic Disease Navigator — Layla Iyer
-- Hospital Discharge Planning Educator — Meera Malik
-- Medicine Consult Communication Coach — Noah Nwosu
-- Preoperative Medical Clearance Educator — Rina Sharma
-- Adult Immunization Schedule Advisor — Valentina Zhang
-- Travel Medicine Chronic Disease Coach — Aarav Chen
-- Hospital Antibiotic Stewardship Educator — Akira Gupta
-- Internal Medicine Quality Improvement Coach — Aya Laurent
-- Medicine Ward Rounds Family Educator — Daniel Nakamura
-- Inpatient Glycemic Management Coach — Emre Rahman
-- Delirium Prevention Hospital Advisor — Hana Vega
-- Hospital Falls Prevention Educator — Iris Boateng
-- Internal Medicine Telehealth Coach — Kavya Farouk
+- Internal Medicine Hospitalist Advisor — Dr. Sophia Volkov
+- General Internist Educator — Dr. Zainab Brooks
+- Hospital Medicine Flow Coach — Dr. Aditya Fernandez
+- Anticoagulation Education Advisor — Dr. Anika Khan
+- Fever Workup Literacy Guide — Dr. Chidi Mensah
+- Polypharmacy Review Educator — Dr. Efe Patel
+- Metabolic Syndrome Coach — Dr. Freya Tanaka
+- Internal Medicine Board Prep Tutor — Dr. Idris Alvarez
+- Multimorbidity Care Coordinator — Dr. Jonas Desai
+- Complex Chronic Disease Navigator — Dr. Layla Iyer
+- Hospital Discharge Planning Educator — Dr. Meera Malik
+- Medicine Consult Communication Coach — Dr. Noah Nwosu
+- Preoperative Medical Clearance Educator — Dr. Rina Sharma
+- Adult Immunization Schedule Advisor — Dr. Valentina Zhang
+- Travel Medicine Chronic Disease Coach — Dr. Aarav Chen
+- Hospital Antibiotic Stewardship Educator — Dr. Akira Gupta
+- Internal Medicine Quality Improvement Coach — Dr. Aya Laurent
+- Medicine Ward Rounds Family Educator — Dr. Daniel Nakamura
+- Inpatient Glycemic Management Coach — Dr. Emre Rahman
+- Delirium Prevention Hospital Advisor — Dr. Hana Vega
+- Hospital Falls Prevention Educator — Dr. Iris Boateng
+- Internal Medicine Telehealth Coach — Dr. Kavya Farouk
 
 ## Medical · Surgical Specialties (General) (`medical-surgical-specialties`) — 22 roles
 *Medical informational disclaimer required*
-- General Surgery Prehab Advisor — Linh Kaur
-- Surgical Consent Literacy Advisor — Mina Mehta
-- Post-Op Wound Care Educator — Paloma Park
-- Surgical Scheduling Coordinator — Sofia Svensson
-- Minimally Invasive Surgery Educator — Yuki Ahmed
-- Robotic Surgery Patient Guide — Adaeze Dahl
-- Surgical Site Infection Prevention Coach — Amir Ibrahim
-- Same-Day Surgery Discharge Coach — Camila Lopez
-- Surgical Risk Stratification Educator — Diego Novak
-- Perioperative Blood Management Advisor — Felix Santos
-- Surgical Antibiotic Prophylaxis Educator — Hugo Williams
-- Surgical Pain Expectation Coach — Jia Chang
-- Surgical Second Opinion Navigator — Kwame Garcia
-- Surgical Clinical Trial Educator — Maya Kowalski
-- Surgical Quality Outcomes Advisor — Nia Muller
-- Surgical Team Communication Educator — Rami Popov
-- Outpatient Surgery Center Navigator — Tomas Usman
-- Surgical Complication Red Flag Educator — Zola Bianchi
-- Surgical Nutrition Prehab Coach — Aisha Dubois
-- Surgical DVT Prevention Educator — Arjun Joshi
-- Surgical Scar Management Advisor — Dalia Martinez
-- Surgical Telehealth Follow-Up Coach — Elias Oliveira
+- General Surgery Prehab Advisor — Dr. Linh Kaur
+- Surgical Consent Literacy Advisor — Dr. Mina Mehta
+- Post-Op Wound Care Educator — Dr. Paloma Park
+- Surgical Scheduling Coordinator — Dr. Sofia Svensson
+- Minimally Invasive Surgery Educator — Dr. Yuki Ahmed
+- Robotic Surgery Patient Guide — Dr. Adaeze Dahl
+- Surgical Site Infection Prevention Coach — Dr. Amir Ibrahim
+- Same-Day Surgery Discharge Coach — Dr. Camila Lopez
+- Surgical Risk Stratification Educator — Dr. Diego Novak
+- Perioperative Blood Management Advisor — Dr. Felix Santos
+- Surgical Antibiotic Prophylaxis Educator — Dr. Hugo Williams
+- Surgical Pain Expectation Coach — Dr. Jia Chang
+- Surgical Second Opinion Navigator — Dr. Kwame Garcia
+- Surgical Clinical Trial Educator — Dr. Maya Kowalski
+- Surgical Quality Outcomes Advisor — Dr. Nia Muller
+- Surgical Team Communication Educator — Dr. Rami Popov
+- Outpatient Surgery Center Navigator — Dr. Tomas Usman
+- Surgical Complication Red Flag Educator — Dr. Zola Bianchi
+- Surgical Nutrition Prehab Coach — Dr. Aisha Dubois
+- Surgical DVT Prevention Educator — Dr. Arjun Joshi
+- Surgical Scar Management Advisor — Dr. Dalia Martinez
+- Surgical Telehealth Follow-Up Coach — Dr. Elias Oliveira
 
 ## Medical · Pediatrics & Neonatal (`medical-pediatrics-neonatal`) — 22 roles
 *Medical informational disclaimer required*
-- Pediatric Well-Child Educator — Giulia Singh
-- Neonatal ICU Family Navigator — Ines Adeyemi
-- Pediatric Asthma Coach — Karim Cruz
-- Childhood Nutrition Advisor — Liam Hassan
-- Adolescent Medicine Counselor — Miguel Lindberg
-- Pediatric Emergency Triage Educator — Omar Nguyen
-- Developmental Milestone Guide — Santiago Rossi
-- Vaccine Hesitancy Counselor — Yara Watanabe
-- Pediatric Diabetes Educator — Abena Campbell
-- NICU Discharge Planner — Amara Fischer
-- Breastfeeding Lactation Educator — Callum Kim
-- Pediatric Sleep Coach — Deepa Mori
-- Childhood Obesity Prevention Advisor — Fatima Petrov
-- Pediatric Allergy Educator — Helena Torres
-- School Health Policy Advisor — Jaden Anderson
-- Pediatric Mental Health First Aid Coach — Khalid Diallo
-- Newborn Care Skills Educator — Luna Jensen
-- Pediatric Pain Management Literacy Guide — Naomi Mansour
-- Youth Sports Safety Advisor — Rafael Okafor
-- Neonatal Pediatric Palliative Navigator — Tariq Silva
-- Child Abuse Recognition Trainer — Zara Abdi
-- Pediatric Telehealth Coach — Aiko Costa
+- Pediatric Well-Child Educator — Dr. Giulia Singh
+- Neonatal ICU Family Navigator — Dr. Ines Adeyemi
+- Pediatric Asthma Coach — Dr. Karim Cruz
+- Childhood Nutrition Advisor — Dr. Liam Hassan
+- Adolescent Medicine Counselor — Dr. Miguel Lindberg
+- Pediatric Emergency Triage Educator — Dr. Omar Nguyen
+- Developmental Milestone Guide — Dr. Santiago Rossi
+- Vaccine Hesitancy Counselor — Dr. Yara Watanabe
+- Pediatric Diabetes Educator — Dr. Abena Campbell
+- NICU Discharge Planner — Dr. Amara Fischer
+- Breastfeeding Lactation Educator — Dr. Callum Kim
+- Pediatric Sleep Coach — Dr. Deepa Mori
+- Childhood Obesity Prevention Advisor — Dr. Fatima Petrov
+- Pediatric Allergy Educator — Dr. Helena Torres
+- School Health Policy Advisor — Dr. Jaden Anderson
+- Pediatric Mental Health First Aid Coach — Dr. Khalid Diallo
+- Newborn Care Skills Educator — Dr. Luna Jensen
+- Pediatric Pain Management Literacy Guide — Dr. Naomi Mansour
+- Youth Sports Safety Advisor — Dr. Rafael Okafor
+- Neonatal Pediatric Palliative Navigator — Dr. Tariq Silva
+- Child Abuse Recognition Trainer — Dr. Zara Abdi
+- Pediatric Telehealth Coach — Dr. Aiko Costa
 
 ## Medical · OB/GYN & Reproductive Health (`medical-obstetrics-gynecology`) — 22 roles
 *Medical informational disclaimer required*
-- Prenatal Education Specialist — Anya Haddad
-- Labor & Delivery Birth Plan Coach — Clara Lee
-- Postpartum Recovery Advisor — Elena Nasser
-- Lactation Support Educator — Gabriel Rao
-- Fertility Awareness Educator — Imani Volkov
-- Menopause Symptom Coach — Kaito Brooks
-- PCOS Lifestyle Advisor — Leila Fernandez
-- Endometriosis Support Navigator — Mei Khan
-- Cervical Screening Literacy Guide — Noura Mensah
-- Contraception Options Counselor — Sana Patel
-- High-Risk Pregnancy Navigator — Wei Tanaka
-- Pelvic Floor Rehab Educator — Aaliyah Alvarez
-- Pregnancy Nutrition Coach — Alina Desai
-- Gestational Diabetes Educator — Beatriz Iyer
-- Miscarriage Support Counselor — Dante Malik
-- Reproductive Endocrinology Educator — Esra Nwosu
-- OB Triage Phone Coach — Haruto Sharma
-- Prenatal Genetic Screening Educator — Ishan Zhang
-- Postpartum Mental Health Navigator — Keiko Chen
-- Gynecologic Surgery Recovery Advisor — Luca Gupta
-- Sexual Health Educator — Nadia Laurent
-- Midwifery Care Pathway Advisor — Priya Nakamura
+- Prenatal Education Specialist — Dr. Anya Haddad
+- Labor & Delivery Birth Plan Coach — Dr. Clara Lee
+- Postpartum Recovery Advisor — Dr. Elena Nasser
+- Lactation Support Educator — Dr. Gabriel Rao
+- Fertility Awareness Educator — Dr. Imani Volkov
+- Menopause Symptom Coach — Dr. Kaito Brooks
+- PCOS Lifestyle Advisor — Dr. Leila Fernandez
+- Endometriosis Support Navigator — Dr. Mei Khan
+- Cervical Screening Literacy Guide — Dr. Noura Mensah
+- Contraception Options Counselor — Dr. Sana Patel
+- High-Risk Pregnancy Navigator — Dr. Wei Tanaka
+- Pelvic Floor Rehab Educator — Dr. Aaliyah Alvarez
+- Pregnancy Nutrition Coach — Dr. Alina Desai
+- Gestational Diabetes Educator — Dr. Beatriz Iyer
+- Miscarriage Support Counselor — Dr. Dante Malik
+- Reproductive Endocrinology Educator — Dr. Esra Nwosu
+- OB Triage Phone Coach — Dr. Haruto Sharma
+- Prenatal Genetic Screening Educator — Dr. Ishan Zhang
+- Postpartum Mental Health Navigator — Dr. Keiko Chen
+- Gynecologic Surgery Recovery Advisor — Dr. Luca Gupta
+- Sexual Health Educator — Dr. Nadia Laurent
+- Midwifery Care Pathway Advisor — Dr. Priya Nakamura
 
 ## Medical · Psychiatry & Behavioral Health (`medical-psychiatry-behavioral`) — 22 roles
 *Medical informational disclaimer required*
-- Depression Psychoeducation Coach — Sophia Rahman
-- Anxiety Coping Skills Educator — Zainab Vega
-- Bipolar Mood Tracking Advisor — Aditya Boateng
-- PTSD Grounding Skills Coach — Anika Farouk
-- ADHD Executive Function Coach — Chidi Kaur
-- Addiction Recovery Navigator — Efe Mehta
-- Eating Disorder Support Educator — Freya Park
-- Schizophrenia Family Psychoeducation Guide — Idris Svensson
-- Suicide Crisis Resource Navigator — Jonas Ahmed
-- Child Psychiatry Parent Coach — Layla Dahl
-- Geriatric Psychiatry Support Advisor — Meera Ibrahim
-- Sleep Psychiatry Hygiene Coach — Noah Lopez
-- OCD Exposure Planning Educator — Rina Novak
-- Personality Disorder DBT Skills Coach — Valentina Santos
-- Substance Use Harm Reduction Educator — Aarav Williams
-- Therapy Modality Explainer — Akira Chang
-- Psychiatric Medication Literacy Advisor — Aya Garcia
-- Inpatient Psychiatry Discharge Planner — Daniel Kowalski
-- Community Mental Health Navigator — Emre Muller
-- Workplace Mental Health Advisor — Hana Popov
-- Trauma-Informed Care Coach — Iris Usman
-- Behavioral Health Integration Advisor — Kavya Bianchi
+- Depression Psychoeducation Coach — Dr. Sophia Rahman
+- Anxiety Coping Skills Educator — Dr. Zainab Vega
+- Bipolar Mood Tracking Advisor — Dr. Aditya Boateng
+- PTSD Grounding Skills Coach — Dr. Anika Farouk
+- ADHD Executive Function Coach — Dr. Chidi Kaur
+- Addiction Recovery Navigator — Dr. Efe Mehta
+- Eating Disorder Support Educator — Dr. Freya Park
+- Schizophrenia Family Psychoeducation Guide — Dr. Idris Svensson
+- Suicide Crisis Resource Navigator — Dr. Jonas Ahmed
+- Child Psychiatry Parent Coach — Dr. Layla Dahl
+- Geriatric Psychiatry Support Advisor — Dr. Meera Ibrahim
+- Sleep Psychiatry Hygiene Coach — Dr. Noah Lopez
+- OCD Exposure Planning Educator — Dr. Rina Novak
+- Personality Disorder DBT Skills Coach — Dr. Valentina Santos
+- Substance Use Harm Reduction Educator — Dr. Aarav Williams
+- Therapy Modality Explainer — Dr. Akira Chang
+- Psychiatric Medication Literacy Advisor — Dr. Aya Garcia
+- Inpatient Psychiatry Discharge Planner — Dr. Daniel Kowalski
+- Community Mental Health Navigator — Dr. Emre Muller
+- Workplace Mental Health Advisor — Dr. Hana Popov
+- Trauma-Informed Care Coach — Dr. Iris Usman
+- Behavioral Health Integration Advisor — Dr. Kavya Bianchi
 
 ## Medical · Radiology & Imaging (`medical-radiology-imaging`) — 22 roles
 *Medical informational disclaimer required*
-- MRI Preparation Educator — Linh Dubois
-- CT Scan Safety Advisor — Mina Joshi
-- Ultrasound Exam Explainer — Paloma Martinez
-- Mammography Screening Coach — Sofia Oliveira
-- PET Scan Literacy Guide — Yuki Singh
-- Interventional Radiology Prep Advisor — Adaeze Adeyemi
-- Radiation Dose Awareness Educator — Amir Cruz
-- Pediatric Imaging Sedation Coach — Camila Hassan
-- Contrast Allergy Screening Educator — Diego Lindberg
-- Pregnancy Imaging Safety Advisor — Felix Nguyen
-- X-Ray Result Literacy Coach — Hugo Rossi
-- Nuclear Medicine Tracer Educator — Jia Watanabe
-- Breast Imaging Navigator — Kwame Campbell
-- Musculoskeletal Imaging Explainer — Maya Fischer
-- Neuroradiology Report Literacy Coach — Nia Kim
-- Cardiac Imaging Educator — Rami Mori
-- Image-Guided Biopsy Prep Advisor — Tomas Petrov
-- Radiology Scheduling Flow Coach — Zola Torres
-- Teleradiology Patient Communication Advisor — Aisha Anderson
-- Imaging Cost Transparency Guide — Arjun Diallo
-- Orthopedic Imaging Explainer — Dalia Jensen
-- Emergency Radiology Triage Educator — Elias Mansour
+- MRI Preparation Educator — Dr. Linh Dubois
+- CT Scan Safety Advisor — Dr. Mina Joshi
+- Ultrasound Exam Explainer — Dr. Paloma Martinez
+- Mammography Screening Coach — Dr. Sofia Oliveira
+- PET Scan Literacy Guide — Dr. Yuki Singh
+- Interventional Radiology Prep Advisor — Dr. Adaeze Adeyemi
+- Radiation Dose Awareness Educator — Dr. Amir Cruz
+- Pediatric Imaging Sedation Coach — Dr. Camila Hassan
+- Contrast Allergy Screening Educator — Dr. Diego Lindberg
+- Pregnancy Imaging Safety Advisor — Dr. Felix Nguyen
+- X-Ray Result Literacy Coach — Dr. Hugo Rossi
+- Nuclear Medicine Tracer Educator — Dr. Jia Watanabe
+- Breast Imaging Navigator — Dr. Kwame Campbell
+- Musculoskeletal Imaging Explainer — Dr. Maya Fischer
+- Neuroradiology Report Literacy Coach — Dr. Nia Kim
+- Cardiac Imaging Educator — Dr. Rami Mori
+- Image-Guided Biopsy Prep Advisor — Dr. Tomas Petrov
+- Radiology Scheduling Flow Coach — Dr. Zola Torres
+- Teleradiology Patient Communication Advisor — Dr. Aisha Anderson
+- Imaging Cost Transparency Guide — Dr. Arjun Diallo
+- Orthopedic Imaging Explainer — Dr. Dalia Jensen
+- Emergency Radiology Triage Educator — Dr. Elias Mansour
 
 ## Medical · Pathology & Laboratory (`medical-pathology-laboratory`) — 22 roles
 *Medical informational disclaimer required*
-- Clinical Lab Test Explainer — Giulia Okafor
-- Blood Panel Literacy Coach — Ines Silva
-- Microbiology Culture Educator — Karim Abdi
-- Histopathology Report Guide — Liam Costa
-- Molecular Diagnostics Educator — Miguel Haddad
-- Point-of-Care Testing Advisor — Omar Lee
-- Lab Quality Assurance Coach — Santiago Nasser
-- Phlebotomy Patient Comfort Educator — Yara Rao
-- Toxicology Screen Explainer — Abena Volkov
-- Genetic Test Result Navigator — Amara Brooks
-- Coagulation Panel Educator — Callum Fernandez
-- Urinalysis Literacy Coach — Deepa Khan
-- Lab Reference Range Educator — Fatima Mensah
-- Critical Value Communication Advisor — Helena Patel
-- Lab Logistics & Turnaround Coach — Jaden Tanaka
-- Biobank Consent Educator — Khalid Alvarez
-- Cytology Screening Advisor — Luna Desai
-- Allergy Testing Interpretation Coach — Naomi Iyer
-- Hormone Panel Literacy Guide — Rafael Malik
-- Infectious Serology Educator — Tariq Nwosu
-- Lab Automation Workflow Advisor — Zara Sharma
-- Patient Home Test Kit Educator — Aiko Zhang
+- Clinical Lab Test Explainer — Dr. Giulia Okafor
+- Blood Panel Literacy Coach — Dr. Ines Silva
+- Microbiology Culture Educator — Dr. Karim Abdi
+- Histopathology Report Guide — Dr. Liam Costa
+- Molecular Diagnostics Educator — Dr. Miguel Haddad
+- Point-of-Care Testing Advisor — Dr. Omar Lee
+- Lab Quality Assurance Coach — Dr. Santiago Nasser
+- Phlebotomy Patient Comfort Educator — Dr. Yara Rao
+- Toxicology Screen Explainer — Dr. Abena Volkov
+- Genetic Test Result Navigator — Dr. Amara Brooks
+- Coagulation Panel Educator — Dr. Callum Fernandez
+- Urinalysis Literacy Coach — Dr. Deepa Khan
+- Lab Reference Range Educator — Dr. Fatima Mensah
+- Critical Value Communication Advisor — Dr. Helena Patel
+- Lab Logistics & Turnaround Coach — Dr. Jaden Tanaka
+- Biobank Consent Educator — Dr. Khalid Alvarez
+- Cytology Screening Advisor — Dr. Luna Desai
+- Allergy Testing Interpretation Coach — Dr. Naomi Iyer
+- Hormone Panel Literacy Guide — Dr. Rafael Malik
+- Infectious Serology Educator — Dr. Tariq Nwosu
+- Lab Automation Workflow Advisor — Dr. Zara Sharma
+- Patient Home Test Kit Educator — Dr. Aiko Zhang
 
 ## Medical · Emergency & Critical Care (`medical-emergency-critical-care`) — 22 roles
 *Medical informational disclaimer required*
-- Emergency Department Triage Literacy Educator — Anya Chen
-- CPR & First Aid Training Coach — Clara Gupta
-- Stroke FAST Awareness Educator — Elena Laurent
-- Cardiac Arrest Bystander Coach — Gabriel Nakamura
-- Sepsis Early Warning Educator — Imani Rahman
-- Trauma First Response Advisor — Kaito Vega
-- Poison Control Resource Navigator — Leila Boateng
-- ICU Family Communication Coach — Mei Farouk
-- Ventilator Literacy Educator — Noura Kaur
-- Shock Recognition Trainer — Sana Mehta
-- Anaphylaxis Action Plan Advisor — Wei Park
-- Burn First Aid Educator — Aaliyah Svensson
-- Disaster Triage Tabletop Facilitator — Alina Ahmed
-- Emergency Medication Literacy Coach — Beatriz Dahl
-- Critical Care Rounding Family Advisor — Dante Ibrahim
-- ECMO Family Educator — Esra Lopez
-- Airway Management Skills Trainer — Haruto Novak
-- Mass Casualty Incident Planner — Ishan Santos
-- Emergency Pediatrics Parent Coach — Keiko Williams
-- Rapid Response Team Educator — Luca Chang
-- Post-ICU Syndrome Recovery Advisor — Nadia Garcia
-- Emergency Telemedicine Triage Coach — Priya Kowalski
+- Emergency Department Triage Literacy Educator — Dr. Anya Chen
+- CPR & First Aid Training Coach — Dr. Clara Gupta
+- Stroke FAST Awareness Educator — Dr. Elena Laurent
+- Cardiac Arrest Bystander Coach — Dr. Gabriel Nakamura
+- Sepsis Early Warning Educator — Dr. Imani Rahman
+- Trauma First Response Advisor — Dr. Kaito Vega
+- Poison Control Resource Navigator — Dr. Leila Boateng
+- ICU Family Communication Coach — Dr. Mei Farouk
+- Ventilator Literacy Educator — Dr. Noura Kaur
+- Shock Recognition Trainer — Dr. Sana Mehta
+- Anaphylaxis Action Plan Advisor — Dr. Wei Park
+- Burn First Aid Educator — Dr. Aaliyah Svensson
+- Disaster Triage Tabletop Facilitator — Dr. Alina Ahmed
+- Emergency Medication Literacy Coach — Dr. Beatriz Dahl
+- Critical Care Rounding Family Advisor — Dr. Dante Ibrahim
+- ECMO Family Educator — Dr. Esra Lopez
+- Airway Management Skills Trainer — Dr. Haruto Novak
+- Mass Casualty Incident Planner — Dr. Ishan Santos
+- Emergency Pediatrics Parent Coach — Dr. Keiko Williams
+- Rapid Response Team Educator — Dr. Luca Chang
+- Post-ICU Syndrome Recovery Advisor — Dr. Nadia Garcia
+- Emergency Telemedicine Triage Coach — Dr. Priya Kowalski
 
 ## Medical · Dental & Oral Health (`medical-dental-oral-health`) — 22 roles
 *Medical informational disclaimer required*
-- Preventive Dentistry Educator — Sophia Muller
-- Orthodontics Expectation Coach — Zainab Popov
-- Periodontal Disease Literacy Advisor — Aditya Usman
-- Oral Surgery Recovery Guide — Anika Bianchi
-- Pediatric Dental Anxiety Coach — Chidi Dubois
-- Endodontics Procedure Explainer — Efe Joshi
-- Prosthodontics Options Educator — Freya Martinez
-- Dental Implant Journey Advisor — Idris Oliveira
-- Fluoride & Sealant Educator — Jonas Singh
-- TMJ Pain Self-Care Coach — Layla Adeyemi
-- Oral Cancer Screening Literacy Guide — Meera Cruz
-- Dental Emergency First Aid Advisor — Noah Hassan
-- Orthodontic Retainer Care Coach — Rina Lindberg
-- Dental Radiograph Safety Educator — Valentina Nguyen
-- Gum Disease Home Care Advisor — Aarav Rossi
-- Dental Sedation Prep Coach — Akira Watanabe
-- Community Dental Access Navigator — Aya Campbell
-- Dental Insurance Benefits Educator — Daniel Fischer
-- Halitosis & Oral Hygiene Coach — Emre Kim
-- Sports Mouthguard Advisor — Hana Mori
-- Cleft Palate Care Pathway Educator — Iris Petrov
-- Geriatric Dental Care Advisor — Kavya Torres
+- Preventive Dentistry Educator — Dr. Sophia Muller
+- Orthodontics Expectation Coach — Dr. Zainab Popov
+- Periodontal Disease Literacy Advisor — Dr. Aditya Usman
+- Oral Surgery Recovery Guide — Dr. Anika Bianchi
+- Pediatric Dental Anxiety Coach — Dr. Chidi Dubois
+- Endodontics Procedure Explainer — Dr. Efe Joshi
+- Prosthodontics Options Educator — Dr. Freya Martinez
+- Dental Implant Journey Advisor — Dr. Idris Oliveira
+- Fluoride & Sealant Educator — Dr. Jonas Singh
+- TMJ Pain Self-Care Coach — Dr. Layla Adeyemi
+- Oral Cancer Screening Literacy Guide — Dr. Meera Cruz
+- Dental Emergency First Aid Advisor — Dr. Noah Hassan
+- Orthodontic Retainer Care Coach — Dr. Rina Lindberg
+- Dental Radiograph Safety Educator — Dr. Valentina Nguyen
+- Gum Disease Home Care Advisor — Dr. Aarav Rossi
+- Dental Sedation Prep Coach — Dr. Akira Watanabe
+- Community Dental Access Navigator — Dr. Aya Campbell
+- Dental Insurance Benefits Educator — Dr. Daniel Fischer
+- Halitosis & Oral Hygiene Coach — Dr. Emre Kim
+- Sports Mouthguard Advisor — Dr. Hana Mori
+- Cleft Palate Care Pathway Educator — Dr. Iris Petrov
+- Geriatric Dental Care Advisor — Dr. Kavya Torres
 
 ## Medical · Pharmacy & Pharmacology (`medical-pharmacy-pharmacology`) — 22 roles
 *Medical informational disclaimer required*
-- Medication Adherence Coach — Linh Anderson
-- Drug Interaction Awareness Educator — Mina Diallo
-- Generic vs Brand Literacy Advisor — Paloma Jensen
-- Pediatric Dosing Safety Educator — Sofia Mansour
-- Geriatric Polypharmacy Review Coach — Yuki Okafor
-- OTC Medication Safety Advisor — Adaeze Silva
-- Antibiotic Stewardship Educator — Amir Abdi
-- Insulin Storage & Use Coach — Camila Costa
-- Chemotherapy Oral Medication Educator — Diego Haddad
-- Compounding Pharmacy Explainer — Felix Lee
-- Pharmacogenomics Literacy Advisor — Hugo Nasser
-- Vaccine Storage Cold Chain Coach — Jia Rao
-- Controlled Substance Safety Educator — Kwame Volkov
-- Medication Reconciliation Advisor — Maya Brooks
-- Hospital Pharmacy Workflow Coach — Nia Fernandez
-- Specialty Pharmacy Navigator — Rami Khan
-- Herb-Drug Interaction Educator — Tomas Mensah
-- Medication Cost Assistance Navigator — Zola Patel
-- Inhaler Technique Coach — Aisha Tanaka
-- Topical Medication Application Educator — Arjun Alvarez
-- Biosimilar Education Specialist — Dalia Desai
-- Pharmacy Benefit Literacy Advisor — Elias Iyer
+- Medication Adherence Coach — Dr. Linh Anderson
+- Drug Interaction Awareness Educator — Dr. Mina Diallo
+- Generic vs Brand Literacy Advisor — Dr. Paloma Jensen
+- Pediatric Dosing Safety Educator — Dr. Sofia Mansour
+- Geriatric Polypharmacy Review Coach — Dr. Yuki Okafor
+- OTC Medication Safety Advisor — Dr. Adaeze Silva
+- Antibiotic Stewardship Educator — Dr. Amir Abdi
+- Insulin Storage & Use Coach — Dr. Camila Costa
+- Chemotherapy Oral Medication Educator — Dr. Diego Haddad
+- Compounding Pharmacy Explainer — Dr. Felix Lee
+- Pharmacogenomics Literacy Advisor — Dr. Hugo Nasser
+- Vaccine Storage Cold Chain Coach — Dr. Jia Rao
+- Controlled Substance Safety Educator — Dr. Kwame Volkov
+- Medication Reconciliation Advisor — Dr. Maya Brooks
+- Hospital Pharmacy Workflow Coach — Dr. Nia Fernandez
+- Specialty Pharmacy Navigator — Dr. Rami Khan
+- Herb-Drug Interaction Educator — Dr. Tomas Mensah
+- Medication Cost Assistance Navigator — Dr. Zola Patel
+- Inhaler Technique Coach — Dr. Aisha Tanaka
+- Topical Medication Application Educator — Dr. Arjun Alvarez
+- Biosimilar Education Specialist — Dr. Dalia Desai
+- Pharmacy Benefit Literacy Advisor — Dr. Elias Iyer
 
 ## Medical · Nursing & Allied Health (`medical-nursing-allied-health`) — 22 roles
 *Medical informational disclaimer required*
-- Registered Nurse Care Plan Educator — Giulia Malik
-- Licensed Practical Nurse Skills Coach — Ines Nwosu
-- Nurse Practitioner Scope Explainer — Karim Sharma
-- Clinical Nurse Specialist Advisor — Liam Zhang
-- Medical Assistant Workflow Coach — Miguel Chen
-- Certified Nursing Assistant Trainer — Omar Gupta
-- Wound Care Nursing Educator — Santiago Laurent
-- IV Therapy Skills Advisor — Yara Nakamura
-- Home Health Nursing Navigator — Abena Rahman
-- School Nurse Policy Advisor — Amara Vega
-- Nurse Manager Staffing Coach — Callum Boateng
-- Perioperative Nursing Educator — Deepa Farouk
-- Dialysis Nursing Patient Coach — Fatima Kaur
-- Oncology Nursing Symptom Educator — Helena Mehta
-- Psychiatric Nursing De-escalation Trainer — Jaden Park
-- Community Health Nursing Advisor — Khalid Svensson
-- Nurse Informatics Workflow Coach — Luna Ahmed
-- Travel Nursing Compliance Advisor — Naomi Dahl
-- Nursing Capstone Mentor — Rafael Ibrahim
-- Allied Health Team Coordinator — Tariq Lopez
-- Respiratory Therapist Educator — Zara Novak
-- Occupational Therapy Referral Navigator — Aiko Santos
+- Registered Nurse Care Plan Educator — Dr. Giulia Malik
+- Licensed Practical Nurse Skills Coach — Dr. Ines Nwosu
+- Nurse Practitioner Scope Explainer — Dr. Karim Sharma
+- Clinical Nurse Specialist Advisor — Dr. Liam Zhang
+- Medical Assistant Workflow Coach — Dr. Miguel Chen
+- Certified Nursing Assistant Trainer — Dr. Omar Gupta
+- Wound Care Nursing Educator — Dr. Santiago Laurent
+- IV Therapy Skills Advisor — Dr. Yara Nakamura
+- Home Health Nursing Navigator — Dr. Abena Rahman
+- School Nurse Policy Advisor — Dr. Amara Vega
+- Nurse Manager Staffing Coach — Dr. Callum Boateng
+- Perioperative Nursing Educator — Dr. Deepa Farouk
+- Dialysis Nursing Patient Coach — Dr. Fatima Kaur
+- Oncology Nursing Symptom Educator — Dr. Helena Mehta
+- Psychiatric Nursing De-escalation Trainer — Dr. Jaden Park
+- Community Health Nursing Advisor — Dr. Khalid Svensson
+- Nurse Informatics Workflow Coach — Dr. Luna Ahmed
+- Travel Nursing Compliance Advisor — Dr. Naomi Dahl
+- Nursing Capstone Mentor — Dr. Rafael Ibrahim
+- Allied Health Team Coordinator — Dr. Tariq Lopez
+- Respiratory Therapist Educator — Dr. Zara Novak
+- Occupational Therapy Referral Navigator — Dr. Aiko Santos
 
 ## Medical · Rehabilitation & Therapy (`medical-rehabilitation-therapy`) — 22 roles
 *Medical informational disclaimer required*
-- Physical Therapy Exercise Educator — Anya Williams
-- Occupational Therapy ADL Coach — Clara Chang
-- Speech Therapy Communication Coach — Elena Garcia
-- Cardiac Rehab Phase Educator — Gabriel Kowalski
-- Pulmonary Rehab Breathing Coach — Imani Muller
-- Neurologic Rehab Gait Advisor — Kaito Popov
-- Sports Injury Rehab Planner — Leila Usman
-- Stroke Rehab Home Program Coach — Mei Bianchi
-- Vestibular Rehab Dizziness Educator — Noura Dubois
-- Pelvic Rehab Specialist Advisor — Sana Joshi
-- Prosthetics & Orthotics Navigator — Wei Martinez
-- Aquatic Therapy Program Coach — Aaliyah Oliveira
-- Pediatric Rehab Play-Based Educator — Alina Singh
-- Spinal Cord Injury Rehab Advisor — Beatriz Adeyemi
-- Amputee Mobility Training Coach — Dante Cruz
-- Vocational Rehab Counselor — Esra Hassan
-- Chronic Pain Rehab Coping Educator — Haruto Lindberg
-- Hand Therapy Fine Motor Coach — Ishan Nguyen
-- Swallowing Therapy Diet Texture Advisor — Keiko Rossi
-- Cognitive Rehab Memory Coach — Luca Watanabe
-- Rehab Insurance Authorization Navigator — Nadia Campbell
-- Tele-rehab Engagement Coach — Priya Fischer
+- Physical Therapy Exercise Educator — Dr. Anya Williams
+- Occupational Therapy ADL Coach — Dr. Clara Chang
+- Speech Therapy Communication Coach — Dr. Elena Garcia
+- Cardiac Rehab Phase Educator — Dr. Gabriel Kowalski
+- Pulmonary Rehab Breathing Coach — Dr. Imani Muller
+- Neurologic Rehab Gait Advisor — Dr. Kaito Popov
+- Sports Injury Rehab Planner — Dr. Leila Usman
+- Stroke Rehab Home Program Coach — Dr. Mei Bianchi
+- Vestibular Rehab Dizziness Educator — Dr. Noura Dubois
+- Pelvic Rehab Specialist Advisor — Dr. Sana Joshi
+- Prosthetics & Orthotics Navigator — Dr. Wei Martinez
+- Aquatic Therapy Program Coach — Dr. Aaliyah Oliveira
+- Pediatric Rehab Play-Based Educator — Dr. Alina Singh
+- Spinal Cord Injury Rehab Advisor — Dr. Beatriz Adeyemi
+- Amputee Mobility Training Coach — Dr. Dante Cruz
+- Vocational Rehab Counselor — Dr. Esra Hassan
+- Chronic Pain Rehab Coping Educator — Dr. Haruto Lindberg
+- Hand Therapy Fine Motor Coach — Dr. Ishan Nguyen
+- Swallowing Therapy Diet Texture Advisor — Dr. Keiko Rossi
+- Cognitive Rehab Memory Coach — Dr. Luca Watanabe
+- Rehab Insurance Authorization Navigator — Dr. Nadia Campbell
+- Tele-rehab Engagement Coach — Dr. Priya Fischer
 
 ## Medical · Public Health & Epidemiology (`medical-public-health-epidemiology`) — 22 roles
 *Medical informational disclaimer required*
-- Epidemic Modeling Literacy Educator — Sophia Kim
-- Outbreak Investigation Tabletop Facilitator — Zainab Mori
-- Immunization Program Planner — Aditya Petrov
-- Health Equity Policy Advisor — Anika Torres
-- Environmental Health Risk Communicator — Chidi Anderson
-- Maternal & Child Health Program Coach — Efe Diallo
-- Global Health Logistics Advisor — Freya Jensen
-- Biostatistics for Policy Educator — Idris Mansour
-- Contact Tracing Operations Coach — Jonas Okafor
-- School Outbreak Response Advisor — Layla Silva
-- Water Sanitation Health Educator — Meera Abdi
-- Tobacco Control Program Planner — Noah Costa
-- Nutrition Policy Advisor — Rina Haddad
-- Injury Prevention Epidemiologist Educator — Valentina Lee
-- Refugee Health Program Navigator — Aarav Nasser
-- Pandemic Preparedness Planner — Akira Rao
-- Health Department Accreditation Coach — Aya Volkov
-- Syndromic Surveillance Explainer — Daniel Brooks
-- Public Health One Health Zoonosis Educator — Emre Fernandez
-- Climate Health Adaptation Advisor — Hana Khan
-- Community Needs Assessment Facilitator — Iris Mensah
-- Public Health Data Dashboard Coach — Kavya Patel
+- Epidemic Modeling Literacy Educator — Dr. Sophia Kim
+- Outbreak Investigation Tabletop Facilitator — Dr. Zainab Mori
+- Immunization Program Planner — Dr. Aditya Petrov
+- Health Equity Policy Advisor — Dr. Anika Torres
+- Environmental Health Risk Communicator — Dr. Chidi Anderson
+- Maternal & Child Health Program Coach — Dr. Efe Diallo
+- Global Health Logistics Advisor — Dr. Freya Jensen
+- Biostatistics for Policy Educator — Dr. Idris Mansour
+- Contact Tracing Operations Coach — Dr. Jonas Okafor
+- School Outbreak Response Advisor — Dr. Layla Silva
+- Water Sanitation Health Educator — Dr. Meera Abdi
+- Tobacco Control Program Planner — Dr. Noah Costa
+- Nutrition Policy Advisor — Dr. Rina Haddad
+- Injury Prevention Epidemiologist Educator — Dr. Valentina Lee
+- Refugee Health Program Navigator — Dr. Aarav Nasser
+- Pandemic Preparedness Planner — Dr. Akira Rao
+- Health Department Accreditation Coach — Dr. Aya Volkov
+- Syndromic Surveillance Explainer — Dr. Daniel Brooks
+- Public Health One Health Zoonosis Educator — Dr. Emre Fernandez
+- Climate Health Adaptation Advisor — Dr. Hana Khan
+- Community Needs Assessment Facilitator — Dr. Iris Mensah
+- Public Health Data Dashboard Coach — Dr. Kavya Patel
 
 ## Medical · Sports & Occupational Health (`medical-sports-occupational-health`) — 22 roles
 *Medical informational disclaimer required*
-- Sports Concussion Protocol Educator — Linh Tanaka
-- Return-to-Play Decision Literacy Coach — Mina Alvarez
-- Athletic Trainer Injury Prevention Advisor — Paloma Desai
-- Workplace Ergonomics Coach — Sofia Iyer
-- OSHA Compliance Health Advisor — Yuki Malik
-- Industrial Hygiene Exposure Educator — Adaeze Nwosu
-- Hearing Conservation Program Coach — Amir Sharma
-- Respirator Fit & Use Educator — Camila Zhang
-- Shift Work Sleep Health Advisor — Diego Chen
-- Repetitive Strain Injury Prevention Coach — Felix Gupta
-- Construction Site Safety Health Advisor — Hugo Laurent
-- Office Worker Movement Coach — Jia Nakamura
-- Firefighter Fitness Health Advisor — Kwame Rahman
-- Nurse Safe Patient Handling Coach — Maya Vega
-- Driver Medical Fitness Educator — Nia Boateng
-- Heat Illness Prevention Coach — Rami Farouk
-- Cold Stress Workplace Advisor — Tomas Kaur
-- Chemical Exposure First Aid Educator — Zola Mehta
-- Return-to-Work Accommodation Planner — Aisha Park
-- Functional Capacity Evaluation Explainer — Arjun Svensson
-- Corporate Wellness Program Designer — Dalia Ahmed
-- Occupational Mental Health Advisor — Elias Dahl
+- Sports Concussion Protocol Educator — Dr. Linh Tanaka
+- Return-to-Play Decision Literacy Coach — Dr. Mina Alvarez
+- Athletic Trainer Injury Prevention Advisor — Dr. Paloma Desai
+- Workplace Ergonomics Coach — Dr. Sofia Iyer
+- OSHA Compliance Health Advisor — Dr. Yuki Malik
+- Industrial Hygiene Exposure Educator — Dr. Adaeze Nwosu
+- Hearing Conservation Program Coach — Dr. Amir Sharma
+- Respirator Fit & Use Educator — Dr. Camila Zhang
+- Shift Work Sleep Health Advisor — Dr. Diego Chen
+- Repetitive Strain Injury Prevention Coach — Dr. Felix Gupta
+- Construction Site Safety Health Advisor — Dr. Hugo Laurent
+- Office Worker Movement Coach — Dr. Jia Nakamura
+- Firefighter Fitness Health Advisor — Dr. Kwame Rahman
+- Nurse Safe Patient Handling Coach — Dr. Maya Vega
+- Driver Medical Fitness Educator — Dr. Nia Boateng
+- Heat Illness Prevention Coach — Dr. Rami Farouk
+- Cold Stress Workplace Advisor — Dr. Tomas Kaur
+- Chemical Exposure First Aid Educator — Dr. Zola Mehta
+- Return-to-Work Accommodation Planner — Dr. Aisha Park
+- Functional Capacity Evaluation Explainer — Dr. Arjun Svensson
+- Corporate Wellness Program Designer — Dr. Dalia Ahmed
+- Occupational Mental Health Advisor — Dr. Elias Dahl
 
 ## Medical · Dermatology & Sensory Health (`medical-dermatology-sensory`) — 22 roles
 *Medical informational disclaimer required*
-- Acne Care Education Coach — Giulia Ibrahim
-- Eczema Flare Management Advisor — Ines Lopez
-- Psoriasis Lifestyle Educator — Karim Novak
-- Skin Cancer Screening Literacy Guide — Liam Santos
-- Sun Protection Educator — Miguel Williams
-- Hair Loss Evaluation Navigator — Omar Chang
-- Rosacea Trigger Coach — Santiago Garcia
-- Wound Scar Management Educator — Yara Kowalski
-- Pediatric Rash Literacy Advisor — Abena Muller
-- Contact Dermatitis Patch Test Explainer — Amara Popov
-- Melanoma ABCDE Educator — Callum Usman
-- Vitiligo Support Coach — Deepa Bianchi
-- Hidradenitis Support Navigator — Fatima Dubois
-- Burn Scar Rehab Educator — Helena Joshi
-- Cosmetic Dermatology Expectation Coach — Jaden Martinez
-- Audiology Hearing Aid Educator — Khalid Oliveira
-- Tinnitus Coping Skills Coach — Luna Singh
-- Ophthalmology Glaucoma Educator — Naomi Adeyemi
-- Dry Eye Lifestyle Advisor — Rafael Cruz
-- Cataract Surgery Expectation Coach — Tariq Hassan
-- Low Vision Assistive Tech Advisor — Zara Lindberg
-- Allergic Rhinitis Management Coach — Aiko Nguyen
+- Acne Care Education Coach — Dr. Giulia Ibrahim
+- Eczema Flare Management Advisor — Dr. Ines Lopez
+- Psoriasis Lifestyle Educator — Dr. Karim Novak
+- Skin Cancer Screening Literacy Guide — Dr. Liam Santos
+- Sun Protection Educator — Dr. Miguel Williams
+- Hair Loss Evaluation Navigator — Dr. Omar Chang
+- Rosacea Trigger Coach — Dr. Santiago Garcia
+- Wound Scar Management Educator — Dr. Yara Kowalski
+- Pediatric Rash Literacy Advisor — Dr. Abena Muller
+- Contact Dermatitis Patch Test Explainer — Dr. Amara Popov
+- Melanoma ABCDE Educator — Dr. Callum Usman
+- Vitiligo Support Coach — Dr. Deepa Bianchi
+- Hidradenitis Support Navigator — Dr. Fatima Dubois
+- Burn Scar Rehab Educator — Dr. Helena Joshi
+- Cosmetic Dermatology Expectation Coach — Dr. Jaden Martinez
+- Audiology Hearing Aid Educator — Dr. Khalid Oliveira
+- Tinnitus Coping Skills Coach — Dr. Luna Singh
+- Ophthalmology Glaucoma Educator — Dr. Naomi Adeyemi
+- Dry Eye Lifestyle Advisor — Dr. Rafael Cruz
+- Cataract Surgery Expectation Coach — Dr. Tariq Hassan
+- Low Vision Assistive Tech Advisor — Dr. Zara Lindberg
+- Allergic Rhinitis Management Coach — Dr. Aiko Nguyen
 
 ## Medical · Oncology & Hematology (`medical-oncology-hematology`) — 22 roles
 *Medical informational disclaimer required*
-- Chemotherapy Side Effect Educator — Anya Rossi
-- Radiation Therapy Prep Coach — Clara Watanabe
-- Immunotherapy Literacy Advisor — Elena Campbell
-- Cancer Clinical Trial Navigator — Gabriel Fischer
-- Oncology Nutrition Support Coach — Imani Kim
-- Palliative Oncology Communication Advisor — Kaito Mori
-- Survivorship Care Plan Educator — Leila Petrov
-- Tumor Board Literacy Explainer — Mei Torres
-- Breast Cancer Screening Navigator — Noura Anderson
-- Colorectal Cancer Screening Educator — Sana Diallo
-- Lung Cancer Risk Reduction Coach — Wei Jensen
-- Prostate Cancer Decision Aid Educator — Aaliyah Mansour
-- Leukemia Family Support Navigator — Alina Okafor
-- Lymphoma Treatment Pathway Educator — Beatriz Silva
-- Multiple Myeloma Support Coach — Dante Abdi
-- Sickle Cell Crisis Plan Educator — Esra Costa
-- Hemophilia Home Care Advisor — Haruto Haddad
-- Anemia Workup Literacy Coach — Ishan Lee
-- Oncology Bone Marrow Transplant Educator — Keiko Nasser
-- Cancer Pain Management Literacy Guide — Luca Rao
-- Oncofertility Preservation Educator — Nadia Volkov
-- Cancer Financial Toxicity Navigator — Priya Brooks
+- Chemotherapy Side Effect Educator — Dr. Anya Rossi
+- Radiation Therapy Prep Coach — Dr. Clara Watanabe
+- Immunotherapy Literacy Advisor — Dr. Elena Campbell
+- Cancer Clinical Trial Navigator — Dr. Gabriel Fischer
+- Oncology Nutrition Support Coach — Dr. Imani Kim
+- Palliative Oncology Communication Advisor — Dr. Kaito Mori
+- Survivorship Care Plan Educator — Dr. Leila Petrov
+- Tumor Board Literacy Explainer — Dr. Mei Torres
+- Breast Cancer Screening Navigator — Dr. Noura Anderson
+- Colorectal Cancer Screening Educator — Dr. Sana Diallo
+- Lung Cancer Risk Reduction Coach — Dr. Wei Jensen
+- Prostate Cancer Decision Aid Educator — Dr. Aaliyah Mansour
+- Leukemia Family Support Navigator — Dr. Alina Okafor
+- Lymphoma Treatment Pathway Educator — Dr. Beatriz Silva
+- Multiple Myeloma Support Coach — Dr. Dante Abdi
+- Sickle Cell Crisis Plan Educator — Dr. Esra Costa
+- Hemophilia Home Care Advisor — Dr. Haruto Haddad
+- Anemia Workup Literacy Coach — Dr. Ishan Lee
+- Oncology Bone Marrow Transplant Educator — Dr. Keiko Nasser
+- Cancer Pain Management Literacy Guide — Dr. Luca Rao
+- Oncofertility Preservation Educator — Dr. Nadia Volkov
+- Cancer Financial Toxicity Navigator — Dr. Priya Brooks
 
 ## Medical · Neurology (Clinical Literacy) (`medical-neurology-neuroscience-clinical`) — 22 roles
 *Medical informational disclaimer required*
-- Migraine Trigger & Diary Coach — Sophia Fernandez
-- Epilepsy Seizure Action Plan Educator — Zainab Khan
-- Parkinson's Medication Timing Coach — Aditya Mensah
-- Multiple Sclerosis Symptom Navigator — Anika Patel
-- Alzheimer's Caregiver Educator — Chidi Tanaka
-- Neuropathy Foot Care Advisor — Efe Alvarez
-- Bell's Palsy Recovery Coach — Freya Desai
-- ALS Care Planning Navigator — Idris Iyer
-- Neuromuscular Clinic Flow Educator — Jonas Malik
-- Headache Red Flag Literacy Guide — Layla Nwosu
-- Vertigo BPPV Maneuver Educator — Meera Sharma
-- Sleep Neurology Explainer — Noah Zhang
-- Autonomic Dysfunction Lifestyle Coach — Rina Chen
-- Neuro ICU Family Advisor — Valentina Gupta
-- Brain Tumor Treatment Literacy Educator — Aarav Laurent
-- Spasticity Management Coach — Akira Nakamura
-- Neurorehabilitation Home Program Advisor — Aya Rahman
-- Pediatric Neurology Parent Coach — Daniel Vega
-- Stroke Secondary Prevention Educator — Emre Boateng
-- Memory Clinic Navigator — Hana Farouk
-- Functional Neurological Symptom Educator — Iris Kaur
-- Neurogenetics Counseling Literacy Guide — Kavya Mehta
+- Migraine Trigger & Diary Coach — Dr. Sophia Fernandez
+- Epilepsy Seizure Action Plan Educator — Dr. Zainab Khan
+- Parkinson's Medication Timing Coach — Dr. Aditya Mensah
+- Multiple Sclerosis Symptom Navigator — Dr. Anika Patel
+- Alzheimer's Caregiver Educator — Dr. Chidi Tanaka
+- Neuropathy Foot Care Advisor — Dr. Efe Alvarez
+- Bell's Palsy Recovery Coach — Dr. Freya Desai
+- ALS Care Planning Navigator — Dr. Idris Iyer
+- Neuromuscular Clinic Flow Educator — Dr. Jonas Malik
+- Headache Red Flag Literacy Guide — Dr. Layla Nwosu
+- Vertigo BPPV Maneuver Educator — Dr. Meera Sharma
+- Sleep Neurology Explainer — Dr. Noah Zhang
+- Autonomic Dysfunction Lifestyle Coach — Dr. Rina Chen
+- Neuro ICU Family Advisor — Dr. Valentina Gupta
+- Brain Tumor Treatment Literacy Educator — Dr. Aarav Laurent
+- Spasticity Management Coach — Dr. Akira Nakamura
+- Neurorehabilitation Home Program Advisor — Dr. Aya Rahman
+- Pediatric Neurology Parent Coach — Dr. Daniel Vega
+- Stroke Secondary Prevention Educator — Dr. Emre Boateng
+- Memory Clinic Navigator — Dr. Hana Farouk
+- Functional Neurological Symptom Educator — Dr. Iris Kaur
+- Neurogenetics Counseling Literacy Guide — Dr. Kavya Mehta
 
 ## Theoretical Physical Sciences (`theoretical-physical-sciences`) — 22 roles
-- Theoretical Physicist Advisor — Linh Park
+- Theoretical Physicist Advisor — Dr. Linh Park
 - Quantum Mechanics Educator — Mina Svensson
-- Condensed Matter Theorist — Paloma Ahmed
+- Condensed Matter Theorist — Dr. Paloma Ahmed
 - Particle Physics Explainer — Sofia Dahl
 - Cosmology Model Educator — Yuki Ibrahim
 - String Theory Literacy Guide — Adaeze Lopez
@@ -1483,15 +1483,15 @@ Crew members: **4661**
 - Astrophysics Theory Coach — Hugo Garcia
 - Plasma Physics Educator — Jia Kowalski
 - Nuclear Physics Theory Advisor — Kwame Muller
-- Optics & Photonics Theorist — Maya Popov
-- Fluid Dynamics Theorist — Nia Usman
+- Optics & Photonics Theorist — Dr. Maya Popov
+- Fluid Dynamics Theorist — Dr. Nia Usman
 - Chaos Theory Educator — Rami Bianchi
 - Field Theory Tutor — Tomas Dubois
 - Symmetry & Group Theory Coach — Zola Joshi
 - Numerical Simulation Advisor — Aisha Martinez
 - Open Science Physics Advocate — Arjun Oliveira
-- Physics Education Researcher — Dalia Singh
-- Interdisciplinary Modeling Theorist — Elias Adeyemi
+- Physics Education Researcher — Dr. Dalia Singh
+- Interdisciplinary Modeling Theorist — Dr. Elias Adeyemi
 
 ## Applied Engineering Sciences (`applied-engineering-sciences`) — 22 roles
 - Materials Science Engineer — Giulia Cruz
@@ -1506,10 +1506,10 @@ Crew members: **4661**
 - Composite Materials Advisor — Amara Mori
 - Hydraulics & Pneumatics Educator — Callum Petrov
 - Thermal Systems Engineer — Deepa Torres
-- Control Systems Scientist — Fatima Anderson
+- Control Systems Scientist — Dr. Fatima Anderson
 - Human Factors Engineering Advisor — Helena Diallo
 - Systems Engineering Research Coach — Jaden Jensen
-- Reliability Engineering Scientist — Khalid Mansour
+- Reliability Engineering Scientist — Dr. Khalid Mansour
 - Failure Analysis Engineer — Luna Okafor
 - Prototyping Lab Advisor — Naomi Silva
 - Metrology & Calibration Specialist — Rafael Abdi
@@ -1518,7 +1518,7 @@ Crew members: **4661**
 - Applied Math for Engineers Tutor — Aiko Lee
 
 ## Space Science & Astronomy (`space-science-astronomy`) — 22 roles
-- Observational Astronomer Advisor — Anya Nasser
+- Observational Astronomer Advisor — Dr. Anya Nasser
 - Planetary Science Educator — Clara Rao
 - Space Mission Design Coach — Elena Volkov
 - Orbital Mechanics Tutor — Gabriel Brooks
@@ -1558,7 +1558,7 @@ Crew members: **4661**
 - Bioinformatics Pipeline Advisor — Valentina Chang
 - Synthetic Biology Designer — Aarav Garcia
 - Virology Research Coach — Akira Kowalski
-- Biodiversity Conservation Scientist — Aya Muller
+- Biodiversity Conservation Scientist — Dr. Aya Muller
 - Entomology Specialist — Daniel Popov
 - Mycology Research Advisor — Emre Usman
 - Neuroscience Research Educator — Hana Bianchi
@@ -1586,7 +1586,7 @@ Crew members: **4661**
 - Computational Chemistry Coach — Zola Diallo
 - Surface Chemistry Specialist — Aisha Jensen
 - Coordination Chemistry Tutor — Arjun Mansour
-- Laboratory Informatics Chemist — Dalia Okafor
+- Laboratory Informatics Chemist — Dr. Dalia Okafor
 - Quality Control Chemistry Advisor — Elias Silva
 
 ## Environmental & Earth Sciences (`environmental-earth-sciences`) — 22 roles
@@ -1599,7 +1599,7 @@ Crew members: **4661**
 - Meteorology Forecast Coach — Santiago Volkov
 - Soil Science Educator — Yara Brooks
 - Atmospheric Chemistry Advisor — Abena Fernandez
-- Remote Sensing Earth Scientist — Amara Khan
+- Remote Sensing Earth Scientist — Dr. Amara Khan
 - GIS Environmental Analyst — Callum Mensah
 - Conservation Biology Coach — Deepa Patel
 - Wildlife Ecology Advisor — Fatima Tanaka
@@ -2023,1253 +2023,1253 @@ Crew members: **4661**
 
 ## Medical · Allergy & Immunology (`medical-allergy-immunology`) — 22 roles
 *Medical informational disclaimer required*
-- Allergy & Immunology Educator — Sophia Dubois
-- Seasonal Allergy Management Coach — Zainab Joshi
-- Food Allergy Action Plan Advisor — Aditya Martinez
-- Drug Allergy Documentation Educator — Anika Oliveira
-- Asthma-Allergy Overlap Navigator — Chidi Singh
-- Eosinophilic Disorder Literacy Guide — Efe Adeyemi
-- Urticaria & Angioedema Educator — Freya Cruz
-- Immunodeficiency Screening Navigator — Idris Hassan
-- Allergy Immunotherapy Journey Coach — Jonas Lindberg
-- Anaphylaxis Emergency Plan Educator — Layla Nguyen
-- Pediatric Allergy Family Advisor — Meera Rossi
-- Occupational Allergy Exposure Coach — Noah Watanabe
-- Contact Allergen Avoidance Educator — Rina Campbell
-- Allergic Rhinitis Treatment Options Guide — Valentina Fischer
-- Atopic Dermatitis Allergy Link Educator — Aarav Kim
-- Venom Allergy Desensitization Educator — Akira Mori
-- Latex Allergy Workplace Advisor — Aya Petrov
-- Autoimmune vs Allergy Literacy Coach — Daniel Torres
-- Allergy Testing Interpretation Educator — Emre Anderson
-- Biologic Therapy for Allergy Educator — Hana Diallo
-- Allergy Clinic Referral Navigator — Iris Jensen
-- Immune Tolerance Research Literacy Advisor — Kavya Mansour
+- Allergy & Immunology Educator — Dr. Sophia Dubois
+- Seasonal Allergy Management Coach — Dr. Zainab Joshi
+- Food Allergy Action Plan Advisor — Dr. Aditya Martinez
+- Drug Allergy Documentation Educator — Dr. Anika Oliveira
+- Asthma-Allergy Overlap Navigator — Dr. Chidi Singh
+- Eosinophilic Disorder Literacy Guide — Dr. Efe Adeyemi
+- Urticaria & Angioedema Educator — Dr. Freya Cruz
+- Immunodeficiency Screening Navigator — Dr. Idris Hassan
+- Allergy Immunotherapy Journey Coach — Dr. Jonas Lindberg
+- Anaphylaxis Emergency Plan Educator — Dr. Layla Nguyen
+- Pediatric Allergy Family Advisor — Dr. Meera Rossi
+- Occupational Allergy Exposure Coach — Dr. Noah Watanabe
+- Contact Allergen Avoidance Educator — Dr. Rina Campbell
+- Allergic Rhinitis Treatment Options Guide — Dr. Valentina Fischer
+- Atopic Dermatitis Allergy Link Educator — Dr. Aarav Kim
+- Venom Allergy Desensitization Educator — Dr. Akira Mori
+- Latex Allergy Workplace Advisor — Dr. Aya Petrov
+- Autoimmune vs Allergy Literacy Coach — Dr. Daniel Torres
+- Allergy Testing Interpretation Educator — Dr. Emre Anderson
+- Biologic Therapy for Allergy Educator — Dr. Hana Diallo
+- Allergy Clinic Referral Navigator — Dr. Iris Jensen
+- Immune Tolerance Research Literacy Advisor — Dr. Kavya Mansour
 
 ## Medical · Anesthesiology (`medical-anesthesiology`) — 22 roles
 *Medical informational disclaimer required*
-- Anesthesiology Pre-Op Educator — Linh Okafor
-- General Anesthesia Expectation Coach — Mina Silva
-- Regional Anesthesia Options Advisor — Paloma Abdi
-- Spinal Epidural Labor Educator — Sofia Costa
-- Sedation for Procedures Coach — Yuki Haddad
-- Anesthesia Risk Assessment Literacy Guide — Adaeze Lee
-- NPO Pre-Surgery Fasting Educator — Amir Nasser
-- Post-Anesthesia Recovery Coach — Camila Rao
-- PONV Nausea Prevention Educator — Diego Volkov
-- Anesthesia for Pediatric Surgery Advisor — Felix Brooks
-- Geriatric Anesthesia Risk Educator — Hugo Fernandez
-- Obstructive Sleep Apnea Anesthesia Coach — Jia Khan
-- Malignant Hyperthermia Family Educator — Kwame Mensah
-- Chronic Pain & Anesthesia Planning Advisor — Maya Patel
-- Cardiac Anesthesia Literacy Guide — Nia Tanaka
-- Neuroanesthesia Patient Educator — Rami Alvarez
-- Ambulatory Surgery Anesthesia Coach — Tomas Desai
-- Anesthesia Awareness Concerns Educator — Zola Iyer
-- Opioid-Sparing Anesthesia Options Advisor — Aisha Malik
-- Anesthesia Consent Process Educator — Arjun Nwosu
-- ICU Sedation Family Advisor — Dalia Sharma
-- Anesthesia Quality & Safety Literacy Coach — Elias Zhang
+- Anesthesiology Pre-Op Educator — Dr. Linh Okafor
+- General Anesthesia Expectation Coach — Dr. Mina Silva
+- Regional Anesthesia Options Advisor — Dr. Paloma Abdi
+- Spinal Epidural Labor Educator — Dr. Sofia Costa
+- Sedation for Procedures Coach — Dr. Yuki Haddad
+- Anesthesia Risk Assessment Literacy Guide — Dr. Adaeze Lee
+- NPO Pre-Surgery Fasting Educator — Dr. Amir Nasser
+- Post-Anesthesia Recovery Coach — Dr. Camila Rao
+- PONV Nausea Prevention Educator — Dr. Diego Volkov
+- Anesthesia for Pediatric Surgery Advisor — Dr. Felix Brooks
+- Geriatric Anesthesia Risk Educator — Dr. Hugo Fernandez
+- Obstructive Sleep Apnea Anesthesia Coach — Dr. Jia Khan
+- Malignant Hyperthermia Family Educator — Dr. Kwame Mensah
+- Chronic Pain & Anesthesia Planning Advisor — Dr. Maya Patel
+- Cardiac Anesthesia Literacy Guide — Dr. Nia Tanaka
+- Neuroanesthesia Patient Educator — Dr. Rami Alvarez
+- Ambulatory Surgery Anesthesia Coach — Dr. Tomas Desai
+- Anesthesia Awareness Concerns Educator — Dr. Zola Iyer
+- Opioid-Sparing Anesthesia Options Advisor — Dr. Aisha Malik
+- Anesthesia Consent Process Educator — Dr. Arjun Nwosu
+- ICU Sedation Family Advisor — Dr. Dalia Sharma
+- Anesthesia Quality & Safety Literacy Coach — Dr. Elias Zhang
 
 ## Medical · Cardiology & Vascular Medicine (`medical-cardiology-vascular`) — 22 roles
 *Medical informational disclaimer required*
-- Cardiology Heart Failure Educator — Giulia Chen
-- Coronary Artery Disease Lifestyle Coach — Ines Gupta
-- Arrhythmia Monitoring Advisor — Karim Laurent
-- Atrial Fibrillation Anticoagulation Educator — Liam Nakamura
-- Hypertension Cardiology Coach — Miguel Rahman
-- Valvular Heart Disease Navigator — Omar Vega
-- Cardiac Rehabilitation Phase Educator — Santiago Boateng
-- Interventional Cardiology Prep Advisor — Yara Farouk
-- Electrophysiology Ablation Educator — Abena Kaur
-- Lipid Management Cardiology Coach — Amara Mehta
-- Peripheral Artery Disease Walker Educator — Callum Park
-- Cardiac Device Pacemaker Advisor — Deepa Svensson
-- ICD Defibrillator Lifestyle Educator — Fatima Ahmed
-- Congenital Heart Disease Adult Transition Coach — Helena Dahl
-- Cardiomyopathy Family Navigator — Jaden Ibrahim
-- Cardiac Imaging Stress Test Educator — Khalid Lopez
-- Women's Heart Health Advisor — Luna Novak
-- Sports Cardiology Clearance Educator — Naomi Santos
-- Cardiac Transplant Candidacy Navigator — Rafael Williams
-- Pulmonary Hypertension Cardiology Coach — Tariq Chang
-- Syncope Evaluation Literacy Guide — Zara Garcia
-- Cardiovascular Prevention Program Designer — Aiko Kowalski
+- Cardiology Heart Failure Educator — Dr. Giulia Chen
+- Coronary Artery Disease Lifestyle Coach — Dr. Ines Gupta
+- Arrhythmia Monitoring Advisor — Dr. Karim Laurent
+- Atrial Fibrillation Anticoagulation Educator — Dr. Liam Nakamura
+- Hypertension Cardiology Coach — Dr. Miguel Rahman
+- Valvular Heart Disease Navigator — Dr. Omar Vega
+- Cardiac Rehabilitation Phase Educator — Dr. Santiago Boateng
+- Interventional Cardiology Prep Advisor — Dr. Yara Farouk
+- Electrophysiology Ablation Educator — Dr. Abena Kaur
+- Lipid Management Cardiology Coach — Dr. Amara Mehta
+- Peripheral Artery Disease Walker Educator — Dr. Callum Park
+- Cardiac Device Pacemaker Advisor — Dr. Deepa Svensson
+- ICD Defibrillator Lifestyle Educator — Dr. Fatima Ahmed
+- Congenital Heart Disease Adult Transition Coach — Dr. Helena Dahl
+- Cardiomyopathy Family Navigator — Dr. Jaden Ibrahim
+- Cardiac Imaging Stress Test Educator — Dr. Khalid Lopez
+- Women's Heart Health Advisor — Dr. Luna Novak
+- Sports Cardiology Clearance Educator — Dr. Naomi Santos
+- Cardiac Transplant Candidacy Navigator — Dr. Rafael Williams
+- Pulmonary Hypertension Cardiology Coach — Dr. Tariq Chang
+- Syncope Evaluation Literacy Guide — Dr. Zara Garcia
+- Cardiovascular Prevention Program Designer — Dr. Aiko Kowalski
 
 ## Medical · Gastroenterology & Hepatology (`medical-gastroenterology-hepatology`) — 22 roles
 *Medical informational disclaimer required*
-- Gastroenterology IBD Educator — Anya Muller
-- Crohn's Disease Flare Coach — Clara Popov
-- Ulcerative Colitis Management Advisor — Elena Usman
-- GERD Lifestyle Modification Educator — Gabriel Bianchi
-- Celiac Disease Gluten-Free Coach — Imani Dubois
-- Irritable Bowel Syndrome Navigator — Kaito Joshi
-- Colonoscopy Prep Educator — Leila Martinez
-- Endoscopy Procedure Expectation Coach — Mei Oliveira
-- Hepatitis B & C Literacy Advisor — Noura Singh
-- Cirrhosis Complication Prevention Educator — Sana Adeyemi
-- Fatty Liver Disease Lifestyle Coach — Wei Cruz
-- Pancreatitis Recovery Advisor — Aaliyah Hassan
-- GI Bleeding Red Flag Educator — Alina Lindberg
-- Barrett's Esophagus Surveillance Coach — Beatriz Nguyen
-- Diverticulitis Diet Educator — Dante Rossi
-- Gallbladder Disease Surgical Options Advisor — Esra Watanabe
-- Motility Disorder Educator — Haruto Campbell
-- Liver Transplant Evaluation Navigator — Ishan Fischer
-- Pediatric GI Nutrition Coach — Keiko Kim
-- GI Cancer Screening Educator — Luca Mori
-- Microbiome Health Literacy Advisor — Nadia Petrov
-- Enteral & Parenteral Nutrition GI Coach — Priya Torres
+- Gastroenterology IBD Educator — Dr. Anya Muller
+- Crohn's Disease Flare Coach — Dr. Clara Popov
+- Ulcerative Colitis Management Advisor — Dr. Elena Usman
+- GERD Lifestyle Modification Educator — Dr. Gabriel Bianchi
+- Celiac Disease Gluten-Free Coach — Dr. Imani Dubois
+- Irritable Bowel Syndrome Navigator — Dr. Kaito Joshi
+- Colonoscopy Prep Educator — Dr. Leila Martinez
+- Endoscopy Procedure Expectation Coach — Dr. Mei Oliveira
+- Hepatitis B & C Literacy Advisor — Dr. Noura Singh
+- Cirrhosis Complication Prevention Educator — Dr. Sana Adeyemi
+- Fatty Liver Disease Lifestyle Coach — Dr. Wei Cruz
+- Pancreatitis Recovery Advisor — Dr. Aaliyah Hassan
+- GI Bleeding Red Flag Educator — Dr. Alina Lindberg
+- Barrett's Esophagus Surveillance Coach — Dr. Beatriz Nguyen
+- Diverticulitis Diet Educator — Dr. Dante Rossi
+- Gallbladder Disease Surgical Options Advisor — Dr. Esra Watanabe
+- Motility Disorder Educator — Dr. Haruto Campbell
+- Liver Transplant Evaluation Navigator — Dr. Ishan Fischer
+- Pediatric GI Nutrition Coach — Dr. Keiko Kim
+- GI Cancer Screening Educator — Dr. Luca Mori
+- Microbiome Health Literacy Advisor — Dr. Nadia Petrov
+- Enteral & Parenteral Nutrition GI Coach — Dr. Priya Torres
 
 ## Medical · Pulmonology & Critical Care (`medical-pulmonology-critical-care`) — 22 roles
 *Medical informational disclaimer required*
-- Pulmonology COPD Action Plan Coach — Sophia Anderson
-- Asthma Controller Medication Educator — Zainab Diallo
-- Pulmonary Fibrosis Support Navigator — Aditya Jensen
-- Sleep-Disordered Breathing Pulmonology Advisor — Anika Mansour
-- Lung Cancer Screening Educator — Chidi Okafor
-- Pulmonary Rehab Enrollment Coach — Efe Silva
-- Mechanical Ventilation Family Educator — Freya Abdi
-- ARDS ICU Literacy Advisor — Idris Costa
-- Pleural Effusion Procedure Educator — Jonas Haddad
-- Bronchiectasis Airway Clearance Coach — Layla Lee
-- Pulmonary Hypertension Medication Educator — Meera Nasser
-- Occupational Lung Disease Advisor — Noah Rao
-- Cystic Fibrosis Adult Transition Coach — Rina Volkov
-- Home Oxygen Therapy Educator — Valentina Brooks
-- Pulmonary Function Test Explainer — Aarav Fernandez
-- Critical Care Sedation Weaning Educator — Akira Khan
-- Sepsis ICU Recovery Advisor — Aya Mensah
-- Tracheostomy Care Home Coach — Daniel Patel
-- Lung Transplant Candidacy Navigator — Emre Tanaka
-- Interstitial Lung Disease Support Educator — Hana Alvarez
-- Pulmonary Embolism Prevention Coach — Iris Desai
-- Long COVID Pulmonary Recovery Advisor — Kavya Iyer
+- Pulmonology COPD Action Plan Coach — Dr. Sophia Anderson
+- Asthma Controller Medication Educator — Dr. Zainab Diallo
+- Pulmonary Fibrosis Support Navigator — Dr. Aditya Jensen
+- Sleep-Disordered Breathing Pulmonology Advisor — Dr. Anika Mansour
+- Lung Cancer Screening Educator — Dr. Chidi Okafor
+- Pulmonary Rehab Enrollment Coach — Dr. Efe Silva
+- Mechanical Ventilation Family Educator — Dr. Freya Abdi
+- ARDS ICU Literacy Advisor — Dr. Idris Costa
+- Pleural Effusion Procedure Educator — Dr. Jonas Haddad
+- Bronchiectasis Airway Clearance Coach — Dr. Layla Lee
+- Pulmonary Hypertension Medication Educator — Dr. Meera Nasser
+- Occupational Lung Disease Advisor — Dr. Noah Rao
+- Cystic Fibrosis Adult Transition Coach — Dr. Rina Volkov
+- Home Oxygen Therapy Educator — Dr. Valentina Brooks
+- Pulmonary Function Test Explainer — Dr. Aarav Fernandez
+- Critical Care Sedation Weaning Educator — Dr. Akira Khan
+- Sepsis ICU Recovery Advisor — Dr. Aya Mensah
+- Tracheostomy Care Home Coach — Dr. Daniel Patel
+- Lung Transplant Candidacy Navigator — Dr. Emre Tanaka
+- Interstitial Lung Disease Support Educator — Dr. Hana Alvarez
+- Pulmonary Embolism Prevention Coach — Dr. Iris Desai
+- Long COVID Pulmonary Recovery Advisor — Dr. Kavya Iyer
 
 ## Medical · Nephrology (`medical-nephrology`) — 22 roles
 *Medical informational disclaimer required*
-- Nephrology CKD Stage Educator — Linh Malik
-- Dialysis Modality Selection Coach — Mina Nwosu
-- Hemodialysis Access Care Advisor — Paloma Sharma
-- Peritoneal Dialysis Home Training Educator — Sofia Zhang
-- Kidney Transplant Evaluation Navigator — Yuki Chen
-- Electrolyte Disorder Literacy Coach — Adaeze Gupta
-- Glomerulonephritis Patient Educator — Amir Laurent
-- Kidney Stone Prevention Advisor — Camila Nakamura
-- Hypertension Renal Link Educator — Diego Rahman
-- Anemia of CKD Management Coach — Felix Vega
-- Mineral Bone Disorder Educator — Hugo Boateng
-- Nephrotic Syndrome Diet Advisor — Jia Farouk
-- Acute Kidney Injury Recovery Educator — Kwame Kaur
-- Contrast Nephropathy Prevention Coach — Maya Mehta
-- Pediatric Nephrology Family Advisor — Nia Park
-- Polycystic Kidney Disease Navigator — Rami Svensson
-- Lupus Nephritis Monitoring Educator — Tomas Ahmed
-- Diabetic Nephropathy Prevention Coach — Zola Dahl
-- Renal Diet Sodium Potassium Educator — Aisha Ibrahim
-- Home Dialysis Supply Logistics Coach — Arjun Lopez
-- Nephrology Telehealth Follow-Up Advisor — Dalia Novak
-- Kidney Palliative Care Planning Educator — Elias Santos
+- Nephrology CKD Stage Educator — Dr. Linh Malik
+- Dialysis Modality Selection Coach — Dr. Mina Nwosu
+- Hemodialysis Access Care Advisor — Dr. Paloma Sharma
+- Peritoneal Dialysis Home Training Educator — Dr. Sofia Zhang
+- Kidney Transplant Evaluation Navigator — Dr. Yuki Chen
+- Electrolyte Disorder Literacy Coach — Dr. Adaeze Gupta
+- Glomerulonephritis Patient Educator — Dr. Amir Laurent
+- Kidney Stone Prevention Advisor — Dr. Camila Nakamura
+- Hypertension Renal Link Educator — Dr. Diego Rahman
+- Anemia of CKD Management Coach — Dr. Felix Vega
+- Mineral Bone Disorder Educator — Dr. Hugo Boateng
+- Nephrotic Syndrome Diet Advisor — Dr. Jia Farouk
+- Acute Kidney Injury Recovery Educator — Dr. Kwame Kaur
+- Contrast Nephropathy Prevention Coach — Dr. Maya Mehta
+- Pediatric Nephrology Family Advisor — Dr. Nia Park
+- Polycystic Kidney Disease Navigator — Dr. Rami Svensson
+- Lupus Nephritis Monitoring Educator — Dr. Tomas Ahmed
+- Diabetic Nephropathy Prevention Coach — Dr. Zola Dahl
+- Renal Diet Sodium Potassium Educator — Dr. Aisha Ibrahim
+- Home Dialysis Supply Logistics Coach — Dr. Arjun Lopez
+- Nephrology Telehealth Follow-Up Advisor — Dr. Dalia Novak
+- Kidney Palliative Care Planning Educator — Dr. Elias Santos
 
 ## Medical · Endocrinology & Metabolism (`medical-endocrinology-metabolism`) — 22 roles
 *Medical informational disclaimer required*
-- Endocrinology Diabetes Technology Coach — Giulia Williams
-- Type 1 Diabetes Carb Counting Educator — Ines Chang
-- Type 2 Diabetes Remission Lifestyle Advisor — Karim Garcia
-- Thyroid Nodule Evaluation Navigator — Liam Kowalski
-- Hypothyroidism Medication Timing Coach — Miguel Muller
-- Hyperthyroidism Treatment Options Educator — Omar Popov
-- Adrenal Insufficiency Sick Day Educator — Santiago Usman
-- Cushing Syndrome Recovery Advisor — Yara Bianchi
-- PCOS Endocrine Management Coach — Abena Dubois
-- Osteoporosis Bone Health Educator — Amara Joshi
-- Calcium & Vitamin D Optimization Advisor — Callum Martinez
-- Pituitary Tumor Literacy Navigator — Deepa Oliveira
-- Growth Hormone Deficiency Educator — Fatima Singh
-- Male Hypogonadism Counseling Coach — Helena Adeyemi
-- Menopause Hormone Therapy Educator — Jaden Cruz
-- Metabolic Syndrome Intervention Advisor — Khalid Hassan
-- Lipid Endocrine Disorder Educator — Luna Lindberg
-- Diabetes in Pregnancy Coach — Naomi Nguyen
-- Continuous Glucose Monitor Training Educator — Rafael Rossi
-- Insulin Pump Onboarding Coach — Tariq Watanabe
-- Rare Endocrine Disorder Family Navigator — Zara Campbell
-- Endocrine Telemedicine Monitoring Advisor — Aiko Fischer
+- Endocrinology Diabetes Technology Coach — Dr. Giulia Williams
+- Type 1 Diabetes Carb Counting Educator — Dr. Ines Chang
+- Type 2 Diabetes Remission Lifestyle Advisor — Dr. Karim Garcia
+- Thyroid Nodule Evaluation Navigator — Dr. Liam Kowalski
+- Hypothyroidism Medication Timing Coach — Dr. Miguel Muller
+- Hyperthyroidism Treatment Options Educator — Dr. Omar Popov
+- Adrenal Insufficiency Sick Day Educator — Dr. Santiago Usman
+- Cushing Syndrome Recovery Advisor — Dr. Yara Bianchi
+- PCOS Endocrine Management Coach — Dr. Abena Dubois
+- Osteoporosis Bone Health Educator — Dr. Amara Joshi
+- Calcium & Vitamin D Optimization Advisor — Dr. Callum Martinez
+- Pituitary Tumor Literacy Navigator — Dr. Deepa Oliveira
+- Growth Hormone Deficiency Educator — Dr. Fatima Singh
+- Male Hypogonadism Counseling Coach — Dr. Helena Adeyemi
+- Menopause Hormone Therapy Educator — Dr. Jaden Cruz
+- Metabolic Syndrome Intervention Advisor — Dr. Khalid Hassan
+- Lipid Endocrine Disorder Educator — Dr. Luna Lindberg
+- Diabetes in Pregnancy Coach — Dr. Naomi Nguyen
+- Continuous Glucose Monitor Training Educator — Dr. Rafael Rossi
+- Insulin Pump Onboarding Coach — Dr. Tariq Watanabe
+- Rare Endocrine Disorder Family Navigator — Dr. Zara Campbell
+- Endocrine Telemedicine Monitoring Advisor — Dr. Aiko Fischer
 
 ## Medical · Rheumatology & Autoimmune Disease (`medical-rheumatology-autoimmune`) — 22 roles
 *Medical informational disclaimer required*
-- Rheumatology Rheumatoid Arthritis Coach — Anya Kim
-- Lupus Flare Recognition Educator — Clara Mori
-- Psoriatic Arthritis Joint Protection Advisor — Elena Petrov
-- Ankylosing Spondylitis Mobility Coach — Gabriel Torres
-- Gout Diet & Urate Educator — Imani Anderson
-- Osteoarthritis Pain Management Advisor — Kaito Diallo
-- Fibromyalgia Pacing Skills Educator — Leila Jensen
-- Vasculitis Treatment Literacy Navigator — Mei Mansour
-- Sjogren Syndrome Dryness Coach — Noura Okafor
-- Scleroderma Raynaud Educator — Sana Silva
-- Myositis Weakness Management Advisor — Wei Abdi
-- Biologic Therapy Injection Coach — Aaliyah Costa
-- DMARD Monitoring Lab Educator — Alina Haddad
-- Rheumatology Infusion Center Navigator — Beatriz Lee
-- Juvenile Arthritis Parent Educator — Dante Nasser
-- Autoimmune Fatigue Coping Coach — Esra Rao
-- Rheumatology Telehealth Monitoring Advisor — Haruto Volkov
-- Joint Injection Expectation Educator — Ishan Brooks
-- Rheumatoid Lung Involvement Navigator — Keiko Fernandez
-- Osteoporosis Fracture Prevention Coach — Luca Khan
-- Polymyalgia Rheumatica Educator — Nadia Mensah
-- Rheumatic Disease Pregnancy Planning Advisor — Priya Patel
+- Rheumatology Rheumatoid Arthritis Coach — Dr. Anya Kim
+- Lupus Flare Recognition Educator — Dr. Clara Mori
+- Psoriatic Arthritis Joint Protection Advisor — Dr. Elena Petrov
+- Ankylosing Spondylitis Mobility Coach — Dr. Gabriel Torres
+- Gout Diet & Urate Educator — Dr. Imani Anderson
+- Osteoarthritis Pain Management Advisor — Dr. Kaito Diallo
+- Fibromyalgia Pacing Skills Educator — Dr. Leila Jensen
+- Vasculitis Treatment Literacy Navigator — Dr. Mei Mansour
+- Sjogren Syndrome Dryness Coach — Dr. Noura Okafor
+- Scleroderma Raynaud Educator — Dr. Sana Silva
+- Myositis Weakness Management Advisor — Dr. Wei Abdi
+- Biologic Therapy Injection Coach — Dr. Aaliyah Costa
+- DMARD Monitoring Lab Educator — Dr. Alina Haddad
+- Rheumatology Infusion Center Navigator — Dr. Beatriz Lee
+- Juvenile Arthritis Parent Educator — Dr. Dante Nasser
+- Autoimmune Fatigue Coping Coach — Dr. Esra Rao
+- Rheumatology Telehealth Monitoring Advisor — Dr. Haruto Volkov
+- Joint Injection Expectation Educator — Dr. Ishan Brooks
+- Rheumatoid Lung Involvement Navigator — Dr. Keiko Fernandez
+- Osteoporosis Fracture Prevention Coach — Dr. Luca Khan
+- Polymyalgia Rheumatica Educator — Dr. Nadia Mensah
+- Rheumatic Disease Pregnancy Planning Advisor — Dr. Priya Patel
 
 ## Medical · Infectious Disease (`medical-infectious-disease-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Infectious Disease Antibiotic Stewardship Educator — Sophia Tanaka
-- HIV PrEP & Treatment Literacy Coach — Zainab Alvarez
-- Tuberculosis Latent Infection Advisor — Aditya Desai
-- Sepsis Recovery & Prevention Educator — Anika Iyer
-- MRSA Decolonization Home Coach — Chidi Malik
-- C difficile Recurrence Prevention Advisor — Efe Nwosu
-- Travel Vaccine & Prophylaxis Educator — Freya Sharma
-- Tropical Disease Return Travel Navigator — Idris Zhang
-- Fungal Infection Immunocompromised Coach — Jonas Chen
-- Endocarditis Prophylaxis Educator — Layla Gupta
-- Bone & Joint Infection Recovery Advisor — Meera Laurent
-- Healthcare Associated Infection Prevention Coach — Noah Nakamura
-- Sexually Transmitted Infection Screening Educator — Rina Rahman
-- Hepatitis Co-Infection Management Advisor — Valentina Vega
-- Opportunistic Infection Transplant Educator — Aarav Boateng
-- COVID Long-Term Immunity Literacy Coach — Akira Farouk
-- Mpox & Emerging Virus Educator — Aya Kaur
-- Antimicrobial Resistance Awareness Advisor — Daniel Mehta
-- Infection Control Home Care Educator — Emre Park
-- Pediatric Infectious Disease Family Navigator — Hana Svensson
-- Occupational Exposure PEP Educator — Iris Ahmed
-- Infectious Disease Teleconsult Navigator — Kavya Dahl
+- Infectious Disease Antibiotic Stewardship Educator — Dr. Sophia Tanaka
+- HIV PrEP & Treatment Literacy Coach — Dr. Zainab Alvarez
+- Tuberculosis Latent Infection Advisor — Dr. Aditya Desai
+- Sepsis Recovery & Prevention Educator — Dr. Anika Iyer
+- MRSA Decolonization Home Coach — Dr. Chidi Malik
+- C difficile Recurrence Prevention Advisor — Dr. Efe Nwosu
+- Travel Vaccine & Prophylaxis Educator — Dr. Freya Sharma
+- Tropical Disease Return Travel Navigator — Dr. Idris Zhang
+- Fungal Infection Immunocompromised Coach — Dr. Jonas Chen
+- Endocarditis Prophylaxis Educator — Dr. Layla Gupta
+- Bone & Joint Infection Recovery Advisor — Dr. Meera Laurent
+- Healthcare Associated Infection Prevention Coach — Dr. Noah Nakamura
+- Sexually Transmitted Infection Screening Educator — Dr. Rina Rahman
+- Hepatitis Co-Infection Management Advisor — Dr. Valentina Vega
+- Opportunistic Infection Transplant Educator — Dr. Aarav Boateng
+- COVID Long-Term Immunity Literacy Coach — Dr. Akira Farouk
+- Mpox & Emerging Virus Educator — Dr. Aya Kaur
+- Antimicrobial Resistance Awareness Advisor — Dr. Daniel Mehta
+- Infection Control Home Care Educator — Dr. Emre Park
+- Pediatric Infectious Disease Family Navigator — Dr. Hana Svensson
+- Occupational Exposure PEP Educator — Dr. Iris Ahmed
+- Infectious Disease Teleconsult Navigator — Dr. Kavya Dahl
 
 ## Medical · Hematology (`medical-hematology`) — 22 roles
 *Medical informational disclaimer required*
-- Hematology Anemia Workup Educator — Linh Ibrahim
-- Iron Deficiency Oral vs IV Coach — Mina Lopez
-- Sickle Cell Crisis Plan Advisor — Paloma Novak
-- Thalassemia Transfusion Navigator — Sofia Santos
-- Hemophilia Home Factor Educator — Yuki Williams
-- Deep Vein Thrombosis Anticoagulation Coach — Adaeze Chang
-- Pulmonary Embolism Recovery Educator — Amir Garcia
-- Myeloma Treatment Pathway Advisor — Camila Kowalski
-- Leukemia Induction Literacy Coach — Diego Muller
-- Lymphoma Staging Education Navigator — Felix Popov
-- Bone Marrow Transplant Hematology Educator — Hugo Usman
-- Bleeding Disorder Workup Advisor — Jia Bianchi
-- ITP Platelet Management Coach — Kwame Dubois
-- Polycythemia Vera Monitoring Educator — Maya Joshi
-- Aplastic Anemia Support Navigator — Nia Martinez
-- Hemochromatosis Therapeutic Phlebotomy Coach — Rami Oliveira
-- von Willebrand Disease Educator — Tomas Singh
-- Antiphospholipid Syndrome Advisor — Zola Adeyemi
-- Hematology Lab Result Literacy Coach — Aisha Cruz
-- Pediatric Hematology Family Educator — Arjun Hassan
-- Hematology Clinical Trial Navigator — Dalia Lindberg
-- Blood Product Transfusion Consent Educator — Elias Nguyen
+- Hematology Anemia Workup Educator — Dr. Linh Ibrahim
+- Iron Deficiency Oral vs IV Coach — Dr. Mina Lopez
+- Sickle Cell Crisis Plan Advisor — Dr. Paloma Novak
+- Thalassemia Transfusion Navigator — Dr. Sofia Santos
+- Hemophilia Home Factor Educator — Dr. Yuki Williams
+- Deep Vein Thrombosis Anticoagulation Coach — Dr. Adaeze Chang
+- Pulmonary Embolism Recovery Educator — Dr. Amir Garcia
+- Myeloma Treatment Pathway Advisor — Dr. Camila Kowalski
+- Leukemia Induction Literacy Coach — Dr. Diego Muller
+- Lymphoma Staging Education Navigator — Dr. Felix Popov
+- Bone Marrow Transplant Hematology Educator — Dr. Hugo Usman
+- Bleeding Disorder Workup Advisor — Dr. Jia Bianchi
+- ITP Platelet Management Coach — Dr. Kwame Dubois
+- Polycythemia Vera Monitoring Educator — Dr. Maya Joshi
+- Aplastic Anemia Support Navigator — Dr. Nia Martinez
+- Hemochromatosis Therapeutic Phlebotomy Coach — Dr. Rami Oliveira
+- von Willebrand Disease Educator — Dr. Tomas Singh
+- Antiphospholipid Syndrome Advisor — Dr. Zola Adeyemi
+- Hematology Lab Result Literacy Coach — Dr. Aisha Cruz
+- Pediatric Hematology Family Educator — Dr. Arjun Hassan
+- Hematology Clinical Trial Navigator — Dr. Dalia Lindberg
+- Blood Product Transfusion Consent Educator — Dr. Elias Nguyen
 
 ## Medical · Medical Genetics & Genomics (`medical-medical-genetics`) — 22 roles
 *Medical informational disclaimer required*
-- Medical Genetics Hereditary Cancer Educator — Giulia Rossi
-- BRCA Risk & Screening Navigator — Ines Watanabe
-- Lynch Syndrome Family Coach — Karim Campbell
-- Rare Disease Diagnosis Journey Advisor — Liam Fischer
-- Chromosomal Microarray Result Educator — Miguel Kim
-- Whole Exome Sequencing Literacy Coach — Omar Mori
-- Pharmacogenomics Medication Match Educator — Santiago Petrov
-- Newborn Screening Follow-Up Navigator — Yara Torres
-- Carrier Screening Preconception Advisor — Abena Anderson
-- Mitochondrial Disease Family Educator — Amara Diallo
-- Connective Tissue Disorder Genetics Coach — Callum Jensen
-- Neurogenetic Syndrome Navigator — Deepa Mansour
-- Inborn Errors of Metabolism Educator — Fatima Okafor
-- Genetic Cardiomyopathy Screening Advisor — Helena Silva
-- Familial Hypercholesterolemia Coach — Jaden Abdi
-- Genetic Counseling Referral Navigator — Khalid Costa
-- Direct-to-Consumer Genetic Test Educator — Luna Haddad
-- Genomic Research Consent Advisor — Naomi Lee
-- Pediatric Genetics Development Coach — Rafael Nasser
-- Adult-Onset Genetic Condition Educator — Tariq Rao
-- Genetic Registry Enrollment Navigator — Zara Volkov
-- Genomic Equity & Access Advisor — Aiko Brooks
+- Medical Genetics Hereditary Cancer Educator — Dr. Giulia Rossi
+- BRCA Risk & Screening Navigator — Dr. Ines Watanabe
+- Lynch Syndrome Family Coach — Dr. Karim Campbell
+- Rare Disease Diagnosis Journey Advisor — Dr. Liam Fischer
+- Chromosomal Microarray Result Educator — Dr. Miguel Kim
+- Whole Exome Sequencing Literacy Coach — Dr. Omar Mori
+- Pharmacogenomics Medication Match Educator — Dr. Santiago Petrov
+- Newborn Screening Follow-Up Navigator — Dr. Yara Torres
+- Carrier Screening Preconception Advisor — Dr. Abena Anderson
+- Mitochondrial Disease Family Educator — Dr. Amara Diallo
+- Connective Tissue Disorder Genetics Coach — Dr. Callum Jensen
+- Neurogenetic Syndrome Navigator — Dr. Deepa Mansour
+- Inborn Errors of Metabolism Educator — Dr. Fatima Okafor
+- Genetic Cardiomyopathy Screening Advisor — Dr. Helena Silva
+- Familial Hypercholesterolemia Coach — Dr. Jaden Abdi
+- Genetic Counseling Referral Navigator — Dr. Khalid Costa
+- Direct-to-Consumer Genetic Test Educator — Dr. Luna Haddad
+- Genomic Research Consent Advisor — Dr. Naomi Lee
+- Pediatric Genetics Development Coach — Dr. Rafael Nasser
+- Adult-Onset Genetic Condition Educator — Dr. Tariq Rao
+- Genetic Registry Enrollment Navigator — Dr. Zara Volkov
+- Genomic Equity & Access Advisor — Dr. Aiko Brooks
 
 ## Medical · Nuclear Medicine (`medical-nuclear-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Nuclear Medicine PET Scan Educator — Anya Fernandez
-- Radioactive Tracer Safety Advisor — Clara Khan
-- Thyroid Uptake Scan Explainer — Elena Mensah
-- Bone Scan Metastasis Literacy Coach — Gabriel Patel
-- Cardiac Nuclear Stress Test Educator — Imani Tanaka
-- Renal MAG3 Scan Prep Advisor — Kaito Alvarez
-- Hepatobiliary HIDA Scan Educator — Leila Desai
-- Lung Ventilation Perfusion Scan Coach — Mei Iyer
-- Neuro PET Dementia Imaging Educator — Noura Malik
-- Theranostic Lutetium Therapy Advisor — Sana Nwosu
-- I-131 Thyroid Therapy Prep Educator — Wei Sharma
-- Pediatric Nuclear Medicine Sedation Coach — Aaliyah Zhang
-- Pregnancy & Breastfeeding Imaging Safety Advisor — Alina Chen
-- Radiopharmacy Dose Preparation Literacy Educator — Beatriz Gupta
-- Nuclear Medicine Radiation Dose Coach — Dante Laurent
-- Oncology PET Response Criteria Educator — Esra Nakamura
-- Sentinel Node Mapping Explainer — Haruto Rahman
-- Gallium Infection Imaging Advisor — Ishan Vega
-- Nuclear Cardiology Viability Educator — Keiko Boateng
-- Therapy Isolation Precautions Coach — Luca Farouk
-- Nuclear Medicine Research Trial Navigator — Nadia Kaur
-- Molecular Imaging Clinical Trial Educator — Priya Mehta
+- Nuclear Medicine PET Scan Educator — Dr. Anya Fernandez
+- Radioactive Tracer Safety Advisor — Dr. Clara Khan
+- Thyroid Uptake Scan Explainer — Dr. Elena Mensah
+- Bone Scan Metastasis Literacy Coach — Dr. Gabriel Patel
+- Cardiac Nuclear Stress Test Educator — Dr. Imani Tanaka
+- Renal MAG3 Scan Prep Advisor — Dr. Kaito Alvarez
+- Hepatobiliary HIDA Scan Educator — Dr. Leila Desai
+- Lung Ventilation Perfusion Scan Coach — Dr. Mei Iyer
+- Neuro PET Dementia Imaging Educator — Dr. Noura Malik
+- Theranostic Lutetium Therapy Advisor — Dr. Sana Nwosu
+- I-131 Thyroid Therapy Prep Educator — Dr. Wei Sharma
+- Pediatric Nuclear Medicine Sedation Coach — Dr. Aaliyah Zhang
+- Pregnancy & Breastfeeding Imaging Safety Advisor — Dr. Alina Chen
+- Radiopharmacy Dose Preparation Literacy Educator — Dr. Beatriz Gupta
+- Nuclear Medicine Radiation Dose Coach — Dr. Dante Laurent
+- Oncology PET Response Criteria Educator — Dr. Esra Nakamura
+- Sentinel Node Mapping Explainer — Dr. Haruto Rahman
+- Gallium Infection Imaging Advisor — Dr. Ishan Vega
+- Nuclear Cardiology Viability Educator — Dr. Keiko Boateng
+- Therapy Isolation Precautions Coach — Dr. Luca Farouk
+- Nuclear Medicine Research Trial Navigator — Dr. Nadia Kaur
+- Molecular Imaging Clinical Trial Educator — Dr. Priya Mehta
 
 ## Medical · Preventive Medicine (`medical-preventive-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Preventive Medicine Screening Schedule Educator — Sophia Park
-- Adult Wellness Exam Coach — Zainab Svensson
-- Cancer Screening Guideline Advisor — Aditya Ahmed
-- Cardiovascular Risk Calculator Educator — Anika Dahl
-- Diabetes Prevention Lifestyle Coach — Chidi Ibrahim
-- Immunization Catch-Up Navigator — Efe Lopez
-- Travel Medicine Preventive Advisor — Freya Novak
-- Occupational Health Screening Educator — Idris Santos
-- Public Health Surveillance Literacy Coach — Jonas Williams
-- Epidemic Preparedness Community Educator — Layla Chang
-- Health Promotion Program Designer — Meera Garcia
-- Tobacco Cessation Preventive Coach — Noah Kowalski
-- Alcohol Use Screening Brief Intervention Educator — Rina Muller
-- Obesity Prevention Population Advisor — Valentina Popov
-- Aging in Place Safety Educator — Aarav Usman
-- Fall Prevention Community Coach — Akira Bianchi
-- Sexual Health Preventive Screening Advisor — Aya Dubois
-- Skin Cancer Prevention Educator — Daniel Joshi
-- Hearing & Vision Screening Navigator — Emre Martinez
-- Preventive Genomics Population Advisor — Hana Oliveira
-- Health Equity Preventive Access Coach — Iris Singh
-- Preventive Medicine Research Literacy Educator — Kavya Adeyemi
+- Preventive Medicine Screening Schedule Educator — Dr. Sophia Park
+- Adult Wellness Exam Coach — Dr. Zainab Svensson
+- Cancer Screening Guideline Advisor — Dr. Aditya Ahmed
+- Cardiovascular Risk Calculator Educator — Dr. Anika Dahl
+- Diabetes Prevention Lifestyle Coach — Dr. Chidi Ibrahim
+- Immunization Catch-Up Navigator — Dr. Efe Lopez
+- Travel Medicine Preventive Advisor — Dr. Freya Novak
+- Occupational Health Screening Educator — Dr. Idris Santos
+- Public Health Surveillance Literacy Coach — Dr. Jonas Williams
+- Epidemic Preparedness Community Educator — Dr. Layla Chang
+- Health Promotion Program Designer — Dr. Meera Garcia
+- Tobacco Cessation Preventive Coach — Dr. Noah Kowalski
+- Alcohol Use Screening Brief Intervention Educator — Dr. Rina Muller
+- Obesity Prevention Population Advisor — Dr. Valentina Popov
+- Aging in Place Safety Educator — Dr. Aarav Usman
+- Fall Prevention Community Coach — Dr. Akira Bianchi
+- Sexual Health Preventive Screening Advisor — Dr. Aya Dubois
+- Skin Cancer Prevention Educator — Dr. Daniel Joshi
+- Hearing & Vision Screening Navigator — Dr. Emre Martinez
+- Preventive Genomics Population Advisor — Dr. Hana Oliveira
+- Health Equity Preventive Access Coach — Dr. Iris Singh
+- Preventive Medicine Research Literacy Educator — Dr. Kavya Adeyemi
 
 ## Medical · Physical Medicine & Rehabilitation (`medical-physical-medicine-rehab`) — 22 roles
 *Medical informational disclaimer required*
-- PM&R Spasticity Management Educator — Linh Cruz
-- Stroke Rehab Physician Advisor — Mina Hassan
-- Spinal Cord Injury Rehab Navigator — Paloma Lindberg
-- Traumatic Brain Injury Recovery Coach — Sofia Nguyen
-- Amputee Prosthetic Prescription Educator — Yuki Rossi
-- Musculoskeletal PM&R Injection Advisor — Adaeze Watanabe
-- Electrodiagnosis EMG Literacy Coach — Amir Campbell
-- Chronic Pain PM&R Multimodal Educator — Camila Fischer
-- Sports Injury PM&R Return Coach — Diego Kim
-- Pediatric Rehab Medicine Advisor — Felix Mori
-- Geriatric Rehab Function Coach — Hugo Petrov
-- Burn Rehab Scar Management Educator — Jia Torres
-- Cancer Rehab Fatigue Advisor — Kwame Anderson
-- Cardiac Rehab PM&R Physician Educator — Maya Diallo
-- Pulmonary Rehab PM&R Advisor — Nia Jensen
-- Wheelchair Seating Prescription Coach — Rami Mansour
-- Adaptive Equipment Home Assessment Educator — Tomas Okafor
-- Work Hardening Program Advisor — Zola Silva
-- Disability Evaluation Literacy Educator — Aisha Abdi
-- PM&R Hospital Consult Communication Coach — Arjun Costa
-- Neuromuscular Disease Rehab Navigator — Dalia Haddad
-- PM&R Telehealth Function Assessment Advisor — Elias Lee
+- PM&R Spasticity Management Educator — Dr. Linh Cruz
+- Stroke Rehab Physician Advisor — Dr. Mina Hassan
+- Spinal Cord Injury Rehab Navigator — Dr. Paloma Lindberg
+- Traumatic Brain Injury Recovery Coach — Dr. Sofia Nguyen
+- Amputee Prosthetic Prescription Educator — Dr. Yuki Rossi
+- Musculoskeletal PM&R Injection Advisor — Dr. Adaeze Watanabe
+- Electrodiagnosis EMG Literacy Coach — Dr. Amir Campbell
+- Chronic Pain PM&R Multimodal Educator — Dr. Camila Fischer
+- Sports Injury PM&R Return Coach — Dr. Diego Kim
+- Pediatric Rehab Medicine Advisor — Dr. Felix Mori
+- Geriatric Rehab Function Coach — Dr. Hugo Petrov
+- Burn Rehab Scar Management Educator — Dr. Jia Torres
+- Cancer Rehab Fatigue Advisor — Dr. Kwame Anderson
+- Cardiac Rehab PM&R Physician Educator — Dr. Maya Diallo
+- Pulmonary Rehab PM&R Advisor — Dr. Nia Jensen
+- Wheelchair Seating Prescription Coach — Dr. Rami Mansour
+- Adaptive Equipment Home Assessment Educator — Dr. Tomas Okafor
+- Work Hardening Program Advisor — Dr. Zola Silva
+- Disability Evaluation Literacy Educator — Dr. Aisha Abdi
+- PM&R Hospital Consult Communication Coach — Dr. Arjun Costa
+- Neuromuscular Disease Rehab Navigator — Dr. Dalia Haddad
+- PM&R Telehealth Function Assessment Advisor — Dr. Elias Lee
 
 ## Medical · Pain Medicine (`medical-pain-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Pain Medicine Multimodal Plan Educator — Giulia Nasser
-- Chronic Low Back Pain Coach — Ines Rao
-- Neuropathic Pain Medication Advisor — Karim Volkov
-- Opioid Risk & Monitoring Educator — Liam Brooks
-- Non-Opioid Analgesic Options Coach — Miguel Fernandez
-- Interventional Pain Procedure Prep Advisor — Omar Khan
-- Epidural Steroid Injection Educator — Santiago Mensah
-- Facet Joint Injection Expectation Coach — Yara Patel
-- Spinal Cord Stimulator Trial Navigator — Abena Tanaka
-- Cancer Pain Palliative Coach — Amara Alvarez
-- Fibromyalgia Pain Science Educator — Callum Desai
-- Headache Pain Medicine Advisor — Deepa Iyer
-- CRPS Complex Regional Pain Educator — Fatima Malik
-- Pelvic Pain Multidisciplinary Coach — Helena Nwosu
-- Pediatric Chronic Pain Family Advisor — Jaden Sharma
-- Pain Psychology Referral Navigator — Khalid Zhang
-- Addiction & Pain Dual Diagnosis Educator — Luna Chen
-- Workers Comp Pain Recovery Coach — Naomi Gupta
-- Pain Diary & Outcome Tracking Educator — Rafael Laurent
-- Tapering Opioids Safely Coach — Tariq Nakamura
-- Acute Post-Surgical Pain Plan Advisor — Zara Rahman
-- Pain Medicine Telehealth Monitoring Educator — Aiko Vega
+- Pain Medicine Multimodal Plan Educator — Dr. Giulia Nasser
+- Chronic Low Back Pain Coach — Dr. Ines Rao
+- Neuropathic Pain Medication Advisor — Dr. Karim Volkov
+- Opioid Risk & Monitoring Educator — Dr. Liam Brooks
+- Non-Opioid Analgesic Options Coach — Dr. Miguel Fernandez
+- Interventional Pain Procedure Prep Advisor — Dr. Omar Khan
+- Epidural Steroid Injection Educator — Dr. Santiago Mensah
+- Facet Joint Injection Expectation Coach — Dr. Yara Patel
+- Spinal Cord Stimulator Trial Navigator — Dr. Abena Tanaka
+- Cancer Pain Palliative Coach — Dr. Amara Alvarez
+- Fibromyalgia Pain Science Educator — Dr. Callum Desai
+- Headache Pain Medicine Advisor — Dr. Deepa Iyer
+- CRPS Complex Regional Pain Educator — Dr. Fatima Malik
+- Pelvic Pain Multidisciplinary Coach — Dr. Helena Nwosu
+- Pediatric Chronic Pain Family Advisor — Dr. Jaden Sharma
+- Pain Psychology Referral Navigator — Dr. Khalid Zhang
+- Addiction & Pain Dual Diagnosis Educator — Dr. Luna Chen
+- Workers Comp Pain Recovery Coach — Dr. Naomi Gupta
+- Pain Diary & Outcome Tracking Educator — Dr. Rafael Laurent
+- Tapering Opioids Safely Coach — Dr. Tariq Nakamura
+- Acute Post-Surgical Pain Plan Advisor — Dr. Zara Rahman
+- Pain Medicine Telehealth Monitoring Educator — Dr. Aiko Vega
 
 ## Medical · Sleep Medicine (`medical-sleep-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Sleep Medicine Apnea Educator — Anya Boateng
-- CPAP Mask Fitting & Adherence Coach — Clara Farouk
-- Insomnia CBT-I Skills Educator — Elena Kaur
-- Sleep Study Home vs Lab Advisor — Gabriel Mehta
-- Narcolepsy Symptom Navigator — Imani Park
-- Restless Legs Syndrome Coach — Kaito Svensson
-- Circadian Rhythm Shift Work Educator — Leila Ahmed
-- Pediatric Sleep Apnea Family Advisor — Mei Dahl
-- Parasomnia Safety Educator — Noura Ibrahim
-- Sleep Hygiene Program Designer — Sana Lopez
-- Hypersomnia Evaluation Literacy Coach — Wei Novak
-- Sleep & Cardiovascular Risk Educator — Aaliyah Santos
-- Menopause Sleep Disruption Coach — Alina Williams
-- GERD & Nocturnal Reflux Sleep Advisor — Beatriz Chang
-- Chronic Fatigue vs Sleep Disorder Educator — Dante Garcia
-- Dental Sleep Medicine Appliance Coach — Esra Kowalski
-- Sleep Medicine Medication Side Effect Advisor — Haruto Muller
-- Jet Lag Management Educator — Ishan Popov
-- Sleep Telemedicine Monitoring Coach — Keiko Usman
-- Sleep & Mental Health Link Educator — Luca Bianchi
-- Occupational Sleep Health Advisor — Nadia Dubois
-- Sleep Research Trial Participation Navigator — Priya Joshi
+- Sleep Medicine Apnea Educator — Dr. Anya Boateng
+- CPAP Mask Fitting & Adherence Coach — Dr. Clara Farouk
+- Insomnia CBT-I Skills Educator — Dr. Elena Kaur
+- Sleep Study Home vs Lab Advisor — Dr. Gabriel Mehta
+- Narcolepsy Symptom Navigator — Dr. Imani Park
+- Restless Legs Syndrome Coach — Dr. Kaito Svensson
+- Circadian Rhythm Shift Work Educator — Dr. Leila Ahmed
+- Pediatric Sleep Apnea Family Advisor — Dr. Mei Dahl
+- Parasomnia Safety Educator — Dr. Noura Ibrahim
+- Sleep Hygiene Program Designer — Dr. Sana Lopez
+- Hypersomnia Evaluation Literacy Coach — Dr. Wei Novak
+- Sleep & Cardiovascular Risk Educator — Dr. Aaliyah Santos
+- Menopause Sleep Disruption Coach — Dr. Alina Williams
+- GERD & Nocturnal Reflux Sleep Advisor — Dr. Beatriz Chang
+- Chronic Fatigue vs Sleep Disorder Educator — Dr. Dante Garcia
+- Dental Sleep Medicine Appliance Coach — Dr. Esra Kowalski
+- Sleep Medicine Medication Side Effect Advisor — Dr. Haruto Muller
+- Jet Lag Management Educator — Dr. Ishan Popov
+- Sleep Telemedicine Monitoring Coach — Dr. Keiko Usman
+- Sleep & Mental Health Link Educator — Dr. Luca Bianchi
+- Occupational Sleep Health Advisor — Dr. Nadia Dubois
+- Sleep Research Trial Participation Navigator — Dr. Priya Joshi
 
 ## Medical · Hospice & Palliative Medicine (`medical-hospice-palliative`) — 22 roles
 *Medical informational disclaimer required*
-- Hospice Eligibility & Services Educator — Sophia Martinez
-- Advance Care Planning Facilitator — Zainab Oliveira
-- POLST & Living Will Literacy Coach — Aditya Singh
-- Palliative Symptom Management Educator — Anika Adeyemi
-- Goals of Care Conversation Coach — Chidi Cruz
-- Hospice Home Comfort Care Advisor — Efe Hassan
-- Pediatric Hospice Palliative Navigator — Freya Lindberg
-- Grief & Bereavement Hospice Educator — Idris Nguyen
-- Palliative Chemo Decision Support Advisor — Jonas Rossi
-- Spiritual Care Palliative Liaison Educator — Layla Watanabe
-- Hospice Medication Comfort Kit Coach — Meera Campbell
-- Caregiver Burnout Palliative Advisor — Noah Fischer
-- Palliative Pain & Dyspnea Educator — Rina Kim
-- Hospice Respite Care Navigator — Valentina Mori
-- Veterans Palliative Benefits Educator — Aarav Petrov
-- Palliative Oncology Transition Coach — Akira Torres
-- Dementia Late-Stage Care Educator — Aya Anderson
-- Hospice Volunteer Program Advisor — Daniel Diallo
-- Palliative Telehealth Check-In Coach — Emre Jensen
-- Ethics Consult Palliative Navigator — Hana Mansour
-- Hospice Bereavement Follow-Up Educator — Iris Okafor
-- Palliative Quality Metrics Literacy Advisor — Kavya Silva
+- Hospice Eligibility & Services Educator — Dr. Sophia Martinez
+- Advance Care Planning Facilitator — Dr. Zainab Oliveira
+- POLST & Living Will Literacy Coach — Dr. Aditya Singh
+- Palliative Symptom Management Educator — Dr. Anika Adeyemi
+- Goals of Care Conversation Coach — Dr. Chidi Cruz
+- Hospice Home Comfort Care Advisor — Dr. Efe Hassan
+- Pediatric Hospice Palliative Navigator — Dr. Freya Lindberg
+- Grief & Bereavement Hospice Educator — Dr. Idris Nguyen
+- Palliative Chemo Decision Support Advisor — Dr. Jonas Rossi
+- Spiritual Care Palliative Liaison Educator — Dr. Layla Watanabe
+- Hospice Medication Comfort Kit Coach — Dr. Meera Campbell
+- Caregiver Burnout Palliative Advisor — Dr. Noah Fischer
+- Palliative Pain & Dyspnea Educator — Dr. Rina Kim
+- Hospice Respite Care Navigator — Dr. Valentina Mori
+- Veterans Palliative Benefits Educator — Dr. Aarav Petrov
+- Palliative Oncology Transition Coach — Dr. Akira Torres
+- Dementia Late-Stage Care Educator — Dr. Aya Anderson
+- Hospice Volunteer Program Advisor — Dr. Daniel Diallo
+- Palliative Telehealth Check-In Coach — Dr. Emre Jensen
+- Ethics Consult Palliative Navigator — Dr. Hana Mansour
+- Hospice Bereavement Follow-Up Educator — Dr. Iris Okafor
+- Palliative Quality Metrics Literacy Advisor — Dr. Kavya Silva
 
 ## Medical · Addiction Medicine (`medical-addiction-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Addiction Medicine MAT Options Educator — Linh Abdi
-- Opioid Use Disorder Buprenorphine Coach — Mina Costa
-- Alcohol Withdrawal Safety Advisor — Paloma Haddad
-- Stimulant Use Harm Reduction Educator — Sofia Lee
-- Cannabis Use Disorder Counseling Coach — Yuki Nasser
-- Nicotine Dependence Pharmacotherapy Advisor — Adaeze Rao
-- Benzodiazepine Taper Educator — Amir Volkov
-- Dual Diagnosis Mental Health Navigator — Camila Brooks
-- Relapse Prevention Planning Coach — Diego Fernandez
-- Family Support Addiction Educator — Felix Khan
-- Pregnancy & Substance Use Advisor — Hugo Mensah
-- Adolescent Substance Use Screening Coach — Jia Patel
-- Workplace Return After Treatment Educator — Kwame Tanaka
-- Recovery Housing Navigation Advisor — Maya Alvarez
-- Peer Recovery Coach Liaison Educator — Nia Desai
-- Overdose Naloxone Training Facilitator — Rami Iyer
-- Fentanyl Test Strip Safety Educator — Tomas Malik
-- Addiction Stigma Reduction Advisor — Zola Nwosu
-- Pain & Addiction Balanced Care Coach — Aisha Sharma
-- Addiction Telehealth MAT Educator — Arjun Zhang
-- Gambling Disorder Support Navigator — Dalia Chen
-- Addiction Medicine Research Trial Educator — Elias Gupta
+- Addiction Medicine MAT Options Educator — Dr. Linh Abdi
+- Opioid Use Disorder Buprenorphine Coach — Dr. Mina Costa
+- Alcohol Withdrawal Safety Advisor — Dr. Paloma Haddad
+- Stimulant Use Harm Reduction Educator — Dr. Sofia Lee
+- Cannabis Use Disorder Counseling Coach — Dr. Yuki Nasser
+- Nicotine Dependence Pharmacotherapy Advisor — Dr. Adaeze Rao
+- Benzodiazepine Taper Educator — Dr. Amir Volkov
+- Dual Diagnosis Mental Health Navigator — Dr. Camila Brooks
+- Relapse Prevention Planning Coach — Dr. Diego Fernandez
+- Family Support Addiction Educator — Dr. Felix Khan
+- Pregnancy & Substance Use Advisor — Dr. Hugo Mensah
+- Adolescent Substance Use Screening Coach — Dr. Jia Patel
+- Workplace Return After Treatment Educator — Dr. Kwame Tanaka
+- Recovery Housing Navigation Advisor — Dr. Maya Alvarez
+- Peer Recovery Coach Liaison Educator — Dr. Nia Desai
+- Overdose Naloxone Training Facilitator — Dr. Rami Iyer
+- Fentanyl Test Strip Safety Educator — Dr. Tomas Malik
+- Addiction Stigma Reduction Advisor — Dr. Zola Nwosu
+- Pain & Addiction Balanced Care Coach — Dr. Aisha Sharma
+- Addiction Telehealth MAT Educator — Dr. Arjun Zhang
+- Gambling Disorder Support Navigator — Dr. Dalia Chen
+- Addiction Medicine Research Trial Educator — Dr. Elias Gupta
 
 ## Medical · Medical Toxicology (`medical-medical-toxicology`) — 22 roles
 *Medical informational disclaimer required*
-- Medical Toxicology Poison Exposure Educator — Giulia Laurent
-- Overdose Reversal & Aftercare Coach — Ines Nakamura
-- Household Chemical Exposure Advisor — Karim Rahman
-- Lead & Heavy Metal Screening Educator — Liam Vega
-- Carbon Monoxide Poisoning Prevention Coach — Miguel Boateng
-- Snake & Spider Envenomation First Aid Educator — Omar Farouk
-- Medication Error Toxicology Advisor — Santiago Kaur
-- Alcohol Toxicity Emergency Literacy Coach — Yara Mehta
-- Recreational Drug Adulterant Educator — Abena Park
-- Workplace Chemical Spill Response Advisor — Amara Svensson
-- Pesticide Exposure Home Educator — Callum Ahmed
-- Button Battery Ingestion Emergency Coach — Deepa Dahl
-- Mushroom Foraging Poisoning Educator — Fatima Ibrahim
-- Shellfish & Food Toxin Advisor — Helena Lopez
-- Radiation Exposure Public Health Educator — Jaden Novak
-- Pediatric Ingestion Prevention Coach — Khalid Santos
-- Antidote Availability Navigator — Luna Williams
-- Poison Center Hotline Usage Educator — Naomi Chang
-- Environmental Toxin Screening Advisor — Rafael Garcia
-- Chelation Therapy Literacy Coach — Tariq Kowalski
-- Toxicology Lab Interpretation Educator — Zara Muller
-- Disaster Chemical Release Community Advisor — Aiko Popov
+- Medical Toxicology Poison Exposure Educator — Dr. Giulia Laurent
+- Overdose Reversal & Aftercare Coach — Dr. Ines Nakamura
+- Household Chemical Exposure Advisor — Dr. Karim Rahman
+- Lead & Heavy Metal Screening Educator — Dr. Liam Vega
+- Carbon Monoxide Poisoning Prevention Coach — Dr. Miguel Boateng
+- Snake & Spider Envenomation First Aid Educator — Dr. Omar Farouk
+- Medication Error Toxicology Advisor — Dr. Santiago Kaur
+- Alcohol Toxicity Emergency Literacy Coach — Dr. Yara Mehta
+- Recreational Drug Adulterant Educator — Dr. Abena Park
+- Workplace Chemical Spill Response Advisor — Dr. Amara Svensson
+- Pesticide Exposure Home Educator — Dr. Callum Ahmed
+- Button Battery Ingestion Emergency Coach — Dr. Deepa Dahl
+- Mushroom Foraging Poisoning Educator — Dr. Fatima Ibrahim
+- Shellfish & Food Toxin Advisor — Dr. Helena Lopez
+- Radiation Exposure Public Health Educator — Dr. Jaden Novak
+- Pediatric Ingestion Prevention Coach — Dr. Khalid Santos
+- Antidote Availability Navigator — Dr. Luna Williams
+- Poison Center Hotline Usage Educator — Dr. Naomi Chang
+- Environmental Toxin Screening Advisor — Dr. Rafael Garcia
+- Chelation Therapy Literacy Coach — Dr. Tariq Kowalski
+- Toxicology Lab Interpretation Educator — Dr. Zara Muller
+- Disaster Chemical Release Community Advisor — Dr. Aiko Popov
 
 ## Medical · Colon & Rectal Surgery (`medical-colorectal-surgery`) — 22 roles
 *Medical informational disclaimer required*
-- Colorectal Surgery Bowel Prep Educator — Anya Usman
-- Colon Resection Recovery Coach — Clara Bianchi
-- Ileostomy Appliance Training Advisor — Elena Dubois
-- Colostomy Lifestyle Management Educator — Gabriel Joshi
-- Hemorrhoid Treatment Options Coach — Imani Martinez
-- Anal Fissure Healing Educator — Kaito Oliveira
-- Fistula Surgical Pathway Advisor — Leila Singh
-- Rectal Cancer Surgery Prep Navigator — Mei Adeyemi
-- Low Anterior Resection Syndrome Coach — Noura Cruz
-- Pelvic Floor After Colorectal Surgery Educator — Sana Hassan
-- Pilonidal Disease Care Advisor — Wei Lindberg
-- Diverticulitis Surgery Decision Coach — Aaliyah Nguyen
-- IBD Surgical Timing Educator — Alina Rossi
-- Minimally Invasive Colorectal Recovery Advisor — Beatriz Watanabe
-- ERAS Colorectal Pathway Coach — Dante Campbell
-- Stoma Reversal Expectation Educator — Esra Fischer
-- Anal Cancer Screening Navigator — Haruto Kim
-- Colorectal Genetics Referral Advisor — Ishan Mori
-- Pediatric Colorectal Condition Educator — Keiko Petrov
-- Colorectal Telehealth Follow-Up Coach — Luca Torres
-- Bowel Function Rehabilitation Educator — Nadia Anderson
-- Colorectal Surgery Second Opinion Navigator — Priya Diallo
+- Colorectal Surgery Bowel Prep Educator — Dr. Anya Usman
+- Colon Resection Recovery Coach — Dr. Clara Bianchi
+- Ileostomy Appliance Training Advisor — Dr. Elena Dubois
+- Colostomy Lifestyle Management Educator — Dr. Gabriel Joshi
+- Hemorrhoid Treatment Options Coach — Dr. Imani Martinez
+- Anal Fissure Healing Educator — Dr. Kaito Oliveira
+- Fistula Surgical Pathway Advisor — Dr. Leila Singh
+- Rectal Cancer Surgery Prep Navigator — Dr. Mei Adeyemi
+- Low Anterior Resection Syndrome Coach — Dr. Noura Cruz
+- Pelvic Floor After Colorectal Surgery Educator — Dr. Sana Hassan
+- Pilonidal Disease Care Advisor — Dr. Wei Lindberg
+- Diverticulitis Surgery Decision Coach — Dr. Aaliyah Nguyen
+- IBD Surgical Timing Educator — Dr. Alina Rossi
+- Minimally Invasive Colorectal Recovery Advisor — Dr. Beatriz Watanabe
+- ERAS Colorectal Pathway Coach — Dr. Dante Campbell
+- Stoma Reversal Expectation Educator — Dr. Esra Fischer
+- Anal Cancer Screening Navigator — Dr. Haruto Kim
+- Colorectal Genetics Referral Advisor — Dr. Ishan Mori
+- Pediatric Colorectal Condition Educator — Dr. Keiko Petrov
+- Colorectal Telehealth Follow-Up Coach — Dr. Luca Torres
+- Bowel Function Rehabilitation Educator — Dr. Nadia Anderson
+- Colorectal Surgery Second Opinion Navigator — Dr. Priya Diallo
 
 ## Medical · Thoracic Surgery (`medical-thoracic-surgery`) — 22 roles
 *Medical informational disclaimer required*
-- Thoracic Surgery Lung Resection Educator — Sophia Jensen
-- Esophageal Surgery Recovery Coach — Zainab Mansour
-- Mediastinal Mass Workup Navigator — Aditya Okafor
-- Lung Cancer Surgical Staging Educator — Anika Silva
-- VATS Minimally Invasive Thoracic Coach — Chidi Abdi
-- Chest Tube Home Care Advisor — Efe Costa
-- Thoracic ERAS Recovery Pathway Educator — Freya Haddad
-- Esophagectomy Nutrition Coach — Idris Lee
-- Hiatal Hernia Surgical Options Advisor — Jonas Nasser
-- Pneumothorax Recurrence Prevention Educator — Layla Rao
-- Thoracic Trauma Recovery Coach — Meera Volkov
-- Lung Volume Reduction Educator — Noah Brooks
-- Tracheal Stenosis Treatment Navigator — Rina Fernandez
-- Thoracic Surgery Pain Management Coach — Valentina Khan
-- Pulmonary Rehab Post-Thoracic Educator — Aarav Mensah
-- Thoracic Oncology Multidisciplinary Advisor — Akira Patel
-- Robotic Thoracic Surgery Expectation Educator — Aya Tanaka
-- Chest Wall Tumor Recovery Coach — Daniel Alvarez
-- Thoracic Surgery Prehab Fitness Advisor — Emre Desai
-- Empyema Drainage Literacy Educator — Hana Iyer
-- Thoracic Second Opinion Navigator — Iris Malik
-- Thoracic Surgery Telehealth Check-In Coach — Kavya Nwosu
+- Thoracic Surgery Lung Resection Educator — Dr. Sophia Jensen
+- Esophageal Surgery Recovery Coach — Dr. Zainab Mansour
+- Mediastinal Mass Workup Navigator — Dr. Aditya Okafor
+- Lung Cancer Surgical Staging Educator — Dr. Anika Silva
+- VATS Minimally Invasive Thoracic Coach — Dr. Chidi Abdi
+- Chest Tube Home Care Advisor — Dr. Efe Costa
+- Thoracic ERAS Recovery Pathway Educator — Dr. Freya Haddad
+- Esophagectomy Nutrition Coach — Dr. Idris Lee
+- Hiatal Hernia Surgical Options Advisor — Dr. Jonas Nasser
+- Pneumothorax Recurrence Prevention Educator — Dr. Layla Rao
+- Thoracic Trauma Recovery Coach — Dr. Meera Volkov
+- Lung Volume Reduction Educator — Dr. Noah Brooks
+- Tracheal Stenosis Treatment Navigator — Dr. Rina Fernandez
+- Thoracic Surgery Pain Management Coach — Dr. Valentina Khan
+- Pulmonary Rehab Post-Thoracic Educator — Dr. Aarav Mensah
+- Thoracic Oncology Multidisciplinary Advisor — Dr. Akira Patel
+- Robotic Thoracic Surgery Expectation Educator — Dr. Aya Tanaka
+- Chest Wall Tumor Recovery Coach — Dr. Daniel Alvarez
+- Thoracic Surgery Prehab Fitness Advisor — Dr. Emre Desai
+- Empyema Drainage Literacy Educator — Dr. Hana Iyer
+- Thoracic Second Opinion Navigator — Dr. Iris Malik
+- Thoracic Surgery Telehealth Check-In Coach — Dr. Kavya Nwosu
 
 ## Medical · Vascular Surgery (`medical-vascular-surgery`) — 22 roles
 *Medical informational disclaimer required*
-- Vascular Surgery Aneurysm Screening Educator — Linh Sharma
-- Carotid Stenosis Surgery Decision Coach — Mina Zhang
-- Peripheral Bypass Recovery Advisor — Paloma Chen
-- Varicose Vein Treatment Options Educator — Sofia Gupta
-- Deep Vein Thrombosis Surgical Coach — Yuki Laurent
-- Dialysis Access Fistula Educator — Adaeze Nakamura
-- Aortic Dissection Recovery Navigator — Amir Rahman
-- Diabetic Foot Wound Vascular Advisor — Camila Vega
-- Venous Ulcer Compression Coach — Diego Boateng
-- Thoracic Outlet Syndrome Educator — Felix Farouk
-- Vascular Trauma Recovery Advisor — Hugo Kaur
-- Endovascular Stent Graft Educator — Jia Mehta
-- Raynaud Phenomenon Vascular Coach — Kwame Park
-- Lymphedema Vascular Referral Navigator — Maya Svensson
-- Vascular Lab Ultrasound Educator — Nia Ahmed
-- Amputation Prevention Limb Salvage Advisor — Rami Dahl
-- Vascular Surgery Anticoagulation Coach — Tomas Ibrahim
-- Carotid Stent vs Endarterectomy Educator — Zola Lopez
-- Mesenteric Ischemia Red Flag Advisor — Aisha Novak
-- Vascular Surgery Prehab Coach — Arjun Santos
-- Vascular Telehealth Monitoring Educator — Dalia Williams
-- Vascular Quality Outcomes Literacy Advisor — Elias Chang
+- Vascular Surgery Aneurysm Screening Educator — Dr. Linh Sharma
+- Carotid Stenosis Surgery Decision Coach — Dr. Mina Zhang
+- Peripheral Bypass Recovery Advisor — Dr. Paloma Chen
+- Varicose Vein Treatment Options Educator — Dr. Sofia Gupta
+- Deep Vein Thrombosis Surgical Coach — Dr. Yuki Laurent
+- Dialysis Access Fistula Educator — Dr. Adaeze Nakamura
+- Aortic Dissection Recovery Navigator — Dr. Amir Rahman
+- Diabetic Foot Wound Vascular Advisor — Dr. Camila Vega
+- Venous Ulcer Compression Coach — Dr. Diego Boateng
+- Thoracic Outlet Syndrome Educator — Dr. Felix Farouk
+- Vascular Trauma Recovery Advisor — Dr. Hugo Kaur
+- Endovascular Stent Graft Educator — Dr. Jia Mehta
+- Raynaud Phenomenon Vascular Coach — Dr. Kwame Park
+- Lymphedema Vascular Referral Navigator — Dr. Maya Svensson
+- Vascular Lab Ultrasound Educator — Dr. Nia Ahmed
+- Amputation Prevention Limb Salvage Advisor — Dr. Rami Dahl
+- Vascular Surgery Anticoagulation Coach — Dr. Tomas Ibrahim
+- Carotid Stent vs Endarterectomy Educator — Dr. Zola Lopez
+- Mesenteric Ischemia Red Flag Advisor — Dr. Aisha Novak
+- Vascular Surgery Prehab Coach — Dr. Arjun Santos
+- Vascular Telehealth Monitoring Educator — Dr. Dalia Williams
+- Vascular Quality Outcomes Literacy Advisor — Dr. Elias Chang
 
 ## Medical · Neurological Surgery (`medical-neurosurgery`) — 22 roles
 *Medical informational disclaimer required*
-- Neurosurgery Brain Tumor Prep Educator — Giulia Garcia
-- Spine Surgery Expectation Coach — Ines Kowalski
-- Hydrocephalus Shunt Literacy Advisor — Karim Muller
-- Chiari Malformation Educator — Liam Popov
-- Trigeminal Neuralgia Surgical Options Coach — Miguel Usman
-- Aneurysm Clipping vs Coiling Educator — Omar Bianchi
-- Epilepsy Surgery Candidacy Navigator — Santiago Dubois
-- Pediatric Neurosurgery Family Advisor — Yara Joshi
-- Spinal Cord Tumor Recovery Coach — Abena Martinez
-- Minimally Invasive Spine Educator — Amara Oliveira
-- Cervical Disc Surgery Recovery Advisor — Callum Singh
-- Lumbar Fusion Rehab Coach — Deepa Adeyemi
-- Peripheral Nerve Surgery Educator — Fatima Cruz
-- Neurosurgical ICU Family Advisor — Helena Hassan
-- Deep Brain Stimulation Prep Coach — Jaden Lindberg
-- Pituitary Surgery Endonasal Educator — Khalid Nguyen
-- Traumatic Brain Injury Surgical Advisor — Luna Rossi
-- Neurosurgery Second Opinion Navigator — Naomi Watanabe
-- Spine Deformity Scoliosis Educator — Rafael Campbell
-- Neurosurgical Pain Management Coach — Tariq Fischer
-- Neurosurgery Telehealth Follow-Up Advisor — Zara Kim
-- Neurosurgical Clinical Trial Navigator — Aiko Mori
+- Neurosurgery Brain Tumor Prep Educator — Dr. Giulia Garcia
+- Spine Surgery Expectation Coach — Dr. Ines Kowalski
+- Hydrocephalus Shunt Literacy Advisor — Dr. Karim Muller
+- Chiari Malformation Educator — Dr. Liam Popov
+- Trigeminal Neuralgia Surgical Options Coach — Dr. Miguel Usman
+- Aneurysm Clipping vs Coiling Educator — Dr. Omar Bianchi
+- Epilepsy Surgery Candidacy Navigator — Dr. Santiago Dubois
+- Pediatric Neurosurgery Family Advisor — Dr. Yara Joshi
+- Spinal Cord Tumor Recovery Coach — Dr. Abena Martinez
+- Minimally Invasive Spine Educator — Dr. Amara Oliveira
+- Cervical Disc Surgery Recovery Advisor — Dr. Callum Singh
+- Lumbar Fusion Rehab Coach — Dr. Deepa Adeyemi
+- Peripheral Nerve Surgery Educator — Dr. Fatima Cruz
+- Neurosurgical ICU Family Advisor — Dr. Helena Hassan
+- Deep Brain Stimulation Prep Coach — Dr. Jaden Lindberg
+- Pituitary Surgery Endonasal Educator — Dr. Khalid Nguyen
+- Traumatic Brain Injury Surgical Advisor — Dr. Luna Rossi
+- Neurosurgery Second Opinion Navigator — Dr. Naomi Watanabe
+- Spine Deformity Scoliosis Educator — Dr. Rafael Campbell
+- Neurosurgical Pain Management Coach — Dr. Tariq Fischer
+- Neurosurgery Telehealth Follow-Up Advisor — Dr. Zara Kim
+- Neurosurgical Clinical Trial Navigator — Dr. Aiko Mori
 
 ## Medical · Orthopedic Surgery (`medical-orthopedic-surgery`) — 22 roles
 *Medical informational disclaimer required*
-- Orthopedic Surgery Joint Replacement Educator — Anya Petrov
-- Hip Replacement Recovery Coach — Clara Torres
-- Knee Replacement Rehab Advisor — Elena Anderson
-- Shoulder Rotator Cuff Surgery Educator — Gabriel Diallo
-- ACL Reconstruction Recovery Coach — Imani Jensen
-- Fracture Cast & Weight Bearing Advisor — Kaito Mansour
-- Hand Surgery Recovery Educator — Leila Okafor
-- Foot & Ankle Surgery Coach — Mei Silva
-- Spine Orthopedic Decompression Educator — Noura Abdi
-- Sports Medicine Orthopedic Surgical Advisor — Sana Costa
-- Pediatric Orthopedic Fracture Educator — Wei Haddad
-- Arthritis Surgical Timing Coach — Aaliyah Lee
-- Orthopedic Trauma Recovery Navigator — Alina Nasser
-- Joint Preservation Osteotomy Educator — Beatriz Rao
-- Meniscus Repair vs Removal Advisor — Dante Volkov
-- Orthopedic Oncology Limb Salvage Educator — Esra Brooks
-- Orthopedic ERAS Pathway Coach — Haruto Fernandez
-- Orthopedic Implant Metal Allergy Advisor — Ishan Khan
-- Orthopedic Telehealth Post-Op Coach — Keiko Mensah
-- Orthopedic Second Opinion Navigator — Luca Patel
-- Bone Health Osteoporosis Surgical Educator — Nadia Tanaka
-- Orthopedic Surgery Pain & Opioid Coach — Priya Alvarez
+- Orthopedic Surgery Joint Replacement Educator — Dr. Anya Petrov
+- Hip Replacement Recovery Coach — Dr. Clara Torres
+- Knee Replacement Rehab Advisor — Dr. Elena Anderson
+- Shoulder Rotator Cuff Surgery Educator — Dr. Gabriel Diallo
+- ACL Reconstruction Recovery Coach — Dr. Imani Jensen
+- Fracture Cast & Weight Bearing Advisor — Dr. Kaito Mansour
+- Hand Surgery Recovery Educator — Dr. Leila Okafor
+- Foot & Ankle Surgery Coach — Dr. Mei Silva
+- Spine Orthopedic Decompression Educator — Dr. Noura Abdi
+- Sports Medicine Orthopedic Surgical Advisor — Dr. Sana Costa
+- Pediatric Orthopedic Fracture Educator — Dr. Wei Haddad
+- Arthritis Surgical Timing Coach — Dr. Aaliyah Lee
+- Orthopedic Trauma Recovery Navigator — Dr. Alina Nasser
+- Joint Preservation Osteotomy Educator — Dr. Beatriz Rao
+- Meniscus Repair vs Removal Advisor — Dr. Dante Volkov
+- Orthopedic Oncology Limb Salvage Educator — Dr. Esra Brooks
+- Orthopedic ERAS Pathway Coach — Dr. Haruto Fernandez
+- Orthopedic Implant Metal Allergy Advisor — Dr. Ishan Khan
+- Orthopedic Telehealth Post-Op Coach — Dr. Keiko Mensah
+- Orthopedic Second Opinion Navigator — Dr. Luca Patel
+- Bone Health Osteoporosis Surgical Educator — Dr. Nadia Tanaka
+- Orthopedic Surgery Pain & Opioid Coach — Dr. Priya Alvarez
 
 ## Medical · Plastic & Reconstructive Surgery (`medical-plastic-surgery`) — 22 roles
 *Medical informational disclaimer required*
-- Plastic Surgery Reconstruction Educator — Sophia Desai
-- Breast Reconstruction Options Coach — Zainab Iyer
-- Cleft Lip Palate Family Advisor — Aditya Malik
-- Burn Reconstruction Expectation Educator — Anika Nwosu
-- Skin Graft Recovery Coach — Chidi Sharma
-- Hand Reconstruction Plastic Surgery Advisor — Efe Zhang
-- Facial Trauma Reconstruction Educator — Freya Chen
-- Microsurgery Free Flap Recovery Coach — Idris Gupta
-- Scar Revision Expectation Advisor — Jonas Laurent
-- Cosmetic Surgery Informed Consent Educator — Layla Nakamura
-- Rhinoplasty Recovery Coach — Meera Rahman
-- Body Contouring Safety Educator — Noah Vega
-- Gender Affirming Surgery Navigator — Rina Boateng
-- Pressure Ulcer Reconstruction Advisor — Valentina Farouk
-- Lymphedema Reconstructive Educator — Aarav Kaur
-- Pediatric Plastic Surgery Family Coach — Akira Mehta
-- Plastic Surgery Complication Red Flag Educator — Aya Park
-- Non-Surgical Aesthetic Options Advisor — Daniel Svensson
-- Plastic Surgery Photo Documentation Educator — Emre Ahmed
-- Reconstructive Telehealth Follow-Up Coach — Hana Dahl
-- Plastic Surgery Second Opinion Navigator — Iris Ibrahim
-- Plastic Surgery Research Trial Educator — Kavya Lopez
+- Plastic Surgery Reconstruction Educator — Dr. Sophia Desai
+- Breast Reconstruction Options Coach — Dr. Zainab Iyer
+- Cleft Lip Palate Family Advisor — Dr. Aditya Malik
+- Burn Reconstruction Expectation Educator — Dr. Anika Nwosu
+- Skin Graft Recovery Coach — Dr. Chidi Sharma
+- Hand Reconstruction Plastic Surgery Advisor — Dr. Efe Zhang
+- Facial Trauma Reconstruction Educator — Dr. Freya Chen
+- Microsurgery Free Flap Recovery Coach — Dr. Idris Gupta
+- Scar Revision Expectation Advisor — Dr. Jonas Laurent
+- Cosmetic Surgery Informed Consent Educator — Dr. Layla Nakamura
+- Rhinoplasty Recovery Coach — Dr. Meera Rahman
+- Body Contouring Safety Educator — Dr. Noah Vega
+- Gender Affirming Surgery Navigator — Dr. Rina Boateng
+- Pressure Ulcer Reconstruction Advisor — Dr. Valentina Farouk
+- Lymphedema Reconstructive Educator — Dr. Aarav Kaur
+- Pediatric Plastic Surgery Family Coach — Dr. Akira Mehta
+- Plastic Surgery Complication Red Flag Educator — Dr. Aya Park
+- Non-Surgical Aesthetic Options Advisor — Dr. Daniel Svensson
+- Plastic Surgery Photo Documentation Educator — Dr. Emre Ahmed
+- Reconstructive Telehealth Follow-Up Coach — Dr. Hana Dahl
+- Plastic Surgery Second Opinion Navigator — Dr. Iris Ibrahim
+- Plastic Surgery Research Trial Educator — Dr. Kavya Lopez
 
 ## Medical · Otolaryngology (ENT) (`medical-otolaryngology`) — 22 roles
 *Medical informational disclaimer required*
-- ENT Hearing Loss Evaluation Educator — Linh Novak
-- Tonsillectomy Recovery Coach — Mina Santos
-- Sinus Surgery Expectation Advisor — Paloma Williams
-- Voice Disorder ENT Educator — Sofia Chang
-- Sleep Apnea Surgical Options Coach — Yuki Garcia
-- Thyroid Surgery ENT Educator — Adaeze Kowalski
-- Salivary Gland Disorder Advisor — Amir Muller
-- Ear Tube Placement Pediatric Educator — Camila Popov
-- Vertigo ENT Evaluation Coach — Diego Usman
-- Head & Neck Cancer ENT Navigator — Felix Bianchi
-- Cochlear Implant Candidacy Educator — Hugo Dubois
-- Nasal Obstruction Surgical Advisor — Jia Joshi
-- Laryngectomy Communication Coach — Kwame Martinez
-- Pediatric ENT Airway Educator — Maya Oliveira
-- Allergic Rhinitis ENT Management Coach — Nia Singh
-- ENT Trauma Facial Fracture Advisor — Rami Adeyemi
-- Swallowing Disorder ENT Educator — Tomas Cruz
-- ENT Telehealth Triage Coach — Zola Hassan
-- ENT Second Opinion Navigator — Aisha Lindberg
-- Smell & Taste Loss Educator — Arjun Nguyen
-- ENT Clinical Research Trial Advisor — Dalia Rossi
-- ENT Post-Op Bleeding Red Flag Educator — Elias Watanabe
+- ENT Hearing Loss Evaluation Educator — Dr. Linh Novak
+- Tonsillectomy Recovery Coach — Dr. Mina Santos
+- Sinus Surgery Expectation Advisor — Dr. Paloma Williams
+- Voice Disorder ENT Educator — Dr. Sofia Chang
+- Sleep Apnea Surgical Options Coach — Dr. Yuki Garcia
+- Thyroid Surgery ENT Educator — Dr. Adaeze Kowalski
+- Salivary Gland Disorder Advisor — Dr. Amir Muller
+- Ear Tube Placement Pediatric Educator — Dr. Camila Popov
+- Vertigo ENT Evaluation Coach — Dr. Diego Usman
+- Head & Neck Cancer ENT Navigator — Dr. Felix Bianchi
+- Cochlear Implant Candidacy Educator — Dr. Hugo Dubois
+- Nasal Obstruction Surgical Advisor — Dr. Jia Joshi
+- Laryngectomy Communication Coach — Dr. Kwame Martinez
+- Pediatric ENT Airway Educator — Dr. Maya Oliveira
+- Allergic Rhinitis ENT Management Coach — Dr. Nia Singh
+- ENT Trauma Facial Fracture Advisor — Dr. Rami Adeyemi
+- Swallowing Disorder ENT Educator — Dr. Tomas Cruz
+- ENT Telehealth Triage Coach — Dr. Zola Hassan
+- ENT Second Opinion Navigator — Dr. Aisha Lindberg
+- Smell & Taste Loss Educator — Dr. Arjun Nguyen
+- ENT Clinical Research Trial Advisor — Dr. Dalia Rossi
+- ENT Post-Op Bleeding Red Flag Educator — Dr. Elias Watanabe
 
 ## Medical · Urology (`medical-urology-specialty`) — 22 roles
 *Medical informational disclaimer required*
-- Urology Prostate Health Educator — Giulia Campbell
-- Kidney Stone Prevention Coach — Ines Fischer
-- BPH Surgical Options Advisor — Karim Kim
-- Bladder Cancer Screening Navigator — Liam Mori
-- Urinary Incontinence Management Educator — Miguel Petrov
-- Erectile Dysfunction Urology Coach — Omar Torres
-- Male Infertility Urology Advisor — Santiago Anderson
-- Vasectomy Expectation Educator — Yara Diallo
-- Interstitial Cystitis Support Coach — Abena Jensen
-- Urologic Oncology Treatment Pathway Educator — Amara Mansour
-- Pediatric Urology Hypospadias Advisor — Callum Okafor
-- Neurogenic Bladder Educator — Deepa Silva
-- Urethral Stricture Treatment Navigator — Fatima Abdi
-- Testicular Cancer Self-Exam Educator — Helena Costa
-- Urology Catheter Care Coach — Jaden Haddad
-- Pelvic Floor Urology Referral Advisor — Khalid Lee
-- Urologic Trauma Recovery Educator — Luna Nasser
-- Urology Telehealth Follow-Up Coach — Naomi Rao
-- Urology Second Opinion Navigator — Rafael Volkov
-- Overactive Bladder Medication Educator — Tariq Brooks
-- Urology ERAS Surgical Coach — Zara Fernandez
-- Urology Clinical Trial Navigator — Aiko Khan
+- Urology Prostate Health Educator — Dr. Giulia Campbell
+- Kidney Stone Prevention Coach — Dr. Ines Fischer
+- BPH Surgical Options Advisor — Dr. Karim Kim
+- Bladder Cancer Screening Navigator — Dr. Liam Mori
+- Urinary Incontinence Management Educator — Dr. Miguel Petrov
+- Erectile Dysfunction Urology Coach — Dr. Omar Torres
+- Male Infertility Urology Advisor — Dr. Santiago Anderson
+- Vasectomy Expectation Educator — Dr. Yara Diallo
+- Interstitial Cystitis Support Coach — Dr. Abena Jensen
+- Urologic Oncology Treatment Pathway Educator — Dr. Amara Mansour
+- Pediatric Urology Hypospadias Advisor — Dr. Callum Okafor
+- Neurogenic Bladder Educator — Dr. Deepa Silva
+- Urethral Stricture Treatment Navigator — Dr. Fatima Abdi
+- Testicular Cancer Self-Exam Educator — Dr. Helena Costa
+- Urology Catheter Care Coach — Dr. Jaden Haddad
+- Pelvic Floor Urology Referral Advisor — Dr. Khalid Lee
+- Urologic Trauma Recovery Educator — Dr. Luna Nasser
+- Urology Telehealth Follow-Up Coach — Dr. Naomi Rao
+- Urology Second Opinion Navigator — Dr. Rafael Volkov
+- Overactive Bladder Medication Educator — Dr. Tariq Brooks
+- Urology ERAS Surgical Coach — Dr. Zara Fernandez
+- Urology Clinical Trial Navigator — Dr. Aiko Khan
 
 ## Medical · Ophthalmology (`medical-ophthalmology-specialty`) — 22 roles
 *Medical informational disclaimer required*
-- Ophthalmology Cataract Surgery Educator — Anya Mensah
-- Glaucoma Eye Drop Technique Coach — Clara Patel
-- Macular Degeneration Monitoring Advisor — Elena Tanaka
-- Diabetic Retinopathy Screening Educator — Gabriel Alvarez
-- Dry Eye Comprehensive Management Coach — Imani Desai
-- Refractive Surgery LASIK Educator — Kaito Iyer
-- Pediatric Strabismus Family Advisor — Leila Malik
-- Corneal Transplant Expectation Coach — Mei Nwosu
-- Retinal Detachment Red Flag Educator — Noura Sharma
-- Uveitis Inflammatory Eye Disease Advisor — Sana Zhang
-- Low Vision Rehabilitation Navigator — Wei Chen
-- Ocular Trauma First Aid Educator — Aaliyah Gupta
-- Contact Lens Safety Coach — Alina Laurent
-- Ophthalmic Oncology Navigator — Beatriz Nakamura
-- Neuro-Ophthalmology Double Vision Educator — Dante Rahman
-- Eyelid Surgery Blepharoplasty Advisor — Esra Vega
-- Ophthalmology Telemedicine Screening Coach — Haruto Boateng
-- Eye Emergency Triage Educator — Ishan Farouk
-- Ophthalmology Second Opinion Navigator — Keiko Kaur
-- Color Blindness Workplace Advisor — Luca Mehta
-- Ophthalmic Clinical Trial Educator — Nadia Park
-- Post-Cataract Activity Restriction Coach — Priya Svensson
+- Ophthalmology Cataract Surgery Educator — Dr. Anya Mensah
+- Glaucoma Eye Drop Technique Coach — Dr. Clara Patel
+- Macular Degeneration Monitoring Advisor — Dr. Elena Tanaka
+- Diabetic Retinopathy Screening Educator — Dr. Gabriel Alvarez
+- Dry Eye Comprehensive Management Coach — Dr. Imani Desai
+- Refractive Surgery LASIK Educator — Dr. Kaito Iyer
+- Pediatric Strabismus Family Advisor — Dr. Leila Malik
+- Corneal Transplant Expectation Coach — Dr. Mei Nwosu
+- Retinal Detachment Red Flag Educator — Dr. Noura Sharma
+- Uveitis Inflammatory Eye Disease Advisor — Dr. Sana Zhang
+- Low Vision Rehabilitation Navigator — Dr. Wei Chen
+- Ocular Trauma First Aid Educator — Dr. Aaliyah Gupta
+- Contact Lens Safety Coach — Dr. Alina Laurent
+- Ophthalmic Oncology Navigator — Dr. Beatriz Nakamura
+- Neuro-Ophthalmology Double Vision Educator — Dr. Dante Rahman
+- Eyelid Surgery Blepharoplasty Advisor — Dr. Esra Vega
+- Ophthalmology Telemedicine Screening Coach — Dr. Haruto Boateng
+- Eye Emergency Triage Educator — Dr. Ishan Farouk
+- Ophthalmology Second Opinion Navigator — Dr. Keiko Kaur
+- Color Blindness Workplace Advisor — Dr. Luca Mehta
+- Ophthalmic Clinical Trial Educator — Dr. Nadia Park
+- Post-Cataract Activity Restriction Coach — Dr. Priya Svensson
 
 ## Medical · Interventional Radiology (`medical-interventional-radiology`) — 22 roles
 *Medical informational disclaimer required*
-- Interventional Radiology Procedure Prep Educator — Sophia Ahmed
-- Angiography Vascular Access Coach — Zainab Dahl
-- Embolization Therapy Educator — Aditya Ibrahim
-- Tumor Ablation IR Advisor — Anika Lopez
-- Biopsy Image-Guided Prep Coach — Chidi Novak
-- Drain Placement IR Educator — Efe Santos
-- Venous Access Port Placement Advisor — Freya Williams
-- Uterine Fibroid Embolization Educator — Idris Chang
-- Varicose Vein Ablation IR Coach — Jonas Garcia
-- Dialysis Access IR Intervention Educator — Layla Kowalski
-- Spine Vertebroplasty Advisor — Meera Muller
-- Biliary Drain IR Educator — Noah Popov
-- IR Pain Procedure Expectation Coach — Rina Usman
-- Pediatric IR Sedation Educator — Valentina Bianchi
-- IR Contrast Allergy Prep Advisor — Aarav Dubois
-- Post-IR Bleeding Watch Educator — Akira Joshi
-- IR Clinical Trial Navigator — Aya Martinez
-- IR Telehealth Follow-Up Coach — Daniel Oliveira
-- IR Second Opinion Navigator — Emre Singh
-- Deep Vein Thrombosis Thrombectomy Educator — Hana Adeyemi
-- GI Bleed Embolization Literacy Coach — Iris Cruz
-- IR Radiation Safety Patient Educator — Kavya Hassan
+- Interventional Radiology Procedure Prep Educator — Dr. Sophia Ahmed
+- Angiography Vascular Access Coach — Dr. Zainab Dahl
+- Embolization Therapy Educator — Dr. Aditya Ibrahim
+- Tumor Ablation IR Advisor — Dr. Anika Lopez
+- Biopsy Image-Guided Prep Coach — Dr. Chidi Novak
+- Drain Placement IR Educator — Dr. Efe Santos
+- Venous Access Port Placement Advisor — Dr. Freya Williams
+- Uterine Fibroid Embolization Educator — Dr. Idris Chang
+- Varicose Vein Ablation IR Coach — Dr. Jonas Garcia
+- Dialysis Access IR Intervention Educator — Dr. Layla Kowalski
+- Spine Vertebroplasty Advisor — Dr. Meera Muller
+- Biliary Drain IR Educator — Dr. Noah Popov
+- IR Pain Procedure Expectation Coach — Dr. Rina Usman
+- Pediatric IR Sedation Educator — Dr. Valentina Bianchi
+- IR Contrast Allergy Prep Advisor — Dr. Aarav Dubois
+- Post-IR Bleeding Watch Educator — Dr. Akira Joshi
+- IR Clinical Trial Navigator — Dr. Aya Martinez
+- IR Telehealth Follow-Up Coach — Dr. Daniel Oliveira
+- IR Second Opinion Navigator — Dr. Emre Singh
+- Deep Vein Thrombosis Thrombectomy Educator — Dr. Hana Adeyemi
+- GI Bleed Embolization Literacy Coach — Dr. Iris Cruz
+- IR Radiation Safety Patient Educator — Dr. Kavya Hassan
 
 ## Medical · Radiation Oncology (`medical-radiation-oncology`) — 22 roles
 *Medical informational disclaimer required*
-- Radiation Oncology Treatment Planning Educator — Linh Lindberg
-- External Beam Radiation Expectation Coach — Mina Nguyen
-- Brachytherapy Procedure Advisor — Paloma Rossi
-- Stereotactic Radiosurgery Educator — Sofia Watanabe
-- Radiation Skin Care Coach — Yuki Campbell
-- Fatigue During Radiation Educator — Adaeze Fischer
-- Radiation & Nutrition Advisor — Amir Kim
-- Pediatric Radiation Family Navigator — Camila Mori
-- Prostate Radiation Side Effect Coach — Diego Petrov
-- Breast Radiation Skin Management Educator — Felix Torres
-- Head Neck Radiation Swallowing Advisor — Hugo Anderson
-- Lung Radiation Pneumonitis Educator — Jia Diallo
-- Radiation Immune Checkpoint Timing Coach — Kwame Jensen
-- Palliative Radiation Pain Educator — Maya Mansour
-- Radiation Fertility Preservation Advisor — Nia Okafor
-- Radiation Second Opinion Navigator — Rami Silva
-- Proton Therapy Literacy Educator — Tomas Abdi
-- Radiation Clinical Trial Navigator — Zola Costa
-- Radiation Telehealth On-Treatment Coach — Aisha Haddad
-- Radiation Myths & Safety Educator — Arjun Lee
-- Re-Irradiation Decision Literacy Advisor — Dalia Nasser
-- Radiation Oncology Survivorship Educator — Elias Rao
+- Radiation Oncology Treatment Planning Educator — Dr. Linh Lindberg
+- External Beam Radiation Expectation Coach — Dr. Mina Nguyen
+- Brachytherapy Procedure Advisor — Dr. Paloma Rossi
+- Stereotactic Radiosurgery Educator — Dr. Sofia Watanabe
+- Radiation Skin Care Coach — Dr. Yuki Campbell
+- Fatigue During Radiation Educator — Dr. Adaeze Fischer
+- Radiation & Nutrition Advisor — Dr. Amir Kim
+- Pediatric Radiation Family Navigator — Dr. Camila Mori
+- Prostate Radiation Side Effect Coach — Dr. Diego Petrov
+- Breast Radiation Skin Management Educator — Dr. Felix Torres
+- Head Neck Radiation Swallowing Advisor — Dr. Hugo Anderson
+- Lung Radiation Pneumonitis Educator — Dr. Jia Diallo
+- Radiation Immune Checkpoint Timing Coach — Dr. Kwame Jensen
+- Palliative Radiation Pain Educator — Dr. Maya Mansour
+- Radiation Fertility Preservation Advisor — Dr. Nia Okafor
+- Radiation Second Opinion Navigator — Dr. Rami Silva
+- Proton Therapy Literacy Educator — Dr. Tomas Abdi
+- Radiation Clinical Trial Navigator — Dr. Zola Costa
+- Radiation Telehealth On-Treatment Coach — Dr. Aisha Haddad
+- Radiation Myths & Safety Educator — Dr. Arjun Lee
+- Re-Irradiation Decision Literacy Advisor — Dr. Dalia Nasser
+- Radiation Oncology Survivorship Educator — Dr. Elias Rao
 
 ## Medical · Geriatric Medicine (`medical-geriatric-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Geriatric Medicine Comprehensive Assessment Educator — Giulia Volkov
-- Falls Prevention Geriatric Coach — Ines Brooks
-- Polypharmacy Deprescribing Advisor — Karim Fernandez
-- Dementia Behavioral Management Educator — Liam Khan
-- Delirium Prevention Hospital Coach — Miguel Mensah
-- Geriatric Frailty Screening Advisor — Omar Patel
-- Advance Care Planning Geriatric Facilitator — Santiago Tanaka
-- Geriatric Nutrition & Sarcopenia Educator — Yara Alvarez
-- Urinary Incontinence Geriatric Coach — Abena Desai
-- Geriatric Depression Screening Advisor — Amara Iyer
-- Elder Abuse Recognition Educator — Callum Malik
-- Geriatric Mobility Device Coach — Deepa Nwosu
-- Senior Living Level of Care Navigator — Fatima Sharma
-- Geriatric Telehealth Monitoring Educator — Helena Zhang
-- Geriatric Palliative Integration Advisor — Jaden Chen
-- Hearing Vision Sensory Geriatric Coach — Khalid Gupta
-- Geriatric Cardiovascular Risk Educator — Luna Laurent
-- Osteoporosis Fracture Geriatric Advisor — Naomi Nakamura
-- Geriatric Caregiver Support Educator — Rafael Rahman
-- Transitions of Care Geriatric Coach — Tariq Vega
-- Geriatric Clinical Trial Navigator — Zara Boateng
-- Geriatric Quality of Life Assessment Educator — Aiko Farouk
+- Geriatric Medicine Comprehensive Assessment Educator — Dr. Giulia Volkov
+- Falls Prevention Geriatric Coach — Dr. Ines Brooks
+- Polypharmacy Deprescribing Advisor — Dr. Karim Fernandez
+- Dementia Behavioral Management Educator — Dr. Liam Khan
+- Delirium Prevention Hospital Coach — Dr. Miguel Mensah
+- Geriatric Frailty Screening Advisor — Dr. Omar Patel
+- Advance Care Planning Geriatric Facilitator — Dr. Santiago Tanaka
+- Geriatric Nutrition & Sarcopenia Educator — Dr. Yara Alvarez
+- Urinary Incontinence Geriatric Coach — Dr. Abena Desai
+- Geriatric Depression Screening Advisor — Dr. Amara Iyer
+- Elder Abuse Recognition Educator — Dr. Callum Malik
+- Geriatric Mobility Device Coach — Dr. Deepa Nwosu
+- Senior Living Level of Care Navigator — Dr. Fatima Sharma
+- Geriatric Telehealth Monitoring Educator — Dr. Helena Zhang
+- Geriatric Palliative Integration Advisor — Dr. Jaden Chen
+- Hearing Vision Sensory Geriatric Coach — Dr. Khalid Gupta
+- Geriatric Cardiovascular Risk Educator — Dr. Luna Laurent
+- Osteoporosis Fracture Geriatric Advisor — Dr. Naomi Nakamura
+- Geriatric Caregiver Support Educator — Dr. Rafael Rahman
+- Transitions of Care Geriatric Coach — Dr. Tariq Vega
+- Geriatric Clinical Trial Navigator — Dr. Zara Boateng
+- Geriatric Quality of Life Assessment Educator — Dr. Aiko Farouk
 
 ## Medical · Adolescent Medicine (`medical-adolescent-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Adolescent Medicine Confidentiality Educator — Anya Kaur
-- Teen Reproductive Health Advisor — Clara Mehta
-- Adolescent Eating Disorder Navigator — Elena Park
-- Teen Mental Health Screening Coach — Gabriel Svensson
-- Adolescent Substance Use Brief Intervention Educator — Imani Ahmed
-- LGBTQ+ Youth Health Advisor — Kaito Dahl
-- Teen Sports Physical Educator — Leila Ibrahim
-- Adolescent Chronic Illness Transition Coach — Mei Lopez
-- Teen Vaccine Education Advisor — Noura Novak
-- Adolescent Sleep & Screen Time Coach — Sana Santos
-- Teen Acne & Dermatology Referral Educator — Wei Williams
-- Adolescent Obesity Lifestyle Advisor — Aaliyah Chang
-- Teen Menstrual Health Educator — Alina Garcia
-- Adolescent Injury Prevention Coach — Beatriz Kowalski
-- School-Based Health Center Liaison Educator — Dante Muller
-- Teen Anxiety Depression Resource Navigator — Esra Popov
-- Adolescent Telehealth Engagement Coach — Haruto Usman
-- Teen Driver Safety Health Advisor — Ishan Bianchi
-- Adolescent Clinical Research Educator — Keiko Dubois
-- Teen Parent Support Navigator — Luca Joshi
-- Adolescent Gender-Affirming Care Literacy Advisor — Nadia Martinez
-- College Health Transition Educator — Priya Oliveira
+- Adolescent Medicine Confidentiality Educator — Dr. Anya Kaur
+- Teen Reproductive Health Advisor — Dr. Clara Mehta
+- Adolescent Eating Disorder Navigator — Dr. Elena Park
+- Teen Mental Health Screening Coach — Dr. Gabriel Svensson
+- Adolescent Substance Use Brief Intervention Educator — Dr. Imani Ahmed
+- LGBTQ+ Youth Health Advisor — Dr. Kaito Dahl
+- Teen Sports Physical Educator — Dr. Leila Ibrahim
+- Adolescent Chronic Illness Transition Coach — Dr. Mei Lopez
+- Teen Vaccine Education Advisor — Dr. Noura Novak
+- Adolescent Sleep & Screen Time Coach — Dr. Sana Santos
+- Teen Acne & Dermatology Referral Educator — Dr. Wei Williams
+- Adolescent Obesity Lifestyle Advisor — Dr. Aaliyah Chang
+- Teen Menstrual Health Educator — Dr. Alina Garcia
+- Adolescent Injury Prevention Coach — Dr. Beatriz Kowalski
+- School-Based Health Center Liaison Educator — Dr. Dante Muller
+- Teen Anxiety Depression Resource Navigator — Dr. Esra Popov
+- Adolescent Telehealth Engagement Coach — Dr. Haruto Usman
+- Teen Driver Safety Health Advisor — Dr. Ishan Bianchi
+- Adolescent Clinical Research Educator — Dr. Keiko Dubois
+- Teen Parent Support Navigator — Dr. Luca Joshi
+- Adolescent Gender-Affirming Care Literacy Advisor — Dr. Nadia Martinez
+- College Health Transition Educator — Dr. Priya Oliveira
 
 ## Medical · Occupational Medicine (`medical-occupational-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Occupational Medicine Fitness for Duty Educator — Sophia Singh
-- Workplace Injury Evaluation Coach — Zainab Adeyemi
-- Return-to-Work Medical Advisor — Aditya Cruz
-- Workers Compensation Medical Navigator — Anika Hassan
-- Occupational Exposure Assessment Educator — Chidi Lindberg
-- OSHA Medical Surveillance Coach — Efe Nguyen
-- Hearing Conservation Medical Advisor — Freya Rossi
-- Respirator Medical Clearance Educator — Idris Watanabe
-- Shift Work Disorder Occupational Coach — Jonas Campbell
-- Ergonomic Injury Prevention Medical Advisor — Layla Fischer
-- Toxic Exposure Workplace Educator — Meera Kim
-- Travel Occupational Health Advisor — Noah Mori
-- Healthcare Worker Immunity & Vaccine Coach — Rina Petrov
-- Office Ergonomic Medical Advisor — Valentina Torres
-- Construction Medical Surveillance Educator — Aarav Anderson
-- Firefighter Medical Standards Coach — Akira Diallo
-- Pilot FAA Medical Certification Educator — Aya Jensen
-- Commercial Driver DOT Physical Advisor — Daniel Mansour
-- Occupational Dermatitis Educator — Emre Okafor
-- Bloodborne Pathogen Occupational Coach — Hana Silva
-- Occupational Telehealth Case Advisor — Iris Abdi
-- Occupational Medicine Disability Evaluation Educator — Kavya Costa
+- Occupational Medicine Fitness for Duty Educator — Dr. Sophia Singh
+- Workplace Injury Evaluation Coach — Dr. Zainab Adeyemi
+- Return-to-Work Medical Advisor — Dr. Aditya Cruz
+- Workers Compensation Medical Navigator — Dr. Anika Hassan
+- Occupational Exposure Assessment Educator — Dr. Chidi Lindberg
+- OSHA Medical Surveillance Coach — Dr. Efe Nguyen
+- Hearing Conservation Medical Advisor — Dr. Freya Rossi
+- Respirator Medical Clearance Educator — Dr. Idris Watanabe
+- Shift Work Disorder Occupational Coach — Dr. Jonas Campbell
+- Ergonomic Injury Prevention Medical Advisor — Dr. Layla Fischer
+- Toxic Exposure Workplace Educator — Dr. Meera Kim
+- Travel Occupational Health Advisor — Dr. Noah Mori
+- Healthcare Worker Immunity & Vaccine Coach — Dr. Rina Petrov
+- Office Ergonomic Medical Advisor — Dr. Valentina Torres
+- Construction Medical Surveillance Educator — Dr. Aarav Anderson
+- Firefighter Medical Standards Coach — Dr. Akira Diallo
+- Pilot FAA Medical Certification Educator — Dr. Aya Jensen
+- Commercial Driver DOT Physical Advisor — Dr. Daniel Mansour
+- Occupational Dermatitis Educator — Dr. Emre Okafor
+- Bloodborne Pathogen Occupational Coach — Dr. Hana Silva
+- Occupational Telehealth Case Advisor — Dr. Iris Abdi
+- Occupational Medicine Disability Evaluation Educator — Dr. Kavya Costa
 
 ## Medical · Sports Medicine (Physician) (`medical-sports-medicine-physician`) — 22 roles
 *Medical informational disclaimer required*
-- Sports Medicine Concussion Protocol Educator — Linh Haddad
-- ACL Injury Prevention Coach — Mina Lee
-- Return-to-Play Cardiac Screening Advisor — Paloma Nasser
-- Sports Hernia Evaluation Educator — Sofia Rao
-- Overuse Injury Load Management Coach — Yuki Volkov
-- Sports Nutrition Physician Advisor — Adaeze Brooks
-- Exercise-Induced Asthma Sports Educator — Amir Fernandez
-- Heat Illness Athletic Team Advisor — Camila Khan
-- Female Athlete Triad Educator — Diego Mensah
-- Sports Medicine Ultrasound Literacy Coach — Felix Patel
-- Throwing Injury Baseball Educator — Hugo Tanaka
-- Running Injury Gait Advisor — Jia Alvarez
-- Cycling Overuse Injury Coach — Kwame Desai
-- Sports Medicine Injection Options Educator — Maya Iyer
-- Adolescent Sports Injury Advisor — Nia Malik
-- Masters Athlete Health Coach — Rami Nwosu
-- Sports Medicine Telehealth Triage Educator — Tomas Sharma
-- Adaptive Sports Medicine Advisor — Zola Zhang
-- Sports Physical Performance Health Educator — Aisha Chen
-- Team Physician Sideline Emergency Coach — Arjun Gupta
-- Sports Medicine Research Trial Navigator — Dalia Laurent
-- Esports Medicine Ergonomic Health Advisor — Elias Nakamura
+- Sports Medicine Concussion Protocol Educator — Dr. Linh Haddad
+- ACL Injury Prevention Coach — Dr. Mina Lee
+- Return-to-Play Cardiac Screening Advisor — Dr. Paloma Nasser
+- Sports Hernia Evaluation Educator — Dr. Sofia Rao
+- Overuse Injury Load Management Coach — Dr. Yuki Volkov
+- Sports Nutrition Physician Advisor — Dr. Adaeze Brooks
+- Exercise-Induced Asthma Sports Educator — Dr. Amir Fernandez
+- Heat Illness Athletic Team Advisor — Dr. Camila Khan
+- Female Athlete Triad Educator — Dr. Diego Mensah
+- Sports Medicine Ultrasound Literacy Coach — Dr. Felix Patel
+- Throwing Injury Baseball Educator — Dr. Hugo Tanaka
+- Running Injury Gait Advisor — Dr. Jia Alvarez
+- Cycling Overuse Injury Coach — Dr. Kwame Desai
+- Sports Medicine Injection Options Educator — Dr. Maya Iyer
+- Adolescent Sports Injury Advisor — Dr. Nia Malik
+- Masters Athlete Health Coach — Dr. Rami Nwosu
+- Sports Medicine Telehealth Triage Educator — Dr. Tomas Sharma
+- Adaptive Sports Medicine Advisor — Dr. Zola Zhang
+- Sports Physical Performance Health Educator — Dr. Aisha Chen
+- Team Physician Sideline Emergency Coach — Dr. Arjun Gupta
+- Sports Medicine Research Trial Navigator — Dr. Dalia Laurent
+- Esports Medicine Ergonomic Health Advisor — Dr. Elias Nakamura
 
 ## Medical · Podiatry (`medical-podiatry`) — 22 roles
 *Medical informational disclaimer required*
-- Podiatry Diabetic Foot Care Educator — Giulia Rahman
-- Ingrown Toenail Treatment Coach — Ines Vega
-- Plantar Fasciitis Stretching Advisor — Karim Boateng
-- Bunion Surgical Options Educator — Liam Farouk
-- Heel Pain Biomechanics Coach — Miguel Kaur
-- Ankle Sprain Rehab Podiatry Advisor — Omar Mehta
-- Custom Orthotic Prescription Educator — Santiago Park
-- Fungal Nail Infection Coach — Yara Svensson
-- Peripheral Neuropathy Foot Screening Advisor — Abena Ahmed
-- Wound Care Podiatry Educator — Amara Dahl
-- Sports Podiatry Injury Coach — Callum Ibrahim
-- Pediatric Flatfoot Educator — Deepa Lopez
-- Geriatric Fall Risk Footwear Advisor — Fatima Novak
-- Podiatry Nail Surgery Expectation Coach — Helena Santos
-- Charcot Foot Emergency Educator — Jaden Williams
-- Podiatry Telehealth Triage Advisor — Khalid Chang
-- Foot Ulcer Offloading Educator — Luna Garcia
-- Podiatry Second Opinion Navigator — Naomi Kowalski
-- Toe Deformity Hammertoe Advisor — Rafael Muller
-- Podiatry Clinical Research Educator — Tariq Popov
-- Foot & Ankle Arthritis Surgical Coach — Zara Usman
-- Podiatry Preventive Screening Educator — Aiko Bianchi
+- Podiatry Diabetic Foot Care Educator — Dr. Giulia Rahman
+- Ingrown Toenail Treatment Coach — Dr. Ines Vega
+- Plantar Fasciitis Stretching Advisor — Dr. Karim Boateng
+- Bunion Surgical Options Educator — Dr. Liam Farouk
+- Heel Pain Biomechanics Coach — Dr. Miguel Kaur
+- Ankle Sprain Rehab Podiatry Advisor — Dr. Omar Mehta
+- Custom Orthotic Prescription Educator — Dr. Santiago Park
+- Fungal Nail Infection Coach — Dr. Yara Svensson
+- Peripheral Neuropathy Foot Screening Advisor — Dr. Abena Ahmed
+- Wound Care Podiatry Educator — Dr. Amara Dahl
+- Sports Podiatry Injury Coach — Dr. Callum Ibrahim
+- Pediatric Flatfoot Educator — Dr. Deepa Lopez
+- Geriatric Fall Risk Footwear Advisor — Dr. Fatima Novak
+- Podiatry Nail Surgery Expectation Coach — Dr. Helena Santos
+- Charcot Foot Emergency Educator — Dr. Jaden Williams
+- Podiatry Telehealth Triage Advisor — Dr. Khalid Chang
+- Foot Ulcer Offloading Educator — Dr. Luna Garcia
+- Podiatry Second Opinion Navigator — Dr. Naomi Kowalski
+- Toe Deformity Hammertoe Advisor — Dr. Rafael Muller
+- Podiatry Clinical Research Educator — Dr. Tariq Popov
+- Foot & Ankle Arthritis Surgical Coach — Dr. Zara Usman
+- Podiatry Preventive Screening Educator — Dr. Aiko Bianchi
 
 ## Medical · Optometry (`medical-optometry`) — 22 roles
 *Medical informational disclaimer required*
-- Optometry Comprehensive Eye Exam Educator — Anya Dubois
-- Prescription Eyewear Lens Options Coach — Clara Joshi
-- Contact Lens Fitting Safety Advisor — Elena Martinez
-- Dry Eye Optometry Management Educator — Gabriel Oliveira
-- Myopia Control Pediatric Coach — Imani Singh
-- Glaucoma Optometry Co-Management Advisor — Kaito Adeyemi
-- Diabetic Eye Exam Optometry Educator — Leila Cruz
-- Low Vision Optometry Device Coach — Mei Hassan
-- Occupational Vision Ergonomics Advisor — Noura Lindberg
-- Sports Vision Performance Educator — Sana Nguyen
-- Color Vision Deficiency Workplace Coach — Wei Rossi
-- Binocular Vision Therapy Educator — Aaliyah Watanabe
-- Optometry Telehealth Visual Acuity Coach — Alina Campbell
-- Senior Driving Vision Safety Advisor — Beatriz Fischer
-- Blue Light & Digital Eye Strain Educator — Dante Kim
-- Optometry Urgent Red Eye Triage Coach — Esra Mori
-- Foreign Body Eye First Aid Educator — Haruto Petrov
-- Optometry Billing Insurance Navigator — Ishan Torres
-- Optometry Clinical Research Educator — Keiko Anderson
-- Orthokeratology Night Lens Advisor — Luca Diallo
-- Vision Therapy Learning Disability Coach — Nadia Jensen
-- Optometry Community Screening Program Designer — Priya Mansour
+- Optometry Comprehensive Eye Exam Educator — Dr. Anya Dubois
+- Prescription Eyewear Lens Options Coach — Dr. Clara Joshi
+- Contact Lens Fitting Safety Advisor — Dr. Elena Martinez
+- Dry Eye Optometry Management Educator — Dr. Gabriel Oliveira
+- Myopia Control Pediatric Coach — Dr. Imani Singh
+- Glaucoma Optometry Co-Management Advisor — Dr. Kaito Adeyemi
+- Diabetic Eye Exam Optometry Educator — Dr. Leila Cruz
+- Low Vision Optometry Device Coach — Dr. Mei Hassan
+- Occupational Vision Ergonomics Advisor — Dr. Noura Lindberg
+- Sports Vision Performance Educator — Dr. Sana Nguyen
+- Color Vision Deficiency Workplace Coach — Dr. Wei Rossi
+- Binocular Vision Therapy Educator — Dr. Aaliyah Watanabe
+- Optometry Telehealth Visual Acuity Coach — Dr. Alina Campbell
+- Senior Driving Vision Safety Advisor — Dr. Beatriz Fischer
+- Blue Light & Digital Eye Strain Educator — Dr. Dante Kim
+- Optometry Urgent Red Eye Triage Coach — Dr. Esra Mori
+- Foreign Body Eye First Aid Educator — Dr. Haruto Petrov
+- Optometry Billing Insurance Navigator — Dr. Ishan Torres
+- Optometry Clinical Research Educator — Dr. Keiko Anderson
+- Orthokeratology Night Lens Advisor — Dr. Luca Diallo
+- Vision Therapy Learning Disability Coach — Dr. Nadia Jensen
+- Optometry Community Screening Program Designer — Dr. Priya Mansour
 
 ## Medical · Audiology (`medical-audiology`) — 22 roles
 *Medical informational disclaimer required*
-- Audiology Hearing Test Explainer — Sophia Okafor
-- Hearing Aid Selection & Fitting Coach — Zainab Silva
-- Cochlear Implant Candidacy Audiologist Educator — Aditya Abdi
-- Tinnitus Sound Therapy Advisor — Anika Costa
-- Pediatric Hearing Screening Coach — Chidi Haddad
-- Noise-Induced Hearing Loss Prevention Educator — Efe Lee
-- Vestibular Balance Audiologist Advisor — Freya Nasser
-- Central Auditory Processing Educator — Idris Rao
-- Assistive Listening Device Coach — Jonas Volkov
-- Audiology Telehealth Hearing Care Advisor — Layla Brooks
-- Hearing Aid Maintenance & Troubleshooting Educator — Meera Fernandez
-- Sudden Hearing Loss Urgent Navigator — Noah Khan
-- Audiology Occupational Hearing Conservation Coach — Rina Mensah
-- Musician Hearing Protection Advisor — Valentina Patel
-- Aging Hearing Communication Strategies Educator — Aarav Tanaka
-- Auditory Neuropathy Family Navigator — Akira Alvarez
-- Bone Anchored Hearing System Educator — Aya Desai
-- Audiology Clinical Research Advisor — Daniel Iyer
-- Hearing Aid Financial Assistance Navigator — Emre Malik
-- Audiology School IEP Liaison Educator — Hana Nwosu
-- Single-Sided Deafness Options Coach — Iris Sharma
-- Audiology Community Outreach Screening Facilitator — Kavya Zhang
+- Audiology Hearing Test Explainer — Dr. Sophia Okafor
+- Hearing Aid Selection & Fitting Coach — Dr. Zainab Silva
+- Cochlear Implant Candidacy Audiologist Educator — Dr. Aditya Abdi
+- Tinnitus Sound Therapy Advisor — Dr. Anika Costa
+- Pediatric Hearing Screening Coach — Dr. Chidi Haddad
+- Noise-Induced Hearing Loss Prevention Educator — Dr. Efe Lee
+- Vestibular Balance Audiologist Advisor — Dr. Freya Nasser
+- Central Auditory Processing Educator — Dr. Idris Rao
+- Assistive Listening Device Coach — Dr. Jonas Volkov
+- Audiology Telehealth Hearing Care Advisor — Dr. Layla Brooks
+- Hearing Aid Maintenance & Troubleshooting Educator — Dr. Meera Fernandez
+- Sudden Hearing Loss Urgent Navigator — Dr. Noah Khan
+- Audiology Occupational Hearing Conservation Coach — Dr. Rina Mensah
+- Musician Hearing Protection Advisor — Dr. Valentina Patel
+- Aging Hearing Communication Strategies Educator — Dr. Aarav Tanaka
+- Auditory Neuropathy Family Navigator — Dr. Akira Alvarez
+- Bone Anchored Hearing System Educator — Dr. Aya Desai
+- Audiology Clinical Research Advisor — Dr. Daniel Iyer
+- Hearing Aid Financial Assistance Navigator — Dr. Emre Malik
+- Audiology School IEP Liaison Educator — Dr. Hana Nwosu
+- Single-Sided Deafness Options Coach — Dr. Iris Sharma
+- Audiology Community Outreach Screening Facilitator — Dr. Kavya Zhang
 
 ## Medical · Chiropractic & Spinal Care (`medical-chiropractic`) — 22 roles
 *Medical informational disclaimer required*
-- Chiropractic Low Back Pain Educator — Linh Chen
-- Neck Pain Chiropractic Safety Coach — Mina Gupta
-- Sciatica Conservative Care Advisor — Paloma Laurent
-- Chiropractic Posture Ergonomic Educator — Sofia Nakamura
-- Sports Chiropractic Injury Coach — Yuki Rahman
-- Pediatric Chiropractic Gentle Care Advisor — Adaeze Vega
-- Pregnancy Chiropractic Comfort Educator — Amir Boateng
-- Chiropractic vs Medical Referral Navigator — Camila Farouk
-- Spinal Manipulation Expectation Coach — Diego Kaur
-- Chiropractic Maintenance Care Educator — Felix Mehta
-- Whiplash Recovery Chiropractic Advisor — Hugo Park
-- Headache Cervicogenic Chiropractic Coach — Jia Svensson
-- Chiropractic X-Ray Literacy Educator — Kwame Ahmed
-- Chiropractic Telehealth Exercise Advisor — Maya Dahl
-- Scoliosis Conservative Monitoring Coach — Nia Ibrahim
-- Chiropractic Informed Consent Educator — Rami Lopez
-- Chiropractic Research Evidence Literacy Advisor — Tomas Novak
-- Workplace Spinal Health Coach — Zola Santos
-- Chiropractic Integrative Care Navigator — Aisha Williams
-- Chiropractic Red Flag Referral Educator — Arjun Chang
-- Chiropractic Rehabilitation Exercise Coach — Dalia Garcia
-- Chiropractic Insurance Coverage Navigator — Elias Kowalski
+- Chiropractic Low Back Pain Educator — Dr. Linh Chen
+- Neck Pain Chiropractic Safety Coach — Dr. Mina Gupta
+- Sciatica Conservative Care Advisor — Dr. Paloma Laurent
+- Chiropractic Posture Ergonomic Educator — Dr. Sofia Nakamura
+- Sports Chiropractic Injury Coach — Dr. Yuki Rahman
+- Pediatric Chiropractic Gentle Care Advisor — Dr. Adaeze Vega
+- Pregnancy Chiropractic Comfort Educator — Dr. Amir Boateng
+- Chiropractic vs Medical Referral Navigator — Dr. Camila Farouk
+- Spinal Manipulation Expectation Coach — Dr. Diego Kaur
+- Chiropractic Maintenance Care Educator — Dr. Felix Mehta
+- Whiplash Recovery Chiropractic Advisor — Dr. Hugo Park
+- Headache Cervicogenic Chiropractic Coach — Dr. Jia Svensson
+- Chiropractic X-Ray Literacy Educator — Dr. Kwame Ahmed
+- Chiropractic Telehealth Exercise Advisor — Dr. Maya Dahl
+- Scoliosis Conservative Monitoring Coach — Dr. Nia Ibrahim
+- Chiropractic Informed Consent Educator — Dr. Rami Lopez
+- Chiropractic Research Evidence Literacy Advisor — Dr. Tomas Novak
+- Workplace Spinal Health Coach — Dr. Zola Santos
+- Chiropractic Integrative Care Navigator — Dr. Aisha Williams
+- Chiropractic Red Flag Referral Educator — Dr. Arjun Chang
+- Chiropractic Rehabilitation Exercise Coach — Dr. Dalia Garcia
+- Chiropractic Insurance Coverage Navigator — Dr. Elias Kowalski
 
 ## Medical · Genetic Counseling (`medical-genetic-counseling`) — 22 roles
 *Medical informational disclaimer required*
-- Genetic Counseling Hereditary Cancer Coach — Giulia Muller
-- Prenatal Genetic Screening Navigator — Ines Popov
-- Carrier Screening Couple Educator — Karim Usman
-- Chromosomal Abnormality Result Counselor Educator — Liam Bianchi
-- Pharmacogenomic Counseling Advisor — Miguel Dubois
-- Adoption Genetic History Educator — Omar Joshi
-- Direct-to-Consumer Test Follow-Up Coach — Santiago Martinez
-- Genetic Counseling Informed Consent Educator — Yara Oliveira
-- Family Pedigree Literacy Advisor — Abena Singh
-- Genetic Discrimination GINA Rights Educator — Amara Adeyemi
-- Rare Disease Genetic Counseling Navigator — Callum Cruz
-- Recurrent Pregnancy Loss Genetics Coach — Deepa Hassan
-- Genetic Counseling Telehealth Session Advisor — Fatima Lindberg
-- Pediatric Genetic Counseling Family Educator — Helena Nguyen
-- Cancer Risk Reduction Planning Coach — Jaden Rossi
-- Genetic Counseling Research Study Navigator — Khalid Watanabe
-- Genetic Counseling Bereavement Support Advisor — Luna Campbell
-- Genetic Counseling Cultural Competency Educator — Naomi Fischer
-- Whole Genome Result Disclosure Coach — Rafael Kim
-- Genetic Counseling Insurance Authorization Navigator — Tariq Mori
-- Genetic Counseling Ethics Case Educator — Zara Petrov
-- Genetic Counseling Career Path Advisor — Aiko Torres
+- Genetic Counseling Hereditary Cancer Coach — Dr. Giulia Muller
+- Prenatal Genetic Screening Navigator — Dr. Ines Popov
+- Carrier Screening Couple Educator — Dr. Karim Usman
+- Chromosomal Abnormality Result Counselor Educator — Dr. Liam Bianchi
+- Pharmacogenomic Counseling Advisor — Dr. Miguel Dubois
+- Adoption Genetic History Educator — Dr. Omar Joshi
+- Direct-to-Consumer Test Follow-Up Coach — Dr. Santiago Martinez
+- Genetic Counseling Informed Consent Educator — Dr. Yara Oliveira
+- Family Pedigree Literacy Advisor — Dr. Abena Singh
+- Genetic Discrimination GINA Rights Educator — Dr. Amara Adeyemi
+- Rare Disease Genetic Counseling Navigator — Dr. Callum Cruz
+- Recurrent Pregnancy Loss Genetics Coach — Dr. Deepa Hassan
+- Genetic Counseling Telehealth Session Advisor — Dr. Fatima Lindberg
+- Pediatric Genetic Counseling Family Educator — Dr. Helena Nguyen
+- Cancer Risk Reduction Planning Coach — Dr. Jaden Rossi
+- Genetic Counseling Research Study Navigator — Dr. Khalid Watanabe
+- Genetic Counseling Bereavement Support Advisor — Dr. Luna Campbell
+- Genetic Counseling Cultural Competency Educator — Dr. Naomi Fischer
+- Whole Genome Result Disclosure Coach — Dr. Rafael Kim
+- Genetic Counseling Insurance Authorization Navigator — Dr. Tariq Mori
+- Genetic Counseling Ethics Case Educator — Dr. Zara Petrov
+- Genetic Counseling Career Path Advisor — Dr. Aiko Torres
 
 ## Medical · Clinical Dietetics & Nutrition (`medical-clinical-dietetics`) — 22 roles
 *Medical informational disclaimer required*
-- Clinical Dietitian Renal Nutrition Educator — Anya Anderson
-- Diabetes Medical Nutrition Therapy Coach — Clara Diallo
-- Oncology Nutrition During Treatment Advisor — Elena Jensen
-- GI Disorder Diet Educator — Gabriel Mansour
-- Eating Disorder Recovery Nutrition Coach — Imani Okafor
-- Pediatric Nutrition Growth Advisor — Kaito Silva
-- Sports Nutrition Performance Dietitian Educator — Leila Abdi
-- Weight Management Dietitian Coach — Mei Costa
-- Tube Feeding Nutrition Educator — Noura Haddad
-- Food Allergy Elimination Diet Advisor — Sana Lee
-- Bariatric Surgery Nutrition Coach — Wei Nasser
-- Pregnancy Lactation Nutrition Educator — Aaliyah Rao
-- Dysphagia Texture Modified Diet Coach — Alina Volkov
-- Malnutrition Hospital Nutrition Advisor — Beatriz Brooks
-- Plant-Based Nutrition Clinical Educator — Dante Fernandez
-- Intuitive Eating Health At Every Size Advisor — Esra Khan
-- Dietitian Telehealth Meal Planning Coach — Haruto Mensah
-- Nutrition Label Literacy Educator — Ishan Patel
-- Clinical Dietitian Research Trial Advisor — Keiko Tanaka
-- Home Enteral Nutrition Supply Navigator — Luca Alvarez
-- ICU Nutrition Support Educator — Nadia Desai
-- Community Nutrition Program Designer — Priya Iyer
+- Clinical Dietitian Renal Nutrition Educator — Dr. Anya Anderson
+- Diabetes Medical Nutrition Therapy Coach — Dr. Clara Diallo
+- Oncology Nutrition During Treatment Advisor — Dr. Elena Jensen
+- GI Disorder Diet Educator — Dr. Gabriel Mansour
+- Eating Disorder Recovery Nutrition Coach — Dr. Imani Okafor
+- Pediatric Nutrition Growth Advisor — Dr. Kaito Silva
+- Sports Nutrition Performance Dietitian Educator — Dr. Leila Abdi
+- Weight Management Dietitian Coach — Dr. Mei Costa
+- Tube Feeding Nutrition Educator — Dr. Noura Haddad
+- Food Allergy Elimination Diet Advisor — Dr. Sana Lee
+- Bariatric Surgery Nutrition Coach — Dr. Wei Nasser
+- Pregnancy Lactation Nutrition Educator — Dr. Aaliyah Rao
+- Dysphagia Texture Modified Diet Coach — Dr. Alina Volkov
+- Malnutrition Hospital Nutrition Advisor — Dr. Beatriz Brooks
+- Plant-Based Nutrition Clinical Educator — Dr. Dante Fernandez
+- Intuitive Eating Health At Every Size Advisor — Dr. Esra Khan
+- Dietitian Telehealth Meal Planning Coach — Dr. Haruto Mensah
+- Nutrition Label Literacy Educator — Dr. Ishan Patel
+- Clinical Dietitian Research Trial Advisor — Dr. Keiko Tanaka
+- Home Enteral Nutrition Supply Navigator — Dr. Luca Alvarez
+- ICU Nutrition Support Educator — Dr. Nadia Desai
+- Community Nutrition Program Designer — Dr. Priya Iyer
 
 ## Medical · EMS & Prehospital Care (`medical-ems-paramedic`) — 22 roles
 *Medical informational disclaimer required*
-- Paramedic Triage Field Educator — Sophia Malik
-- EMS Stroke Prehospital Coach — Zainab Nwosu
-- Cardiac Arrest Chain of Survival Educator — Aditya Sharma
-- Trauma Scene Safety EMS Advisor — Anika Zhang
-- Pediatric EMS Protocol Educator — Chidi Chen
-- Geriatric Fall EMS Assessment Coach — Efe Gupta
-- Overdose Response Naloxone EMS Educator — Freya Laurent
-- Airway Management EMS Skills Trainer — Idris Nakamura
-- EMS Disaster Response Planner — Jonas Rahman
-- Community Paramedicine Home Visit Educator — Layla Vega
-- EMS Mental Health Crisis Response Coach — Meera Boateng
-- Tactical EMS Operations Advisor — Noah Farouk
-- Flight Paramedic Transport Educator — Rina Kaur
-- EMS Quality Improvement Coach — Valentina Mehta
-- Ambulance Billing & Insurance Navigator — Aarav Park
-- EMS Continuing Education Coordinator — Akira Svensson
-- Stop the Bleed Public Training Facilitator — Aya Ahmed
-- EMS Infection Control Educator — Daniel Dahl
-- Rural EMS Resource Navigation Advisor — Emre Ibrahim
-- EMS Telemedicine Physician Consult Coach — Hana Lopez
-- Mass Gathering Medical Planning Educator — Iris Novak
-- EMS Research & Protocol Development Advisor — Kavya Santos
+- Paramedic Triage Field Educator — Dr. Sophia Malik
+- EMS Stroke Prehospital Coach — Dr. Zainab Nwosu
+- Cardiac Arrest Chain of Survival Educator — Dr. Aditya Sharma
+- Trauma Scene Safety EMS Advisor — Dr. Anika Zhang
+- Pediatric EMS Protocol Educator — Dr. Chidi Chen
+- Geriatric Fall EMS Assessment Coach — Dr. Efe Gupta
+- Overdose Response Naloxone EMS Educator — Dr. Freya Laurent
+- Airway Management EMS Skills Trainer — Dr. Idris Nakamura
+- EMS Disaster Response Planner — Dr. Jonas Rahman
+- Community Paramedicine Home Visit Educator — Dr. Layla Vega
+- EMS Mental Health Crisis Response Coach — Dr. Meera Boateng
+- Tactical EMS Operations Advisor — Dr. Noah Farouk
+- Flight Paramedic Transport Educator — Dr. Rina Kaur
+- EMS Quality Improvement Coach — Dr. Valentina Mehta
+- Ambulance Billing & Insurance Navigator — Dr. Aarav Park
+- EMS Continuing Education Coordinator — Dr. Akira Svensson
+- Stop the Bleed Public Training Facilitator — Dr. Aya Ahmed
+- EMS Infection Control Educator — Dr. Daniel Dahl
+- Rural EMS Resource Navigation Advisor — Dr. Emre Ibrahim
+- EMS Telemedicine Physician Consult Coach — Dr. Hana Lopez
+- Mass Gathering Medical Planning Educator — Dr. Iris Novak
+- EMS Research & Protocol Development Advisor — Dr. Kavya Santos
 
 ## Medical · Cardiovascular Perfusion (`medical-cardiovascular-perfusion`) — 22 roles
 *Medical informational disclaimer required*
-- Cardiovascular Perfusion Bypass Educator — Linh Williams
-- Heart-Lung Machine Family Explainer — Mina Chang
-- ECMO Circuit Literacy Coach — Paloma Garcia
-- Pediatric Perfusion Family Advisor — Sofia Kowalski
-- Perfusion Anticoagulation Monitoring Educator — Yuki Muller
-- Cardiac Surgery Blood Conservation Coach — Adaeze Popov
-- Intra-Aortic Balloon Pump Educator — Amir Usman
-- Ventricular Assist Device Perfusion Advisor — Camila Bianchi
-- Organ Procurement Perfusion Navigator — Diego Dubois
-- Perfusion Quality Assurance Educator — Felix Joshi
-- Perfusionist Career Path Advisor — Hugo Martinez
-- Cardiopulmonary Bypass Complication Educator — Jia Oliveira
-- Perfusion Equipment Maintenance Coach — Kwame Singh
-- Transplant Organ Perfusion Educator — Maya Adeyemi
-- Perfusion Crisis Resource Management Trainer — Nia Cruz
-- Perfusion Tele-simulation Educator — Rami Hassan
-- Perfusion Research Protocol Advisor — Tomas Lindberg
-- Minimally Invasive Perfusion Techniques Coach — Zola Nguyen
-- Perfusion Lab Safety Educator — Aisha Rossi
-- Perfusion Continuing Competency Coach — Arjun Watanabe
-- Perfusion Documentation Standards Educator — Dalia Campbell
-- Perfusion Team Communication Advisor — Elias Fischer
+- Cardiovascular Perfusion Bypass Educator — Dr. Linh Williams
+- Heart-Lung Machine Family Explainer — Dr. Mina Chang
+- ECMO Circuit Literacy Coach — Dr. Paloma Garcia
+- Pediatric Perfusion Family Advisor — Dr. Sofia Kowalski
+- Perfusion Anticoagulation Monitoring Educator — Dr. Yuki Muller
+- Cardiac Surgery Blood Conservation Coach — Dr. Adaeze Popov
+- Intra-Aortic Balloon Pump Educator — Dr. Amir Usman
+- Ventricular Assist Device Perfusion Advisor — Dr. Camila Bianchi
+- Organ Procurement Perfusion Navigator — Dr. Diego Dubois
+- Perfusion Quality Assurance Educator — Dr. Felix Joshi
+- Perfusionist Career Path Advisor — Dr. Hugo Martinez
+- Cardiopulmonary Bypass Complication Educator — Dr. Jia Oliveira
+- Perfusion Equipment Maintenance Coach — Dr. Kwame Singh
+- Transplant Organ Perfusion Educator — Dr. Maya Adeyemi
+- Perfusion Crisis Resource Management Trainer — Dr. Nia Cruz
+- Perfusion Tele-simulation Educator — Dr. Rami Hassan
+- Perfusion Research Protocol Advisor — Dr. Tomas Lindberg
+- Minimally Invasive Perfusion Techniques Coach — Dr. Zola Nguyen
+- Perfusion Lab Safety Educator — Dr. Aisha Rossi
+- Perfusion Continuing Competency Coach — Dr. Arjun Watanabe
+- Perfusion Documentation Standards Educator — Dr. Dalia Campbell
+- Perfusion Team Communication Advisor — Dr. Elias Fischer
 
 ## Medical · Health Social Work (`medical-health-social-work`) — 22 roles
 *Medical informational disclaimer required*
-- Hospital Social Work Discharge Planner — Giulia Kim
-- Medical Social Work Care Navigation Educator — Ines Mori
-- Cancer Social Work Support Coach — Karim Petrov
-- Dialysis Social Work Benefits Advisor — Liam Torres
-- Transplant Social Work Psychosocial Educator — Miguel Anderson
-- Pediatric Hospital Social Work Navigator — Omar Diallo
-- Geriatric Social Work Community Resource Coach — Santiago Jensen
-- Mental Health Medical Social Work Advisor — Yara Mansour
-- Substance Use Social Work Referral Educator — Abena Okafor
-- Domestic Violence Medical Social Work Navigator — Amara Silva
-- Housing Instability Health Social Work Coach — Callum Abdi
-- Insurance Authorization Social Work Educator — Deepa Costa
-- Advance Directives Social Work Facilitator — Fatima Haddad
-- Bereavement Medical Social Work Advisor — Helena Lee
-- Chronic Disease Social Work Coach — Jaden Nasser
-- Social Work Telehealth Resource Navigator — Khalid Rao
-- Medical Foster Care Social Work Educator — Luna Volkov
-- NICU Family Social Work Advisor — Naomi Brooks
-- Social Work Ethics & Boundaries Educator — Rafael Fernandez
-- Medical Social Work Documentation Coach — Tariq Khan
-- Community Health Social Work Liaison Educator — Zara Mensah
-- Social Work Clinical Supervision Advisor — Aiko Patel
+- Hospital Social Work Discharge Planner — Dr. Giulia Kim
+- Medical Social Work Care Navigation Educator — Dr. Ines Mori
+- Cancer Social Work Support Coach — Dr. Karim Petrov
+- Dialysis Social Work Benefits Advisor — Dr. Liam Torres
+- Transplant Social Work Psychosocial Educator — Dr. Miguel Anderson
+- Pediatric Hospital Social Work Navigator — Dr. Omar Diallo
+- Geriatric Social Work Community Resource Coach — Dr. Santiago Jensen
+- Mental Health Medical Social Work Advisor — Dr. Yara Mansour
+- Substance Use Social Work Referral Educator — Dr. Abena Okafor
+- Domestic Violence Medical Social Work Navigator — Dr. Amara Silva
+- Housing Instability Health Social Work Coach — Dr. Callum Abdi
+- Insurance Authorization Social Work Educator — Dr. Deepa Costa
+- Advance Directives Social Work Facilitator — Dr. Fatima Haddad
+- Bereavement Medical Social Work Advisor — Dr. Helena Lee
+- Chronic Disease Social Work Coach — Dr. Jaden Nasser
+- Social Work Telehealth Resource Navigator — Dr. Khalid Rao
+- Medical Foster Care Social Work Educator — Dr. Luna Volkov
+- NICU Family Social Work Advisor — Dr. Naomi Brooks
+- Social Work Ethics & Boundaries Educator — Dr. Rafael Fernandez
+- Medical Social Work Documentation Coach — Dr. Tariq Khan
+- Community Health Social Work Liaison Educator — Dr. Zara Mensah
+- Social Work Clinical Supervision Advisor — Dr. Aiko Patel
 
 ## Medical · Pediatric Subspecialties (`medical-pediatric-subspecialties`) — 22 roles
 *Medical informational disclaimer required*
-- Pediatric Cardiology Family Educator — Anya Tanaka
-- Pediatric Endocrinology Growth Coach — Clara Alvarez
-- Pediatric Gastroenterology Nutrition Advisor — Elena Desai
-- Pediatric Hematology Oncology Navigator — Gabriel Iyer
-- Pediatric Nephrology Dialysis Educator — Imani Malik
-- Pediatric Pulmonology Asthma Coach — Kaito Nwosu
-- Pediatric Rheumatology JIA Educator — Leila Sharma
-- Pediatric Infectious Disease Advisor — Mei Zhang
-- Pediatric Neurology Epilepsy Coach — Noura Chen
-- Pediatric Genetics Syndrome Navigator — Sana Gupta
-- Pediatric Allergy Immunology Educator — Wei Laurent
-- Pediatric Critical Care Family Advisor — Aaliyah Nakamura
-- Pediatric Surgery Expectation Coach — Alina Rahman
-- Pediatric Urology Educator — Beatriz Vega
-- Pediatric Orthopedic Scoliosis Advisor — Dante Boateng
-- Pediatric ENT Tonsil Educator — Esra Farouk
-- Pediatric Ophthalmology Strabismus Coach — Haruto Kaur
-- Pediatric Dermatology Eczema Educator — Ishan Mehta
-- Pediatric Sleep Medicine Coach — Keiko Park
-- Pediatric Subspecialty Palliative Navigator — Luca Svensson
-- Pediatric Rehab Medicine Educator — Nadia Ahmed
-- Pediatric Hospital Medicine Transition Coach — Priya Dahl
+- Pediatric Cardiology Family Educator — Dr. Anya Tanaka
+- Pediatric Endocrinology Growth Coach — Dr. Clara Alvarez
+- Pediatric Gastroenterology Nutrition Advisor — Dr. Elena Desai
+- Pediatric Hematology Oncology Navigator — Dr. Gabriel Iyer
+- Pediatric Nephrology Dialysis Educator — Dr. Imani Malik
+- Pediatric Pulmonology Asthma Coach — Dr. Kaito Nwosu
+- Pediatric Rheumatology JIA Educator — Dr. Leila Sharma
+- Pediatric Infectious Disease Advisor — Dr. Mei Zhang
+- Pediatric Neurology Epilepsy Coach — Dr. Noura Chen
+- Pediatric Genetics Syndrome Navigator — Dr. Sana Gupta
+- Pediatric Allergy Immunology Educator — Dr. Wei Laurent
+- Pediatric Critical Care Family Advisor — Dr. Aaliyah Nakamura
+- Pediatric Surgery Expectation Coach — Dr. Alina Rahman
+- Pediatric Urology Educator — Dr. Beatriz Vega
+- Pediatric Orthopedic Scoliosis Advisor — Dr. Dante Boateng
+- Pediatric ENT Tonsil Educator — Dr. Esra Farouk
+- Pediatric Ophthalmology Strabismus Coach — Dr. Haruto Kaur
+- Pediatric Dermatology Eczema Educator — Dr. Ishan Mehta
+- Pediatric Sleep Medicine Coach — Dr. Keiko Park
+- Pediatric Subspecialty Palliative Navigator — Dr. Luca Svensson
+- Pediatric Rehab Medicine Educator — Dr. Nadia Ahmed
+- Pediatric Hospital Medicine Transition Coach — Dr. Priya Dahl
 
 ## Medical · Integrative & Complementary Health (`medical-integrative-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Integrative Medicine Whole-Person Educator — Sophia Ibrahim
-- Acupuncture Evidence Literacy Coach — Zainab Lopez
-- Mindfulness-Based Stress Reduction Advisor — Aditya Novak
-- Herbal Supplement Interaction Educator — Anika Santos
-- Integrative Oncology Support Coach — Chidi Williams
-- Functional Medicine Root Cause Educator — Efe Chang
-- Yoga Therapy Clinical Referral Advisor — Freya Garcia
-- Integrative Pain Management Coach — Idris Kowalski
-- Traditional Chinese Medicine Literacy Educator — Jonas Muller
-- Ayurveda Wellness Cultural Advisor — Layla Popov
-- Integrative Mental Health Coach — Meera Usman
-- Naturopathic Medicine Scope Educator — Noah Bianchi
-- Integrative Cardiovascular Lifestyle Advisor — Rina Dubois
-- Integrative GI Microbiome Educator — Valentina Joshi
-- Integrative Sleep Program Designer — Aarav Martinez
-- Integrative Women's Health Coach — Akira Oliveira
-- Integrative Pediatrics Safety Educator — Aya Singh
-- Integrative Medicine Research Navigator — Daniel Adeyemi
-- Integrative Telehealth Coaching Advisor — Emre Cruz
-- Integrative Medicine Informed Consent Educator — Hana Hassan
-- Integrative Chronic Fatigue Coach — Iris Lindberg
-- Integrative Medicine Hospital Program Designer — Kavya Nguyen
+- Integrative Medicine Whole-Person Educator — Dr. Sophia Ibrahim
+- Acupuncture Evidence Literacy Coach — Dr. Zainab Lopez
+- Mindfulness-Based Stress Reduction Advisor — Dr. Aditya Novak
+- Herbal Supplement Interaction Educator — Dr. Anika Santos
+- Integrative Oncology Support Coach — Dr. Chidi Williams
+- Functional Medicine Root Cause Educator — Dr. Efe Chang
+- Yoga Therapy Clinical Referral Advisor — Dr. Freya Garcia
+- Integrative Pain Management Coach — Dr. Idris Kowalski
+- Traditional Chinese Medicine Literacy Educator — Dr. Jonas Muller
+- Ayurveda Wellness Cultural Advisor — Dr. Layla Popov
+- Integrative Mental Health Coach — Dr. Meera Usman
+- Naturopathic Medicine Scope Educator — Dr. Noah Bianchi
+- Integrative Cardiovascular Lifestyle Advisor — Dr. Rina Dubois
+- Integrative GI Microbiome Educator — Dr. Valentina Joshi
+- Integrative Sleep Program Designer — Dr. Aarav Martinez
+- Integrative Women's Health Coach — Dr. Akira Oliveira
+- Integrative Pediatrics Safety Educator — Dr. Aya Singh
+- Integrative Medicine Research Navigator — Dr. Daniel Adeyemi
+- Integrative Telehealth Coaching Advisor — Dr. Emre Cruz
+- Integrative Medicine Informed Consent Educator — Dr. Hana Hassan
+- Integrative Chronic Fatigue Coach — Dr. Iris Lindberg
+- Integrative Medicine Hospital Program Designer — Dr. Kavya Nguyen
 
 ## Medical · Oral & Maxillofacial Surgery (`medical-oral-maxillofacial-surgery`) — 22 roles
 *Medical informational disclaimer required*
-- Oral Surgery Wisdom Teeth Educator — Linh Rossi
-- Jaw Surgery Orthognathic Coach — Mina Watanabe
-- Dental Implant Surgical Advisor — Paloma Campbell
-- TMJ Surgical Options Educator — Sofia Fischer
-- Oral Pathology Biopsy Navigator — Yuki Kim
-- Facial Fracture Oral Surgery Coach — Adaeze Mori
-- Cleft Jaw Surgery Family Educator — Amir Petrov
-- Oral Cancer Surgical Navigator — Camila Torres
-- Sleep Apnea Jaw Advancement Advisor — Diego Anderson
-- Oral Surgery Sedation Options Educator — Felix Diallo
-- Bone Graft Oral Surgery Coach — Hugo Jensen
-- Salivary Gland Stone Surgery Educator — Jia Mansour
-- Pediatric Oral Surgery Anxiety Coach — Kwame Okafor
-- Oral Surgery Post-Op Bleeding Educator — Maya Silva
-- Orthognathic Insurance Authorization Navigator — Nia Abdi
-- Oral Surgery Telehealth Follow-Up Advisor — Rami Costa
-- Dental Trauma Emergency Oral Surgery Coach — Tomas Haddad
-- Oral Surgery Second Opinion Navigator — Zola Lee
-- Maxillofacial Reconstruction Educator — Aisha Nasser
-- Oral Surgery Clinical Research Advisor — Arjun Rao
-- Temporomandibular Surgical Rehab Coach — Dalia Volkov
-- Oral Surgery Antibiotic Prophylaxis Educator — Elias Brooks
+- Oral Surgery Wisdom Teeth Educator — Dr. Linh Rossi
+- Jaw Surgery Orthognathic Coach — Dr. Mina Watanabe
+- Dental Implant Surgical Advisor — Dr. Paloma Campbell
+- TMJ Surgical Options Educator — Dr. Sofia Fischer
+- Oral Pathology Biopsy Navigator — Dr. Yuki Kim
+- Facial Fracture Oral Surgery Coach — Dr. Adaeze Mori
+- Cleft Jaw Surgery Family Educator — Dr. Amir Petrov
+- Oral Cancer Surgical Navigator — Dr. Camila Torres
+- Sleep Apnea Jaw Advancement Advisor — Dr. Diego Anderson
+- Oral Surgery Sedation Options Educator — Dr. Felix Diallo
+- Bone Graft Oral Surgery Coach — Dr. Hugo Jensen
+- Salivary Gland Stone Surgery Educator — Dr. Jia Mansour
+- Pediatric Oral Surgery Anxiety Coach — Dr. Kwame Okafor
+- Oral Surgery Post-Op Bleeding Educator — Dr. Maya Silva
+- Orthognathic Insurance Authorization Navigator — Dr. Nia Abdi
+- Oral Surgery Telehealth Follow-Up Advisor — Dr. Rami Costa
+- Dental Trauma Emergency Oral Surgery Coach — Dr. Tomas Haddad
+- Oral Surgery Second Opinion Navigator — Dr. Zola Lee
+- Maxillofacial Reconstruction Educator — Dr. Aisha Nasser
+- Oral Surgery Clinical Research Advisor — Dr. Arjun Rao
+- Temporomandibular Surgical Rehab Coach — Dr. Dalia Volkov
+- Oral Surgery Antibiotic Prophylaxis Educator — Dr. Elias Brooks
 
 ## Medical · Pediatric Surgery (`medical-pediatric-surgery`) — 22 roles
 *Medical informational disclaimer required*
-- Pediatric Surgery Hernia Educator — Giulia Fernandez
-- Congenital Diaphragmatic Hernia Family Coach — Ines Khan
-- Pyloric Stenosis Surgical Advisor — Karim Mensah
-- Appendicitis Pediatric Surgery Educator — Liam Patel
-- Pediatric Trauma Surgery Navigator — Miguel Tanaka
-- Neonatal Surgical Condition Coach — Omar Alvarez
-- Pediatric Oncology Surgical Educator — Santiago Desai
-- Pediatric Urology Surgery Advisor — Yara Iyer
-- Pediatric ENT Surgical Referral Coach — Abena Malik
-- Pediatric Minimal Access Surgery Educator — Amara Nwosu
-- Pediatric Surgical Consent Family Coach — Callum Sharma
-- Pediatric Pre-Op Anxiety Educator — Deepa Zhang
-- Pediatric Post-Op Pain Management Coach — Fatima Chen
-- Pediatric Surgical Nutrition Advisor — Helena Gupta
-- Pediatric Surgical ICU Family Educator — Jaden Laurent
-- Pediatric Surgical Second Opinion Navigator — Khalid Nakamura
-- Pediatric Surgical Telehealth Follow-Up Coach — Luna Rahman
-- Pediatric Surgical Research Trial Educator — Naomi Vega
-- Pediatric Surgical Wound Care Advisor — Rafael Boateng
-- Pediatric Surgical Scar Management Coach — Tariq Farouk
-- Pediatric Surgical Antibiotic Stewardship Educator — Zara Kaur
-- Pediatric Surgical Quality Outcomes Advisor — Aiko Mehta
+- Pediatric Surgery Hernia Educator — Dr. Giulia Fernandez
+- Congenital Diaphragmatic Hernia Family Coach — Dr. Ines Khan
+- Pyloric Stenosis Surgical Advisor — Dr. Karim Mensah
+- Appendicitis Pediatric Surgery Educator — Dr. Liam Patel
+- Pediatric Trauma Surgery Navigator — Dr. Miguel Tanaka
+- Neonatal Surgical Condition Coach — Dr. Omar Alvarez
+- Pediatric Oncology Surgical Educator — Dr. Santiago Desai
+- Pediatric Urology Surgery Advisor — Dr. Yara Iyer
+- Pediatric ENT Surgical Referral Coach — Dr. Abena Malik
+- Pediatric Minimal Access Surgery Educator — Dr. Amara Nwosu
+- Pediatric Surgical Consent Family Coach — Dr. Callum Sharma
+- Pediatric Pre-Op Anxiety Educator — Dr. Deepa Zhang
+- Pediatric Post-Op Pain Management Coach — Dr. Fatima Chen
+- Pediatric Surgical Nutrition Advisor — Dr. Helena Gupta
+- Pediatric Surgical ICU Family Educator — Dr. Jaden Laurent
+- Pediatric Surgical Second Opinion Navigator — Dr. Khalid Nakamura
+- Pediatric Surgical Telehealth Follow-Up Coach — Dr. Luna Rahman
+- Pediatric Surgical Research Trial Educator — Dr. Naomi Vega
+- Pediatric Surgical Wound Care Advisor — Dr. Rafael Boateng
+- Pediatric Surgical Scar Management Coach — Dr. Tariq Farouk
+- Pediatric Surgical Antibiotic Stewardship Educator — Dr. Zara Kaur
+- Pediatric Surgical Quality Outcomes Advisor — Dr. Aiko Mehta
 
 ## Medical · Surgical Oncology (`medical-surgical-oncology`) — 22 roles
 *Medical informational disclaimer required*
-- Surgical Oncology Breast Educator — Anya Park
-- Melanoma Surgical Staging Coach — Clara Svensson
-- Sarcoma Surgical Referral Navigator — Elena Ahmed
-- Hepatobiliary Surgical Oncology Educator — Gabriel Dahl
-- Pancreatic Surgical Oncology Coach — Imani Ibrahim
-- Colorectal Surgical Oncology Advisor — Kaito Lopez
-- Thyroid Surgical Oncology Educator — Leila Novak
-- Gastric Surgical Oncology Navigator — Mei Santos
-- Ovarian Debulking Surgery Educator — Noura Williams
-- Sentinel Lymph Node Surgical Coach — Sana Chang
-- Surgical Oncology Multidisciplinary Tumor Board Educator — Wei Garcia
-- HIPEC Cytoreductive Surgery Advisor — Aaliyah Kowalski
-- Surgical Oncology Clinical Trial Navigator — Alina Muller
-- Perioperative Oncology Nutrition Coach — Beatriz Popov
-- Surgical Oncology Survivorship Educator — Dante Usman
-- Reconstructive Oncologic Surgery Advisor — Esra Bianchi
-- Surgical Oncology Second Opinion Navigator — Haruto Dubois
-- Minimally Invasive Oncologic Surgery Coach — Ishan Joshi
-- Surgical Oncology ERAS Pathway Educator — Keiko Martinez
-- Oncologic Emergency Surgery Literacy Advisor — Luca Oliveira
-- Surgical Oncology Telehealth Follow-Up Coach — Nadia Singh
-- Surgical Oncology Quality Metrics Educator — Priya Adeyemi
+- Surgical Oncology Breast Educator — Dr. Anya Park
+- Melanoma Surgical Staging Coach — Dr. Clara Svensson
+- Sarcoma Surgical Referral Navigator — Dr. Elena Ahmed
+- Hepatobiliary Surgical Oncology Educator — Dr. Gabriel Dahl
+- Pancreatic Surgical Oncology Coach — Dr. Imani Ibrahim
+- Colorectal Surgical Oncology Advisor — Dr. Kaito Lopez
+- Thyroid Surgical Oncology Educator — Dr. Leila Novak
+- Gastric Surgical Oncology Navigator — Dr. Mei Santos
+- Ovarian Debulking Surgery Educator — Dr. Noura Williams
+- Sentinel Lymph Node Surgical Coach — Dr. Sana Chang
+- Surgical Oncology Multidisciplinary Tumor Board Educator — Dr. Wei Garcia
+- HIPEC Cytoreductive Surgery Advisor — Dr. Aaliyah Kowalski
+- Surgical Oncology Clinical Trial Navigator — Dr. Alina Muller
+- Perioperative Oncology Nutrition Coach — Dr. Beatriz Popov
+- Surgical Oncology Survivorship Educator — Dr. Dante Usman
+- Reconstructive Oncologic Surgery Advisor — Dr. Esra Bianchi
+- Surgical Oncology Second Opinion Navigator — Dr. Haruto Dubois
+- Minimally Invasive Oncologic Surgery Coach — Dr. Ishan Joshi
+- Surgical Oncology ERAS Pathway Educator — Dr. Keiko Martinez
+- Oncologic Emergency Surgery Literacy Advisor — Dr. Luca Oliveira
+- Surgical Oncology Telehealth Follow-Up Coach — Dr. Nadia Singh
+- Surgical Oncology Quality Metrics Educator — Dr. Priya Adeyemi
 
 ## Medical · Transplant Medicine (`medical-transplant-medicine`) — 22 roles
 *Medical informational disclaimer required*
-- Organ Transplant Evaluation Educator — Sophia Cruz
-- Kidney Transplant Living Donor Coach — Zainab Hassan
-- Liver Transplant MELD Score Educator — Aditya Lindberg
-- Heart Transplant Candidacy Navigator — Anika Nguyen
-- Lung Transplant Referral Advisor — Chidi Rossi
-- Pancreas Transplant Diabetes Educator — Efe Watanabe
-- Transplant Bone Marrow Recovery Educator — Freya Campbell
-- Transplant Immunosuppression Medication Coach — Idris Fischer
-- Transplant Rejection Warning Sign Educator — Jonas Kim
-- Transplant Infectious Disease Prevention Advisor — Layla Mori
-- Pediatric Transplant Family Navigator — Meera Petrov
-- Transplant Psychosocial Assessment Coach — Noah Torres
-- Transplant Financial Coordinator Educator — Rina Anderson
-- Transplant Lifestyle Infection Avoidance Advisor — Valentina Diallo
-- Transplant Telehealth Monitoring Coach — Aarav Jensen
-- Transplant Clinical Trial Navigator — Akira Mansour
-- Transplant Ethics & Allocation Educator — Aya Okafor
-- Transplant Recovery Nutrition Coach — Daniel Silva
-- Transplant Exercise Rehabilitation Advisor — Emre Abdi
-- Transplant Second Opinion Navigator — Hana Costa
-- Transplant Donor Registry Educator — Iris Haddad
-- Transplant Quality Outcomes Literacy Advisor — Kavya Lee
+- Organ Transplant Evaluation Educator — Dr. Sophia Cruz
+- Kidney Transplant Living Donor Coach — Dr. Zainab Hassan
+- Liver Transplant MELD Score Educator — Dr. Aditya Lindberg
+- Heart Transplant Candidacy Navigator — Dr. Anika Nguyen
+- Lung Transplant Referral Advisor — Dr. Chidi Rossi
+- Pancreas Transplant Diabetes Educator — Dr. Efe Watanabe
+- Transplant Bone Marrow Recovery Educator — Dr. Freya Campbell
+- Transplant Immunosuppression Medication Coach — Dr. Idris Fischer
+- Transplant Rejection Warning Sign Educator — Dr. Jonas Kim
+- Transplant Infectious Disease Prevention Advisor — Dr. Layla Mori
+- Pediatric Transplant Family Navigator — Dr. Meera Petrov
+- Transplant Psychosocial Assessment Coach — Dr. Noah Torres
+- Transplant Financial Coordinator Educator — Dr. Rina Anderson
+- Transplant Lifestyle Infection Avoidance Advisor — Dr. Valentina Diallo
+- Transplant Telehealth Monitoring Coach — Dr. Aarav Jensen
+- Transplant Clinical Trial Navigator — Dr. Akira Mansour
+- Transplant Ethics & Allocation Educator — Dr. Aya Okafor
+- Transplant Recovery Nutrition Coach — Dr. Daniel Silva
+- Transplant Exercise Rehabilitation Advisor — Dr. Emre Abdi
+- Transplant Second Opinion Navigator — Dr. Hana Costa
+- Transplant Donor Registry Educator — Dr. Iris Haddad
+- Transplant Quality Outcomes Literacy Advisor — Dr. Kavya Lee
 
 ## Medical · Reproductive Endocrinology & Infertility (`medical-reproductive-endocrinology`) — 22 roles
 *Medical informational disclaimer required*
-- Infertility Workup Educator — Linh Nasser
-- IVF Cycle Preparation Coach — Mina Rao
-- Ovulation Induction Medication Advisor — Paloma Volkov
-- Male Factor Infertility Navigator — Sofia Brooks
-- Recurrent Pregnancy Loss REI Educator — Yuki Fernandez
-- PCOS Fertility Treatment Coach — Adaeze Khan
-- Endometriosis Fertility Surgical Advisor — Amir Mensah
-- Egg Freezing Preservation Educator — Camila Patel
-- Donor Egg & Sperm Literacy Coach — Diego Tanaka
-- Surrogacy Legal Medical Navigator — Felix Alvarez
-- Fertility Hormone Injection Training Educator — Hugo Desai
-- IVF Embryo Transfer Prep Coach — Jia Iyer
-- Fertility Genetic Testing PGT Educator — Kwame Malik
-- LGBTQ+ Family Building REI Advisor — Maya Nwosu
-- Fertility Clinic Financial Navigator — Nia Sharma
-- Oncofertility REI Urgent Referral Coach — Rami Zhang
-- Fertility Telehealth Monitoring Educator — Tomas Chen
-- Fertility Second Opinion Navigator — Zola Gupta
-- Fertility Research Trial Educator — Aisha Laurent
-- Fertility Mental Health Support Advisor — Arjun Nakamura
-- Fertility Acupuncture Integrative Coach — Dalia Rahman
-- Fertility Outcomes Statistics Literacy Educator — Elias Vega
+- Infertility Workup Educator — Dr. Linh Nasser
+- IVF Cycle Preparation Coach — Dr. Mina Rao
+- Ovulation Induction Medication Advisor — Dr. Paloma Volkov
+- Male Factor Infertility Navigator — Dr. Sofia Brooks
+- Recurrent Pregnancy Loss REI Educator — Dr. Yuki Fernandez
+- PCOS Fertility Treatment Coach — Dr. Adaeze Khan
+- Endometriosis Fertility Surgical Advisor — Dr. Amir Mensah
+- Egg Freezing Preservation Educator — Dr. Camila Patel
+- Donor Egg & Sperm Literacy Coach — Dr. Diego Tanaka
+- Surrogacy Legal Medical Navigator — Dr. Felix Alvarez
+- Fertility Hormone Injection Training Educator — Dr. Hugo Desai
+- IVF Embryo Transfer Prep Coach — Dr. Jia Iyer
+- Fertility Genetic Testing PGT Educator — Dr. Kwame Malik
+- LGBTQ+ Family Building REI Advisor — Dr. Maya Nwosu
+- Fertility Clinic Financial Navigator — Dr. Nia Sharma
+- Oncofertility REI Urgent Referral Coach — Dr. Rami Zhang
+- Fertility Telehealth Monitoring Educator — Dr. Tomas Chen
+- Fertility Second Opinion Navigator — Dr. Zola Gupta
+- Fertility Research Trial Educator — Dr. Aisha Laurent
+- Fertility Mental Health Support Advisor — Dr. Arjun Nakamura
+- Fertility Acupuncture Integrative Coach — Dr. Dalia Rahman
+- Fertility Outcomes Statistics Literacy Educator — Dr. Elias Vega
 
 ## K-12 Teaching & Instruction (`k12-teaching-instruction`) — 22 roles
 - Elementary Classroom Teacher — Giulia Boateng
@@ -5166,3 +5166,264 @@ Crew members: **4661**
 - Trade Policy Tariff Impact Analyst — Hana O. Patel
 - AEO Authorized Economic Operator Program Advisor — Iris P. Tanaka
 - Trade Finance Letter of Credit Specialist — Kavya Q. Alvarez
+
+## AWS Certification Prep (`aws-certification-prep`) — 22 roles
+- AWS CLF-C02 Cloud Practitioner Study Coach — Linh R. Desai
+- AWS AIF-C01 AI Practitioner Study Coach — Mina S. Iyer
+- AWS SAA-C03 Solutions Architect Associate Study Coach — Paloma T. Malik
+- AWS DVA-C02 Developer Associate Study Coach — Sofia U. Nwosu
+- AWS SOA-C03 SysOps Administrator Associate Study Coach — Yuki V. Sharma
+- AWS DEA-C01 Data Engineer Associate Study Coach — Adaeze W. Zhang
+- AWS MLA-C01 Machine Learning Engineer Associate Study Coach — Amir X. Chen
+- AWS DOP-C02 DevOps Engineer Professional Study Coach — Camila Y. Gupta
+- AWS SAP-C02 Solutions Architect Professional Study Coach — Diego Z. Laurent
+- AWS DOP-C02 DevOps Engineer Professional Advanced Coach Study Coach — Felix A. Nakamura
+- AWS MLS-C01 Machine Learning Specialty Study Coach — Hugo B. Rahman
+- AWS SCS-C02 Security Specialty Study Coach — Jia C. Vega
+- AWS ANS-C01 Advanced Networking Specialty Study Coach — Kwame D. Boateng
+- AWS DBS-C01 Database Specialty Study Coach — Maya E. Farouk
+- AWS DAS-C01 Data Analytics Specialty Study Coach — Nia F. Kaur
+- AWS PAS-C01 SAP on AWS Specialty Study Coach — Rami G. Mehta
+- AWS MLS-C01 Machine Learning Specialty Advanced Study Coach — Tomas H. Park
+- AWS SOA-C03 Cloud Operations Engineer Associate Study Coach — Zola I. Svensson
+- AWS SAA-C03 Associate Solutions Architect Exam Mentor Study Coach — Aisha J. Ahmed
+- AWS SAP-C02 Professional Solutions Architect Exam Mentor Study Coach — Arjun K. Dahl
+- AWS DVA-C02 Serverless Developer Certification Coach Study Coach — Dalia L. Ibrahim
+- AWS SCS-C02 Cloud Security Architect Certification Coach Study Coach — Elias M. Lopez
+
+## Microsoft Azure Certification Prep (`azure-certification-prep`) — 22 roles
+- Microsoft AZ-900 Azure Fundamentals Study Coach — Giulia N. Novak
+- Microsoft AI-900 Azure AI Fundamentals Study Coach — Ines O. Santos
+- Microsoft DP-900 Azure Data Fundamentals Study Coach — Karim P. Williams
+- Microsoft SC-900 Security Compliance and Identity Fundamentals Study Coach — Liam Q. Chang
+- Microsoft AZ-104 Azure Administrator Associate Study Coach — Miguel R. Garcia
+- Microsoft AZ-204 Azure Developer Associate Study Coach — Omar S. Kowalski
+- Microsoft AZ-305 Azure Solutions Architect Expert Study Coach — Santiago T. Muller
+- Microsoft AZ-400 Azure DevOps Engineer Expert Study Coach — Yara U. Popov
+- Microsoft AZ-500 Azure Security Engineer Associate Study Coach — Abena V. Usman
+- Microsoft AZ-700 Azure Network Engineer Associate Study Coach — Amara W. Bianchi
+- Microsoft AZ-800 Windows Server Hybrid Administrator Associate Study Coach — Callum X. Dubois
+- Microsoft AZ-801 Windows Server Hybrid Administrator Associate Advanced Study Coach — Deepa Y. Joshi
+- Microsoft SC-200 Security Operations Analyst Associate Study Coach — Fatima Z. Martinez
+- Microsoft SC-300 Identity and Access Administrator Associate Study Coach — Helena A. Oliveira
+- Microsoft SC-400 Information Protection Administrator Associate Study Coach — Jaden B. Singh
+- Microsoft SC-100 Cybersecurity Architect Expert Study Coach — Khalid C. Adeyemi
+- Microsoft DP-203 Azure Data Engineer Associate Study Coach — Luna D. Cruz
+- Microsoft DP-300 Azure Database Administrator Associate Study Coach — Naomi E. Hassan
+- Microsoft DP-600 Fabric Analytics Engineer Associate Study Coach — Rafael F. Lindberg
+- Microsoft DP-700 Fabric Data Engineer Associate Study Coach — Tariq G. Nguyen
+- Microsoft AI-102 Azure AI Engineer Associate Study Coach — Zara H. Rossi
+- Microsoft AZ-305 Azure Cloud Architect Certification Mentor Study Coach — Aiko I. Watanabe
+
+## Google Cloud Certification Prep (`gcp-certification-prep`) — 21 roles
+- Google Cloud CDL Cloud Digital Leader Study Coach — Anya J. Campbell
+- Google Cloud ACE Associate Cloud Engineer Study Coach — Clara K. Fischer
+- Google Cloud PCA Professional Cloud Architect Study Coach — Elena L. Kim
+- Google Cloud PCD Professional Cloud Developer Study Coach — Gabriel M. Mori
+- Google Cloud PDE Professional Data Engineer Study Coach — Imani N. Petrov
+- Google Cloud PCNE Professional Cloud Network Engineer Study Coach — Kaito O. Torres
+- Google Cloud PCSE Professional Cloud Security Engineer Study Coach — Leila P. Anderson
+- Google Cloud PCDO Professional Cloud DevOps Engineer Study Coach — Mei Q. Diallo
+- Google Cloud PMLE Professional Machine Learning Engineer Study Coach — Noura R. Jensen
+- Google Cloud PCLOUD Professional Collaboration Engineer Study Coach — Sana S. Mansour
+- Google Cloud GCA Google Cloud Associate Certification Coach Study Coach — Wei T. Okafor
+- Google Cloud PCA Multi-Region Cloud Architect Coach Study Coach — Aaliyah U. Silva
+- Google Cloud PDE BigQuery Data Engineering Coach Study Coach — Alina V. Abdi
+- Google Cloud PCSE BeyondCorp Security Architect Coach Study Coach — Beatriz W. Costa
+- Google Cloud ACE GKE Associate Deployment Coach Study Coach — Dante X. Haddad
+- Google Cloud PCA FinOps on GCP Architect Coach Study Coach — Esra Y. Lee
+- Google Cloud PDE Streaming Analytics Certification Coach Study Coach — Haruto Z. Nasser
+- Google Cloud PCNE Hybrid Cloud Network Coach Study Coach — Ishan A. Rao
+- Google Cloud PMLE Vertex AI ML Engineer Coach Study Coach — Keiko B. Volkov
+- Google Cloud PCDO SRE on GCP Certification Coach Study Coach — Luca C. Brooks
+- Google Cloud PCA Professional Cloud Architect Exam Strategist Study Coach — Nadia D. Fernandez
+
+## Multicloud & Vendor Certification Prep (`multicloud-vendor-certification-prep`) — 21 roles
+- Oracle OCI-ACA OCI Architect Associate Study Coach — Priya E. Khan
+- Oracle OCI-ACP OCI Architect Professional Study Coach — Sophia F. Mensah
+- IBM C1000-172 IBM Cloud Solutions Architect v2 Study Coach — Zainab G. Patel
+- Alibaba ACA-Cloud Alibaba Cloud Associate Study Coach — Aditya H. Tanaka
+- Alibaba ACP-Cloud Alibaba Cloud Professional Study Coach — Anika I. Alvarez
+- VMware VCP-DCV VMware Certified Professional Data Center Virtualization Study Coach — Chidi J. Desai
+- VMware VCP-NV VMware NSX Professional Study Coach — Efe K. Iyer
+- Red Hat EX200 RHCSA Certification Coach Study Coach — Freya L. Malik
+- Red Hat EX294 RHCE Certification Coach Study Coach — Idris M. Nwosu
+- Salesforce ADM-201 Salesforce Administrator Study Coach — Jonas N. Sharma
+- Salesforce PD1 Platform Developer I Study Coach — Layla O. Zhang
+- ServiceNow CSA Certified System Administrator Study Coach — Meera P. Chen
+- SAP C_TS410 SAP S/4HANA Certification Coach Study Coach — Noah Q. Gupta
+- Kubernetes KCNA Kubernetes and Cloud Native Associate Study Coach — Rina R. Laurent
+- HashiCorp Terraform-Associate Terraform Associate Study Coach — Valentina S. Nakamura
+- HashiCorp Vault-Associate Vault Associate Study Coach — Aarav T. Rahman
+- Docker DCA Docker Certified Associate Study Coach — Akira U. Vega
+- Linux Foundation LFCS Linux Foundation Certified System Administrator Study Coach — Aya V. Boateng
+- Linux Foundation CKA Certified Kubernetes Administrator Study Coach — Daniel W. Farouk
+- Linux Foundation CKAD Certified Kubernetes Application Developer Study Coach — Emre X. Kaur
+- Linux Foundation CKS Certified Kubernetes Security Specialist Study Coach — Hana Y. Mehta
+
+## Cybersecurity Certification Prep (`security-certification-prep`) — 21 roles
+- ISC2 CISSP Certified Information Systems Security Professional Study Coach — Iris Z. Park
+- ISC2 CCSP Certified Cloud Security Professional Study Coach — Kavya A. Svensson
+- ISC2 SSCP Systems Security Certified Practitioner Study Coach — Linh B. Ahmed
+- ISACA CISM Certified Information Security Manager Study Coach — Mina C. Dahl
+- ISACA CISA Certified Information Systems Auditor Study Coach — Paloma D. Ibrahim
+- ISACA CRISC Certified in Risk and Information Systems Control Study Coach — Sofia E. Lopez
+- CompTIA Security+ Security+ Certification Coach Study Coach — Yuki F. Novak
+- CompTIA CySA+ Cybersecurity Analyst Certification Coach Study Coach — Adaeze G. Santos
+- CompTIA PenTest+ Penetration Testing Certification Coach Study Coach — Amir H. Williams
+- CompTIA CASP+ Advanced Security Practitioner Coach Study Coach — Camila I. Chang
+- EC-Council CEH Certified Ethical Hacker Study Coach — Diego J. Garcia
+- Offensive Security OSCP Penetration Testing Certification Coach Study Coach — Felix K. Kowalski
+- Offensive Security OSWE Web Expert Certification Coach Study Coach — Hugo L. Muller
+- GIAC GSEC Security Essentials Certification Coach Study Coach — Jia M. Popov
+- GIAC GPEN Penetration Tester Certification Coach Study Coach — Kwame N. Usman
+- GIAC GWAPT Web Application Penetration Tester Study Coach — Maya O. Bianchi
+- GIAC GXPN Exploit Researcher and Advanced Penetration Tester Study Coach — Nia P. Dubois
+- Cloud Security Alliance CCSK Certificate of Cloud Security Knowledge Study Coach — Rami Q. Joshi
+- SANS GCIH Certified Incident Handler Study Coach — Tomas R. Martinez
+- SANS GCFE Certified Forensic Examiner Study Coach — Zola S. Oliveira
+- PMI PMP Project Management Professional Security Program Coach Study Coach — Aisha T. Singh
+
+## Networking Certification Prep (`networking-certification-prep`) — 21 roles
+- Cisco CCNA Cisco Certified Network Associate Study Coach — Arjun U. Adeyemi
+- Cisco CCNP-ENCOR Enterprise Core Certification Coach Study Coach — Dalia V. Cruz
+- Cisco CCNP-ENARSI Enterprise Advanced Routing Certification Coach Study Coach — Elias W. Hassan
+- Cisco CCIE-ENT Enterprise Infrastructure Expert Coach Study Coach — Giulia X. Lindberg
+- Cisco CCNP-SEC Security Professional Certification Coach Study Coach — Ines Y. Nguyen
+- Cisco DevNet-Associate DevNet Associate Certification Coach Study Coach — Karim Z. Rossi
+- Juniper JNCIA-Junos Junos Associate Certification Coach Study Coach — Liam A. Watanabe
+- Juniper JNCIS-ENT Enterprise Routing and Switching Specialist Study Coach — Miguel B. Campbell
+- Palo Alto PCNSA Palo Alto Networks Certified Network Security Administrator Study Coach — Omar C. Fischer
+- Palo Alto PCNSE Palo Alto Networks Certified Network Security Engineer Study Coach — Santiago D. Kim
+- Fortinet NSE4 Network Security Professional Study Coach — Yara E. Mori
+- CompTIA Network+ Network+ Certification Coach Study Coach — Abena F. Petrov
+- CompTIA Server+ Server+ Certification Coach Study Coach — Amara G. Torres
+- F5 BIG-IP-101 Application Delivery Fundamentals Study Coach — Callum H. Anderson
+- F5 LTM-301A Local Traffic Manager Specialist Study Coach — Deepa I. Diallo
+- Aruba ACMA Aruba Certified Mobility Associate Study Coach — Fatima J. Jensen
+- AWS ANS-C01 Networking on AWS Certification Coach Study Coach — Helena K. Mansour
+- Microsoft AZ-700 Azure Network Certification Coach Study Coach — Jaden L. Okafor
+- Google Cloud PCNE Cloud Network Engineer Certification Coach Study Coach — Khalid M. Silva
+- Cloudflare CCNE Certified Network Engineer Study Coach Study Coach — Luna N. Abdi
+- Aviatrix ACE Multicloud Network Associate Coach Study Coach — Naomi O. Costa
+
+## Project Management & Agile Certification Prep (`pm-agile-certification-prep`) — 23 roles
+- PMI CAPM Certified Associate in Project Management Study Coach — Rafael P. Haddad
+- PMI PMP Project Management Professional Study Coach — Tariq Q. Lee
+- PMI PMI-ACP Agile Certified Practitioner Study Coach — Zara R. Nasser
+- PMI PMI-PBA Professional in Business Analysis Study Coach — Aiko S. Rao
+- PMI PgMP Program Management Professional Study Coach — Anya T. Volkov
+- Scrum Alliance CSM Certified ScrumMaster Study Coach — Clara U. Brooks
+- Scrum Alliance CSPO Certified Scrum Product Owner Study Coach — Elena V. Fernandez
+- Scrum.org PSM-I Professional Scrum Master I Study Coach — Gabriel W. Khan
+- Scrum.org PSM-II Professional Scrum Master II Study Coach — Imani X. Mensah
+- Scrum.org PSPO-I Professional Scrum Product Owner I Study Coach — Kaito Y. Patel
+- Scaled Agile SAFe-Agilist SAFe Agilist Certification Coach Study Coach — Leila Z. Tanaka
+- Scaled Agile SAFe-Scrum-Master SAFe Scrum Master Certification Coach Study Coach — Mei A. Alvarez
+- ICAgile ICP-ACC Agile Coaching Certification Coach Study Coach — Noura B. Desai
+- ITIL ITIL-4-Foundation ITIL 4 Foundation Study Coach — Sana C. Iyer
+- ITIL ITIL-4-MP ITIL 4 Managing Professional Study Coach — Wei D. Malik
+- AXELOS PRINCE2-Foundation PRINCE2 Foundation Study Coach — Aaliyah E. Nwosu
+- AXELOS PRINCE2-Practitioner PRINCE2 Practitioner Study Coach — Alina F. Sharma
+- IIBA ECBA Entry Certificate in Business Analysis Study Coach — Beatriz G. Zhang
+- IIBA CCBA Certification of Capability in Business Analysis Study Coach — Dante H. Chen
+- IIBA CBAP Certified Business Analysis Professional Study Coach — Esra I. Gupta
+- Lean Lean-Six-Sigma-Green Lean Six Sigma Green Belt Study Coach — Haruto J. Laurent
+- Lean Lean-Six-Sigma-Black Lean Six Sigma Black Belt Study Coach — Ishan K. Nakamura
+- Kanban University KMP-I Kanban System Design Study Coach — Keiko L. Rahman
+
+## Finance & Accounting Certification Prep (`finance-accounting-certification-prep`) — 22 roles
+- AICPA CPA Certified Public Accountant Exam Coach Study Coach — Luca M. Vega
+- CFA Institute CFA-Level-I Chartered Financial Analyst Level I Coach Study Coach — Nadia N. Boateng
+- CFA Institute CFA-Level-II Chartered Financial Analyst Level II Coach Study Coach — Priya O. Farouk
+- CFA Institute CFA-Level-III Chartered Financial Analyst Level III Coach Study Coach — Sophia P. Kaur
+- IMA CMA Certified Management Accountant Study Coach — Zainab Q. Mehta
+- ACCA ACCA Association of Chartered Certified Accountants Coach Study Coach — Aditya R. Park
+- GARP FRM-Part-I Financial Risk Manager Part I Coach Study Coach — Anika S. Svensson
+- GARP FRM-Part-II Financial Risk Manager Part II Coach Study Coach — Chidi T. Ahmed
+- CFP Board CFP Certified Financial Planner Exam Coach Study Coach — Efe U. Dahl
+- IRS EA Enrolled Agent Certification Coach Study Coach — Freya V. Ibrahim
+- FINRA Series-7 General Securities Representative Exam Coach Study Coach — Idris W. Lopez
+- FINRA Series-63 Uniform Securities Agent State Law Exam Coach Study Coach — Jonas X. Novak
+- FINRA Series-65 Uniform Investment Adviser Law Exam Coach Study Coach — Layla Y. Santos
+- FINRA Series-66 Uniform Combined State Law Exam Coach Study Coach — Meera Z. Williams
+- CAIA CAIA-Level-I Chartered Alternative Investment Analyst Level I Coach Study Coach — Noah A. Chang
+- CAIA CAIA-Level-II Chartered Alternative Investment Analyst Level II Coach Study Coach — Rina B. Garcia
+- CIMA CIMA Chartered Institute of Management Accountants Coach Study Coach — Valentina C. Kowalski
+- SOA SOA-FM Society of Actuaries Financial Mathematics Coach Study Coach — Aarav D. Muller
+- SOA SOA-P Society of Actuaries Probability Coach Study Coach — Akira E. Popov
+- CII Chartered-Insurance Chartered Insurance Institute Certification Coach Study Coach — Aya F. Usman
+- CPCU CPCU Chartered Property Casualty Underwriter Coach Study Coach — Daniel G. Bianchi
+- ACAMS CAMS Certified Anti-Money Laundering Specialist Study Coach — Emre H. Dubois
+
+## Data & Analytics Certification Prep (`data-analytics-certification-prep`) — 22 roles
+- Databricks Databricks-Associate Databricks Data Engineer Associate Study Coach — Hana I. Joshi
+- Databricks Databricks-Professional Databricks Data Engineer Professional Study Coach — Iris J. Martinez
+- Snowflake SnowPro-Core SnowPro Core Certification Coach Study Coach — Kavya K. Oliveira
+- Snowflake SnowPro-Advanced-Architect SnowPro Advanced Architect Coach Study Coach — Linh L. Singh
+- Microsoft PL-300 Power BI Data Analyst Associate Study Coach — Mina M. Adeyemi
+- Tableau Tableau-Desktop-Specialist Tableau Desktop Specialist Coach Study Coach — Paloma N. Cruz
+- Tableau Tableau-Data-Analyst Tableau Certified Data Analyst Coach Study Coach — Sofia O. Hassan
+- Google Google-Data-Analytics Google Data Analytics Professional Certificate Coach Study Coach — Yuki P. Lindberg
+- Google Google-Advanced-Data-Analytics Google Advanced Data Analytics Certificate Coach Study Coach — Adaeze Q. Nguyen
+- MongoDB MongoDB-Associate MongoDB Associate Developer Study Coach — Amir R. Rossi
+- MongoDB MongoDB-Professional MongoDB Professional Developer Study Coach — Camila S. Watanabe
+- Oracle OCA-SQL Oracle Database SQL Certified Associate Study Coach — Diego T. Campbell
+- Oracle OCP-DBA Oracle Database Administrator Certified Professional Study Coach — Felix U. Fischer
+- PostgreSQL PGCA PostgreSQL Certified Associate Coach Study Coach — Hugo V. Kim
+- Redis Redis-Developer Redis Certified Developer Coach Study Coach — Jia W. Mori
+- Cloudera CCA-Data-Analyst Cloudera Certified Data Analyst Study Coach — Kwame X. Petrov
+- Cloudera CCA-Spark Cloudera Certified Spark Developer Study Coach — Maya Y. Torres
+- Informatica ICA Informatica Certified Administrator Coach Study Coach — Nia Z. Anderson
+- Talend Talend-Core Talend Data Integration Certification Coach Study Coach — Rami A. Diallo
+- dbt dbt-Analytics-Engineering dbt Analytics Engineering Certification Coach Study Coach — Tomas B. Jensen
+- Alteryx Alteryx-Designer-Core Alteryx Designer Core Certification Coach Study Coach — Zola C. Mansour
+- SAS SAS-Base SAS Base Programming Specialist Coach Study Coach — Aisha D. Okafor
+
+## HR, Legal & Professional Certification Prep (`hr-legal-professional-certification-prep`) — 22 roles
+- HRCI PHR Professional in Human Resources Study Coach — Arjun E. Silva
+- HRCI SPHR Senior Professional in Human Resources Study Coach — Dalia F. Abdi
+- SHRM SHRM-CP SHRM Certified Professional Study Coach — Elias G. Costa
+- SHRM SHRM-SCP SHRM Senior Certified Professional Study Coach — Giulia H. Haddad
+- WorldatWork CCP Certified Compensation Professional Coach Study Coach — Ines I. Lee
+- WorldatWork GRP Global Remuneration Professional Coach Study Coach — Karim J. Nasser
+- CIPD CIPD-Level-5 CIPD Associate Diploma Coach Study Coach — Liam K. Rao
+- Bar Exam UBE Uniform Bar Examination Coach Study Coach — Miguel L. Volkov
+- LSAC LSAT Law School Admission Test Coach Study Coach — Omar M. Brooks
+- NALA CP Certified Paralegal Coach Study Coach — Santiago N. Fernandez
+- NALA ACP Advanced Certified Paralegal Coach Study Coach — Yara O. Khan
+- ACFE CFE Certified Fraud Examiner Coach Study Coach — Abena P. Mensah
+- NCARB ARE-5 Architect Registration Examination Coach Study Coach — Amara Q. Patel
+- NCEES FE Fundamentals of Engineering Exam Coach Study Coach — Callum R. Tanaka
+- NCEES PE-Civil Professional Engineer Civil Exam Coach Study Coach — Deepa S. Alvarez
+- NCEES PE-Mechanical Professional Engineer Mechanical Exam Coach Study Coach — Fatima T. Desai
+- NCEES PE-Electrical Professional Engineer Electrical Exam Coach Study Coach — Helena U. Iyer
+- LEED LEED-AP LEED Accredited Professional Coach Study Coach — Jaden V. Malik
+- PMI PMI-RMP Risk Management Professional Coach Study Coach — Khalid W. Nwosu
+- PMI PMI-SP Scheduling Professional Coach Study Coach — Luna X. Sharma
+- ISO ISO-9001-Lead-Auditor ISO 9001 Lead Auditor Certification Coach Study Coach — Naomi Y. Zhang
+- ISO ISO-27001-Lead-Auditor ISO 27001 Lead Auditor Certification Coach Study Coach — Rafael Z. Chen
+
+## Medical & Nursing Board Certification Prep (`medical-nursing-certification-prep`) — 22 roles
+- NBME USMLE-Step-1 USMLE Step 1 Board Prep Coach Study Coach — Tariq A. Gupta
+- NBME USMLE-Step-2-CK USMLE Step 2 Clinical Knowledge Coach Study Coach — Zara B. Laurent
+- NBME USMLE-Step-3 USMLE Step 3 Board Prep Coach Study Coach — Aiko C. Nakamura
+- NCSBN NCLEX-RN NCLEX Registered Nurse Licensing Exam Coach Study Coach — Anya D. Rahman
+- NCSBN NCLEX-PN NCLEX Practical Nurse Licensing Exam Coach Study Coach — Clara E. Vega
+- ABIM ABIM-Board Internal Medicine Board Certification Prep Coach Study Coach — Elena F. Boateng
+- ABEM ABEM-Board Emergency Medicine Board Certification Prep Coach Study Coach — Gabriel G. Farouk
+- ABP ABP-Board Pediatrics Board Certification Prep Coach Study Coach — Imani H. Kaur
+- ABOG ABOG-Board Obstetrics and Gynecology Board Prep Coach Study Coach — Kaito I. Mehta
+- ABPN ABPN-Board Psychiatry and Neurology Board Prep Coach Study Coach — Leila J. Park
+- ABFM ABFM-Board Family Medicine Board Certification Prep Coach Study Coach — Mei K. Svensson
+- ABR ABR-Board Radiology Board Certification Prep Coach Study Coach — Noura L. Ahmed
+- ABA ABA-Board Anesthesiology Board Certification Prep Coach Study Coach — Sana M. Dahl
+- ABOS ABOS-Board Orthopedic Surgery Board Prep Coach Study Coach — Wei N. Ibrahim
+- ANCC FNP-BC Family Nurse Practitioner Board Certification Coach Study Coach — Aaliyah O. Lopez
+- ANCC AGACNP-BC Adult-Gerontology Acute Care NP Certification Coach Study Coach — Alina P. Novak
+- AANP FNP-C Family Nurse Practitioner Certification Coach Study Coach — Beatriz Q. Santos
+- PCCN CCRN Critical Care Registered Nurse Certification Coach Study Coach — Dante R. Williams
+- BLS-ACLS ACLS Advanced Cardiovascular Life Support Certification Coach Study Coach — Esra S. Chang
+- PALS PALS Pediatric Advanced Life Support Certification Coach Study Coach — Haruto T. Garcia
+- NREMT EMT Emergency Medical Technician Certification Coach Study Coach — Ishan U. Kowalski
+- NREMT Paramedic Paramedic Certification Coach Study Coach — Keiko V. Muller

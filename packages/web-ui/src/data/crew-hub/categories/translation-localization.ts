@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "patient",
       "detail-oriented",
       "quality-focused"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Elias Diallo",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "quality-focused",
       "clear"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Giulia Jensen",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "quality-focused",
       "clear"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Ines Mansour",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "organized",
       "precise",
       "patient"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Karim Okafor",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "patient",
       "detail-oriented"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Liam Silva",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "culturally-aware",
       "collaborative",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Miguel Abdi",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "organized",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Omar Costa",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "organized",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Santiago Haddad",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "organized",
       "precise",
       "patient"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Yara Lee",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "clear",
       "culturally-aware",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Abena Nasser",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "clear",
       "culturally-aware",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Amara Rao",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "quality-focused",
       "clear"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Callum Volkov",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "quality-focused",
       "clear",
       "culturally-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Deepa Brooks",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "quality-focused",
       "clear",
       "culturally-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Fatima Fernandez",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "patient",
       "detail-oriented"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Helena Khan",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "quality-focused",
       "clear",
       "culturally-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jaden Mensah",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "quality-focused",
       "clear"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Khalid Patel",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "organized",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Luna Tanaka",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "patient",
       "detail-oriented",
       "quality-focused"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Naomi Alvarez",
@@ -443,6 +462,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "quality-focused",
       "clear"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

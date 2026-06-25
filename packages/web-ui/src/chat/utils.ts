@@ -95,6 +95,20 @@ export function hasPendingQuestionnaire(messages: Array<{ parts?: Array<{ type?:
   return false;
 }
 
+/** True when in-chat crew roster picker is awaiting user selection. */
+export function hasPendingCrewRosterPicker(messages: Array<{ parts?: Array<{ type?: string; crewRosterPicker?: { status?: string } }> }>): boolean {
+  for (const m of messages) {
+    for (const p of m.parts ?? []) {
+      if (p.type === 'crew_roster_picker' && p.crewRosterPicker?.status === 'pending') return true;
+    }
+  }
+  return false;
+}
+
+export function hasPendingChatInteraction(messages: Parameters<typeof hasPendingQuestionnaire>[0]): boolean {
+  return hasPendingQuestionnaire(messages) || hasPendingCrewRosterPicker(messages);
+}
+
 /** Remove a trailing streaming/text-only assistant bubble before a questionnaire card. */
 export function stripTrailingStreamPreamble<T extends {
   role?: string;

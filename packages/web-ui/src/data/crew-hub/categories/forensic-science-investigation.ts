@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Clara Brooks",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Elena Fernandez",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Gabriel Khan",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Imani Mensah",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kaito Patel",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Leila Tanaka",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Mei Alvarez",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Noura Desai",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Sana Iyer",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Wei Malik",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aaliyah Nwosu",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Alina Sharma",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Beatriz Zhang",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Dante Chen",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Esra Gupta",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Haruto Laurent",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Ishan Nakamura",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Keiko Rahman",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Luca Vega",
@@ -443,7 +462,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Nadia Boateng",
@@ -465,7 +485,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Priya Farouk",
@@ -487,6 +508,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

@@ -207,6 +207,7 @@ export function expansionCategoryDefinitions() {
       id,
       label,
       iconId,
+      scienceCategory: true,
       skillBank: ['Scientific Method', 'Literature Review', 'Experimental Design', 'Data Analysis', 'Peer Review', 'Lab Safety', 'Reproducibility', 'Hypothesis Testing', 'Instrumentation', 'Technical Writing', 'Grant Writing', 'Ethics Compliance'],
       traitBank: scienceTraits,
       roles: rolesFromTitles(label, titles, 'research methodology and applied science guidance'),

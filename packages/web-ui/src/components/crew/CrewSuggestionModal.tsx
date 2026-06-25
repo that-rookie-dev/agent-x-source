@@ -8,15 +8,13 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
-import Chip from '@mui/material/Chip';
-import LinearProgress from '@mui/material/LinearProgress';
 import IconButton from '@mui/material/IconButton';
 import Alert from '@mui/material/Alert';
 import CloseIcon from '@mui/icons-material/Close';
 import type { CrewMatchCandidate, CrewSuggestionEvaluation } from '@agentx/shared/browser';
 import { crewTheme, crewDialogPaperSx } from '../../styles/crew-theme';
-import { MedicalDisclaimerStripe } from './MedicalDisclaimerBanner';
 import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
+import { CrewRecruitCard } from './CrewRecruitCard';
 
 export interface CrewSuggestionModalProps {
   open: boolean;
@@ -27,226 +25,6 @@ export interface CrewSuggestionModalProps {
   onClose: () => void;
   onViewDossier?: (candidate: CrewMatchCandidate) => void;
   onReenableSuggestions?: () => void;
-}
-
-function originLabel(origin: CrewMatchCandidate['origin']): string {
-  if (origin === 'custom') return 'CLASSIFIED · CUSTOM';
-  if (origin === 'hub_roster') return 'ROSTER · ACTIVE';
-  return 'HUB · RECRUIT';
-}
-
-function rankAccent(rank: number): string {
-  if (rank === 1) return crewTheme.text.primary;
-  if (rank === 2) return crewTheme.text.secondary;
-  return crewTheme.text.dim;
-}
-
-function RecruitCard({
-  candidate,
-  rank,
-  selected,
-  onToggle,
-  onViewDossier,
-  isMedical,
-}: {
-  candidate: CrewMatchCandidate;
-  rank: number;
-  selected: boolean;
-  onToggle: () => void;
-  onViewDossier?: () => void;
-  isMedical: boolean;
-}) {
-  const pct = Math.round(candidate.matchScore * 100);
-  const topReason = candidate.reasons[0];
-
-  return (
-    <Box
-      onClick={onToggle}
-      sx={{
-        position: 'relative',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        minHeight: 196,
-        border: `1px solid ${selected ? crewTheme.accent.tactical : crewTheme.border.default}`,
-        borderRadius: '8px',
-        overflow: 'hidden',
-        cursor: 'pointer',
-        bgcolor: selected ? 'rgba(255,255,255,0.04)' : crewTheme.bg.card,
-        transition: 'border-color 0.15s, background-color 0.15s',
-        '&:hover': { borderColor: crewTheme.border.strong, bgcolor: crewTheme.bg.cardHover },
-      }}
-    >
-      {isMedical && <MedicalDisclaimerStripe height={3} />}
-      <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, p: 1.35, position: 'relative', minHeight: 0 }}>
-        <Box sx={{
-          position: 'absolute',
-          top: 10,
-          left: 10,
-          fontFamily: "'JetBrains Mono', monospace",
-          fontSize: rank === 1 ? '0.82rem' : '0.68rem',
-          fontWeight: rank <= 2 ? 700 : 500,
-          color: rankAccent(rank),
-          opacity: rank === 1 ? 0.9 : 0.55,
-          lineHeight: 1,
-          letterSpacing: '-0.5px',
-        }}>
-          {String(rank).padStart(2, '0')}
-        </Box>
-
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', mb: 0.5, minHeight: 22 }}>
-        <Checkbox
-          size="small"
-          checked={selected}
-          onClick={(e) => e.stopPropagation()}
-          onChange={onToggle}
-          sx={{ p: 0.25, mt: -0.25, color: crewTheme.text.dim, '&.Mui-checked': { color: crewTheme.accent.tactical } }}
-        />
-      </Box>
-
-      <Box sx={{ flex: 1, minWidth: 0, pl: 0.25 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.45, flexWrap: 'wrap' }}>
-          <Chip
-            size="small"
-            label={originLabel(candidate.origin)}
-            sx={{
-              height: 18,
-              fontSize: '0.48rem',
-              fontFamily: "'JetBrains Mono', monospace",
-              letterSpacing: '0.4px',
-              bgcolor: 'transparent',
-              border: `1px solid ${crewTheme.border.default}`,
-              color: crewTheme.text.dim,
-            }}
-          />
-          {candidate.onRoster && (
-            <Chip
-              size="small"
-              label="ON ROSTER"
-              sx={{
-                height: 18,
-                fontSize: '0.48rem',
-                fontFamily: "'JetBrains Mono', monospace",
-                bgcolor: 'transparent',
-                border: `1px solid ${crewTheme.border.subtle}`,
-                color: crewTheme.text.dim,
-              }}
-            />
-          )}
-        </Box>
-
-        <Typography sx={{
-          fontFamily: "'JetBrains Mono', monospace",
-          fontSize: '0.74rem',
-          fontWeight: 700,
-          color: crewTheme.text.primary,
-          lineHeight: 1.25,
-          mb: 0.25,
-        }}>
-          {candidate.name}
-        </Typography>
-
-        <Typography sx={{
-          fontSize: '0.6rem',
-          color: crewTheme.text.secondary,
-          lineHeight: 1.35,
-          mb: 0.5,
-        }}>
-          {candidate.title}
-          {candidate.categoryLabel ? ` · ${candidate.categoryLabel}` : ''}
-        </Typography>
-
-        {candidate.description && (
-          <Typography sx={{
-            fontSize: '0.58rem',
-            color: crewTheme.text.dim,
-            lineHeight: 1.45,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            mb: 0.6,
-          }}>
-            {candidate.description}
-          </Typography>
-        )}
-
-        {topReason && (
-          <Typography sx={{
-            fontSize: '0.55rem',
-            color: crewTheme.text.secondary,
-            fontStyle: 'italic',
-            lineHeight: 1.35,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            mb: 0.65,
-          }}>
-            {topReason}
-          </Typography>
-        )}
-
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.35, mb: 0.75 }}>
-          {candidate.expertise.slice(0, 4).map((e) => (
-            <Chip key={e} label={e} size="small" sx={{
-              height: 18,
-              fontSize: '0.5rem',
-              bgcolor: crewTheme.bg.void,
-              color: crewTheme.text.dim,
-              border: `1px solid ${crewTheme.border.subtle}`,
-            }} />
-          ))}
-        </Box>
-      </Box>
-
-      <Box sx={{ mt: 'auto' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-          <Typography sx={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: '0.52rem',
-            color: crewTheme.text.dim,
-            letterSpacing: '0.5px',
-          }}>
-            {pct}% FIT
-          </Typography>
-          {onViewDossier && (
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={(e) => { e.stopPropagation(); onViewDossier(); }}
-              sx={{
-                minWidth: 0,
-                py: 0.15,
-                px: 0.85,
-                fontSize: '0.52rem',
-                fontFamily: "'JetBrains Mono', monospace",
-                textTransform: 'none',
-                letterSpacing: '0.3px',
-                color: crewTheme.text.secondary,
-                borderColor: crewTheme.border.default,
-                '&:hover': { borderColor: crewTheme.border.strong, bgcolor: crewTheme.bg.void },
-              }}
-            >
-              View details
-            </Button>
-          )}
-        </Box>
-        <LinearProgress
-          variant="determinate"
-          value={pct}
-          sx={{
-            height: 3,
-            borderRadius: 2,
-            bgcolor: crewTheme.bg.void,
-            '& .MuiLinearProgress-bar': { bgcolor: rank === 1 ? crewTheme.accent.tactical : crewTheme.text.dim },
-          }}
-        />
-      </Box>
-      </Box>
-      {isMedical && <MedicalDisclaimerStripe height={3} />}
-    </Box>
-  );
 }
 
 export default function CrewSuggestionModal({
@@ -360,7 +138,7 @@ export default function CrewSuggestionModal({
           mb: 1.25,
         }}>
           {candidates.map((c, i) => (
-            <RecruitCard
+            <CrewRecruitCard
               key={c.id}
               candidate={c}
               rank={i + 1}

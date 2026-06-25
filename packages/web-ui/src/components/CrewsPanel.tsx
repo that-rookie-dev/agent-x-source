@@ -66,6 +66,7 @@ function crewToProfile(crew: Crew): PrebuiltCrew {
     catalogId: crew.catalogId ?? (crew.callsign ? `hub-${crew.callsign}` : undefined),
     categoryId: crew.categoryId,
     requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    honorsDoctorate: crew.honorsDoctorate,
   };
 }
 
@@ -294,24 +295,26 @@ export function CrewsPanel() {
     setPrivateChatLoading(true);
     setError('');
     try {
-      const body = opts.crewId
-        ? { crewId: opts.crewId }
-        : {
+      const body = opts.recruit
+        ? {
+            crewId: opts.crewId,
             recruit: {
-              id: `hub-${opts.recruit!.callsign}`,
-              name: opts.recruit!.name,
-              title: opts.recruit!.title,
-              callsign: opts.recruit!.callsign,
-              systemPrompt: opts.recruit!.systemPrompt,
-              description: opts.recruit!.description || undefined,
-              tone: opts.recruit!.tone,
+              id: `hub-${opts.recruit.callsign}`,
+              name: opts.recruit.name,
+              title: opts.recruit.title,
+              callsign: opts.recruit.callsign,
+              systemPrompt: opts.recruit.systemPrompt,
+              description: opts.recruit.description || undefined,
+              tone: opts.recruit.tone,
               source: 'hub',
-              catalogId: `hub-${opts.recruit!.callsign}`,
-              expertise: opts.recruit!.expertise,
-              traits: opts.recruit!.traits,
-              tools: opts.recruit!.tools,
+              catalogId: opts.recruit.catalogId ?? `hub-${opts.recruit.callsign}`,
+              categoryId: opts.recruit.categoryId,
+              expertise: opts.recruit.expertise,
+              traits: opts.recruit.traits,
+              tools: opts.recruit.tools,
             },
-          };
+          }
+        : { crewId: opts.crewId! };
       const result = await crewChat.startSession(body);
       await load();
       setDetailCrew(null);
@@ -617,8 +620,7 @@ export function CrewsPanel() {
         onImport={handleImportCrew}
         onRemove={(id) => handleDelete(id)}
         onPrivateChat={(crew, rosterCrewId) => {
-          if (rosterCrewId) startPrivateChat({ crewId: rosterCrewId });
-          else startPrivateChat({ recruit: crew });
+          startPrivateChat({ crewId: rosterCrewId, recruit: crew });
         }}
         privateChatLoading={privateChatLoading}
       />

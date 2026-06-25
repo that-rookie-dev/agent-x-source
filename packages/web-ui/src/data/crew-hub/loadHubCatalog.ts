@@ -8,6 +8,7 @@ export type HubSearchHit = {
   categoryId: string;
   categoryLabel: string;
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
   name: string;
   title: string;
   callsign: string;
@@ -22,6 +23,7 @@ function summaryToPrebuilt(crew: CatalogSummary): PrebuiltCrew {
     catalogId: crew.id,
     categoryId: crew.categoryId,
     requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    honorsDoctorate: crew.honorsDoctorate,
     name: crew.name,
     title: crew.title,
     callsign: crew.callsign,
@@ -39,6 +41,7 @@ function entryToPrebuilt(entry: CatalogEntry): PrebuiltCrew {
     catalogId: entry.id,
     categoryId: entry.categoryId,
     requiresMedicalDisclaimer: entry.requiresMedicalDisclaimer,
+    honorsDoctorate: entry.honorsDoctorate,
     name: entry.name,
     title: entry.title,
     callsign: entry.callsign,
@@ -82,6 +85,7 @@ export async function searchHubCatalog(query: string): Promise<HubSearchHit[]> {
     categoryId: crew.categoryId,
     categoryLabel: crew.categoryLabel,
     requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    honorsDoctorate: crew.honorsDoctorate,
     name: crew.name,
     title: crew.title,
     callsign: crew.callsign,

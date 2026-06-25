@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Ines Hassan",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Karim Lindberg",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Liam Nguyen",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Miguel Rossi",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Omar Watanabe",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Santiago Campbell",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Yara Fischer",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Abena Kim",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Amara Mori",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Callum Petrov",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Deepa Torres",
@@ -267,14 +278,15 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
-    "name": "Fatima Anderson",
+    "name": "Dr. Fatima Anderson",
     "title": "Control Systems Scientist",
-    "callsign": "fatima_anderson_g1yvoh",
+    "callsign": "dr_fatima_anderson_g1yvoh",
     "description": "Control Systems Scientist focused on research methodology and applied science guidance for control systems scientist — planning, education, and operational guidance. Delivers concrete plans, practical trade-offs, and execution-ready guidance for real-world teams.",
-    "systemPrompt": "You are Fatima Anderson, a Control Systems Scientist specializing in research methodology and applied science guidance for control systems scientist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Ethics Compliance\n- Peer Review\n- Technical Writing\n- Experimental Design\n- Hypothesis Testing\n- Scientific Method\n\nResponse style:\n- Tone: professional\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
+    "systemPrompt": "You are Dr. Fatima Anderson, a Control Systems Scientist specializing in research methodology and applied science guidance for control systems scientist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Ethics Compliance\n- Peer Review\n- Technical Writing\n- Experimental Design\n- Hypothesis Testing\n- Scientific Method\n\nResponse style:\n- Tone: professional\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
     "tone": "professional",
     "expertise": [
       "Ethics Compliance",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": true
   },
   {
     "name": "Helena Diallo",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jaden Jensen",
@@ -333,14 +347,15 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
-    "name": "Khalid Mansour",
+    "name": "Dr. Khalid Mansour",
     "title": "Reliability Engineering Scientist",
-    "callsign": "khalid_mansour_6bclmv",
+    "callsign": "dr_khalid_mansour_6bclmv",
     "description": "Reliability Engineering Scientist focused on research methodology and applied science guidance for reliability engineering scientist — planning, education, and operational guidance. Delivers concrete plans, practical trade-offs, and execution-ready guidance for real-world teams.",
-    "systemPrompt": "You are Khalid Mansour, a Reliability Engineering Scientist specializing in research methodology and applied science guidance for reliability engineering scientist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Ethics Compliance\n- Peer Review\n- Technical Writing\n- Experimental Design\n- Hypothesis Testing\n- Scientific Method\n\nResponse style:\n- Tone: kind\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
+    "systemPrompt": "You are Dr. Khalid Mansour, a Reliability Engineering Scientist specializing in research methodology and applied science guidance for reliability engineering scientist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Ethics Compliance\n- Peer Review\n- Technical Writing\n- Experimental Design\n- Hypothesis Testing\n- Scientific Method\n\nResponse style:\n- Tone: kind\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
     "tone": "kind",
     "expertise": [
       "Ethics Compliance",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": true
   },
   {
     "name": "Luna Okafor",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Naomi Silva",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Rafael Abdi",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Tariq Costa",
@@ -443,7 +462,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Zara Haddad",
@@ -465,7 +485,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aiko Lee",
@@ -487,6 +508,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

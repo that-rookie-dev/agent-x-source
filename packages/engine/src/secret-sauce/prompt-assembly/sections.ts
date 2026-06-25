@@ -242,6 +242,32 @@ export function createQuestionnaireGuideSection(): PromptSection<string> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Crew roster — in-conversation specialist discovery (fallback to modal)
+// ─────────────────────────────────────────────────────────────
+
+export function createCrewRosterGuideSection(): PromptSection<string> {
+  const GUIDE = [
+    `[CREW_ROSTER]`,
+    `When the user needs specialists, skills, workforce, or hiring help:`,
+    `1. Check [CREW_ROSTER_HINT] if present this turn — it lists catalog/roster matches when the popup did not appear.`,
+    `2. Call search_crew_hub to search the Crew Hub + session roster by skills, certifications, or role keywords.`,
+    `3. Offer matches conversationally — NOT only via the blocking modal:`,
+    `   - ask_clarification single_choice with top specialists + "Continue with Agent-X" (max 5 options), OR`,
+    `   - Brief inline @callsign mentions with recruit / private-chat guidance.`,
+    `4. If [CREW_ROSTER_HINT] says the user skipped the crew modal, do NOT re-offer crew — handle the request as Agent-X.`,
+    `5. If search returns no fits, proceed as Agent-X (plans, hiring guidance, execution) without apologizing excessively.`,
+    `Do not jump to external hiring/staffing plans before a quick crew roster check when workforce intent is clear.`,
+    `[/CREW_ROSTER]`,
+  ].join('\n');
+  return {
+    key: 'core/crew-roster',
+    load: () => GUIDE,
+    render: (text) => text,
+    diff: () => null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
 // Chat markdown — user-facing reply formatting (not tool file content)
 // ─────────────────────────────────────────────────────────────
 
@@ -462,7 +488,18 @@ interface CrewState {
     tools?: string[];
     expertise: string[];
   }>;
-  enabledIds: Set<string>;
+  enabledIds: Set<string> | string[];
+}
+
+function enabledIdSet(ids: unknown): Set<string> {
+  if (ids instanceof Set) return ids;
+  if (Array.isArray(ids)) return new Set(ids.map(String));
+  return new Set();
+}
+
+function enabledMembers(state: { members: CrewState['members']; enabledIds: unknown }): CrewState['members'] {
+  const enabled = enabledIdSet(state.enabledIds);
+  return state.members.filter((m) => enabled.has(m.id));
 }
 
 export function createMultiCrewSection(ctx: SectionContext): PromptSection<CrewState> {
@@ -487,10 +524,11 @@ export function createMultiCrewSection(ctx: SectionContext): PromptSection<CrewS
       };
     },
     render: (state) => {
-      const enabled = state.members.filter(m => state.enabledIds.has(m.id));
+      const enabled = enabledMembers(state);
       const lines = [`[MULTI_CREW]`];
       if (enabled.length === 0) {
         lines.push('No additional crew members enabled in this session.');
+        lines.push('When the user needs specialists, skills, workforce, or hiring help: search the Crew Hub and suggest recruiting catalog specialists before external hiring or staffing plans — unless they already skipped crew suggestions for this turn.');
       } else {
         lines.push('Available crew members:');
         lines.push('');
@@ -515,19 +553,21 @@ export function createMultiCrewSection(ctx: SectionContext): PromptSection<CrewS
         lines.push(`- Crew members respond with their unique personalities, knowledge, and expertise.`);
         lines.push(`- When you delegate, provide clear context about what you want and why you chose that crew.`);
         lines.push(`- All participants share the same conversation history — build on each other's work.`);
+        lines.push(`- When the user needs specialists, skills, workforce, or hiring help: check enabled crew and the Crew Hub catalog first. Suggest @mentions or recruiting hub specialists before external hiring or staffing plans — unless the user already skipped or dismissed crew suggestions for this turn.`);
       }
       lines.push('[/MULTI_CREW]');
       return lines.join('\n');
     },
     diff: (prev, current) => {
-      const prevEnabled = prev.members.filter(m => prev.enabledIds.has(m.id)).map(m => m.id).sort().join(',');
-      const curEnabled = current.members.filter(m => current.enabledIds.has(m.id)).map(m => m.id).sort().join(',');
+      const prevEnabled = enabledMembers(prev).map(m => m.id).sort().join(',');
+      const curEnabled = enabledMembers(current).map(m => m.id).sort().join(',');
       if (prevEnabled === curEnabled) return null;
+      const enabledNow = enabledMembers(current);
       // Full re-render for crew changes
-      return current.members.filter(m => current.enabledIds.has(m.id)).length === 0
+      return enabledNow.length === 0
         ? `[MULTI_CREW — UPDATE]\nNo crew members currently enabled.\n[/MULTI_CREW]`
         : `[MULTI_CREW — UPDATE]\nCrew roster changed. Available members:\n${
-            current.members.filter(m => current.enabledIds.has(m.id))
+            enabledNow
               .map(m => `- @${m.callsign} (${m.name}${m.title ? `, ${m.title}` : ''})${m.expertise.length > 0 ? ` — ${m.expertise.join(', ')}` : ''}`)
               .join('\n')
           }\n[/MULTI_CREW]`;

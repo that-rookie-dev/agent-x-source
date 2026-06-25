@@ -14,7 +14,7 @@ import type {
   ClarificationSource,
   QuestionnaireRecord,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, buildTextQuestionnaire } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { Mutex } from '../concurrency/Mutex.js';
 import { join, resolve, normalize } from 'node:path';
@@ -34,13 +34,18 @@ import { setTaskManagerInstance } from '../commands/builtin/tasks.js';
 import { registerSessionTodoManager } from '../tools/TodoAccess.js';
 import { setSubAgentManagerInstance } from '../tools/builtin/subagent.js';
 import { setCrewDelegator } from '../tools/builtin/delegate-to-crew.js';
+import { setCrewHubSearcher } from '../tools/builtin/search-crew-hub.js';
+import { buildCrewRosterHintBlock } from '../crew/crew-roster-hint.js';
+import { getCrewSuggestionService } from '../crew/get-crew-store.js';
+import { buildCrewSuggestionSearchQuery } from './crew-auto-compose.js';
+import { scoreMatchCandidates, type RawMatchRow } from '../crew/CrewMatchService.js';
 import { setToolRegistryInstance } from '../commands/builtin/tools.js';
 import { SecretSauceManager } from '../secret-sauce/index.js';
 import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createSqliteNeuralDb, createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
@@ -251,6 +256,14 @@ export class Agent {
 
   // ─── Clarification & Approval
   private clarificationResolve: ((response: string) => void) | null = null;
+  private activeClarificationResume: {
+    kind: 'questionnaire' | 'crew_intake';
+    questionnaireMessageId: string;
+    userText?: string;
+    delegateCrewIds?: string[];
+    primaryCrewId?: string;
+    crewIntakeFromPicker?: boolean;
+  } | null = null;
   private _missionEventSeq = 0;
   private missionContextProvider?: () => { revision: number; block: string };
   private lastMissionContextRevision = -1;
@@ -396,11 +409,49 @@ export class Agent {
 
   /**
    * Respond to a pending clarification request.
+   * @returns true when a waiter was active and the response was delivered.
    */
-  respondToClarification(response: string): void {
+  respondToClarification(response: string): boolean {
     if (this.clarificationResolve) {
       this.clarificationResolve(response);
+      return true;
     }
+    return false;
+  }
+
+  isAwaitingClarification(): boolean {
+    return this.clarificationResolve != null;
+  }
+
+  getClarificationResumeState(): {
+    kind: 'questionnaire' | 'crew_intake';
+    messageId: string;
+    questionnaireMessageId?: string;
+    userText?: string;
+    delegateCrewIds?: string[];
+    primaryCrewId?: string;
+    crewIntakeFromPicker?: boolean;
+    createdAt: string;
+  } | null {
+    if (!this.activeClarificationResume) return null;
+    return {
+      kind: this.activeClarificationResume.kind,
+      messageId: this.activeClarificationResume.questionnaireMessageId,
+      questionnaireMessageId: this.activeClarificationResume.questionnaireMessageId,
+      userText: this.activeClarificationResume.userText,
+      delegateCrewIds: this.activeClarificationResume.delegateCrewIds,
+      primaryCrewId: this.activeClarificationResume.primaryCrewId,
+      crewIntakeFromPicker: this.activeClarificationResume.crewIntakeFromPicker,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  clearClarificationResumeState(): void {
+    this.activeClarificationResume = null;
+  }
+
+  recordCrewFeedback(crewId: string, positive: boolean): void {
+    this.crewOrchestrator.recordFeedback(crewId, positive);
   }
 
   private clarificationSource(): ClarificationSource | undefined {
@@ -434,11 +485,20 @@ export class Agent {
     const record: QuestionnaireRecord = { payload, status: 'pending' };
     const questionnaireMsg = this.buildQuestionnaireMessage(messageId, record);
     this.persistQuestionnaireMessage(questionnaireMsg);
+    this.activeClarificationResume = {
+      kind: this.activeClarificationResume?.kind ?? 'questionnaire',
+      questionnaireMessageId: messageId,
+      userText: this.activeClarificationResume?.userText,
+      delegateCrewIds: this.activeClarificationResume?.delegateCrewIds,
+      primaryCrewId: this.activeClarificationResume?.primaryCrewId,
+      crewIntakeFromPicker: this.activeClarificationResume?.crewIntakeFromPicker,
+    };
     this.emit({ type: 'clarification_required', questionnaire: payload });
     this.emit({ type: 'message_received', message: questionnaireMsg, elapsed: 0 });
 
     const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
     this.clarificationResolve = null;
+    this.activeClarificationResume = null;
 
     const answered: QuestionnaireRecord = {
       payload,
@@ -549,7 +609,6 @@ export class Agent {
     this.subAgents.setParentAgent(this);
     setSubAgentManagerInstance(this.subAgents);
 
-    // Crew delegation: Agent-X delegates via tool calls (validated by LLM guard)
     setCrewDelegator(async (crewName: string, taskDescription: string) => {
       if (!this.crewOrchestrator) return { success: false, output: 'No crews available.' };
       if (isMissionInProgress(this.sessionId)) {
@@ -581,6 +640,77 @@ export class Agent {
           : (result.synthesized || `${member.crew.name} completed the task.`),
       };
     });
+
+    setCrewHubSearcher(async (query, _sessionId, limit = 5) => {
+      const store = (this.sessionManager as unknown as { store?: unknown })?.store;
+      const service = getCrewSuggestionService(store);
+      if (!service) return [];
+      await service.ensureReady();
+      type CatalogSearchStore = {
+        searchCatalog: (q: string, n: number) => Promise<Array<Record<string, unknown> & { ftsRank: number }>>;
+        searchRosterCrews: (q: string, n: number) => Promise<Array<Record<string, unknown> & { ftsRank: number }>>;
+        listRecruitedCatalogIds: () => Promise<Set<string>>;
+      };
+      const catalogStore = (store as { getCrewCatalogStore?: () => CatalogSearchStore | null })
+        ?.getCrewCatalogStore?.() ?? null;
+      if (!catalogStore) return [];
+
+      const searchQuery = buildCrewSuggestionSearchQuery(query);
+      const recruited = await catalogStore.listRecruitedCatalogIds();
+      const catalogHits = await catalogStore.searchCatalog(searchQuery, 20);
+      const rosterHits = await catalogStore.searchRosterCrews(searchQuery, 20);
+      const rows: RawMatchRow[] = [];
+
+      for (const hit of catalogHits) {
+        if (recruited.has(String(hit.id))) continue;
+        rows.push({
+          id: String(hit.id),
+          origin: 'hub_catalog',
+          callsign: String(hit.callsign ?? ''),
+          name: String(hit.name ?? ''),
+          title: String(hit.title ?? ''),
+          categoryLabel: hit.categoryLabel as string | undefined,
+          description: String(hit.description ?? ''),
+          expertise: (hit.expertise as string[]) ?? [],
+          traits: (hit.traits as string[]) ?? [],
+          catalogId: String(hit.id),
+          onRoster: false,
+          ftsRank: hit.ftsRank,
+          systemPrompt: hit.systemPrompt as string | undefined,
+        });
+      }
+      for (const crew of rosterHits) {
+        rows.push({
+          id: String(crew.id),
+          origin: crew.source === 'custom' ? 'custom' : 'hub_roster',
+          callsign: String(crew.callsign ?? ''),
+          name: String(crew.name ?? ''),
+          title: String(crew.title ?? ''),
+          description: String(crew.description ?? ''),
+          expertise: (crew.expertise as string[]) ?? [],
+          traits: (crew.traits as string[]) ?? [],
+          catalogId: crew.catalogId as string | undefined,
+          onRoster: true,
+          enabled: crew.enabled as boolean | undefined,
+          ftsRank: crew.ftsRank,
+          systemPrompt: crew.systemPrompt as string | undefined,
+        });
+      }
+
+      const scored = scoreMatchCandidates(searchQuery, rows);
+      return scored.slice(0, limit).map((c) => ({
+        id: c.id,
+        callsign: c.callsign,
+        name: c.name,
+        title: c.title,
+        matchScore: c.matchScore,
+        expertise: c.expertise,
+        onRoster: c.onRoster,
+        origin: c.origin,
+        categoryLabel: c.categoryLabel,
+      }));
+    });
+
     this.taskManager = new TaskManager(this.eventBus);
     setTaskManagerInstance(this.taskManager);
     this.todoManager = new TodoManager(this.eventBus);
@@ -1235,7 +1365,7 @@ export class Agent {
     }
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[] }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1306,6 +1436,36 @@ export class Agent {
     // Store the per-message instruction for injection during completion (not in history)
     this.pendingInstruction = options?.instruction || null;
     this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
+
+    if (!options?.retry && this.options.promptProfile !== 'crew_private' && !options?.delegateCrewIds?.length) {
+      try {
+        const priorUserMessages = this.messages
+          .filter((m) => m.role === 'user')
+          .map((m) => (typeof m.content === 'string' ? m.content : ''))
+          .slice(-3);
+        const store = (this.sessionManager as unknown as { store?: unknown })?.store;
+        const rosterHint = await buildCrewRosterHintBlock({
+          message: cleanContent,
+          sessionId: this.sessionId,
+          store,
+          priorUserMessages,
+          crewSuggestionResolved: options?.crewSuggestionResolved,
+        });
+        if (rosterHint) {
+          this.pendingInstruction = this.pendingInstruction
+            ? `${this.pendingInstruction}\n\n${rosterHint}`
+            : rosterHint;
+        }
+      } catch (e) {
+        getLogger().warn('CREW_ROSTER_HINT', e instanceof Error ? e.message : String(e));
+      }
+    }
+
+    if (options?.retry) {
+      while (this.messages.length > 0 && this.messages[this.messages.length - 1]?.role === 'assistant') {
+        this.messages.pop();
+      }
+    }
 
     // Add user message (clean, without instruction)
     if (!options?.retry) {
@@ -1382,6 +1542,20 @@ export class Agent {
     // Build a natural-language context summary for crew routing (passed to crew LLM calls)
     const classificationContext = `[Classified as "${decision.messageClass}" (confidence: ${decision.confidence}) — ${decision.reasoning}]`;
 
+    // ─── RESUME CREW INTAKE after session restore (questionnaire already answered) ───
+    if (options?.resumeCrewIntake && this.crewOrchestrator) {
+      const { originalUserText, intakeAnswer, delegateCrewIds } = options.resumeCrewIntake;
+      const delegatedMembers = this.crewOrchestrator.getMembers().filter((m) =>
+        delegateCrewIds.includes(m.crew.id) && m.crew.enabled !== false,
+      );
+      if (delegatedMembers.length > 0) {
+        const missionTask = intakeAnswer.trim()
+          ? `${originalUserText}\n\n[User clarified their request]\n${intakeAnswer.trim()}`
+          : originalUserText;
+        return await this.executeCrewMission(delegatedMembers, missionTask, startTime, classificationContext);
+      }
+    }
+
     getLogger().info('CLASSIFY', `class=${decision.messageClass} conf=${decision.confidence} msg="${cleanContent.slice(0, 60)}"`);
 
     // Emit as the general decision event for UI consumption
@@ -1409,12 +1583,36 @@ export class Agent {
     // ─── USER-APPROVED CREW SUGGESTION — deploy selected specialists ───
     if (this.pendingDelegateCrewIds?.length && this.crewOrchestrator) {
       const delegateIds = this.pendingDelegateCrewIds;
+      const intakeFromPicker = options?.crewIntakeFromPicker ?? false;
+      const primaryCrewId = options?.primaryCrewId;
       this.pendingDelegateCrewIds = null;
       const members = this.crewOrchestrator.getMembers();
       const delegatedMembers = members.filter((m) =>
         delegateIds.includes(m.crew.id) && m.crew.enabled !== false,
       );
       if (delegatedMembers.length > 0) {
+        if (intakeFromPicker) {
+          const lead = primaryCrewId
+            ? delegatedMembers.find((m) => m.crew.id === primaryCrewId) ?? delegatedMembers[0]!
+            : delegatedMembers[0]!;
+          this.activeClarificationResume = {
+            kind: 'crew_intake',
+            questionnaireMessageId: '',
+            userText: cleanContent,
+            delegateCrewIds: delegateIds,
+            primaryCrewId,
+            crewIntakeFromPicker: true,
+          };
+          const intakeAnswer = await this.waitForQuestionnaireResponse(buildTextQuestionnaire({
+            title: lead.crew.name,
+            prompt: `What specific help or support do you need from me as your ${lead.crew.title || 'specialist'}?`,
+            source: { kind: 'crew', name: lead.crew.name, callsign: lead.crew.callsign } satisfies ClarificationSource,
+          }));
+          const missionTask = intakeAnswer.trim()
+            ? `${cleanContent}\n\n[User clarified their request]\n${intakeAnswer.trim()}`
+            : cleanContent;
+          return await this.executeCrewMission(delegatedMembers, missionTask, startTime, classificationContext);
+        }
         return await this.executeCrewMission(delegatedMembers, cleanContent, startTime, classificationContext);
       }
       getLogger().warn('AGENT', `Crew deploy failed: no enabled members for ids ${delegateIds.join(', ')}`);
@@ -2230,6 +2428,7 @@ export class Agent {
       .register(createHyperdriveSection(ctx))
       .register(createChannelFocusSection(ctx))
       .register(createMultiCrewSection(ctx))
+      .register(createCrewRosterGuideSection())
       .register(createUserSection(ctx))
       .register(createSessionNarrativeSection(ctx))
       .register(createTurnFeedbackSection(ctx))

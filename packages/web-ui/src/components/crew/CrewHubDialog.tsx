@@ -24,11 +24,13 @@ import { SkillChips } from './SkillChips';
 import { CrewProfileDialog } from './CrewProfileDialog';
 import { HubSectorNavItem } from './HubSectorNavItem';
 import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
+import { crewCallsignsMatch, crewDisplayFields } from '../../utils/crew-display';
 
 export interface PrebuiltCrew {
   catalogId?: string;
   categoryId?: string;
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
   name: string;
   title: string;
   callsign: string;
@@ -69,6 +71,7 @@ interface HubCardCrew {
   categoryId: string;
   categoryLabel?: string;
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
   name: string;
   title: string;
   callsign: string;
@@ -126,6 +129,7 @@ export function CrewHubDialog({
               categoryId: hit.categoryId,
               categoryLabel: hit.categoryLabel,
               requiresMedicalDisclaimer: hit.requiresMedicalDisclaimer,
+              honorsDoctorate: hit.honorsDoctorate,
               name: hit.name,
               title: hit.title,
               callsign: hit.callsign,
@@ -153,6 +157,7 @@ export function CrewHubDialog({
       catalogId: crew.catalogId ?? crew.callsign,
       categoryId: activeCategory.id,
       requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+      honorsDoctorate: crew.honorsDoctorate,
       name: crew.name,
       title: crew.title,
       callsign: crew.callsign,
@@ -172,7 +177,7 @@ export function CrewHubDialog({
   })();
 
   const profileExisting = profileCrew
-    ? crews.find((c) => c.callsign.toLowerCase() === profileCrew.callsign.toLowerCase())
+    ? crews.find((c) => crewCallsignsMatch(c.callsign, profileCrew.callsign))
     : undefined;
 
   const resolveCardCrew = useCallback(async (item: HubCardCrew): Promise<PrebuiltCrew | undefined> => {
@@ -194,7 +199,7 @@ export function CrewHubDialog({
     if (!onPrivateChat) return;
     const crew = await resolveCardCrew(item);
     if (!crew) return;
-    const existing = crews.find((c) => c.callsign.toLowerCase() === item.callsign.toLowerCase());
+    const existing = crews.find((c) => crewCallsignsMatch(c.callsign, item.callsign));
     if (existing) {
       onPrivateChat(crew, existing.id);
     } else {
@@ -415,9 +420,18 @@ export function CrewHubDialog({
         }}>
           {displayCrews.map((pc) => {
             const categoryLabel = pc.categoryLabel;
-            const existing = crews.find((c) => c.callsign.toLowerCase() === pc.callsign.toLowerCase());
+            const existing = crews.find((c) => crewCallsignsMatch(c.callsign, pc.callsign));
             const imported = !!existing;
-            const accent = getCrewAccent(undefined, pc.callsign);
+            const { displayName, displayCallsign } = crewDisplayFields({
+              name: pc.name,
+              callsign: pc.callsign,
+              title: pc.title,
+              categoryId: pc.categoryId,
+              expertise: pc.expertise,
+              requiresMedicalDisclaimer: pc.requiresMedicalDisclaimer,
+              honorsDoctorate: pc.honorsDoctorate,
+            });
+            const accent = getCrewAccent(undefined, displayCallsign);
             const isLoading = importLoading === pc.callsign;
             const isMedical = isMedicalCrewDisplay({
               categoryId: pc.categoryId,
@@ -471,17 +485,17 @@ export function CrewHubDialog({
                     fontSize: '0.55rem', fontWeight: 700, color: accent,
                     fontFamily: "'JetBrains Mono', monospace",
                   }}>
-                    {pc.callsign.slice(0, 2).toUpperCase()}
+                    {displayCallsign.slice(0, 2).toUpperCase()}
                   </Box>
                   <Box sx={{ minWidth: 0, flex: 1 }}>
                     <Typography sx={{ fontWeight: 600, fontSize: '0.8rem', color: crewTheme.text.primary, lineHeight: 1.2 }}>
-                      {pc.name}
+                      {displayName}
                     </Typography>
                     <Typography sx={{ fontSize: '0.65rem', color: crewTheme.text.secondary, mt: 0.15 }}>
                       {pc.title}
                     </Typography>
                     <Typography sx={{ fontSize: '0.58rem', color: accent, fontFamily: "'JetBrains Mono', monospace", mt: 0.15 }}>
-                      @{pc.callsign}
+                      @{displayCallsign}
                     </Typography>
                   </Box>
                   {imported && (

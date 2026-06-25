@@ -20,7 +20,7 @@ export interface TurnFeedbackEligibilityInput {
   content?: string;
   streaming?: boolean;
   isModeChange?: boolean;
-  parts?: Array<{ type: string; tool?: unknown; agent?: unknown; questionnaire?: { status?: string } }>;
+  parts?: Array<{ type: string; tool?: unknown; agent?: unknown; questionnaire?: { status?: string }; crewRosterPicker?: { status?: string } }>;
   toolCalls?: unknown[];
   elapsedMs?: number;
 }
@@ -40,6 +40,11 @@ export function isTurnFeedbackEligible(input: TurnFeedbackEligibilityInput): boo
     (p) => p.type === 'questionnaire' && p.questionnaire?.status === 'pending',
   );
   if (hasPendingQuestionnaire) return false;
+
+  const hasPendingCrewPicker = input.parts?.some(
+    (p) => p.type === 'crew_roster_picker' && p.crewRosterPicker?.status === 'pending',
+  );
+  if (hasPendingCrewPicker) return false;
 
   const text = (input.content ?? '').trim();
   const toolCount = (input.toolCalls?.length ?? 0)

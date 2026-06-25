@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { expansionCategoryDefinitions } from './crew-hub-expansion-domains.mjs';
 import { medicalSpecialtyCategoryDefinitions } from './crew-hub-medical-specialties.mjs';
 import { worldOccupationCategoryDefinitions } from './crew-hub-world-occupations.mjs';
+import { certificationCategoryDefinitions } from './crew-hub-certification-specialists.mjs';
+import { applyDrHonorificIfQualified } from './crew-doctor-honorific.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HUB_DIR = join(__dirname, '../src/data/crew-hub');
@@ -194,9 +196,60 @@ function buildComplianceAuditorCrew(categoryId, role, roleIndex) {
   };
 }
 
-function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCategory = false, clinicalCategory = false, medicalCategory = false) {
+function buildCertPrepCrew(categoryId, skillBank, traitBank, role, roleIndex) {
+  const name = role.name ? reserveName(role.name) : takeGeneratedName();
+  const title = role.title;
+  const callsign = toCallsign(name, title, categoryId);
+  const tone = role.tone ?? TONES[roleIndex % TONES.length];
+  const domainExpertise = role.examDomains ?? [];
+  const extraFromBank = pickUnique(skillBank, Math.max(0, 6 - domainExpertise.length), `${categoryId}:${title}:expertise`);
+  const expertise = role.expertise ?? [...domainExpertise, ...extraFromBank].slice(0, 12);
+  const traits = role.traits ?? pickUnique(traitBank, 4, `${categoryId}:${title}:traits`);
+  const specialty = role.specialty;
+  const secondaryLine = role.secondaryCerts?.length
+    ? ` Also credentialed in: ${role.secondaryCerts.join(', ')}.`
+    : '';
+  const description = `${title} — ${role.certBody} (${role.examCode}) certification study coach. ${specialty}.${secondaryLine} Helps learners map exam domains, build study schedules, practice scenario questions, and close knowledge gaps. Not an official exam proxy or pass guarantee.`;
+  const systemPrompt = [
+    `You are ${name}, a ${title} specializing in ${specialty}.`,
+    '',
+    `Primary credential: ${role.certBody} — ${role.examCode}`,
+    ...(role.secondaryCerts?.length ? [`Additional credentials: ${role.secondaryCerts.join(', ')}`] : []),
+    '',
+    'Exam domains you coach:',
+    ...role.examDomains.map((d) => `- ${d}`),
+    '',
+    'Study coaching workflow:',
+    '1. Baseline: assess the learner\'s current knowledge against each exam domain.',
+    '2. Plan: build a week-by-week study schedule with weights aligned to the official blueprint.',
+    '3. Teach: explain concepts with real-world scenarios, diagrams, and decision frameworks.',
+    '4. Practice: run scenario questions, case studies, and "explain your reasoning" drills.',
+    '5. Review: track weak domains, adjust the plan, and recommend hands-on labs where applicable.',
+    '6. Exam readiness: mock exam strategy, time management, and anxiety/confidence coaching.',
+    '',
+    'Domain strengths:',
+    ...expertise.map((item) => `- ${item}`),
+    '',
+    'Important:',
+    '- You provide certification study coaching — not official exam items, brain dumps, or guaranteed pass claims.',
+    '- Encourage learners to use official vendor documentation, practice exams, and hands-on labs.',
+    '- When licensed professional practice is required beyond the exam, recommend qualified practitioners.',
+    '',
+    'Response style:',
+    `- Tone: ${tone}`,
+    '- Be structured, encouraging, and exam-blueprint aligned.',
+    '- Prefer checklists, domain maps, and practice question walkthroughs over generic advice.',
+  ].join('\n');
+  const base = { name, title, callsign, description, systemPrompt, tone, expertise, traits };
+  return applyDrHonorificIfQualified(base, { medicalCategory: false, scienceCategory: false, categoryId });
+}
+
+function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCategory = false, clinicalCategory = false, medicalCategory = false, scienceCategory = false) {
   if (role.compliance) {
     return buildComplianceAuditorCrew(categoryId, role, roleIndex);
+  }
+  if (role.certPrep) {
+    return buildCertPrepCrew(categoryId, skillBank, traitBank, role, roleIndex);
   }
   const name = role.name ? reserveName(role.name) : takeGeneratedName();
   const title = role.title;
@@ -271,7 +324,8 @@ function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCa
         '- Be specific, pragmatic, and technically accurate.',
         '- Prefer examples, checklists, and decision frameworks over generic advice.',
       ].join('\n');
-  return { name, title, callsign, description, systemPrompt, tone, expertise, traits };
+  const base = { name, title, callsign, description, systemPrompt, tone, expertise, traits };
+  return applyDrHonorificIfQualified(base, { medicalCategory, scienceCategory, categoryId });
 }
 
 function role(title, specialty, name, tone) {
@@ -1654,6 +1708,7 @@ const allCategoryDefinitions = [
   ...expansionCategoryDefinitions(),
   ...medicalSpecialtyCategoryDefinitions(),
   ...worldOccupationCategoryDefinitions(),
+  ...certificationCategoryDefinitions(),
 ];
 
 for (const category of allCategoryDefinitions) {
@@ -1673,6 +1728,7 @@ const categories = allCategoryDefinitions.map((category) => {
       category.businessCategory,
       category.clinicalCategory,
       category.medicalCategory,
+      category.scienceCategory,
     ),
   );
   return {
@@ -1680,6 +1736,7 @@ const categories = allCategoryDefinitions.map((category) => {
     label: category.label,
     iconId: category.iconId,
     medicalCategory: !!category.medicalCategory,
+    scienceCategory: !!category.scienceCategory,
     crews,
   };
 });
@@ -1728,6 +1785,7 @@ export type PrebuiltCrewData = {
   expertise: string[];
   traits: string[];
   tools?: string[];
+  honorsDoctorate?: boolean;
 };
 
 export type CategoryIconId = ${categoryIconIds.map((id) => `'${id}'`).join(' | ')};
@@ -1817,6 +1875,7 @@ for (const category of categories) {
       tools: crew.tools,
       searchText,
       requiresMedicalDisclaimer: !!category.medicalCategory,
+      honorsDoctorate: !!crew.honorsDoctorate,
     });
   }
 }

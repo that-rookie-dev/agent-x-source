@@ -12,6 +12,7 @@ import type { Crew } from '../../api';
 import { crewCardSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
 import { SkillChips } from './SkillChips';
 import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
+import { crewDisplayFields } from '../../utils/crew-display';
 
 interface CrewCardProps {
   crew: Crew;
@@ -37,7 +38,16 @@ export function CrewCard({
   onRegenerate,
 }: CrewCardProps) {
   const enabled = crew.enabled !== false;
-  const accent = getCrewAccent(crew.color, crew.callsign);
+  const { displayName, displayCallsign } = crewDisplayFields({
+    name: crew.name,
+    callsign: crew.callsign,
+    title: crew.title,
+    categoryId: crew.categoryId,
+    expertise: crew.expertise,
+    requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    honorsDoctorate: crew.honorsDoctorate,
+  });
+  const accent = getCrewAccent(crew.color, displayCallsign);
   const isMedical = isMedicalCrewDisplay({
     categoryId: crew.categoryId,
     requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
@@ -59,14 +69,14 @@ export function CrewCard({
             fontFamily: "'JetBrains Mono', monospace",
             fontSize: '0.6rem', fontWeight: 700, color: accent,
           }}>
-            {(crew.callsign.slice(0, 2) || 'CX').toUpperCase()}
+            {(displayCallsign.slice(0, 2) || 'CX').toUpperCase()}
           </Box>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography sx={{
               fontWeight: 700, fontSize: '0.85rem', color: crewTheme.text.primary,
               lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
-              {crew.name}
+              {displayName}
             </Typography>
             {crew.title && (
               <Typography sx={{
@@ -79,7 +89,7 @@ export function CrewCard({
             <Typography sx={{
               fontSize: '0.58rem', color: accent, fontFamily: "'JetBrains Mono', monospace", mt: 0.25,
             }}>
-              @{crew.callsign}
+              @{displayCallsign}
             </Typography>
           </Box>
           {crew.tone && (

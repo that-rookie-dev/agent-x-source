@@ -11,6 +11,7 @@ import * as subagent from './builtin/subagent.js';
 import * as crewdelegate from './builtin/delegate-to-crew.js';
 import * as spawncrew from './builtin/spawn-crew-workers.js';
 import * as crewmessage from './builtin/crew-message.js';
+import * as searchcrewhub from './builtin/search-crew-hub.js';
 import * as browser from './builtin/browser.js';
 import * as containers from './builtin/containers.js';
 import * as data from './builtin/data.js';
@@ -152,6 +153,7 @@ const CORE_TOOLS: ToolDefinition[] = [
   { id: 'spawn_crew_workers', name: 'Spawn Crew Workers', description: 'Spawn parallel crew workers with full personas and tools', modelDescription: 'Spawn crew workers ONLY when you (Agent-X) have reasoned that specialist domain expertise is required and you should not handle this alone. Not for general assistance. Each operative posts their response in chat. After calling, do NOT repeat their analysis. Pass crew callsigns (comma-separated) or omit to use all enabled crews.', category: 'agent_orchestration', riskLevel: 'medium', schema: { type: 'object', properties: { task: { type: 'string', description: 'Mission task description' }, crews: { type: 'string', description: 'Comma-separated crew callsigns (optional — uses all enabled if omitted)' } }, required: ['task'] }, composable: true, source: 'builtin' },
   { id: 'crew_message', name: 'Crew Message', description: 'Send a message to another crew member', modelDescription: 'Send a message to another crew member by callsign or ID. Use this to coordinate with other specialists on multi-disciplinary tasks. The target crew member will receive your message and respond.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { to: { type: 'string', description: 'Target crew member callsign or ID' }, message: { type: 'string', description: 'Message content to send' } }, required: ['to', 'message'] }, composable: false, source: 'builtin' },
   { id: 'crew_response', name: 'Crew Response', description: 'Reply to a message from another crew member', modelDescription: 'Reply to another crew member. Use replyToMessageId+content for threaded replies, or to+message to respond directly by callsign.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { replyToMessageId: { type: 'string', description: 'ID of the message being replied to' }, content: { type: 'string', description: 'Reply content' }, to: { type: 'string', description: 'Target crew callsign (alternative to replyToMessageId)' }, message: { type: 'string', description: 'Reply message (alternative to content)' } } }, composable: false, source: 'builtin' },
+  { id: 'search_crew_hub', name: 'Search Crew Hub', description: 'Search Crew Hub catalog and session roster for specialists', modelDescription: 'Search the Crew Hub catalog and enabled session roster by skills, certifications, job titles, or domain keywords. Use when the user needs specialists/workforce help and [CREW_ROSTER_HINT] is missing or you need a refined query. Returns callsigns, titles, match scores, and expertise.', category: 'agent_orchestration', riskLevel: 'low', schema: { type: 'object', properties: { query: { type: 'string', description: 'Skills, certification, role, or domain to search for' }, limit: { type: 'number', description: 'Max results (1-10, default 5)' } }, required: ['query'] }, composable: true, source: 'builtin' },
 
   // ═══ BROWSER ═══
   { id: 'browser_open', name: 'Open Web Page', description: 'Open URL in headless browser', modelDescription: 'Open a URL, return page title and text content.', category: 'browser_automation', riskLevel: 'medium', schema: { type: 'object', properties: { url: { type: 'string', description: 'URL to open' } }, required: ['url'] }, composable: true, source: 'builtin' },
@@ -437,6 +439,7 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('spawn_crew_workers', spawncrew.spawnCrewWorkers);
   executor.registerHandler('crew_message', crewmessage.crewMessage);
   executor.registerHandler('crew_response', crewmessage.crewResponse);
+  executor.registerHandler('search_crew_hub', searchcrewhub.searchCrewHub);
 
   // ═══ Browser ═══
   executor.registerHandler('browser_open', browser.browserOpen);

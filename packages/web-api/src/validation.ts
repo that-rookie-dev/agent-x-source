@@ -34,7 +34,16 @@ export const chatMessageSchema = z.object({
   delegateCrewIds: z.array(z.string()).optional(),
   /** Set after user skips/deploys from CrewSuggestionModal — prevents server re-prompt. */
   crewSuggestionResolved: z.boolean().optional(),
+  /** After in-chat crew roster picker — lead crew asks intake question first. */
+  crewIntakeFromPicker: z.boolean().optional(),
+  primaryCrewId: z.string().optional(),
   priorUserMessages: z.array(z.string()).optional(),
+  resumeCrewIntake: z.object({
+    originalUserText: z.string(),
+    intakeAnswer: z.string(),
+    delegateCrewIds: z.array(z.string()),
+    primaryCrewId: z.string().optional(),
+  }).optional(),
 });
 
 export const crewSuggestionEvaluateSchema = z.object({
@@ -65,6 +74,7 @@ export const crewSuggestionResolveSchema = z.object({
     categoryId: z.string().optional(),
     categoryLabel: z.string().optional(),
     tone: z.string().optional(),
+    requiresMedicalDisclaimer: z.boolean().optional(),
   })).optional(),
 });
 
@@ -84,6 +94,8 @@ export const crewChatSessionSchema = z.object({
     tools: z.array(z.string()).optional(),
     source: z.string().optional(),
     catalogId: z.string().optional(),
+    categoryId: z.string().optional(),
+    color: z.string().optional(),
   }).optional(),
 }).refine((d) => d.crewId || d.recruit, { message: 'crewId or recruit required' });
 
@@ -93,6 +105,41 @@ export const chatSteerSchema = z.object({
     name: z.string(),
     content: z.string(),
   })).optional(),
+  delegateCrewIds: z.array(z.string()).optional(),
+  crewSuggestionResolved: z.boolean().optional(),
+  crewIntakeFromPicker: z.boolean().optional(),
+  primaryCrewId: z.string().optional(),
+});
+
+export const clarificationRespondSchema = z.object({
+  response: z.string().min(1, 'response is required'),
+});
+
+export const crewRosterPickerOfferSchema = z.object({
+  userText: z.string().min(1),
+  evaluation: z.object({
+    shouldSuggest: z.boolean(),
+    dismissed: z.boolean(),
+    confidence: z.number(),
+    taskSummary: z.string(),
+    candidates: z.array(z.any()),
+    reasons: z.array(z.string()),
+  }),
+  attachments: z.array(z.object({ name: z.string() })).optional(),
+});
+
+export const crewRosterPickerUpdateSchema = z.object({
+  pickerMessageId: z.string().min(1),
+  status: z.enum(['answered', 'skipped']),
+  selectedCandidateIds: z.array(z.string()).optional(),
+  evaluation: crewRosterPickerOfferSchema.shape.evaluation,
+  pendingUserText: z.string().min(1),
+  pickerPartId: z.string().optional(),
+});
+
+export const sessionMessagesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  before: z.string().min(1).optional(),
 });
 
 export const permissionRespondSchema = z.object({

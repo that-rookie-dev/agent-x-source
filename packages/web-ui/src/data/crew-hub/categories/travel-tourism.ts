@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "culturally-aware",
       "organized",
       "persuasive"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Anika Vega",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "resourceful",
       "detail-oriented"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Chidi Boateng",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "resourceful",
       "detail-oriented"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Efe Farouk",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "resourceful",
       "detail-oriented",
       "culturally-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Freya Kaur",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "welcoming",
       "calm",
       "resourceful"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Idris Mehta",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "persuasive",
       "customer-focused",
       "welcoming"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jonas Park",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "persuasive",
       "customer-focused",
       "welcoming"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Layla Svensson",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "culturally-aware",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Meera Ahmed",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "customer-focused",
       "welcoming",
       "calm"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Noah Dahl",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "persuasive",
       "customer-focused",
       "welcoming"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Rina Ibrahim",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "resourceful",
       "detail-oriented",
       "culturally-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Valentina Lopez",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "resourceful",
       "detail-oriented",
       "culturally-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aarav Novak",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "persuasive",
       "customer-focused",
       "welcoming"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Akira Santos",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "persuasive",
       "customer-focused",
       "welcoming"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aya Williams",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "culturally-aware",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Daniel Chang",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "persuasive",
       "customer-focused",
       "welcoming"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Emre Garcia",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "resourceful",
       "detail-oriented"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hana Kowalski",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "welcoming",
       "calm",
       "resourceful"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Iris Muller",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "customer-focused",
       "welcoming",
       "calm"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kavya Popov",
@@ -443,6 +462,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "detail-oriented",
       "culturally-aware",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

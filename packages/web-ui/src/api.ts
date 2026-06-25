@@ -196,6 +196,8 @@ export const crewChat = {
       tools?: string[];
       source?: string;
       catalogId?: string;
+      categoryId?: string;
+      color?: string;
     };
   }) => request<{
     sessionId: string;
@@ -217,7 +219,7 @@ export const crewSuggestions = {
     dismissForSession?: boolean;
     selectedCandidateIds?: string[];
     candidates?: CrewMatchCandidate[];
-  }) => request<{ ok: boolean; deployedCrewIds: string[] }>('/crew-suggestions/resolve', {
+  }) => request<{ ok: boolean; deployedCrewIds: string[]; deployedPrimaryCrewId?: string }>('/crew-suggestions/resolve', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
@@ -228,6 +230,25 @@ export const crewSuggestions = {
     }),
   getCatalogEntry: (id: string) =>
     request<{ entry: CatalogEntry }>(`/crew-catalog/${encodeURIComponent(id)}`),
+  offerRosterPicker: (sessionId: string, body: {
+    userText: string;
+    evaluation: CrewSuggestionEvaluation;
+    attachments?: Array<{ name: string }>;
+  }) => request<{ ok: boolean; userMessageId: string; pickerMessageId: string; pickerPartId: string }>(
+    `/sessions/${sessionId}/crew-roster-picker`,
+    { method: 'POST', body: JSON.stringify(body) },
+  ),
+  updateRosterPicker: (sessionId: string, body: {
+    pickerMessageId: string;
+    status: 'answered' | 'skipped';
+    selectedCandidateIds?: string[];
+    evaluation: CrewSuggestionEvaluation;
+    pendingUserText: string;
+    pickerPartId?: string;
+  }) => request<{ ok: boolean }>(`/sessions/${sessionId}/crew-roster-picker`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  }),
 };
 
 export const crewCatalog = {
@@ -267,6 +288,8 @@ export const chat = {
     delegateCrewIds?: string[],
     crewSuggestionResolved?: boolean,
     priorUserMessages?: string[],
+    crewIntakeFromPicker?: boolean,
+    primaryCrewId?: string,
   ) =>
     postChatAsync('/chat/message', {
       text,
@@ -275,6 +298,8 @@ export const chat = {
       delegateCrewIds,
       crewSuggestionResolved,
       priorUserMessages,
+      crewIntakeFromPicker,
+      primaryCrewId,
     }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
@@ -286,6 +311,9 @@ export const chat = {
     attachments?: { name: string; content: string }[],
     retry?: boolean,
     delegateCrewIds?: string[],
+    crewSuggestionResolved?: boolean,
+    crewIntakeFromPicker?: boolean,
+    primaryCrewId?: string,
   ): Promise<{ ok: boolean; message?: ChatMessage; clarification?: boolean; error?: string }> => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -299,7 +327,7 @@ export const chat = {
         method: 'POST',
         credentials: 'include',
         headers,
-        body: JSON.stringify({ text, attachments, retry, delegateCrewIds }),
+        body: JSON.stringify({ text, attachments, retry, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId }),
       });
 
       if (response.status === 401) {
@@ -401,10 +429,19 @@ export const sessions = {
   create: (scopePath?: string) => request<{ sessionId: string }>('/sessions', { method: 'POST', body: scopePath ? JSON.stringify({ scopePath }) : undefined }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
-  restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; parts?: Array<Record<string, unknown>>; crewStates?: Array<{ crewId: string; enabled: boolean }>; scopePath?: string; turnFeedback?: Array<Record<string, unknown>> }>(`/sessions/${id}/restore`, { method: 'POST' }),
+  restore: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[]; parts?: Array<Record<string, unknown>>; crewStates?: Array<{ crewId: string; enabled: boolean }>; scopePath?: string; turnFeedback?: Array<Record<string, unknown>>; resumeState?: Record<string, unknown> | null }>(`/sessions/${id}/restore`, { method: 'POST' }),
   submitTurnFeedback: (id: string, body: { messageId: string; rating: 'positive' | 'negative' | 'skipped'; turnSummary?: string; metadata?: Record<string, unknown> }) =>
     request<{ ok: boolean; messageId: string; rating: string }>(`/sessions/${id}/feedback`, { method: 'POST', body: JSON.stringify(body) }),
   listTurnFeedback: (id: string) => request<{ feedback: Array<Record<string, unknown>> }>(`/sessions/${id}/feedback`),
+  getMessagesPage: (id: string, opts?: { limit?: number; before?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit != null) params.set('limit', String(opts.limit));
+    if (opts?.before) params.set('before', opts.before);
+    const qs = params.toString();
+    return request<{ messages: ChatMessage[]; total: number; hasMore: boolean }>(
+      `/sessions/${id}/messages${qs ? `?${qs}` : ''}`,
+    );
+  },
   context: (id: string) => request<SessionContext>(`/sessions/${id}/context`),
   compact: (id: string) => request<{ ok: boolean; summary: string }>(`/sessions/${id}/compact`, { method: 'POST' }),
   checkpoint: (id: string, label?: string) => request<{ checkpointId: string; label: string }>(`/sessions/${id}/checkpoint`, { method: 'POST', body: JSON.stringify({ label }) }),
@@ -713,6 +750,7 @@ export interface Crew {
   catalogId?: string;
   categoryId?: string;
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
 }
 
 export interface CrewInput {
@@ -765,6 +803,7 @@ export interface CatalogSummary {
   tone?: string;
   tools?: string[];
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
 }
 
 export interface CatalogEntry {
@@ -784,6 +823,7 @@ export interface CatalogEntry {
   hubRevision: number;
   active: boolean;
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
 }
 
 export interface CrewMatchCandidate {
@@ -804,6 +844,7 @@ export interface CrewMatchCandidate {
   categoryLabel?: string;
   tone?: string;
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
 }
 
 export interface CrewSuggestionEvaluation {
@@ -842,6 +883,9 @@ export interface SessionInfo {
   hostCrewName?: string;
   hostCrewCallsign?: string;
   hostCrewTitle?: string;
+  hostCrewColor?: string;
+  hostCrewCatalogId?: string;
+  hostCrewCategoryId?: string;
   mode?: 'agent' | 'plan';
   messageCount: number;
   status?: string;
@@ -1163,7 +1207,7 @@ export const agent = {
   resetCircuitBreaker: (tool?: string) =>
     request<{ ok: boolean }>('/agent/circuit-breaker/reset', { method: 'POST', body: JSON.stringify(tool ? { tool } : {}) }),
   respondToClarification: (response: string) =>
-    request<{ ok: boolean }>('/clarification/respond', { method: 'POST', body: JSON.stringify({ response }) }),
+    request<{ ok: boolean; resumed?: boolean }>('/clarification/respond', { method: 'POST', body: JSON.stringify({ response }) }),
   respondToModeEscalation: (accepted: boolean) =>
     request<{ ok: boolean }>('/agent/mode-escalation', { method: 'POST', body: JSON.stringify({ accepted }) }),
   respondToStepCap: (continueRun: boolean) =>

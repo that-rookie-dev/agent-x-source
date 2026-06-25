@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Mina Oliveira",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Paloma Singh",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Sofia Adeyemi",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Yuki Cruz",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Adaeze Hassan",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Amir Lindberg",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Camila Nguyen",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Diego Rossi",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Felix Watanabe",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hugo Campbell",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jia Fischer",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kwame Kim",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Maya Mori",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Nia Petrov",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Rami Torres",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Tomas Anderson",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Zola Diallo",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aisha Jensen",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Arjun Mansour",
@@ -443,14 +462,15 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
-    "name": "Dalia Okafor",
+    "name": "Dr. Dalia Okafor",
     "title": "Laboratory Informatics Chemist",
-    "callsign": "dalia_okafor_q3odqz",
+    "callsign": "dr_dalia_okafor_q3odqz",
     "description": "Laboratory Informatics Chemist focused on research methodology and applied science guidance for laboratory informatics chemist — planning, education, and operational guidance. Delivers concrete plans, practical trade-offs, and execution-ready guidance for real-world teams.",
-    "systemPrompt": "You are Dalia Okafor, a Laboratory Informatics Chemist specializing in research methodology and applied science guidance for laboratory informatics chemist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Scientific Method\n- Lab Safety\n- Grant Writing\n- Data Analysis\n- Instrumentation\n- Literature Review\n\nResponse style:\n- Tone: professional\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
+    "systemPrompt": "You are Dr. Dalia Okafor, a Laboratory Informatics Chemist specializing in research methodology and applied science guidance for laboratory informatics chemist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Scientific Method\n- Lab Safety\n- Grant Writing\n- Data Analysis\n- Instrumentation\n- Literature Review\n\nResponse style:\n- Tone: professional\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
     "tone": "professional",
     "expertise": [
       "Scientific Method",
@@ -465,7 +485,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": true
   },
   {
     "name": "Elias Silva",
@@ -487,6 +508,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

@@ -159,6 +159,8 @@ const CREW_SEARCH_STOP_WORDS = new Set([
   'this', 'that', 'are', 'was', 'were', 'have', 'has', 'had', 'am', 'is', 'my', 'our',
   'your', 'his', 'her', 'their', 'who', 'what', 'when', 'where', 'how', 'why', 'also',
   'just', 'need', 'want', 'like', 'some', 'any', 'all', 'very', 'really',
+  'skilled', 'person', 'people', 'hire', 'hiring', 'workforce', 'specialist', 'expert',
+  'someone', 'talent', 'resource', 'resources', 'qualified', 'experienced', 'looking',
 ]);
 
 /** Build a focused catalog FTS query — avoids OR-matching every crew on filler tokens. */

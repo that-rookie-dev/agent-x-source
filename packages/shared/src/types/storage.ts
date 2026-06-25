@@ -16,6 +16,13 @@ export interface StorableSession extends RecordMeta {
   parentId?: string | null;
   contextKind?: SessionContextKind;
   hostCrewId?: string | null;
+  /** Denormalized host crew display — survives roster removal / hub-only chats */
+  hostCrewName?: string | null;
+  hostCrewCallsign?: string | null;
+  hostCrewTitle?: string | null;
+  hostCrewColor?: string | null;
+  hostCrewCatalogId?: string | null;
+  hostCrewCategoryId?: string | null;
   hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;

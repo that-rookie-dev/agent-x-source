@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "resourceful",
       "practical",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Akira Nguyen",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "observant",
       "environmentally-minded",
       "risk-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aya Rossi",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "steady",
       "resourceful",
       "practical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Daniel Watanabe",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "environmentally-minded",
       "risk-aware",
       "patient"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Emre Campbell",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "resourceful",
       "practical",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hana Fischer",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "practical",
       "organized",
       "observant"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Iris Kim",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "environmentally-minded",
       "risk-aware",
       "patient"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kavya Mori",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "patient",
       "steady",
       "resourceful"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Linh Petrov",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "observant",
       "environmentally-minded",
       "risk-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Mina Torres",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "observant",
       "environmentally-minded",
       "risk-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Paloma Anderson",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "patient",
       "steady",
       "resourceful"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Sofia Diallo",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "resourceful",
       "practical",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Yuki Jensen",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "observant",
       "environmentally-minded",
       "risk-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Adaeze Mansour",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "steady",
       "resourceful",
       "practical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Amir Okafor",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "risk-aware",
       "patient",
       "steady"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Camila Silva",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "resourceful",
       "practical",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Diego Abdi",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "resourceful",
       "practical",
       "organized"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Felix Costa",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "environmentally-minded",
       "risk-aware",
       "patient"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hugo Haddad",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "risk-aware",
       "patient",
       "steady"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jia Lee",
@@ -443,6 +462,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "patient",
       "steady",
       "resourceful"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

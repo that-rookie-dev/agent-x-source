@@ -12,6 +12,12 @@ export interface Session {
   contextKind?: SessionContextKind;
   /** Set when contextKind is crew_private */
   hostCrewId?: string | null;
+  hostCrewName?: string | null;
+  hostCrewCallsign?: string | null;
+  hostCrewTitle?: string | null;
+  hostCrewColor?: string | null;
+  hostCrewCatalogId?: string | null;
+  hostCrewCategoryId?: string | null;
   hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;

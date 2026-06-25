@@ -68,6 +68,17 @@ describe('evaluateSuggestionGate', () => {
     });
     expect(result.pass).toBe(true);
   });
+
+  it('passes for workforce / skilled-person requests without domain task verbs', () => {
+    const result = evaluateSuggestionGate({
+      message: 'I need a skilled person',
+      dismissed: false,
+      hasAtMention: false,
+      explicitCrewRequest: false,
+    });
+    expect(result.pass).toBe(true);
+    expect(result.reasons).toContain('workforce-intent');
+  });
 });
 
 describe('scoreMatchCandidates', () => {

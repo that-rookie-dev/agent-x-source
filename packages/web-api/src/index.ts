@@ -19,12 +19,14 @@ import {
   isCrewPrivateSessionRecord,
   loadTurnFeedbackForSession,
   recordTurnFeedback,
+  loadSessionMessagesPage,
 } from './chat-helpers.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
-import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema } from './validation.js';
+import { healOrphanedUserMessages } from './message-history-repair.js';
+import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
 import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore } from '@agentx/engine';
-import type { ProviderId, AgentXConfig, CompletionRequest } from '@agentx/shared';
+import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
   postCrewSuggestionEvaluate,
@@ -38,7 +40,11 @@ import {
   emitCrewSuggestionTelemetry,
   blockForCrewSuggestionIfNeeded,
 } from './crew-suggestions.js';
+import { persistCrewRosterPickerOffer, updateCrewRosterPickerStatus } from './crew-roster-picker-api.js';
+import { handleClarificationRespond } from './clarification-resume.js';
+import { loadSessionResumeState } from './session-resume-state.js';
 import { postCrewChatSession } from './crew-chat.js';
+import { resolveHostCrewDisplay, ensureCrewPrivateHostOnRoster, syncHostCrewHonorificToSession } from './host-crew-session.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -900,15 +906,15 @@ app.post('/api/session/mode', (req, res) => {
   }
 });
 
-app.post('/api/clarification/respond', (req, res) => {
+app.post('/api/clarification/respond', validate(clarificationRespondSchema), async (req, res) => {
   try {
-    const { response } = req.body as { response?: string };
-    const eng = getEngine();
-    const agent = eng.agent;
-    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
-    if (!response?.trim()) { res.status(400).json({ error: 'empty-response' }); return; }
-    (agent as unknown as { respondToClarification: (r: string) => void }).respondToClarification(response.trim());
-    res.json({ ok: true });
+    const { response } = req.body as { response: string };
+    const result = await handleClarificationRespond(response);
+    if (!result.ok) {
+      res.status(result.status ?? 500).json({ error: result.error ?? 'clarification-respond-failed' });
+      return;
+    }
+    res.json({ ok: true, resumed: result.resumed ?? false });
   } catch (e) {
     getLogger().error('CLARIFICATION_RESPOND', e instanceof Error ? e : String(e));
     res.status(500).json({ error: 'clarification-respond-failed' });
@@ -1169,6 +1175,54 @@ app.post('/api/crew-suggestions/evaluate', validate(crewSuggestionEvaluateSchema
 app.post('/api/crew-suggestions/resolve', validate(crewSuggestionResolveSchema), postCrewSuggestionResolve);
 app.post('/api/crew-suggestions/clear-dismiss', postCrewSuggestionClearDismiss);
 
+app.post('/api/sessions/:id/crew-roster-picker', validate(crewRosterPickerOfferSchema), (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const { userText, evaluation, attachments } = req.body as {
+      userText: string;
+      evaluation: import('@agentx/shared').CrewSuggestionEvaluation;
+      attachments?: Array<{ name: string }>;
+    };
+    const eng = getEngine();
+    if (!eng.sessionManager.getSessionById(sessionId)) {
+      res.status(404).json({ error: 'not-found' });
+      return;
+    }
+    const ids = persistCrewRosterPickerOffer({ sessionId, userText, evaluation, attachments });
+    res.json({ ok: true, ...ids });
+  } catch (e: unknown) {
+    getLogger().error('CREW_ROSTER_PICKER_OFFER', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'offer-failed' });
+  }
+});
+
+app.patch('/api/sessions/:id/crew-roster-picker', validate(crewRosterPickerUpdateSchema), (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const body = req.body as {
+      pickerMessageId: string;
+      status: 'answered' | 'skipped';
+      selectedCandidateIds?: string[];
+      evaluation: import('@agentx/shared').CrewSuggestionEvaluation;
+      pendingUserText: string;
+      pickerPartId?: string;
+    };
+    updateCrewRosterPickerStatus({
+      sessionId,
+      pickerMessageId: body.pickerMessageId,
+      status: body.status,
+      selectedCandidateIds: body.selectedCandidateIds,
+      evaluation: body.evaluation,
+      pendingUserText: body.pendingUserText,
+      pickerPartId: body.pickerPartId,
+    });
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    getLogger().error('CREW_ROSTER_PICKER_UPDATE', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'update-failed' });
+  }
+});
+
 // ───── Crew private session bootstrap (chat uses /api/sessions + /api/chat) ─────
 const crewChatRateLimiter = createRateLimiter({ prefix: 'CREW_CHAT', label: 'CrewChat' });
 app.use('/api/crew-chat', crewChatRateLimiter.middleware);
@@ -1193,22 +1247,42 @@ app.post('/api/crew/:id/feedback', (req, res) => {
     const crewId = req.params['id']!;
     const { positive, comment } = req.body as { positive: boolean; comment?: string };
     if (typeof positive !== 'boolean') { res.status(400).json({ error: 'positive must be a boolean' }); return; }
-    const store = (eng.sessionManager as any)?.store ?? (eng.sessionManager as any)?.['_store'];
-    if (store && typeof store.addCrewFeedback === 'function') {
+    const store = (eng.sessionManager as unknown as { store?: {
+      addCrewFeedback?: (f: Record<string, unknown>) => void;
+    } }).store;
+    const sessionId = (eng.agent as unknown as { sessionId?: string })?.sessionId ?? 'unknown';
+    if (store?.addCrewFeedback) {
       store.addCrewFeedback({
         id: crypto.randomUUID(),
-        sessionId: (eng.agent as any)?.sessionId ?? 'unknown',
+        sessionId,
         crewId,
         positive,
         comment: comment ?? null,
         createdAt: new Date().toISOString(),
       });
+      const agentInst = eng.agent as Agent & { recordCrewFeedback?: (crewId: string, positive: boolean) => void } | null;
+      agentInst?.recordCrewFeedback?.(crewId, positive);
       res.json({ ok: true });
     } else {
       res.status(500).json({ error: 'store-unavailable' });
     }
   } catch (e: unknown) {
     getLogger().error('POST_API_CREW_ID_FEEDBACK', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'feedback-failed' });
+  }
+});
+
+app.get('/api/crew/:id/feedback', (req, res) => {
+  try {
+    const eng = getEngine();
+    const crewId = req.params['id']!;
+    const store = (eng.sessionManager as unknown as { store?: {
+      getCrewFeedback?: (id: string) => Array<Record<string, unknown>>;
+    } }).store;
+    const feedback = store?.getCrewFeedback?.(crewId) ?? [];
+    res.json({ feedback });
+  } catch (e: unknown) {
+    getLogger().error('GET_API_CREW_ID_FEEDBACK', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'feedback-load-failed' });
   }
 });
 
@@ -1280,13 +1354,15 @@ app.use('/api/chat', chatRateLimiter.middleware);
 // NEW: Streaming SSE endpoint for real-time progress visualization
 app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
       delegateCrewIds?: string[];
       crewSuggestionResolved?: boolean;
       priorUserMessages?: string[];
+      crewIntakeFromPicker?: boolean;
+      primaryCrewId?: string;
     };
     const eng = getEngine();
     
@@ -1301,7 +1377,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
     // ─── Safety: reset stuck agent ───
     if (agent.processing) {
       try { agent.cancel(); } catch (e) { /* ignore */ }
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 250));
       if (agent.processing) {
         res.status(503).json({ error: 'Agent is busy. Please try again in a moment.' });
         return;
@@ -1330,13 +1406,13 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
     // Apply session mode from active session record
     const mode = applySessionModeToAgent(agent);
 
-    // ─── Retry: remove last exchange ───
+    // ─── Retry: remove only the assistant reply being regenerated (keep user turn in DB) ───
     if (retry) {
       try {
         const store = (eng.sessionManager as any).store;
         if (store?.deleteLastMessages) {
           const sid = (agent as unknown as { sessionId: string }).sessionId;
-          if (sid) store.deleteLastMessages(sid, 2, ['user', 'assistant']);
+          if (sid) store.deleteLastMessages(sid, 1, ['assistant']);
         }
       } catch (e) { /* best-effort */ }
     }
@@ -1430,7 +1506,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       try { agent.cancel(); } catch { /* ignore */ }
     });
 
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
     sendEvent('started', { turnId: turn.turnId, async: true });
     return;
   } catch (e: unknown) {
@@ -1442,13 +1518,15 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
 // LEGACY comment removed — async turn endpoint used by ChatPanel (SSE uses message-stream).
 app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
       delegateCrewIds?: string[];
       crewSuggestionResolved?: boolean;
       priorUserMessages?: string[];
+      crewIntakeFromPicker?: boolean;
+      primaryCrewId?: string;
     };
     const eng = getEngine();
     // Auto-create agent if none exists (first message in session)
@@ -1462,7 +1540,7 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     // ─── Safety: reset stuck agent if processing flag leaked from previous call ───
     if (agent.processing) {
       try { agent.cancel(); } catch (e) { /* ignore */ }
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 250));
       if (agent.processing) {
         res.status(503).json({ error: 'Agent is busy. Please try again in a moment.' });
         return;
@@ -1471,13 +1549,13 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
 
     const mode = applySessionModeToAgent(agent);
 
-    // ─── Retry: remove last exchange from DB to avoid duplicates ───
+    // ─── Retry: remove only the assistant reply being regenerated (keep user turn in DB) ───
     if (retry) {
       try {
         const store = (eng.sessionManager as any).store;
         if (store?.deleteLastMessages) {
           const sid = (agent as unknown as { sessionId: string }).sessionId;
-          if (sid) store.deleteLastMessages(sid, 2, ['user', 'assistant']);
+          if (sid) store.deleteLastMessages(sid, 1, ['assistant']);
         }
       } catch (e) { /* best-effort */ }
     }
@@ -1524,7 +1602,7 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     }
 
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
 
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
@@ -1565,12 +1643,26 @@ async function waitForIdle(agent: { processing: boolean }, maxWait = 3000): Prom
   }
 }
 
-const messageQueue: Array<{ text: string; attachments?: { name: string; content: string }[] }> = [];
+const messageQueue: Array<{
+  text: string;
+  attachments?: { name: string; content: string }[];
+  delegateCrewIds?: string[];
+  crewSuggestionResolved?: boolean;
+  crewIntakeFromPicker?: boolean;
+  primaryCrewId?: string;
+}> = [];
 
 app.post('/api/chat/queue', validate(chatMessageSchema), (req, res) => {
   try {
-    const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
-    messageQueue.push({ text, attachments });
+    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
+      text: string;
+      attachments?: { name: string; content: string }[];
+      delegateCrewIds?: string[];
+      crewSuggestionResolved?: boolean;
+      crewIntakeFromPicker?: boolean;
+      primaryCrewId?: string;
+    };
+    messageQueue.push({ text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId });
     res.json({ ok: true, queueLength: messageQueue.length });
   } catch (e) {
     getLogger().error('POST_API_CHAT_QUEUE', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'queue-failed' });
@@ -1589,7 +1681,14 @@ app.delete('/api/chat/queue', (_req, res) => {
 // Steer: cancel current task, then immediately send a new message
 app.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
   try {
-    const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
+    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
+      text: string;
+      attachments?: { name: string; content: string }[];
+      delegateCrewIds?: string[];
+      crewSuggestionResolved?: boolean;
+      crewIntakeFromPicker?: boolean;
+      primaryCrewId?: string;
+    };
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
@@ -1603,7 +1702,7 @@ app.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
     const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid);
+    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
     getLogger().error('POST_API_CHAT_STEER', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'steer-failed' });
@@ -1631,7 +1730,14 @@ app.post('/api/chat/checkpoint-respond', async (req, res) => {
 
 app.post('/api/chat/stop-and-send', validate(chatSteerSchema), async (req, res) => {
   try {
-    const { text, attachments } = req.body as { text: string; attachments?: { name: string; content: string }[] };
+    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
+      text: string;
+      attachments?: { name: string; content: string }[];
+      delegateCrewIds?: string[];
+      crewSuggestionResolved?: boolean;
+      crewIntakeFromPicker?: boolean;
+      primaryCrewId?: string;
+    };
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
@@ -1649,7 +1755,7 @@ app.post('/api/chat/stop-and-send', validate(chatSteerSchema), async (req, res) 
         : buildInstructionForMode(mode));
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid);
+    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
     getLogger().error('POST_API_CHAT_STOP_AND_SEND', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'stop-and-send-failed' });
@@ -2131,7 +2237,7 @@ app.post('/api/settings/db/migrate', async (_req, res) => {
 app.get('/api/settings/db/health', async (_req, res) => {
   try {
     const eng = getEngine();
-    const store = (eng.sessionManager as { store?: unknown }).store;
+    const store = (eng.sessionManager as unknown as { store?: unknown }).store;
     if (store) {
       try {
         await healDatabaseStore(store);
@@ -2226,10 +2332,20 @@ app.get('/api/sessions', (_req, res) => {
       const contextKind = (s['contextKind'] as string | undefined) ?? 'agent_x';
       const hostCrewId = (s['hostCrewId'] as string | null | undefined) ?? null;
       const hostCrew = hostCrewId ? crewManager?.get?.(hostCrewId) : undefined;
+      const hostDisplay = contextKind === 'crew_private'
+        ? resolveHostCrewDisplay(s, hostCrew as Crew | undefined)
+        : null;
+
+      const rawTitle = s['title'];
+      const displayTitle = contextKind === 'crew_private' && hostDisplay?.hostCrewName && (
+        !rawTitle
+        || rawTitle === s['hostCrewName']
+        || rawTitle === (hostCrew as Crew | undefined)?.name
+      ) ? hostDisplay.hostCrewName : rawTitle;
 
       return {
         id: s['id'],
-        title: s['title'],
+        title: displayTitle,
         status: s['status'],
         provider: s['provider'] ?? s['providerId'],
         model: s['model'] ?? s['modelId'],
@@ -2250,9 +2366,12 @@ app.get('/api/sessions', (_req, res) => {
         compactionCount: kpis['compactionCount'] ?? 0,
         contextKind,
         hostCrewId,
-        hostCrewName: hostCrew?.name ?? null,
-        hostCrewCallsign: hostCrew?.callsign ?? null,
-        hostCrewTitle: (hostCrew as { title?: string } | undefined)?.title ?? null,
+        hostCrewName: hostDisplay?.hostCrewName ?? null,
+        hostCrewCallsign: hostDisplay?.hostCrewCallsign ?? null,
+        hostCrewTitle: hostDisplay?.hostCrewTitle ?? null,
+        hostCrewColor: hostDisplay?.hostCrewColor ?? null,
+        hostCrewCatalogId: hostDisplay?.hostCrewCatalogId ?? null,
+        hostCrewCategoryId: hostDisplay?.hostCrewCategoryId ?? null,
         crewId: hostCrewId,
       };
     });
@@ -2507,6 +2626,18 @@ app.get('/api/sessions/:id', (req, res) => {
   const eng = getEngine();
   const session = eng.sessionManager.getSessionById(req.params['id']!);
   if (!session) { res.status(404).json({ error: 'not-found' }); return; }
+  if ((session.contextKind ?? 'agent_x') === 'crew_private' && session.hostCrewId) {
+    const hostCrew = eng.crewManager.get(session.hostCrewId);
+    const display = resolveHostCrewDisplay(session as unknown as Record<string, unknown>, hostCrew);
+    res.json({
+      ...session,
+      ...display,
+      title: display.hostCrewName && (
+        !session.title || session.title === session.hostCrewName || session.title === hostCrew?.name
+      ) ? display.hostCrewName : session.title,
+    });
+    return;
+  }
   res.json(session);
 });
 
@@ -2527,14 +2658,20 @@ app.delete('/api/sessions/:id', (req, res) => {
   }
 });
 
-app.post('/api/sessions/:id/restore', (req, res) => {
+app.post('/api/sessions/:id/restore', async (req, res) => {
   try {
     const sessionId = req.params['id']!;
     if (sessionId === '__channel__') { res.status(403).json({ error: 'channel-session' }); return; }
     const eng = getEngine();
     const peek = eng.sessionManager.getSessionById(sessionId);
     if (!peek) { res.status(404).json({ error: 'not-found' }); return; }
-    destroyAgent();
+    const existingAgent = eng.agent;
+    const keepAgent = !!existingAgent
+      && (existingAgent as unknown as { sessionId: string }).sessionId === sessionId
+      && !existingAgent.processing;
+    if (!keepAgent) {
+      destroyAgent();
+    }
     const session = eng.sessionManager.restoreSession(sessionId);
     if (!session) { res.status(404).json({ error: 'not-found' }); return; }
     // Restore saved session mode (defaults to 'plan')
@@ -2545,7 +2682,21 @@ app.post('/api/sessions/:id/restore', (req, res) => {
         session.hyperdrive = false;
       } catch { /* best-effort */ }
     }
-    createAgent(undefined, session);
+    if (isCrewPrivateSessionRecord(session) && session.hostCrewId) {
+      const store = (eng.sessionManager as unknown as { store?: unknown }).store;
+      const crew = await ensureCrewPrivateHostOnRoster(eng.crewManager, session, store);
+      if (crew) {
+        const patch = syncHostCrewHonorificToSession(session, crew);
+        if (patch) {
+          eng.sessionManager.patchSession(session.id, patch);
+          Object.assign(session, patch);
+        }
+      }
+    }
+    if (!keepAgent) {
+      createAgent(undefined, session);
+    }
+    const resumeState = loadSessionResumeState(sessionId);
     // Restore hyperdrive overlay from DB (Agent-X sessions only — not crew private)
     if (!isCrewPrivateSessionRecord(session) && session.hyperdrive) {
       try {
@@ -2610,6 +2761,28 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       }
     } catch (e) { getLogger().warn('RESTORE_MESSAGES', e instanceof Error ? e.message : String(e)); }
 
+    try {
+      const store = (eng.sessionManager as unknown as {
+        store?: {
+          listCheckpoints?: (id: string) => Array<{ id: string }>;
+          getCheckpoint?: (sessionId: string, checkpointId: string) => Array<Record<string, unknown>> | null;
+        };
+      }).store;
+      const sid = req.params['id']!;
+      if (store?.listCheckpoints && store?.getCheckpoint) {
+        const snapshots: Array<Array<Record<string, unknown>>> = [];
+        for (const cp of store.listCheckpoints(sid).slice().reverse()) {
+          const snap = store.getCheckpoint(sid, cp.id);
+          if (snap?.length) snapshots.push(snap);
+        }
+        const healed = healOrphanedUserMessages(messages, snapshots);
+        if (healed !== messages) {
+          messages = healed;
+          getLogger().info('RESTORE', `Healed orphaned user turn(s) in session ${sid.slice(0, 8)}`);
+        }
+      }
+    } catch { /* best-effort */ }
+
     // Merge parts into messages so the frontend gets chronological parts arrays
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i]!;
@@ -2654,7 +2827,7 @@ app.post('/api/sessions/:id/restore', (req, res) => {
       }
     }
 
-    res.json({ session, messages, parts: [], crewStates, scopePath: session.scopePath, interruptedTask, turnFeedback: loadTurnFeedbackForSession(eng, sessionId) });
+    res.json({ session, messages, parts: [], crewStates, scopePath: session.scopePath, interruptedTask, turnFeedback: loadTurnFeedbackForSession(eng, sessionId), resumeState });
   } catch (e: unknown) {
     getLogger().error('RESTORE_SESSION', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'restore-failed' });
@@ -2671,6 +2844,28 @@ app.get('/api/sessions/:id/feedback', (req, res) => {
   } catch (e: unknown) {
     getLogger().error('GET_SESSION_FEEDBACK', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'feedback-load-failed' });
+  }
+});
+
+app.get('/api/sessions/:id/messages', (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const parsed = sessionMessagesQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'invalid-query', details: parsed.error.flatten() });
+      return;
+    }
+    const eng = getEngine();
+    const session = eng.sessionManager.getSessionById(sessionId);
+    if (!session) { res.status(404).json({ error: 'not-found' }); return; }
+
+    const { limit, before } = parsed.data;
+    const page = loadSessionMessagesPage(sessionId, { limit, before });
+    const messages = page.messages.map((m) => normalizeMessageForUi(m as Parameters<typeof normalizeMessageForUi>[0]));
+    res.json({ messages, total: page.total, hasMore: page.hasMore });
+  } catch (e: unknown) {
+    getLogger().error('GET_SESSION_MESSAGES', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'messages-load-failed' });
   }
 });
 
@@ -2738,8 +2933,12 @@ app.post('/api/sessions/:id/context/limits', (req, res) => {
       maxHistoryChars?: number;
       maxBlockChars?: number;
     };
-    agent.setContextMemoryLimits({ maxHistoryMessages, maxHistoryChars, maxBlockChars });
-    res.json({ ok: true, maxHistoryMessages, maxHistoryChars, maxBlockChars });
+    const limits: Record<string, number> = {};
+    if (maxHistoryMessages != null) limits.maxHistoryMessages = maxHistoryMessages;
+    if (maxHistoryChars != null) limits.maxHistoryChars = maxHistoryChars;
+    if (maxBlockChars != null) limits.maxBlockChars = maxBlockChars;
+    agent.setContextMemoryLimits(limits);
+    res.json({ ok: true, ...limits });
   } catch (e: unknown) {
     getLogger().error('POST_API_SESSIONS_ID_CONTEXT_LIMITS', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'limits-failed' });

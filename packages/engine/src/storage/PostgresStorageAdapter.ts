@@ -207,6 +207,14 @@ CREATE TABLE IF NOT EXISTS turn_feedback (
   UNIQUE(session_id, message_id)
 );
 
+CREATE TABLE IF NOT EXISTS session_resume_state (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_parts_session ON message_parts(session_id);
 CREATE INDEX IF NOT EXISTS idx_token_logs_session ON token_logs(session_id);
@@ -316,6 +324,7 @@ interface CacheState {
   permissions: Map<string, StorablePermission[]>;
   crewFeedback: Map<string, Array<Record<string, unknown>>>;
   turnFeedback: Map<string, Array<Record<string, unknown>>>;
+  resumeState: Map<string, Record<string, unknown>>;
   permissionRules: Map<string, Array<Record<string, unknown>>>;
   taskSnapshots: Map<string, Record<string, unknown>>;
 }
@@ -327,7 +336,7 @@ export interface PostgresConfig extends PoolConfig {
 export class PostgresStorageAdapter implements StorageAdapter {
   private pool: Pool;
   private connected = false;
-  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
+  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
 
   constructor(config: PostgresConfig) {
     this.pool = new Pool(config);
@@ -401,6 +410,16 @@ export class PostgresStorageAdapter implements StorageAdapter {
       await client.query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS compaction_count INTEGER NOT NULL DEFAULT 0');
       await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS context_kind TEXT NOT NULL DEFAULT 'agent_x'`);
       await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS host_crew_id TEXT`);
+      for (const col of [
+        'host_crew_name',
+        'host_crew_callsign',
+        'host_crew_title',
+        'host_crew_color',
+        'host_crew_catalog_id',
+        'host_crew_category_id',
+      ]) {
+        await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ${col} TEXT`);
+      }
       await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_crew_private ON sessions(host_crew_id, context_kind)`);
       await client.query(`
         CREATE TABLE IF NOT EXISTS turn_feedback (
@@ -418,6 +437,15 @@ export class PostgresStorageAdapter implements StorageAdapter {
       `);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_turn_feedback_session ON turn_feedback(session_id)`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_turn_feedback_crew ON turn_feedback(crew_id)`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS session_resume_state (
+          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
       await client.query(`
         INSERT INTO child_sessions (id, parent_session_id, kind, label, status, created_at, updated_at)
         SELECT id, parent_id, 'sub_agent', title, status, created_at, updated_at
@@ -507,6 +535,9 @@ export class PostgresStorageAdapter implements StorageAdapter {
                 scope_path as "scopePath",token_used as "tokenUsed",token_available as "tokenAvailable",
                 compaction_count as "compactionCount",
                 context_kind as "contextKind",host_crew_id as "hostCrewId",
+                host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
+                host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
+                host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
                 mode,parent_id as "parentId",hyperdrive,created_at as "createdAt",updated_at as "updatedAt"
          FROM sessions`,
       );
@@ -623,6 +654,12 @@ export class PostgresStorageAdapter implements StorageAdapter {
         arr.push(r);
         this.cache.turnFeedback.set(sid, arr);
       }
+      const resumeStates = await this.pool.query('SELECT * FROM session_resume_state');
+      for (const row of resumeStates.rows) {
+        const r = row as Record<string, unknown>;
+        const sid = r['session_id'] as string;
+        this.cache.resumeState.set(sid, r);
+      }
       const permissionRules = await this.pool.query('SELECT * FROM permission_rules ORDER BY created_at ASC');
       for (const row of permissionRules.rows) {
         const r = row as Record<string, unknown>;
@@ -691,16 +728,25 @@ export class PostgresStorageAdapter implements StorageAdapter {
       parentId: (inputAny['parentId'] as string) ?? null,
       contextKind: (inputAny['contextKind'] as StorableSession['contextKind']) ?? 'agent_x',
       hostCrewId: (inputAny['hostCrewId'] as string | null) ?? null,
+      hostCrewName: (inputAny['hostCrewName'] as string | null) ?? null,
+      hostCrewCallsign: (inputAny['hostCrewCallsign'] as string | null) ?? null,
+      hostCrewTitle: (inputAny['hostCrewTitle'] as string | null) ?? null,
+      hostCrewColor: (inputAny['hostCrewColor'] as string | null) ?? null,
+      hostCrewCatalogId: (inputAny['hostCrewCatalogId'] as string | null) ?? null,
+      hostCrewCategoryId: (inputAny['hostCrewCategoryId'] as string | null) ?? null,
       hyperdrive: !!(inputAny['hyperdrive']),
       createdAt: now, updatedAt: now,
     };
     this.cache.sessions.set(id, session);
     this.write(
-      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,mode,parent_id,token_used,token_available,context_kind,host_crew_id,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,mode,parent_id,token_used,token_available,context_kind,host_crew_id,host_crew_name,host_crew_callsign,host_crew_title,host_crew_color,host_crew_catalog_id,host_crew_category_id,created_at,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [id, input.title, input.status, input.providerId, input.modelId, input.scopePath,
        session.mode, session.parentId, input.tokenUsed, input.tokenAvailable,
-       session.contextKind ?? 'agent_x', session.hostCrewId ?? null, now, now]
+       session.contextKind ?? 'agent_x', session.hostCrewId ?? null,
+       session.hostCrewName ?? null, session.hostCrewCallsign ?? null, session.hostCrewTitle ?? null,
+       session.hostCrewColor ?? null, session.hostCrewCatalogId ?? null, session.hostCrewCategoryId ?? null,
+       now, now]
     );
     return session;
   }
@@ -724,6 +770,9 @@ export class PostgresStorageAdapter implements StorageAdapter {
       compactionCount: 'compaction_count',
       mode: 'mode', parentId: 'parent_id',
       contextKind: 'context_kind', hostCrewId: 'host_crew_id',
+      hostCrewName: 'host_crew_name', hostCrewCallsign: 'host_crew_callsign',
+      hostCrewTitle: 'host_crew_title', hostCrewColor: 'host_crew_color',
+      hostCrewCatalogId: 'host_crew_catalog_id', hostCrewCategoryId: 'host_crew_category_id',
     };
     for (const [key, col] of Object.entries(map)) {
       if (key in normalized) {
@@ -1488,6 +1537,60 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   getTurnFeedbackBySession(sessionId: string): Array<Record<string, unknown>> {
     return this.cache.turnFeedback.get(sessionId) ?? [];
+  }
+
+  setSessionResumeState(sessionId: string, state: {
+    kind: string;
+    messageId: string;
+    payload: Record<string, unknown>;
+    createdAt?: string;
+  }): void {
+    const createdAt = state.createdAt ?? new Date().toISOString();
+    const entry = {
+      session_id: sessionId,
+      kind: state.kind,
+      message_id: state.messageId,
+      payload: JSON.stringify(state.payload),
+      created_at: createdAt,
+    };
+    this.cache.resumeState.set(sessionId, entry);
+    this.write(
+      `INSERT INTO session_resume_state (session_id, kind, message_id, payload, created_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (session_id) DO UPDATE SET
+         kind = EXCLUDED.kind,
+         message_id = EXCLUDED.message_id,
+         payload = EXCLUDED.payload,
+         created_at = EXCLUDED.created_at`,
+      [sessionId, state.kind, state.messageId, entry.payload, createdAt],
+    );
+  }
+
+  getSessionResumeState(sessionId: string): Record<string, unknown> | null {
+    return this.cache.resumeState.get(sessionId) ?? null;
+  }
+
+  clearSessionResumeState(sessionId: string): void {
+    this.cache.resumeState.delete(sessionId);
+    this.write('DELETE FROM session_resume_state WHERE session_id = $1', [sessionId]);
+  }
+
+  getMessagesPage(
+    sessionId: string,
+    opts: { limit?: number; before?: string },
+  ): { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean } {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const all = (this.cache.messages.get(sessionId) ?? [])
+      .filter((m) => m.role === 'user' || m.role === 'assistant');
+    const total = all.length;
+    let slice = all;
+    if (opts.before) {
+      const idx = all.findIndex((m) => m.id === opts.before);
+      slice = idx > 0 ? all.slice(0, idx) : all;
+    }
+    const page = slice.slice(-limit);
+    const hasMore = slice.length > limit || (opts.before ? all.findIndex((m) => m.id === opts.before) > limit : total > limit);
+    return { messages: page as unknown as Array<Record<string, unknown>>, total, hasMore };
   }
 
   // ─── Crew CRUD ─────────────────────────────────────────────────

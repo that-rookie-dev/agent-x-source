@@ -3,7 +3,7 @@ import type { CatalogEntry, CatalogManifest, Crew, SessionCrewPreferences } from
 import { buildCrewSearchText } from '@agentx/shared';
 import { loadCatalogManifest } from './catalog-manifest.js';
 import { buildPostgresHubTsQuery } from './fts-query.js';
-import { catalogLikePattern, mergeCatalogSearchHits } from './catalog-search.js';
+import { catalogLikePattern, mergeCatalogSearchHits, searchManifestCatalog } from './catalog-search.js';
 import { mergeCategoryIconIds } from './catalog-categories.js';
 import { catalogEntryToSummary } from './catalog-summary.js';
 import { markCatalogSeedProgress } from './catalog-seed-state.js';
@@ -278,7 +278,10 @@ export function createPgCrewCatalogStore(
         ftsRank: 0.5 - i * 0.01,
       }));
 
-      return mergeCatalogSearchHits(ftsHits, likeHits, limit);
+      const merged = mergeCatalogSearchHits(ftsHits, likeHits, limit);
+      if (merged.length > 0) return merged;
+      const manifest = loadCatalogManifest();
+      return manifest ? searchManifestCatalog(manifest, trimmed, limit) : [];
     },
 
     async listCategories() {

@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Ines Costa",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Karim Haddad",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Liam Lee",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Miguel Nasser",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Omar Rao",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Santiago Volkov",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Yara Brooks",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Abena Fernandez",
@@ -201,14 +209,15 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
-    "name": "Amara Khan",
+    "name": "Dr. Amara Khan",
     "title": "Remote Sensing Earth Scientist",
-    "callsign": "amara_khan_mfwh2f",
+    "callsign": "dr_amara_khan_mfwh2f",
     "description": "Remote Sensing Earth Scientist focused on research methodology and applied science guidance for remote sensing earth scientist — planning, education, and operational guidance. Delivers concrete plans, practical trade-offs, and execution-ready guidance for real-world teams.",
-    "systemPrompt": "You are Amara Khan, a Remote Sensing Earth Scientist specializing in research methodology and applied science guidance for remote sensing earth scientist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Hypothesis Testing\n- Scientific Method\n- Lab Safety\n- Grant Writing\n- Data Analysis\n- Instrumentation\n\nResponse style:\n- Tone: friendly\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
+    "systemPrompt": "You are Dr. Amara Khan, a Remote Sensing Earth Scientist specializing in research methodology and applied science guidance for remote sensing earth scientist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Hypothesis Testing\n- Scientific Method\n- Lab Safety\n- Grant Writing\n- Data Analysis\n- Instrumentation\n\nResponse style:\n- Tone: friendly\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
     "tone": "friendly",
     "expertise": [
       "Hypothesis Testing",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": true
   },
   {
     "name": "Callum Mensah",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Deepa Patel",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Fatima Tanaka",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Helena Alvarez",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jaden Desai",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Khalid Iyer",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Luna Malik",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Naomi Nwosu",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Rafael Sharma",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Tariq Zhang",
@@ -443,7 +462,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Zara Chen",
@@ -465,7 +485,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aiko Gupta",
@@ -487,6 +508,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "risk-aware",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Emre Lindberg",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "principled",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hana Nguyen",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "risk-aware",
       "methodical",
       "principled"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Iris Rossi",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "skeptical",
       "thorough"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kavya Watanabe",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "skeptical",
       "thorough",
       "vigilant"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Linh Campbell",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "skeptical",
       "thorough"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Mina Fischer",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "risk-aware",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Paloma Kim",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "vigilant",
       "calm",
       "risk-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Sofia Mori",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "skeptical",
       "thorough"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Yuki Petrov",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "vigilant",
       "calm",
       "risk-aware"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Adaeze Torres",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "skeptical",
       "thorough"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Amir Anderson",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "principled",
       "precise",
       "skeptical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Camila Diallo",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "principled",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Diego Jensen",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "principled",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Felix Mansour",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "calm",
       "risk-aware",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hugo Okafor",
@@ -355,7 +370,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "thorough",
       "vigilant",
       "calm"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jia Silva",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "risk-aware",
       "methodical",
       "principled"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kwame Abdi",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "thorough",
       "vigilant",
       "calm"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Maya Costa",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "skeptical",
       "thorough",
       "vigilant"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Nia Haddad",
@@ -443,6 +462,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "principled",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

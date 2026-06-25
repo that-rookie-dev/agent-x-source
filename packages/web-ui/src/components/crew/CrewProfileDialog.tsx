@@ -16,6 +16,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import type { PrebuiltCrew } from './CrewHubDialog';
 import { crewDialogPaperSx, crewHubScanlineSx, crewOverlineSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
 import { MedicalDisclaimerSectorCard, MedicalProfileIdentityFrame, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
+import { crewDisplayFields } from '../../utils/crew-display';
 
 export interface RosterProfileActions {
   enabled: boolean;
@@ -140,6 +141,15 @@ function RedactedAvatar() {
 }
 
 function IdentityText({ crew, accent }: { crew: PrebuiltCrew; accent: string }) {
+  const { displayName, displayCallsign } = crewDisplayFields({
+    name: crew.name,
+    callsign: crew.callsign,
+    title: crew.title,
+    categoryId: crew.categoryId,
+    expertise: crew.expertise,
+    requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
+    honorsDoctorate: crew.honorsDoctorate,
+  });
   return (
     <Box sx={{ flex: 1, minWidth: 0 }}>
       <Typography sx={{
@@ -150,7 +160,7 @@ function IdentityText({ crew, accent }: { crew: PrebuiltCrew; accent: string }) 
         color: crewTheme.text.primary,
         lineHeight: 1.2,
       }}>
-        {crew.name}
+        {displayName}
       </Typography>
       <Typography sx={{ fontSize: '0.72rem', color: crewTheme.text.secondary, mt: 0.35 }}>
         {crew.title}
@@ -161,7 +171,7 @@ function IdentityText({ crew, accent }: { crew: PrebuiltCrew; accent: string }) 
         fontFamily: "'JetBrains Mono', monospace",
         mt: 0.5,
       }}>
-        @{crew.callsign}
+        @{displayCallsign}
       </Typography>
     </Box>
   );

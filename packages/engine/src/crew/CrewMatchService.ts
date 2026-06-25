@@ -1,4 +1,5 @@
 import type { Crew, CrewMatchCandidate } from '@agentx/shared';
+import { isWorkforceOrSpecialistNeed } from '@agentx/shared';
 import {
   assessCrewNeed,
   buildTaskContextForCrewRouting,
@@ -176,9 +177,13 @@ export function evaluateSuggestionGate(input: SuggestionGateInput): {
     reasons.push('agent-x-direct');
     return { pass: false, task, reasons };
   }
-  if (!hasTaskSignals(task)) {
+  const rosterFirst = input.explicitCrewRequest || isWorkforceOrSpecialistNeed(task);
+  if (!hasTaskSignals(task) && !rosterFirst) {
     reasons.push('no-task-signals');
     return { pass: false, task, reasons };
+  }
+  if (rosterFirst && !hasTaskSignals(task)) {
+    reasons.push('workforce-intent');
   }
   return { pass: true, task, reasons };
 }

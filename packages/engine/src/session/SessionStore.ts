@@ -519,6 +519,38 @@ const MIGRATIONS: Array<{ version: number; description: string; run: (db: any) =
       `);
     },
   },
+  {
+    version: 22,
+    description: 'Denormalized host crew snapshot on crew_private sessions',
+    run: (db: any) => {
+      for (const col of [
+        'host_crew_name',
+        'host_crew_callsign',
+        'host_crew_title',
+        'host_crew_color',
+        'host_crew_catalog_id',
+        'host_crew_category_id',
+      ]) {
+        try { db.exec(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`); } catch { /* exists */ }
+      }
+    },
+  },
+  {
+    version: 23,
+    description: 'Session resume state for pending clarifications and crew intake',
+    run: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_resume_state (
+          session_id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+      `);
+    },
+  },
 ];
 
 /** Idempotent: recreate core + crew_catalog tables if manually dropped while _schema is current. */
@@ -548,6 +580,7 @@ export class SessionStore {
   private memPermissionRules: Map<string, Array<Record<string, unknown>>> = new Map();
   private memCrewFeedback: Map<string, Array<Record<string, unknown>>> = new Map();
   private memTurnFeedback: Map<string, Array<Record<string, unknown>>> = new Map();
+  private memResumeState: Map<string, Record<string, unknown>> = new Map();
   private memCheckpoints: Map<string, Array<Record<string, unknown>>> = new Map();
   private memTaskSnapshots: Map<string, Record<string, unknown>> = new Map();
   private memPersona: Record<string, unknown> | null = null;
@@ -813,6 +846,12 @@ export class SessionStore {
     hyperdrive?: boolean;
     contextKind?: string;
     hostCrewId?: string | null;
+    hostCrewName?: string | null;
+    hostCrewCallsign?: string | null;
+    hostCrewTitle?: string | null;
+    hostCrewColor?: string | null;
+    hostCrewCatalogId?: string | null;
+    hostCrewCategoryId?: string | null;
     createdAt: string;
     updatedAt: string;
   }): void {
@@ -831,6 +870,12 @@ export class SessionStore {
         hyperdrive: session.hyperdrive ? 1 : 0,
         contextKind: session.contextKind ?? 'agent_x',
         hostCrewId: session.hostCrewId ?? null,
+        hostCrewName: session.hostCrewName ?? null,
+        hostCrewCallsign: session.hostCrewCallsign ?? null,
+        hostCrewTitle: session.hostCrewTitle ?? null,
+        hostCrewColor: session.hostCrewColor ?? null,
+        hostCrewCatalogId: session.hostCrewCatalogId ?? null,
+        hostCrewCategoryId: session.hostCrewCategoryId ?? null,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       });
@@ -838,8 +883,8 @@ export class SessionStore {
     }
 
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, title, status, provider_id, model_id, parent_id, token_used, token_available, scope_path, mode, hyperdrive, context_kind, host_crew_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, title, status, provider_id, model_id, parent_id, token_used, token_available, scope_path, mode, hyperdrive, context_kind, host_crew_id, host_crew_name, host_crew_callsign, host_crew_title, host_crew_color, host_crew_catalog_id, host_crew_category_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       session.id,
@@ -855,6 +900,12 @@ export class SessionStore {
       session.hyperdrive ? 1 : 0,
       session.contextKind ?? 'agent_x',
       session.hostCrewId ?? null,
+      session.hostCrewName ?? null,
+      session.hostCrewCallsign ?? null,
+      session.hostCrewTitle ?? null,
+      session.hostCrewColor ?? null,
+      session.hostCrewCatalogId ?? null,
+      session.hostCrewCategoryId ?? null,
       session.createdAt,
       session.updatedAt,
     );
@@ -884,6 +935,12 @@ export class SessionStore {
       hyperdrive: !!row['hyperdrive'],
       contextKind: row['context_kind'] ?? 'agent_x',
       hostCrewId: row['host_crew_id'] ?? null,
+      hostCrewName: row['host_crew_name'] ?? null,
+      hostCrewCallsign: row['host_crew_callsign'] ?? null,
+      hostCrewTitle: row['host_crew_title'] ?? null,
+      hostCrewColor: row['host_crew_color'] ?? null,
+      hostCrewCatalogId: row['host_crew_catalog_id'] ?? null,
+      hostCrewCategoryId: row['host_crew_category_id'] ?? null,
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     };
@@ -918,6 +975,12 @@ export class SessionStore {
       scopePath: 'scope_path',
       contextKind: 'context_kind',
       hostCrewId: 'host_crew_id',
+      hostCrewName: 'host_crew_name',
+      hostCrewCallsign: 'host_crew_callsign',
+      hostCrewTitle: 'host_crew_title',
+      hostCrewColor: 'host_crew_color',
+      hostCrewCatalogId: 'host_crew_catalog_id',
+      hostCrewCategoryId: 'host_crew_category_id',
       updatedAt: 'updated_at',
     };
 
@@ -1041,6 +1104,12 @@ export class SessionStore {
       hyperdrive: !!row['hyperdrive'],
       contextKind: row['context_kind'] ?? 'agent_x',
       hostCrewId: row['host_crew_id'] ?? null,
+      hostCrewName: row['host_crew_name'] ?? null,
+      hostCrewCallsign: row['host_crew_callsign'] ?? null,
+      hostCrewTitle: row['host_crew_title'] ?? null,
+      hostCrewColor: row['host_crew_color'] ?? null,
+      hostCrewCatalogId: row['host_crew_catalog_id'] ?? null,
+      hostCrewCategoryId: row['host_crew_category_id'] ?? null,
       createdAt: row['created_at'],
       updatedAt: row['updated_at'],
     };
@@ -1891,6 +1960,61 @@ export class SessionStore {
     }
   }
 
+  setSessionResumeState(sessionId: string, state: {
+    kind: string;
+    messageId: string;
+    payload: Record<string, unknown>;
+    createdAt?: string;
+  }): void {
+    const createdAt = state.createdAt ?? new Date().toISOString();
+    const row = {
+      session_id: sessionId,
+      kind: state.kind,
+      message_id: state.messageId,
+      payload: JSON.stringify(state.payload),
+      created_at: createdAt,
+    };
+    if (this.memMode) {
+      this.memResumeState.set(sessionId, row);
+      return;
+    }
+    try {
+      this.db!.prepare(`
+        INSERT INTO session_resume_state (session_id, kind, message_id, payload, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+          kind = excluded.kind,
+          message_id = excluded.message_id,
+          payload = excluded.payload,
+          created_at = excluded.created_at
+      `).run(sessionId, state.kind, state.messageId, row.payload, createdAt);
+    } catch (e) {
+      getLogger().warn('STORE', `setSessionResumeState failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  getSessionResumeState(sessionId: string): Record<string, unknown> | null {
+    if (this.memMode) {
+      return this.memResumeState.get(sessionId) ?? null;
+    }
+    try {
+      const row = this.db!.prepare('SELECT * FROM session_resume_state WHERE session_id = ?').get(sessionId) as Record<string, unknown> | undefined;
+      return row ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  clearSessionResumeState(sessionId: string): void {
+    if (this.memMode) {
+      this.memResumeState.delete(sessionId);
+      return;
+    }
+    try {
+      this.db!.prepare('DELETE FROM session_resume_state WHERE session_id = ?').run(sessionId);
+    } catch { /* best-effort */ }
+  }
+
   deleteSession(sessionId: string): void {
     if (this.memMode) {
       this.memSessions.delete(sessionId);
@@ -1900,6 +2024,7 @@ export class SessionStore {
       this.memSessionEvents.delete(sessionId);
       this.memPermissionRules.delete(sessionId);
       this.memTurnFeedback.delete(sessionId);
+      this.memResumeState.delete(sessionId);
       if (this.memCrewStates) {
         for (const key of this.memCrewStates.keys()) {
           if (key.startsWith(`${sessionId}:`)) {
@@ -1913,6 +2038,7 @@ export class SessionStore {
     try { this.db.prepare('DELETE FROM session_events WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
     try { this.db.prepare('DELETE FROM crew_feedback WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
     try { this.db.prepare('DELETE FROM turn_feedback WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
+    try { this.db.prepare('DELETE FROM session_resume_state WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
     try { this.db.prepare('DELETE FROM permission_rules WHERE session_id = ?').run(sessionId); } catch { /* table may not exist yet */ }
     this.db.prepare('DELETE FROM session_crew_states WHERE session_id = ?').run(sessionId);
     this.db.prepare('DELETE FROM tool_executions WHERE session_id = ?').run(sessionId);

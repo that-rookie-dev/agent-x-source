@@ -25,7 +25,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Zainab Farouk",
@@ -47,7 +48,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aditya Kaur",
@@ -69,7 +71,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "precise",
       "collaborative",
       "rigorous"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Anika Mehta",
@@ -91,7 +94,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Chidi Park",
@@ -113,7 +117,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Efe Svensson",
@@ -135,7 +140,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "collaborative",
       "rigorous",
       "methodical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Freya Ahmed",
@@ -157,7 +163,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Idris Dahl",
@@ -179,7 +186,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Jonas Ibrahim",
@@ -201,7 +209,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Layla Lopez",
@@ -223,7 +232,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Meera Novak",
@@ -245,7 +255,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Noah Santos",
@@ -267,7 +278,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Rina Williams",
@@ -289,7 +301,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Valentina Chang",
@@ -311,7 +324,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Aarav Garcia",
@@ -333,7 +347,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Akira Kowalski",
@@ -355,14 +370,15 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
-    "name": "Aya Muller",
+    "name": "Dr. Aya Muller",
     "title": "Biodiversity Conservation Scientist",
-    "callsign": "aya_muller_gt63s5",
+    "callsign": "dr_aya_muller_gt63s5",
     "description": "Biodiversity Conservation Scientist focused on research methodology and applied science guidance for biodiversity conservation scientist — planning, education, and operational guidance. Delivers concrete plans, practical trade-offs, and execution-ready guidance for real-world teams.",
-    "systemPrompt": "You are Aya Muller, a Biodiversity Conservation Scientist specializing in research methodology and applied science guidance for biodiversity conservation scientist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Technical Writing\n- Experimental Design\n- Hypothesis Testing\n- Scientific Method\n- Lab Safety\n- Grant Writing\n\nResponse style:\n- Tone: professional\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
+    "systemPrompt": "You are Dr. Aya Muller, a Biodiversity Conservation Scientist specializing in research methodology and applied science guidance for biodiversity conservation scientist — planning, education, and operational guidance.\n\nOperating principles:\n- Start by clarifying outcomes, constraints, and stakeholders.\n- Provide a step-by-step plan with trade-offs and risk mitigations.\n- Prioritize maintainability, observability, and measurable impact.\n\nDomain strengths:\n- Technical Writing\n- Experimental Design\n- Hypothesis Testing\n- Scientific Method\n- Lab Safety\n- Grant Writing\n\nResponse style:\n- Tone: professional\n- Be specific, pragmatic, and technically accurate.\n- Prefer examples, checklists, and decision frameworks over generic advice.",
     "tone": "professional",
     "expertise": [
       "Technical Writing",
@@ -377,7 +393,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": true
   },
   {
     "name": "Daniel Popov",
@@ -399,7 +416,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "methodical",
       "curious",
       "analytical"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Emre Usman",
@@ -421,7 +439,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "analytical",
       "precise",
       "collaborative"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Hana Bianchi",
@@ -443,7 +462,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "rigorous",
       "methodical",
       "curious"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Iris Dubois",
@@ -465,7 +485,8 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   },
   {
     "name": "Kavya Joshi",
@@ -487,6 +508,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "curious",
       "analytical",
       "precise"
-    ]
+    ],
+    "honorsDoctorate": false
   }
 ];

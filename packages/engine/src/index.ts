@@ -4,6 +4,7 @@ export { ConfigManager } from './config/index.js';
 export * from './tools/platform.js';
 export { SessionStore } from './session/SessionStore.js';
 export { SessionManager } from './session/SessionManager.js';
+export { hostCrewSnapshotPatch, hostCrewSnapshotFromInput } from './session/session-field-utils.js';
 export { TokenTracker } from './session/TokenTracker.js';
 export { CrashRecovery } from './session/CrashRecovery.js';
 export { GitManager } from './session/GitManager.js';
@@ -84,6 +85,7 @@ export { createSqliteNeuralDb, createPgNeuralDb } from './neural/NeuralDbAdapter
 export type { NeuralDb, NeuralStatement } from './neural/NeuralDbAdapter.js';
 export { CrewOrchestrator, buildCrewPrivateIdentityPrompt, buildCrewPrivateFastReplyPrompt } from './agent/CrewOrchestrator.js';
 export { CrewSuggestionService } from './crew/CrewSuggestionService.js';
+export type { CrewCatalogStore } from './crew/CrewSuggestionService.js';
 export { catalogEntryToSummary } from './crew/catalog-summary.js';
 export { getCrewSuggestionService, getCrewCatalogStoreFromEngine } from './crew/get-crew-store.js';
 export { startBackgroundCatalogSeed, getCatalogSeedStatus } from './crew/catalog-seed-runner.js';

@@ -10,6 +10,8 @@ import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
 import { QuestionnaireMessage } from '../components/questionnaire/QuestionnaireMessage';
+import { CrewRosterPickerMessage } from '../components/crew/CrewRosterPickerMessage';
+import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { TurnFeedbackBar } from './TurnFeedbackBar';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
 
@@ -38,12 +40,17 @@ function renderParts(
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void,
   onQuestionnaireRespond?: (messageId: string, response: string) => void,
   messageId?: string,
+  onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void,
+  onCrewRosterPickerSkip?: (messageId: string) => void,
+  onViewCrewDossier?: (candidate: CrewMatchCandidate) => void,
+  planMode?: boolean,
 ) {
   const filtered = parts.filter((p) => {
     if (p.type === 'text') return !!p.content?.trim();
     if (p.type === 'tool') return !!p.tool;
     if (p.type === 'subagent') return !!p.agent;
     if (p.type === 'questionnaire') return !!p.questionnaire;
+    if (p.type === 'crew_roster_picker') return !!p.crewRosterPicker;
     return false;
   });
 
@@ -64,6 +71,26 @@ function renderParts(
                     ? (response) => onQuestionnaireRespond(messageId, response)
                     : undefined
                 }
+              />
+            );
+          case 'crew_roster_picker':
+            if (!part.crewRosterPicker) return null;
+            return (
+              <CrewRosterPickerMessage
+                key={part.id}
+                record={part.crewRosterPicker}
+                planMode={planMode}
+                onSubmit={
+                  part.crewRosterPicker.status === 'pending' && onCrewRosterPickerSubmit && messageId
+                    ? (selected) => onCrewRosterPickerSubmit(messageId, selected)
+                    : undefined
+                }
+                onSkip={
+                  part.crewRosterPicker.status === 'pending' && onCrewRosterPickerSkip && messageId
+                    ? () => onCrewRosterPickerSkip(messageId)
+                    : undefined
+                }
+                onViewDossier={onViewCrewDossier}
               />
             );
           case 'tool':
@@ -103,14 +130,18 @@ function renderParts(
   );
 }
 
-function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, showFeedback, onTurnFeedback, feedbackSubmitting }: {
+function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, showFeedback, onTurnFeedback, feedbackSubmitting, planMode }: {
   message: UIMessage;
   loadingSteps?: Array<{ id: string; label: string; status: string }> | null;
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void;
   onQuestionnaireRespond?: (messageId: string, response: string) => void;
+  onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void;
+  onCrewRosterPickerSkip?: (messageId: string) => void;
+  onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
   showFeedback?: boolean;
   onTurnFeedback?: (messageId: string, rating: TurnFeedbackRating) => void;
   feedbackSubmitting?: boolean;
+  planMode?: boolean;
 }) {
   const crewInfo = message.crew;
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
@@ -136,7 +167,16 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   const cleanContent = displayContent(displayMessage);
   const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
   const hasQuestionnaire = !!(displayMessage.parts?.some((p) => p.type === 'questionnaire'));
-  const contentBlock = hasParts ? renderParts(displayMessage.parts!, onOpenChildSession, onQuestionnaireRespond, message.id) : (
+  const contentBlock = hasParts ? renderParts(
+    displayMessage.parts!,
+    onOpenChildSession,
+    onQuestionnaireRespond,
+    message.id,
+    onCrewRosterPickerSubmit,
+    onCrewRosterPickerSkip,
+    onViewCrewDossier,
+    planMode,
+  ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       {cleanContent && <CrewAwareMarkdown content={cleanContent} />}
       {displayMessage.toolCalls?.map((t) => <InlineToolCall key={t.id} tool={t} />)}
@@ -227,21 +267,38 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   );
 }
 
-function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean },
-  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean }) {
+function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean; planMode?: boolean },
+  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean; planMode?: boolean }) {
   if (prev.loadingSteps !== next.loadingSteps) return false;
   if (prev.onOpenChildSession !== next.onOpenChildSession) return false;
   if (prev.onQuestionnaireRespond !== next.onQuestionnaireRespond) return false;
+  if (prev.onCrewRosterPickerSubmit !== next.onCrewRosterPickerSubmit) return false;
+  if (prev.onCrewRosterPickerSkip !== next.onCrewRosterPickerSkip) return false;
+  if (prev.onViewCrewDossier !== next.onViewCrewDossier) return false;
   if (prev.showFeedback !== next.showFeedback) return false;
   if (prev.onTurnFeedback !== next.onTurnFeedback) return false;
   if (prev.feedbackSubmitting !== next.feedbackSubmitting) return false;
+  if (prev.planMode !== next.planMode) return false;
   const pm = prev.message;
   const nm = next.message;
-  return pm.id === nm.id && pm.content === nm.content && pm.streaming === nm.streaming
-    && pm.thinking === nm.thinking && pm.parts === nm.parts && pm.toolCalls === nm.toolCalls
-    && pm.crew?.crewId === nm.crew?.crewId && pm.crew?.name === nm.crew?.name
-    && pm.subAgents === nm.subAgents
-    && pm.turnFeedback?.rating === nm.turnFeedback?.rating;
+  if (pm.id !== nm.id || pm.content !== nm.content || pm.streaming !== nm.streaming) return false;
+  if (pm.thinking !== nm.thinking || pm.toolCalls !== nm.toolCalls) return false;
+  if (pm.crew?.crewId !== nm.crew?.crewId || pm.crew?.name !== nm.crew?.name) return false;
+  if (pm.subAgents !== nm.subAgents) return false;
+  if (pm.turnFeedback?.rating !== nm.turnFeedback?.rating) return false;
+  const prevParts = pm.parts ?? [];
+  const nextParts = nm.parts ?? [];
+  if (prevParts !== nm.parts && prevParts.length === nextParts.length) {
+    for (let i = 0; i < prevParts.length; i++) {
+      const pp = prevParts[i]!;
+      const np = nextParts[i]!;
+      if (pp.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
+      if (pp.type === 'crew_roster_picker' && pp.crewRosterPicker?.status !== np.crewRosterPicker?.status) return false;
+    }
+  } else if (prevParts !== nm.parts) {
+    return false;
+  }
+  return true;
 }
 
 export const ChatMessageTurn = React.memo(ChatMessageTurnComponent, propsEqual);

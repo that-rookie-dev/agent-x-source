@@ -25,6 +25,7 @@ export interface CatalogEntry {
   hubRevision: number;
   active: boolean;
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
 }
 
 /** Hub browse card — omits heavy fields (system prompt, search text). */
@@ -41,6 +42,7 @@ export interface CatalogSummary {
   tone?: string;
   tools?: string[];
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
 }
 
 export interface CatalogCategorySummary {
@@ -72,6 +74,7 @@ export interface CrewMatchCandidate {
   enabled?: boolean;
   catalogId?: string;
   requiresMedicalDisclaimer?: boolean;
+  honorsDoctorate?: boolean;
 }
 
 export interface CrewSuggestionEvaluation {

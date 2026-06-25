@@ -46,7 +46,7 @@ export const PLAN_ALLOWED_TOOL_IDS = new Set([
   // Project detection
   'project_detect',
   // Agent meta (clarify + inspect sub-agents only)
-  'ask_clarification', 'sub_agent_status', 'sub_agent_cancel', 'todo_read',
+  'ask_clarification', 'sub_agent_status', 'sub_agent_cancel', 'todo_read', 'search_crew_hub',
   // Scheduler read
   'reminder_list',
 ]);

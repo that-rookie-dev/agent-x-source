@@ -23,6 +23,26 @@ function crewInfo(crew: Crew) {
   };
 }
 
+function hostInputFromCrew(crew: Crew, extras?: { categoryId?: string }) {
+  const ext = crew as Crew & {
+    categoryId?: string;
+    requiresMedicalDisclaimer?: boolean;
+    honorsDoctorate?: boolean;
+  };
+  return {
+    id: crew.id,
+    name: crew.name,
+    callsign: crew.callsign,
+    title: crew.title,
+    color: crew.color,
+    catalogId: crew.catalogId ?? (crew.id.startsWith('hub-') ? crew.id : undefined),
+    categoryId: extras?.categoryId ?? ext.categoryId,
+    expertise: crew.expertise,
+    requiresMedicalDisclaimer: ext.requiresMedicalDisclaimer,
+    honorsDoctorate: ext.honorsDoctorate,
+  };
+}
+
 function resolveScopePath(scopePath?: string): string {
   if (scopePath?.trim()) return scopePath.trim();
   try {
@@ -49,11 +69,53 @@ function sessionToInfo(session: Record<string, unknown>, crew?: Crew) {
   };
 }
 
+async function enrichRecruitFromCatalog(recruit: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const catalogId = (recruit['catalogId'] as string | undefined)
+    ?? ((recruit['id'] as string | undefined)?.startsWith('hub-') ? recruit['id'] as string : undefined);
+  if (!catalogId || recruit['categoryId']) return recruit;
+
+  try {
+    const eng = getEngine();
+    const store = (eng.sessionManager as unknown as {
+      store?: { getCrewCatalogStore?: () => { getCatalogEntry: (id: string) => Promise<{ categoryId?: string } | null> } };
+    }).store;
+    const catalogStore = store?.getCrewCatalogStore?.();
+    const entry = catalogStore ? await catalogStore.getCatalogEntry(catalogId) : null;
+    if (entry?.categoryId) {
+      return { ...recruit, categoryId: entry.categoryId, catalogId };
+    }
+  } catch { /* best-effort */ }
+  return recruit;
+}
+
 function resolveOrRecruitCrew(body: {
   crewId?: string;
   recruit?: Record<string, unknown>;
 }): Crew {
   const eng = getEngine();
+
+  const r = body.recruit;
+  if (r?.['name'] && r?.['systemPrompt']) {
+    const callsign = (r['callsign'] as string) || String(r['name']).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const existing = eng.crewManager.list().find((c) => c.callsign.toLowerCase() === callsign.toLowerCase());
+    if (existing) return existing;
+
+    return eng.crewManager.create({
+      id: (r['id'] as string) || `hub-${callsign}`,
+      name: r['name'] as string,
+      title: r['title'] as string | undefined,
+      callsign,
+      systemPrompt: r['systemPrompt'] as string,
+      description: (r['description'] as string) || '',
+      emotion: (r['tone'] as Crew['emotion']) ?? (r['emotion'] as Crew['emotion']),
+      expertise: r['expertise'] as string[] | undefined,
+      traits: r['traits'] as string[] | undefined,
+      tools: r['tools'] as string[] | undefined,
+      source: (r['source'] as Crew['source']) ?? (r['catalogId'] ? 'hub' : 'custom'),
+      catalogId: (r['catalogId'] as string | undefined) ?? `hub-${callsign}`,
+      color: r['color'] as string | undefined,
+    });
+  }
 
   if (body.crewId) {
     const crew = eng.crewManager.get(body.crewId) ?? eng.crewManager.list().find((c) => c.id === body.crewId);
@@ -61,29 +123,7 @@ function resolveOrRecruitCrew(body: {
     throw new Error('crew-not-found');
   }
 
-  const r = body.recruit;
-  if (!r?.['name'] || !r?.['systemPrompt']) {
-    throw new Error('crewId-or-recruit-required');
-  }
-
-  const callsign = (r['callsign'] as string) || String(r['name']).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-  const existing = eng.crewManager.list().find((c) => c.callsign.toLowerCase() === callsign.toLowerCase());
-  if (existing) return existing;
-
-  return eng.crewManager.create({
-    id: (r['id'] as string) || `hub-${callsign}`,
-    name: r['name'] as string,
-    title: r['title'] as string | undefined,
-    callsign,
-    systemPrompt: r['systemPrompt'] as string,
-    description: (r['description'] as string) || '',
-    emotion: (r['tone'] as Crew['emotion']) ?? (r['emotion'] as Crew['emotion']),
-    expertise: r['expertise'] as string[] | undefined,
-    traits: r['traits'] as string[] | undefined,
-    tools: r['tools'] as string[] | undefined,
-    source: (r['source'] as Crew['source']) ?? (r['catalogId'] ? 'hub' : 'custom'),
-    catalogId: r['catalogId'] as string | undefined,
-  });
+  throw new Error('crewId-or-recruit-required');
 }
 
 function findCrewPrivateSession(crewId: string): Session | null {
@@ -95,12 +135,17 @@ function findCrewPrivateSession(crewId: string): Session | null {
 }
 
 /** POST /api/crew-chat/sessions — create or return the crew-private session (chat uses /api/sessions + /api/chat). */
-export function postCrewChatSession(req: Request, res: Response): void {
+export async function postCrewChatSession(req: Request, res: Response): Promise<void> {
   try {
     const body = req.body as { crewId?: string; recruit?: Record<string, unknown>; scopePath?: string };
     const eng = getEngine();
 
-    const crew = resolveOrRecruitCrew(body);
+    const recruit = body.recruit ? await enrichRecruitFromCatalog(body.recruit) : undefined;
+    const crew = resolveOrRecruitCrew({ crewId: body.crewId, recruit });
+    const categoryId = (recruit?.['categoryId'] as string | undefined)
+      ?? (body.recruit?.['categoryId'] as string | undefined);
+    const host = hostInputFromCrew(crew, { categoryId });
+
     const cfg = eng.configManager.load();
     if (!cfg.provider.activeProvider || !cfg.provider.activeModel) {
       res.status(400).json({ error: 'no-provider' });
@@ -108,20 +153,15 @@ export function postCrewChatSession(req: Request, res: Response): void {
     }
 
     const scopePath = resolveScopePath(body.scopePath);
-    const existing = findCrewPrivateSession(crew.id);
-    let session: Session;
-    let created = false;
-
-    if (existing) {
-      session = existing;
-    } else {
-      session = eng.sessionManager.createCrewPrivateSession(
-        cfg.provider.activeProvider,
-        cfg.provider.activeModel,
-        scopePath,
-        { id: crew.id, name: crew.name, callsign: crew.callsign, title: crew.title },
-      );
-      created = true;
+    const hadSession = !!findCrewPrivateSession(crew.id);
+    const session = eng.sessionManager.createCrewPrivateSession(
+      cfg.provider.activeProvider,
+      cfg.provider.activeModel,
+      scopePath,
+      host,
+    );
+    const created = !hadSession;
+    if (created) {
       try {
         mkdirSync(join(getDataDir(), 'sessions', session.id), { recursive: true });
       } catch { /* best-effort */ }

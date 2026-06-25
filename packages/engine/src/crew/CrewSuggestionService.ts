@@ -7,7 +7,7 @@ import type {
   CrewSuggestionEvaluation,
   SessionCrewPreferences,
 } from '@agentx/shared';
-import { crewRequiresMedicalDisclaimer } from '@agentx/shared';
+import { crewRequiresMedicalDisclaimer, isWorkforceOrSpecialistNeed } from '@agentx/shared';
 import type { RawMatchRow } from './CrewMatchService.js';
 import {
   buildCrewSuggestionSearchQuery,
@@ -143,8 +143,9 @@ export class CrewSuggestionService {
     const enabledCrewIds = await this.store.getSessionEnabledCrewIds(input.sessionId);
     const priorMessages = input.priorUserMessages ?? [];
     const candidates = scoreMatchCandidates(gate.task, rows, { sessionMessageCounts: sessionCounts });
+    const rosterFirst = (input.explicitCrewRequest ?? false) || isWorkforceOrSpecialistNeed(input.message);
 
-    if (enabledCrewIds.length > 0 && !(input.explicitCrewRequest ?? false)) {
+    if (enabledCrewIds.length > 0 && !rosterFirst) {
       const isContinuation = isActiveCrewContinuation(input.message, priorMessages);
       const isNewRequirement = isDistinctNewRequirement(input.message, priorMessages);
 
@@ -163,9 +164,11 @@ export class CrewSuggestionService {
         };
       }
 
-      const threshold = isNewRequirement
-        ? CREW_MATCH_THRESHOLDS.minSuggestConfidence
-        : CREW_MATCH_THRESHOLDS.minSuggestWithActiveCrew;
+      const threshold = rosterFirst
+        ? CREW_MATCH_THRESHOLDS.minCandidateScore
+        : isNewRequirement
+          ? CREW_MATCH_THRESHOLDS.minSuggestConfidence
+          : CREW_MATCH_THRESHOLDS.minSuggestWithActiveCrew;
       const shouldSuggest = shouldShowSuggestion(filtered, threshold);
       const confidence = filtered[0]?.matchScore ?? 0;
 
@@ -181,7 +184,10 @@ export class CrewSuggestionService {
       };
     }
 
-    const shouldSuggest = shouldShowSuggestion(candidates);
+    const suggestThreshold = rosterFirst
+      ? CREW_MATCH_THRESHOLDS.minCandidateScore
+      : CREW_MATCH_THRESHOLDS.minSuggestConfidence;
+    const shouldSuggest = shouldShowSuggestion(candidates, suggestThreshold);
     const confidence = candidates[0]?.matchScore ?? 0;
 
     return {
@@ -190,7 +196,9 @@ export class CrewSuggestionService {
       confidence,
       taskSummary: taskSummaryFromMessage(gate.task),
       candidates,
-      reasons: shouldSuggest ? ['matched-specialists'] : ['below-threshold'],
+      reasons: shouldSuggest
+        ? ['matched-specialists', ...(rosterFirst ? ['workforce-intent'] : [])]
+        : [rosterFirst ? 'below-threshold-workforce' : 'below-threshold'],
     };
   }
 

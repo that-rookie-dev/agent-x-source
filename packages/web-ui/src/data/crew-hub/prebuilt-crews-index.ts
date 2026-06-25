@@ -13,6 +13,7 @@ export type PrebuiltCrewData = {
   expertise: string[];
   traits: string[];
   tools?: string[];
+  honorsDoctorate?: boolean;
 };
 
 export type CategoryIconId = 'code' | 'web' | 'layers' | 'cloud' | 'verified' | 'devices' | 'analytics' | 'autoawesome' | 'bug_report' | 'database' | 'videogame' | 'lan' | 'palette' | 'trending' | 'campaign' | 'ads' | 'groups' | 'gavel' | 'work' | 'balance' | 'voice' | 'support' | 'shipping' | 'apartment' | 'policy' | 'volunteer' | 'restaurant' | 'factory' | 'construction' | 'landmark' | 'hospital' | 'cart' | 'flight' | 'energy' | 'translate' | 'news' | 'sports' | 'eco' | 'storefront' | 'maritime' | 'school' | 'favorite' | 'home' | 'brush' | 'local_hospital' | 'science' | 'biotech' | 'rocket_launch' | 'sailing' | 'agriculture' | 'pets' | 'museum' | 'police' | 'forensic' | 'volunteer_activism' | 'menu_book';
@@ -1103,5 +1104,60 @@ export const PREBUILT_CATEGORY_INDEX: PrebuiltCategoryIndexEntry[] = [
     "id": "diplomatic-courier-logistics",
     "label": "International Trade & Customs Brokerage",
     "iconId": "shipping"
+  },
+  {
+    "id": "aws-certification-prep",
+    "label": "AWS Certification Prep",
+    "iconId": "cloud"
+  },
+  {
+    "id": "azure-certification-prep",
+    "label": "Microsoft Azure Certification Prep",
+    "iconId": "cloud"
+  },
+  {
+    "id": "gcp-certification-prep",
+    "label": "Google Cloud Certification Prep",
+    "iconId": "cloud"
+  },
+  {
+    "id": "multicloud-vendor-certification-prep",
+    "label": "Multicloud & Vendor Certification Prep",
+    "iconId": "cloud"
+  },
+  {
+    "id": "security-certification-prep",
+    "label": "Cybersecurity Certification Prep",
+    "iconId": "verified"
+  },
+  {
+    "id": "networking-certification-prep",
+    "label": "Networking Certification Prep",
+    "iconId": "lan"
+  },
+  {
+    "id": "pm-agile-certification-prep",
+    "label": "Project Management & Agile Certification Prep",
+    "iconId": "groups"
+  },
+  {
+    "id": "finance-accounting-certification-prep",
+    "label": "Finance & Accounting Certification Prep",
+    "iconId": "balance"
+  },
+  {
+    "id": "data-analytics-certification-prep",
+    "label": "Data & Analytics Certification Prep",
+    "iconId": "analytics"
+  },
+  {
+    "id": "hr-legal-professional-certification-prep",
+    "label": "HR, Legal & Professional Certification Prep",
+    "iconId": "gavel"
+  },
+  {
+    "id": "medical-nursing-certification-prep",
+    "label": "Medical & Nursing Board Certification Prep",
+    "iconId": "local_hospital"
   }
 ];

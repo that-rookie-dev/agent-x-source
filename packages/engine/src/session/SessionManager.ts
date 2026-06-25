@@ -3,7 +3,7 @@ import type { StorageAdapter } from '@agentx/shared';
 import { generateSessionId, generateId } from '@agentx/shared';
 import { SessionStore } from './SessionStore.js';
 import { TokenTracker } from './TokenTracker.js';
-import { normalizeSessionUpdates, EMPTY_SESSION_KPIS } from './session-field-utils.js';
+import { normalizeSessionUpdates, EMPTY_SESSION_KPIS, hostCrewSnapshotFromInput, hostCrewSnapshotPatch } from './session-field-utils.js';
 import type { SessionListKpis } from './session-field-utils.js';
 
 export interface SessionManagerOptions {
@@ -62,6 +62,12 @@ export class SessionManager {
         tokenAvailable: session.tokenAvailable,
         contextKind: session.contextKind ?? 'agent_x',
         hostCrewId: session.hostCrewId ?? null,
+        hostCrewName: session.hostCrewName ?? null,
+        hostCrewCallsign: session.hostCrewCallsign ?? null,
+        hostCrewTitle: session.hostCrewTitle ?? null,
+        hostCrewColor: session.hostCrewColor ?? null,
+        hostCrewCatalogId: session.hostCrewCatalogId ?? null,
+        hostCrewCategoryId: session.hostCrewCategoryId ?? null,
       });
     } else {
       this.getSessionStore().createSession({
@@ -78,6 +84,12 @@ export class SessionManager {
         hyperdrive: session.hyperdrive,
         contextKind: session.contextKind ?? 'agent_x',
         hostCrewId: session.hostCrewId ?? null,
+        hostCrewName: session.hostCrewName ?? null,
+        hostCrewCallsign: session.hostCrewCallsign ?? null,
+        hostCrewTitle: session.hostCrewTitle ?? null,
+        hostCrewColor: session.hostCrewColor ?? null,
+        hostCrewCatalogId: session.hostCrewCatalogId ?? null,
+        hostCrewCategoryId: session.hostCrewCategoryId ?? null,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
       });
@@ -130,10 +142,27 @@ export class SessionManager {
     providerId: string,
     modelId: string,
     scopePath: string,
-    crew: { id: string; name: string; callsign: string; title?: string },
+    crew: {
+      id: string;
+      name: string;
+      callsign: string;
+      title?: string;
+      color?: string;
+      catalogId?: string;
+      categoryId?: string;
+      expertise?: string[];
+      requiresMedicalDisclaimer?: boolean;
+      honorsDoctorate?: boolean;
+    },
   ): Session {
     const existing = this.findCrewPrivateSession(crew.id);
-    if (existing) return existing;
+    if (existing) {
+      const patch = hostCrewSnapshotPatch(existing, crew);
+      if (Object.keys(patch).length > 0) {
+        this.patchSession(existing.id, patch as Partial<Session>);
+      }
+      return { ...existing, ...patch };
+    }
 
     const session = this.buildSessionRecord(
       providerId,
@@ -146,8 +175,16 @@ export class SessionManager {
     session.contextKind = 'crew_private';
     session.hostCrewId = crew.id;
     session.mode = 'plan';
+    Object.assign(session, hostCrewSnapshotFromInput(crew));
     this.createSessionRecord(session);
     return session;
+  }
+
+  patchSession(sessionId: string, updates: Partial<Session>): void {
+    this.updateSessionRecord(sessionId, updates);
+    if (this.activeSession?.id === sessionId) {
+      this.activeSession = { ...this.activeSession, ...updates, updatedAt: new Date().toISOString() };
+    }
   }
 
   /** Register a child session without switching the active parent session. */

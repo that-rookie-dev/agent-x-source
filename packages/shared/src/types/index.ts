@@ -18,3 +18,5 @@ export * from './session-events.js';
 export * from './session-context.js';
 export * from './questionnaire.js';
 export * from './turn-feedback.js';
+export * from './crew-roster-picker.js';
+export * from './session-resume.js';

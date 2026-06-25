@@ -6,9 +6,12 @@ import {
   catalogEntryToSummary,
   getCatalogSeedStatus,
   healDatabaseStore,
+  type CrewCatalogStore,
 } from '@agentx/engine';
 import type { CrewMatchCandidate, CrewSuggestionEvaluation, CatalogEntry } from '@agentx/shared';
+import { explicitCrewRequest } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
+import { mapPrimaryCrewId } from './crew-roster-picker-api.js';
 
 function getStore(eng: ReturnType<typeof getEngine>): unknown {
   return (eng.sessionManager as unknown as { store?: unknown }).store;
@@ -21,11 +24,6 @@ async function ensureCatalogOperational(eng: ReturnType<typeof getEngine>): Prom
 
 function hasAtMention(text: string): boolean {
   return /(?<!\w)@([\w][\w.-]*)/.test(text);
-}
-
-function explicitCrewRequest(text: string): boolean {
-  return /\b(involve|bring in|suggest|recommend|get)\s+(the\s+)?(crew|specialist|team)\b/i.test(text)
-    || /\bwho should (help|handle|work on)\b/i.test(text);
 }
 
 function getCatalogStore(eng: ReturnType<typeof getEngine>) {
@@ -194,6 +192,7 @@ export async function postCrewSuggestionResolve(req: Request, res: Response): Pr
     });
 
     let deployedCrewIds: string[] = [];
+    let deployedPrimaryCrewId: string | undefined;
     if (action === 'deploy' && selectedCandidateIds?.length && candidates?.length) {
       const selected = candidates.filter((c) => selectedCandidateIds.includes(c.id));
       if (!eng.agent) getOrCreateAgent();
@@ -205,6 +204,8 @@ export async function postCrewSuggestionResolve(req: Request, res: Response): Pr
           selected,
           catalogStore as Parameters<typeof recruitCandidatesForMission>[3],
         );
+        const topCandidateId = [...selected].sort((a, b) => b.matchScore - a.matchScore)[0]?.id;
+        deployedPrimaryCrewId = mapPrimaryCrewId(topCandidateId, selected, deployedCrewIds);
       }
       eng.crewManager.refresh();
       if (deployedCrewIds.length === 0) {
@@ -219,7 +220,7 @@ export async function postCrewSuggestionResolve(req: Request, res: Response): Pr
       }
     }
 
-    res.json({ ok: true, preferences: prefs, deployedCrewIds });
+    res.json({ ok: true, preferences: prefs, deployedCrewIds, deployedPrimaryCrewId });
   } catch (e: unknown) {
     getLogger().error('CREW_SUGGESTION_RESOLVE', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'resolve-failed' });
@@ -283,7 +284,7 @@ export async function getCatalogSeedStatusHandler(_req: Request, res: Response):
       return;
     }
     const ftsTable = eng.pgPool ? 'crew_catalog.search_tsv' : 'crew_catalog_fts';
-    const snapshot = await getCatalogSeedStatus(catalogStore, ftsTable);
+    const snapshot = await getCatalogSeedStatus(catalogStore as CrewCatalogStore, ftsTable);
     res.json(snapshot);
   } catch (e: unknown) {
     getLogger().error('CREW_CATALOG_SEED_STATUS', e instanceof Error ? e : String(e));

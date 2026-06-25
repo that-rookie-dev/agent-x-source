@@ -6,3 +6,4 @@ export * from './theme.js';
 export * from './errors.js';
 export * from './crew-domains.js';
 export * from './medical-hub.js';
+export * from './doctorate-honorific.js';
