@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeAssistantMarkdown, repairMarkdownTables } from '../src/chat/markdown-normalize';
+import { normalizeAssistantMarkdown, repairMarkdownTables, isPlainTextMarkdown } from '../src/chat/markdown-normalize';
 import { expandCollapsedTreeLine, repairTreeDiagrams } from '../src/chat/tree-diagram';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -120,5 +120,23 @@ On first platform startup: ├── Detect if Vosk + Piper are installed`;
     const repaired = repairTreeDiagrams(collapsed);
     expect(repaired).toContain('```tree');
     expect(repaired.split('\n').filter((l) => l.includes('├──')).length).toBeGreaterThan(2);
+  });
+});
+
+describe('isPlainTextMarkdown', () => {
+  it('returns true for short conversational prose', () => {
+    expect(isPlainTextMarkdown('Black holes are regions where gravity is so strong that nothing can escape.')).toBe(true);
+    expect(isPlainTextMarkdown('Sure — I can help with that.')).toBe(true);
+  });
+
+  it('returns false for tables, code fences, lists, and headings', () => {
+    expect(isPlainTextMarkdown('| A | B |\n|---|---|\n| 1 | 2 |')).toBe(false);
+    expect(isPlainTextMarkdown('```js\nconst x = 1;\n```')).toBe(false);
+    expect(isPlainTextMarkdown('- one\n- two')).toBe(false);
+    expect(isPlainTextMarkdown('## Section title')).toBe(false);
+  });
+
+  it('returns false for multi-section messages', () => {
+    expect(isPlainTextMarkdown('First part.\n\n---\n\nSecond part.')).toBe(false);
   });
 });

@@ -41,6 +41,17 @@ if (!gotSingleLock) {
   });
 }
 
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+  dialog.showErrorBox('Unexpected Error', `An unexpected error occurred.\n\n${err.message}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error('Unhandled rejection:', msg);
+  dialog.showErrorBox('Unexpected Error', `An unexpected error occurred.\n\n${msg}`);
+});
+
 // ==================== Utilities ====================
 
 function parseVersion(v: string): number[] {
@@ -424,7 +435,9 @@ app.whenReady().then(async () => {
       }
     }, 2000);
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.error('Failed to start:', err);
+    dialog.showErrorBox('Startup Error', `Agent-X failed to start.\n\n${msg}`);
     app.quit();
   }
 });

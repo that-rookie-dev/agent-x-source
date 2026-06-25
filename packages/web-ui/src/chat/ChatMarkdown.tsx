@@ -7,7 +7,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { colors } from '../theme';
 import { StyledTableWrapper, StyledUl, StyledOl, StyledLi } from '../components/StructuredViews';
-import { splitMarkdownSections } from './markdown-normalize';
+import { splitMarkdownSections, isPlainTextMarkdown, PLAIN_TEXT_BUBBLE_MAX_WIDTH } from './markdown-normalize';
 import { expandCollapsedTreeLine, isTreeDiagramContent } from './tree-diagram';
 import { isHorizontalPipelineContent, isPipelineDiagramContent } from './pipeline-diagram';
 import { FlowDiagramBlock } from './FlowDiagramBlock';
@@ -256,7 +256,7 @@ function createMarkdownComponents(isFirstSection: boolean) {
   };
 }
 
-function MarkdownSection({ content, index }: { content: string; index: number }) {
+function MarkdownSection({ content, index, compact }: { content: string; index: number; compact?: boolean }) {
   const components = useMemo(() => createMarkdownComponents(index === 0), [index]);
   return (
     <Box sx={{
@@ -265,6 +265,13 @@ function MarkdownSection({ content, index }: { content: string; index: number })
       borderRadius: 1.5,
       px: 2,
       py: 1.5,
+      ...(compact ? {
+        display: 'inline-block',
+        width: 'fit-content',
+        maxWidth: PLAIN_TEXT_BUBBLE_MAX_WIDTH,
+        verticalAlign: 'top',
+        wordBreak: 'break-word',
+      } : {}),
       ...MARKDOWN_BASE_SX,
     }}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{content}</ReactMarkdown>
@@ -290,12 +297,13 @@ export function UserMentionText({ content }: { content: string }) {
 
 export function CrewAwareMarkdown({ content }: { content: string }) {
   const sections = useMemo(() => splitMarkdownSections(content), [content]);
+  const compact = useMemo(() => isPlainTextMarkdown(content), [content]);
 
   if (sections.length === 0) return null;
 
   if (sections.length === 1) {
     return (
-      <MarkdownSection content={sections[0]!} index={0} />
+      <MarkdownSection content={sections[0]!} index={0} compact={compact} />
     );
   }
 
