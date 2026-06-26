@@ -243,15 +243,14 @@ export function createAiSdkTools(
              activeOutputCalls.delete(callId);
              onToolExecuted?.(toolDef.id, result.success, result.output, elapsed, args as Record<string, unknown>);
               emit({ 
-               type: 'tool_complete', 
-               tool: toolDef.id, 
-               result: { success: result.success, output: result.output }, 
-               metadata: result.metadata,
-               elapsed, 
-               args: args as Record<string, unknown>, 
-               callId,
-               message: result.success ? `✅ ${toolDef.name} completed in ${elapsed}ms` : `❌ ${toolDef.name} failed`
-             });
+                type: 'tool_complete', 
+                tool: toolDef.id, 
+                result, 
+                elapsed, 
+                args: args as Record<string, unknown>, 
+                callId,
+                message: result.success ? `✅ ${toolDef.name} completed in ${elapsed}ms` : `❌ ${toolDef.name} failed`
+              });
 
                if (!result.success) {
                  if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
@@ -270,16 +269,15 @@ export function createAiSdkTools(
                        const retryResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
                        const retryElapsed = Date.now() - startTime;
                        onToolExecuted?.(toolDef.id, retryResult.success, retryResult.output, retryElapsed, args as Record<string, unknown>);
-                       emit({
-                         type: 'tool_complete',
-                         tool: toolDef.id,
-                         result: { success: retryResult.success, output: retryResult.output },
-                         metadata: retryResult.metadata,
-                         elapsed: retryElapsed,
-                         args: args as Record<string, unknown>,
-                         callId,
-                         message: retryResult.success ? `✅ ${toolDef.name} completed after mode switch` : `❌ ${toolDef.name} still failed`,
-                       });
+                        emit({
+                          type: 'tool_complete',
+                          tool: toolDef.id,
+                          result: retryResult,
+                          elapsed: retryElapsed,
+                          args: args as Record<string, unknown>,
+                          callId,
+                          message: retryResult.success ? `✅ ${toolDef.name} completed after mode switch` : `❌ ${toolDef.name} still failed`,
+                        });
                        if (retryResult.success) return retryResult.output;
                        return `[TOOL ERROR: ${retryResult.error || 'Unknown'}] ${retryResult.output}`;
                      }
