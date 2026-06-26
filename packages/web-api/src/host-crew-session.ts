@@ -227,6 +227,28 @@ function finalizePrivateHostCrew(session: Session, crew: Crew, hints?: CrewHonor
   });
 }
 
+function ephemeralCrewFromCatalogEntry(entry: CatalogEntry): Crew {
+  const now = new Date().toISOString();
+  return {
+    id: entry.id,
+    name: entry.name,
+    title: entry.title,
+    callsign: entry.callsign,
+    systemPrompt: entry.systemPrompt,
+    description: entry.description,
+    emotion: entry.tone as CrewEmotion | undefined,
+    expertise: entry.expertise,
+    traits: entry.traits,
+    tools: entry.tools,
+    source: 'hub',
+    catalogId: entry.id,
+    isDefault: false,
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export function recruitCrewFromCatalogEntry(crewManager: CrewManagerLike, entry: CatalogEntry): Crew {
   const existing = crewManager.list().find((c) =>
     c.id === entry.id || crewCallsignsMatch(c.callsign, entry.callsign));
@@ -277,7 +299,7 @@ export function crewFromSessionSnapshot(session: Session): Crew | undefined {
   };
 }
 
-/** Sync resolve for createAgent — roster, sqlite catalog recruit, then session snapshot. */
+/** Sync resolve for createAgent — roster, sqlite catalog snapshot, then session fields (no roster recruit). */
 export function resolveCrewPrivateHostForAgent(
   crewManager: CrewManagerLike,
   session: Session,
@@ -301,31 +323,25 @@ export function resolveCrewPrivateHostForAgent(
   if (catalogId && store) {
     const entry = getCatalogEntrySync(store, catalogId);
     if (entry) {
-      try {
-        return recruitCrewFromCatalogEntry(crewManager, entry);
-      } catch (e) {
-        getLogger().warn(
-          'CREW_PRIVATE',
-          `Catalog recruit failed for ${catalogId}: ${e instanceof Error ? e.message : e}`,
-        );
-        crew = crewManager.list().find((c) =>
-          c.id === entry.id || crewCallsignsMatch(c.callsign, entry.callsign));
-        if (crew) return finalizePrivateHostCrew(session, crew, catalogEntryToCrewHints(entry));
-      }
+      return finalizePrivateHostCrew(
+        session,
+        ephemeralCrewFromCatalogEntry(entry),
+        catalogEntryToCrewHints(entry),
+      );
     }
   }
 
   return crewFromSessionSnapshot(session);
 }
 
-/** Async resolve for session restore — includes PG catalog lookup + auto-recruit. */
-export async function ensureCrewPrivateHostOnRoster(
+/** Async resolve for session restore — roster, catalog snapshot, or session fields (no roster recruit). */
+export async function resolveCrewPrivateHostForSession(
   crewManager: CrewManagerLike,
   session: Session,
   store?: unknown,
 ): Promise<Crew | undefined> {
   const sync = resolveCrewPrivateHostForAgent(crewManager, session, store);
-  if (sync && crewManager.get(sync.id)) return sync;
+  if (sync) return sync;
 
   const catalogId = catalogIdForSession(session);
   if (catalogId && store) {
@@ -334,16 +350,23 @@ export async function ensureCrewPrivateHostOnRoster(
       try {
         const entry = await catalogStore.getCatalogEntry(catalogId);
         if (entry) {
-          return recruitCrewFromCatalogEntry(crewManager, entry);
+          return finalizePrivateHostCrew(
+            session,
+            ephemeralCrewFromCatalogEntry(entry),
+            catalogEntryToCrewHints(entry),
+          );
         }
       } catch (e) {
         getLogger().warn(
           'CREW_PRIVATE',
-          `Async catalog recruit failed for ${catalogId}: ${e instanceof Error ? e.message : e}`,
+          `Async catalog resolve failed for ${catalogId}: ${e instanceof Error ? e.message : e}`,
         );
       }
     }
   }
 
-  return sync ?? crewFromSessionSnapshot(session);
+  return crewFromSessionSnapshot(session);
 }
+
+/** @deprecated Use resolveCrewPrivateHostForSession — private chat no longer recruits to roster. */
+export const ensureCrewPrivateHostOnRoster = resolveCrewPrivateHostForSession;

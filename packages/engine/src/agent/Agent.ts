@@ -38,6 +38,7 @@ import { setCrewHubSearcher } from '../tools/builtin/search-crew-hub.js';
 import { buildCrewRosterHintBlock } from '../crew/crew-roster-hint.js';
 import { createCrewKeywordExpander } from '../crew/crew-keyword-expander.js';
 import { getCrewSuggestionService } from '../crew/get-crew-store.js';
+import { ensureCrewMembersOnRoster, type CrewCatalogRecruitStore } from '../crew/crew-mission-deploy.js';
 import { buildCrewSuggestionSearchQuery } from './crew-auto-compose.js';
 import { scoreMatchCandidates, type RawMatchRow } from '../crew/CrewMatchService.js';
 import { setToolRegistryInstance } from '../commands/builtin/tools.js';
@@ -3465,9 +3466,22 @@ Only include specialists that are actually needed for this task.`;
   ): Promise<CrewMissionResult> {
     const startTime = options?.startTime ?? Date.now();
 
+    let missionMembers = members;
+    if (this.options.promptProfile !== 'crew_private') {
+      const store = (this.sessionManager as unknown as { store?: unknown })?.store;
+      const catalogStore = (store as { getCrewCatalogStore?: () => CrewCatalogRecruitStore | null })
+        ?.getCrewCatalogStore?.() ?? null;
+      missionMembers = await ensureCrewMembersOnRoster(
+        this.secretSauce.crew,
+        members,
+        catalogStore,
+        this,
+      );
+    }
+
     if (options?.emitLoading !== false) {
       this.emit({ type: 'loading_start', stage: 'crew_mission' });
-      for (const m of members) {
+      for (const m of missionMembers) {
         this.emit({
           type: 'intent_detected',
           intent: `crew:${m.crew.callsign}`,
@@ -3478,10 +3492,10 @@ Only include specialists that are actually needed for this task.`;
     }
 
     const mission = await this.crewMissionOrchestrator.runMission(
-      this.buildCrewMissionOptions(members, task, options?.extraContext),
+      this.buildCrewMissionOptions(missionMembers, task, options?.extraContext),
     );
 
-    for (const m of members) {
+    for (const m of missionMembers) {
       this.contextTracker.getHandler().registerCrew({
         crewId: m.crew.id,
         name: m.crew.name,
@@ -3490,7 +3504,7 @@ Only include specialists that are actually needed for this task.`;
       });
     }
 
-    this.publishCrewMissionResponses(mission, members, startTime);
+    this.publishCrewMissionResponses(mission, missionMembers, startTime);
     return mission;
   }
 

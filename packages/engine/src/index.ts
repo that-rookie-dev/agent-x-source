@@ -102,7 +102,12 @@ export {
 } from './db/database-healer.js';
 export type { DatabaseHealResult } from './db/database-healer.js';
 export { repairSqliteFullSchema } from './session/SessionStore.js';
-export { recruitCandidatesForMission } from './crew/crew-mission-deploy.js';
+export {
+  recruitCandidatesForMission,
+  ensureHubCrewOnRoster,
+  ensureCrewMembersOnRoster,
+  type CrewCatalogRecruitStore,
+} from './crew/crew-mission-deploy.js';
 export { CrewMissionOrchestrator } from './agent/CrewMissionOrchestrator.js';
 export { CrewWorker } from './agent/CrewWorker.js';
 export type { CrewWorkerResult } from './agent/CrewWorker.js';

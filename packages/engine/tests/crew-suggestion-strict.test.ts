@@ -71,7 +71,7 @@ describe('strict crew suggestion — blackholes', () => {
       message: 'I need to understand anglerfish bioluminescence. Who can help me?',
       sessionId: 'test-anglerfish',
       priorUserMessages: [],
-      expandKeywords: async () => ['genetics', 'molecular biology', 'biotechnology'],
+      expandKeywords: async () => ['genetics', 'biology'],
     });
 
     expect(evaluation.candidates.length).toBeGreaterThan(0);

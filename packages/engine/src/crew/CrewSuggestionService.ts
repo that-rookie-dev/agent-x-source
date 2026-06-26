@@ -125,6 +125,7 @@ export class CrewSuggestionService {
           matchTokens: expanded,
           recruited,
           sessionCounts,
+          minScore: 0.15,
         });
         if (candidates.length > 0) matchReason = 'llm-keyword-match';
       }
@@ -176,10 +177,10 @@ export class CrewSuggestionService {
       };
     }
 
-    const shouldSuggest = shouldShowSuggestion(
-      candidates,
-      CREW_MATCH_THRESHOLDS.minSuggestConfidence,
-    );
+    const suggestThreshold = matchReason === 'llm-keyword-match'
+      ? 0.15
+      : CREW_MATCH_THRESHOLDS.minSuggestConfidence;
+    const shouldSuggest = shouldShowSuggestion(candidates, suggestThreshold);
     const confidence = candidates[0]?.matchScore ?? 0;
 
     return {
@@ -200,6 +201,7 @@ export class CrewSuggestionService {
     matchTokens: string[];
     recruited: Set<string>;
     sessionCounts: Map<string, number>;
+    minScore?: number;
   }): Promise<CrewMatchCandidate[]> {
     if (!input.searchQuery.trim() || input.matchTokens.length === 0) return [];
 
@@ -261,7 +263,10 @@ export class CrewSuggestionService {
     }
 
     const substantive = filterSubstantiveMatches(rows, input.matchTokens);
-    return scoreMatchCandidates(input.task, substantive, { sessionMessageCounts: input.sessionCounts });
+    return scoreMatchCandidates(input.task, substantive, {
+      sessionMessageCounts: input.sessionCounts,
+      minCandidateScore: input.minScore,
+    });
   }
 
   async resolve(input: {

@@ -46,7 +46,7 @@ import { persistCrewRosterPickerOffer, updateCrewRosterPickerStatus } from './cr
 import { handleClarificationRespond } from './clarification-resume.js';
 import { loadSessionResumeState } from './session-resume-state.js';
 import { postCrewChatSession } from './crew-chat.js';
-import { resolveHostCrewDisplay, ensureCrewPrivateHostOnRoster, syncHostCrewHonorificToSession } from './host-crew-session.js';
+import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewHonorificToSession } from './host-crew-session.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -2754,7 +2754,7 @@ app.post('/api/sessions/:id/restore', async (req, res) => {
     }
     if (isCrewPrivateSessionRecord(session) && session.hostCrewId) {
       const store = (eng.sessionManager as unknown as { store?: unknown }).store;
-      const crew = await ensureCrewPrivateHostOnRoster(eng.crewManager, session, store);
+      const crew = await resolveCrewPrivateHostForSession(eng.crewManager, session, store);
       if (crew) {
         const patch = syncHostCrewHonorificToSession(session, crew);
         if (patch) {
