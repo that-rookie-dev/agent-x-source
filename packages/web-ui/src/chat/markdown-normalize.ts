@@ -1,5 +1,8 @@
-import { repairTreeDiagrams, repairPlainTreeFences } from './tree-diagram.js';
-import { repairPipelineDiagrams, repairPlainPipelineFences } from './pipeline-diagram.js';
+import { repairTreeDiagrams, repairPlainTreeFences, isTreeDiagramContent } from './tree-diagram.js';
+import { repairPipelineDiagrams, repairPlainPipelineFences, isPipelineDiagramContent, isHorizontalPipelineContent } from './pipeline-diagram.js';
+
+/** Max width for assistant plain-text-only bubbles (share of chat column). */
+export const PLAIN_TEXT_BUBBLE_MAX_WIDTH = '70%';
 
 const EMOJI_PREFIX = /^[\p{Extended_Pictographic}\uFE0F\u200D\s]+/u;
 
@@ -190,4 +193,41 @@ export function splitMarkdownSections(content: string): string[] {
   const byRule = normalized.split(/\n---\n/).map((s) => s.trim()).filter(Boolean);
   if (byRule.length > 1) return byRule;
   return normalized ? [normalized] : [];
+}
+
+/** True when assistant content is prose only — no tables, code blocks, lists, headings, or diagram fences. */
+export function isPlainTextMarkdown(content: string): boolean {
+  if (!content?.trim()) return false;
+
+  const normalized = normalizeAssistantMarkdown(content);
+  const sections = normalized.split(/\n---\n/).map((s) => s.trim()).filter(Boolean);
+  if (sections.length > 1) return false;
+
+  const text = sections[0] ?? normalized;
+  if (isPipelineDiagramContent(text) || isHorizontalPipelineContent(text) || isTreeDiagramContent(text)) {
+    return false;
+  }
+
+  const lines = text.split('\n');
+  let inFence = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith('```')) {
+      inFence = !inFence;
+      return false;
+    }
+    if (inFence) return false;
+
+    if (isTableRow(trimmed) || isSeparatorRow(trimmed)) return false;
+    if (/^#{1,6}\s/.test(trimmed)) return false;
+    if (/^>\s?/.test(trimmed)) return false;
+    if (/^[-*+]\s+/.test(trimmed)) return false;
+    if (/^\d+\.\s+/.test(trimmed)) return false;
+    if (/^_{4,}$/.test(trimmed) || /^-{4,}$/.test(trimmed) || /^={4,}$/.test(trimmed)) return false;
+  }
+
+  return true;
 }

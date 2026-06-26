@@ -45,7 +45,8 @@ describe('evaluateCrewDelegation', () => {
       complete,
     );
     expect(result.allowed).toBe(false);
-    expect(result.reason).toMatch(/system info/i);
+    expect(result.reason).toMatch(/Agent-X should respond directly|system info/i);
+    expect(complete).not.toHaveBeenCalled();
   });
 
   it('allows when guard LLM returns allow for clear specialist fit', async () => {
@@ -81,5 +82,26 @@ describe('evaluateCrewDelegation', () => {
       vi.fn(),
     );
     expect(result.allowed).toBe(false);
+  });
+
+  it('denies travel planner for JWST news before calling LLM', async () => {
+    const jonas = mockCrew({
+      id: 'jonas-travel',
+      name: 'Jonas Park',
+      callsign: 'jonas_park',
+      systemPrompt: 'Adventure Travel Planner.',
+      expertise: ['travel', 'tourism'],
+    });
+    const complete = vi.fn();
+    const result = await evaluateCrewDelegation(
+      {
+        userMessage: 'what is the latest new about James Webb Telescope?',
+        task: 'Summarize latest James Webb Telescope news',
+        members: [mockMember(jonas)],
+      },
+      complete,
+    );
+    expect(result.allowed).toBe(false);
+    expect(complete).not.toHaveBeenCalled();
   });
 });

@@ -18,19 +18,21 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { settings, factoryReset, setAuthToken, type DbStatus } from '../../api';
 import { useApp } from '../../store/AppContext';
+import { crewTheme } from '../../styles/crew-theme';
 import { colors } from '../../theme';
 
 const cardSx = {
-  bgcolor: colors.bg.secondary,
-  border: `1px solid ${colors.border.default}`,
-  borderRadius: 1.5,
+  position: 'relative' as const,
+  bgcolor: crewTheme.bg.inset,
+  border: `1px solid ${crewTheme.border.default}`,
+  borderRadius: '8px',
   p: 3,
 };
 
 const dangerCardSx = {
   ...cardSx,
-  border: `1px solid ${colors.accent.red}20`,
-  bgcolor: `${colors.accent.red}05`,
+  border: `1px solid ${crewTheme.accent.alert}33`,
+  bgcolor: `${crewTheme.accent.alert}08`,
 };
 
 export function PersistenceTab() {

@@ -236,6 +236,7 @@ export const DEFAULT_TOOL_DISPLAY: Record<string, ToolDisplaySpec> = {
   code_definitions: { icon: '📍', label: 'Definitions', color: '#4FC3F7' },
   code_symbols: { icon: '🔣', label: 'Symbols', color: '#4FC3F7' },
   web_search: { icon: '🌐', label: 'Web search', color: '#64B5F6' },
+  deep_web_search: { icon: '🔍', label: 'Deep search', color: '#4FC3F7' },
   web_scrape: { icon: '🕸️', label: 'Web scrape', color: '#64B5F6' },
   web_fetch: { icon: '🌐', label: 'Web fetch', color: '#64B5F6' },
   http_get: { icon: '📡', label: 'HTTP GET', color: '#64B5F6' },

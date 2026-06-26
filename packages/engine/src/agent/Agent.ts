@@ -14,7 +14,7 @@ import type {
   ClarificationSource,
   QuestionnaireRecord,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, buildTextQuestionnaire } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { Mutex } from '../concurrency/Mutex.js';
 import { join, resolve, normalize } from 'node:path';
@@ -36,7 +36,9 @@ import { setSubAgentManagerInstance } from '../tools/builtin/subagent.js';
 import { setCrewDelegator } from '../tools/builtin/delegate-to-crew.js';
 import { setCrewHubSearcher } from '../tools/builtin/search-crew-hub.js';
 import { buildCrewRosterHintBlock } from '../crew/crew-roster-hint.js';
+import { createCrewKeywordExpander } from '../crew/crew-keyword-expander.js';
 import { getCrewSuggestionService } from '../crew/get-crew-store.js';
+import { ensureCrewMembersOnRoster, type CrewCatalogRecruitStore } from '../crew/crew-mission-deploy.js';
 import { buildCrewSuggestionSearchQuery } from './crew-auto-compose.js';
 import { scoreMatchCandidates, type RawMatchRow } from '../crew/CrewMatchService.js';
 import { setToolRegistryInstance } from '../commands/builtin/tools.js';
@@ -81,7 +83,9 @@ import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 import { CrewOrchestrator, buildCrewPrivateFastReplyPrompt, type CrewMember } from './CrewOrchestrator.js';
 import {
   assessCrewNeed,
-  buildTaskContextForCrewRouting,
+  buildRoutingTaskForActiveCrew,
+  crewDelegationMatchesTask,
+  isGeneralKnowledgeQuery,
   shouldBypassActiveCrewRouting,
 } from './crew-auto-compose.js';
 import { CrewMissionOrchestrator, type CrewMissionOptions, type CrewMissionResult } from './CrewMissionOrchestrator.js';
@@ -116,6 +120,14 @@ import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
 import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
 import type { PartPersistFn } from './AiSdkStreamHandler.js';
 import { streamText, stepCountIs } from 'ai';
+import {
+  buildWebSearchTurnInstruction,
+  isWebSearchAvailableForChat,
+  resolveWebSearchTurnPolicyAsync,
+  createWebSearchIntentClassifier,
+  type WebSearchTurnPolicy,
+} from '../search/web-search-policy.js';
+import { isPermissionExemptTool } from '../tools/permissions/exempt-tools.js';
 import { SessionRunner } from '../session/SessionRunner.js';
 import { BUILTIN_AGENTS } from './agent-configs.js';
 // IntentClassifier import removed — DecisionEngine (heuristic) handles all routing
@@ -165,6 +177,8 @@ export class Agent {
   private _abortSignalController: AbortController | null = null;
   private pendingInstruction: string | null = null;
   private pendingDelegateCrewIds: string[] | null = null;
+  private turnWebSearchPolicy: WebSearchTurnPolicy = 'off';
+  private forcedWebSearchToolName: 'deep_web_search' | 'web_search' | null = null;
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
   private todoManager: TodoManager;
@@ -612,15 +626,30 @@ export class Agent {
       if (isMissionInProgress(this.sessionId)) {
         return { success: false, output: 'A crew mission is already running in this session.' };
       }
-      const members = this.crewOrchestrator.getMembers();
+      const members = this.getActiveCrewMembers();
       const member = members.find((m) =>
         m.crew.name.toLowerCase() === crewName.toLowerCase() ||
         m.crew.callsign.toLowerCase() === crewName.toLowerCase()
       );
       if (!member) {
+        const enabled = this.getActiveCrewMembers();
         return {
           success: false,
-          output: `Crew "${crewName}" not found. Available: ${members.map(m => `${m.crew.name} (@${m.crew.callsign})`).join(', ')}`,
+          output: enabled.length === 0
+            ? `Crew "${crewName}" is not enabled in this session. Recruit specialists via crew suggestions or @mention after adding them to the session roster.`
+            : `Crew "${crewName}" not found among session-enabled crew. Available: ${enabled.map(m => `${m.crew.name} (@${m.crew.callsign})`).join(', ')}`,
+        };
+      }
+      if (isGeneralKnowledgeQuery(taskDescription)) {
+        return {
+          success: false,
+          output: 'Crew delegation blocked: this is a general information question. Answer directly as Agent-X (use web search if needed).',
+        };
+      }
+      if (!crewDelegationMatchesTask(taskDescription, [member])) {
+        return {
+          success: false,
+          output: `Crew delegation blocked: @${member.crew.callsign} does not have expertise for this task. Answer directly as Agent-X.`,
         };
       }
       const guard = await this.guardCrewDelegation(taskDescription, [member]);
@@ -835,6 +864,7 @@ export class Agent {
     // Wire permission requests to event bus
     if (this.toolExecutor) {
       this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel) => {
+        if (isPermissionExemptTool(toolId)) return 'allow_once';
         if (this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
         const requestId = randomUUID();
         return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
@@ -1363,7 +1393,7 @@ export class Agent {
     }
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1435,6 +1465,27 @@ export class Agent {
     this.pendingInstruction = options?.instruction || null;
     this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
 
+    const searchStatus = isWebSearchAvailableForChat(this.config);
+    this.turnWebSearchPolicy = await resolveWebSearchTurnPolicyAsync({
+      forceWebSearch: options?.forceWebSearch,
+      userText: cleanContent,
+      searchAvailable: searchStatus.available,
+      classifyIntent: createWebSearchIntentClassifier({
+        provider: this.provider,
+        model: this.config.provider.activeModel,
+      }),
+    });
+    this.forcedWebSearchToolName = searchStatus.forcedTool;
+    if (options?.forceWebSearch && !searchStatus.available) {
+      throw new Error('Web search is not available. Enable a provider in Settings → Tools.');
+    }
+    if (this.turnWebSearchPolicy !== 'off') {
+      const searchInstr = buildWebSearchTurnInstruction(this.turnWebSearchPolicy);
+      this.pendingInstruction = this.pendingInstruction
+        ? `${this.pendingInstruction}\n\n${searchInstr}`
+        : searchInstr;
+    }
+
     if (!options?.retry && this.options.promptProfile !== 'crew_private' && !options?.delegateCrewIds?.length) {
       try {
         const priorUserMessages = this.messages
@@ -1448,6 +1499,10 @@ export class Agent {
           store,
           priorUserMessages,
           crewSuggestionResolved: options?.crewSuggestionResolved,
+          expandKeywords: createCrewKeywordExpander({
+            provider: this.provider,
+            model: this.config.provider.activeModel,
+          }),
         });
         if (rosterHint) {
           this.pendingInstruction = this.pendingInstruction
@@ -1475,8 +1530,6 @@ export class Agent {
 
     // Record in context tracker
     this.contextTracker.record('user', cleanContent);
-
-    const turnContext = this.prepareTurnContext(cleanContent);
 
     const userMessage: Message = {
       id: generateMessageId(),
@@ -1539,6 +1592,10 @@ export class Agent {
 
     // Build a natural-language context summary for crew routing (passed to crew LLM calls)
     const classificationContext = `[Classified as "${decision.messageClass}" (confidence: ${decision.confidence}) — ${decision.reasoning}]`;
+    const priorUserMessages = this.messages
+      .filter((m) => m.role === 'user')
+      .map((m) => (typeof m.content === 'string' ? m.content : ''))
+      .slice(0, -1);
 
     // ─── RESUME CREW INTAKE after session restore (questionnaire already answered) ───
     if (options?.resumeCrewIntake && this.crewOrchestrator) {
@@ -1581,36 +1638,12 @@ export class Agent {
     // ─── USER-APPROVED CREW SUGGESTION — deploy selected specialists ───
     if (this.pendingDelegateCrewIds?.length && this.crewOrchestrator) {
       const delegateIds = this.pendingDelegateCrewIds;
-      const intakeFromPicker = options?.crewIntakeFromPicker ?? false;
-      const primaryCrewId = options?.primaryCrewId;
       this.pendingDelegateCrewIds = null;
       const members = this.crewOrchestrator.getMembers();
       const delegatedMembers = members.filter((m) =>
         delegateIds.includes(m.crew.id) && m.crew.enabled !== false,
       );
-      if (delegatedMembers.length > 0) {
-        if (intakeFromPicker) {
-          const lead = primaryCrewId
-            ? delegatedMembers.find((m) => m.crew.id === primaryCrewId) ?? delegatedMembers[0]!
-            : delegatedMembers[0]!;
-          this.activeClarificationResume = {
-            kind: 'crew_intake',
-            questionnaireMessageId: '',
-            userText: cleanContent,
-            delegateCrewIds: delegateIds,
-            primaryCrewId,
-            crewIntakeFromPicker: true,
-          };
-          const intakeAnswer = await this.waitForQuestionnaireResponse(buildTextQuestionnaire({
-            title: lead.crew.name,
-            prompt: `What specific help or support do you need from me as your ${lead.crew.title || 'specialist'}?`,
-            source: { kind: 'crew', name: lead.crew.name, callsign: lead.crew.callsign } satisfies ClarificationSource,
-          }));
-          const missionTask = intakeAnswer.trim()
-            ? `${cleanContent}\n\n[User clarified their request]\n${intakeAnswer.trim()}`
-            : cleanContent;
-          return await this.executeCrewMission(delegatedMembers, missionTask, startTime, classificationContext);
-        }
+    if (delegatedMembers.length > 0) {
         return await this.executeCrewMission(delegatedMembers, cleanContent, startTime, classificationContext);
       }
       getLogger().warn('AGENT', `Crew deploy failed: no enabled members for ids ${delegateIds.join(', ')}`);
@@ -1628,16 +1661,10 @@ export class Agent {
       const bypassActiveCrew = shouldBypassActiveCrewRouting(cleanContent, {
         crewSuggestionResolved: options?.crewSuggestionResolved,
         hasDelegateCrewIds: Boolean(options?.delegateCrewIds?.length),
-      });
+      }, priorUserMessages);
 
       if (!bypassActiveCrew) {
-        const priorUserMessages = this.messages
-          .filter((m) => m.role === 'user')
-          .map((m) => (typeof m.content === 'string' ? m.content : ''))
-          .slice(0, -1);
-        const routingTask = turnContext.needsContextMerge
-          ? turnContext.mergedTask
-          : buildTaskContextForCrewRouting(cleanContent, priorUserMessages);
+        const routingTask = buildRoutingTaskForActiveCrew(cleanContent, priorUserMessages);
         const assessment = assessCrewNeed(routingTask, activeCrew);
 
         if (assessment.shouldRoute && assessment.members.length > 0) {
@@ -1936,6 +1963,8 @@ export class Agent {
       });
       throw error;
     } finally {
+      this.turnWebSearchPolicy = 'off';
+      this.forcedWebSearchToolName = null;
       this.completeTurnTelemetry(startTime);
       this.lifecycle.forceTransition('idle');
       this.scope = null;
@@ -2108,6 +2137,14 @@ export class Agent {
             const cont = await this.waitForStepCap(stepNumber);
             if (!cont) throw new Error('STEP_CAP_STOP');
             stepCapContinuations++;
+          }
+          if (
+            stepNumber === 0
+            && this.turnWebSearchPolicy === 'forced'
+            && this.forcedWebSearchToolName
+            && tools[this.forcedWebSearchToolName]
+          ) {
+            return { toolChoice: { type: 'tool' as const, toolName: this.forcedWebSearchToolName } };
           }
           const provider = this.missionContextProvider;
           if (!provider || stepNumber === 0) return {};
@@ -3247,7 +3284,7 @@ Only include specialists that are actually needed for this task.`;
     const members = this.crewOrchestrator?.getMembers().filter((m) =>
       m.active !== false && m.crew.enabled !== false,
     ) ?? [];
-    if (this.enabledCrewSessionIds.size === 0) return members;
+    if (this.enabledCrewSessionIds.size === 0) return [];
     return members.filter((m) => this.enabledCrewSessionIds.has(m.crew.id));
   }
 
@@ -3429,9 +3466,22 @@ Only include specialists that are actually needed for this task.`;
   ): Promise<CrewMissionResult> {
     const startTime = options?.startTime ?? Date.now();
 
+    let missionMembers = members;
+    if (this.options.promptProfile !== 'crew_private') {
+      const store = (this.sessionManager as unknown as { store?: unknown })?.store;
+      const catalogStore = (store as { getCrewCatalogStore?: () => CrewCatalogRecruitStore | null })
+        ?.getCrewCatalogStore?.() ?? null;
+      missionMembers = await ensureCrewMembersOnRoster(
+        this.secretSauce.crew,
+        members,
+        catalogStore,
+        this,
+      );
+    }
+
     if (options?.emitLoading !== false) {
       this.emit({ type: 'loading_start', stage: 'crew_mission' });
-      for (const m of members) {
+      for (const m of missionMembers) {
         this.emit({
           type: 'intent_detected',
           intent: `crew:${m.crew.callsign}`,
@@ -3442,10 +3492,10 @@ Only include specialists that are actually needed for this task.`;
     }
 
     const mission = await this.crewMissionOrchestrator.runMission(
-      this.buildCrewMissionOptions(members, task, options?.extraContext),
+      this.buildCrewMissionOptions(missionMembers, task, options?.extraContext),
     );
 
-    for (const m of members) {
+    for (const m of missionMembers) {
       this.contextTracker.getHandler().registerCrew({
         crewId: m.crew.id,
         name: m.crew.name,
@@ -3454,7 +3504,7 @@ Only include specialists that are actually needed for this task.`;
       });
     }
 
-    this.publishCrewMissionResponses(mission, members, startTime);
+    this.publishCrewMissionResponses(mission, missionMembers, startTime);
     return mission;
   }
 

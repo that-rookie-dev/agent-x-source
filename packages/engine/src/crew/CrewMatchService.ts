@@ -50,10 +50,16 @@ function normalizeFtsScores(rows: RawMatchRow[]): Map<string, number> {
   const ranks = rows.map((r) => r.ftsRank);
   const max = Math.max(...ranks);
   const min = Math.min(...ranks);
-  const span = max - min || 1;
   const out = new Map<string, number>();
-  for (const row of rows) {
-    out.set(row.id, (row.ftsRank - min) / span);
+  if (max === min) {
+    for (const row of rows) {
+      out.set(row.id, 0.5);
+    }
+  } else {
+    const span = max - min;
+    for (const row of rows) {
+      out.set(row.id, (row.ftsRank - min) / span);
+    }
   }
   return out;
 }
@@ -100,7 +106,7 @@ function heuristicScore(task: string, row: RawMatchRow): { score: number; reason
 export function scoreMatchCandidates(
   task: string,
   rows: RawMatchRow[],
-  opts?: { sessionMessageCounts?: Map<string, number> },
+  opts?: { sessionMessageCounts?: Map<string, number>; minCandidateScore?: number },
 ): CrewMatchCandidate[] {
   if (rows.length === 0) return [];
 
@@ -122,7 +128,8 @@ export function scoreMatchCandidates(
       fts * 0.4 + heuristic * 0.45 + originBoost,
     );
 
-    if (matchScore < CREW_MATCH_THRESHOLDS.minCandidateScore) continue;
+    const threshold = opts?.minCandidateScore ?? CREW_MATCH_THRESHOLDS.minCandidateScore;
+    if (matchScore < threshold) continue;
 
     scored.push({
       id: row.id,

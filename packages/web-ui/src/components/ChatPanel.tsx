@@ -44,7 +44,7 @@ import {
   CheckpointDrawer,
   type PaletteAction,
 } from './ChatEnhancements';
-import { chat, sessions, todos, tools, models, crews, crewSuggestions, providers, system, sessionSettings, agent, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate } from '../api';
+import { chat, sessions, todos, tools, models, crews, crewSuggestions, providers, system, sessionSettings, agent, settings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate } from '../api';
 import { colors } from '../theme';
 import ModeEscalationModal from './ModeEscalationModal';
 import StepCapModal from './StepCapModal';
@@ -53,16 +53,24 @@ import CrewSuggestionModal from './crew/CrewSuggestionModal';
 import { CrewProfileDialog } from './crew/CrewProfileDialog';
 import type { PrebuiltCrew } from './crew/CrewHubDialog';
 import { ChatInputBar, type ChatInputBarHandle } from './ChatInputBar';
+import { WebSearchGlobeToggle, readWebSearchForcePreference, writeWebSearchForcePreference } from './WebSearchGlobeToggle';
 import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
-import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard } from '../chat/utils';
+import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard, mergeIncomingMessageParts, applyToolCompleteMetadata, reconcileStreamingMessageParts } from '../chat/utils';
 import { CHAT_INITIAL_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
 import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
 import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer, explicitCrewRequest } from '@agentx/shared/browser';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
+import {
+  upsertDeepSearchPart,
+  parseDeepSearchProgressLine,
+  parseDeepSearchProgressFromStream,
+  deepSearchBundleFromMetadata,
+  type MessagePart,
+} from '@agentx/shared/browser';
 import { MedicalDisclaimerChatSessionStrip } from './crew/MedicalDisclaimerBanner';
 import { CrewMissionCard, type CrewInterMessage } from './CrewMissionCard';
 import type { CrewWorkerState } from './CrewWorkerPanel';
@@ -146,13 +154,22 @@ interface UIMessage extends ChatMessage {
 }
 
 interface PartEntry {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search';
   id: string;
   content?: string;
   tool?: ToolCall;
   agent?: SubAgent;
   questionnaire?: import('@agentx/shared/browser').QuestionnaireRecord;
   crewRosterPicker?: import('./crew/CrewRosterPickerMessage').CrewRosterPickerRecord;
+  deepSearch?: {
+    bundle?: import('@agentx/shared/browser').DeepSearchResultBundle;
+    progress?: import('@agentx/shared/browser').DeepSearchProgress;
+    running?: boolean;
+  };
+}
+
+function upsertDeepSearchPartEntry(parts: PartEntry[], payload: Parameters<typeof upsertDeepSearchPart>[1]): PartEntry[] {
+  return upsertDeepSearchPart(parts as MessagePart[], payload) as PartEntry[];
 }
 
 interface ToolCall {
@@ -214,6 +231,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   useEffect(() => { isCrewPrivateRef.current = isCrewPrivateSession; }, [isCrewPrivateSession]);
   useEffect(() => { crewPrivateHostRef.current = crewPrivateHost; }, [crewPrivateHost]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadWebSearchStatus = () => {
+      settings.webSearch.status()
+        .then((status) => { if (!cancelled) setWebSearchAvailable(status.available); })
+        .catch(() => { if (!cancelled) setWebSearchAvailable(false); });
+    };
+    loadWebSearchStatus();
+    window.addEventListener('focus', loadWebSearchStatus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', loadWebSearchStatus);
+    };
+  }, []);
+
+  const handleWebSearchToggle = useCallback((enabled: boolean) => {
+    setWebSearchForce(enabled);
+    writeWebSearchForcePreference(enabled);
+  }, []);
+
   // Chat state
   const [sessionRestoring, setSessionRestoring] = useState(!!sessionId);
   const sessionRestoringRef = useRef(!!sessionId);
@@ -230,6 +267,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [pendingPermissionCount, setPendingPermissionCount] = useState(0);
   const [toolEnablePrompt, setToolEnablePrompt] = useState<{ toolId: string; toolName: string } | null>(null);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  const [webSearchAvailable, setWebSearchAvailable] = useState(false);
+  const [webSearchForce, setWebSearchForce] = useState(() => readWebSearchForcePreference());
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputBarRef = useRef<ChatInputBarHandle>(null);
@@ -990,6 +1029,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     kind: 'sub_agent' | 'crew_worker',
     task = '',
   ): UIMessage[] => {
+    if (kind === 'crew_worker') return prev;
     const last = prev[prev.length - 1];
     if (last?.role !== 'assistant') return prev;
     const existing = last.subAgents ?? [];
@@ -1064,7 +1104,20 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           const newToolCalls = (last.toolCalls || []).map((t: ToolCall) =>
             t.id === outputCallId && t.status === 'running'
               ? { ...t, streamOutput: (t.streamOutput || '') + outputText } : t);
-          return updateLastMessage(prev, { toolCalls: newToolCalls, parts: newParts });
+          const matched = newToolCalls.find((t) => t.id === outputCallId);
+          let partsWithSearch = newParts;
+          if (matched?.name === 'deep_web_search') {
+            const progress = parseDeepSearchProgressLine(outputText.trim())
+              ?? parseDeepSearchProgressFromStream(matched.streamOutput);
+            if (progress) {
+              partsWithSearch = upsertDeepSearchPartEntry(newParts, {
+                toolCallId: outputCallId,
+                progress,
+                running: true,
+              });
+            }
+          }
+          return updateLastMessage(prev, { toolCalls: newToolCalls, parts: partsWithSearch });
         }
         case 'tool_complete': {
           const toolName = (ev.tool as string) ?? '';
@@ -1097,10 +1150,28 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           const resObj = typeof (ev as any).result === 'object' && (ev as any).result !== null ? (ev as any).result as Record<string, unknown> : null;
           const meta = (ev as any).metadata as Record<string, unknown> | undefined;
           if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') setToolEnablePrompt({ toolId: toolName, toolName });
-          const withMeta = (t: ToolCall) => (meta ? { ...t, metadata: { ...t.metadata, ...meta } } : t);
+          let finalParts = newParts.map((p) => (
+            p.type === 'tool' && p.tool
+              ? { ...p, tool: applyToolCompleteMetadata(p.tool, meta, callId, toolName) }
+              : p
+          ));
+          const toolCallsWithMeta = newToolCalls.map((t) => applyToolCompleteMetadata(t, meta, callId, toolName));
+          if (toolName === 'deep_web_search') {
+            const resolvedId = callId || finalParts.find((p) => p.type === 'tool' && p.tool?.name === 'deep_web_search')?.tool?.id;
+            if (resolvedId) {
+              const bundle = deepSearchBundleFromMetadata(meta);
+              const progress = (meta?.deepSearchProgress as import('@agentx/shared/browser').DeepSearchProgress | undefined);
+              finalParts = upsertDeepSearchPartEntry(finalParts, {
+                toolCallId: resolvedId,
+                bundle,
+                progress,
+                running: !bundle,
+              });
+            }
+          }
           return updateLastMessage(prev, {
-            toolCalls: newToolCalls.map(withMeta),
-            parts: newParts.map((p) => (p.type === 'tool' && p.tool ? { ...p, tool: withMeta(p.tool) } : p)),
+            toolCalls: toolCallsWithMeta,
+            parts: finalParts,
           });
         }
         default:
@@ -1334,10 +1405,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   setStreaming(false);
                 }
                 const text = repairStreamTextGlitches(stripToolNoise(msg.content ?? ''));
+                const mergedParts = reconcileStreamingMessageParts(
+                  mergeIncomingMessageParts(prev[idx]!.parts, msg.parts) ?? prev[idx]!.parts,
+                  prev[idx]!.toolCalls ?? msg.toolCalls,
+                  msg.parts,
+                );
                 const updated: UIMessage = {
                   ...prev[idx]!,
                   content: text || prev[idx]!.content,
-                  parts: msg.parts ?? prev[idx]!.parts,
+                  parts: mergedParts,
                   streaming: false,
                   ...(crew ? { crew } : {}),
                 };
@@ -1378,7 +1454,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                   : !lastCrewId);
               const shouldMerge = sameSpeaker && (last.streaming || (!text && !!last.content));
               if (shouldMerge) {
-                const mergedParts = (last.parts && last.parts.length > 0) ? last.parts : msg.parts;
+                const mergedParts = reconcileStreamingMessageParts(
+                  (last.parts && last.parts.length > 0) ? last.parts : msg.parts,
+                  last.toolCalls?.length ? last.toolCalls : msg.toolCalls,
+                  msg.parts,
+                );
                 return updateLastMessage(prev, {
                   id: msg.id || last.id,
                   content: text || stripToolNoise(last.content || ''),
@@ -1755,6 +1835,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           case 'child_session_started': {
             const c = ev as unknown as { childSessionId: string; label: string; kind: 'sub_agent' | 'crew_worker' };
             if (!c.childSessionId) return prev;
+            // Crew mission panel above the input already tracks workers — skip duplicate inline cards.
+            if (c.kind === 'crew_worker') return prev;
             return attachChildSessionToAssistant(prev, c.childSessionId, c.label || 'Background work', c.kind ?? 'sub_agent');
           }
 
@@ -2035,7 +2117,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const offerInlineCrewRoster = useCallback(async (text: string, evaluation: CrewSuggestionEvaluation): Promise<boolean> => {
     if (isCrewPrivateSession) return false;
     if (evaluation.candidates.length === 0) return false;
-    if (!explicitCrewRequest(text) && evaluation.shouldSuggest) return false;
+    // High-confidence matches use the modal — never duplicate with in-chat picker cards.
+    if (evaluation.shouldSuggest) return false;
 
     const trimmed = sanitizeForJson(text.trim());
     if (!trimmed) return false;
@@ -2170,6 +2253,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         priorUserMessages,
         options?.crewIntakeFromPicker,
         options?.primaryCrewId,
+        webSearchAvailable && webSearchForce,
       );
       if (result?.crewSuggestionRequired && result.evaluation) {
         endTurnUi();
@@ -2215,7 +2299,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       });
       endTurnUi();
     }
-  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, openCrewSuggestionFromEvaluation, beginTurnUi, endTurnUi]);
+  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, openCrewSuggestionFromEvaluation, beginTurnUi, endTurnUi, webSearchAvailable, webSearchForce]);
 
   const sendAfterModeChoice = useCallback(async (text: string, switchToAgent: boolean) => {
     if (switchToAgent) {
@@ -2243,15 +2327,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           if (evaluation.reasons.includes('catalog-unavailable')) {
             setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
           }
-          const workforceIntent = explicitCrewRequest(trimmed);
-          if (workforceIntent && evaluation.candidates.length > 0) {
-            crewSuggestionHandledRef.current = true;
-            if (await offerInlineCrewRoster(trimmed, evaluation)) return;
-          }
+          // Modal first for high-confidence specialist matches — one UI surface only.
           if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
             crewSuggestionHandledRef.current = true;
             openCrewSuggestionFromEvaluation(evaluation, trimmed);
             return;
+          }
+          const workforceIntent = explicitCrewRequest(trimmed);
+          if (workforceIntent && evaluation.candidates.length > 0) {
+            crewSuggestionHandledRef.current = true;
+            if (await offerInlineCrewRoster(trimmed, evaluation)) return;
           }
           if (await offerInlineCrewRoster(trimmed, evaluation)) return;
         }
@@ -2343,6 +2428,26 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }));
   }, []);
 
+  const revertCrewRosterPickerPending = useCallback((messageId: string) => {
+    setMessages((prev) => prev.map((m) => {
+      if (m.id !== messageId || !m.parts) return m;
+      return {
+        ...m,
+        parts: m.parts.map((p) => {
+          if (p.type !== 'crew_roster_picker' || !p.crewRosterPicker) return p;
+          return {
+            ...p,
+            crewRosterPicker: {
+              ...p.crewRosterPicker,
+              status: 'pending' as const,
+              selectedCandidateIds: undefined,
+            },
+          };
+        }),
+      };
+    }));
+  }, []);
+
   const handleCrewRosterPickerSubmit = useCallback(async (messageId: string, selected: CrewMatchCandidate[]) => {
     const pickerMsg = messages.find((m) => m.id === messageId);
     const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
@@ -2351,14 +2456,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
     const text = record.pendingUserText;
     const pickerPartId = pickerPart?.id;
+    const selectedIds = selected.map((c) => c.id);
+    markCrewRosterPickerResolved(messageId, 'answered', selectedIds);
 
     try {
       const sessionId = await ensureSession();
-      if (!sessionId) return;
+      if (!sessionId) {
+        revertCrewRosterPickerPending(messageId);
+        return;
+      }
       const result = await crewSuggestions.resolve({
         sessionId,
         action: 'deploy',
-        selectedCandidateIds: selected.map((c) => c.id),
+        selectedCandidateIds: selectedIds,
         candidates: record.evaluation.candidates,
       });
       if (!result.deployedCrewIds?.length) {
@@ -2379,28 +2489,30 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       await crewSuggestions.updateRosterPicker(sessionId, {
         pickerMessageId: messageId,
         status: 'answered',
-        selectedCandidateIds: selected.map((c) => c.id),
+        selectedCandidateIds: selectedIds,
         evaluation: record.evaluation,
         pendingUserText: text,
         pickerPartId,
       });
-      markCrewRosterPickerResolved(messageId, 'answered', selected.map((c) => c.id));
+      crews.list().then((list) => setCrewList(list)).catch(() => {});
       await executeSend(text, result.deployedCrewIds, {
         crewSuggestionResolved: true,
-        crewIntakeFromPicker: true,
         primaryCrewId,
         skipUserMessage: true,
       });
     } catch (err) {
+      revertCrewRosterPickerPending(messageId);
       setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to deploy crew'));
     }
-  }, [messages, markCrewRosterPickerResolved, ensureSession, executeSend, replaceWarning]);
+  }, [messages, markCrewRosterPickerResolved, revertCrewRosterPickerPending, ensureSession, executeSend, replaceWarning]);
 
   const handleCrewRosterPickerSkip = useCallback(async (messageId: string) => {
     const pickerMsg = messages.find((m) => m.id === messageId);
     const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
     const record = pickerPart?.crewRosterPicker;
     if (!record || record.status !== 'pending') return;
+
+    markCrewRosterPickerResolved(messageId, 'skipped');
 
     try {
       const sessionId = await ensureSession();
@@ -2413,15 +2525,37 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           pickerPartId: pickerPart?.id,
         });
       }
-      markCrewRosterPickerResolved(messageId, 'skipped');
       await executeSend(record.pendingUserText, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
     } catch (err) {
+      revertCrewRosterPickerPending(messageId);
       setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to skip crew picker'));
     }
-  }, [messages, markCrewRosterPickerResolved, ensureSession, executeSend, replaceWarning]);
+  }, [messages, markCrewRosterPickerResolved, revertCrewRosterPickerPending, ensureSession, executeSend, replaceWarning]);
 
-  const handleQuestionnaireRespond = useCallback(async (_messageId: string, response: string) => {
+  const handleQuestionnaireRespond = useCallback(async (messageId: string, response: string) => {
+    const markAnswered = () => {
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== messageId || !m.parts) return m;
+        return {
+          ...m,
+          parts: m.parts.map((p) => {
+            if (p.type !== 'questionnaire' || !p.questionnaire) return p;
+            return {
+              ...p,
+              questionnaire: {
+                ...p.questionnaire,
+                status: 'answered' as const,
+                answer: response,
+                answeredAt: new Date().toISOString(),
+              },
+            };
+          }),
+        };
+      }));
+    };
+
     try {
+      markAnswered();
       const result = await agent.respondToClarification(response, currentSessionId ?? undefined);
       if (result.ok) {
         setStreaming(true);
@@ -3405,6 +3539,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 </IconButton>
               </Tooltip>
 
+              <WebSearchGlobeToggle
+                available={webSearchAvailable}
+                enabled={webSearchForce}
+                onToggle={handleWebSearchToggle}
+              />
+
               {/* Hyperdrive */}
               {!isCrewPrivateSession && (
               <Tooltip title={hyperdriveMode ? 'HYPERDRIVE ENGAGED — Full autonomous mode. All permissions bypassed.' : 'Engage Hyperdrive — full autonomous mode (no permission prompts)'} arrow>
@@ -3891,9 +4031,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               return;
             }
             const primaryCrewId = result.deployedPrimaryCrewId ?? result.deployedCrewIds[0];
+            crews.list().then((list) => setCrewList(list)).catch(() => {});
             await executeSend(text, result.deployedCrewIds, {
               crewSuggestionResolved: true,
-              crewIntakeFromPicker: true,
               primaryCrewId,
             });
           } catch (err) {

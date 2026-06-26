@@ -10,6 +10,7 @@ export interface InlineToolData {
   name: string;
   args?: string | Record<string, unknown>;
   result?: string;
+  streamOutput?: string;
   status: 'running' | 'done' | 'error';
   elapsed?: number;
   metadata?: Record<string, unknown>;
@@ -40,8 +41,9 @@ function getToolRenderer(tool: InlineToolData): ((props: { tool: InlineToolData 
   return null;
 }
 
-export function InlineToolCall({ tool }: { tool: InlineToolData }) {
+export function InlineToolCall({ tool, compactTop }: { tool: InlineToolData; compactTop?: boolean }) {
   const isEditTool = EDIT_TOOLS.has(tool.name);
+  const isDeepSearchTool = tool.name === 'deep_web_search';
   const hasDiff = !!(tool.metadata?.diff || (tool.result && tool.result.includes('---') && tool.result.includes('+++')));
   const [expanded, setExpanded] = useState(isEditTool && hasDiff);
   useEffect(() => {
@@ -70,19 +72,21 @@ export function InlineToolCall({ tool }: { tool: InlineToolData }) {
 
   return (
     <Box sx={{
-      mb: 0.5, borderRadius: 1, overflow: 'hidden',
+      mb: 0.25,
+      mt: compactTop ? -0.625 : 0,
+      borderRadius: 1, overflow: 'hidden',
       border: `1px solid ${cc}20`,
       bgcolor: `${cc}04`,
       transition: 'border-color 0.15s',
     }}>
       <Box
         ref={headerRef}
-        onClick={() => tool.status !== 'running' && setExpanded(e => !e)}
+        onClick={() => !isDeepSearchTool && tool.status !== 'running' && setExpanded(e => !e)}
         sx={{
-          display: 'flex', alignItems: 'center', gap: 0.625, py: 0.5, px: 1,
+          display: 'flex', alignItems: 'center', gap: 0.625, py: 0.75, px: 1,
           opacity: tool.status === 'running' ? 0.7 : 1,
-          cursor: tool.status === 'running' ? 'default' : 'pointer',
-          '&:hover': tool.status !== 'running' ? { bgcolor: `${cc}08` } : {},
+          cursor: isDeepSearchTool ? 'default' : (tool.status === 'running' ? 'default' : 'pointer'),
+          '&:hover': !isDeepSearchTool && tool.status !== 'running' ? { bgcolor: `${cc}08` } : {},
         }}
       >
         <Typography sx={{
@@ -121,7 +125,7 @@ export function InlineToolCall({ tool }: { tool: InlineToolData }) {
           </Typography>
         )}
 
-        {tool.status !== 'running' && (
+        {tool.status !== 'running' && !isDeepSearchTool && (
           <Typography sx={{
             fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace",
             color: colors.text.dim, flexShrink: 0, transition: 'transform 0.15s',
@@ -132,11 +136,11 @@ export function InlineToolCall({ tool }: { tool: InlineToolData }) {
         )}
       </Box>
 
-      {expanded && SpecializedRender && (
+      {expanded && SpecializedRender && !isDeepSearchTool && (
         <SpecializedRender tool={tool} />
       )}
 
-      {expanded && !SpecializedRender && (
+      {expanded && !SpecializedRender && !isDeepSearchTool && (
         <DefaultDetailsPanel tool={tool} cc={cc} />
       )}
     </Box>

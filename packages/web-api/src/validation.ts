@@ -38,6 +38,8 @@ export const chatMessageSchema = z.object({
   crewIntakeFromPicker: z.boolean().optional(),
   primaryCrewId: z.string().optional(),
   priorUserMessages: z.array(z.string()).optional(),
+  /** Globe toggle in chat — force web search on this turn. */
+  forceWebSearch: z.boolean().optional(),
   resumeCrewIntake: z.object({
     originalUserText: z.string(),
     intakeAnswer: z.string(),

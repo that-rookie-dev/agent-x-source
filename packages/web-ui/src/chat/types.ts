@@ -25,13 +25,18 @@ export interface SubAgent {
 import type { QuestionnaireRecord } from '@agentx/shared/browser';
 
 export interface PartEntry {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search';
   id: string;
   content?: string;
   tool?: ToolCall;
   agent?: SubAgent;
   questionnaire?: QuestionnaireRecord;
   crewRosterPicker?: import('../components/crew/CrewRosterPickerMessage').CrewRosterPickerRecord;
+  deepSearch?: {
+    bundle?: import('@agentx/shared/browser').DeepSearchResultBundle;
+    progress?: import('@agentx/shared/browser').DeepSearchProgress;
+    running?: boolean;
+  };
 }
 
 export interface UIMessage extends ChatMessage {

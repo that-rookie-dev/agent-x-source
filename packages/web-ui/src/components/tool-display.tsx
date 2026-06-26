@@ -79,6 +79,8 @@ export function getToolDisplay(toolName: string, args: Record<string, unknown> |
       return { icon: <TerminalIcon sx={iconSx} />, title: 'Shell', subtitle: label || (parsed.command ? String(parsed.command).slice(0, 60) : undefined) };
     case 'web_search':
       return { icon: <PublicIcon sx={iconSx} />, title: 'Search', subtitle: label };
+    case 'deep_web_search':
+      return { icon: <PublicIcon sx={iconSx} />, title: 'Deep Search', subtitle: label };
     case 'web_fetch':
     case 'web_scrape':
     case 'http_get':

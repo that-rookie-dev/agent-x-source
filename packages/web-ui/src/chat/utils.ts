@@ -1,6 +1,37 @@
 /** Client-side text helpers (mirrors @agentx/shared). */
 
-import { normalizeMessageForUi } from '@agentx/shared/browser';
+import { attachDeepSearchPartsFromTools, normalizeMessageForUi, type MessagePart } from '@agentx/shared/browser';
+
+/** Apply tool_complete metadata only to the matching tool call (parallel same-name tools). */
+export function applyToolCompleteMetadata<T extends {
+  id: string;
+  name: string;
+  status: string;
+  metadata?: Record<string, unknown>;
+}>(
+  tool: T,
+  meta: Record<string, unknown> | undefined,
+  callId: string,
+  toolName: string,
+): T {
+  if (!meta) return tool;
+  if (callId) {
+    return tool.id === callId ? { ...tool, metadata: { ...tool.metadata, ...meta } } : tool;
+  }
+  if (tool.name !== toolName) return tool;
+  return { ...tool, metadata: { ...tool.metadata, ...meta } };
+}
+
+/** Rebuild deep_search parts from per-tool metadata after a streaming turn completes. */
+export function reconcileStreamingMessageParts<T extends MessagePart>(
+  liveParts: T[] | undefined,
+  toolCalls: Array<{ id: string; name: string; metadata?: Record<string, unknown>; streamOutput?: string }> | undefined,
+  incomingParts: T[] | undefined,
+): T[] | undefined {
+  const base = liveParts?.length ? liveParts : incomingParts;
+  if (!base?.length) return base;
+  return attachDeepSearchPartsFromTools(base, toolCalls) as T[];
+}
 
 export function sanitizeForJson(text: string): string {
   if (!text) return text;
@@ -96,6 +127,53 @@ export function hasPendingQuestionnaire(messages: Array<{ parts?: Array<{ type?:
 }
 
 /** True when in-chat crew roster picker is awaiting user selection. */
+type CrewRosterPickerPartLike = {
+  type?: string;
+  id?: string;
+  crewRosterPicker?: {
+    id?: string;
+    status?: 'pending' | 'answered' | 'skipped';
+    selectedCandidateIds?: string[];
+  };
+};
+
+/** Keep resolved crew roster picker state when streaming replays stale pending parts. */
+export function mergeIncomingMessageParts<T extends CrewRosterPickerPartLike>(
+  prevParts: T[] | undefined,
+  incomingParts: T[] | undefined,
+): T[] | undefined {
+  if (!incomingParts?.length) return prevParts;
+  if (!prevParts?.length) return incomingParts;
+  return incomingParts.map((incoming) => {
+    if (incoming.type !== 'crew_roster_picker' || !incoming.crewRosterPicker) return incoming;
+    const prev = prevParts.find((p) => {
+      if (p.type !== 'crew_roster_picker' || !p.crewRosterPicker) return false;
+      if (incoming.id && p.id === incoming.id) return true;
+      return Boolean(
+        incoming.crewRosterPicker?.id
+        && p.crewRosterPicker.id === incoming.crewRosterPicker.id,
+      );
+    });
+    if (
+      prev?.crewRosterPicker?.status
+      && prev.crewRosterPicker.status !== 'pending'
+      && incoming.crewRosterPicker.status === 'pending'
+    ) {
+      return {
+        ...incoming,
+        crewRosterPicker: {
+          ...incoming.crewRosterPicker,
+          status: prev.crewRosterPicker.status,
+          selectedCandidateIds:
+            prev.crewRosterPicker.selectedCandidateIds
+            ?? incoming.crewRosterPicker.selectedCandidateIds,
+        },
+      };
+    }
+    return incoming;
+  });
+}
+
 export function hasPendingCrewRosterPicker(messages: Array<{ parts?: Array<{ type?: string; crewRosterPicker?: { status?: string } }> }>): boolean {
   for (const m of messages) {
     for (const p of m.parts ?? []) {

@@ -20,13 +20,14 @@ import {
   loadTurnFeedbackForSession,
   recordTurnFeedback,
   loadSessionMessagesPage,
+  getForceWebSearchError,
 } from './chat-helpers.js';
 import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi, selectRecentMessagesTail } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { healOrphanedUserMessages } from './message-history-repair.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -45,7 +46,7 @@ import { persistCrewRosterPickerOffer, updateCrewRosterPickerStatus } from './cr
 import { handleClarificationRespond } from './clarification-resume.js';
 import { loadSessionResumeState } from './session-resume-state.js';
 import { postCrewChatSession } from './crew-chat.js';
-import { resolveHostCrewDisplay, ensureCrewPrivateHostOnRoster, syncHostCrewHonorificToSession } from './host-crew-session.js';
+import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewHonorificToSession } from './host-crew-session.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -431,12 +432,28 @@ app.put('/api/config', (req, res) => {
   try {
     const existing = eng.configManager.load();
     const merged = { ...existing, ...req.body };
+    if (req.body.tools?.webSearch) {
+      merged.tools = {
+        ...existing.tools,
+        ...req.body.tools,
+        webSearch: mergeWebSearchToolsConfig(existing.tools?.webSearch, req.body.tools?.webSearch),
+      };
+    } else if (req.body.tools) {
+      merged.tools = { ...existing.tools, ...req.body.tools };
+    }
     eng.configManager.save(merged);
+    applyWebSearchConfigFromAgentConfig(merged);
     res.json({ ok: true });
   } catch (err) {
     // If load failed (e.g. DEK mismatch from different auth), save raw body as new config
     try {
+      const body = req.body as Record<string, unknown>;
+      if (body.tools && typeof body.tools === 'object' && (body.tools as { webSearch?: unknown }).webSearch) {
+        const tools = body.tools as { webSearch?: import('@agentx/shared').WebSearchToolsConfig };
+        tools.webSearch = mergeWebSearchToolsConfig(undefined, tools.webSearch);
+      }
       eng.configManager.save(req.body);
+      applyWebSearchConfigFromAgentConfig(req.body);
       res.json({ ok: true });
     } catch (saveErr) {
       getLogger().error('PUT_API_CONFIG', err instanceof Error ? err : String(err));      res.status(500).json({
@@ -1355,7 +1372,7 @@ app.use('/api/chat', chatRateLimiter.middleware);
 // NEW: Streaming SSE endpoint for real-time progress visualization
 app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
@@ -1364,6 +1381,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       priorUserMessages?: string[];
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
+      forceWebSearch?: boolean;
     };
     const eng = getEngine();
     
@@ -1471,6 +1489,15 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       return;
     }
 
+    const forceErr = getForceWebSearchError(eng.configManager.load(), forceWebSearch);
+    if (forceErr) {
+      sendEvent('error', { error: forceErr, code: 'WEB_SEARCH_UNAVAILABLE' });
+      clearInterval(heartbeat);
+      unsub();
+      res.end();
+      return;
+    }
+
     const turn = turnRegistry.create(sid);
     let finished = false;
 
@@ -1507,7 +1534,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       try { agent.cancel(); } catch { /* ignore */ }
     });
 
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, forceWebSearch ? { forceWebSearch: true } : undefined);
     sendEvent('started', { turnId: turn.turnId, async: true });
     return;
   } catch (e: unknown) {
@@ -1519,7 +1546,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
 // LEGACY comment removed — async turn endpoint used by ChatPanel (SSE uses message-stream).
 app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
@@ -1528,6 +1555,7 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
       priorUserMessages?: string[];
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
+      forceWebSearch?: boolean;
     };
     const eng = getEngine();
     // Auto-create agent if none exists (first message in session)
@@ -1602,8 +1630,14 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
       return;
     }
 
+    const forceErr = getForceWebSearchError(eng.configManager.load(), forceWebSearch);
+    if (forceErr) {
+      res.status(400).json({ error: forceErr });
+      return;
+    }
+
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, forceWebSearch ? { forceWebSearch: true } : undefined);
 
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
@@ -2148,6 +2182,37 @@ app.get('/api/settings/db', async (_req, res) => {
   }
 });
 
+app.get('/api/settings/web-search/status', async (_req, res) => {
+  try {
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+    applyWebSearchConfigFromAgentConfig(cfg);
+    const status = isWebSearchAvailableForChat(cfg);
+    res.json(status);
+  } catch (e: unknown) {
+    getLogger().error('GET_API_SETTINGS_WEB_SEARCH_STATUS', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'web-search-status-failed' });
+  }
+});
+
+app.post('/api/settings/web-search/test', async (req, res) => {
+  try {
+    const provider = req.body?.provider as string;
+    const apiKey = String(req.body?.apiKey ?? '');
+    if (provider !== 'brave' && provider !== 'exa' && provider !== 'tavily') {
+      res.status(400).json({ ok: false, error: 'provider must be brave, exa, or tavily' });
+      return;
+    }
+    const result = await validateWebSearchProvider(provider, apiKey);
+    res.json(result);
+  } catch (e: unknown) {
+    res.status(500).json({
+      ok: false,
+      error: e instanceof Error ? e.message : 'web-search-test-failed',
+    });
+  }
+});
+
 app.put('/api/settings/db', async (req, res) => {
   try {
     const { backend, postgres } = req.body || {};
@@ -2689,7 +2754,7 @@ app.post('/api/sessions/:id/restore', async (req, res) => {
     }
     if (isCrewPrivateSessionRecord(session) && session.hostCrewId) {
       const store = (eng.sessionManager as unknown as { store?: unknown }).store;
-      const crew = await ensureCrewPrivateHostOnRoster(eng.crewManager, session, store);
+      const crew = await resolveCrewPrivateHostForSession(eng.crewManager, session, store);
       if (crew) {
         const patch = syncHostCrewHonorificToSession(session, crew);
         if (patch) {

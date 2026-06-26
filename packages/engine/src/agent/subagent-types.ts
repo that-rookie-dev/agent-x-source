@@ -18,7 +18,7 @@ export const SUBAGENT_TYPES: SubAgentType[] = [
   {
     id: 'researcher',
     name: 'Researcher',
-    defaultTools: ['web_search', 'web_scrape', 'web_fetch', 'file_read'],
+    defaultTools: ['deep_web_search', 'web_search', 'web_scrape', 'web_fetch', 'file_read'],
     deniedTools: ['file_write', 'file_delete', 'shell_exec'],
     description: 'Web research and information gathering',
   },

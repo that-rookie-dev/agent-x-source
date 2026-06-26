@@ -15,6 +15,17 @@ export {
 export type { MessagePart, PersistedToolCall } from './utils/message-parts.js';
 
 export {
+  upsertDeepSearchPart,
+  attachDeepSearchPartsFromTools,
+  partitionPartsForRender,
+  orderPartsForChatRender,
+  parseDeepSearchProgressFromStream,
+  parseDeepSearchProgressLine,
+  deepSearchBundleFromMetadata,
+} from './utils/deep-search-parts.js';
+export type { DeepSearchPartPayload } from './utils/deep-search-parts.js';
+
+export {
   MEDICAL_INFORMATIONAL_DISCLAIMER,
   MEDICAL_HUB_CATEGORY_IDS,
   MEDICAL_HUB_CATALOG_IDS,
@@ -80,3 +91,15 @@ export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNee
 
 export type { CrewRosterPickerRecord, CrewRosterPickerStatus } from './types/crew-roster-picker.js';
 export type { SessionResumeState, SessionResumeKind } from './types/session-resume.js';
+export type {
+  DeepSearchContentType,
+  DeepSearchDepth,
+  DeepSearchScores,
+  DeepSearchExtracted,
+  DeepSearchResult,
+  DeepSearchPlan,
+  DeepSearchStats,
+  DeepSearchProgress,
+  DeepSearchResultBundle,
+  DeepSearchRequest,
+} from './types/deep-search.js';

@@ -31,6 +31,7 @@ import {
   healDatabaseStore,
   startPeriodicDatabaseHeal,
   buildCrewPrivateIdentityPrompt,
+  applyWebSearchConfigFromAgentConfig,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
@@ -83,6 +84,9 @@ export function getEngine(): EngineState {
   const configured = configManager.isConfigured();
   if (configured) {
     safeLoadConfig(configManager);
+    try {
+      applyWebSearchConfigFromAgentConfig(configManager.load());
+    } catch { /* pre-auth or corrupt config */ }
   }
 
   const toolkit = createDefaultToolkit(process.cwd());
@@ -229,6 +233,9 @@ export function setEngineDEK(dek: Buffer | null): void {
   if (state) {
     state.dek = dek;
     state.configManager.setDEK(dek);
+    try {
+      applyWebSearchConfigFromAgentConfig(state.configManager.load());
+    } catch { /* not configured yet */ }
   }
 }
 
@@ -240,6 +247,7 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   } else {
     cfg = eng.configManager.load();
   }
+  applyWebSearchConfigFromAgentConfig(cfg);
 
   if (!cfg.provider.activeProvider || !cfg.provider.activeModel) {
     throw new Error('No provider configured. Configure a provider and model first.');
@@ -379,10 +387,14 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     agent.addCrewMember(crewPrivateHost);
     agent.setCrewEnabled(crewPrivateHost.id, true);
   } else {
-    const enabledCrews = eng.crewManager.listEnabled();
-    for (const crew of enabledCrews) {
-      agent.addCrewMember(crew);
-      agent.setCrewEnabled(crew.id, true);
+    const sessionCrewStates = eng.sessionManager.loadCrewStates(session.id);
+    for (const state of sessionCrewStates) {
+      if (!state.enabled) continue;
+      const crew = eng.crewManager.get(state.crewId);
+      if (crew) {
+        agent.addCrewMember(crew);
+        agent.setCrewEnabled(crew.id, true);
+      }
     }
   }
 

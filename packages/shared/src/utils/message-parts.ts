@@ -1,5 +1,6 @@
 import { stripToolNoise } from './text-sanitize.js';
 import { appendStreamText, repairStreamTextGlitches } from './stream-text.js';
+import { attachDeepSearchPartsFromTools } from './deep-search-parts.js';
 
 export interface PersistedToolCall {
   id: string;
@@ -13,13 +14,19 @@ export interface PersistedToolCall {
 
 import type { QuestionnaireRecord } from '../types/questionnaire.js';
 import type { CrewRosterPickerRecord } from '../types/crew-roster-picker.js';
+import type { DeepSearchProgress, DeepSearchResultBundle } from '../types/deep-search.js';
 
 export interface MessagePart {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search';
   id: string;
   content?: string;
   questionnaire?: QuestionnaireRecord;
   crewRosterPicker?: CrewRosterPickerRecord;
+  deepSearch?: {
+    bundle?: DeepSearchResultBundle;
+    progress?: DeepSearchProgress;
+    running?: boolean;
+  };
   tool?: PersistedToolCall;
   agent?: {
     id: string;
@@ -313,23 +320,28 @@ export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts
       if (p.type === 'tool' && p.tool) return { ...p, tool: { ...p.tool, status: p.tool.status || 'done' } };
       if (p.type === 'questionnaire' && p.questionnaire) return p;
       if (p.type === 'crew_roster_picker' && p.crewRosterPicker) return p;
+      if (p.type === 'deep_search' && p.deepSearch) return p;
       return p;
     }), true);
     if (!shouldRebuildStoredParts(content, mapped, toolCalls)) {
-      return { content, parts: mapped, toolCalls };
+      return { content, parts: attachDeepSearchPartsFromTools(mapped, toolCalls), toolCalls };
     }
   }
 
   if (sessionParts && sessionParts.length > 0) {
     const parts = buildPartsFromDbRows(sessionParts, content, toolCalls);
     if (parts.length > 0 && !shouldRebuildStoredParts(content, parts, toolCalls)) {
-      return { content, parts, toolCalls };
+      return { content, parts: attachDeepSearchPartsFromTools(parts, toolCalls), toolCalls };
     }
   }
 
   if (toolCalls?.length || content) {
     const parts = rebuildPartsFromCanonical(content, toolCalls);
-    return { content, parts: parts.length > 0 ? parts : undefined, toolCalls };
+    return {
+      content,
+      parts: parts.length > 0 ? attachDeepSearchPartsFromTools(parts, toolCalls) : undefined,
+      toolCalls,
+    };
   }
 
   return { content, toolCalls };

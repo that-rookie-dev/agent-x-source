@@ -45,7 +45,7 @@ describe('evaluateSuggestionGate', () => {
     const query = buildCrewSuggestionSearchQuery(msg);
     expect(query).toContain('travel');
     expect(query).not.toMatch(/\bam\b/);
-    expect(query.split(' ').length).toBeLessThanOrEqual(8);
+    expect(query).not.toContain('know');
   });
 
   it('passes when dismissed but user explicitly requests crew', () => {

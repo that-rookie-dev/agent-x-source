@@ -118,30 +118,40 @@ export async function webScrape(args: Record<string, unknown>, _context: ToolExe
 }
 
 export async function webSearch(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
-  const query = args['query'] as string;
-  // Use DuckDuckGo HTML for basic search (no API key needed)
-  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const query = String(args['query'] ?? '').trim();
+  if (!query) {
+    return { success: false, output: 'query is required', error: 'MISSING_INPUT' };
+  }
 
   try {
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'AgentX/0.1' },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    const html = await response.text();
-    // Extract result snippets
-    const results: string[] = [];
-    const snippetRegex = /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-    let match;
-    while ((match = snippetRegex.exec(html)) !== null && results.length < 5) {
-      const text = match[1]!.replace(/<[^>]+>/g, '').trim();
-      if (text) results.push(text);
+    const { runWebSearch, describeActiveWebSearchProviders } = await import('../../search/providers/index.js');
+    const { hasActiveWebSearchProviders, webSearchProvidersUnavailableMessage } = await import('../../search/search-config.js');
+    if (!hasActiveWebSearchProviders()) {
+      return {
+        success: false,
+        output: webSearchProvidersUnavailableMessage(),
+        error: 'NO_SEARCH_PROVIDERS',
+        metadata: { query, resultCount: 0 },
+      };
     }
+    const hits = await runWebSearch(query, 8);
+
+    if (hits.length === 0) {
+      return {
+        success: false,
+        output: `No web results found. Active providers: ${describeActiveWebSearchProviders()}. Enable DuckDuckGo or configure BYOK providers in Settings → Tools → Web Search.`,
+        metadata: { query, resultCount: 0 },
+      };
+    }
+
+    const lines = hits.map((h, i) => (
+      `${i + 1}. ${h.title}\n   ${h.snippet || '(no snippet)'}\n   ${h.url} [${h.provider}]`
+    ));
 
     return {
       success: true,
-      output: results.length > 0 ? results.join('\n\n') : 'No results found',
-      metadata: { query, resultCount: results.length },
+      output: lines.join('\n\n'),
+      metadata: { query, resultCount: hits.length, providers: [...new Set(hits.map((h) => h.provider))] },
     };
   } catch (error) {
     return { success: false, output: (error as Error).message, error: 'SEARCH_ERROR' };

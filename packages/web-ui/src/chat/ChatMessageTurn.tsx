@@ -4,10 +4,11 @@ import Typography from '@mui/material/Typography';
 import { colors } from '../theme';
 import { ReasoningBlock } from '../components/ChatEnhancements';
 import { InlineToolCall } from '../components/InlineToolCall';
-import { normalizeMessageForUi } from '@agentx/shared/browser';
+import { normalizeMessageForUi, orderPartsForChatRender } from '@agentx/shared/browser';
 import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
+import { DeepSearchMessageBlock } from './DeepSearchMessageBlock';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
 import { QuestionnaireMessage } from '../components/questionnaire/QuestionnaireMessage';
 import { CrewRosterPickerMessage } from '../components/crew/CrewRosterPickerMessage';
@@ -46,6 +47,9 @@ function renderParts(
   planMode?: boolean,
 ) {
   const filtered = parts.filter((p) => {
+    if (p.type === 'deep_search') {
+      return !!(p.deepSearch?.bundle || p.deepSearch?.progress || p.deepSearch?.running);
+    }
     if (p.type === 'text') return !!p.content?.trim();
     if (p.type === 'tool') return !!p.tool;
     if (p.type === 'subagent') return !!p.agent;
@@ -54,77 +58,100 @@ function renderParts(
     return false;
   });
 
+  const ordered = orderPartsForChatRender(filtered);
+
+  const renderMainPart = (part: PartEntry, compactTop = false) => {
+    switch (part.type) {
+      case 'text':
+        return part.content ? <CrewAwareMarkdown key={part.id} content={part.content} /> : null;
+      case 'questionnaire':
+        if (!part.questionnaire) return null;
+        return (
+          <QuestionnaireMessage
+            key={part.id}
+            record={part.questionnaire}
+            onRespond={
+              part.questionnaire.status === 'pending' && onQuestionnaireRespond && messageId
+                ? (response) => onQuestionnaireRespond(messageId, response)
+                : undefined
+            }
+          />
+        );
+      case 'crew_roster_picker':
+        if (!part.crewRosterPicker) return null;
+        return (
+          <CrewRosterPickerMessage
+            key={part.id}
+            record={part.crewRosterPicker}
+            planMode={planMode}
+            onSubmit={
+              part.crewRosterPicker.status === 'pending' && onCrewRosterPickerSubmit && messageId
+                ? (selected) => onCrewRosterPickerSubmit(messageId, selected)
+                : undefined
+            }
+            onSkip={
+              part.crewRosterPicker.status === 'pending' && onCrewRosterPickerSkip && messageId
+                ? () => onCrewRosterPickerSkip(messageId)
+                : undefined
+            }
+            onViewDossier={onViewCrewDossier}
+          />
+        );
+      case 'tool':
+        return part.tool ? <InlineToolCall key={part.id} tool={part.tool} compactTop={compactTop} /> : null;
+      case 'subagent':
+        if (!part.agent) return null;
+        if (part.agent.kind === 'crew_worker') return null;
+        if (onOpenChildSession && part.agent.id && part.agent.id !== 'subagent') {
+          const agent = part.agent;
+          return (
+            <ChildSessionInlineCard
+              key={part.id}
+              childSessionId={agent.id}
+              label={agent.name}
+              kind={agent.kind ?? 'sub_agent'}
+              status={agent.status}
+              task={agent.task}
+              onExpand={() => onOpenChildSession({
+                childSessionId: agent.id,
+                label: agent.name,
+                kind: agent.kind ?? 'sub_agent',
+                status: agent.status,
+                task: agent.task,
+              })}
+            />
+          );
+        }
+        return (
+          <Box key={part.id} sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+            <SubAgentChip agent={part.agent} />
+          </Box>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {filtered.map((part) => {
-        switch (part.type) {
-          case 'text':
-            return part.content ? <CrewAwareMarkdown key={part.id} content={part.content} /> : null;
-          case 'questionnaire':
-            if (!part.questionnaire) return null;
-            return (
-              <QuestionnaireMessage
-                key={part.id}
-                record={part.questionnaire}
-                onRespond={
-                  part.questionnaire.status === 'pending' && onQuestionnaireRespond && messageId
-                    ? (response) => onQuestionnaireRespond(messageId, response)
-                    : undefined
-                }
+      {ordered.map((part, i) => {
+        const prev = ordered[i - 1];
+        const compactTop = part.type === 'tool' && prev?.type === 'tool';
+        const afterTool = part.type === 'deep_search' && prev?.type === 'tool';
+
+        if (part.type === 'deep_search' && part.deepSearch) {
+          return (
+            <Box key={part.id} sx={{ mb: 0.25, mt: afterTool ? -0.625 : 0 }}>
+              <DeepSearchMessageBlock
+                bundle={part.deepSearch.bundle}
+                progress={part.deepSearch.progress}
+                running={part.deepSearch.running}
               />
-            );
-          case 'crew_roster_picker':
-            if (!part.crewRosterPicker) return null;
-            return (
-              <CrewRosterPickerMessage
-                key={part.id}
-                record={part.crewRosterPicker}
-                planMode={planMode}
-                onSubmit={
-                  part.crewRosterPicker.status === 'pending' && onCrewRosterPickerSubmit && messageId
-                    ? (selected) => onCrewRosterPickerSubmit(messageId, selected)
-                    : undefined
-                }
-                onSkip={
-                  part.crewRosterPicker.status === 'pending' && onCrewRosterPickerSkip && messageId
-                    ? () => onCrewRosterPickerSkip(messageId)
-                    : undefined
-                }
-                onViewDossier={onViewCrewDossier}
-              />
-            );
-          case 'tool':
-            return part.tool ? <InlineToolCall key={part.id} tool={part.tool} /> : null;
-          case 'subagent':
-            if (!part.agent) return null;
-            if (onOpenChildSession && part.agent.id && part.agent.id !== 'subagent') {
-              const agent = part.agent;
-              return (
-                <ChildSessionInlineCard
-                  key={part.id}
-                  childSessionId={agent.id}
-                  label={agent.name}
-                  kind={agent.kind ?? 'sub_agent'}
-                  status={agent.status}
-                  task={agent.task}
-                  onExpand={() => onOpenChildSession({
-                    childSessionId: agent.id,
-                    label: agent.name,
-                    kind: agent.kind ?? 'sub_agent',
-                    status: agent.status,
-                    task: agent.task,
-                  })}
-                />
-              );
-            }
-            return (
-              <Box key={part.id} sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                <SubAgentChip agent={part.agent} />
-              </Box>
-            );
-          default:
-            return null;
+            </Box>
+          );
         }
+
+        return renderMainPart(part, compactTop);
       })}
     </Box>
   );
@@ -179,11 +206,15 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       {cleanContent && <CrewAwareMarkdown content={cleanContent} />}
-      {displayMessage.toolCalls?.map((t) => <InlineToolCall key={t.id} tool={t} />)}
+      {displayMessage.toolCalls?.map((t, i) => (
+        <InlineToolCall key={t.id} tool={t} compactTop={i > 0} />
+      ))}
     </Box>
   );
 
-  const subAgentCards = (message.subAgents ?? []).filter((a) => a.id && a.id !== 'subagent');
+  const subAgentCards = (message.subAgents ?? []).filter(
+    (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker',
+  );
 
   return (
     <Box sx={{ mb: 3, animation: 'agentx-fadeIn 0.25s ease-out' }}>
@@ -286,6 +317,9 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   if (pm.crew?.crewId !== nm.crew?.crewId || pm.crew?.name !== nm.crew?.name) return false;
   if (pm.subAgents !== nm.subAgents) return false;
   if (pm.turnFeedback?.rating !== nm.turnFeedback?.rating) return false;
+  const prevDeep = pm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
+  const nextDeep = nm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
+  if (prevDeep !== nextDeep) return false;
   const prevParts = pm.parts ?? [];
   const nextParts = nm.parts ?? [];
   if (prevParts !== nm.parts && prevParts.length === nextParts.length) {
@@ -293,7 +327,13 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
       const pp = prevParts[i]!;
       const np = nextParts[i]!;
       if (pp.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
-      if (pp.type === 'crew_roster_picker' && pp.crewRosterPicker?.status !== np.crewRosterPicker?.status) return false;
+      if (pp.type === 'crew_roster_picker') {
+        if (pp.crewRosterPicker?.status !== np.crewRosterPicker?.status) return false;
+        const prevIds = pp.crewRosterPicker?.selectedCandidateIds;
+        const nextIds = np.crewRosterPicker?.selectedCandidateIds;
+        if ((prevIds?.length ?? 0) !== (nextIds?.length ?? 0)) return false;
+        if (prevIds?.some((id, i) => id !== nextIds?.[i])) return false;
+      }
     }
   } else if (prevParts !== nm.parts) {
     return false;

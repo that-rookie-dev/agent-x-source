@@ -20,3 +20,4 @@ export * from './questionnaire.js';
 export * from './turn-feedback.js';
 export * from './crew-roster-picker.js';
 export * from './session-resume.js';
+export * from './deep-search.js';

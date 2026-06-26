@@ -7,12 +7,13 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { colors } from '../theme';
 import { StyledTableWrapper, StyledUl, StyledOl, StyledLi } from '../components/StructuredViews';
-import { splitMarkdownSections } from './markdown-normalize';
+import { splitMarkdownSections, isPlainTextMarkdown, PLAIN_TEXT_BUBBLE_MAX_WIDTH } from './markdown-normalize';
 import { expandCollapsedTreeLine, isTreeDiagramContent } from './tree-diagram';
 import { isHorizontalPipelineContent, isPipelineDiagramContent } from './pipeline-diagram';
 import { FlowDiagramBlock } from './FlowDiagramBlock';
 import { PipelineDiagramBlock } from './PipelineDiagramBlock';
 import { CodeBlockChrome, CodeBlockBody, CODE_BLOCK_TOKENS, formatBlockTitle } from './code-block-chrome';
+import { CitationChip, isCitationStyleLink } from './CitationChip';
 
 const MARKDOWN_BASE_SX = {
   '& p': { m: 0, mb: 0.75, fontSize: '0.8125rem', lineHeight: 1.65, color: colors.text.secondary, fontFamily: "'Inter', sans-serif" },
@@ -253,10 +254,41 @@ function createMarkdownComponents(isFirstSection: boolean) {
     ul({ children }: { children?: React.ReactNode }) { return <StyledUl>{children}</StyledUl>; },
     ol({ children }: { children?: React.ReactNode }) { return <StyledOl>{children}</StyledOl>; },
     li({ children }: { children?: React.ReactNode }) { return <StyledLi>{children}</StyledLi>; },
+    a({ href, children }: { href?: string; children?: React.ReactNode }) {
+      if (href && isCitationStyleLink(href, children)) {
+        return <CitationChip href={href} label={String(children ?? '')} />;
+      }
+      return (
+        <Box
+          component="a"
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          sx={{ color: colors.accent.blue, textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+        >
+          {children}
+        </Box>
+      );
+    },
+    sup({ children }: { children?: React.ReactNode }) {
+      return (
+        <Box
+          component="sup"
+          sx={{
+            fontSize: '0.62rem',
+            fontFamily: "'JetBrains Mono', monospace",
+            color: colors.accent.cyan,
+            fontWeight: 700,
+          }}
+        >
+          {children}
+        </Box>
+      );
+    },
   };
 }
 
-function MarkdownSection({ content, index }: { content: string; index: number }) {
+function MarkdownSection({ content, index, compact }: { content: string; index: number; compact?: boolean }) {
   const components = useMemo(() => createMarkdownComponents(index === 0), [index]);
   return (
     <Box sx={{
@@ -265,6 +297,13 @@ function MarkdownSection({ content, index }: { content: string; index: number })
       borderRadius: 1.5,
       px: 2,
       py: 1.5,
+      ...(compact ? {
+        display: 'inline-block',
+        width: 'fit-content',
+        maxWidth: PLAIN_TEXT_BUBBLE_MAX_WIDTH,
+        verticalAlign: 'top',
+        wordBreak: 'break-word',
+      } : {}),
       ...MARKDOWN_BASE_SX,
     }}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{content}</ReactMarkdown>
@@ -290,12 +329,13 @@ export function UserMentionText({ content }: { content: string }) {
 
 export function CrewAwareMarkdown({ content }: { content: string }) {
   const sections = useMemo(() => splitMarkdownSections(content), [content]);
+  const compact = useMemo(() => isPlainTextMarkdown(content), [content]);
 
   if (sections.length === 0) return null;
 
   if (sections.length === 1) {
     return (
-      <MarkdownSection content={sections[0]!} index={0} />
+      <MarkdownSection content={sections[0]!} index={0} compact={compact} />
     );
   }
 

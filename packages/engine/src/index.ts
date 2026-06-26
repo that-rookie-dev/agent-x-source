@@ -86,6 +86,9 @@ export type { NeuralDb, NeuralStatement } from './neural/NeuralDbAdapter.js';
 export { CrewOrchestrator, buildCrewPrivateIdentityPrompt, buildCrewPrivateFastReplyPrompt } from './agent/CrewOrchestrator.js';
 export { CrewSuggestionService } from './crew/CrewSuggestionService.js';
 export type { CrewCatalogStore } from './crew/CrewSuggestionService.js';
+export { createCrewKeywordExpander, isExpertiseOpinionQuery, parseExpandedKeywords } from './crew/crew-keyword-expander.js';
+export type { CrewKeywordExpandFn } from './crew/crew-keyword-expander.js';
+export { filterSubstantiveMatches, hasSubstantiveKeywordMatch } from './crew/crew-match-quality.js';
 export { catalogEntryToSummary } from './crew/catalog-summary.js';
 export { getCrewSuggestionService, getCrewCatalogStoreFromEngine } from './crew/get-crew-store.js';
 export { startBackgroundCatalogSeed, getCatalogSeedStatus } from './crew/catalog-seed-runner.js';
@@ -99,7 +102,12 @@ export {
 } from './db/database-healer.js';
 export type { DatabaseHealResult } from './db/database-healer.js';
 export { repairSqliteFullSchema } from './session/SessionStore.js';
-export { recruitCandidatesForMission } from './crew/crew-mission-deploy.js';
+export {
+  recruitCandidatesForMission,
+  ensureHubCrewOnRoster,
+  ensureCrewMembersOnRoster,
+  type CrewCatalogRecruitStore,
+} from './crew/crew-mission-deploy.js';
 export { CrewMissionOrchestrator } from './agent/CrewMissionOrchestrator.js';
 export { CrewWorker } from './agent/CrewWorker.js';
 export type { CrewWorkerResult } from './agent/CrewWorker.js';
@@ -198,6 +206,31 @@ export { TreeOfThoughts } from './reasoning/TreeOfThoughts.js';
 export type { ThoughtNode, TreeOfThoughtsOptions } from './reasoning/TreeOfThoughts.js';
 export { ResearchEngine } from './reasoning/ResearchEngine.js';
 export type { ResearchQuery, ResearchResult, ResearchEngineOptions } from './reasoning/ResearchEngine.js';
+export {
+  applyWebSearchConfigFromAgentConfig,
+  getWebSearchRuntime,
+  listActiveWebSearchProviders,
+  defaultWebSearchToolsConfig,
+  resolveWebSearchRuntime,
+  hasActiveWebSearchProviders,
+  webSearchProvidersUnavailableMessage,
+  mergeWebSearchToolsConfig,
+} from './search/search-config.js';
+export type { ResolvedWebSearchProvider, ResolvedWebSearchRuntime } from './search/search-config.js';
+export { validateWebSearchProvider } from './search/validate-provider.js';
+export type { WebSearchProviderValidation } from './search/validate-provider.js';
+export {
+  detectExplicitWebSearchRequest,
+  resolveWebSearchTurnPolicy,
+  resolveWebSearchTurnPolicyAsync,
+  createWebSearchIntentClassifier,
+  analyzeWebSearchIntent,
+  analyzeWebSearchIntentHeuristic,
+  pickForcedWebSearchTool,
+  isWebSearchAvailableForChat,
+  buildWebSearchTurnInstruction,
+} from './search/web-search-policy.js';
+export type { WebSearchTurnPolicy } from './search/web-search-policy.js';
 
 // === UNIFIED IMPLEMENTATION: Communication Layer ===
 

@@ -88,6 +88,31 @@ async function enrichRecruitFromCatalog(recruit: Record<string, unknown>): Promi
   return recruit;
 }
 
+function ephemeralCrewFromRecruitPayload(r: Record<string, unknown>): Crew {
+  const callsign = (r['callsign'] as string)
+    || String(r['name']).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const now = new Date().toISOString();
+  return {
+    id: (r['id'] as string) || `hub-${callsign}`,
+    name: r['name'] as string,
+    title: r['title'] as string | undefined,
+    callsign,
+    systemPrompt: r['systemPrompt'] as string,
+    description: (r['description'] as string) || '',
+    emotion: (r['tone'] as Crew['emotion']) ?? (r['emotion'] as Crew['emotion']),
+    expertise: r['expertise'] as string[] | undefined,
+    traits: r['traits'] as string[] | undefined,
+    tools: r['tools'] as string[] | undefined,
+    source: (r['source'] as Crew['source']) ?? (r['catalogId'] ? 'hub' : 'custom'),
+    catalogId: (r['catalogId'] as string | undefined) ?? `hub-${callsign}`,
+    color: r['color'] as string | undefined,
+    isDefault: false,
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function resolveOrRecruitCrew(body: {
   crewId?: string;
   recruit?: Record<string, unknown>;
@@ -100,21 +125,8 @@ function resolveOrRecruitCrew(body: {
     const existing = eng.crewManager.list().find((c) => c.callsign.toLowerCase() === callsign.toLowerCase());
     if (existing) return existing;
 
-    return eng.crewManager.create({
-      id: (r['id'] as string) || `hub-${callsign}`,
-      name: r['name'] as string,
-      title: r['title'] as string | undefined,
-      callsign,
-      systemPrompt: r['systemPrompt'] as string,
-      description: (r['description'] as string) || '',
-      emotion: (r['tone'] as Crew['emotion']) ?? (r['emotion'] as Crew['emotion']),
-      expertise: r['expertise'] as string[] | undefined,
-      traits: r['traits'] as string[] | undefined,
-      tools: r['tools'] as string[] | undefined,
-      source: (r['source'] as Crew['source']) ?? (r['catalogId'] ? 'hub' : 'custom'),
-      catalogId: (r['catalogId'] as string | undefined) ?? `hub-${callsign}`,
-      color: r['color'] as string | undefined,
-    });
+    // Private crew chat: use hub identity without persisting to the global roster.
+    return ephemeralCrewFromRecruitPayload(r);
   }
 
   if (body.crewId) {

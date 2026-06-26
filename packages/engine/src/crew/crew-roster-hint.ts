@@ -1,6 +1,7 @@
 import type { CrewMatchCandidate, CrewSuggestionEvaluation } from '@agentx/shared';
 import { explicitCrewRequest, prefersCrewRosterFirst } from '@agentx/shared';
 import { getCrewSuggestionService } from './get-crew-store.js';
+import type { CrewKeywordExpandFn } from './crew-keyword-expander.js';
 
 export interface CrewRosterHintInput {
   message: string;
@@ -9,6 +10,7 @@ export interface CrewRosterHintInput {
   priorUserMessages?: string[];
   /** User skipped/dismissed the crew suggestion modal — do not re-prompt. */
   crewSuggestionResolved?: boolean;
+  expandKeywords?: CrewKeywordExpandFn;
 }
 
 function formatCandidateLine(c: CrewMatchCandidate, index: number): string {
@@ -66,6 +68,7 @@ export async function buildCrewRosterHintBlock(input: CrewRosterHintInput): Prom
     sessionId: input.sessionId,
     priorUserMessages: input.priorUserMessages,
     explicitCrewRequest: explicitCrewRequest(input.message),
+    expandKeywords: input.expandKeywords,
   });
 
   if (!prefersCrewRosterFirst(input.message) && evaluation.candidates.length === 0) {
