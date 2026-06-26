@@ -1,7 +1,8 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'http';
 import { getEngine } from './engine.js';
-import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart } from '@agentx/shared';
+import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
+import type { DeepSearchProgress } from '@agentx/shared';
 
 interface PartRecord {
   type: string;
@@ -390,9 +391,10 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
   } {
     const toolCalls = Array.from(toolCallMap.values());
     const subAgents = Array.from(subAgentMap.values());
-    const parts = accumulatedParts.length > 0
+    let parts = accumulatedParts.length > 0
       ? JSON.parse(JSON.stringify(accumulatedParts)) as MessagePart[]
       : undefined;
+    if (parts) parts = attachDeepSearchPartsFromTools(parts, toolCalls);
     const extra: ReturnType<typeof buildExtra> = {};
     if (thinkingText) extra.thinking = thinkingText;
     if (thinkingStartedAt != null) extra.thinkingStartedAt = thinkingStartedAt;
@@ -509,6 +511,18 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
                 metadata: metadata as ToolCallRecord['metadata'],
               },
             };
+          }
+          if (toolName === 'deep_web_search' && id) {
+            const bundle = deepSearchBundleFromMetadata(metadata);
+            const progress = metadata?.deepSearchProgress as DeepSearchProgress | undefined;
+            const next = upsertDeepSearchPart([...accumulatedParts], {
+              toolCallId: id,
+              bundle,
+              progress,
+              running: !bundle,
+            });
+            accumulatedParts.length = 0;
+            next.forEach((p) => accumulatedParts.push(p));
           }
         }
       }

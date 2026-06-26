@@ -201,6 +201,31 @@ export { TreeOfThoughts } from './reasoning/TreeOfThoughts.js';
 export type { ThoughtNode, TreeOfThoughtsOptions } from './reasoning/TreeOfThoughts.js';
 export { ResearchEngine } from './reasoning/ResearchEngine.js';
 export type { ResearchQuery, ResearchResult, ResearchEngineOptions } from './reasoning/ResearchEngine.js';
+export {
+  applyWebSearchConfigFromAgentConfig,
+  getWebSearchRuntime,
+  listActiveWebSearchProviders,
+  defaultWebSearchToolsConfig,
+  resolveWebSearchRuntime,
+  hasActiveWebSearchProviders,
+  webSearchProvidersUnavailableMessage,
+  mergeWebSearchToolsConfig,
+} from './search/search-config.js';
+export type { ResolvedWebSearchProvider, ResolvedWebSearchRuntime } from './search/search-config.js';
+export { validateWebSearchProvider } from './search/validate-provider.js';
+export type { WebSearchProviderValidation } from './search/validate-provider.js';
+export {
+  detectExplicitWebSearchRequest,
+  resolveWebSearchTurnPolicy,
+  resolveWebSearchTurnPolicyAsync,
+  createWebSearchIntentClassifier,
+  analyzeWebSearchIntent,
+  analyzeWebSearchIntentHeuristic,
+  pickForcedWebSearchTool,
+  isWebSearchAvailableForChat,
+  buildWebSearchTurnInstruction,
+} from './search/web-search-policy.js';
+export type { WebSearchTurnPolicy } from './search/web-search-policy.js';
 
 // === UNIFIED IMPLEMENTATION: Communication Layer ===
 

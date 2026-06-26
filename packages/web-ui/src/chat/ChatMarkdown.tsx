@@ -13,6 +13,7 @@ import { isHorizontalPipelineContent, isPipelineDiagramContent } from './pipelin
 import { FlowDiagramBlock } from './FlowDiagramBlock';
 import { PipelineDiagramBlock } from './PipelineDiagramBlock';
 import { CodeBlockChrome, CodeBlockBody, CODE_BLOCK_TOKENS, formatBlockTitle } from './code-block-chrome';
+import { CitationChip, isCitationStyleLink } from './CitationChip';
 
 const MARKDOWN_BASE_SX = {
   '& p': { m: 0, mb: 0.75, fontSize: '0.8125rem', lineHeight: 1.65, color: colors.text.secondary, fontFamily: "'Inter', sans-serif" },
@@ -253,6 +254,37 @@ function createMarkdownComponents(isFirstSection: boolean) {
     ul({ children }: { children?: React.ReactNode }) { return <StyledUl>{children}</StyledUl>; },
     ol({ children }: { children?: React.ReactNode }) { return <StyledOl>{children}</StyledOl>; },
     li({ children }: { children?: React.ReactNode }) { return <StyledLi>{children}</StyledLi>; },
+    a({ href, children }: { href?: string; children?: React.ReactNode }) {
+      if (href && isCitationStyleLink(href, children)) {
+        return <CitationChip href={href} label={String(children ?? '')} />;
+      }
+      return (
+        <Box
+          component="a"
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          sx={{ color: colors.accent.blue, textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+        >
+          {children}
+        </Box>
+      );
+    },
+    sup({ children }: { children?: React.ReactNode }) {
+      return (
+        <Box
+          component="sup"
+          sx={{
+            fontSize: '0.62rem',
+            fontFamily: "'JetBrains Mono', monospace",
+            color: colors.accent.cyan,
+            fontWeight: 700,
+          }}
+        >
+          {children}
+        </Box>
+      );
+    },
   };
 }
 

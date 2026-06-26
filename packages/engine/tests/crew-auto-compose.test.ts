@@ -4,9 +4,11 @@ import {
   autoComposeCrewMembers,
   buildRoutingTaskForActiveCrew,
   buildTaskContextForCrewRouting,
+  crewDelegationMatchesTask,
   hasTaskSignals,
   isActiveCrewContinuation,
   isDistinctNewRequirement,
+  isGeneralKnowledgeQuery,
   memberMatchesTaskDomains,
   shouldBypassActiveCrewRouting,
   shouldSkipAutonomousCrewRouting,
@@ -284,5 +286,42 @@ describe('astrophysics must not route to travel crew on follow-up', () => {
     ).toBe(true);
     expect(memberMatchesTaskDomains('what are blackholes?', mockMember(jonas))).toBe(false);
     expect(memberMatchesTaskDomains('what are blackholes?', mockMember(hugo))).toBe(true);
+  });
+});
+
+describe('general knowledge queries must not route to irrelevant crew', () => {
+  const jonas = mockCrew({
+    id: 'jonas-travel',
+    name: 'Jonas Park',
+    callsign: 'jonas_park',
+    systemPrompt: 'Adventure Travel Planner specializing in itineraries and tourism.',
+    expertise: ['travel', 'tourism', 'planning', 'logistics'],
+  });
+
+  const hugo = mockCrew({
+    id: 'hugo-astro',
+    name: 'Hugo Garcia',
+    callsign: 'hugo_garcia',
+    systemPrompt: 'Astrophysics theory coach specializing in black holes and cosmology.',
+    expertise: ['astrophysics', 'astronomy', 'cosmology', 'physics'],
+  });
+
+  const jwst = 'what is the latest new about James Webb Telescope?';
+
+  it('detects JWST news as general knowledge', () => {
+    expect(isGeneralKnowledgeQuery(jwst)).toBe(true);
+    expect(shouldBypassActiveCrewRouting(jwst)).toBe(true);
+    expect(hasTaskSignals(jwst)).toBe(false);
+  });
+
+  it('does not route JWST news to travel planner when he is the only enabled crew', () => {
+    const assessment = assessCrewNeed(jwst, [mockMember(jonas)]);
+    expect(assessment.shouldRoute).toBe(false);
+    expect(crewDelegationMatchesTask(jwst, [mockMember(jonas)])).toBe(false);
+  });
+
+  it('does not delegate JWST news to travel planner via crewDelegationMatchesTask', () => {
+    expect(crewDelegationMatchesTask(jwst, [mockMember(jonas)])).toBe(false);
+    expect(crewDelegationMatchesTask(jwst, [mockMember(jonas), mockMember(hugo)])).toBe(false);
   });
 });

@@ -57,6 +57,22 @@ export const ragConfigSchema = z.object({
   minScore: z.number().default(0.0),
 }).optional();
 
+export const webSearchPaidProviderSchema = z.object({
+  enabled: z.boolean().default(false),
+  apiKey: z.string().optional(),
+});
+
+export const webSearchToolsConfigSchema = z.object({
+  duckduckgo: z.object({ enabled: z.boolean().default(true) }).optional(),
+  brave: webSearchPaidProviderSchema.optional(),
+  exa: webSearchPaidProviderSchema.optional(),
+  tavily: webSearchPaidProviderSchema.optional(),
+}).optional();
+
+export const toolsConfigSchema = z.object({
+  webSearch: webSearchToolsConfigSchema,
+}).optional();
+
 export const agentXConfigSchema = z.object({
   provider: providerSettingsSchema,
   ui: uiSettingsSchema.default({}),
@@ -66,6 +82,7 @@ export const agentXConfigSchema = z.object({
   user: userConfigSchema,
   setupComplete: z.boolean().optional(),
   rag: ragConfigSchema,
+  tools: toolsConfigSchema,
 });
 
 export type ValidatedConfig = z.infer<typeof agentXConfigSchema>;

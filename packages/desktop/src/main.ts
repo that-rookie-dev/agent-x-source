@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage } from 'electron';
+import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage, shell } from 'electron';
 import { join, basename } from 'path';
 import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } from 'fs';
 import type { Server } from 'http';
@@ -317,6 +317,37 @@ async function stopServer(): Promise<void> {
   }
 }
 
+// ==================== External links ====================
+
+function isExternalHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+async function openExternalLink(url: string): Promise<boolean> {
+  if (!isExternalHttpUrl(url)) return false;
+  try {
+    await shell.openExternal(url);
+    return true;
+  } catch (err) {
+    console.error('openExternal failed:', err);
+    return false;
+  }
+}
+
+function attachExternalLinkHandlers(win: BrowserWindow): void {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalHttpUrl(url)) {
+      void openExternalLink(url);
+    }
+    return { action: 'deny' };
+  });
+}
+
 // ==================== Window ====================
 
 function createWindow(): void {
@@ -333,6 +364,8 @@ function createWindow(): void {
   });
 
   mainWindow.loadURL(`http://localhost:${PORT}`);
+
+  attachExternalLinkHandlers(mainWindow);
 
   // Clear webview cache on each launch to prevent stale assets
   mainWindow.webContents.session.clearCache().catch(() => {});
@@ -416,6 +449,7 @@ ipcMain.handle('dialog:openFolder', async () => {
   });
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
+ipcMain.handle('shell:openExternal', async (_event, url: string) => openExternalLink(url));
 
 // ==================== App Lifecycle ====================
 

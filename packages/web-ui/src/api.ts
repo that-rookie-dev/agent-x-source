@@ -290,6 +290,7 @@ export const chat = {
     priorUserMessages?: string[],
     crewIntakeFromPicker?: boolean,
     primaryCrewId?: string,
+    forceWebSearch?: boolean,
   ) =>
     postChatAsync('/chat/message', {
       text,
@@ -300,6 +301,7 @@ export const chat = {
       priorUserMessages,
       crewIntakeFromPicker,
       primaryCrewId,
+      forceWebSearch,
     }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
@@ -709,6 +711,14 @@ export interface AgentXConfig {
   user?: { callsign: string };
   setupComplete?: boolean;
   rag?: { enabled: boolean; embeddingModel: string; chunkSize: number; topK: number };
+  tools?: {
+    webSearch?: {
+      duckduckgo?: { enabled?: boolean };
+      brave?: { enabled: boolean; apiKey?: string };
+      exa?: { enabled: boolean; apiKey?: string };
+      tavily?: { enabled: boolean; apiKey?: string };
+    };
+  };
 }
 
 export interface ProviderSettings {
@@ -1191,6 +1201,20 @@ export const settings = {
       request<{ ok: boolean }>('/settings/db/clear', { method: 'POST' }),
     clearCache: () =>
       request<{ ok: boolean; freedFormatted: string }>('/settings/db/clear-cache', { method: 'POST' }),
+  },
+  webSearch: {
+    status: () =>
+      request<{
+        available: boolean;
+        providers: string[];
+        tools: { deep_web_search: boolean; web_search: boolean };
+        forcedTool: 'deep_web_search' | 'web_search' | null;
+      }>('/settings/web-search/status'),
+    test: (provider: 'brave' | 'exa' | 'tavily', apiKey: string) =>
+      request<{ ok: boolean; provider: string; latencyMs?: number; error?: string }>(
+        '/settings/web-search/test',
+        { method: 'POST', body: JSON.stringify({ provider, apiKey }) },
+      ),
   },
 };
 

@@ -46,8 +46,34 @@ const SOCIAL_ONLY = /^(hi|hey|hello|thanks|thank you|bye|goodbye|ok|okay|sure|go
 /** User defers decisions to the agent/crew — deliver a plan with stated assumptions. */
 const USER_DEFERS_TO_AGENT = /\b(plan it yourself|you decide|you suggest|figure it out|just plan|surprise me|choose for me|pick for me|on your own|your call|up to you|not sure|do it yourself|plan on your own)\b/i;
 
+/** Informational questions Agent-X should answer directly (often with web search), not crew specialists. */
+const GENERAL_KNOWLEDGE_PATTERNS = [
+  /\b(what is|what are|what was|what's|who is|who are|when did|when was|where is|where are)\b/i,
+  /\b(latest|recent|current|new)\s+(news|update|updates|developments?)\b/i,
+  /\bnews\s+(about|on|regarding|from)\b/i,
+  /\b(tell me about|explain|describe|give me an overview of)\b/i,
+  /\bhow\s+(does|do|did|is|are|was|were)\b/i,
+] as const;
+
 export function userDeferredToAgent(text: string): boolean {
   return USER_DEFERS_TO_AGENT.test(text.trim());
+}
+
+/** True for research/news/overview questions that Agent-X should handle (not crew delegation). */
+export function isGeneralKnowledgeQuery(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || explicitCrewRequest(trimmed)) return false;
+  if (TASK_ACTION_SIGNALS.test(trimmed) && !GENERAL_KNOWLEDGE_PATTERNS.some((p) => p.test(trimmed))) {
+    return false;
+  }
+  return GENERAL_KNOWLEDGE_PATTERNS.some((p) => p.test(trimmed));
+}
+
+/** Heuristic gate before crew tools run — blocks irrelevant specialists (e.g. travel planner on JWST news). */
+export function crewDelegationMatchesTask(task: string, members: CrewMember[]): boolean {
+  if (members.length === 0) return false;
+  if (isGeneralKnowledgeQuery(task)) return false;
+  return assessCrewNeed(task, members).shouldRoute;
 }
 
 /** Skip autonomous crew routing for host/session/meta questions directed at Agent-X. */
@@ -258,6 +284,7 @@ export function shouldBypassActiveCrewRouting(
   if (opts?.hasDelegateCrewIds) return false;
   if (opts?.crewSuggestionResolved) return true;
   const trimmed = message.trim();
+  if (isGeneralKnowledgeQuery(trimmed)) return true;
   if (priorUserMessages.length > 0 && isDistinctNewRequirement(trimmed, priorUserMessages)) return true;
   return explicitCrewRequest(trimmed);
 }
@@ -305,6 +332,7 @@ export function isActiveCrewContinuation(
 export function hasTaskSignals(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed || SOCIAL_ONLY.test(trimmed)) return false;
+  if (isGeneralKnowledgeQuery(trimmed)) return false;
   if (TASK_ACTION_SIGNALS.test(trimmed)) return true;
   if (DOMAIN_HINTS.some((h) => h.pattern.test(trimmed))) return true;
   return CREW_DOMAIN_KEYWORDS.some((kw) => trimmed.toLowerCase().includes(kw));
@@ -313,7 +341,7 @@ export function hasTaskSignals(text: string): boolean {
 /** Score all crew members and decide whether Agent-X should autonomously involve them. */
 export function assessCrewNeed(task: string, availableMembers: CrewMember[]): CrewNeedAssessment {
   const empty: CrewNeedAssessment = { members: [], confidence: 0, reasons: [], shouldRoute: false };
-  if (availableMembers.length === 0 || !hasTaskSignals(task)) return empty;
+  if (availableMembers.length === 0 || isGeneralKnowledgeQuery(task) || !hasTaskSignals(task)) return empty;
 
   const taskLower = task.toLowerCase();
   const scored = availableMembers

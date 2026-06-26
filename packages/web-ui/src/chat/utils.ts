@@ -1,6 +1,37 @@
 /** Client-side text helpers (mirrors @agentx/shared). */
 
-import { normalizeMessageForUi } from '@agentx/shared/browser';
+import { attachDeepSearchPartsFromTools, normalizeMessageForUi, type MessagePart } from '@agentx/shared/browser';
+
+/** Apply tool_complete metadata only to the matching tool call (parallel same-name tools). */
+export function applyToolCompleteMetadata<T extends {
+  id: string;
+  name: string;
+  status: string;
+  metadata?: Record<string, unknown>;
+}>(
+  tool: T,
+  meta: Record<string, unknown> | undefined,
+  callId: string,
+  toolName: string,
+): T {
+  if (!meta) return tool;
+  if (callId) {
+    return tool.id === callId ? { ...tool, metadata: { ...tool.metadata, ...meta } } : tool;
+  }
+  if (tool.name !== toolName) return tool;
+  return { ...tool, metadata: { ...tool.metadata, ...meta } };
+}
+
+/** Rebuild deep_search parts from per-tool metadata after a streaming turn completes. */
+export function reconcileStreamingMessageParts<T extends MessagePart>(
+  liveParts: T[] | undefined,
+  toolCalls: Array<{ id: string; name: string; metadata?: Record<string, unknown>; streamOutput?: string }> | undefined,
+  incomingParts: T[] | undefined,
+): T[] | undefined {
+  const base = liveParts?.length ? liveParts : incomingParts;
+  if (!base?.length) return base;
+  return attachDeepSearchPartsFromTools(base, toolCalls) as T[];
+}
 
 export function sanitizeForJson(text: string): string {
   if (!text) return text;

@@ -1,6 +1,7 @@
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import type { Agent } from '../../agent/Agent.js';
 import type { CrewMember } from '../../agent/CrewOrchestrator.js';
+import { assessCrewNeed, isGeneralKnowledgeQuery } from '../../agent/crew-auto-compose.js';
 import { isMissionInProgress } from '../../agent/crew-mission-registry.js';
 
 let agentInstance: Agent | null = null;
@@ -47,7 +48,7 @@ export async function spawnCrewWorkers(
       ? crewsRaw.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
 
-  const members = resolveMembers(crewNames);
+  let members = resolveMembers(crewNames);
   if (members.length === 0) {
     return {
       success: false,
@@ -55,6 +56,25 @@ export async function spawnCrewWorkers(
       error: 'NO_CREWS',
     };
   }
+
+  if (isGeneralKnowledgeQuery(task)) {
+    return {
+      success: false,
+      output: 'Crew delegation blocked: this is a general information question. Answer directly as Agent-X (use web search if needed).',
+      error: 'DELEGATION_DENIED',
+    };
+  }
+
+  const assessment = assessCrewNeed(task, members);
+  if (!assessment.shouldRoute || assessment.members.length === 0) {
+    const names = members.map((m) => `@${m.crew.callsign}`).join(', ');
+    return {
+      success: false,
+      output: `Crew delegation blocked: none of the requested crew (${names}) match this task. Answer directly as Agent-X.`,
+      error: 'DELEGATION_DENIED',
+    };
+  }
+  members = assessment.members;
 
   const guard = await agentInstance.guardCrewDelegation(task, members);
   if (!guard.allowed) {

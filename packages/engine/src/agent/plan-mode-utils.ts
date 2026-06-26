@@ -11,7 +11,7 @@ export const PLAN_ALLOWED_TOOL_IDS = new Set([
   // Git read
   'git_status', 'git_diff', 'git_log', 'git_blame', 'git_show',
   // Web read
-  'web_search', 'web_fetch', 'web_scrape', 'web_browse', 'http_get',
+  'web_search', 'deep_web_search', 'web_fetch', 'web_scrape', 'web_browse', 'http_get',
   // Document/data read
   'pdf_read', 'docx_read', 'xlsx_read', 'pptx_read', 'csv_parse', 'json_parse', 'json_query',
   // Memory / RAG read

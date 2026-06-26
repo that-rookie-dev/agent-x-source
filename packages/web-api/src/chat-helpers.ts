@@ -1,10 +1,21 @@
 import type { Agent } from '@agentx/engine';
+import { applyWebSearchConfigFromAgentConfig, isWebSearchAvailableForChat } from '@agentx/engine';
+import type { AgentXConfig } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import { getLogger, sanitizeForJson, generateId } from '@agentx/shared';
 
 export const TURN_TIMEOUT_MS = 600_000;
+
+export function getForceWebSearchError(cfg: AgentXConfig, forceWebSearch?: boolean): string | null {
+  if (!forceWebSearch) return null;
+  applyWebSearchConfigFromAgentConfig(cfg);
+  if (!isWebSearchAvailableForChat(cfg).available) {
+    return 'Web search is not available. Enable a search provider in Settings → Tools.';
+  }
+  return null;
+}
 
 export const sessionSettings: { mode: 'agent' | 'plan' } = { mode: 'plan' };
 
@@ -133,6 +144,7 @@ export function runAgentTurnAsync(
   crewIntakeFromPicker?: boolean,
   primaryCrewId?: string,
   extra?: {
+    forceWebSearch?: boolean;
     resumeCrewIntake?: {
       originalUserText: string;
       intakeAnswer: string;
@@ -171,6 +183,7 @@ export function runAgentTurnAsync(
     ...(crewSuggestionResolved ? { crewSuggestionResolved: true } : {}),
     ...(crewIntakeFromPicker ? { crewIntakeFromPicker: true } : {}),
     ...(primaryCrewId ? { primaryCrewId } : {}),
+    ...(extra?.forceWebSearch ? { forceWebSearch: true } : {}),
     ...(extra?.resumeCrewIntake ? { resumeCrewIntake: extra.resumeCrewIntake } : {}),
   })
     .then((message) => {

@@ -95,7 +95,7 @@ export class SpecialistRegistry {
       name: 'Researcher',
       specialty: 'researcher',
       description: 'Searches web, code, and docs for information',
-      preferredTools: ['web_search', 'web_scrape', 'code_search', 'file_read', 'folder_list'],
+      preferredTools: ['deep_web_search', 'web_search', 'web_fetch', 'web_scrape', 'code_search', 'file_read', 'folder_list'],
       systemPrompt: 'Find information across web, code, and documents. Synthesize findings into clear summaries.',
     });
 

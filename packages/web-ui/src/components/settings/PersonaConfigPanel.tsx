@@ -6,29 +6,28 @@ import Select from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
 import Chip from '@mui/material/Chip';
 import type { AgentPersonaConfig, CommunicationStyle, DecisionMakingStyle } from '../../api';
-import { colors } from '../../theme';
+import { crewTheme, crewOverlineSx } from '../../styles/crew-theme';
 
 const cardSx = {
-  bgcolor: colors.bg.secondary,
-  border: `1px solid ${colors.border.default}`,
-  borderRadius: 1.5,
+  position: 'relative' as const,
+  bgcolor: crewTheme.bg.inset,
+  border: `1px solid ${crewTheme.border.default}`,
+  borderRadius: '8px',
   p: 3,
   mb: 2,
+  overflow: 'hidden',
 };
 
 const labelSx = {
-  fontSize: '0.7rem',
-  fontWeight: 600,
-  color: colors.text.secondary,
+  ...crewOverlineSx,
+  fontSize: '0.65rem',
   mb: 0.75,
-  fontFamily: "'JetBrains Mono', monospace",
-  textTransform: 'uppercase',
-  letterSpacing: '0.5px',
+  display: 'block',
 };
 
 const helperSx = {
   fontSize: '0.65rem',
-  color: colors.text.dim,
+  color: crewTheme.text.dim,
   mt: 0.5,
   lineHeight: 1.5,
 };
@@ -126,7 +125,7 @@ export function PersonaConfigPanel({ value, onChange }: Props) {
         <Typography sx={labelSx}>Behavior</Typography>
         <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
           <Box sx={{ flex: 1, minWidth: 200, maxWidth: 320 }}>
-            <Typography sx={{ fontSize: '0.65rem', color: colors.text.dim, mb: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>
+            <Typography sx={{ fontSize: '0.65rem', color: crewTheme.text.dim, mb: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>
               Communication Style
             </Typography>
             <Select size="small" value={persona.communicationStyle}
@@ -137,14 +136,14 @@ export function PersonaConfigPanel({ value, onChange }: Props) {
                 <MenuItem key={s.value} value={s.value} sx={{ fontSize: '0.8rem' }}>
                   <Box>
                     <Typography sx={{ fontSize: '0.8rem', fontFamily: "'JetBrains Mono', monospace" }}>{s.label}</Typography>
-                    <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim }}>{s.desc}</Typography>
+                    <Typography sx={{ fontSize: '0.6rem', color: crewTheme.text.dim }}>{s.desc}</Typography>
                   </Box>
                 </MenuItem>
               ))}
             </Select>
           </Box>
           <Box sx={{ flex: 1, minWidth: 200, maxWidth: 320 }}>
-            <Typography sx={{ fontSize: '0.65rem', color: colors.text.dim, mb: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>
+            <Typography sx={{ fontSize: '0.65rem', color: crewTheme.text.dim, mb: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>
               Decision Making
             </Typography>
             <Select size="small" value={persona.decisionMaking}
@@ -155,7 +154,7 @@ export function PersonaConfigPanel({ value, onChange }: Props) {
                 <MenuItem key={s.value} value={s.value} sx={{ fontSize: '0.8rem' }}>
                   <Box>
                     <Typography sx={{ fontSize: '0.8rem', fontFamily: "'JetBrains Mono', monospace" }}>{s.label}</Typography>
-                    <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim }}>{s.desc}</Typography>
+                    <Typography sx={{ fontSize: '0.6rem', color: crewTheme.text.dim }}>{s.desc}</Typography>
                   </Box>
                 </MenuItem>
               ))}
@@ -173,15 +172,15 @@ export function PersonaConfigPanel({ value, onChange }: Props) {
           slotProps={{ input: { sx: { fontSize: '0.8rem' } } }} />
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1 }}>
           {persona.traits.length === 0 ? (
-            <Typography sx={{ fontSize: '0.65rem', color: colors.text.muted, fontStyle: 'italic' }}>
+            <Typography sx={{ fontSize: '0.65rem', color: crewTheme.text.dim, fontStyle: 'italic' }}>
               No traits added. Add traits like "analytical", "creative", "practical", "curious".
             </Typography>
           ) : (
             persona.traits.map((trait) => (
               <Chip key={trait} label={trait} size="small" onDelete={() => removeTrait(trait)}
                 sx={{ fontSize: '0.7rem', height: 22, fontFamily: "'JetBrains Mono', monospace",
-                  bgcolor: colors.border.subtle, color: colors.text.secondary,
-                  '& .MuiChip-deleteIcon': { fontSize: 14, color: colors.text.dim } }} />
+                  bgcolor: crewTheme.border.subtle, color: crewTheme.text.secondary,
+                  '& .MuiChip-deleteIcon': { fontSize: 14, color: crewTheme.text.dim } }} />
             ))
           )}
         </Box>
@@ -192,9 +191,9 @@ export function PersonaConfigPanel({ value, onChange }: Props) {
       <Box sx={cardSx}>
         <Typography sx={labelSx}>System Prompt Preview</Typography>
         <Box sx={{
-          bgcolor: colors.bg.primary, border: `1px solid ${colors.border.subtle}`,
+          bgcolor: crewTheme.bg.void, border: `1px solid ${crewTheme.border.subtle}`,
           borderRadius: 1, p: 2, maxHeight: 180, overflow: 'auto',
-          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.6rem', whiteSpace: 'pre-wrap', color: colors.text.muted,
+          fontFamily: "'JetBrains Mono', monospace", fontSize: '0.6rem', whiteSpace: 'pre-wrap', color: crewTheme.text.dim,
         }}>
 {`[IDENTITY]
 You are ${persona.name}, an AI agent running on the user's own machine.

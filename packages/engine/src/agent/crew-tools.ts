@@ -42,7 +42,7 @@ const READ_CREW_TOOLS = new Set([
   'file_read', 'folder_list', 'code_search', 'code_grep', 'code_definitions',
   'glob', 'grep', 'pdf_read', 'csv_parse', 'json_parse', 'http_get',
   'browser_open', 'browser_screenshot', 'git_status', 'git_diff',
-  'git_log', 'test_run', 'test_coverage', 'db_query', 'web_search', 'web_fetch',
+  'git_log', 'test_run', 'test_coverage', 'db_query', 'deep_web_search', 'web_search', 'web_fetch', 'web_scrape',
 ]);
 
 export function resolveCrewToolIds(crew: Crew, planMode = false): string[] {

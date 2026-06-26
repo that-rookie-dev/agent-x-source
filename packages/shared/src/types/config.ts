@@ -18,6 +18,26 @@ export interface AgentPersonaConfig {
   traits: string[];
 }
 
+/** Paid web search providers — BYOK only; DuckDuckGo is the free default. */
+export type WebSearchPaidProviderId = 'brave' | 'exa' | 'tavily';
+
+export interface WebSearchPaidProviderConfig {
+  enabled: boolean;
+  apiKey?: string;
+}
+
+export interface WebSearchToolsConfig {
+  /** Open-source DuckDuckGo HTML search — enabled by default when unset. */
+  duckduckgo?: { enabled?: boolean };
+  brave?: WebSearchPaidProviderConfig;
+  exa?: WebSearchPaidProviderConfig;
+  tavily?: WebSearchPaidProviderConfig;
+}
+
+export interface ToolsConfig {
+  webSearch?: WebSearchToolsConfig;
+}
+
 export interface AgentXConfig {
   provider: ProviderSettings;
   ui: UISettings;
@@ -27,6 +47,7 @@ export interface AgentXConfig {
   user?: UserConfig;
   setupComplete?: boolean; // true after Mission Control wizard finishes
   rag?: RAGConfig;
+  tools?: ToolsConfig;
   maxSubAgents?: number; // Maximum number of concurrent sub-agents (default: 5, max: 20)
 
   /** Maximum autonomous LLM↔tool cycles per turn (default: 20, increase for complex tasks) */

@@ -104,10 +104,10 @@ Sources must be one of: "web", "code", "docs", "all".`;
 
   async executeParallel(queries: ResearchQuery[], agent: Agent): Promise<ResearchResult[]> {
     const toolMap: Record<ResearchQuery['sources'], string[]> = {
-      web: ['web_search', 'web_scrape'],
+      web: ['deep_web_search', 'web_search', 'web_scrape'],
       code: ['code_search', 'file_read'],
-      docs: ['web_search', 'file_read'],
-      all: ['web_search', 'web_scrape', 'code_search', 'file_read'],
+      docs: ['deep_web_search', 'web_search', 'file_read'],
+      all: ['deep_web_search', 'web_search', 'web_scrape', 'code_search', 'file_read'],
     };
 
     const results = await Promise.all(

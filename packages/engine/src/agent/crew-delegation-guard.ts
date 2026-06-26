@@ -1,3 +1,4 @@
+import { crewDelegationMatchesTask, isGeneralKnowledgeQuery } from './crew-auto-compose.js';
 import type { CrewMember } from './CrewOrchestrator.js';
 
 export interface CrewDelegationGuardResult {
@@ -29,6 +30,21 @@ export async function evaluateCrewDelegation(
 ): Promise<CrewDelegationGuardResult> {
   if (input.members.length === 0) {
     return { allowed: false, reason: 'No crew members selected' };
+  }
+
+  if (isGeneralKnowledgeQuery(input.userMessage) || isGeneralKnowledgeQuery(input.task)) {
+    return {
+      allowed: false,
+      reason: 'General information and news questions should be answered by Agent-X directly',
+    };
+  }
+
+  if (!crewDelegationMatchesTask(input.task, input.members)) {
+    const names = input.members.map((m) => m.crew.name).join(', ');
+    return {
+      allowed: false,
+      reason: `No selected crew member (${names}) has expertise that matches this task — Agent-X should respond directly`,
+    };
   }
 
   const prompt = `You are a conservative delegation gate for Agent-X, the user's primary assistant.

@@ -1,5 +1,6 @@
 import type { ToolResult, ToolExecutionContext, PermissionRule } from '@agentx/shared';
 import { evaluateRules } from './permissions/RuleEngine.js';
+import { isPermissionExemptTool } from './permissions/exempt-tools.js';
 import { PermissionManager } from './permissions/PermissionManager.js';
 import { ScopeGuard } from './permissions/ScopeGuard.js';
 import { ToolRegistry } from './ToolRegistry.js';
@@ -223,7 +224,13 @@ export class ToolExecutor {
       return { success: false, output: `"${toolId}" is not available.`, error: 'MODE_RESTRICTED' };
     }
 
-    if (ruleResult === 'ask' && this.permissionRequestHandler && tool.riskLevel !== 'low') {
+    const permissionExempt = isPermissionExemptTool(toolId);
+    if (
+      !permissionExempt
+      && ruleResult === 'ask'
+      && this.permissionRequestHandler
+      && tool.riskLevel !== 'low'
+    ) {
       const existingGrant = this.permissionManager.check(toolId, scopePathForHook ?? undefined);
       if (existingGrant === 'allow_always') {
         // Previously granted — skip prompt
