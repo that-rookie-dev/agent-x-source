@@ -23,7 +23,6 @@ import PublicIcon from '@mui/icons-material/Public';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BoltIcon from '@mui/icons-material/Bolt';
 import HomeIcon from '@mui/icons-material/Home';
-import BuildIcon from '@mui/icons-material/Build';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { providers as provApi, models as modelsApi, config, settings, personaApi } from '../api';
 import { useApp } from '../store/AppContext';
@@ -272,13 +271,13 @@ export function SetupWizard() {
                     {selectedBackend === 'embedded-postgres' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.green, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
                   </Box>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
-                    <Punch text="Zero-config PostgreSQL. Docker spins the database for you." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Runs on port 3335. Schema, tables, and indexes auto-built." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Same DEK encryption. PG sees only ciphertext. Always." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Air-gapped by default. No cloud credentials required." icon={<BuildIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Perfect for hackers, solo devs, and first-time setup." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Move machines by re-running setup — Docker keeps it portable." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="One click. 12 tables. 9 indexes. Brain online in seconds." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Everything runs on your Mac — no cloud account or database setup needed." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Your messages, memories, and crew data stay on this machine." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Works offline. Agent-X is ready even without internet." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Automatic brain setup. The database is created and maintained for you." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Simple to back up or move to another Mac." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Best for personal use, solo work, and getting started fast." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
                   </Box>
                   <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: `${colors.accent.green}06`, border: `1px solid ${colors.accent.green}10`, mt: 'auto' }}>
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.green, textAlign: 'center', fontWeight: 600 }}>
@@ -303,13 +302,13 @@ export function SetupWizard() {
                     {selectedBackend === 'postgres' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
                   </Box>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
-                    <Punch text="Bring your own PostgreSQL. Cloud, local server, or managed DB." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="AWS · Supabase · Neon · Railway · Raspberry Pi. Your call." icon={<PublicIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Multiple agents. Zero conflicts. One brain, everywhere." icon={<HubIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Same DEK encryption. PG sees only ciphertext. Always." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="One click. 12 tables. 9 indexes. Schema auto-built on connect." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Managed backups. pg_dump, WAL archiving, point-in-time recovery." icon={<CloudIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Concurrent access. MVCC means zero file locks, zero corruption." icon={<HubIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Connect your own PostgreSQL database — cloud or self-hosted." icon={<CloudIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Access the same brain from multiple Macs or devices." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Share a team brain with shared crews and sessions." icon={<HubIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Your data lives in infrastructure you already control." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Use your existing backups and disaster recovery." icon={<PublicIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Schema and tables are created automatically on first connect." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
                   </Box>
                   <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: `${colors.accent.blue}06`, border: `1px solid ${colors.accent.blue}10`, mt: 'auto' }}>
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.blue, textAlign: 'center', fontWeight: 600 }}>
