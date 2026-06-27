@@ -27,6 +27,34 @@ describe('deep-search-parts', () => {
     expect(next[0]?.type).toBe('text');
   });
 
+  it('upsertDeepSearchPart updates an existing card in place without moving it', () => {
+    const parts: MessagePart[] = [
+      { type: 'deep_search', id: 'c1', deepSearch: { running: true } },
+      { type: 'text', id: 't1', content: 'answer' },
+    ];
+    const next = upsertDeepSearchPart(parts, { toolCallId: 'c1', bundle: sampleBundle, running: false });
+    expect(next.map((p) => p.type)).toEqual(['deep_search', 'text']);
+    expect(next[0]?.deepSearch?.bundle?.query).toBe('test');
+  });
+
+  it('attachDeepSearchPartsFromTools rejoins streamed text split around a deep_search card', () => {
+    const parts: MessagePart[] = [
+      { type: 'text', id: 't1', content: 'Ready to nail down ' },
+      { type: 'deep_search', id: 'c1', deepSearch: { bundle: sampleBundle } },
+      { type: 'text', id: 't2', content: 'travel dates?' },
+      {
+        type: 'tool',
+        id: 'c1',
+        tool: { id: 'c1', name: 'deep_web_search', status: 'done', metadata: { deepSearch: sampleBundle } },
+      },
+    ];
+    const next = attachDeepSearchPartsFromTools(parts);
+    const texts = next.filter((p) => p.type === 'text');
+    expect(texts).toHaveLength(1);
+    expect(texts[0]?.content).toBe('Ready to nail down travel dates?');
+    expect(next.some((p) => p.type === 'deep_search')).toBe(true);
+  });
+
   it('orderPartsForChatRender places deep search after tools and before text', () => {
     const parts = [
       { type: 'tool', id: 't1' },
