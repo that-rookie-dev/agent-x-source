@@ -482,8 +482,12 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
       const toolName = ((event as any).tool as string) ?? '';
       const elapsed = ((event as any).elapsed as number) ?? 0;
       const result = (event as any).result ?? (event as any).output as string ?? '';
-      const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
-      const metadata = (event as any).metadata as Record<string, unknown> | undefined;
+      const resultStr = typeof result === 'string'
+        ? result
+        : typeof (result as { output?: unknown })?.output === 'string'
+          ? (result as { output: string }).output
+          : JSON.stringify(result ?? '');
+      const metadata = ((event as any).metadata ?? (result as { metadata?: unknown })?.metadata) as Record<string, unknown> | undefined;
       if (toolName === 'delegate_to_subagent') {
         const id = (event as any).callId as string || (event as any).id as string;
         if (id && subAgentMap.has(id)) {
