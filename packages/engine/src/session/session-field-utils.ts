@@ -4,7 +4,7 @@ import {
 } from '@agentx/shared';
 
 /**
- * Normalize session field names so callers can use either SQLite (tokensUsed)
+ * Normalize session field names so callers can use either legacy (tokensUsed)
  * or Postgres/StorableSession (tokenUsed) conventions interchangeably.
  */
 export function normalizeSessionUpdates(updates: Record<string, unknown>): Record<string, unknown> {

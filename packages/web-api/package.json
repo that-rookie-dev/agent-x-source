@@ -14,7 +14,6 @@
   "dependencies": {
     "@agentx/engine": "workspace:*",
     "@agentx/shared": "workspace:*",
-    "better-sqlite3": "^12.10.0",
     "express": "^4.21.0",
     "helmet": "^8.2.0",
     "multer": "^2.1.1",

@@ -11,7 +11,7 @@ import {
   sessions as sessionsApi,
   type HealthStatus,
   type AutonomyStatus,
-  type DbStatus,
+  type SessionDbStatus,
 } from '../api';
 import {
   healthTheme,
@@ -173,7 +173,7 @@ function TextBlock({ text }: { text: string }) {
 export function HealthPanel() {
   const [data, setData] = useState<HealthStatus | null>(null);
   const [autonomy, setAutonomy] = useState<AutonomyStatus | null>(null);
-  const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
+  const [dbStatus, setDbStatus] = useState<SessionDbStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
@@ -282,8 +282,8 @@ export function HealthPanel() {
               <MetricRow label="Provider" value={data.config.provider} sub={data.config.model} />
             )}
             {dbStatus && (
-              <MetricRow label="Database" value={dbStatus.dbMode?.toUpperCase() ?? '—'}
-                sub={`${dbStatus.sessionCount} stored · schema v${dbStatus.schemaVersion}`} />
+              <MetricRow label="Database" value={dbStatus.backend?.toUpperCase() ?? '—'}
+                sub={`${dbStatus.connected ? 'Connected' : 'Disconnected'} · ${dbStatus.sessionCount} stored · schema v${dbStatus.schemaVersion}`} />
             )}
             {telegramConfigured && (
               <MetricRow label="Telegram" value={data?.telegramConnected ? 'Connected' : 'Configured'}

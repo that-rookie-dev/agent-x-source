@@ -1,20 +1,6 @@
 import type { Pool } from 'pg';
 
 /** Remove child_sessions index rows whose session rows no longer exist. */
-export function purgeOrphanChildSessionsSqlite(db: {
-  prepare: (sql: string) => { run: (...args: unknown[]) => unknown };
-}): void {
-  try {
-    db.prepare(`
-      DELETE FROM child_sessions
-      WHERE id NOT IN (SELECT id FROM sessions)
-         OR parent_session_id NOT IN (SELECT id FROM sessions)
-    `).run();
-  } catch {
-    /* table may not exist yet */
-  }
-}
-
 export async function purgeOrphanChildSessionsPg(pool: Pool): Promise<void> {
   try {
     await pool.query(`

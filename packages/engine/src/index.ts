@@ -2,7 +2,6 @@ export { AgentLifecycle } from './agent/AgentLifecycle.js';
 export type { AgentState, LifecycleListener } from './agent/AgentLifecycle.js';
 export { ConfigManager } from './config/index.js';
 export * from './tools/platform.js';
-export { SessionStore } from './session/SessionStore.js';
 export { SessionManager } from './session/SessionManager.js';
 export { hostCrewSnapshotPatch, hostCrewSnapshotFromInput } from './session/session-field-utils.js';
 export { TokenTracker } from './session/TokenTracker.js';
@@ -81,7 +80,7 @@ export { EmotionEngine } from './neural/EmotionEngine.js';
 export { GrowthEngine } from './neural/GrowthEngine.js';
 export type { GrowthState } from './neural/GrowthEngine.js';
 export type { EmotionalState } from './neural/EmotionEngine.js';
-export { createSqliteNeuralDb, createPgNeuralDb } from './neural/NeuralDbAdapter.js';
+export { createPgNeuralDb } from './neural/NeuralDbAdapter.js';
 export type { NeuralDb, NeuralStatement } from './neural/NeuralDbAdapter.js';
 export { CrewOrchestrator, buildCrewPrivateIdentityPrompt, buildCrewPrivateFastReplyPrompt } from './agent/CrewOrchestrator.js';
 export { CrewSuggestionService } from './crew/CrewSuggestionService.js';
@@ -101,7 +100,6 @@ export {
   CRITICAL_DB_TABLES,
 } from './db/database-healer.js';
 export type { DatabaseHealResult } from './db/database-healer.js';
-export { repairSqliteFullSchema } from './session/SessionStore.js';
 export {
   recruitCandidatesForMission,
   ensureHubCrewOnRoster,
@@ -143,7 +141,7 @@ export { DefaultTelemetryBus } from './telemetry/index.js';
 export type { TelemetryBus, TelemetryEvent, TelemetryConfig } from '@agentx/shared';
 
 // Phase 0: Storage adapter
-export { DefaultStorageAdapter, PostgresStorageAdapter } from './storage/index.js';
+export { PostgresStorageAdapter } from './storage/index.js';
 export type { PostgresConfig } from './storage/PostgresStorageAdapter.js';
 export type { StorageAdapter, StorableSession, StorableMessage, StorableTokenLog, StorablePermission } from '@agentx/shared';
 
@@ -156,10 +154,8 @@ export { executePluginInSandbox, validatePluginSource } from './plugin/PluginSan
 export type { PluginSandboxResult } from './plugin/PluginSandbox.js';
 export { RedisCacheRuntime } from './plugin/runtime/RedisRuntime.js';
 export { WebhookNotifierRuntime } from './plugin/runtime/WebhookNotifierRuntime.js';
-export { SQLiteBrowserRuntime } from './plugin/runtime/SQLiteBrowserRuntime.js';
 export type { RedisCacheConfig } from './plugin/runtime/RedisRuntime.js';
 export type { WebhookNotifierConfig } from './plugin/runtime/WebhookNotifierRuntime.js';
-export type { SQLiteBrowserConfig } from './plugin/runtime/SQLiteBrowserRuntime.js';
 export type { AcpServerConfig } from './plugin/index.js';
 export type { PluginManifest, PluginInstance, PluginLoader, MCPBridgeConfig, PluginHubEntry, PluginCategory, InstalledPlugin } from '@agentx/shared';
 

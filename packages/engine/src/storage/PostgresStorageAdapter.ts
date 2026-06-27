@@ -228,6 +228,28 @@ CREATE INDEX IF NOT EXISTS idx_turn_feedback_session ON turn_feedback(session_id
 CREATE INDEX IF NOT EXISTS idx_turn_feedback_crew ON turn_feedback(crew_id);
 CREATE INDEX IF NOT EXISTS idx_session_crew_states_session ON session_crew_states(session_id);
 
+CREATE TABLE IF NOT EXISTS bot_credentials (
+  platform TEXT PRIMARY KEY,
+  config_enc TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  tag TEXT NOT NULL,
+  version TEXT NOT NULL DEFAULT '1.0',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS skills (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  trigger_patterns_json TEXT NOT NULL DEFAULT '[]',
+  prompt TEXT NOT NULL DEFAULT '',
+  tools_json TEXT NOT NULL DEFAULT '[]',
+  is_bundled INTEGER NOT NULL DEFAULT 0,
+  usage_count INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS agent_persona (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   name TEXT NOT NULL DEFAULT '',

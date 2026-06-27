@@ -2,8 +2,9 @@ import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, 
 import { join, basename } from 'path';
 import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } from 'fs';
 import type { Server } from 'http';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { tmpdir } from 'os';
+import { PostgresLifecycleManager } from './PostgresLifecycleManager.js';
 
 const REPO = 'SlashpanOrg/agent-x';
 
@@ -11,7 +12,9 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let server: Server | null = null;
+let pgManager: PostgresLifecycleManager | null = null;
 const PORT = 3333;
+const EMBEDDED_PG_PORT = 3335;
 
 const isDev = process.env['NODE_ENV'] === 'development' || !app.isPackaged;
 
@@ -294,6 +297,54 @@ function getWebUiDir(): string {
   return join(process.resourcesPath, 'web-ui');
 }
 
+function loadShellPath(): void {
+  if (process.platform !== 'darwin') return;
+  try {
+    const shellPath = execSync('/bin/bash -l -c "echo $PATH"', { encoding: 'utf-8', timeout: 5000 }).trim();
+    if (shellPath && shellPath !== process.env['PATH']) {
+      process.env['PATH'] = shellPath;
+    }
+  } catch {
+    /* ignore — binaries are bundled */
+  }
+}
+
+async function startEmbeddedPostgres(): Promise<string | null> {
+  // If a connection string is already provided externally, do not start embedded PG.
+  if (process.env['AGENTX_POSTGRES_CONNECTION_STRING']) {
+    return process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
+  }
+
+  const dataDir = join(app.getPath('userData'), 'brain_db');
+  pgManager = new PostgresLifecycleManager({
+    dataDir,
+    port: EMBEDDED_PG_PORT,
+    host: '127.0.0.1',
+    user: 'agentx',
+    password: 'agentx',
+    database: 'agentx',
+    onLog: (msg) => console.log(`[PG] ${msg}`),
+    onError: (msg) => console.error(`[PG] ${msg}`),
+  });
+
+  try {
+    const connectionString = await pgManager.start();
+    process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = connectionString;
+    process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '1';
+    return connectionString;
+  } catch (e) {
+    pgManager = null;
+    throw e;
+  }
+}
+
+async function stopEmbeddedPostgres(): Promise<void> {
+  if (pgManager) {
+    await pgManager.stop();
+    pgManager = null;
+  }
+}
+
 async function startServer(): Promise<void> {
   const apiPath = getWebApiPath();
   const uiDir = getWebUiDir();
@@ -301,6 +352,11 @@ async function startServer(): Promise<void> {
   if (!existsSync(apiPath)) {
     throw new Error(`Web-API not found at ${apiPath}`);
   }
+
+  loadShellPath();
+
+  // Start the bundled native PostgreSQL before the web-api so it has a connection string ready.
+  await startEmbeddedPostgres();
 
   process.env['AGENTX_UI_DIR'] = uiDir;
   process.env['PORT'] = String(PORT);
@@ -315,6 +371,7 @@ async function stopServer(): Promise<void> {
     await new Promise<void>((resolve) => server!.close(() => resolve()));
     server = null;
   }
+  await stopEmbeddedPostgres();
 }
 
 // ==================== External links ====================
@@ -476,7 +533,24 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on('will-quit', () => { globalShortcut.unregisterAll(); stopServer(); });
+app.on('will-quit', async () => {
+  globalShortcut.unregisterAll();
+  await stopServer();
+});
+
+app.on('before-quit', async () => {
+  await stopEmbeddedPostgres();
+});
+
+process.on('SIGTERM', async () => {
+  await stopEmbeddedPostgres();
+  app.quit();
+});
+
+process.on('SIGINT', async () => {
+  await stopEmbeddedPostgres();
+  app.quit();
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();

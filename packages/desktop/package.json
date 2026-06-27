@@ -10,14 +10,14 @@
     "prebuild": "node ../../scripts/sync-version.mjs && node scripts/generate-icon.mjs",
     "build": "tsup",
     "build:deps": "pnpm --filter @agentx/web-api run build && pnpm --filter @agentx/web-ui run build",
-    "dev": "tsup && electron-rebuild -f -w better-sqlite3 -m ../web-api && electron dist/main.js",
+    "dev": "tsup && electron dist/main.js",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "pack": "electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --dir",
+    "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "dist:mac": "npm run build && pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
-    "dist:linux": "npm run build && pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --linux",
-    "dist:win": "npm run build && pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api && electron-builder --win"
+    "dist:mac": "npm run build && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:win": "npm run build && electron-builder --win"
   },
   "build": {
     "appId": "com.agentx.desktop",
@@ -34,17 +34,14 @@
       "dist/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "node_modules/@embedded-postgres/**/*",
+      "node_modules/embedded-postgres/**/*"
+    ],
     "extraResources": [
       {
         "from": "../web-api/dist",
         "to": "web-api",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "../web-api/node_modules/better-sqlite3",
-        "to": "web-api/node_modules/better-sqlite3",
         "filter": [
           "**/*"
         ]
@@ -135,10 +132,18 @@
     }
   },
   "dependencies": {
-    "electron-updater": "^6.0.0"
+    "electron-updater": "^6.0.0",
+    "embedded-postgres": "17.5.0-beta.15",
+    "@embedded-postgres/darwin-arm64": "17.5.0-beta.15",
+    "@embedded-postgres/darwin-x64": "17.5.0-beta.15",
+    "@embedded-postgres/linux-arm64": "17.5.0-beta.15",
+    "@embedded-postgres/linux-x64": "17.5.0-beta.15",
+    "@embedded-postgres/windows-x64": "17.5.0-beta.15",
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
+    "@types/pg": "^8.20.0",
     "electron": "^42.0.0",
     "electron-builder": "^25.0.0",
     "tsup": "^8.0.0",

@@ -299,7 +299,7 @@ export function crewFromSessionSnapshot(session: Session): Crew | undefined {
   };
 }
 
-/** Sync resolve for createAgent — roster, sqlite catalog snapshot, then session fields (no roster recruit). */
+/** Sync resolve for createAgent — roster, Postgres catalog snapshot, then session fields (no roster recruit). */
 export function resolveCrewPrivateHostForAgent(
   crewManager: CrewManagerLike,
   session: Session,

@@ -102,7 +102,7 @@ export class TelegramBridge {
     _setActiveTelegramBridge(this);
 
     // Restore lastUpdateId from disk to prevent message replay on restart
-    this.restoreLastUpdateId();
+    await this.restoreLastUpdateId();
 
     // Use webhook mode if configured, otherwise long-polling
     if (this.config.webhookUrl) {
@@ -215,23 +215,23 @@ export class TelegramBridge {
     this.credentialStore = store;
   }
 
-  private persistLastUpdateId(): void {
+  private async persistLastUpdateId(): Promise<void> {
     try {
       if (!this.credentialStore) return;
-      const config = this.credentialStore.load();
+      const config = await this.credentialStore.load();
       if (config) {
         config.lastUpdateId = this.lastUpdateId;
-        this.credentialStore.save(config);
+        await this.credentialStore.save(config);
       }
     } catch {
       // Best effort — non-critical
     }
   }
 
-  private restoreLastUpdateId(): void {
+  private async restoreLastUpdateId(): Promise<void> {
     try {
       if (!this.credentialStore) return;
-      const config = this.credentialStore.load();
+      const config = await this.credentialStore.load();
       if (config?.lastUpdateId) {
         this.lastUpdateId = config.lastUpdateId;
       }
@@ -262,7 +262,7 @@ export class TelegramBridge {
           }
         }
         // Persist lastUpdateId to prevent message replay on restart
-        this.persistLastUpdateId();
+        await this.persistLastUpdateId();
       }
     } catch (error) {
       // Emit error but continue polling

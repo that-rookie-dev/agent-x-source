@@ -32,18 +32,18 @@ cd "$DESKTOP_DIR"
 rm -rf dist release
 
 # 6. Build dependencies
-echo ">>> Building shared, engine, web-api, and web-ui..."
+echo ">>> Building shared, engine, web-api, web-ui, and web-neuron..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
+pnpm --filter @agentx/web-neuron run build
 
 # 7. Build desktop app (unpacked .app)
 echo ">>> Building desktop app..."
 cd "$DESKTOP_DIR"
 pnpm run build
-pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api
 pnpm exec electron-builder --mac --dir
 
 # 8. Copy to /Applications

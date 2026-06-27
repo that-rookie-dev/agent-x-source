@@ -20,7 +20,6 @@ import {
   EmailBridge,
   RedisCacheRuntime,
   WebhookNotifierRuntime,
-  SQLiteBrowserRuntime,
   MCPBridge,
   SessionLogger,
   initLogCollector,
@@ -28,6 +27,7 @@ import {
   GrowthEngine,
   EmotionEngine,
   ExperienceEngine,
+  createPgNeuralDb,
   healDatabaseStore,
   startPeriodicDatabaseHeal,
   buildCrewPrivateIdentityPrompt,
@@ -63,17 +63,17 @@ export interface EngineState {
   emailBridge: EmailBridge | null;
   redisRuntime: RedisCacheRuntime | null;
   webhookRuntime: WebhookNotifierRuntime | null;
-  sqliteBrowser: SQLiteBrowserRuntime | null;
   mcpBridge: MCPBridge;
   dek: Buffer | null;
 }
 
 let state: EngineState | null = null;
 
-function safeLoadConfig(configManager: ConfigManager): void {
+function safeLoadConfig(configManager: ConfigManager): AgentXConfig | null {
   try {
-    configManager.load();
+    return configManager.load();
   } catch {
+    return null;
   }
 }
 
@@ -82,10 +82,10 @@ export function getEngine(): EngineState {
 
   const configManager = new ConfigManager();
   const configured = configManager.isConfigured();
-  if (configured) {
-    safeLoadConfig(configManager);
+  const loadedConfig = configured ? safeLoadConfig(configManager) : null;
+  if (loadedConfig) {
     try {
-      applyWebSearchConfigFromAgentConfig(configManager.load());
+      applyWebSearchConfigFromAgentConfig(loadedConfig);
     } catch { /* pre-auth or corrupt config */ }
   }
 
@@ -97,47 +97,30 @@ export function getEngine(): EngineState {
   // Initialize log collector — hooks into the shared logger to capture all logs
   initLogCollector();
 
-  const pgPlugin = pluginRegistry.getPlugin('postgresql');
-  const pgConfig = pgPlugin?.config ?? {};
-  let sessionManager: SessionManager;
-  let pgAdapter: PostgresStorageAdapter | null = null;
-  if (pgPlugin?.enabled && pgConfig['connectionString']) {
-    try {
-      pgAdapter = new PostgresStorageAdapter({
-        connectionString: pgConfig['connectionString'] as string,
-        max: (pgConfig['poolSize'] as number) ?? 5,
-      } as any);
-      sessionManager = new SessionManager({ storageAdapter: pgAdapter });
-    } catch (e) {
-      console.error('Failed to initialize PostgreSQL adapter, falling back to SQLite', e);
-      sessionManager = new SessionManager();
-      pgAdapter = null;
-    }
-  } else {
-    sessionManager = new SessionManager();
+  // PostgreSQL is the only supported storage backend.
+  let pgConnectionString =
+    process.env['AGENTX_POSTGRES_CONNECTION_STRING'] ??
+    ((loadedConfig as any)?.postgres?.connectionString as string | undefined) ??
+    (configManager as any).getPostgresConnectionString?.() ??
+    '';
+
+  if (!pgConnectionString) {
+    throw new Error(
+      'PostgreSQL connection string is required. When running the Agent-X desktop app, the bundled embedded PostgreSQL is started automatically. When running the web-api standalone, set AGENTX_POSTGRES_CONNECTION_STRING or configure postgres.connectionString in config.',
+    );
   }
 
+  const pgAdapter = new PostgresStorageAdapter({
+    connectionString: pgConnectionString,
+    max: ((loadedConfig as any)?.postgres?.poolSize as number) ?? 5,
+  } as any);
+  const sessionManager = new SessionManager({ storageAdapter: pgAdapter });
+
   const storageReady = (async () => {
-    if (pgAdapter) {
-      await pgAdapter.connect();
-    }
+    await pgAdapter.connect();
   })();
 
-  const sessionsDir = join(getDataDir(), 'sessions');
-  let store: any = undefined;
-  try {
-    store = (sessionManager as any).store;
-    if (store && typeof store.setSessionsDir === 'function') {
-      store.setSessionsDir(sessionsDir);
-    }
-    if (store && typeof store.recoverOrphanedSessions === 'function') {
-      const recovered = store.recoverOrphanedSessions(sessionsDir);
-      if (recovered > 0) {
-        console.log(`Startup: recovered ${recovered} orphaned session(s) from filesystem`);
-      }
-    }
-  } catch { /* non-critical */ }
-
+  const store = (sessionManager as any).store as PostgresStorageAdapter;
   const crewManager = new CrewManager(store);
 
   const telemetry = new DefaultTelemetryBus({ enabled: true });
@@ -180,7 +163,6 @@ export function getEngine(): EngineState {
     emailBridge: null,
     redisRuntime: null,
     webhookRuntime: null,
-    sqliteBrowser: null,
     mcpBridge,
     dek: null,
   };
@@ -416,7 +398,7 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   const sessDir = join(dataDir, 'sessions', session.id);
   agent.setContextPersistDir(sessDir, effectiveScopePath);
 
-  // Wire session events to SessionStore (DB persistence)
+  // Wire session events to StorageAdapter (DB persistence)
   agent.onSessionEvent = (event) => {
     try {
       const store = (eng.sessionManager as any).store;
@@ -426,7 +408,7 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     } catch { /* best-effort */ }
   };
 
-  // Wire tool executions to SessionStore (DB persistence)
+  // Wire tool executions to StorageAdapter (DB persistence)
   try {
     const executor = (agent as any).toolExecutor;
     if (executor?.setExecutionPersist) {
@@ -677,15 +659,6 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     }
   }
 
-  if (!eng.sqliteBrowser) {
-    const sqlPlugin = eng.pluginRegistry.getPlugin('sqlite-web');
-    if (sqlPlugin?.enabled) {
-      eng.sqliteBrowser = new SQLiteBrowserRuntime(
-        { readOnly: (sqlPlugin.config['readOnly'] as boolean) ?? true },
-      );
-    }
-  }
-
   eng.mcpBridge.discover().then((manifests) => {
     for (const manifest of manifests) {
       eng.mcpBridge.load(manifest).catch((e) => {
@@ -751,45 +724,18 @@ export function clearEngine(): void {
   state = null;
 }
 
-export function getVitals(): Record<string, unknown> {
+export async function getVitals(): Promise<Record<string, unknown>> {
   try {
     const eng = getEngine();
-    const store = (eng.sessionManager as any).store;
-    const usingPg = store && typeof store.isConnected === 'function' && store.isConnected();
-    const db = eng.sessionManager.getDb();
-
-    if (!db && !usingPg) {
+    const pool = eng.pgPool;
+    if (!pool) {
       return { status: 'uninitialized', ageDays: 0, level: 'Fresh', wisdomScore: 0, totalExperiences: 0, totalInteractions: 0, totalCorrections: 0, avgConfidence: 0, currentMood: 'neutral', moodIntensity: 0.3, memories: { total: 0, categories: {} }, diaryEntries: 0, brainSizeFormatted: '0 B', nextMilestoneAt: null, capabilities: [], birthDate: null };
     }
 
-    // When using PG, the neural engine tables (agent_memories, agent_diary, etc.)
-    // exist only in SQLite. Return initialized status with defaults for now.
-    if (!db) {
-      return {
-        status: 'initialized',
-        ageDays: 0,
-        birthDate: null,
-        level: 'Fresh',
-        wisdomScore: 0,
-        totalExperiences: 0,
-        totalInteractions: 0,
-        totalCorrections: 0,
-        avgConfidence: 0,
-        currentMood: 'neutral',
-        moodIntensity: 0.3,
-        memories: { total: 0, categories: {} },
-        diaryEntries: 0,
-        brainSizeFormatted: 'PG',
-        nextMilestoneAt: null,
-        capabilities: [],
-      };
-    }
-
-    const sqliteDb = db as any;
-
-    const growth = new GrowthEngine(sqliteDb);
-    const emotion = new EmotionEngine(sqliteDb);
-    const experience = new ExperienceEngine(sqliteDb);
+    const neuralDb = createPgNeuralDb(pool);
+    const growth = new GrowthEngine(neuralDb);
+    const emotion = new EmotionEngine(neuralDb);
+    const experience = new ExperienceEngine(neuralDb);
 
     const growthState = growth.getCurrentState();
     const emotionState = emotion.getCurrentState();
@@ -798,32 +744,31 @@ export function getVitals(): Record<string, unknown> {
     let memoriesTotal = 0;
     const memoryCategories: Record<string, number> = {};
     try {
-      const memRows = sqliteDb.prepare('SELECT type, COUNT(*) as c FROM agent_memories GROUP BY type').all() as Array<{ type: string; c: number }>;
-      memoriesTotal = memRows.reduce((s, r) => s + r.c, 0);
-      memRows.forEach(r => { memoryCategories[r.type] = r.c; });
-    } catch { /* table may not exist */ }
+      const memRes = await pool.query('SELECT category, COUNT(*) as c FROM agent_memories GROUP BY category');
+      for (const row of memRes.rows) {
+        const category = row['category'] as string;
+        const count = Number(row['c'] ?? 0);
+        if (category) memoryCategories[category] = count;
+        memoriesTotal += count;
+      }
+    } catch { /* table may not exist yet */ }
 
     let diaryEntries = 0;
-    try { const r = sqliteDb.prepare('SELECT COUNT(*) as c FROM agent_diary').get() as { c: number }; diaryEntries = r?.c ?? 0; } catch { /* */ }
-
-    let brainSizeFormatted = '0 B';
     try {
-      const pageCount = sqliteDb.prepare('PRAGMA page_count').get() as { page_count: number } | undefined;
-      const pageSize = sqliteDb.prepare('PRAGMA page_size').get() as { page_size: number } | undefined;
-      if (pageCount && pageSize) {
-        const bytes = pageCount.page_count * pageSize.page_size;
-        brainSizeFormatted = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes > 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
-      }
+      const diaryRes = await pool.query('SELECT COUNT(*) as c FROM agent_diary');
+      diaryEntries = Number(diaryRes.rows[0]?.['c'] ?? 0);
     } catch { /* */ }
 
     let birthDate: string | null = null;
     try {
-      const sources = [
-        sqliteDb.prepare('SELECT MIN(created_at) as d FROM agent_experiences').get() as { d: string | null } | undefined,
-        sqliteDb.prepare('SELECT MIN(created_at) as d FROM agent_memories').get() as { d: string | null } | undefined,
-        sqliteDb.prepare('SELECT MIN(created_at) as d FROM agent_diary').get() as { d: string | null } | undefined,
-      ];
-      const dates = sources.map(s => s?.d).filter(Boolean) as string[];
+      const sources = await Promise.all([
+        pool.query('SELECT MIN(created_at) as d FROM agent_experiences').catch(() => ({ rows: [] })),
+        pool.query('SELECT MIN(created_at) as d FROM agent_memories').catch(() => ({ rows: [] })),
+        pool.query('SELECT MIN(created_at) as d FROM agent_diary').catch(() => ({ rows: [] })),
+      ]);
+      const dates = sources
+        .map((r) => r.rows[0]?.['d'] as string | null | undefined)
+        .filter((d): d is string => !!d);
       if (dates.length > 0) birthDate = dates.sort()[0] ?? null;
     } catch { /* */ }
 
@@ -831,6 +776,13 @@ export function getVitals(): Record<string, unknown> {
     if (growthState?.capabilities) {
       try { capabilities = JSON.parse(growthState.capabilities); } catch { capabilities = []; }
     }
+
+    let brainSizeFormatted = 'PG';
+    try {
+      const sizeRes = await pool.query('SELECT pg_database_size(current_database()) as bytes');
+      const bytes = Number(sizeRes.rows[0]?.['bytes'] ?? 0);
+      brainSizeFormatted = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes > 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
+    } catch { /* */ }
 
     return {
       status: 'initialized',
@@ -930,13 +882,7 @@ export function getAutonomyStatus(): Record<string, unknown> {
     } catch { /* */ }
 
     // DB backend mode
-    let dbMode = 'sqlite';
-    try {
-      const store = (eng.sessionManager as any).store;
-      if (store && typeof store.isConnected === 'function' && store.isConnected()) {
-        dbMode = 'postgres';
-      }
-    } catch { /* */ }
+    const dbMode = 'postgres';
 
     // Compaction stats
     const compactionCount = health.compactionCount;

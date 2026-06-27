@@ -27,7 +27,7 @@ import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { healOrphanedUserMessages } from './message-history-repair.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -1007,9 +1007,9 @@ app.get('/api/agent/state', (_req, res) => {
 });
 
 // ───── Agent Vitals (Age, Level, Wisdom, Mood, etc.) ─────
-app.get('/api/agent/vitals', (_req, res) => {
+app.get('/api/agent/vitals', async (_req, res) => {
   try {
-    const vitals = getVitals();
+    const vitals = await getVitals();
     res.json(vitals);
   } catch (e) {
     getLogger().error('GET_API_AGENT_VITALS', e instanceof Error ? e : String(e));
@@ -2019,14 +2019,14 @@ app.get('/api/mode/hyperdrive', (_req, res) => {
 });
 
 // ───── Sessions ─────
-app.get('/api/sessions/db-status', (_req, res) => {
+app.get('/api/sessions/db-status', async (_req, res) => {
   try {
     const eng = getEngine();
     const store = (eng.sessionManager as unknown as { store: { getInfo?: () => { dbMode: string; sessionCount: number; filesystemRecovered: number; schemaVersion: number } } }).store;
-    const info = store?.getInfo?.() ?? { dbMode: 'unknown', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 };
-    res.json(info);
+    const info = store?.getInfo?.() ?? { dbMode: 'postgres', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 };
+    res.json({ ...info, dbMode: 'postgres' });
   } catch (e) {
-    res.json({ dbMode: 'error', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 });
+    res.json({ dbMode: 'postgres', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 });
   }
 });
 
@@ -2041,72 +2041,43 @@ function formatSize(bytes: number): string {
 
 async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<string, unknown>> {
   const store = (eng.sessionManager as any)?.store;
-  const storeIsPg = store && typeof store.isConnected === 'function' && !store.getDb;
-  const pgConnected = store && typeof store.isConnected === 'function' && store.isConnected();
-  const usingPg = storeIsPg || (store && typeof store.isConnected === 'function' && store.isConnected());
-  const db = store?.getDb?.() ?? null;
+  const pgConnected = !!(store && typeof store.isConnected === 'function' && store.isConnected());
   let dbSizeBytes = 0;
-  let walSizeBytes = 0;
   let tableCount = 0;
   const tables: Record<string, number> = {};
   let healthStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
   const checks: Array<{ table: string; rows: number; ok: boolean }> = [];
+  let connectionString = '';
 
-  if (usingPg) {
-    try {
-      const pgPool: any = (store as any).pool;
-      if (pgPool && typeof pgPool.query === 'function') {
-        const tabRows = await pgPool.query(
-          "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename"
-        );
-        tableCount = tabRows.rows.length;
-        for (const r of tabRows.rows) {
-          try {
-            const cnt = await pgPool.query(`SELECT COUNT(*)::int as cnt FROM "${r.tablename}"`);
-            tables[r.tablename] = cnt.rows[0].cnt;
-            checks.push({ table: r.tablename, rows: cnt.rows[0].cnt, ok: true });
-          } catch (e) {
-            tables[r.tablename] = -1;
-            checks.push({ table: r.tablename, rows: -1, ok: false });
-            healthStatus = 'degraded';
-          }
-        }
+  try {
+    const pgPool: any = (store as any).pool ?? eng.pgPool;
+    if (pgPool && typeof pgPool.query === 'function') {
+      const tabRows = await pgPool.query(
+        "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+      );
+      tableCount = tabRows.rows.length;
+      for (const r of tabRows.rows) {
         try {
-          const sizeRes = await pgPool.query("SELECT pg_database_size(current_database()) as size");
-          dbSizeBytes = sizeRes.rows[0].size;
-        } catch (e) { /* db size not available */ }
-        if (tableCount > 0) healthStatus = 'healthy';
-      }
-    } catch (e) {
-      healthStatus = 'unhealthy';
-    }
-  } else if (db) {
-    try {
-      dbSizeBytes = statSync(db.name).size;
-    } catch (e) { dbSizeBytes = 0; }
-    try {
-      const walPath = db.name + '-wal';
-      if (existsSync(walPath)) walSizeBytes = statSync(walPath).size;
-    } catch (e) { walSizeBytes = 0; }
-    try {
-      const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_schema' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>;
-      tableCount = rows.length;
-      for (const r of rows) {
-        try {
-          const c = db.prepare(`SELECT COUNT(*) as cnt FROM "${r.name}"`).get() as { cnt: number };
-          tables[r.name] = c.cnt;
-          checks.push({ table: r.name, rows: c.cnt, ok: true });
+          const cnt = await pgPool.query(`SELECT COUNT(*)::int as cnt FROM "${r.tablename}"`);
+          tables[r.tablename] = cnt.rows[0].cnt;
+          checks.push({ table: r.tablename, rows: cnt.rows[0].cnt, ok: true });
         } catch (e) {
-          tables[r.name] = -1;
-          checks.push({ table: r.name, rows: -1, ok: false });
+          tables[r.tablename] = -1;
+          checks.push({ table: r.tablename, rows: -1, ok: false });
           healthStatus = 'degraded';
         }
       }
-    } catch (e) {
-      tableCount = 0;
-      healthStatus = 'unhealthy';
+      try {
+        const sizeRes = await pgPool.query("SELECT pg_database_size(current_database()) as size");
+        dbSizeBytes = sizeRes.rows[0].size;
+      } catch (e) { /* db size not available */ }
+      if (tableCount > 0) healthStatus = 'healthy';
+      try {
+        const connRes = await pgPool.query('SELECT current_database() as db, inet_server_addr() as host');
+        connectionString = `postgresql://${connRes.rows[0]?.['host'] ?? 'localhost'}/${connRes.rows[0]?.['db'] ?? 'agentx'}`;
+      } catch { /* */ }
     }
-  } else {
+  } catch (e) {
     healthStatus = 'unhealthy';
   }
 
@@ -2131,33 +2102,14 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
     return { path: dir, sizeBytes, sizeFormatted: `${s.toFixed(1)} ${units[i]}` };
   }
 
-  const pgPlugin = eng.pluginRegistry.getPlugin('postgresql');
-  const pgConfig = pgPlugin?.config ?? {};
-  const pgActive = !!(pgPlugin?.enabled && pgConfig['connectionString']);
-
-  if (!pgActive && !usingPg && db) {
-    healthStatus = 'healthy';
-  } else if (!pgActive && !usingPg && !db) {
-    healthStatus = 'unhealthy';
-  }
-
   return {
-    backend: usingPg ? 'postgres' : 'sqlite',
-    connected: usingPg ? pgConnected : !!db,
-    stats: usingPg ? {
+    backend: 'postgres',
+    connected: pgConnected,
+    stats: {
       dbSizeBytes,
-      dbSizeFormatted: dbSizeBytes > 0
-        ? formatSize(dbSizeBytes)
-        : `${tableCount} tables`,
+      dbSizeFormatted: dbSizeBytes > 0 ? formatSize(dbSizeBytes) : `${tableCount} tables`,
       tableCount,
       tables,
-      walSizeBytes: 0,
-    } : {
-      dbSizeBytes,
-      dbSizeFormatted: dirInfo(dataDir).sizeFormatted,
-      tableCount,
-      tables,
-      walSizeBytes,
     },
     health: { status: healthStatus, checks },
     fileStorage: {
@@ -2166,8 +2118,8 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
       cache: dirInfo(cacheDir),
     },
     postgres: {
-      configured: pgActive || usingPg,
-      connectionString: pgConfig['connectionString'] || '',
+      configured: true,
+      connectionString,
     },
   };
 }
@@ -2216,11 +2168,22 @@ app.post('/api/settings/web-search/test', async (req, res) => {
 app.put('/api/settings/db', async (req, res) => {
   try {
     const { backend, postgres } = req.body || {};
-    getLogger().info('SETTINGS_DB_UPDATE', `Backend switch requested: ${backend}`);
+    getLogger().info('SETTINGS_DB_UPDATE', `PostgreSQL connection update requested (backend=${backend ?? 'postgres'})`);
 
-    if (backend === 'postgres' && postgres?.connectionString) {
+    let connectionString = postgres?.connectionString as string | undefined;
+
+    if (backend === 'embedded-postgres') {
+      // The desktop main process starts the bundled native PostgreSQL and sets this env var.
+      connectionString = process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
+      if (!connectionString) {
+        res.status(400).json({ ok: false, error: 'Embedded PostgreSQL is not running. Start the Agent-X desktop app to use the bundled database.' });
+        return;
+      }
+    }
+
+    if (connectionString) {
       const { PostgresStorageAdapter } = await import('@agentx/engine');
-      const test = await PostgresStorageAdapter.testConnection(postgres.connectionString);
+      const test = await PostgresStorageAdapter.testConnection(connectionString);
       if (!test.ok) {
         res.status(400).json({ ok: false, error: test.error ?? 'PostgreSQL connection failed' });
         return;
@@ -2237,7 +2200,7 @@ app.put('/api/settings/db', async (req, res) => {
         eng.pluginRegistry.enable('postgresql');
       }
       eng.pluginRegistry.updateConfig('postgresql', {
-        connectionString: postgres.connectionString,
+        connectionString,
         autoMigrate: true,
         poolSize: 5,
       });
@@ -2245,7 +2208,7 @@ app.put('/api/settings/db', async (req, res) => {
       clearEngine();
     }
 
-    res.json({ ok: true, backend: backend || 'sqlite' });
+    res.json({ ok: true, backend: 'postgres' });
   } catch (e: unknown) {
     getLogger().error('PUT_API_SETTINGS_DB', e instanceof Error ? e : String(e));
     res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-update-failed' });
@@ -2277,23 +2240,15 @@ app.post('/api/settings/db/test', async (req, res) => {
 app.post('/api/settings/db/migrate', async (_req, res) => {
   try {
     const eng = getEngine();
-    const pgPlugin = eng.pluginRegistry.getPlugin('postgresql');
-    const pgConfig = pgPlugin?.config ?? {};
-    if (pgPlugin?.enabled && pgConfig['connectionString']) {
-      const { PostgresStorageAdapter } = await import('@agentx/engine');
-      const adapter = new PostgresStorageAdapter({
-        connectionString: pgConfig['connectionString'] as string,
-        max: (pgConfig['poolSize'] as number) ?? 5,
-      } as any);
-      const started = Date.now();
-      await adapter.connect();
-      const durationMs = Date.now() - started;
-      await adapter.disconnect();
-      res.json({ ok: true, migrated: {}, durationMs });
-    } else {
-      getLogger().info('SETTINGS_DB_MIGRATE', 'Migration already up to date in SQLite mode');
-      res.json({ ok: true, migrated: {}, durationMs: 0 });
+    const store = (eng.sessionManager as any)?.store as PostgresStorageAdapter | undefined;
+    if (!store || typeof store.connect !== 'function') {
+      res.status(500).json({ ok: false, error: 'PostgreSQL storage not initialized' });
+      return;
     }
+    const started = Date.now();
+    await store.connect();
+    const durationMs = Date.now() - started;
+    res.json({ ok: true, migrated: {}, durationMs });
   } catch (e: unknown) {
     getLogger().error('POST_API_SETTINGS_DB_MIGRATE', e instanceof Error ? e : String(e));
     res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-migrate-failed' });
@@ -2319,16 +2274,12 @@ app.get('/api/settings/db/health', async (_req, res) => {
   }
 });
 
-app.post('/api/settings/db/clear', (_req, res) => {
+app.post('/api/settings/db/clear', async (_req, res) => {
   try {
     const eng = getEngine();
-    const store = (eng.sessionManager as any)?.store;
-    if (store?.deleteMessages) {
-      const sessions = eng.sessionManager.listSessions(9999) as unknown as Array<{ id: string }>;
-      for (const s of sessions) {
-        if (s.id === '__channel__') continue;
-        try { store.deleteMessages(s.id); } catch (e) { /* continue */ }
-      }
+    const store = (eng.sessionManager as any)?.store as PostgresStorageAdapter | undefined;
+    if (store && typeof store.clearAll === 'function') {
+      await store.clearAll();
     }
     getLogger().info('SETTINGS_DB_CLEAR', 'All session data cleared');
     res.json({ ok: true });
@@ -2549,7 +2500,7 @@ User message: "${firstUser.content.slice(0, 500)}"`;
   }
 });
 
-// Cross-session full-text search. Queries the messages table via SQLite.
+// Cross-session full-text search. Queries the messages table via PostgreSQL.
 app.get('/api/sessions/search', (req, res) => {
   try {
     const q = String(req.query['q'] ?? '').trim();
@@ -3426,8 +3377,9 @@ app.post('/api/discord/start', async (req, res) => {
     }
 
     // Persist to disk
-    const store = new DiscordStore(eng.sessionManager.getDb(), eng.dek!);
-    store.save({ botToken: token, channelId });
+    if (!eng.pgPool) throw new Error('PostgreSQL pool not available');
+    const discordStore = new DiscordStore(eng.pgPool, eng.dek!);
+    await discordStore.save({ botToken: token, channelId });
 
     // Stop existing bridge if any
     if (eng.discordBridge) {
@@ -3463,7 +3415,7 @@ app.post('/api/discord/start', async (req, res) => {
   }
 });
 
-app.post('/api/discord/stop', (_req, res) => {
+app.post('/api/discord/stop', async (_req, res) => {
   try {
     const eng = getEngine();
     if (eng.discordBridge) {
@@ -3473,8 +3425,10 @@ app.post('/api/discord/stop', (_req, res) => {
     if (eng.pluginRegistry.isInstalled('discord')) {
       eng.pluginRegistry.uninstall('discord');
     }
-    const store = new DiscordStore(eng.sessionManager.getDb(), eng.dek!);
-    store.clear();
+    if (eng.pgPool) {
+      const discordStore = new DiscordStore(eng.pgPool, eng.dek!);
+      await discordStore.clear();
+    }
     res.json({ ok: true });
   } catch (e) {
     getLogger().error('POST_API_DISCORD_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
@@ -3521,34 +3475,40 @@ app.post('/api/slack/start', async (req, res) => {
         pgPool: eng.pgPool ?? undefined,
       });
     });
+    if (!eng.pgPool) throw new Error('PostgreSQL pool not available');
     await bridge.start();
     eng.slackBridge = bridge;
-    new SlackStore(eng.sessionManager.getDb(), eng.dek!).save({ botToken, appToken });
+    const slackStore = new SlackStore(eng.pgPool, eng.dek!);
+    await slackStore.save({ botToken, appToken });
     res.json({ ok: true, message: 'Slack bridge started.', status: bridge.getStatus() });
   } catch (e: unknown) {
     getLogger().error('POST_API_SLACK_START', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'start-failed' });
   }
 });
 
-app.post('/api/slack/stop', (_req, res) => {
+app.post('/api/slack/stop', async (_req, res) => {
   try {
     const eng = getEngine();
     if (eng.slackBridge) {
       eng.slackBridge.stop();
       eng.slackBridge = null;
     }
-    new SlackStore(eng.sessionManager.getDb(), eng.dek!).clear();
+    if (eng.pgPool) {
+      const slackStore = new SlackStore(eng.pgPool, eng.dek!);
+      await slackStore.clear();
+    }
     res.json({ ok: true });
   } catch (e) {
     getLogger().error('POST_API_SLACK_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'stop-failed' });
   }
 });
 
-app.get('/api/slack/status', (_req, res) => {
+app.get('/api/slack/status', async (_req, res) => {
   try {
     const eng = getEngine();
-    const store = new SlackStore(eng.sessionManager.getDb(), eng.dek!);
-    const cfg = store.load();
+    if (!eng.pgPool) throw new Error('PostgreSQL pool not available');
+    const slackStore = new SlackStore(eng.pgPool, eng.dek!);
+    const cfg = await slackStore.load();
     const bridge = eng.slackBridge;
     const configured = !!cfg?.botToken && !!cfg?.appToken;
     const status = bridge?.getStatus();

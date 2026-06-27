@@ -16,15 +16,14 @@ import { CheckCircle } from '../components/CheckCircle';
 import BadgeIcon from '@mui/icons-material/Badge';
 import StorageIcon from '@mui/icons-material/Storage';
 import CloudIcon from '@mui/icons-material/Cloud';
-import LockIcon from '@mui/icons-material/Lock';
-import BoltIcon from '@mui/icons-material/Bolt';
 import SyncAltIcon from '@mui/icons-material/SyncAlt';
 import ShieldIcon from '@mui/icons-material/Shield';
 import HubIcon from '@mui/icons-material/Hub';
 import PublicIcon from '@mui/icons-material/Public';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import BoltIcon from '@mui/icons-material/Bolt';
 import HomeIcon from '@mui/icons-material/Home';
 import BuildIcon from '@mui/icons-material/Build';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { providers as provApi, models as modelsApi, config, settings, personaApi } from '../api';
 import { useApp } from '../store/AppContext';
@@ -81,7 +80,7 @@ export function SetupWizard() {
   const [modelsLoading, setModelsLoading] = useState(false);
 
   // DB
-  const [selectedBackend, setSelectedBackend] = useState<'sqlite' | 'postgres'>('sqlite');
+  const [selectedBackend, setSelectedBackend] = useState<'embedded-postgres' | 'postgres'>('embedded-postgres');
   const [showRelayConfig, setShowRelayConfig] = useState(false);
   const [pgMode, setPgMode] = useState<'string' | 'fields'>('string');
   const [pgSsl, setPgSsl] = useState(true);
@@ -121,7 +120,7 @@ export function SetupWizard() {
       setSelectedProvider(saved.selectedProvider);
       setSelectedModel(saved.selectedModel);
       setCallsign(saved.callsign || '');
-      if (saved.selectedBackend) setSelectedBackend(saved.selectedBackend as 'sqlite' | 'postgres');
+      setSelectedBackend('embedded-postgres');
       if (saved.persona) setPersona(saved.persona);
       if (saved.selectedProvider) {
         setModelsLoading(true);
@@ -146,11 +145,17 @@ export function SetupWizard() {
   const next = () => { clearError(); setStep(s => s + 1); };
   const back = () => { clearError(); setStep(s => s - 1); };
 
-  const handleStorageNext = () => {
-    if (selectedBackend === 'postgres') {
-      setShowRelayConfig(true);
+  const handleStorageNext = async () => {
+    if (selectedBackend === 'embedded-postgres') {
+      setLoading(true);
+      try {
+        const r = await settings.db.update({ backend: 'embedded-postgres' });
+        if (!r.ok) { showError('Embedded PostgreSQL failed to start'); setLoading(false); return; }
+        next();
+      } catch (e) { showError(e instanceof Error ? e.message : 'Embedded PostgreSQL failed'); setLoading(false); return; }
+      finally { setLoading(false); }
     } else {
-      next();
+      setShowRelayConfig(true);
     }
   };
 
@@ -206,11 +211,9 @@ export function SetupWizard() {
   const handleComplete = async () => {
     setLoading(true);
     try {
-      if (selectedBackend === 'postgres') {
-        const connStr = buildPgConnStr();
-        if (connStr) {
-          try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {}
-        }
+      const connStr = buildPgConnStr();
+      if (connStr) {
+        try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {}
       }
       try { await personaApi.save(persona); } catch {}
       const r = await config.update({ setupComplete: true, user: { callsign } });
@@ -253,33 +256,33 @@ export function SetupWizard() {
               </Box>
 
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                <Box onClick={() => { setSelectedBackend('sqlite'); setPgTestResult(null); }}
-                  sx={{ p: 2.5, border: `2px solid ${selectedBackend === 'sqlite' ? colors.accent.green : colors.border.default}`, borderRadius: 2, cursor: 'pointer',
-                    bgcolor: selectedBackend === 'sqlite' ? `${colors.accent.green}05` : colors.bg.secondary,
-                    boxShadow: selectedBackend === 'sqlite' ? `0 0 20px ${colors.accent.green}10` : 'none', display: 'flex', flexDirection: 'column',
-                    transition: 'all 0.2s', '&:hover': { borderColor: selectedBackend === 'sqlite' ? colors.accent.green : colors.border.strong } }}>
+                <Box onClick={() => { setSelectedBackend('embedded-postgres'); setPgTestResult(null); }}
+                  sx={{ p: 2.5, border: `2px solid ${selectedBackend === 'embedded-postgres' ? colors.accent.green : colors.border.default}`, borderRadius: 2, cursor: 'pointer',
+                    bgcolor: selectedBackend === 'embedded-postgres' ? `${colors.accent.green}05` : colors.bg.secondary,
+                    boxShadow: selectedBackend === 'embedded-postgres' ? `0 0 20px ${colors.accent.green}10` : 'none', display: 'flex', flexDirection: 'column',
+                    transition: 'all 0.2s', '&:hover': { borderColor: selectedBackend === 'embedded-postgres' ? colors.accent.green : colors.border.strong } }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
                     <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: `${colors.accent.green}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${colors.accent.green}20`, flexShrink: 0 }}>
                       <StorageIcon sx={{ fontSize: 18, color: colors.accent.green }} />
                     </Box>
                     <Box>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: colors.text.primary }}>Onboard Vault</Typography>
-                      <Typography sx={{ fontSize: '0.52rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.green, letterSpacing: '1.5px' }}>NATIVE SQLITE</Typography>
+                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: colors.text.primary }}>Onboard Core</Typography>
+                      <Typography sx={{ fontSize: '0.52rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.green, letterSpacing: '1.5px' }}>EMBEDDED POSTGRESQL</Typography>
                     </Box>
-                    {selectedBackend === 'sqlite' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.green, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
+                    {selectedBackend === 'embedded-postgres' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.green, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
                   </Box>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
-                    <Punch text="Zero latency. Reads hit memory, not the network." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="One file. Your entire world backs up with a single copy." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Air-gapped by default. No ports. No servers. No attack surface." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="AES-256-GCM. Every byte encrypted before touching disk." icon={<LockIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Zero config. Agent-X builds and manages everything." icon={<BuildIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="WAL mode. Crash-proof. Close your laptop mid-flight." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Instant portability. Move machines by copying a single file." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Zero-config PostgreSQL. Docker spins the database for you." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Runs on port 3335. Schema, tables, and indexes auto-built." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Same DEK encryption. PG sees only ciphertext. Always." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Air-gapped by default. No cloud credentials required." icon={<BuildIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Perfect for hackers, solo devs, and first-time setup." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Move machines by re-running setup — Docker keeps it portable." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="One click. 12 tables. 9 indexes. Brain online in seconds." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
                   </Box>
                   <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: `${colors.accent.green}06`, border: `1px solid ${colors.accent.green}10`, mt: 'auto' }}>
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.green, textAlign: 'center', fontWeight: 600 }}>
-                      For hackers, solo devs, and anyone who wants raw speed.
+                      Recommended. No external database needed.
                     </Typography>
                   </Box>
                 </Box>
@@ -300,9 +303,9 @@ export function SetupWizard() {
                     {selectedBackend === 'postgres' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
                   </Box>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
-                    <Punch text="Desktop. Laptop. Server. One brain, everywhere you go." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Multiple agents. Zero conflicts. PostgreSQL handles the orchestra." icon={<HubIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Bring your own PostgreSQL. Cloud, local server, or managed DB." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
                     <Punch text="AWS · Supabase · Neon · Railway · Raspberry Pi. Your call." icon={<PublicIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Multiple agents. Zero conflicts. One brain, everywhere." icon={<HubIcon sx={{ fontSize: 13 }} />} />
                     <Punch text="Same DEK encryption. PG sees only ciphertext. Always." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
                     <Punch text="One click. 12 tables. 9 indexes. Schema auto-built on connect." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
                     <Punch text="Managed backups. pg_dump, WAL archiving, point-in-time recovery." icon={<CloudIcon sx={{ fontSize: 13 }} />} />
@@ -310,7 +313,7 @@ export function SetupWizard() {
                   </Box>
                   <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: `${colors.accent.blue}06`, border: `1px solid ${colors.accent.blue}10`, mt: 'auto' }}>
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.blue, textAlign: 'center', fontWeight: 600 }}>
-                      For multi-machine setups, teams, and cloud-native workflows.
+                      For multi-machine setups, teams, and cloud DBs.
                     </Typography>
                   </Box>
                 </Box>
@@ -558,7 +561,7 @@ export function SetupWizard() {
                   <Typography variant="h5" sx={{ mb: 1 }}>Setup Complete!</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 3 }}>Your Agent-X instance is ready.</Typography>
                   <Box sx={{ textAlign: 'left', p: 2, border: `1px solid ${colors.border.default}`, borderRadius: 1, mb: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem' }}>
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Storage: {selectedBackend === 'sqlite' ? 'Onboard Vault (SQLite)' : 'Starfleet Relay (PostgreSQL)'}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Storage: {selectedBackend === 'embedded-postgres' ? 'Embedded PostgreSQL (port 3335)' : 'Starfleet Relay (PostgreSQL)'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Provider: {selectedProvider}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Model: {selectedModel}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Callsign: {callsign || '(not set)'}</Typography>
@@ -581,13 +584,13 @@ export function SetupWizard() {
           {step === 4 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 5 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 0 && !showRelayConfig && (
-            <Button variant="contained" onClick={handleStorageNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>
-              {selectedBackend === 'postgres' ? 'Configure Relay →' : 'Next →'}
+            <Button variant="contained" onClick={handleStorageNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>
+              {loading ? 'Starting...' : selectedBackend === 'embedded-postgres' ? 'Start Embedded PostgreSQL →' : 'Configure Relay →'}
             </Button>
           )}
           {step === 0 && showRelayConfig && (
             <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-              <Button onClick={() => { setShowRelayConfig(false); setSelectedBackend('sqlite'); }} sx={{ color: colors.text.secondary }}>← Choose SQLite Instead</Button>
+              <Button onClick={() => { setShowRelayConfig(false); }} sx={{ color: colors.text.secondary }}>← Back</Button>
               <Button variant="contained" onClick={handleRelayNext} disabled={pgTesting} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>{pgTesting ? 'Testing...' : 'Connect & Next →'}</Button>
             </Box>
           )}

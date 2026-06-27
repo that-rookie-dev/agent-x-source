@@ -17,7 +17,7 @@ interface PartRecord {
 }
 
 /**
- * Incrementally persist each AI SDK part event to SQLite.
+ * Incrementally persist each AI SDK part event to PostgreSQL.
  */
 export function persistPart(sessionId: string, part: PartRecord): void {
   if (!sessionId) return;
@@ -101,7 +101,7 @@ function appendContextFile(
 }
 
 /**
- * Directly persist a message to SQLite — independent of WebSocket subscription.
+ * Directly persist a message to PostgreSQL — independent of WebSocket subscription.
  */
 export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[] }): void {
   appendContextFile(sessionId, role, content, undefined, extra);
@@ -474,7 +474,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
           id,
           tool: { id, name: toolName, args: eventArgs, status: 'running' },
         });
-        // Persist part to SQLite immediately
+        // Persist part to PostgreSQL immediately
         persistPart(currentSessionId, { type: 'tool-call', toolName, toolCallId: id, toolArgs: typeof eventArgs === 'object' ? eventArgs as Record<string, unknown> : undefined, timestamp: Date.now() });
       }
     }
@@ -531,7 +531,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
         }
       }
 
-      // Persist tool result to SQLite parts table immediately
+      // Persist tool result to PostgreSQL parts table immediately
       if (toolName !== 'delegate_to_subagent') {
         const id = (event as any).callId as string || (event as any).toolCallId as string || (event as any).id as string;
         persistPart(currentSessionId, {

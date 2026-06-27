@@ -416,15 +416,17 @@ export interface Checkpoint {
   messageCount: number;
 }
 
-export interface DbStatus {
-  dbMode: 'sqlite' | 'memory' | 'unknown' | 'error';
+export interface SessionDbStatus {
+  dbMode: 'postgres' | 'unknown' | 'error';
+  backend: 'postgres' | 'unknown' | 'error';
+  connected: boolean;
   sessionCount: number;
   filesystemRecovered: number;
   schemaVersion: number;
 }
 
 export const sessions = {
-  dbStatus: () => request<DbStatus>('/sessions/db-status'),
+  dbStatus: () => request<SessionDbStatus>('/sessions/db-status'),
   list: () => request<SessionInfo[]>('/sessions'),
   children: (parentId: string) => request<{ children: ChildSessionInfo[] }>(`/sessions/${parentId}/children`).then((r) => r.children ?? []),
   preview: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[] }>(`/sessions/${id}/preview`),
@@ -1154,14 +1156,13 @@ export const webuiActive = {
 
 // ─── Settings: Database ───
 export interface DbStatus {
-  backend: 'sqlite' | 'postgres';
+  backend: 'postgres';
   connected: boolean;
   stats: {
     dbSizeBytes: number;
     dbSizeFormatted: string;
     tableCount: number;
     tables: Record<string, number>;
-    walSizeBytes: number;
   };
   health: {
     status: 'healthy' | 'degraded' | 'unhealthy';

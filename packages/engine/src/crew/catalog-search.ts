@@ -21,7 +21,7 @@ export function catalogLikePattern(query: string): string {
   return `%${query.trim().toLowerCase().slice(0, 80)}%`;
 }
 
-/** In-memory catalog search when SQLite/Postgres is unavailable (mem mode). */
+/** In-memory catalog search when Postgres is unavailable (mem mode). */
 export function searchManifestCatalog(
   manifest: CatalogManifest,
   query: string,

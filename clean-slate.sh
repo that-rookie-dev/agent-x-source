@@ -38,8 +38,8 @@ sleep 1
 echo ">>> Removing /Applications/Agent-X.app..."
 sudo rm -rf /Applications/Agent-X.app 2>/dev/null || true
 
-# ── 3. Wipe all local Agent-X state (SQLite, config, auth, sessions, cache) ─
-echo ">>> Wiping local Agent-X data (SQLite, config, sessions, cache)..."
+# ── 3. Wipe all local Agent-X state (config, auth, sessions, cache) ─
+echo ">>> Wiping local Agent-X data (config, auth, sessions, cache)..."
 
 wipe_path() {
   local target="$1"
@@ -118,8 +118,8 @@ for f in "${AGENTX_FILES[@]}"; do
   [ -e "$f" ] && echo "    rm -f $f" && rm -f "$f" 2>/dev/null || true
 done
 
-# Fallback: remove any stray SQLite sidecars under known Agent-X roots
-echo ">>> Sweeping stray Agent-X SQLite files..."
+# Fallback: remove any stray legacy SQLite sidecars under known Agent-X roots
+echo ">>> Sweeping legacy Agent-X SQLite files..."
 for root in "${deduped_dirs[@]}"; do
   if [ -d "$root" ]; then
     find "$root" \( -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' -o -name '*.sqlite' -o -name '*.sqlite3' \) -print -delete 2>/dev/null || true
@@ -130,9 +130,7 @@ done
 
 # Verify key paths are gone (warn if something survived — usually a live process)
 VERIFY_PATHS=(
-  "$HOME/.local/share/agentx/db/agentx.db"
   "$HOME/.config/agentx/config.enc.json"
-  "$HOME/.config/agentx/neural.db"
 )
 survivors=0
 for p in "${VERIFY_PATHS[@]}"; do
@@ -144,7 +142,7 @@ done
 if [ "$survivors" -gt 0 ]; then
   echo "    WARNING: $survivors path(s) survived. Ensure Agent-X is fully quit and re-run."
 else
-  echo "    Local wipe verified (no core SQLite/config files remain)."
+  echo "    Local wipe verified (no core config files remain)."
 fi
 
 # ── 3b. Wipe PostgreSQL (drops every table/view/sequence in public schema) ───
@@ -232,27 +230,27 @@ cd "$DESKTOP_DIR"
 rm -rf dist release
 
 # ── 5. Build dependencies ───────────────────────────────────────────────────
-echo ">>> Building shared, web-api, and web-ui..."
+echo ">>> Building shared, engine, web-api, web-ui, and web-neuron..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
+pnpm --filter @agentx/web-neuron run build
 
 # ── 6. Build desktop app (unpacked .app) ────────────────────────────────────
 echo ">>> Building desktop app..."
 cd "$DESKTOP_DIR"
 npm run build
-pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api
 npx electron-builder --mac --dir
 
 # ── 7. Copy to /Applications ─────────────────────────────────────────────────
 echo ">>> Installing to /Applications (password prompt may appear)..."
 osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && cp -R '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/\" with administrator privileges"
 
-# ── 8. Launch (creates fresh empty SQLite + config on first run) ─────────────
+# ── 8. Launch (creates fresh config + bundled native PostgreSQL on first run) ─
 echo ">>> Launching Agent-X..."
-echo "    Note: a fresh agentx.db is created on first launch — that is expected."
+echo "    Note: a fresh config is created on first launch; the bundled native PostgreSQL starts on port 3335."
 open /Applications/Agent-X.app
 
 echo "=== Clean slate done! ==="
