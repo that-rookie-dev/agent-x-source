@@ -57,6 +57,49 @@ describe('repairMarkdownTables', () => {
     expect(rowCount).toBe(4); // header + 3 data rows
   });
 
+  it('keeps an all-caps summary/total row inside the table', () => {
+    const table = `| Item | Cost |
+| --- | --- |
+| Flights | ₹1.8L |
+| TOTAL | ₹6.3–6.8L |`;
+    expect(rendersTable(table)).toBe(true);
+    const html = renderToStaticMarkup(
+      React.createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, normalizeAssistantMarkdown(table)),
+    );
+    expect((html.match(/<tr/g) ?? []).length).toBe(3); // header + 2 data rows
+    expect(/<td[^>]*>(?:<[^>]+>)*TOTAL/.test(html)).toBe(true);
+    expect(/<h\d>[^<]*TOTAL/.test(html)).toBe(false); // not turned into a heading
+  });
+
+  it('re-attaches a trailing total row separated from the table by a blank line', () => {
+    const table = `| Item | Cost |
+| --- | --- |
+| Flights | ₹1.8L |
+| Hotels | ₹2L |
+
+| TOTAL | ₹6.3–6.8L |`;
+    const html = renderToStaticMarkup(
+      React.createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, normalizeAssistantMarkdown(table)),
+    );
+    expect((html.match(/<table/g) ?? []).length).toBe(1); // single table, not split
+    expect((html.match(/<tr/g) ?? []).length).toBe(4); // header + 3 data rows
+    expect(/<td[^>]*>(?:<[^>]+>)*TOTAL/.test(html)).toBe(true);
+  });
+
+  it('does not merge two distinct tables separated by a blank line', () => {
+    const tables = `| A | B |
+| --- | --- |
+| 1 | 2 |
+
+| C | D |
+| --- | --- |
+| 3 | 4 |`;
+    const html = renderToStaticMarkup(
+      React.createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, normalizeAssistantMarkdown(tables)),
+    );
+    expect((html.match(/<table/g) ?? []).length).toBe(2);
+  });
+
   it('strips spurious separator rows between data rows from LLM output', () => {
     const broken = `| Time | Activity |
 | --- | --- |
