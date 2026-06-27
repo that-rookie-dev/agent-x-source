@@ -1148,7 +1148,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             return p;
           });
           const resObj = typeof (ev as any).result === 'object' && (ev as any).result !== null ? (ev as any).result as Record<string, unknown> : null;
-          const meta = (ev as any).metadata as Record<string, unknown> | undefined;
+          const meta = ((ev as any).metadata ?? resObj?.metadata) as Record<string, unknown> | undefined;
           if (resObj?.error === 'TOOL_NOT_FOUND' || resObj?.error === 'NO_HANDLER') setToolEnablePrompt({ toolId: toolName, toolName });
           let finalParts = newParts.map((p) => (
             p.type === 'tool' && p.tool
