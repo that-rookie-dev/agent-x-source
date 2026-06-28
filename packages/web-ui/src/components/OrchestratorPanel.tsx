@@ -11,6 +11,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Alert from '@mui/material/Alert';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import { PanelHeader } from './PanelHeader';
 import { orchestrator, type OrchestratorPlan, type OrchestratorStep } from '../api';
 import { colors } from '../theme';
 
@@ -58,12 +59,13 @@ export function OrchestratorPanel() {
   };
 
   return (
-    <Box sx={{ height: '100%', overflow: 'auto', p: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-        <AccountTreeIcon sx={{ color: colors.accent.purple }} />
-        <Typography variant="h6">Multi-Agent Orchestrator</Typography>
-      </Box>
-
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <PanelHeader
+        title="Multi-Agent Orchestrator"
+        subtitle="Break complex goals into sub-agent tasks with dependency tracking"
+        icon={<AccountTreeIcon sx={{ fontSize: 20 }} />}
+      />
+      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
       {error && <Alert severity="error" sx={{ mb: 2, bgcolor: '#1a0000' }}>{error}</Alert>}
 
       {/* Goal input */}
@@ -129,6 +131,7 @@ export function OrchestratorPanel() {
           The orchestrator breaks complex goals into sub-agent tasks with dependency tracking.
         </Typography>
       )}
+      </Box>
     </Box>
   );
 }

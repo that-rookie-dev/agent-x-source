@@ -49,9 +49,17 @@ import { postCrewChatSession } from './crew-chat.js';
 import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewHonorificToSession } from './host-crew-session.js';
 import { memoryRouter } from './memory-api.js';
 import localModelRouter from './local-model-api.js';
+import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Bundle the default embedding model with the app so users do not need to download it.
+const BUNDLED_EMBEDDING_MODEL_DIR = join(__dirname, 'models');
+if (existsSync(join(BUNDLED_EMBEDDING_MODEL_DIR, 'Xenova', 'all-MiniLM-L6-v2'))) {
+  setDefaultEmbeddingCacheDir(BUNDLED_EMBEDDING_MODEL_DIR);
+}
+
 const UI_DIST = process.env['AGENTX_UI_DIR'] || join(__dirname, '..', '..', 'web-ui', 'dist');
 const NEURON_DIST = process.env['AGENTX_NEURON_DIR'] || join(__dirname, '..', '..', 'web-neuron', 'dist');
 

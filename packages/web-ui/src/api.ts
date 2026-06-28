@@ -1193,6 +1193,12 @@ export const localModel = {
     request<{ status: string; progress?: number; error?: string }>(`/local-model/download-status/${modelId}`),
   delete: (modelId: string) =>
     request<{ ok: boolean; message: string }>(`/local-model/${modelId}`, { method: 'DELETE' }),
+  switchToPrimary: () =>
+    request<{ ok: boolean; message: string }>('/local-model/switch-to-primary', { method: 'POST' }),
+  status: () =>
+    request<{ installed: string | null; enabled: boolean; model: { id: string; displayName: string; huggingFaceId: string; sizeGB: number; downloadedAt: string | null } | null }>(
+      '/local-model/status',
+    ),
 };
 
 export const settings = {

@@ -6,6 +6,7 @@
  * for Context Relevance, Groundedness, and Mean Reciprocal Rank (MRR).
  */
 import { pipeline, type TextGenerationPipeline } from '@huggingface/transformers';
+import { getLocalModelConfig } from './LocalModelConfig.js';
 
 export interface RagTriadScores {
   contextRelevance: number;
@@ -95,10 +96,14 @@ Return only a number: 0, 0.5, or 1.0. Answer with just the number.`;
   private async load(): Promise<TextGenerationPipeline> {
     if (this.pipe) return this.pipe;
     if (this.pending) return this.pending;
-    const modelName = this.options.modelName ?? 'onnx-community/Qwen2.5-0.5B-Instruct';
+    const cfg = getLocalModelConfig();
+    const modelName = this.options.modelName ?? cfg?.modelName ?? 'onnx-community/Qwen2.5-0.5B-Instruct';
+    const cacheDir = cfg?.cacheDir;
+    const dtype = (cfg?.dtype ?? 'q4') as 'q4' | 'q4f16' | 'fp32' | 'fp16' | 'int8';
     this.pending = pipeline('text-generation', modelName, {
-      dtype: 'q4',
+      dtype,
       revision: 'main',
+      cache_dir: cacheDir,
       // Disable WASM threading to avoid Electron path issues
       local_files_only: true,
     }) as Promise<TextGenerationPipeline>;

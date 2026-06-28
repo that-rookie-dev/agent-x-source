@@ -13,7 +13,7 @@ import { LocalLLMJudge } from './LocalLLMJudge.js';
 
 export type SummarizeFn = (texts: string[]) => Promise<string>;
 
-export async function createLocalLLMSummarizer(modelName = 'Xenova/Qwen2.5-0.5B-Instruct'): Promise<SummarizeFn> {
+export async function createLocalLLMSummarizer(modelName?: string): Promise<SummarizeFn> {
   const judge = new LocalLLMJudge({ modelName });
   return async (texts: string[]) => {
     const combined = texts.join('\n\n');

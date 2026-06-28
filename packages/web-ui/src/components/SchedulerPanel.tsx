@@ -13,6 +13,8 @@ import Tooltip from '@mui/material/Tooltip';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import ScheduleIcon from '@mui/icons-material/Schedule';
+import { PanelHeader } from './PanelHeader';
 import { scheduler, type SchedulerJob } from '../api';
 import { colors } from '../theme';
 
@@ -71,16 +73,18 @@ export function SchedulerPanel() {
   };
 
   return (
-    <Box sx={{ height: '100%', overflow: 'auto', p: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-        <Box>
-          <Typography variant="h6">Scheduler</Typography>
-          <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim }}>Recurring agent tasks via cron</Typography>
-        </Box>
-        <Button size="small" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)} sx={{ color: colors.accent.blue }}>
-          New Job
-        </Button>
-      </Box>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <PanelHeader
+        title="Scheduler"
+        subtitle="Recurring agent tasks via cron"
+        icon={<ScheduleIcon sx={{ fontSize: 20 }} />}
+        action={
+          <Button size="small" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)} sx={{ color: colors.accent.blue }}>
+            New Job
+          </Button>
+        }
+      />
+      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
 
       {jobs.map((job) => (
         <Box key={job.id} sx={{ p: 2, mb: 1.5, border: `1px solid ${colors.border.default}`, borderRadius: 1 }}>
@@ -155,6 +159,7 @@ export function SchedulerPanel() {
           <Button onClick={handleAdd} variant="contained" sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Create</Button>
         </DialogActions>
       </Dialog>
+      </Box>
     </Box>
   );
 }

@@ -63,7 +63,7 @@ const extractionSchema = z.object({
   edges: z.array(edgeSchema).max(40),
 });
 
-export function createLocalLLMExtractor(modelName = 'Xenova/Qwen2.5-0.5B-Instruct'): MemoryExtractor {
+export function createLocalLLMExtractor(modelName?: string): MemoryExtractor {
   const judge = new LocalLLMJudge({ modelName, maxNewTokens: 512, temperature: 0.1 });
   return new MemoryExtractor(async (prompt: string) => {
     try {

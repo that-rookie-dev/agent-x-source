@@ -4,32 +4,14 @@ import { getEngine } from './engine.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
 import type { DeepSearchProgress } from '@agentx/shared';
 import { MemoryFabric, MemoryService, ProviderFactory, UnifiedLocalModelProvider } from '@agentx/engine';
-import type { GenerateFn, OnnxEmbeddingProvider } from '@agentx/engine';
+import type { GenerateFn } from '@agentx/engine';
 
-let onxEmbedder: OnnxEmbeddingProvider | UnifiedLocalModelProvider | null = null;
-async function getEmbedder(): Promise<OnnxEmbeddingProvider | UnifiedLocalModelProvider | null> {
+let onxEmbedder: import('@agentx/engine').OnnxEmbeddingProvider | null = null;
+async function getEmbedder() {
   if (onxEmbedder) return onxEmbedder;
   try {
-    const eng = getEngine();
-    const cfg = eng.configManager.load();
-
-    // Use local model for embeddings if enabled and configured
-    if (cfg.localModel?.enabled && cfg.localModel.modelName && cfg.localModel.cacheDir) {
-      if (cfg.featureRouting?.embeddings === 'local' || !cfg.featureRouting?.embeddings) {
-        try {
-          onxEmbedder = new UnifiedLocalModelProvider({
-            modelName: cfg.localModel.modelName,
-            cacheDir: cfg.localModel.cacheDir,
-            quantized: true,
-          });
-          return onxEmbedder;
-        } catch (e) {
-          getLogger().warn('EMBEDDING', `Local model failed, falling back to ONNX: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-    }
-
     const { OnnxEmbeddingProvider } = await import('@agentx/engine');
+    // Always use the bundled all-MiniLM-L6-v2 model for embeddings.
     onxEmbedder = new OnnxEmbeddingProvider();
     return onxEmbedder;
   } catch (e) {
@@ -39,16 +21,36 @@ async function getEmbedder(): Promise<OnnxEmbeddingProvider | UnifiedLocalModelP
 }
 
 let memoryService: MemoryService | null = null;
+let memoryServiceConfigHash: string | null = null;
+
+function getLocalModelConfigHash(): string {
+  try {
+    const cfg = getEngine().configManager.load();
+    return JSON.stringify({
+      localModel: cfg.localModel,
+      activeProvider: cfg.provider.activeProvider,
+      activeModel: cfg.provider.activeModel,
+    });
+  } catch {
+    return '';
+  }
+}
 
 async function getMemoryService(): Promise<MemoryService | null> {
-  if (memoryService) return memoryService;
   const fabric = getMemoryFabric();
   if (!fabric) return null;
   const pool = (fabric as any)['pool'];
   if (!pool) return null;
+
+  const currentHash = getLocalModelConfigHash();
+  if (memoryService && memoryServiceConfigHash === currentHash) {
+    return memoryService;
+  }
+
   const embedder = await getEmbedder();
   const generate = await buildDistillationGenerator();
   memoryService = new MemoryService(pool, embedder, generate ?? undefined);
+  memoryServiceConfigHash = currentHash;
   return memoryService;
 }
 
@@ -65,7 +67,7 @@ async function buildDistillationGenerator(): Promise<GenerateFn | null> {
           const localProvider = new UnifiedLocalModelProvider({
             modelName: cfg.localModel.modelName,
             cacheDir: cfg.localModel.cacheDir,
-            quantized: true,
+            dtype: cfg.localModel.dtype ?? 'q4',
           });
           return async (prompt: string) => localProvider.generate(prompt, { maxTokens: 512, temperature: 0.1 });
         } catch (e) {

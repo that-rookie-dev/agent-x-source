@@ -78,6 +78,7 @@ export interface LocalModelConfig {
   displayName?: string;
   cacheDir?: string;
   downloadedAt?: string;
+  dtype?: 'q4' | 'q4f16' | 'fp32' | 'fp16' | 'int8';
 }
 
 export interface FeatureRoutingConfig {

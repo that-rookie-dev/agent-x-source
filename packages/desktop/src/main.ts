@@ -545,6 +545,20 @@ ipcMain.handle('dialog:openFolder', async () => {
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 ipcMain.handle('shell:openExternal', async (_event, url: string) => openExternalLink(url));
+ipcMain.handle('window:openInternal', async (_event, url: string) => {
+  const internal = new BrowserWindow({
+    width: 1280, height: 800,
+    minWidth: 800, minHeight: 600,
+    backgroundColor: '#0a0a0a',
+    webPreferences: {
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  const target = url.startsWith('http') ? url : `http://localhost:${PORT}${url.startsWith('/') ? '' : '/'}${url}`;
+  await internal.loadURL(target);
+  return true;
+});
 
 // ==================== App Lifecycle ====================
 

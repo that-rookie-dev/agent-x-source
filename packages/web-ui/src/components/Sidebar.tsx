@@ -13,9 +13,6 @@ import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import GroupsIcon from '@mui/icons-material/Groups';
 // import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LogoutIcon from '@mui/icons-material/Logout';
-import DnsIcon from '@mui/icons-material/Dns';
-import HubIcon from '@mui/icons-material/Hub';
-import MemoryIcon from '@mui/icons-material/Memory';
 import { useNavigate } from 'react-router-dom';
 import { auth, setAuthToken } from '../api';
 import { useApp } from '../store/AppContext';
@@ -30,9 +27,7 @@ interface Props {
 
 const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
   { id: 'chat', icon: ChatIcon, label: 'Chat' },
-  { id: 'brain', icon: MemoryIcon, label: 'Brain' },
   { id: 'health', icon: MonitorHeartIcon, label: 'Health' },
-  { id: 'providers', icon: DnsIcon, label: 'Providers' },
   { id: 'crews', icon: GroupsIcon, label: 'Crews' },
   { id: 'settings', icon: SettingsIcon, label: 'Settings' },
   // Hidden until wired — see source/MILESTONE.md
@@ -83,15 +78,6 @@ export function Sidebar({ active, onNavigate, highlightCrews }: Props) {
           </IconButton>
         </Tooltip>
       ))}
-
-      <Tooltip title="Brain" placement="right">
-        <IconButton
-          onClick={() => window.open('/neuron', '_blank', 'noopener,noreferrer')}
-          sx={{ mb: 0.5, width: 34, height: 34, borderRadius: 1, color: colors.text.dim, '&:hover': { bgcolor: colors.border.default, color: colors.accent.orange } }}
-        >
-          <HubIcon sx={{ fontSize: 16, color: colors.accent.orange }} />
-        </IconButton>
-      </Tooltip>
 
       <Box sx={{ flex: 1 }} />
       <Divider sx={{ width: 26, mb: 1, borderColor: colors.border.default }} />

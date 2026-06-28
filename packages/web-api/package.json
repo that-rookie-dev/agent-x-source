@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsup && node -e \"require('fs').mkdirSync('dist/data',{recursive:true});require('fs').copyFileSync('../engine/data/crew-catalog.manifest.json','dist/data/crew-catalog.manifest.json')\" && node scripts/copy-runtime-deps.js",
+    "build": "tsup && node -e \"require('fs').mkdirSync('dist/data',{recursive:true});require('fs').copyFileSync('../engine/data/crew-catalog.manifest.json','dist/data/crew-catalog.manifest.json')\" && node scripts/copy-runtime-deps.js && node scripts/bundle-embedding-model.js",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",

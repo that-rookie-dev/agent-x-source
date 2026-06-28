@@ -4,6 +4,7 @@ import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import Select from '@mui/material/Select';
+import { PanelHeader } from './PanelHeader';
 import MenuItem from '@mui/material/MenuItem';
 import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
@@ -213,18 +214,16 @@ export function ProvidersPanel() {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <Box sx={{ flexShrink: 0, px: 3, pt: 2.5, pb: 1.5, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <Box>
-          <Typography sx={{ fontSize: '0.95rem', fontWeight: 600 }}>Providers</Typography>
-          <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, mt: 0.25 }}>
-            Manage AI provider profiles and switch between them
-          </Typography>
-        </Box>
-        <Button size="small" variant="contained" startIcon={<AddIcon />} onClick={() => setShowAddDialog(true)}
-          sx={{ bgcolor: colors.accent.blue, fontSize: '0.7rem', textTransform: 'none', px: 1.5, py: 0.5, '&:hover': { bgcolor: '#3b8ad9' } }}>
-          Add Profile
-        </Button>
-      </Box>
+      <PanelHeader
+        title="Models"
+        subtitle="Manage AI provider profiles and switch between them"
+        action={
+          <Button size="small" variant="contained" startIcon={<AddIcon />} onClick={() => setShowAddDialog(true)}
+            sx={{ bgcolor: colors.accent.blue, fontSize: '0.7rem', textTransform: 'none', px: 1.5, py: 0.5, '&:hover': { bgcolor: '#3b8ad9' } }}>
+            Add Profile
+          </Button>
+        }
+      />
 
       {error && (
         <Box sx={{ px: 3, pb: 1 }}>

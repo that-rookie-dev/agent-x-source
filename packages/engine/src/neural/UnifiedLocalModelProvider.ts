@@ -11,7 +11,7 @@ import path from 'path';
 export interface UnifiedModelConfig {
   modelName: string;
   cacheDir: string;
-  quantized: boolean;
+  dtype: 'q4' | 'q4f16' | 'fp32' | 'fp16' | 'int8';
 }
 
 export class UnifiedLocalModelProvider implements EmbeddingProvider {
@@ -63,7 +63,7 @@ export class UnifiedLocalModelProvider implements EmbeddingProvider {
     if (this.generatorPending) return this.generatorPending;
     
     this.generatorPending = pipeline('text-generation', this.config.modelName, {
-      dtype: this.config.quantized ? 'q4' : 'fp32',
+      dtype: this.config.dtype,
       revision: 'main',
       cache_dir: this.config.cacheDir,
     }) as Promise<TextGenerationPipeline>;
@@ -78,7 +78,7 @@ export class UnifiedLocalModelProvider implements EmbeddingProvider {
     if (this.embedderPending) return this.embedderPending;
 
     this.embedderPending = pipeline('feature-extraction', this.config.modelName, {
-      dtype: this.config.quantized ? 'q4' : 'fp32',
+      dtype: this.config.dtype,
       revision: 'main',
       cache_dir: this.config.cacheDir,
     }) as Promise<FeatureExtractionPipeline>;
@@ -111,11 +111,15 @@ export class UnifiedLocalModelProvider implements EmbeddingProvider {
   }
 }
 
-export async function createUnifiedModelProvider(modelName: string, cacheDir?: string): Promise<UnifiedLocalModelProvider> {
+export async function createUnifiedModelProvider(
+  modelName: string,
+  cacheDir?: string,
+  dtype: UnifiedModelConfig['dtype'] = 'q4',
+): Promise<UnifiedLocalModelProvider> {
   const config: UnifiedModelConfig = {
     modelName,
     cacheDir: cacheDir || path.join(process.env.HOME || process.env.USERPROFILE || '.', '.agentx', 'models'),
-    quantized: true,
+    dtype,
   };
   return new UnifiedLocalModelProvider(config);
 }

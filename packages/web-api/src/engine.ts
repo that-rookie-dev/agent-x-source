@@ -33,6 +33,7 @@ import {
   buildCrewPrivateIdentityPrompt,
   applyWebSearchConfigFromAgentConfig,
   MemoryFabric,
+  setLocalModelConfig,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
@@ -79,6 +80,26 @@ function safeLoadConfig(configManager: ConfigManager): AgentXConfig | null {
   }
 }
 
+export function syncLocalModelConfig(configManager: ConfigManager): void {
+  try {
+    const cfg = configManager.load();
+    if (cfg.localModel?.enabled && cfg.localModel.modelName && cfg.localModel.cacheDir) {
+      setLocalModelConfig({
+        enabled: true,
+        modelId: cfg.localModel.modelId,
+        modelName: cfg.localModel.modelName,
+        displayName: cfg.localModel.displayName,
+        cacheDir: cfg.localModel.cacheDir,
+        dtype: cfg.localModel.dtype ?? 'q4',
+      });
+    } else {
+      setLocalModelConfig(null);
+    }
+  } catch {
+    setLocalModelConfig(null);
+  }
+}
+
 export function getEngine(): EngineState {
   if (state) return state;
 
@@ -90,6 +111,8 @@ export function getEngine(): EngineState {
       applyWebSearchConfigFromAgentConfig(loadedConfig);
     } catch { /* pre-auth or corrupt config */ }
   }
+
+  syncLocalModelConfig(configManager);
 
   const toolkit = createDefaultToolkit(process.cwd());
   const pluginRegistry = new PluginRegistry();

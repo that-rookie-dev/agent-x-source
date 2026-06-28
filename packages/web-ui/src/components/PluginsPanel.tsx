@@ -11,6 +11,8 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SearchIcon from '@mui/icons-material/Search';
+import ExtensionIcon from '@mui/icons-material/Extension';
+import { PanelHeader } from './PanelHeader';
 import { plugins, type PluginInfo } from '../api';
 import { colors } from '../theme';
 
@@ -80,13 +82,14 @@ export function PluginsPanel() {
   }, [allPlugins, search, categoryFilter]);
 
   return (
-    <Box sx={{ height: '100%', overflow: 'auto', p: 2 }}>
-      <Typography sx={{ fontSize: '1rem', fontWeight: 600, mb: 0.5 }}>Plugin Hub</Typography>
-      <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, mb: 2 }}>
-        Project tools and integrations to extend Agent-X capabilities
-      </Typography>
-
-      <Box sx={{ display: 'flex', gap: 1, mb: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <PanelHeader
+        title="Plugins"
+        subtitle="Project tools and integrations to extend Agent-X capabilities"
+        icon={<ExtensionIcon sx={{ fontSize: 20 }} />}
+      />
+      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+        <Box sx={{ display: 'flex', gap: 1, mb: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
         <TextField
           size="small"
           placeholder="Search plugins..."
@@ -208,6 +211,7 @@ export function PluginsPanel() {
           <Button onClick={handleSaveConfig} variant="contained" sx={{ bgcolor: colors.accent.blue, textTransform: 'none' }}>Save</Button>
         </DialogActions>
       </Dialog>
+      </Box>
     </Box>
   );
 }

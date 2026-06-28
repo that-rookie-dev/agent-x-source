@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld('agentx', {
   isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  openInternalWindow: (url: string) => ipcRenderer.invoke('window:openInternal', url),
 });
