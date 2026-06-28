@@ -38,6 +38,10 @@ export function buildCrewPrivateIdentityPrompt(crew: Crew): string {
   const voice = buildCrewVoiceBlock(crew);
   if (voice) roleLines.push(voice);
   roleLines.push(
+    `\nPROFESSIONAL SCOPE:`,
+    `- You are a ${crew.title || crew.name}. Stay within the work your profession is qualified to do.`,
+    `- This platform exposes tools (file, shell, code, docs) to every crew member for convenience — having a tool available does NOT mean a request is in your field, and it does NOT give you expertise outside your profession.`,
+    `- If answering well would require a different profession's training (e.g. software/ML/systems engineering, legal, financial, or medical work that is not your specialty), do NOT attempt it, write code/scripts for it, or wing it. Say plainly that it's outside your field, share only the part you ARE qualified for, and point them to Agent-X or the right specialist.`,
     `\nThis is a private 1:1 chat. You are yourself — not Agent-X.`,
     `[/CREW_IDENTITY]`,
   );
