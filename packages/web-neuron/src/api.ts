@@ -64,7 +64,10 @@ export type BrainActivityEvent =
   | { type: 'synapse_bound'; edgeId: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number; timestamp: string }
   | { type: 'neuron_fired'; nodeId: string; timestamp: string }
   | { type: 'neuron_decayed'; nodeId: string; status: string; timestamp: string }
-  | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string };
+  | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string }
+  | { type: 'distillation_started'; sessionId: string; timestamp: string }
+  | { type: 'distillation_complete'; sessionId: string; nodesCreated: number; edgesCreated: number; timestamp: string }
+  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string };
 
 export interface TestResult {
   score: number;

@@ -177,7 +177,27 @@ export class MemoryFabric {
   async heal(): Promise<{ schemaRepaired: boolean; ageAvailable: boolean; ageError?: string }> {
     const runner = new MemoryMigrationRunner(this.pool);
     const { applied: schemaRepaired } = await runner.ensureSchema();
-    const { available: ageAvailable, error: ageError } = await runner.detectAge();
+    let { available: ageAvailable, error: ageError } = await runner.detectAge();
+
+    // If AGE is available as an extension but not installed yet (e.g. the database
+    // was migrated before AGE was built), create it now. This makes the migration
+    // idempotent with respect to AGE availability.
+    if (!ageAvailable && !ageError) {
+      try {
+        const { rows } = await this.pool.query<{ available: boolean }>(
+          `SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'age') AS available`
+        );
+        if (rows[0]?.available) {
+          await this.pool.query('CREATE EXTENSION IF NOT EXISTS age');
+          const { available } = await runner.detectAge();
+          ageAvailable = available;
+        }
+      } catch (installErr) {
+        ageError = installErr instanceof Error ? installErr.message : String(installErr);
+        getLogger().warn('MEMORY_FABRIC_HEAL', `AGE extension install failed: ${ageError}`);
+      }
+    }
+
     let graphRepaired = false;
     if (ageAvailable) {
       try {
@@ -509,7 +529,10 @@ export class MemoryFabric {
         nodeIds.add(t);
         edges.push({ sourceNodeId: s, targetNodeId: t, relationshipType: String(row.relationship_type), weight: Number(row.weight) });
       }
-      return { nodeIds: Array.from(nodeIds), edges };
+      // AGE graph may exist but be empty (not synced). Fall back to CTE if no paths found.
+      if (edges.length > 0) {
+        return { nodeIds: Array.from(nodeIds), edges };
+      }
     } catch {
       // Relational CTE fallback
     }
@@ -836,33 +859,37 @@ export class MemoryFabric {
         nodeIds.add(t);
         edges.push({ sourceNodeId: s, targetNodeId: t, relationshipType: String(row.relationship_type), weight: Number(row.weight) });
       }
-      return { nodeIds: Array.from(nodeIds), edges };
-    } catch {
-      // AGE fallback: recursive CTE over memory_edges
-      const { rows } = await this.pool.query<{ id: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number }>(
-        `WITH RECURSIVE walk AS (
-          SELECT e.id, e.source_node_id AS "sourceNodeId", e.target_node_id AS "targetNodeId",
-                 e.relationship_type AS "relationshipType", e.weight, 1 AS depth
-          FROM memory_edges e
-          WHERE e.source_node_id = ANY($1::uuid[]) AND e.weight >= $2 ${relFilter}
-          UNION
-          SELECT e.id, e.source_node_id, e.target_node_id, e.relationship_type, e.weight, w.depth + 1
-          FROM memory_edges e
-          JOIN walk w ON e.source_node_id = w."targetNodeId"
-          WHERE w.depth < $3 AND e.weight >= $2 ${relFilter}
-        )
-        SELECT DISTINCT id, "sourceNodeId", "targetNodeId", "relationshipType", weight FROM walk LIMIT $4`,
-        [startIds, minWeight, maxDepth, maxFanOut],
-      );
-      const nodeIds = new Set<string>(startIds);
-      const edges: GraphWalkResult['edges'] = [];
-      for (const row of rows) {
-        nodeIds.add(row.sourceNodeId);
-        nodeIds.add(row.targetNodeId);
-        edges.push({ sourceNodeId: row.sourceNodeId, targetNodeId: row.targetNodeId, relationshipType: row.relationshipType, weight: row.weight });
+      if (edges.length > 0) {
+        return { nodeIds: Array.from(nodeIds), edges };
       }
-      return { nodeIds: Array.from(nodeIds), edges };
+    } catch {
+      // AGE unavailable; fall through to CTE below.
     }
+
+    // Relational CTE fallback (also used when AGE graph is empty).
+    const { rows } = await this.pool.query<{ id: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number }>(
+      `WITH RECURSIVE walk AS (
+        SELECT e.id, e.source_node_id AS "sourceNodeId", e.target_node_id AS "targetNodeId",
+               e.relationship_type AS "relationshipType", e.weight, 1 AS depth
+        FROM memory_edges e
+        WHERE e.source_node_id = ANY($1::uuid[]) AND e.weight >= $2 ${relFilter}
+        UNION
+        SELECT e.id, e.source_node_id, e.target_node_id, e.relationship_type, e.weight, w.depth + 1
+        FROM memory_edges e
+        JOIN walk w ON e.source_node_id = w."targetNodeId"
+        WHERE w.depth < $3 AND e.weight >= $2 ${relFilter}
+      )
+      SELECT DISTINCT id, "sourceNodeId", "targetNodeId", "relationshipType", weight FROM walk LIMIT $4`,
+      [startIds, minWeight, maxDepth, maxFanOut],
+    );
+    const nodeIds = new Set<string>(startIds);
+    const edges: GraphWalkResult['edges'] = [];
+    for (const row of rows) {
+      nodeIds.add(row.sourceNodeId);
+      nodeIds.add(row.targetNodeId);
+      edges.push({ sourceNodeId: row.sourceNodeId, targetNodeId: row.targetNodeId, relationshipType: row.relationshipType, weight: row.weight });
+    }
+    return { nodeIds: Array.from(nodeIds), edges };
   }
 
   async getNodesInViewport(

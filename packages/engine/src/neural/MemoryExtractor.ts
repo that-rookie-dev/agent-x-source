@@ -65,7 +65,15 @@ const extractionSchema = z.object({
 
 export function createLocalLLMExtractor(modelName = 'Xenova/Qwen2.5-0.5B-Instruct'): MemoryExtractor {
   const judge = new LocalLLMJudge({ modelName, maxNewTokens: 512, temperature: 0.1 });
-  return new MemoryExtractor(async (prompt: string) => judge.generate(prompt, { maxTokens: 512 }));
+  return new MemoryExtractor(async (prompt: string) => {
+    try {
+      return await judge.generate(prompt, { maxTokens: 512 });
+    } catch (e) {
+      // Fallback to simple text if WASM fails
+      console.warn('Local LLM extraction failed, using fallback:', e instanceof Error ? e.message : e);
+      return 'Extracted note';
+    }
+  });
 }
 
 export class MemoryExtractor {
@@ -173,8 +181,10 @@ Schema:
 ${JSON.stringify(this.buildJsonSchema(category, maxNodes), null, 2)}
 
 Rules:
+- Mimic a human brain: dissolve the text into atomic concepts, entities, and facts, not whole sentences or transcripts.
+- Prefer subject-relationship-object triplets: each edge should express a clear relationship between two atomic neurons.
 - Nodes should be atomic facts or concepts, not full sentences.
-- Use category "${category}" as the default unless the text clearly describes a tool, person, or conversation event.
+- Use category "${category}" as the default unless the text clearly describes a tool, person, source document, or conversation event.
 - Edges must connect nodes by their id values with a valid relationship_type.
 - Return at most ${maxNodes} nodes and ${maxNodes * 2} edges.
 - Return ONLY the JSON object, no markdown fences, no explanation.

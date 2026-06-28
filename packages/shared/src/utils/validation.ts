@@ -66,12 +66,30 @@ export const ragConfigSchema = z.object({
   minScore: z.number().min(0).max(1).optional(),
 }).optional();
 
+export const localModelConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  modelId: z.string().optional(),
+  modelName: z.string().optional(),
+  displayName: z.string().optional(),
+  cacheDir: z.string().optional(),
+  downloadedAt: z.string().optional(),
+}).optional();
+
+export const featureRoutingConfigSchema = z.object({
+  memoryDistillation: z.enum(['cloud', 'local']).optional(),
+  memoryExtraction: z.enum(['cloud', 'local']).optional(),
+  memoryConsolidation: z.enum(['cloud', 'local']).optional(),
+  embeddings: z.enum(['cloud', 'local']).optional(),
+}).optional();
+
 export const agentXConfigSchema = z.object({
   provider: z.object({
     activeProvider: providerIdSchema,
     activeModel: z.string(),
     providers: z.record(providerCredentialsSchema),
   }),
+  localModel: localModelConfigSchema,
+  featureRouting: featureRoutingConfigSchema,
   ui: z.object({
     theme: z.enum(['dark', 'light']),
     showTokenBar: z.boolean(),

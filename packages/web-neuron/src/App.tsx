@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Graph from 'graphology';
-import Sigma from 'sigma';
-import { api, type MemoryNode, type MemorySource, type BrainActivityEvent, type Scorecard } from './api.ts';
+import ForceGraph3D from '3d-force-graph';
+import { api, type SessionInfo } from './api.ts';
 import { neuronTheme } from './theme.ts';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -13,16 +12,53 @@ const CATEGORY_COLORS: Record<string, string> = {
   system: '#ffffff',
 };
 
+const CATEGORY_NAMES: Record<string, string> = {
+  persona: 'Persona',
+  tool: 'Tool',
+  episodic: 'Episodic',
+  semantic: 'Semantic',
+  source_doc: 'Source Doc',
+  system: 'System',
+};
+
 const WS_URL = (import.meta.env.VITE_API_WS_URL as string) || `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
 
-function useWebSocket(
-  onEvent: (event: BrainActivityEvent) => void,
-  onBenchmarkEvent: (type: string, data: Record<string, unknown>) => void,
-) {
+interface NodeEntry {
+  id: string;
+  label: string;
+  category: string;
+  content: string;
+  sourceId: string | null;
+  sessionId: string | null;
+  x: number | undefined;
+  y: number | undefined;
+  z: number | undefined;
+  baseColor: string;
+  baseSize: number;
+}
+
+interface EdgeEntry {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  weight: number;
+  baseColor: string;
+  baseWidth: number;
+}
+
+type BrainActivityEvent =
+  | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; x: number | null; y: number | null; timestamp: string }
+  | { type: 'synapse_bound'; edgeId: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number; timestamp: string }
+  | { type: 'neuron_fired'; nodeId: string; timestamp: string }
+  | { type: 'neuron_decayed'; nodeId: string; status: string; timestamp: string }
+  | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string }
+  | { type: 'distillation_started'; sessionId: string; timestamp: string }
+  | { type: 'distillation_complete'; sessionId: string; nodesCreated: number; edgesCreated: number; timestamp: string }
+  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string };
+
+function useWebSocket(onEvent: (event: BrainActivityEvent) => void) {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
-  const onBenchmarkEventRef = useRef(onBenchmarkEvent);
-  onBenchmarkEventRef.current = onBenchmarkEvent;
 
   useEffect(() => {
     let ws: WebSocket | null = new WebSocket(WS_URL);
@@ -40,8 +76,6 @@ function useWebSocket(
             for (const event of data.events as BrainActivityEvent[]) {
               onEventRef.current(event);
             }
-          } else if (data.type === 'benchmark_event' || data.type === 'benchmark_result' || data.type === 'benchmark_error') {
-            onBenchmarkEventRef.current(data.type as string, data as Record<string, unknown>);
           }
         } catch {
           // ignore malformed
@@ -62,456 +96,446 @@ function useWebSocket(
   }, []);
 }
 
-function nodeColor(category: string, sourceColor?: string | null): string {
-  return sourceColor || CATEGORY_COLORS[category] || neuronTheme.accent.amber;
+const SPACE_SIZE = 4096;
+const LAYOUT_SCALE = 200;
+
+function resolvePosition(x: number | null | undefined, y: number | null | undefined): { x: number; y: number; z: number } {
+  if (x == null || y == null || (x === 0 && y === 0)) {
+    return {
+      x: (Math.random() - 0.5) * SPACE_SIZE * 0.5,
+      y: (Math.random() - 0.5) * SPACE_SIZE * 0.5,
+      z: (Math.random() - 0.5) * SPACE_SIZE * 0.5,
+    };
+  }
+  return {
+    x: x * LAYOUT_SCALE + SPACE_SIZE / 2,
+    y: y * LAYOUT_SCALE + SPACE_SIZE / 2,
+    z: 0,
+  };
 }
+
+const BASE_NODE_SIZE = 2;
+const FIRED_SIZE = 5;
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const sigmaRef = useRef<Sigma | null>(null);
-  const graphRef = useRef<Graph | null>(null);
-  const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
-  const [sources, setSources] = useState<MemorySource[]>([]);
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  const [soloMode, setSoloMode] = useState(false);
-  const [stats, setStats] = useState({ nodes: 0, edges: 0, communities: 0, epoch: 0 });
+  const graphRef = useRef<any>(null);
+
+  const nodesRef = useRef<NodeEntry[]>([]);
+  const edgesRef = useRef<EdgeEntry[]>([]);
+  const idToNodeRef = useRef<Map<string, NodeEntry>>(new Map());
+  const nodeSizeMapRef = useRef<Map<string, number>>(new Map());
+  const nodeColorMapRef = useRef<Map<string, string>>(new Map());
+
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
+  const [stats, setStats] = useState({ nodes: 0, edges: 0 });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dbStatus, setDbStatus] = useState({ connected: false });
-  const [layoutBusy, setLayoutBusy] = useState(false);
-  const [benchmarkMode, setBenchmarkMode] = useState(false);
-  const [benchmarkRunning, setBenchmarkRunning] = useState(false);
-  const [scorecards, setScorecards] = useState<Scorecard[]>([]);
-  const [benchmarkEvent, setBenchmarkEvent] = useState<string | null>(null);
-  const [lodBand, setLodBand] = useState<'detail' | 'medium' | 'overview'>('detail');
-  const lodBandRef = useRef(lodBand);
-  useEffect(() => { lodBandRef.current = lodBand; }, [lodBand]);
-  const sourceMap = useMemo(() => {
-    const map = new Map<string, MemorySource>();
-    for (const s of sources) map.set(s.id, s);
-    return map;
-  }, [sources]);
+  const [distillationStatus, setDistillationStatus] = useState<{ sessionId: string | null; status: 'idle' | 'processing' | 'complete' | 'error'; message?: string; nodesCreated?: number; edgesCreated?: number }>({ sessionId: null, status: 'idle' });
 
-  const initialGraph = useMemo(() => new Graph(), []);
+  const categories = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const n of nodesRef.current) {
+      counts.set(n.category, (counts.get(n.category) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([category]) => category);
+  }, [stats.nodes]);
 
+  const selectedSessionNodes = useMemo(() => {
+    if (selectedSessionId == null) return [];
+    return nodesRef.current
+      .filter((n) => n.sessionId === selectedSessionId)
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [selectedSessionId, stats.nodes]);
+
+  const selectedSessionName = useMemo(() => {
+    if (selectedSessionId == null) return null;
+    const s = sessions.find((x) => x.id === selectedSessionId);
+    return s?.title || `Session ${selectedSessionId.slice(0, 8)}`;
+  }, [selectedSessionId, sessions]);
+
+  const syncToGraph = () => {
+    const g = graphRef.current;
+    if (!g) return;
+
+    const visibleNodes = selectedSessionId == null && selectedCluster == null
+      ? nodesRef.current
+      : nodesRef.current.filter((n) => {
+          if (selectedSessionId != null && n.sessionId !== selectedSessionId) return false;
+          if (selectedCluster != null && n.category !== selectedCluster) return false;
+          return true;
+        });
+
+    const visibleNodeIds = new Set(visibleNodes.map((n) => n.id));
+    const visibleEdges = edgesRef.current.filter((e) =>
+      visibleNodeIds.has(e.sourceNodeId) && visibleNodeIds.has(e.targetNodeId)
+    );
+
+    const graphData = {
+      nodes: visibleNodes.map((n) => ({
+        id: n.id,
+        label: n.label,
+        category: n.category,
+        x: n.x,
+        y: n.y,
+        z: n.z,
+        val: nodeSizeMapRef.current.get(n.id) ?? BASE_NODE_SIZE,
+        color: nodeColorMapRef.current.get(n.id) ?? n.baseColor,
+      })),
+      links: visibleEdges.map((e) => ({
+        id: e.id,
+        source: e.sourceNodeId,
+        target: e.targetNodeId,
+        val: e.baseWidth,
+        color: e.baseColor,
+      })),
+    };
+
+    g.graphData(graphData);
+  };
+
+  const addNode = (node: Partial<NodeEntry> & { id: string; label: string; category: string; content: string } | any) => {
+    const pos = resolvePosition(node.x || null, node.y || null);
+    const newNode: NodeEntry = {
+      id: node.id,
+      label: node.label,
+      category: node.category,
+      content: node.content,
+      sourceId: node.sourceId ?? null,
+      sessionId: node.sessionId ?? null,
+      x: pos.x,
+      y: pos.y,
+      z: pos.z,
+      baseColor: CATEGORY_COLORS[node.category] || '#ffffff',
+      baseSize: BASE_NODE_SIZE,
+    };
+    nodesRef.current.push(newNode);
+    idToNodeRef.current.set(newNode.id, newNode);
+    nodeSizeMapRef.current.set(newNode.id, BASE_NODE_SIZE);
+    nodeColorMapRef.current.set(newNode.id, newNode.baseColor);
+    setStats((prev) => ({ nodes: prev.nodes + 1, edges: prev.edges }));
+    syncToGraph();
+  };
+
+  const addEdge = (edge: Partial<EdgeEntry> & { id: string; sourceNodeId: string; targetNodeId: string }) => {
+    const newEdge: EdgeEntry = {
+      id: edge.id,
+      sourceNodeId: edge.sourceNodeId,
+      targetNodeId: edge.targetNodeId,
+      weight: edge.weight ?? 0.5,
+      baseColor: '#444444',
+      baseWidth: (edge.weight ?? 0.5) * 2,
+    };
+    edgesRef.current.push(newEdge);
+    setStats((prev) => ({ nodes: prev.nodes, edges: prev.edges + 1 }));
+    syncToGraph();
+  };
+
+  const updateNodeSize = (nodeId: string, size: number) => {
+    nodeSizeMapRef.current.set(nodeId, size);
+    syncToGraph();
+  };
+
+  const updateNodeColor = (nodeId: string, color: string) => {
+    nodeColorMapRef.current.set(nodeId, color);
+    syncToGraph();
+  };
+
+  const fitToAll = () => {
+    const g = graphRef.current;
+    if (!g) return;
+    g.zoomToFit();
+  };
+
+  const focusNode = (nodeId: string) => {
+    const g = graphRef.current;
+    if (!g) return;
+    const node = idToNodeRef.current.get(nodeId);
+    if (!node) return;
+    setFocusedNodeId(nodeId);
+    // Center camera on the node
+    g.cameraPosition({ x: node.x, y: node.y, z: node.z }, node);
+  };
+
+  const backToSession = () => {
+    setFocusedNodeId(null);
+    if (selectedSessionId != null) {
+      const sessionNodes = nodesRef.current.filter((n) => n.sessionId === selectedSessionId);
+      if (sessionNodes.length > 0) {
+        const g = graphRef.current;
+        if (!g) return;
+        g.zoomToFit(400);
+      }
+    } else {
+      fitToAll();
+    }
+  };
+
+  const closeSessionCard = () => {
+    setSelectedSessionId(null);
+    setFocusedNodeId(null);
+    setExpandedNodeIds(new Set());
+    fitToAll();
+  };
+
+  const selectSession = (sessionId: string | null) => {
+    setSelectedSessionId(sessionId);
+    setSelectedCluster(null);
+    setFocusedNodeId(null);
+    setExpandedNodeIds(new Set());
+    syncToGraph();
+    if (sessionId == null) {
+      fitToAll();
+    } else {
+      setTimeout(() => fitToAll(), 100);
+    }
+  };
+
+  const selectCluster = (category: string | null) => {
+    setSelectedCluster(category);
+    setSelectedSessionId(null);
+    setFocusedNodeId(null);
+    setExpandedNodeIds(new Set());
+    syncToGraph();
+    if (category == null) {
+      fitToAll();
+    } else {
+      setTimeout(() => fitToAll(), 100);
+    }
+  };
+
+  const toggleExpand = (nodeId: string) => {
+    setExpandedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  };
+
+  // Initial load
   useEffect(() => {
-    let mounted = true;
-    async function load() {
+    const load = async () => {
       try {
-        const [g, status, srcs, sc] = await Promise.all([
-          api.graph(500, undefined, benchmarkMode ? 'benchmark' : undefined, benchmarkMode ? true : undefined),
+        const [sess, db] = await Promise.all([
+          api.sessions(),
           api.dbStatus(),
-          api.sources(),
-          api.scorecards(),
         ]);
-        if (!mounted) return;
-        setDbStatus({ connected: status.connected });
-        setSources(srcs);
-        setScorecards(sc.scorecards);
-        graphRef.current = initialGraph;
+        setSessions(sess);
+        setDbStatus(db);
+        setLoading(false);
+
+        const g = await api.graph(5000);
         for (const n of g.nodes) {
-          if (!initialGraph.hasNode(n.id)) {
-            const sourceColor = n.sourceId ? sourceMap.get(n.sourceId)?.colorHex ?? null : null;
-            initialGraph.addNode(n.id, {
-              label: n.label,
-              category: n.category,
-              content: n.content,
-              sourceId: n.sourceId,
-              x: n.x ?? 0,
-              y: n.y ?? 0,
-              size: 5,
-              color: nodeColor(n.category, sourceColor),
-              originalColor: nodeColor(n.category, sourceColor),
-              degree: 0,
-            });
-          }
-        }
-        for (const e of g.edges) {
-          if (!initialGraph.hasEdge(e.id) && initialGraph.hasNode(e.sourceNodeId) && initialGraph.hasNode(e.targetNodeId)) {
-            initialGraph.addEdgeWithKey(e.id, e.sourceNodeId, e.targetNodeId, {
-              weight: e.weight,
-              size: 1 + e.weight * 2,
-              color: 'rgba(255,255,255,0.25)',
-              type: 'line',
-            });
-          }
-        }
-        initialGraph.forEachNode((node) => {
-          initialGraph.setNodeAttribute(node, 'degree', initialGraph.degree(node));
-        });
-        setStats((s) => ({ ...s, nodes: initialGraph.order, edges: initialGraph.size }));
-        setError(null);
-      } catch (e) {
-        if (!mounted) return;
-        setError(e instanceof Error ? e.message : 'Failed to load neural data');
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-    load();
-    return () => {
-      mounted = false;
-    };
-  }, [initialGraph, sourceMap]);
-
-  useEffect(() => {
-    if (!containerRef.current || !graphRef.current || loading || error) return;
-    const sigma = new Sigma(graphRef.current, containerRef.current, {
-      renderLabels: true,
-      labelSize: 12,
-      labelColor: { color: '#ffffff' },
-      defaultEdgeType: 'line',
-      zIndex: true,
-      nodeReducer: (_node, attrs) => applyLodNodeAttributes(attrs, lodBandRef.current),
-      edgeReducer: (_edge, attrs) => applyLodEdgeAttributes(attrs, lodBandRef.current),
-    });
-    sigmaRef.current = sigma;
-
-    const updateLod = () => {
-      const ratio = sigma.getCamera().getState().ratio;
-      const nextBand = ratio > 2 ? 'overview' : ratio > 0.6 ? 'medium' : 'detail';
-      setLodBand((current) => {
-        if (current !== nextBand) {
-          sigma.refresh();
-        }
-        return nextBand;
-      });
-    };
-    sigma.getCamera().on('updated', updateLod);
-    updateLod();
-
-    sigma.on('clickNode', ({ node }) => {
-      const attrs = graphRef.current?.getNodeAttributes(node) as Record<string, unknown> | undefined;
-      if (attrs) {
-        setSelectedNode({
-          id: node,
-          label: attrs.label as string,
-          category: attrs.category as string,
-          content: attrs.content as string,
-          status: 'active',
-          x: attrs.x as number | null,
-          y: attrs.y as number | null,
-          sourceId: (attrs.sourceId as string) || null,
-          sessionId: null,
-          agentId: null,
-          confidence: 1,
-          createdAt: '',
-          updatedAt: '',
-          accessCount: 0,
-          lastAccessedAt: null,
-        } as MemoryNode);
-      }
-    });
-
-    sigma.on('enterNode', ({ node }) => {
-      const graph = graphRef.current;
-      if (!graph) return;
-      graph.setNodeAttribute(node, 'size', 10);
-      graph.setNodeAttribute(node, 'color', '#ffffff');
-      graph.forEachNeighbor(node, (neighbor) => {
-        graph.setNodeAttribute(neighbor, 'color', '#ffffff');
-      });
-    });
-
-    sigma.on('leaveNode', ({ node }) => {
-      const graph = graphRef.current;
-      if (!graph) return;
-      graph.setNodeAttribute(node, 'size', 5);
-      graph.setNodeAttribute(node, 'color', graph.getNodeAttribute(node, 'originalColor'));
-      graph.forEachNeighbor(node, (neighbor) => {
-        graph.setNodeAttribute(neighbor, 'color', graph.getNodeAttribute(neighbor, 'originalColor'));
-      });
-      applySoloFilter(graph, selectedSourceId, soloMode);
-    });
-
-    return () => {
-      sigma.getCamera().off('updated', updateLod);
-      sigma.kill();
-      sigmaRef.current = null;
-    };
-  }, [loading, error, selectedSourceId, soloMode]);
-
-  useEffect(() => {
-    const graph = graphRef.current;
-    if (!graph) return;
-    applySoloFilter(graph, selectedSourceId, soloMode);
-  }, [selectedSourceId, soloMode]);
-
-  // Active viewport streaming: fetch nodes/edges inside the visible graph bounds as the camera moves.
-  useEffect(() => {
-    const sigma = sigmaRef.current;
-    if (!sigma || loading || error) return;
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const streamViewport = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        const graph = graphRef.current;
-        if (!graph) return;
-        const camera = sigma.getCamera();
-        const state = camera.getState() as { x: number; y: number; ratio: number; angle: number };
-        const container = containerRef.current;
-        if (!container) return;
-        const width = container.clientWidth * state.ratio;
-        const height = container.clientHeight * state.ratio;
-        const xMin = state.x - width / 2;
-        const xMax = state.x + width / 2;
-        const yMin = state.y - height / 2;
-        const yMax = state.y + height / 2;
-        api
-          .viewport(xMin, yMin, xMax, yMax, state.ratio, 2000)
-          .then(({ nodes, edges, epoch, band }) => {
-            const graph = graphRef.current;
-            if (!graph) return;
-            const bandName = band === 'A' ? 'detail' : band === 'B' ? 'medium' : 'overview';
-            setLodBand((current) => {
-              if (current !== bandName) {
-                sigma.refresh();
-              }
-              return bandName;
-            });
-            for (const n of nodes) {
-              if (!graph.hasNode(n.id)) {
-                const sourceColor = n.sourceId ? sourceMap.get(n.sourceId)?.colorHex ?? null : null;
-                graph.addNode(n.id, {
-                  label: n.label,
-                  category: n.category,
-                  content: n.content,
-                  sourceId: n.sourceId,
-                  x: n.x ?? 0,
-                  y: n.y ?? 0,
-                  size: 5,
-                  color: nodeColor(n.category, sourceColor),
-                  originalColor: nodeColor(n.category, sourceColor),
-                  degree: 0,
-                });
-              }
-            }
-            for (const e of edges) {
-              if (!graph.hasEdge(e.id) && graph.hasNode(e.sourceNodeId) && graph.hasNode(e.targetNodeId)) {
-                graph.addEdgeWithKey(e.id, e.sourceNodeId, e.targetNodeId, {
-                  weight: e.weight,
-                  size: 1 + e.weight * 2,
-                  color: 'rgba(255,255,255,0.25)',
-                  type: 'line',
-                });
-              }
-            }
-            graph.forEachNode((node) => graph.setNodeAttribute(node, 'degree', graph.degree(node)));
-            setStats((s) => ({ ...s, nodes: graph.order, edges: graph.size, epoch }));
-            sigma.refresh();
-          })
-          .catch(() => {});
-      }, 250);
-    };
-    sigma.on('afterRender', streamViewport);
-    streamViewport();
-    return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      sigma.off('afterRender', streamViewport);
-    };
-  }, [loading, error, sourceMap]);
-
-  // Layout-epoch polling: if the server bumps the epoch, re-fetch the full graph so coordinates stay valid.
-  useEffect(() => {
-    let lastEpoch = -1;
-    const poll = setInterval(() => {
-      api.layoutEpoch()
-        .then(({ epoch }) => {
-          if (lastEpoch !== -1 && epoch !== lastEpoch) {
-            reloadGraph();
-          }
-          lastEpoch = epoch;
-        })
-        .catch(() => {});
-    }, 30000);
-    return () => clearInterval(poll);
-  }, []);
-
-  useWebSocket(
-    (event) => {
-      const graph = graphRef.current;
-      if (!graph) return;
-      if (event.type === 'neuron_created') {
-      if (!graph.hasNode(event.nodeId)) {
-        // Neurogenesis animation: spawn from 0 to full size with a bright flash
-        const originalColor = nodeColor(event.category, null);
-        graph.addNode(event.nodeId, {
-          label: event.label,
-          category: event.category,
-          content: event.content,
-          sourceId: null,
-          x: event.x ?? 0,
-          y: event.y ?? 0,
-          size: 0,
-          color: '#ffffff',
-          originalColor,
-          animation: 'neurogenesis',
-        });
-        setStats((s) => ({ ...s, nodes: s.nodes + 1 }));
-        let step = 0;
-        const neurogenesis = setInterval(() => {
-          step++;
-          const targetSize = 5;
-          const size = Math.min(targetSize, (step / 10) * targetSize);
-          const color = step < 6 ? '#ffffff' : originalColor;
-          graph.setNodeAttribute(event.nodeId, 'size', size);
-          graph.setNodeAttribute(event.nodeId, 'color', color);
-          if (step >= 10) {
-            clearInterval(neurogenesis);
-            graph.setNodeAttribute(event.nodeId, 'size', targetSize);
-            graph.setNodeAttribute(event.nodeId, 'color', originalColor);
-          }
-        }, 30);
-      }
-    } else if (event.type === 'synapse_bound') {
-      if (!graph.hasEdge(event.edgeId) && graph.hasNode(event.sourceNodeId) && graph.hasNode(event.targetNodeId)) {
-        // Synaptogenesis animation: bright beam that fades to the normal edge
-        graph.addEdgeWithKey(event.edgeId, event.sourceNodeId, event.targetNodeId, {
-          weight: event.weight,
-          size: 4,
-          color: '#ffffff',
-          type: 'line',
-          animation: 'synaptogenesis',
-        });
-        setStats((s) => ({ ...s, edges: s.edges + 1 }));
-        setTimeout(() => {
-          graph.setEdgeAttribute(event.edgeId, 'size', 1 + event.weight * 2);
-          graph.setEdgeAttribute(event.edgeId, 'color', 'rgba(255,255,255,0.25)');
-        }, 300);
-      }
-    } else if (event.type === 'neuron_fired') {
-      if (graph.hasNode(event.nodeId)) {
-        graph.setNodeAttribute(event.nodeId, 'size', 10);
-        graph.setNodeAttribute(event.nodeId, 'color', '#ffffff');
-        setTimeout(() => {
-          graph.setNodeAttribute(event.nodeId, 'size', 5);
-          graph.setNodeAttribute(event.nodeId, 'color', graph.getNodeAttribute(event.nodeId, 'originalColor'));
-        }, 400);
-      }
-    } else if (event.type === 'neuron_decayed') {
-      if (graph.hasNode(event.nodeId)) {
-        graph.setNodeAttribute(event.nodeId, 'size', 8);
-        graph.setNodeAttribute(event.nodeId, 'color', '#ff0000');
-        graph.setNodeAttribute(event.nodeId, 'originalColor', '#ff0000');
-        let flashes = 0;
-        const flash = setInterval(() => {
-          const color = flashes % 2 === 0 ? '#ff0000' : (graph.getNodeAttribute(event.nodeId, 'originalColor') as string);
-          graph.setNodeAttribute(event.nodeId, 'color', color);
-          graph.setNodeAttribute(event.nodeId, 'size', flashes % 2 === 0 ? 12 : 4);
-          flashes++;
-          if (flashes >= 6) {
-            clearInterval(flash);
-            graph.setNodeAttribute(event.nodeId, 'color', '#ff0000');
-            graph.setNodeAttribute(event.nodeId, 'size', 4);
-            graph.setNodeAttribute(event.nodeId, 'originalColor', '#ff0000');
-          }
-        }, 200);
-      }
-    } else if (event.type === 'cluster_layout_updated') {
-      setStats((s) => ({ ...s, epoch: event.epoch }));
-      reloadGraph();
-    }
-  },
-  (type, data) => {
-    if (type === 'benchmark_event') {
-      const event = data.event as { type: string; progress?: { testName: string; status: string; error?: string }; totalScore?: number; maxScore?: number };
-      if (event.progress) {
-        setBenchmarkEvent(`${event.progress.testName}: ${event.progress.status}${event.progress.error ? ` — ${event.progress.error}` : ''}`);
-      } else if (event.totalScore != null) {
-        setBenchmarkEvent(`Benchmark complete: ${event.totalScore}/${event.maxScore}`);
-      }
-    } else if (type === 'benchmark_result') {
-      const result = data.result as { totalScore: number; maxScore: number };
-      setBenchmarkEvent(`Benchmark complete: ${result.totalScore}/${result.maxScore}`);
-      setBenchmarkRunning(false);
-      api.scorecards().then(({ scorecards }) => setScorecards(scorecards)).catch(() => {});
-    } else if (type === 'benchmark_error') {
-      setBenchmarkEvent(data.error as string);
-      setBenchmarkRunning(false);
-    }
-  },
-  );
-
-  async function reloadGraph() {
-    try {
-      const g = await api.graph(500);
-      const graph = graphRef.current;
-      if (!graph) return;
-      for (const n of g.nodes) {
-        if (graph.hasNode(n.id)) {
-          graph.setNodeAttribute(n.id, 'x', n.x ?? 0);
-          graph.setNodeAttribute(n.id, 'y', n.y ?? 0);
-        } else {
-          const sourceColor = n.sourceId ? sourceMap.get(n.sourceId)?.colorHex ?? null : null;
-          graph.addNode(n.id, {
+          const pos = resolvePosition(n.x, n.y);
+          const node: NodeEntry = {
+            id: n.id,
             label: n.label,
             category: n.category,
             content: n.content,
             sourceId: n.sourceId,
-            x: n.x ?? 0,
-            y: n.y ?? 0,
-            size: 5,
-            color: nodeColor(n.category, sourceColor),
-            originalColor: nodeColor(n.category, sourceColor),
-          });
+            sessionId: n.sessionId,
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            baseColor: CATEGORY_COLORS[n.category] || '#ffffff',
+            baseSize: BASE_NODE_SIZE,
+          };
+          nodesRef.current.push(node);
+          idToNodeRef.current.set(node.id, node);
+          nodeSizeMapRef.current.set(node.id, BASE_NODE_SIZE);
+          nodeColorMapRef.current.set(node.id, node.baseColor);
         }
-      }
-      setStats((s) => ({ ...s, nodes: graph.order, edges: graph.size }));
-      sigmaRef.current?.refresh();
-    } catch (e) {
-      console.error('reload graph failed', e);
-    }
-  }
-
-  async function runLouvain() {
-    setLayoutBusy(true);
-    try {
-      const result = await api.layout();
-      setStats((s) => ({ ...s, communities: result.communities, epoch: result.epoch }));
-      await reloadGraph();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Layout failed');
-    } finally {
-      setLayoutBusy(false);
-    }
-  }
-
-  const handleReset = () => {
-    const sigma = sigmaRef.current;
-    if (!sigma) return;
-    sigma.getCamera().setState({ x: 0.5, y: 0.5, ratio: 1, angle: 0 });
-  };
-
-  const handleRunBenchmark = async () => {
-    if (benchmarkRunning) return;
-    setBenchmarkRunning(true);
-    setBenchmarkEvent('Starting benchmark...');
-    try {
-      await api.runBenchmark('default', 'local', 'benchmark');
-    } catch (e) {
-      setBenchmarkEvent(e instanceof Error ? e.message : 'Benchmark failed');
-      setBenchmarkRunning(false);
-    }
-  };
-
-  const handleWipeBenchmark = async () => {
-    try {
-      await api.wipeBenchmark();
-      setBenchmarkEvent('Benchmark data wiped');
-      if (benchmarkMode) {
-        const graph = graphRef.current;
-        if (graph) {
-          graph.clear();
-          setStats({ nodes: 0, edges: 0, communities: 0, epoch: 0 });
+        for (const e of g.edges) {
+          const edge: EdgeEntry = {
+            id: e.id,
+            sourceNodeId: e.sourceNodeId,
+            targetNodeId: e.targetNodeId,
+            weight: e.weight,
+            baseColor: '#444444',
+            baseWidth: e.weight * 2,
+          };
+          edgesRef.current.push(edge);
         }
+        setStats({ nodes: g.nodes.length, edges: g.edges.length });
+        // Sync to graph after initial load
+        setTimeout(() => syncToGraph(), 100);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load');
+        setLoading(false);
       }
-    } catch (e) {
-      setBenchmarkEvent(e instanceof Error ? e.message : 'Wipe failed');
+    };
+    load();
+  }, []);
+
+  // Layout epoch polling
+  useEffect(() => {
+    let lastEpoch = 0;
+    const poll = setInterval(async () => {
+      try {
+        const { epoch } = await api.layoutEpoch();
+        if (epoch !== lastEpoch) {
+          lastEpoch = epoch;
+          const g = await api.graph(5000);
+          for (const n of g.nodes) {
+            const node = idToNodeRef.current.get(n.id);
+            if (node) {
+              const pos = resolvePosition(n.x, n.y);
+              node.x = pos.x;
+              node.y = pos.y;
+              node.z = pos.z;
+            }
+          }
+          syncToGraph();
+        }
+      } catch (e) {
+        // Ignore errors during polling
+      }
+    }, 30000);
+    return () => clearInterval(poll);
+  }, []);
+
+  // WebSocket event handling
+  useWebSocket((event) => {
+    if (event.type === 'neuron_created') {
+      addNode({
+        id: event.nodeId,
+        label: event.label,
+        category: event.category,
+        content: event.content,
+        sourceId: null,
+        sessionId: null,
+        x: event.x || undefined,
+        y: event.y || undefined,
+      });
+    } else if (event.type === 'synapse_bound') {
+      addEdge({
+        id: event.edgeId,
+        sourceNodeId: event.sourceNodeId,
+        targetNodeId: event.targetNodeId,
+        weight: event.weight,
+      });
+    } else if (event.type === 'neuron_fired') {
+      const node = idToNodeRef.current.get(event.nodeId);
+      if (!node) return;
+      const base = node.baseColor;
+      updateNodeSize(event.nodeId, FIRED_SIZE);
+      updateNodeColor(event.nodeId, '#ffffff');
+      setTimeout(() => {
+        updateNodeSize(event.nodeId, BASE_NODE_SIZE);
+        updateNodeColor(event.nodeId, base);
+      }, 400);
+    } else if (event.type === 'neuron_decayed') {
+      const node = idToNodeRef.current.get(event.nodeId);
+      if (!node) return;
+      updateNodeColor(event.nodeId, '#ff0000');
+      updateNodeSize(event.nodeId, 1);
+    } else if (event.type === 'cluster_layout_updated') {
+      api.graph(5000).then((g) => {
+        for (const n of g.nodes) {
+          const node = idToNodeRef.current.get(n.id);
+          if (node) {
+            const pos = resolvePosition(n.x, n.y);
+            node.x = pos.x;
+            node.y = pos.y;
+            node.z = pos.z;
+          } else {
+            addNode({
+              id: n.id,
+              label: n.label,
+              category: n.category,
+              content: n.content,
+              sourceId: n.sourceId,
+              sessionId: n.sessionId,
+              x: n.x || undefined,
+              y: n.y || undefined,
+            });
+          }
+        }
+        syncToGraph();
+        fitToAll();
+      }).catch(() => {});
+    } else if (event.type === 'distillation_started') {
+      setDistillationStatus({ sessionId: event.sessionId, status: 'processing', message: 'Processing conversation memory...' });
+    } else if (event.type === 'distillation_complete') {
+      setDistillationStatus({
+        sessionId: event.sessionId,
+        status: 'complete',
+        message: `Memory distilled: ${event.nodesCreated} nodes, ${event.edgesCreated} edges`,
+        nodesCreated: event.nodesCreated,
+        edgesCreated: event.edgesCreated,
+      });
+      setTimeout(() => setDistillationStatus({ sessionId: null, status: 'idle' }), 5000);
+    } else if (event.type === 'distillation_error') {
+      setDistillationStatus({
+        sessionId: event.sessionId,
+        status: 'error',
+        message: `Distillation error: ${event.error}`,
+      });
+      setTimeout(() => setDistillationStatus({ sessionId: null, status: 'idle' }), 5000);
     }
-  };
+  });
+
+  // Initialize 3D graph
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    // @ts-ignore - 3d-force-graph type definitions are incomplete
+    const g = ForceGraph3D()(containerRef.current as HTMLElement);
+    g.backgroundColor('#000000')
+      .nodeColor((n: any) => n.color)
+      .nodeVal((n: any) => n.val)
+      .nodeLabel((n: any) => n.label)
+      .nodeLabelColor(() => '#ffffff')
+      .nodeLabelFontSize(10)
+      .linkColor((l: any) => l.color)
+      .linkWidth((l: any) => l.val)
+      .linkOpacity(0.6)
+      .onNodeClick((n: any) => {
+        const node = idToNodeRef.current.get(n.id);
+        if (node) {
+          toggleExpand(n.id);
+          focusNode(n.id);
+        }
+      })
+      .onNodeDragEnd((n: any) => {
+        const node = idToNodeRef.current.get(n.id);
+        if (node) {
+          node.x = n.x;
+          node.y = n.y;
+          node.z = n.z;
+        }
+      });
+
+    graphRef.current = g;
+
+    // Disable rotation on drag for better control
+    g.onNodeDrag(() => {
+      g.controls().autoRotate = false;
+    });
+
+    return () => {
+      if (g) {
+        g._destructor();
+      }
+    };
+  }, []);
+
+  // Update graph when filters change
+  useEffect(() => {
+    syncToGraph();
+  }, [selectedSessionId, selectedCluster]);
 
   return (
     <div style={styles.page}>
+      <div style={styles.starfield} />
       <div style={styles.gridOverlay} />
 
       <header style={styles.header}>
@@ -521,27 +545,28 @@ export default function App() {
           <span style={styles.statusText}>{dbStatus.connected ? 'POSTGRES ONLINE' : 'POSTGRES OFFLINE'}</span>
           <span style={styles.statPill}>NODES {stats.nodes}</span>
           <span style={styles.statPill}>EDGES {stats.edges}</span>
-          <span style={styles.statPill}>EPOCH {stats.epoch}</span>
-          <span style={styles.statPill}>{lodLabel(lodBand)}</span>
-          <button style={styles.button} onClick={runLouvain} disabled={layoutBusy}>
-            {layoutBusy ? 'LAYOUT...' : 'RE-LAYOUT'}
-          </button>
-          <button style={styles.button} onClick={handleReset}>RESET VIEW</button>
-          <button
-            style={benchmarkMode ? { ...styles.button, ...styles.buttonActive } : styles.button}
-            onClick={() => setBenchmarkMode((v) => !v)}
-          >
-            BENCHMARK
-          </button>
-          {benchmarkMode && (
-            <>
-              <button style={styles.button} onClick={handleRunBenchmark} disabled={benchmarkRunning}>
-                {benchmarkRunning ? 'RUNNING...' : 'RUN SUITE'}
-              </button>
-              <button style={styles.button} onClick={handleWipeBenchmark}>WIPE</button>
-            </>
-          )}
+          <button style={styles.button} onClick={() => fitToAll()}>RESET VIEW</button>
         </div>
+        {distillationStatus.status !== 'idle' && (
+          <div style={{
+            ...styles.statusRow,
+            marginTop: '8px',
+            padding: '4px 8px',
+            backgroundColor: distillationStatus.status === 'error' ? 'rgba(255, 0, 0, 0.2)' : 'rgba(0, 255, 0, 0.1)',
+            border: `1px solid ${distillationStatus.status === 'error' ? '#ff0000' : '#00ff00'}`,
+            borderRadius: '4px',
+          }}>
+            <span style={{
+              color: distillationStatus.status === 'error' ? '#ff0000' : '#00ff00',
+              fontSize: '11px',
+              fontFamily: 'monospace',
+            }}>
+              {distillationStatus.status === 'processing' && '⚡ '}
+              {distillationStatus.status === 'error' && '⚠️ '}
+              {distillationStatus.message}
+            </span>
+          </div>
+        )}
       </header>
 
       <main style={styles.main}>
@@ -561,65 +586,91 @@ export default function App() {
         {!loading && !error && (
           <>
             <div ref={containerRef} style={styles.canvas} />
-            <div style={styles.sourcePanel}>
-              <div style={styles.panelTitle}>SOURCES</div>
-              <div style={styles.sourceList}>
+
+            <div style={styles.sidePanel}>
+              <div style={styles.panelTitle}>SESSIONS</div>
+              <div style={styles.list}>
                 <button
-                  style={selectedSourceId === null ? styles.sourceActive : styles.sourceButton}
-                  onClick={() => { setSelectedSourceId(null); setSoloMode(false); }}
+                  style={selectedSessionId === null ? styles.activeItem : styles.item}
+                  onClick={() => selectSession(null)}
                 >
-                  ALL SOURCES
+                  ALL SESSIONS
                 </button>
-                {sources.map((s) => (
+                {sessions.map((s) => (
                   <button
                     key={s.id}
-                    style={selectedSourceId === s.id ? styles.sourceActive : styles.sourceButton}
-                    onClick={() => setSelectedSourceId(s.id)}
+                    style={selectedSessionId === s.id ? styles.activeItem : styles.item}
+                    onClick={() => selectSession(s.id)}
                   >
-                    <span style={{ ...styles.sourceDot, background: s.colorHex }} />
-                    {s.name}
+                    {s.title || `Session ${s.id.slice(0, 8)}`}
                   </button>
                 ))}
               </div>
-              <div style={styles.toggleRow}>
-                <label style={styles.toggleLabel}>
-                  <input
-                    type="checkbox"
-                    checked={soloMode}
-                    onChange={(e) => setSoloMode(e.target.checked)}
-                    style={styles.toggleInput}
-                  />
-                  SOLO / ISOLATE
-                </label>
+
+              <div style={styles.panelTitle}>CLUSTERS</div>
+              <div style={styles.list}>
+                <button
+                  style={selectedCluster === null ? styles.activeItem : styles.item}
+                  onClick={() => selectCluster(null)}
+                >
+                  ALL CLUSTERS
+                </button>
+                {categories.map((c) => (
+                  <button
+                    key={c}
+                    style={selectedCluster === c ? styles.activeItem : styles.item}
+                    onClick={() => selectCluster(c)}
+                  >
+                    <span style={{ ...styles.colorDot, background: CATEGORY_COLORS[c] || neuronTheme.accent.amber }} />
+                    {CATEGORY_NAMES[c] || c}
+                  </button>
+                ))}
               </div>
-              {benchmarkMode && (
-                <div style={styles.benchmarkPanel}>
-                  <div style={styles.panelTitle}>BENCHMARK</div>
-                  <p style={styles.dim}>{benchmarkEvent || 'Ready'}</p>
-                  <div style={styles.scorecardList}>
-                    {scorecards.slice(0, 5).map((sc) => (
-                      <div key={sc.id} style={styles.scorecard}>
-                        <span style={styles.scorecardModel}>{sc.model}</span>
-                        <span style={styles.scorecardScore}>{sc.totalScore}/{sc.maxScore}</span>
-                      </div>
-                    ))}
+            </div>
+
+            {selectedSessionId != null && (
+              <div style={styles.sessionCard}>
+                <div style={styles.sessionCardHeader}>
+                  <span style={styles.sessionCardTitle}>{selectedSessionName?.toUpperCase()}</span>
+                  <div style={styles.sessionCardActions}>
+                    {focusedNodeId && (
+                      <button style={styles.smallButton} onClick={backToSession}>
+                        BACK TO SESSION
+                      </button>
+                    )}
+                    <button style={styles.closeButton} onClick={closeSessionCard}>×</button>
                   </div>
                 </div>
-              )}
-            </div>
-            {selectedNode && (
-              <div style={styles.inspector}>
-                <div style={styles.inspectorHeader}>
-                  <span>{selectedNode.label.toUpperCase()}</span>
-                  <button style={styles.closeButton} onClick={() => setSelectedNode(null)}>×</button>
+                <div style={styles.sessionCardList}>
+                  {selectedSessionNodes.length === 0 && (
+                    <p style={styles.dim}>No neurons in this session.</p>
+                  )}
+                  {selectedSessionNodes.map((n) => {
+                    const expanded = expandedNodeIds.has(n.id);
+                    return (
+                      <div
+                        key={n.id}
+                        style={styles.nodeLine}
+                        onClick={() => {
+                          toggleExpand(n.id);
+                          focusNode(n.id);
+                        }}
+                      >
+                        <div style={styles.nodeLineTop}>
+                          <span style={{ ...styles.colorDot, background: n.baseColor }} />
+                          <span style={expanded ? styles.nodeLineExpanded : styles.nodeLineCollapsed}>
+                            {n.content || n.label}
+                          </span>
+                        </div>
+                        {expanded && (
+                          <div style={styles.nodeLineMeta}>
+                            ID {n.id.slice(0, 8)} · {CATEGORY_NAMES[n.category] || n.category}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                <div style={styles.inspectorMeta}>
-                  <span style={{ color: nodeColor(selectedNode.category, selectedNode.sourceId ? sourceMap.get(selectedNode.sourceId)?.colorHex ?? null : null) }}>
-                    {selectedNode.category.toUpperCase()}
-                  </span>
-                  <span>ID {selectedNode.id.slice(0, 8)}</span>
-                </div>
-                <p style={styles.inspectorContent}>{selectedNode.content}</p>
               </div>
             )}
           </>
@@ -627,72 +678,10 @@ export default function App() {
       </main>
 
       <footer style={styles.footer}>
-        <span style={styles.dim}>PORT 3334 // BLACK & WHITE + AMBER ACCENT // SPACE+Mil SPEC</span>
+        <span style={styles.dim}>3D FORCE GRAPH · SELECT A SESSION TO EXPLORE ITS GALAXY</span>
       </footer>
     </div>
   );
-}
-
-function applySoloFilter(graph: Graph, selectedSourceId: string | null, soloMode: boolean) {
-  graph.forEachNode((node, attrs) => {
-    const sourceId = (attrs.sourceId as string) || null;
-    const isTarget = selectedSourceId === null || sourceId === selectedSourceId;
-    if (soloMode && selectedSourceId !== null) {
-      graph.setNodeAttribute(node, 'color', isTarget ? (attrs.originalColor as string) : 'rgba(255,255,255,0.05)');
-      graph.setNodeAttribute(node, 'hidden', !isTarget);
-    } else {
-      graph.setNodeAttribute(node, 'color', attrs.originalColor as string);
-      graph.setNodeAttribute(node, 'hidden', false);
-    }
-  });
-  graph.forEachEdge((edge, _attrs, source, target) => {
-    const sourceVisible = !graph.getNodeAttribute(source, 'hidden');
-    const targetVisible = !graph.getNodeAttribute(target, 'hidden');
-    graph.setEdgeAttribute(edge, 'hidden', !(sourceVisible && targetVisible));
-  });
-}
-
-function applyLodNodeAttributes(attrs: Record<string, unknown>, band: 'detail' | 'medium' | 'overview'): Record<string, unknown> {
-  const degree = (attrs.degree as number) ?? 0;
-  if (band === 'overview') {
-    return {
-      ...attrs,
-      label: '',
-      size: 2,
-      zIndex: 0,
-    };
-  }
-  if (band === 'medium') {
-    return {
-      ...attrs,
-      label: degree > 3 ? (attrs.label as string) : '',
-      size: degree > 3 ? 6 : 4,
-      zIndex: degree > 3 ? 1 : 0,
-    };
-  }
-  return {
-    ...attrs,
-    label: attrs.label as string,
-    size: 8,
-    zIndex: 2,
-  };
-}
-
-function applyLodEdgeAttributes(attrs: Record<string, unknown>, band: 'detail' | 'medium' | 'overview'): Record<string, unknown> {
-  const weight = (attrs.weight as number) ?? 0;
-  if (band === 'overview') {
-    return { ...attrs, size: 0.5, hidden: weight < 0.5 };
-  }
-  if (band === 'medium') {
-    return { ...attrs, size: 1 + weight, hidden: false };
-  }
-  return { ...attrs, size: 1.5 + weight * 2, hidden: false };
-}
-
-function lodLabel(band: 'detail' | 'medium' | 'overview'): string {
-  if (band === 'detail') return 'LOD // DETAIL';
-  if (band === 'medium') return 'LOD // MEDIUM';
-  return 'LOD // OVERVIEW';
 }
 
 function statusDotStyle(online: boolean): React.CSSProperties {
@@ -700,285 +689,298 @@ function statusDotStyle(online: boolean): React.CSSProperties {
     width: 8,
     height: 8,
     borderRadius: '50%',
-    background: online ? neuronTheme.accent.green : neuronTheme.accent.red,
-    boxShadow: online ? `0 0 8px ${neuronTheme.accent.green}` : `0 0 8px ${neuronTheme.accent.red}`,
+    backgroundColor: online ? '#00ff00' : '#ff0000',
+    marginRight: 8,
+    boxShadow: online ? '0 0 8px #00ff00' : '0 0 8px #ff0000',
   };
 }
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh',
-    background: neuronTheme.bg.void,
-    color: neuronTheme.text.primary,
-    fontFamily: neuronTheme.font,
-    position: 'relative',
+    width: '100vw',
+    height: '100vh',
+    backgroundColor: '#000000',
+    color: '#ffffff',
+    fontFamily: 'monospace',
     overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column',
+    position: 'relative',
+  },
+  starfield: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    backgroundImage: 'radial-gradient(white 1px, transparent 1px)',
+    backgroundSize: '50px 50px',
+    opacity: 0.1,
+    pointerEvents: 'none',
   },
   gridOverlay: {
     position: 'absolute',
-    inset: 0,
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
     backgroundImage: `
       linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
       linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)
     `,
-    backgroundSize: '40px 40px',
+    backgroundSize: '100px 100px',
     pointerEvents: 'none',
-    zIndex: 0,
   },
   header: {
-    position: 'relative',
-    zIndex: 2,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     padding: '16px 24px',
-    borderBottom: `1px solid ${neuronTheme.border.default}`,
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    background: 'rgba(0,0,0,0.7)',
-    backdropFilter: 'blur(4px)',
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+    backdropFilter: 'blur(10px)',
+    zIndex: 100,
   },
   badge: {
-    fontSize: '0.85rem',
-    fontWeight: 700,
+    fontSize: '12px',
+    fontWeight: 'bold',
     letterSpacing: '2px',
-    color: neuronTheme.text.primary,
-    border: `1px solid ${neuronTheme.border.strong}`,
-    padding: '6px 12px',
-    borderRadius: '4px',
+    marginBottom: '8px',
+    color: neuronTheme.accent.amber,
   },
   statusRow: {
     display: 'flex',
     alignItems: 'center',
-    gap: '12px',
-  },
-  statusText: {
-    fontSize: '0.65rem',
-    letterSpacing: '1.5px',
-    color: neuronTheme.text.secondary,
-  },
-  statPill: {
-    fontSize: '0.65rem',
-    letterSpacing: '1px',
-    color: neuronTheme.text.primary,
-    border: `1px solid ${neuronTheme.border.default}`,
-    padding: '4px 8px',
-    borderRadius: '4px',
-  },
-  button: {
-    background: 'transparent',
-    border: `1px solid ${neuronTheme.border.strong}`,
-    color: neuronTheme.text.primary,
-    fontSize: '0.65rem',
-    letterSpacing: '1px',
-    padding: '6px 10px',
-    borderRadius: '4px',
-    cursor: 'pointer',
-  },
-  buttonActive: {
-    background: neuronTheme.border.default,
-    color: neuronTheme.accent.amber,
-  },
-  main: {
-    position: 'relative',
-    zIndex: 1,
-    flex: 1,
-    display: 'flex',
-    overflow: 'hidden',
-  },
-  center: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
     gap: '16px',
   },
-  spinner: {
-    width: 32,
-    height: 32,
-    border: `2px solid ${neuronTheme.border.strong}`,
-    borderTopColor: neuronTheme.accent.amber,
-    borderRadius: '50%',
-    animation: 'spin 1s linear infinite',
+  statusText: {
+    fontSize: '11px',
+    fontWeight: 'bold',
   },
-  hudText: {
-    fontSize: '0.75rem',
-    letterSpacing: '2px',
-    color: neuronTheme.text.dim,
+  statPill: {
+    fontSize: '10px',
+    padding: '4px 8px',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: '2px',
+    border: '1px solid rgba(255, 255, 255, 0.2)',
+  },
+  button: {
+    fontSize: '10px',
+    padding: '4px 12px',
+    backgroundColor: 'transparent',
+    color: '#ffffff',
+    border: '1px solid rgba(255, 255, 255, 0.3)',
+    borderRadius: '2px',
+    cursor: 'pointer',
+    fontFamily: 'monospace',
+  },
+  main: {
+    position: 'absolute',
+    top: '80px',
+    left: 0,
+    right: 0,
+    bottom: '40px',
+    display: 'flex',
   },
   canvas: {
     flex: 1,
-    position: 'relative',
-    background: neuronTheme.bg.void,
+    width: '100%',
+    height: '100%',
   },
-  panel: {
-    background: neuronTheme.bg.panel,
-    border: `1px solid ${neuronTheme.border.default}`,
-    borderRadius: '6px',
-    padding: '24px',
-    margin: '24px',
-  },
-  alert: {
-    color: neuronTheme.accent.red,
-    fontSize: '0.85rem',
-    margin: 0,
-  },
-  sourcePanel: {
+  sidePanel: {
     position: 'absolute',
-    left: 24,
-    top: 24,
-    bottom: 24,
-    width: 220,
-    background: 'rgba(0,0,0,0.85)',
-    border: `1px solid ${neuronTheme.border.default}`,
-    borderRadius: '6px',
+    top: 0,
+    right: 0,
+    width: '250px',
+    maxHeight: '100%',
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    borderLeft: '1px solid rgba(255, 255, 255, 0.1)',
     padding: '16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    zIndex: 3,
-    overflow: 'hidden',
+    overflowY: 'auto',
+    backdropFilter: 'blur(10px)',
   },
   panelTitle: {
-    fontSize: '0.75rem',
-    letterSpacing: '2px',
-    color: neuronTheme.accent.amber,
+    fontSize: '10px',
+    fontWeight: 'bold',
+    letterSpacing: '1px',
     marginBottom: '8px',
+    color: neuronTheme.accent.amber,
   },
-  sourceList: {
+  list: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '6px',
-    overflowY: 'auto',
+    gap: '4px',
+    marginBottom: '16px',
   },
-  sourceButton: {
-    background: 'transparent',
-    border: `1px solid ${neuronTheme.border.default}`,
-    color: neuronTheme.text.secondary,
-    fontSize: '0.7rem',
-    textAlign: 'left',
-    padding: '8px 10px',
-    borderRadius: '4px',
+  item: {
+    fontSize: '10px',
+    padding: '6px 8px',
+    backgroundColor: 'transparent',
+    color: '#ffffff',
+    border: '1px solid transparent',
+    borderRadius: '2px',
     cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-  },
-  sourceActive: {
-    background: neuronTheme.border.default,
-    border: `1px solid ${neuronTheme.border.strong}`,
-    color: neuronTheme.text.primary,
-    fontSize: '0.7rem',
+    fontFamily: 'monospace',
     textAlign: 'left',
-    padding: '8px 10px',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
   },
-  sourceDot: {
+  activeItem: {
+    fontSize: '10px',
+    padding: '6px 8px',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    color: neuronTheme.accent.amber,
+    border: '1px solid rgba(255, 255, 255, 0.2)',
+    borderRadius: '2px',
+    cursor: 'pointer',
+    fontFamily: 'monospace',
+    textAlign: 'left',
+  },
+  colorDot: {
     width: 8,
     height: 8,
     borderRadius: '50%',
+    marginRight: 8,
   },
-  toggleRow: {
-    borderTop: `1px solid ${neuronTheme.border.default}`,
-    paddingTop: '12px',
-  },
-  toggleLabel: {
-    fontSize: '0.65rem',
-    letterSpacing: '1px',
-    color: neuronTheme.text.secondary,
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    cursor: 'pointer',
-  },
-  toggleInput: {
-    accentColor: neuronTheme.accent.amber,
-  },
-  inspector: {
+  sessionCard: {
     position: 'absolute',
-    right: 24,
-    top: 24,
-    bottom: 24,
-    width: 320,
-    background: 'rgba(0,0,0,0.85)',
-    border: `1px solid ${neuronTheme.border.default}`,
-    borderRadius: '6px',
-    padding: '20px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    zIndex: 3,
+    top: '16px',
+    left: '16px',
+    width: '300px',
+    maxHeight: 'calc(100% - 32px)',
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: '4px',
+    padding: '12px',
+    overflowY: 'auto',
+    backdropFilter: 'blur(10px)',
   },
-  inspectorHeader: {
+  sessionCardHeader: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    fontSize: '0.85rem',
-    fontWeight: 700,
+    marginBottom: '8px',
+    paddingBottom: '8px',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+  },
+  sessionCardTitle: {
+    fontSize: '10px',
+    fontWeight: 'bold',
     letterSpacing: '1px',
+    color: neuronTheme.accent.amber,
+  },
+  sessionCardActions: {
+    display: 'flex',
+    gap: '8px',
+  },
+  smallButton: {
+    fontSize: '9px',
+    padding: '2px 6px',
+    backgroundColor: 'transparent',
+    color: '#ffffff',
+    border: '1px solid rgba(255, 255, 255, 0.2)',
+    borderRadius: '2px',
+    cursor: 'pointer',
+    fontFamily: 'monospace',
   },
   closeButton: {
-    background: 'transparent',
+    fontSize: '14px',
+    width: '20px',
+    height: '20px',
+    backgroundColor: 'transparent',
+    color: '#ffffff',
     border: 'none',
-    color: neuronTheme.text.primary,
-    fontSize: '1.2rem',
+    borderRadius: '2px',
+    cursor: 'pointer',
+    fontFamily: 'monospace',
+  },
+  sessionCardList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  nodeLine: {
+    padding: '6px 8px',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: '2px',
     cursor: 'pointer',
   },
-  inspectorMeta: {
+  nodeLineTop: {
     display: 'flex',
-    gap: '12px',
-    fontSize: '0.65rem',
-    letterSpacing: '1px',
-    color: neuronTheme.text.secondary,
+    alignItems: 'center',
   },
-  inspectorContent: {
-    fontSize: '0.8rem',
-    lineHeight: 1.6,
-    color: neuronTheme.text.secondary,
-    whiteSpace: 'pre-wrap',
+  nodeLineCollapsed: {
+    fontSize: '10px',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    maxWidth: '200px',
   },
-  benchmarkPanel: {
-    marginTop: 'auto',
-    borderTop: `1px solid ${neuronTheme.border.default}`,
-    paddingTop: '12px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
+  nodeLineExpanded: {
+    fontSize: '10px',
+    wordBreak: 'break-word',
   },
-  scorecardList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
+  nodeLineMeta: {
+    fontSize: '9px',
+    color: '#888888',
+    marginTop: '4px',
   },
-  scorecard: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: '0.7rem',
-    padding: '6px 8px',
-    border: `1px solid ${neuronTheme.border.default}`,
-    borderRadius: '4px',
-  },
-  scorecardModel: {
-    color: neuronTheme.text.secondary,
-  },
-  scorecardScore: {
-    color: neuronTheme.accent.amber,
-    fontWeight: 700,
-  },
-  footer: {
-    position: 'relative',
-    zIndex: 2,
-    padding: '12px 24px',
-    borderTop: `1px solid ${neuronTheme.border.default}`,
+  center: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
     textAlign: 'center',
   },
+  spinner: {
+    width: '40px',
+    height: '40px',
+    border: '2px solid rgba(255, 255, 255, 0.1)',
+    borderTop: '2px solid neuronTheme.accent.amber',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
+    margin: '0 auto 16px',
+  },
+  hudText: {
+    fontSize: '12px',
+    color: '#888888',
+  },
+  panel: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    padding: '16px 24px',
+    backgroundColor: 'rgba(255, 0, 0, 0.1)',
+    border: '1px solid #ff0000',
+    borderRadius: '4px',
+  },
+  alert: {
+    fontSize: '12px',
+    color: '#ff0000',
+    fontFamily: 'monospace',
+  },
+  footer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: '8px 24px',
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+    backdropFilter: 'blur(10px)',
+    zIndex: 100,
+  },
   dim: {
-    color: neuronTheme.text.dim,
-    fontSize: '0.75rem',
+    fontSize: '10px',
+    color: '#666666',
   },
 };
+
+// Add spinner animation
+const styleSheet = document.createElement('style');
+styleSheet.textContent = `
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+`;
+document.head.appendChild(styleSheet);

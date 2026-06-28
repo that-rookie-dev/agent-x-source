@@ -28,7 +28,11 @@ export default defineConfig({
   clean: true,
   // Bundle everything into a single self-contained file so the release
   // tarball works without node_modules (matching CLI behaviour).
-  noExternal: [/.*/],
+  // NOTE: ONNX runtime packages must stay external because they load native
+  // .node binaries via relative paths inside the package. They are copied into
+  // dist/node_modules by the post-build script.
+  noExternal: [/^(?!onnxruntime-).*$/],
+  external: ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common'],
   banner: {
     js: "import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url); import { fileURLToPath as __futp } from 'node:url'; import { dirname as __dn } from 'node:path'; const __filename = __futp(import.meta.url); const __dirname = __dn(__filename);",
   },

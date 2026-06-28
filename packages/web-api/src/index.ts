@@ -48,6 +48,7 @@ import { loadSessionResumeState } from './session-resume-state.js';
 import { postCrewChatSession } from './crew-chat.js';
 import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewHonorificToSession } from './host-crew-session.js';
 import { memoryRouter } from './memory-api.js';
+import localModelRouter from './local-model-api.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -319,6 +320,9 @@ app.use(authMiddleware);
 
 // Unified memory fabric API — routes inside the router already have /memory/ prefix
 app.use('/api', memoryRouter);
+
+// Local model management API
+app.use('/api', localModelRouter);
 
 // Security headers (content-type sniffing, XSS, clickjacking protection)
 app.use(helmet({

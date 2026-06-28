@@ -29,9 +29,11 @@ import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { colors } from '../theme';
 import { PersonaConfigPanel } from '../components/settings/PersonaConfigPanel';
+import { LocalModelStep } from '../components/LocalModelStep';
+import type { ActiveDownload } from '../components/DownloadIndicator';
 import type { ProviderInfo, ModelInfo, AgentPersonaConfig } from '../api';
 
-const STEPS = ['Storage', 'Provider', 'Profile', 'Model', 'Callsign', 'Persona', 'Complete'];
+const STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Callsign', 'Persona', 'Complete'];
 const STORAGE_KEY = 'agentx_wizard_progress';
 
 interface WizardProgress {
@@ -41,6 +43,8 @@ interface WizardProgress {
   callsign: string;
   selectedBackend: string;
   persona?: AgentPersonaConfig;
+  selectedLocalModel?: string | null;
+  skipLocalModel?: boolean;
 }
 
 function saveProgress(data: WizardProgress) {
@@ -98,6 +102,9 @@ export function SetupWizard() {
   const [sshAuthMode, setSshAuthMode] = useState<'password' | 'key'>('password');
   const [sshPassword, setSshPassword] = useState('');
   const [sshKey, setSshKey] = useState('');
+  const [selectedLocalModel, setSelectedLocalModel] = useState<string | null>(null);
+  const [skipLocalModel, setSkipLocalModel] = useState(false);
+  const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
 
   const buildPgConnStr = () => {
     if (pgMode === 'string') return pgConnStr;
@@ -121,6 +128,8 @@ export function SetupWizard() {
       setCallsign(saved.callsign || '');
       setSelectedBackend('embedded-postgres');
       if (saved.persona) setPersona(saved.persona);
+      if (saved.selectedLocalModel) setSelectedLocalModel(saved.selectedLocalModel);
+      if (saved.skipLocalModel) setSkipLocalModel(saved.skipLocalModel);
       if (saved.selectedProvider) {
         setModelsLoading(true);
         provApi.models(saved.selectedProvider).then(m => { setAvailableModels(m); setModelsLoading(false); }).catch(() => setModelsLoading(false));
@@ -137,8 +146,8 @@ export function SetupWizard() {
   }, []);
 
   const persistProgress = useCallback(() => {
-    if (step >= 1) saveProgress({ step, selectedProvider, selectedModel, callsign, selectedBackend, persona });
-  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, persona]);
+    if (step >= 1) saveProgress({ step, selectedProvider, selectedModel, callsign, selectedBackend, persona, selectedLocalModel, skipLocalModel });
+  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, persona, selectedLocalModel, skipLocalModel]);
   useEffect(() => { persistProgress(); }, [persistProgress]);
 
   const next = () => { clearError(); setStep(s => s + 1); };
@@ -206,6 +215,22 @@ export function SetupWizard() {
     next();
   };
   const handleCallsignNext = () => { next(); };
+
+  const startDownload = (download: ActiveDownload) => {
+    setActiveDownloads(prev => {
+      const existing = prev.find(d => d.modelId === download.modelId);
+      if (existing) return prev;
+      return [...prev, download];
+    });
+  };
+
+  const updateDownload = (modelId: string, updates: Partial<ActiveDownload>) => {
+    setActiveDownloads(prev => prev.map(d => d.modelId === modelId ? { ...d, ...updates } : d));
+  };
+
+  const clearDownload = (modelId: string) => {
+    setActiveDownloads(prev => prev.filter(d => d.modelId !== modelId));
+  };
 
   const handleComplete = async () => {
     setLoading(true);
@@ -513,6 +538,19 @@ export function SetupWizard() {
               )}
 
               {step === 3 && (
+                <LocalModelStep
+                  selectedModel={selectedLocalModel}
+                  onSelectModel={setSelectedLocalModel}
+                  skipLocalModel={skipLocalModel}
+                  onSkipChange={setSkipLocalModel}
+                  onStartDownload={startDownload}
+                  onUpdateDownload={updateDownload}
+                  onClearDownload={clearDownload}
+                  activeDownloads={activeDownloads}
+                />
+              )}
+
+              {step === 4 && (
                 <Box>
                   <Typography variant="h6" sx={{ mb: 0.5 }}>Select Model</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>{availableModels.length} model{availableModels.length !== 1 ? 's' : ''} available from {selectedProviderInfo?.name ?? selectedProvider}</Typography>
@@ -535,7 +573,7 @@ export function SetupWizard() {
                 </Box>
               )}
 
-              {step === 4 && (
+              {step === 5 && (
                 <Box>
                   <Typography variant="h6" sx={{ mb: 1 }}>Your Callsign</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>How should Agent-X address you?</Typography>
@@ -552,7 +590,7 @@ export function SetupWizard() {
                 </Box>
               )}
 
-              {step === 5 && (
+              {step === 6 && (
                 <Box>
                   <Typography variant="h6" sx={{ mb: 0.5, textAlign: 'center' }}>Agent Persona</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2, textAlign: 'center' }}>Define how Agent-X presents itself — identity, communication style, and traits.</Typography>
@@ -560,7 +598,7 @@ export function SetupWizard() {
                 </Box>
               )}
 
-              {step === 6 && (
+              {step === 7 && (
                 <Box sx={{ textAlign: 'center' }}>
                   <CheckCircle size={64} color={colors.accent.green} sx={{ mb: 2 }} />
                   <Typography variant="h5" sx={{ mb: 1 }}>Setup Complete!</Typography>
@@ -569,6 +607,7 @@ export function SetupWizard() {
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Storage: {selectedBackend === 'embedded-postgres' ? 'Embedded PostgreSQL (port 3335)' : 'Starfleet Relay (PostgreSQL)'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Provider: {selectedProvider}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Model: {selectedModel}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Callsign: {callsign || '(not set)'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Persona: {persona.name || '(none)'}</Typography>
                   </Box>
@@ -582,12 +621,13 @@ export function SetupWizard() {
 
       {/* Bottom Nav */}
       <Box sx={{ flexShrink: 0, borderTop: `1px solid ${colors.border.default}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
-        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 6 ? 'center' : 'space-between' }}>
+        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 7 ? 'center' : 'space-between', alignItems: 'center' }}>
           {step === 1 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 2 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 3 && <Button onClick={handleBackToCredentials} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 4 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 3 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 4 && <Button onClick={handleBackToCredentials} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 5 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 6 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 0 && !showRelayConfig && (
             <Button variant="contained" onClick={handleStorageNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>
               {loading ? 'Starting...' : selectedBackend === 'embedded-postgres' ? 'Start Embedded PostgreSQL →' : 'Configure Relay →'}
@@ -601,13 +641,23 @@ export function SetupWizard() {
           )}
           {step === 1 && <Button variant="contained" onClick={handleProviderNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
           {step === 2 && <Button variant="contained" onClick={handleProfileNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>{loading ? 'Validating...' : 'Validate & Next'}</Button>}
-          {step === 3 && <Button variant="contained" onClick={handleModelNext} disabled={!selectedModel} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
-          {step === 4 && <Button variant="contained" onClick={handleCallsignNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>{callsign.trim() ? 'Next' : 'Skip & Next'}</Button>}
-          {step === 5 && <Button variant="contained" onClick={() => {
+          {step === 3 && (
+            <Button
+              variant="contained"
+              onClick={next}
+              disabled={!skipLocalModel && !activeDownloads.some(d => d.modelId === selectedLocalModel && (d.status === 'downloading' || d.status === 'complete'))}
+              sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}
+            >
+              Next
+            </Button>
+          )}
+          {step === 4 && <Button variant="contained" onClick={handleModelNext} disabled={!selectedModel} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
+          {step === 5 && <Button variant="contained" onClick={handleCallsignNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>{callsign.trim() ? 'Next' : 'Skip & Next'}</Button>}
+          {step === 6 && <Button variant="contained" onClick={() => {
             if (!persona.description.trim()) { showError('Persona description is required'); return; }
             next();
           }} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
-          {step === 6 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
+          {step === 7 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
         </Box>
       </Box>
 

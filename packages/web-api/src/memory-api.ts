@@ -285,14 +285,9 @@ router.post('/memory/system-init', async (_req: Request, res: Response) => {
   const fabric = getFabric();
   if (!fabric) return handleFabricUnavailable(res);
   try {
-    const node = await fabric.createNode({
-      label: 'System Initialized',
-      category: 'system',
-      content: 'Agent-X neural fabric initialized. PostgreSQL storage provisioned and schema migrated.',
-      tag: 'system_init',
-      confidence: 1,
-    });
-    res.json({ ok: true, nodeId: node.id });
+    // Check if system init node already exists to avoid duplicates
+    const result = await fabric.seedSystemInitNode();
+    res.json({ ok: true, nodeId: result.nodeId, created: result.created });
   } catch (e) {
     logger.error('MEMORY_API', e instanceof Error ? e.message : e);
     res.status(500).json({ error: 'Failed to create system-init node' });

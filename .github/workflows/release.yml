@@ -96,10 +96,10 @@ jobs:
           name: webui-dist
           path: packages/web-ui/dist
 
-      # --- Build pgvector extension for embedded PostgreSQL ---
-      - name: Build pgvector extension
-        run: pnpm --filter @agentx/desktop run setup:pgvector
-        timeout-minutes: 30
+      # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
+      - name: Build PostgreSQL extensions
+        run: pnpm --filter @agentx/desktop run setup:extensions
+        timeout-minutes: 60
 
       # --- Desktop ---
       - name: Setup bundled Python
@@ -179,10 +179,10 @@ jobs:
           name: webui-dist
           path: packages/web-ui/dist
 
-      # --- Build pgvector extension for embedded PostgreSQL ---
-      - name: Build pgvector extension
-        run: pnpm --filter @agentx/desktop run setup:pgvector
-        timeout-minutes: 30
+      # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
+      - name: Build PostgreSQL extensions
+        run: pnpm --filter @agentx/desktop run setup:extensions
+        timeout-minutes: 60
 
       # --- Desktop ---
       - name: Setup bundled Python
@@ -257,11 +257,11 @@ jobs:
           name: webui-dist
           path: packages/web-ui/dist
 
-      # --- Build pgvector extension for embedded PostgreSQL ---
-      - name: Build pgvector extension
+      # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
+      - name: Build PostgreSQL extensions
         shell: bash
-        run: pnpm --filter @agentx/desktop run setup:pgvector
-        timeout-minutes: 30
+        run: pnpm --filter @agentx/desktop run setup:extensions
+        timeout-minutes: 60
 
       # --- Desktop ---
       - name: Setup bundled Python

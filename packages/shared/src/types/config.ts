@@ -48,6 +48,8 @@ export interface AgentXConfig {
   setupComplete?: boolean; // true after Mission Control wizard finishes
   rag?: RAGConfig;
   tools?: ToolsConfig;
+  localModel?: LocalModelConfig;
+  featureRouting?: FeatureRoutingConfig;
   maxSubAgents?: number; // Maximum number of concurrent sub-agents (default: 5, max: 20)
 
   /** Maximum autonomous LLM↔tool cycles per turn (default: 20, increase for complex tasks) */
@@ -67,6 +69,22 @@ export interface AgentXConfig {
     deniedTools?: string[];
     permissions?: PermissionRule[];
   }>;
+}
+
+export interface LocalModelConfig {
+  enabled?: boolean;
+  modelId?: string;
+  modelName?: string;
+  displayName?: string;
+  cacheDir?: string;
+  downloadedAt?: string;
+}
+
+export interface FeatureRoutingConfig {
+  memoryDistillation?: 'cloud' | 'local';
+  memoryExtraction?: 'cloud' | 'local';
+  memoryConsolidation?: 'cloud' | 'local';
+  embeddings?: 'cloud' | 'local';
 }
 
 export interface ProviderSettings {

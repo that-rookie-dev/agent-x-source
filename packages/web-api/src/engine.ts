@@ -128,7 +128,6 @@ export function getEngine(): EngineState {
     if (pool) {
       const fabric = new MemoryFabric(pool as any);
       await fabric.heal();
-      await fabric.seedSystemInitNode();
     }
     const store = (sessionManager as any).store as PostgresStorageAdapter;
     await healDatabaseStore(store);

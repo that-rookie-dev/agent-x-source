@@ -157,7 +157,7 @@ export class PostgresLifecycleManager {
     this.ensureExecutable(bin.postgres);
     this.options.onLog(`Starting PostgreSQL server on ${this.options.host}:${this.options.port}`);
 
-    const child = spawn(bin.postgres, [
+    const args = [
       '-D', this.options.dataDir,
       '-h', this.options.host,
       '-p', this.options.port.toString(),
@@ -166,7 +166,19 @@ export class PostgresLifecycleManager {
       '-c', 'work_mem=16MB',
       '-c', 'listen_addresses=127.0.0.1',
       '-c', 'unix_socket_directories=',
-    ], {
+    ];
+
+    // Apache AGE requires preloading. Only add it if the library is present in the
+    // bundled native tree so a build without AGE still starts cleanly.
+    const binaryDir = dirname(bin.postgres);
+    const libDir = join(binaryDir, '..', 'lib', 'postgresql');
+    const ext = platform() === 'win32' ? '.dll' : platform() === 'darwin' ? '.dylib' : '.so';
+    if (existsSync(join(libDir, `age${ext}`))) {
+      args.push('-c', 'shared_preload_libraries=age');
+      this.options.onLog('Apache AGE preloading enabled');
+    }
+
+    const child = spawn(bin.postgres, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, LC_MESSAGES: 'C' },
       detached: false,

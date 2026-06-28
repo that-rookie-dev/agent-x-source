@@ -282,9 +282,10 @@ cd "$DESKTOP_DIR"
 pnpm run build
 pnpm exec electron-builder --mac --dir
 
-# ── 9. Copy to /Applications ─────────────────────────────────────────────────
+# ── 9. Copy to /Applications (use ditto to preserve symlinks / extended attributes correctly).
 echo ">>> Installing to /Applications (password prompt may appear)..."
-osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && cp -R '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/\" with administrator privileges"
+CURRENT_USER=$(whoami)
+osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && ditto '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/Agent-X.app && chown -R '$CURRENT_USER:staff' /Applications/Agent-X.app && xattr -rd com.apple.quarantine /Applications/Agent-X.app 2>/dev/null || true\" with administrator privileges"
 
 # ── 10. Launch (creates fresh config + bundled native PostgreSQL on first run) ─
 echo ">>> Launching Agent-X..."

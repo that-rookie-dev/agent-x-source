@@ -18,9 +18,9 @@
     "clean": "rm -rf dist",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
-    "dist:linux": "npm run build && electron-builder --linux",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist:mac": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
+    "dist:linux": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --linux",
+    "dist:win": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --win"
   },
   "build": {
     "appId": "com.agentx.desktop",

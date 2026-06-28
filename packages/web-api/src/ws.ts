@@ -3,18 +3,211 @@ import type { Server } from 'http';
 import { getEngine } from './engine.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
 import type { DeepSearchProgress } from '@agentx/shared';
-import { MemoryFabric } from '@agentx/engine';
+import { MemoryFabric, MemoryService, ProviderFactory, UnifiedLocalModelProvider } from '@agentx/engine';
+import type { GenerateFn, OnnxEmbeddingProvider } from '@agentx/engine';
 
-let onxEmbedder: { embed: (text: string) => Promise<number[]> } | null = null;
-async function getEmbedder(): Promise<{ embed: (text: string) => Promise<number[]> } | null> {
+let onxEmbedder: OnnxEmbeddingProvider | UnifiedLocalModelProvider | null = null;
+async function getEmbedder(): Promise<OnnxEmbeddingProvider | UnifiedLocalModelProvider | null> {
   if (onxEmbedder) return onxEmbedder;
   try {
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+
+    // Use local model for embeddings if enabled and configured
+    if (cfg.localModel?.enabled && cfg.localModel.modelName && cfg.localModel.cacheDir) {
+      if (cfg.featureRouting?.embeddings === 'local' || !cfg.featureRouting?.embeddings) {
+        try {
+          onxEmbedder = new UnifiedLocalModelProvider({
+            modelName: cfg.localModel.modelName,
+            cacheDir: cfg.localModel.cacheDir,
+            quantized: true,
+          });
+          return onxEmbedder;
+        } catch (e) {
+          getLogger().warn('EMBEDDING', `Local model failed, falling back to ONNX: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+
     const { OnnxEmbeddingProvider } = await import('@agentx/engine');
     onxEmbedder = new OnnxEmbeddingProvider();
     return onxEmbedder;
-  } catch {
+  } catch (e) {
+    getLogger().warn('EMBEDDING', `Failed to initialize embedder: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
+}
+
+let memoryService: MemoryService | null = null;
+
+async function getMemoryService(): Promise<MemoryService | null> {
+  if (memoryService) return memoryService;
+  const fabric = getMemoryFabric();
+  if (!fabric) return null;
+  const pool = (fabric as any)['pool'];
+  if (!pool) return null;
+  const embedder = await getEmbedder();
+  const generate = await buildDistillationGenerator();
+  memoryService = new MemoryService(pool, embedder, generate ?? undefined);
+  return memoryService;
+}
+
+async function buildDistillationGenerator(): Promise<GenerateFn | null> {
+  const eng = getEngine();
+  if (!eng.configured) return null;
+  try {
+    const cfg = eng.configManager.load();
+
+    // Use local model for distillation if enabled and configured
+    if (cfg.localModel?.enabled && cfg.localModel.modelName && cfg.localModel.cacheDir) {
+      if (cfg.featureRouting?.memoryDistillation === 'local' || !cfg.featureRouting?.memoryDistillation) {
+        try {
+          const localProvider = new UnifiedLocalModelProvider({
+            modelName: cfg.localModel.modelName,
+            cacheDir: cfg.localModel.cacheDir,
+            quantized: true,
+          });
+          return async (prompt: string) => localProvider.generate(prompt, { maxTokens: 512, temperature: 0.1 });
+        } catch (e) {
+          getLogger().warn('DISTILLATION', `Local model failed, falling back to cloud: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+
+    // Fallback to cloud provider
+    const providerId = cfg.provider.activeProvider;
+    const providerCfg = cfg.provider.providers?.[providerId];
+    if (!providerCfg?.configured || !providerCfg?.apiKey) return null;
+    const provider = ProviderFactory.create(providerId, providerCfg.apiKey, providerCfg.baseUrl);
+    const model = cfg.provider.activeModel || 'gpt-4o-mini';
+    return async (prompt: string) => {
+      let text = '';
+      const request = {
+        model,
+        messages: [{ role: 'user' as const, content: prompt }],
+        temperature: 0,
+        maxTokens: 512,
+        stream: false,
+      };
+      for await (const chunk of provider.complete(request)) {
+        if (chunk.type === 'text_delta' && chunk.content) text += chunk.content;
+      }
+      return text;
+    };
+  } catch (e) {
+    getLogger().warn('DISTILLATION', `Failed to build LLM generator: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
+interface DistillJob {
+  sessionId: string;
+  text: string;
+  sourceId: string;
+  hubId: string;
+}
+
+const distillationQueue: DistillJob[] = [];
+let distillationRunning = false;
+
+async function processDistillationQueue(): Promise<void> {
+  if (distillationRunning) return;
+  distillationRunning = true;
+  try {
+    const service = await getMemoryService();
+    if (!service) {
+      distillationQueue.length = 0;
+      return;
+    }
+    while (distillationQueue.length > 0) {
+      const job = distillationQueue.shift();
+      if (!job) continue;
+      try {
+        // Broadcast distillation start event
+        broadcastBrainActivity({
+          type: 'distillation_started',
+          sessionId: job.sessionId,
+          timestamp: new Date().toISOString(),
+        });
+
+        const result = await service.ingest({
+          text: job.text,
+          extract: true,
+          embed: true,
+          category: 'semantic',
+          sessionId: job.sessionId,
+          sourceId: job.sourceId,
+        });
+        for (const node of result.nodes) {
+          broadcastBrainActivity({
+            type: 'neuron_created',
+            nodeId: node.id,
+            label: node.label,
+            category: node.category,
+            content: node.content,
+            x: node.x ?? null,
+            y: node.y ?? null,
+            timestamp: new Date().toISOString(),
+          });
+          const edge = await service.bindEdge({
+            sourceNodeId: job.hubId,
+            targetNodeId: node.id,
+            relationshipType: 'CONTAINS',
+            weight: 1.0,
+          });
+          broadcastBrainActivity({
+            type: 'synapse_bound',
+            edgeId: edge.id,
+            sourceNodeId: edge.sourceNodeId,
+            targetNodeId: edge.targetNodeId,
+            relationshipType: edge.relationshipType,
+            weight: edge.weight,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        for (const edge of result.edges) {
+          broadcastBrainActivity({
+            type: 'synapse_bound',
+            edgeId: edge.id,
+            sourceNodeId: edge.sourceNodeId,
+            targetNodeId: edge.targetNodeId,
+            relationshipType: edge.relationshipType,
+            weight: edge.weight,
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        // Broadcast distillation complete event
+        broadcastBrainActivity({
+          type: 'distillation_complete',
+          sessionId: job.sessionId,
+          nodesCreated: result.nodes.length,
+          edgesCreated: result.edges.length,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (e) {
+        getLogger().warn('DISTILLATION', e instanceof Error ? e.message : String(e));
+        // Broadcast distillation error event
+        broadcastBrainActivity({
+          type: 'distillation_error',
+          sessionId: job.sessionId,
+          error: e instanceof Error ? e.message : String(e),
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+  } catch (e) {
+    getLogger().error('DISTILLATION', `Memory service unavailable: ${e instanceof Error ? e.message : String(e)}`);
+    // Clear queue if service is completely unavailable
+    distillationQueue.length = 0;
+  } finally {
+    distillationRunning = false;
+  }
+}
+
+function enqueueDistillation(job: DistillJob): void {
+  distillationQueue.push(job);
+  void processDistillationQueue();
 }
 
 interface PartRecord {
@@ -131,7 +324,6 @@ let wss: WebSocketServer | null = null;
 let subscribedAgent: unknown | null = null;
 let unsubscribeFromAgent: (() => void) | null = null;
 const sessionEventSubscribers = new Map<WebSocket, () => void>();
-const lastSessionNodeId = new Map<string, string>();
 
 function getMemoryFabric(): MemoryFabric | null {
   const pool = getEngine().pgPool;
@@ -153,6 +345,16 @@ async function getSessionHub(sessionId: string, fabric: MemoryFabric): Promise<{
     sourceId: source.id,
     sessionId,
   });
+  broadcastBrainActivity({
+    type: 'neuron_created',
+    nodeId: hub.id,
+    label: hub.label,
+    category: hub.category,
+    content: hub.content,
+    x: hub.x ?? null,
+    y: hub.y ?? null,
+    timestamp: new Date().toISOString(),
+  });
   const value = { sourceId: source.id, hubId: hub.id };
   sessionHubMap.set(sessionId, value);
   return value;
@@ -165,58 +367,20 @@ function sessionColor(sessionId: string): string {
   return colors[Math.abs(hash) % colors.length] ?? '#ffffff';
 }
 
-async function linkToKnowledge(fabric: MemoryFabric, nodeId: string, text: string, sessionId: string): Promise<void> {
-  if (text.length < 10) return;
-  try {
-    const embedder = await getEmbedder();
-    if (embedder) {
-      const embedding = await embedder.embed(text);
-      const matches = await fabric.vectorSearch(embedding, { limit: 3, category: 'semantic' });
-      for (const match of matches) {
-        if (match.id === nodeId || match.sessionId === sessionId) continue;
-        await fabric.bindEdge({
-          sourceNodeId: nodeId,
-          targetNodeId: match.id,
-          relationshipType: 'REFERENCES',
-          weight: 0.75,
-        }).catch(() => {});
-      }
-    }
-  } catch (e) {
-    getLogger().warn('MEMORY_REFERENCES', e instanceof Error ? e.message : String(e));
-  }
-}
-
 async function ingestConversationMemory(sessionId: string, role: 'user' | 'assistant', text: string): Promise<void> {
   const fabric = getMemoryFabric();
   if (!fabric) return;
   try {
     const hub = await getSessionHub(sessionId, fabric);
-    const node = await fabric.createNode({
-      label: `${role}: ${text.slice(0, 60)}`,
-      category: 'episodic',
-      content: text,
-      sourceId: hub.sourceId,
+    // Enqueue an asynchronous cognitive distillation job. The raw chat text is
+    // stored in the relational chat log by appendContextFile/persistMessageDirect;
+    // the brain graph receives only atomic concepts extracted from it.
+    enqueueDistillation({
       sessionId,
+      text: `${role}: ${text}`,
+      sourceId: hub.sourceId,
+      hubId: hub.hubId,
     });
-    await fabric.bindEdge({
-      sourceNodeId: hub.hubId,
-      targetNodeId: node.id,
-      relationshipType: 'CONTAINS',
-      weight: 1.0,
-    });
-    const prev = lastSessionNodeId.get(sessionId);
-    if (prev) {
-      await fabric.bindEdge({
-        sourceNodeId: prev,
-        targetNodeId: node.id,
-        relationshipType: 'NEXT_STEP',
-        weight: 1.0,
-      });
-    }
-    lastSessionNodeId.set(sessionId, node.id);
-
-    await linkToKnowledge(fabric, node.id, text, sessionId);
   } catch (e) {
     getLogger().warn('MEMORY_INGEST', e instanceof Error ? e.message : String(e));
   }
@@ -435,7 +599,10 @@ export type BrainActivityEvent =
   | { type: 'synapse_bound'; edgeId: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number; timestamp: string }
   | { type: 'neuron_fired'; nodeId: string; timestamp: string }
   | { type: 'neuron_decayed'; nodeId: string; status: string; timestamp: string }
-  | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string };
+  | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string }
+  | { type: 'distillation_started'; sessionId: string; timestamp: string }
+  | { type: 'distillation_complete'; sessionId: string; nodesCreated: number; edgesCreated: number; timestamp: string }
+  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string };
 
 let brainActivityBatch: BrainActivityEvent[] = [];
 let brainActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;

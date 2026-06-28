@@ -1179,6 +1179,22 @@ export interface DbStatus {
   };
 }
 
+export const localModel = {
+  capabilities: () =>
+    request<{ capabilities: any }>('/local-model/capabilities'),
+  catalog: () =>
+    request<{ catalog: any; compatible: string[]; recommended: string | null }>('/local-model/catalog'),
+  download: (modelId: string) =>
+    request<{ ok: boolean; modelId: string; sizeGB: number; message: string }>('/local-model/download', {
+      method: 'POST',
+      body: JSON.stringify({ modelId }),
+    }),
+  downloadStatus: (modelId: string) =>
+    request<{ status: string; progress?: number; error?: string }>(`/local-model/download-status/${modelId}`),
+  delete: (modelId: string) =>
+    request<{ ok: boolean; message: string }>(`/local-model/${modelId}`, { method: 'DELETE' }),
+};
+
 export const settings = {
   db: {
     get: () => request<DbStatus>('/settings/db'),
