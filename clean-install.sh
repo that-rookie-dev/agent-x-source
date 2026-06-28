@@ -40,17 +40,22 @@ pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
 pnpm --filter @agentx/web-neuron run build
 
-# 7. Build desktop app (unpacked .app)
+# 7. Build pgvector extension for the embedded PostgreSQL binaries
+echo ">>> Building pgvector extension for embedded PostgreSQL..."
+cd "$DESKTOP_DIR"
+pnpm run setup:pgvector
+
+# 8. Build desktop app (unpacked .app)
 echo ">>> Building desktop app..."
 cd "$DESKTOP_DIR"
 pnpm run build
 pnpm exec electron-builder --mac --dir
 
-# 8. Copy to /Applications
+# 9. Copy to /Applications
 echo ">>> Installing to /Applications (password prompt may appear)..."
 osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && cp -R '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/\" with administrator privileges"
 
-# 9. Launch
+# 10. Launch
 echo ">>> Launching Agent-X..."
 open /Applications/Agent-X.app
 

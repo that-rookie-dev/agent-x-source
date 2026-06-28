@@ -25,10 +25,20 @@ export interface ExperienceTrial {
   metadata?: Record<string, unknown>;
 }
 
-export class ExperienceEngine {
-  private db: any; // SessionStore instance or DB handle
+export interface NeuralDb {
+  prepare(sql: string): NeuralStatement;
+}
 
-  constructor(db: any) {
+export interface NeuralStatement {
+  run(...params: unknown[]): { changes: number };
+  get(...params: unknown[]): Record<string, unknown> | undefined;
+  all(...params: unknown[]): Record<string, unknown>[];
+}
+
+export class ExperienceEngine {
+  private db: NeuralDb;
+
+  constructor(db: NeuralDb) {
     this.db = db;
   }
 
@@ -67,7 +77,7 @@ export class ExperienceEngine {
     try {
       this.db.prepare(`
         INSERT INTO agent_experiences (id, session_id, category, action, context, result, confidence, reward, correction, learnings, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `).run(entry.id, entry.sessionId, entry.category, entry.action, entry.context, entry.result, entry.confidence, entry.reward, entry.correction, entry.learnings, entry.metadata);
     } catch { /* table may not exist yet */ }
 
@@ -85,8 +95,8 @@ export class ExperienceEngine {
   getProvenPatterns(minConfidence = 0.7): ExperienceEntry[] {
     try {
       return this.db.prepare(
-        `SELECT * FROM agent_experiences WHERE confidence >= ? ORDER BY confidence DESC LIMIT 50`
-      ).all(minConfidence) as ExperienceEntry[];
+        `SELECT * FROM agent_experiences WHERE confidence >= $1 ORDER BY confidence DESC LIMIT 50`
+      ).all(minConfidence) as unknown as ExperienceEntry[];
     } catch { return []; }
   }
 
@@ -118,7 +128,7 @@ export class ExperienceEngine {
   /** Get total experience count. */
   getTotalCount(): number {
     try {
-      const row = this.db.prepare('SELECT COUNT(*) as c FROM agent_experiences').get() as { c: number } | undefined;
+      const row = this.db.prepare('SELECT COUNT(*)::int as c FROM agent_experiences').get() as { c: number } | undefined;
       return row?.c ?? 0;
     } catch { return 0; }
   }
@@ -134,7 +144,7 @@ export class ExperienceEngine {
   /** Get total corrections count. */
   getCorrectionCount(): number {
     try {
-      const row = this.db.prepare("SELECT COUNT(*) as c FROM agent_experiences WHERE result = 'corrected'").get() as { c: number } | undefined;
+      const row = this.db.prepare("SELECT COUNT(*)::int as c FROM agent_experiences WHERE result = 'corrected'").get() as { c: number } | undefined;
       return row?.c ?? 0;
     } catch { return 0; }
   }
@@ -142,15 +152,15 @@ export class ExperienceEngine {
   private getRecent(category: string, action: string, limit: number): ExperienceEntry[] {
     try {
       return this.db.prepare(
-        `SELECT * FROM agent_experiences WHERE category = ? AND action = ? ORDER BY created_at DESC LIMIT ?`
-      ).all(category, action, limit) as ExperienceEntry[];
+        `SELECT * FROM agent_experiences WHERE category = $1 AND action = $2 ORDER BY created_at DESC LIMIT $3`
+      ).all(category, action, limit) as unknown as ExperienceEntry[];
     } catch { return []; }
   }
 
   private getTrialCount(category: string, action: string): number {
     try {
       const row = this.db.prepare(
-        `SELECT COUNT(*) as c FROM agent_experiences WHERE category = ? AND action = ?`
+        `SELECT COUNT(*)::int as c FROM agent_experiences WHERE category = $1 AND action = $2`
       ).get(category, action) as { c: number } | undefined;
       return row?.c ?? 0;
     } catch { return 0; }

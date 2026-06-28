@@ -27,7 +27,7 @@ import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { healOrphanedUserMessages } from './message-history-repair.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -47,10 +47,12 @@ import { handleClarificationRespond } from './clarification-resume.js';
 import { loadSessionResumeState } from './session-resume-state.js';
 import { postCrewChatSession } from './crew-chat.js';
 import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewHonorificToSession } from './host-crew-session.js';
+import { memoryRouter } from './memory-api.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_DIST = process.env['AGENTX_UI_DIR'] || join(__dirname, '..', '..', 'web-ui', 'dist');
+const NEURON_DIST = process.env['AGENTX_NEURON_DIR'] || join(__dirname, '..', '..', 'web-neuron', 'dist');
 
 
 
@@ -133,6 +135,9 @@ try {
 // Validate UI dist directory (non-fatal warning only)
 if (!existsSync(UI_DIST)) {
   startupErrors.push(`UI dist directory not found at ${UI_DIST}. The web UI will not be served. Set AGENTX_UI_DIR or build the web-ui package.`);
+}
+if (!existsSync(NEURON_DIST)) {
+  startupErrors.push(`Neuron dist directory not found at ${NEURON_DIST}. The brain visualization will not be served. Set AGENTX_NEURON_DIR or build the web-neuron package.`);
 }
 
 // Validate port availability
@@ -311,6 +316,9 @@ app.use('/api', createAuthRouter());
 
 // Auth middleware — protects all /api/* routes except auth endpoints
 app.use(authMiddleware);
+
+// Unified memory fabric API — routes inside the router already have /memory/ prefix
+app.use('/api', memoryRouter);
 
 // Security headers (content-type sniffing, XSS, clickjacking protection)
 app.use(helmet({
@@ -2227,10 +2235,24 @@ app.post('/api/settings/db/test', async (req, res) => {
     const client = await pool.connect();
     const result = await client.query('SELECT version() as version');
     const pgVersion = result.rows[0]?.['version'] as string;
+    let ageAvailable = false;
+    let ageError: string | undefined;
+    let extensionsCreated = false;
+    try {
+      await client.query('CREATE EXTENSION IF NOT EXISTS vector');
+      try { await client.query('CREATE EXTENSION IF NOT EXISTS age'); } catch (ageErr) {
+        ageError = ageErr instanceof Error ? ageErr.message : 'AGE not available';
+      }
+      extensionsCreated = true;
+      const { rows } = await client.query(`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'age') AS available`);
+      ageAvailable = rows[0]?.available === true;
+    } catch (extErr) {
+      ageError = extErr instanceof Error ? extErr.message : 'Failed to install extensions';
+    }
     client.release();
     await pool.end();
     getLogger().info('SETTINGS_DB_TEST', `PostgreSQL connection successful: ${pgVersion}`);
-    res.json({ ok: true, version: pgVersion || 'connected' });
+    res.json({ ok: true, version: pgVersion || 'connected', ageAvailable, ageError, extensionsCreated });
   } catch (e: unknown) {
     getLogger().error('POST_API_SETTINGS_DB_TEST', e instanceof Error ? e : String(e));
     res.status(400).json({ ok: false, error: e instanceof Error ? e.message : 'connection-failed' });
@@ -4491,6 +4513,22 @@ app.post('/api/debug/log', (req, res) => {
 // ───── Static file serve ─────
 const UI_PROXY_URL = process.env['AGENTX_UI_PROXY_URL'] || 'http://localhost:5173';
 
+// Serve web-neuron brain visualization from /neuron
+app.get('/neuron*', (req, res, next) => {
+  const subPath = req.path === '/neuron' || req.path === '/neuron/' ? 'index.html' : req.path.slice('/neuron/'.length);
+  const fullPath = join(NEURON_DIST, subPath);
+  if (existsSync(fullPath)) {
+    res.sendFile(fullPath);
+  } else {
+    const index = join(NEURON_DIST, 'index.html');
+    if (existsSync(index)) {
+      res.sendFile(index);
+    } else {
+      next();
+    }
+  }
+});
+
 app.get('*', async (req, res, next) => {
   if (req.path.startsWith('/api') || req.path.startsWith('/ws')) { next(); return; }
 
@@ -4543,6 +4581,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
   });
 
   let shuttingDown = false;
+  const shutdownHandlers: Array<() => void> = [];
 
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
@@ -4578,7 +4617,10 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
       log.info('SHUTDOWN', 'Bridges stopped.');
     } catch (e) { /* best-effort */ }
 
-    // 4. Flush log buffer and exit
+    // 4. Stop background ingestion worker and periodic handlers
+    for (const handler of shutdownHandlers) { try { handler(); } catch {} }
+    ingestionWorker?.stop();
+    // 5. Flush log buffer and exit
     stopGlobalRateLimitCleanup();
     closeLogger();
     clearTimeout(forceExit);
@@ -4587,6 +4629,73 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
 
   // Start periodic cleanup of rate limit stores
   startGlobalRateLimitCleanup();
+
+  // Start background ingestion job worker (Group 3 + 4 + C3): uses ingestion_jobs queue with FOR UPDATE SKIP LOCKED
+  let ingestionWorker: IngestionWorker | null = null;
+  try {
+    const eng = getEngine();
+    const pgPool = (eng as any).pgPool ?? (eng as any).pool;
+    if (pgPool) {
+      const fabric = new MemoryFabric(pgPool as any);
+      const embedder = new OnnxEmbeddingProvider();
+      ingestionWorker = new IngestionWorker(pgPool as any, fabric, {
+        concurrency: 2,
+        pollIntervalMs: 5000,
+        embed: (text) => embedder.embed(text),
+      });
+
+      // Seed periodic jobs once after storage is ready; the worker will claim them.
+      const queue = new IngestionQueue(pgPool as any);
+      void (async () => {
+        try {
+          await eng.storageReady;
+        } catch { /* storage may have failed — proceed best-effort */ }
+        ingestionWorker.start();
+        try {
+          await queue.enqueue({ kind: 'web_distill', priority: 1 });
+          await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
+          await queue.enqueue({ kind: 'plasticity', priority: 0 });
+          await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
+          await queue.enqueue({ kind: 'rag_telemetry', priority: 0 });
+          await fabric.cleanupExpiredWebStaging();
+        } catch (e: unknown) {
+          getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));
+        }
+      })();
+
+      // Re-enqueue periodic jobs every 60 seconds so the worker has a continuous backlog
+      const periodicInterval = setInterval(async () => {
+        try {
+          await queue.enqueue({ kind: 'web_distill', priority: 1 });
+          await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
+          await queue.enqueue({ kind: 'plasticity', priority: 0 });
+          await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
+          await queue.enqueue({ kind: 'rag_telemetry', priority: 0 });
+          await fabric.cleanupExpiredWebStaging();
+        } catch (e: unknown) {
+          getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));
+        }
+      }, 60000);
+      shutdownHandlers.push(() => clearInterval(periodicInterval));
+
+      // Wire web search results into the two-tier web staging table (Group 3)
+      setDeepSearchStageResult(async (result) => {
+        try {
+          await fabric.stageWebPayload(
+            result.url,
+            result.domain,
+            result.contentType,
+            result,
+          );
+          await queue.enqueue({ kind: 'web_distill', priority: 2 });
+        } catch (e: unknown) {
+          getLogger().warn('WEB_STAGING', e instanceof Error ? e.message : String(e));
+        }
+      });
+    }
+  } catch (e: unknown) {
+    getLogger().warn('INGESTION_WORKER', e instanceof Error ? e.message : String(e));
+  }
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));

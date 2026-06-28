@@ -18,10 +18,11 @@ import { CrewsPanel } from '../components/CrewsPanel';
 import { SoulPanel } from '../components/SoulPanel';
 import { ProvidersPanel } from '../components/ProvidersPanel';
 import { HealthPanel } from '../components/HealthPanel';
+import { BrainPanel } from '../components/BrainPanel';
 import { NotificationToast } from '../components/NotificationToast';
 import { colors } from '../theme';
 
-export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'knowledge' | 'orchestrator' | 'crews' | 'soul' | 'providers' | 'health';
+export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'knowledge' | 'orchestrator' | 'crews' | 'soul' | 'providers' | 'health' | 'brain';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -152,6 +153,7 @@ export function Console() {
               {activePanel === 'soul' && <SoulPanel />}
               {activePanel === 'providers' && <ProvidersPanel />}
               {activePanel === 'health' && <HealthPanel />}
+              {activePanel === 'brain' && <BrainPanel />}
             </PanelErrorBoundary>
           </Box>
           {isVertical && logsContent}

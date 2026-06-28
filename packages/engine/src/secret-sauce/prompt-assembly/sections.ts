@@ -27,6 +27,7 @@ export interface SectionContext {
   experienceEngine: { getProvenContext(): string; getCautionContext(): string } | null;
   growthEngine: { getGrowthContext(): string } | null;
   turnFeedbackService: { buildPromptContext(): string } | null;
+  memoryContext?: { getContext(): Promise<{ episodic: string; semantic: string; graph: string }> } | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -797,6 +798,43 @@ export function createNeuralSection(ctx: SectionContext): PromptSection<NeuralSt
       if (current.caution) parts.push(current.caution);
       if (current.growth) parts.push(current.growth);
       return parts.join('\n');
+    },
+  };
+}
+
+export interface MemoryContextState {
+  episodic: string;
+  semantic: string;
+  graph: string;
+}
+
+export function createMemoryContextSection(ctx: SectionContext): PromptSection<MemoryContextState | null> {
+  return {
+    key: 'core/memory-context',
+    load: async () => {
+      if (!ctx.memoryContext) return null;
+      const state = await ctx.memoryContext.getContext();
+      if (!state.episodic && !state.semantic && !state.graph) return null;
+      return state;
+    },
+    render: (state) => {
+      if (!state) return '';
+      const parts: string[] = [];
+      if (state.episodic) parts.push(`[EPISODIC MEMORY]\n${state.episodic}\n[/EPISODIC MEMORY]`);
+      if (state.semantic) parts.push(`[SEMANTIC MEMORY]\n${state.semantic}\n[/SEMANTIC MEMORY]`);
+      if (state.graph) parts.push(`[GRAPH CONTEXT]\n${state.graph}\n[/GRAPH CONTEXT]`);
+      return parts.join('\n\n');
+    },
+    diff: (prev, current) => {
+      const prevStr = JSON.stringify(prev);
+      const curStr = JSON.stringify(current);
+      if (prevStr === curStr) return null;
+      if (!current) return '';
+      const parts: string[] = [];
+      if (current.episodic) parts.push(`[EPISODIC MEMORY]\n${current.episodic}\n[/EPISODIC MEMORY]`);
+      if (current.semantic) parts.push(`[SEMANTIC MEMORY]\n${current.semantic}\n[/SEMANTIC MEMORY]`);
+      if (current.graph) parts.push(`[GRAPH CONTEXT]\n${current.graph}\n[/GRAPH CONTEXT]`);
+      return parts.join('\n\n');
     },
   };
 }

@@ -16,6 +16,11 @@ import FolderIcon from '@mui/icons-material/Folder';
 import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorIcon from '@mui/icons-material/Error';
+import HelpIcon from '@mui/icons-material/Help';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import { settings, factoryReset, setAuthToken, type DbStatus } from '../../api';
 import { useApp } from '../../store/AppContext';
 import { crewTheme } from '../../styles/crew-theme';
@@ -54,6 +59,34 @@ export function PersistenceTab() {
   const [resetConfirm, setResetConfirm] = useState('');
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState('');
+  const [provisionMode, setProvisionMode] = useState<'embedded' | 'cloud'>('embedded');
+  const [provisionStatus, setProvisionStatus] = useState<{
+    loading: boolean;
+    postgres?: boolean;
+    schemaVersion?: number;
+    migrationsApplied?: number;
+    ageAvailable?: boolean;
+    ageError?: string | null;
+    timestamp?: string;
+  }>({ loading: false });
+
+  const loadProvisionStatus = useCallback(async () => {
+    setProvisionStatus({ loading: true });
+    try {
+      const s = await settings.db.provisionStatus();
+      setProvisionStatus({
+        loading: false,
+        postgres: s.postgres,
+        schemaVersion: s.schemaVersion,
+        migrationsApplied: s.migrationsApplied,
+        ageAvailable: s.age.available,
+        ageError: s.age.error,
+        timestamp: s.timestamp,
+      });
+    } catch (e) {
+      setProvisionStatus({ loading: false, postgres: false, ageAvailable: false, ageError: e instanceof Error ? e.message : 'Status check failed' });
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,7 +98,7 @@ export function PersistenceTab() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); loadProvisionStatus(); }, [load, loadProvisionStatus]);
 
   const handleTest = async () => {
     if (!pgConnStr) return;
@@ -168,6 +201,38 @@ export function PersistenceTab() {
             PostgreSQL · {dbStatus?.stats.dbSizeFormatted || '—'}
           </Typography>
         </Box>
+      </Box>
+
+      {/* ── Provisioning Telemetry ── */}
+      <Box sx={{ ...cardSx, mb: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.text.primary }}>
+            Provisioning Telemetry
+          </Typography>
+          <Button onClick={loadProvisionStatus} disabled={provisionStatus.loading} size="small"
+            sx={{ fontSize: '0.65rem', color: colors.text.secondary, textTransform: 'none', borderColor: colors.border.default }}>
+            {provisionStatus.loading ? <CircularProgress size={12} sx={{ color: colors.text.secondary }} /> : <RefreshIcon sx={{ fontSize: 14 }} />}
+          </Button>
+        </Box>
+
+        <ToggleButtonGroup value={provisionMode} exclusive size="small" fullWidth
+          onChange={(_, v) => v && setProvisionMode(v)} sx={{ mb: 2, '& .MuiToggleButton-root': { fontSize: '0.7rem', textTransform: 'none', color: colors.text.secondary } }}>
+          <ToggleButton value="embedded">Embedded Local</ToggleButton>
+          <ToggleButton value="cloud">External / Cloud</ToggleButton>
+        </ToggleButtonGroup>
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <TelemetryRow label="PostgreSQL connection" status={dbStatus?.connected ? 'ok' : 'fail'} />
+          <TelemetryRow label="pgvector extension" status={provisionStatus.loading ? 'pending' : (provisionStatus.postgres ? 'ok' : 'fail')} />
+          <TelemetryRow label="Schema migrations" status={provisionStatus.loading ? 'pending' : ((provisionStatus.migrationsApplied ?? 0) > 0 ? 'ok' : (provisionStatus.schemaVersion && provisionStatus.schemaVersion > 0 ? 'ok' : 'fail'))} />
+          <TelemetryRow label="Apache AGE graph" status={provisionStatus.loading ? 'pending' : (provisionStatus.ageAvailable ? 'ok' : 'warn')} />
+        </Box>
+
+        {provisionMode === 'cloud' && !provisionStatus.ageAvailable && !provisionStatus.loading && (
+          <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mt: 2, fontSize: '0.7rem', bgcolor: `${crewTheme.accent.alert}15`, border: `1px solid ${crewTheme.accent.alert}40`, color: colors.text.primary }}>
+            This cloud PostgreSQL does not have Apache AGE. Graph walks will use the recursive-CTE fallback; some features may be slower.
+          </Alert>
+        )}
       </Box>
 
       {/* ── PostgreSQL Connection ── */}
@@ -348,6 +413,24 @@ export function PersistenceTab() {
           </Button>
         </DialogActions>
       </Dialog>
+    </Box>
+  );
+}
+
+function TelemetryRow({ label, status }: { label: string; status: 'ok' | 'warn' | 'fail' | 'pending' }) {
+  const icon = status === 'ok' ? <CheckCircleIcon sx={{ fontSize: 16, color: colors.accent.green }} />
+    : status === 'warn' ? <WarningAmberIcon sx={{ fontSize: 16, color: colors.accent.orange }} />
+    : status === 'fail' ? <ErrorIcon sx={{ fontSize: 16, color: colors.accent.red }} />
+    : <HelpIcon sx={{ fontSize: 16, color: colors.text.secondary }} />;
+  const text = status === 'ok' ? 'OK' : status === 'warn' ? 'Warning' : status === 'fail' ? 'Failed' : 'Checking';
+  const color = status === 'ok' ? colors.accent.green : status === 'warn' ? colors.accent.orange : status === 'fail' ? colors.accent.red : colors.text.secondary;
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5, borderBottom: `1px solid ${colors.border.default}` }}>
+      <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>{label}</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        {icon}
+        <Typography sx={{ fontSize: '0.65rem', color, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>{text}</Typography>
+      </Box>
     </Box>
   );
 }

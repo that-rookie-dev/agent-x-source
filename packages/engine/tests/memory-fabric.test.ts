@@ -1,0 +1,95 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { Pool } from 'pg';
+import { MemoryFabric } from '../src/neural/MemoryFabric.js';
+
+const connectionString = process.env.AGENTX_TEST_PG ?? 'postgresql://agentx:agentx@127.0.0.1:3335/agentx';
+
+async function isPgAvailable(): Promise<boolean> {
+  const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 2000 });
+  try {
+    await pool.query('SELECT 1');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await pool.end();
+  }
+}
+
+async function hasPgVector(): Promise<boolean> {
+  const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 2000 });
+  try {
+    const { rows } = await pool.query(`SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') AS available`);
+    return rows[0]?.available === true;
+  } catch {
+    return false;
+  } finally {
+    await pool.end();
+  }
+}
+
+describe.runIf(await isPgAvailable() && await hasPgVector())('MemoryFabric', () => {
+  let pool: Pool;
+  let fabric: MemoryFabric;
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString, max: 2 });
+    fabric = new MemoryFabric(pool);
+    await fabric.migrate();
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it('creates a node and fires the neuron', async () => {
+    const node = await fabric.createNode({
+      label: 'Test concept',
+      category: 'semantic',
+      content: 'A test concept for the memory fabric.',
+    });
+    expect(node.id).toBeTruthy();
+    expect(node.label).toBe('Test concept');
+    expect(node.accessCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('binds an edge between two nodes', async () => {
+    const a = await fabric.createNode({ label: 'Node A', category: 'semantic', content: 'A' });
+    const b = await fabric.createNode({ label: 'Node B', category: 'semantic', content: 'B' });
+    const edge = await fabric.bindEdge({
+      sourceNodeId: a.id,
+      targetNodeId: b.id,
+      relationshipType: 'RELATED_TO',
+      weight: 0.75,
+    });
+    expect(edge.sourceNodeId).toBe(a.id);
+    expect(edge.targetNodeId).toBe(b.id);
+    expect(edge.weight).toBe(0.75);
+  });
+
+  it('walks the graph via recursive CTE', async () => {
+    const a = await fabric.createNode({ label: 'Graph A', category: 'semantic', content: 'A' });
+    const b = await fabric.createNode({ label: 'Graph B', category: 'semantic', content: 'B' });
+    const c = await fabric.createNode({ label: 'Graph C', category: 'semantic', content: 'C' });
+    await fabric.bindEdge({ sourceNodeId: a.id, targetNodeId: b.id, relationshipType: 'RELATED_TO', weight: 0.9 });
+    await fabric.bindEdge({ sourceNodeId: b.id, targetNodeId: c.id, relationshipType: 'RELATED_TO', weight: 0.8 });
+
+    const result = await fabric.graphWalk({ startNodeIds: [a.id], maxDepth: 3 });
+    expect(result.nodeIds).toContain(a.id);
+    expect(result.nodeIds).toContain(b.id);
+    expect(result.nodeIds).toContain(c.id);
+  });
+
+  it('searches by vector similarity', async () => {
+    const embedding = Array.from({ length: 384 }, (_, i) => (i === 0 ? 1.0 : 0.0));
+    await fabric.createNode({
+      label: 'Vector match test',
+      category: 'semantic',
+      content: 'Testing vector similarity.',
+      embedding,
+    });
+    const results = await fabric.vectorSearch(embedding, { limit: 5 });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].label).toBe('Vector match test');
+  });
+});

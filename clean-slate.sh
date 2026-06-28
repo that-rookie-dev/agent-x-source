@@ -5,13 +5,18 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DESKTOP_DIR="$ROOT_DIR/packages/desktop"
 CREDENTIALS_FILE="$ROOT_DIR/../credentials.env"
 
-# Load credentials early (PG targets, optional AGENTX_DATA_DIR override)
+# Load credentials early if available (PG targets, optional AGENTX_DATA_DIR override).
+# This file is intentionally outside the source folder and is therefore optional.
 if [ -f "$CREDENTIALS_FILE" ]; then
   # shellcheck disable=SC1091
   source "$CREDENTIALS_FILE"
+  echo "Loaded credentials from $CREDENTIALS_FILE"
+else
+  echo "No credentials.env found outside source folder; using defaults and skipping external PG wipe."
 fi
 
 echo "=== Clean Slate: Agent-X ==="
+echo "Root dir: $ROOT_DIR"
 
 # ── 1. Stop all Agent-X / Electron / web-api processes ────────────────────────
 echo ">>> Stopping Agent-X processes..."
@@ -23,9 +28,11 @@ stop_agentx() {
   pkill -9 -f "agentx/web-api" 2>/dev/null || true
   pkill -9 -f "packages/web-api/dist/index" 2>/dev/null || true
 
-  # Embedded web-api listens on 3333 in the desktop app
+  # Embedded web-api listens on 3333; embedded PostgreSQL listens on 3335
   if command -v lsof >/dev/null 2>&1; then
-    lsof -ti:3333 2>/dev/null | xargs kill -9 2>/dev/null || true
+    for port in 3333 3335; do
+      lsof -ti:"$port" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    done
   fi
 }
 
@@ -229,8 +236,29 @@ echo ">>> Cleaning previous desktop build artifacts..."
 cd "$DESKTOP_DIR"
 rm -rf dist release
 
-# ── 5. Build dependencies ───────────────────────────────────────────────────
-echo ">>> Building shared, engine, web-api, web-ui, and web-neuron..."
+# ── 4b. Clean all package dist folders (so the fresh build has no stale code) ─
+echo ">>> Cleaning all package dist/ outputs..."
+cd "$ROOT_DIR"
+for pkg in shared engine web-api web-ui web-neuron desktop; do
+  rm -rf "packages/$pkg/dist" 2>/dev/null || true
+done
+
+# Remove any leftover bundled web-api/web-ui directories inside the desktop package
+rm -rf "$DESKTOP_DIR/web-api" "$DESKTOP_DIR/web-ui" 2>/dev/null || true
+
+# ── 5. Clean node_modules caches and ensure .env is present ─────────────────
+echo ">>> Cleaning package-manager caches..."
+pnpm store prune 2>/dev/null || true
+rm -rf node_modules/.cache 2>/dev/null || true
+
+# Ensure a .env file exists from the committed template (safe for fresh builds)
+if [ ! -f "$ROOT_DIR/.env" ]; then
+  echo ">>> Creating .env from .env.example..."
+  cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+fi
+
+# ── 6. Build dependencies in topological order (shared -> engine -> web-api) ─
+echo ">>> Building dependencies in topological order..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
 pnpm --filter @agentx/engine run build
@@ -238,17 +266,27 @@ pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
 pnpm --filter @agentx/web-neuron run build
 
-# ── 6. Build desktop app (unpacked .app) ────────────────────────────────────
+# ── 6b. Build and install PostgreSQL extensions (pgvector + Apache AGE) ──────
+echo ">>> Building PostgreSQL extensions (pgvector + AGE)..."
+cd "$DESKTOP_DIR"
+pnpm run setup:extensions || echo "WARNING: Extension build failed — app will fall back to relational CTE graph engine."
+cd "$ROOT_DIR"
+
+# ── 7. Typecheck all packages (after declarations are available) ─────────────
+echo ">>> Typechecking all packages..."
+pnpm -r run typecheck
+
+# ── 8. Build desktop app (unpacked .app) ────────────────────────────────────
 echo ">>> Building desktop app..."
 cd "$DESKTOP_DIR"
-npm run build
-npx electron-builder --mac --dir
+pnpm run build
+pnpm exec electron-builder --mac --dir
 
-# ── 7. Copy to /Applications ─────────────────────────────────────────────────
+# ── 9. Copy to /Applications ─────────────────────────────────────────────────
 echo ">>> Installing to /Applications (password prompt may appear)..."
 osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && cp -R '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/\" with administrator privileges"
 
-# ── 8. Launch (creates fresh config + bundled native PostgreSQL on first run) ─
+# ── 10. Launch (creates fresh config + bundled native PostgreSQL on first run) ─
 echo ">>> Launching Agent-X..."
 echo "    Note: a fresh config is created on first launch; the bundled native PostgreSQL starts on port 3335."
 open /Applications/Agent-X.app

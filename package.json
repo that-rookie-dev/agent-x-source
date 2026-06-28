@@ -6,8 +6,8 @@
   "description": "Agent-X — Your AI Wingman",
   "scripts": {
     "prebuild": "vitest run --run packages/engine/tests/platform-parity.test.ts",
-    "build": "pnpm -r run build",
-    "dev": "pnpm --filter @agentx/web-api run dev",
+    "build": "pnpm run setup:env && pnpm -r run build",
+    "dev": "pnpm run setup:env && pnpm --filter @agentx/web-api run dev",
     "test": "vitest run",
     "prestart": "vitest run --run packages/engine/tests/platform-parity.test.ts",
     "check:platform": "vitest run --run packages/engine/tests/platform-parity.test.ts",
@@ -19,7 +19,8 @@
     "clean": "pnpm -r run clean && rm -rf node_modules",
     "format": "prettier --write \"packages/*/src/**/*.{ts,tsx}\"",
     "version:sync": "node scripts/sync-version.mjs",
-    "version:check": "node scripts/sync-version.mjs --check"
+    "version:check": "node scripts/sync-version.mjs --check",
+    "setup:env": "node -e \"const fs=require('fs'); if(!fs.existsSync('.env')){ fs.writeFileSync('.env', fs.readFileSync('.env.example','utf8')); console.log('Created .env from .env.example'); } else { console.log('.env already exists'); }\""
   },
   "engines": {
     "node": ">=20.0.0",
@@ -30,6 +31,7 @@
     "@types/node": "^25.9.1",
     "eslint": "^9.0.0",
     "prettier": "^3.3.0",
+    "tsx": "4.19.2",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.60.0",
     "vitest": "^2.0.0"

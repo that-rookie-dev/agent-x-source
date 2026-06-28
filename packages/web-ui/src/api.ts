@@ -1185,11 +1185,11 @@ export const settings = {
     update: (config: { backend: string; postgres?: { connectionString: string } }) =>
       request<{ ok: boolean; backend?: string; tablesCreated?: number }>('/settings/db', { method: 'PUT', body: JSON.stringify(config) }),
     test: (connectionString: string) =>
-      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string }>(
+      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean }>(
         '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh: undefined }) }
       ),
     testAdvanced: (connectionString: string, ssh?: { host: string; port: number; username: string; password?: string; privateKey?: string } | null) =>
-      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string }>(
+      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean }>(
         '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh }) }
       ),
     migrate: () =>
@@ -1202,6 +1202,10 @@ export const settings = {
       request<{ ok: boolean }>('/settings/db/clear', { method: 'POST' }),
     clearCache: () =>
       request<{ ok: boolean; freedFormatted: string }>('/settings/db/clear-cache', { method: 'POST' }),
+    provisionStatus: () =>
+      request<{ postgres: boolean; schemaVersion: number; migrationsApplied: number; age: { available: boolean; error?: string | null }; timestamp: string }>('/memory/storage-status'),
+    systemInit: () =>
+      request<{ ok: boolean; nodeId: string }>('/memory/system-init', { method: 'POST' }),
   },
   webSearch: {
     status: () =>

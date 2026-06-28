@@ -32,6 +32,7 @@ import {
   startPeriodicDatabaseHeal,
   buildCrewPrivateIdentityPrompt,
   applyWebSearchConfigFromAgentConfig,
+  MemoryFabric,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
@@ -55,6 +56,7 @@ export interface EngineState {
   pluginRegistry: PluginRegistry;
   gateway: Gateway | null;
   pgPool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> } | null;
+  connectionString: string;
   /** Resolves when the active storage backend has finished connect + schema migration. */
   storageReady: Promise<void>;
   telegramBridge: TelegramBridge | null;
@@ -98,11 +100,15 @@ export function getEngine(): EngineState {
   initLogCollector();
 
   // PostgreSQL is the only supported storage backend.
+  // When the Agent-X desktop app is used, it starts embedded PostgreSQL on port 3335
+  // and sets AGENTX_POSTGRES_CONNECTION_STRING. If nothing is configured, fall back to
+  // the same embedded PostgreSQL defaults so local development/tests can connect.
+  const embeddedPgDefault = 'postgresql://agentx:agentx@127.0.0.1:3335/agentx';
   let pgConnectionString =
     process.env['AGENTX_POSTGRES_CONNECTION_STRING'] ??
     ((loadedConfig as any)?.postgres?.connectionString as string | undefined) ??
     (configManager as any).getPostgresConnectionString?.() ??
-    '';
+    embeddedPgDefault;
 
   if (!pgConnectionString) {
     throw new Error(
@@ -118,6 +124,15 @@ export function getEngine(): EngineState {
 
   const storageReady = (async () => {
     await pgAdapter.connect();
+    const pool = pgAdapter.getPool();
+    if (pool) {
+      const fabric = new MemoryFabric(pool as any);
+      await fabric.heal();
+      await fabric.seedSystemInitNode();
+    }
+    const store = (sessionManager as any).store as PostgresStorageAdapter;
+    await healDatabaseStore(store);
+    startPeriodicDatabaseHeal(store);
   })();
 
   const store = (sessionManager as any).store as PostgresStorageAdapter;
@@ -156,6 +171,7 @@ export function getEngine(): EngineState {
     pluginRegistry,
     gateway: null,
     pgPool: pgAdapter?.getPool() ?? null,
+    connectionString: pgConnectionString,
     storageReady,
     telegramBridge: null,
     discordBridge: null,

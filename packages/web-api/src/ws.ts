@@ -3,6 +3,19 @@ import type { Server } from 'http';
 import { getEngine } from './engine.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
 import type { DeepSearchProgress } from '@agentx/shared';
+import { MemoryFabric } from '@agentx/engine';
+
+let onxEmbedder: { embed: (text: string) => Promise<number[]> } | null = null;
+async function getEmbedder(): Promise<{ embed: (text: string) => Promise<number[]> } | null> {
+  if (onxEmbedder) return onxEmbedder;
+  try {
+    const { OnnxEmbeddingProvider } = await import('@agentx/engine');
+    onxEmbedder = new OnnxEmbeddingProvider();
+    return onxEmbedder;
+  } catch {
+    return null;
+  }
+}
 
 interface PartRecord {
   type: string;
@@ -118,6 +131,96 @@ let wss: WebSocketServer | null = null;
 let subscribedAgent: unknown | null = null;
 let unsubscribeFromAgent: (() => void) | null = null;
 const sessionEventSubscribers = new Map<WebSocket, () => void>();
+const lastSessionNodeId = new Map<string, string>();
+
+function getMemoryFabric(): MemoryFabric | null {
+  const pool = getEngine().pgPool;
+  if (!pool) return null;
+  return new MemoryFabric(pool as any);
+}
+
+const sessionHubMap = new Map<string, { sourceId: string; hubId: string }>();
+
+async function getSessionHub(sessionId: string, fabric: MemoryFabric): Promise<{ sourceId: string; hubId: string }> {
+  const cached = sessionHubMap.get(sessionId);
+  if (cached) return cached;
+
+  const source = await fabric.createSource(`Session ${sessionId}`, 'chat_session', sessionColor(sessionId));
+  const hub = await fabric.createNode({
+    label: `Session ${sessionId}`,
+    category: 'episodic',
+    content: `Conversation session ${sessionId}`,
+    sourceId: source.id,
+    sessionId,
+  });
+  const value = { sourceId: source.id, hubId: hub.id };
+  sessionHubMap.set(sessionId, value);
+  return value;
+}
+
+function sessionColor(sessionId: string): string {
+  const colors = ['#ff4d4d', '#4da6ff', '#ffd24d', '#4dff88', '#d24dff', '#ff8c4d', '#4dffea', '#ff4da6'];
+  let hash = 0;
+  for (let i = 0; i < sessionId.length; i++) hash = ((hash << 5) - hash) + sessionId.charCodeAt(i);
+  return colors[Math.abs(hash) % colors.length] ?? '#ffffff';
+}
+
+async function linkToKnowledge(fabric: MemoryFabric, nodeId: string, text: string, sessionId: string): Promise<void> {
+  if (text.length < 10) return;
+  try {
+    const embedder = await getEmbedder();
+    if (embedder) {
+      const embedding = await embedder.embed(text);
+      const matches = await fabric.vectorSearch(embedding, { limit: 3, category: 'semantic' });
+      for (const match of matches) {
+        if (match.id === nodeId || match.sessionId === sessionId) continue;
+        await fabric.bindEdge({
+          sourceNodeId: nodeId,
+          targetNodeId: match.id,
+          relationshipType: 'REFERENCES',
+          weight: 0.75,
+        }).catch(() => {});
+      }
+    }
+  } catch (e) {
+    getLogger().warn('MEMORY_REFERENCES', e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function ingestConversationMemory(sessionId: string, role: 'user' | 'assistant', text: string): Promise<void> {
+  const fabric = getMemoryFabric();
+  if (!fabric) return;
+  try {
+    const hub = await getSessionHub(sessionId, fabric);
+    const node = await fabric.createNode({
+      label: `${role}: ${text.slice(0, 60)}`,
+      category: 'episodic',
+      content: text,
+      sourceId: hub.sourceId,
+      sessionId,
+    });
+    await fabric.bindEdge({
+      sourceNodeId: hub.hubId,
+      targetNodeId: node.id,
+      relationshipType: 'CONTAINS',
+      weight: 1.0,
+    });
+    const prev = lastSessionNodeId.get(sessionId);
+    if (prev) {
+      await fabric.bindEdge({
+        sourceNodeId: prev,
+        targetNodeId: node.id,
+        relationshipType: 'NEXT_STEP',
+        weight: 1.0,
+      });
+    }
+    lastSessionNodeId.set(sessionId, node.id);
+
+    await linkToKnowledge(fabric, node.id, text, sessionId);
+  } catch (e) {
+    getLogger().warn('MEMORY_INGEST', e instanceof Error ? e.message : String(e));
+  }
+}
 
 export function setupWebSocket(server: Server): void {
   wss = new WebSocketServer({ server, path: '/ws' });
@@ -317,7 +420,7 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
   }
 }
 
-function broadcast(data: Record<string, unknown>): void {
+export function broadcast(data: Record<string, unknown>): void {
   if (!wss) return;
   const payload = JSON.stringify(data);
   wss.clients.forEach((client) => {
@@ -325,6 +428,31 @@ function broadcast(data: Record<string, unknown>): void {
       client.send(payload);
     }
   });
+}
+
+export type BrainActivityEvent =
+  | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; x: number | null; y: number | null; sourceColor?: string; timestamp: string }
+  | { type: 'synapse_bound'; edgeId: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number; timestamp: string }
+  | { type: 'neuron_fired'; nodeId: string; timestamp: string }
+  | { type: 'neuron_decayed'; nodeId: string; status: string; timestamp: string }
+  | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string };
+
+let brainActivityBatch: BrainActivityEvent[] = [];
+let brainActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const BRAIN_ACTIVITY_COALESCE_MS = 100;
+
+export function broadcastBrainActivity(event: BrainActivityEvent): void {
+  brainActivityBatch.push(event);
+  if (!brainActivityFlushTimer) {
+    brainActivityFlushTimer = setTimeout(() => {
+      const events = brainActivityBatch;
+      brainActivityBatch = [];
+      brainActivityFlushTimer = null;
+      if (events.length > 0) {
+        broadcast({ type: 'brain_activity_batch', events });
+      }
+    }, BRAIN_ACTIVITY_COALESCE_MS);
+  }
 }
 
 export function unsubscribeAgent(): void {
@@ -576,6 +704,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
         const crew = msg?.crew as CrewInfo | undefined;
         if (sessionId && text) {
           appendContextFile(sessionId, 'user', text, crew);
+          ingestConversationMemory(sessionId, 'user', text).catch(() => {});
         }
       }
 
@@ -589,6 +718,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
           if (sessionId && text) {
             const thinkingText = accumulatedThinking || undefined;
             appendContextFile(sessionId, 'assistant', text, crew, buildExtra(thinkingText));
+            ingestConversationMemory(sessionId, 'assistant', text).catch(() => {});
           }
         } finally {
           resetAccumulators();

@@ -75,7 +75,7 @@ export class PostgresLifecycleManager {
     }
 
     // 1. Try the bundled Electron app resources path (unpacked from asar).
-    const resourcesPath = process.resourcesPath;
+    const resourcesPath = process.resourcesPath ?? '';
     const unpackedCandidates = [
       join(resourcesPath, 'app.asar.unpacked', 'node_modules', packageName, 'native', 'bin'),
       join(resourcesPath, 'app.asar.unpacked', 'node_modules', '.pnpm', packageName, 'native', 'bin'),
@@ -244,17 +244,21 @@ export class PostgresLifecycleManager {
 
     const pool = new Pool({ connectionString: this.connectionString, max: 1 });
     try {
-      await pool.query('CREATE EXTENSION IF NOT EXISTS pgvector;');
+      await pool.query('CREATE EXTENSION IF NOT EXISTS vector;');
       this.options.onLog('pgvector extension ready');
     } catch (e) {
-      this.options.onError(`pgvector extension failed: ${e instanceof Error ? e.message : e}`);
+      throw new Error(`pgvector extension failed: ${e instanceof Error ? e.message : e}. The bundled embedded PostgreSQL requires pgvector to be built and installed.`);
     }
 
     try {
-      await pool.query('CREATE EXTENSION IF NOT EXISTS age;');
-      this.options.onLog('age extension ready');
+      const { rows } = await pool.query(`SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'age') AS available`);
+      if (rows[0]?.available) {
+        this.options.onLog('AGE extension available');
+      } else {
+        this.options.onWarn?.('AGE extension not available; using relational CTE graph engine');
+      }
     } catch (e) {
-      this.options.onWarn?.(`AGE extension unavailable; falling back to relational CTE graph engine: ${e instanceof Error ? e.message : e}`);
+      this.options.onWarn?.(`AGE extension check skipped: ${e instanceof Error ? e.message : e}`);
     }
 
     await pool.end();

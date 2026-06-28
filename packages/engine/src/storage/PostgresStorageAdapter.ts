@@ -20,6 +20,7 @@ import {
   createPgCrewCatalogStore,
 } from '../crew/postgres-crew-catalog.js';
 import type { CrewCatalogStore } from '../crew/CrewSuggestionService.js';
+import { MemoryFabric } from '../neural/MemoryFabric.js';
 
 const logger = getLogger();
 
@@ -397,6 +398,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       const client = await this.pool.connect();
       client.release();
       await this.migrate();
+      await this.seedDefaultPersona();
       await this.hydrateCache();
       this.connected = true;
       logger.info('PG_CONNECTED', 'PostgreSQL connection established');
@@ -424,6 +426,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
   async migrate(): Promise<void> {
     const client = await this.pool.connect();
     try {
+      await client.query('CREATE EXTENSION IF NOT EXISTS vector;');
       await client.query(SCHEMA_SQL);
       // Incremental migrations for columns added after initial schema
       await client.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS parts TEXT');
@@ -477,6 +480,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       await purgeOrphanChildSessionsPg(this.pool);
       await runPgCrewCatalogMigration(this.pool);
       await backfillPgCrewSearchColumns(this.pool, (row) => this.crewFromRow(row));
+      await new MemoryFabric(this.pool).migrate();
     } finally {
       client.release();
     }
@@ -485,6 +489,19 @@ export class PostgresStorageAdapter implements StorageAdapter {
   /** Idempotent schema repair — safe after manual table drops. */
   async repairSchema(): Promise<void> {
     await this.migrate();
+  }
+
+  /** Seed default persona if none exists. Idempotent. */
+  async seedDefaultPersona(): Promise<{ created: boolean }> {
+    const id = '00000000-0000-0000-0000-000000000001';
+    const { rows } = await this.pool.query('SELECT 1 AS ok FROM agent_persona WHERE id = $1', [id]);
+    if (rows.length > 0) return { created: false };
+    await this.pool.query(
+      `INSERT INTO agent_persona (id, name, description, communication_style, decision_making, domain_context, traits)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, 'Agent-X', 'A sophisticated AI assistant with British precision and unwavering loyalty. Expert in data analysis, system management, and predictive modeling.', 'formal', 'balanced', 'Intelligent system management, data analysis, predictive modeling, and personal assistance with a focus on precision, security, and real-time situational awareness.', JSON.stringify(['Loyal', 'Precise', 'Analytical', 'Proactive', 'Witty', 'Calm under pressure'])]
+    );
+    return { created: true };
   }
 
   private crewFromRow(row: Record<string, unknown>): Crew {

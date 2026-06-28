@@ -1,9 +1,10 @@
-import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage, shell, safeStorage } from 'electron';
 import { join, basename } from 'path';
-import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } from 'fs';
+import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import type { Server } from 'http';
 import { spawn, execSync } from 'child_process';
 import { tmpdir } from 'os';
+import { randomBytes } from 'node:crypto';
 import { PostgresLifecycleManager } from './PostgresLifecycleManager.js';
 
 const REPO = 'SlashpanOrg/agent-x';
@@ -297,6 +298,11 @@ function getWebUiDir(): string {
   return join(process.resourcesPath, 'web-ui');
 }
 
+function getWebNeuronDir(): string {
+  if (isDev) return join(__dirname, '..', '..', 'web-neuron', 'dist');
+  return join(process.resourcesPath, 'web-neuron');
+}
+
 function loadShellPath(): void {
   if (process.platform !== 'darwin') return;
   try {
@@ -345,9 +351,38 @@ async function stopEmbeddedPostgres(): Promise<void> {
   }
 }
 
+async function initializeVaultKey(): Promise<void> {
+  const configDir = join(app.getPath('userData'), 'vault');
+  mkdirSync(configDir, { recursive: true });
+  const keyFile = join(configDir, 'vault-key.enc');
+
+  if (safeStorage.isEncryptionAvailable() && existsSync(keyFile)) {
+    try {
+      const encrypted = readFileSync(keyFile);
+      const key = safeStorage.decryptString(encrypted);
+      process.env['AGENTX_VAULT_KEY'] = key;
+      return;
+    } catch (e) {
+      console.error('Failed to decrypt vault key, generating new one:', e);
+    }
+  }
+
+  const key = randomBytes(32).toString('base64');
+  if (safeStorage.isEncryptionAvailable()) {
+    try {
+      const encrypted = safeStorage.encryptString(key);
+      writeFileSync(keyFile, encrypted);
+    } catch (e) {
+      console.error('Failed to encrypt vault key:', e);
+    }
+  }
+  process.env['AGENTX_VAULT_KEY'] = key;
+}
+
 async function startServer(): Promise<void> {
   const apiPath = getWebApiPath();
   const uiDir = getWebUiDir();
+  const neuronDir = getWebNeuronDir();
 
   if (!existsSync(apiPath)) {
     throw new Error(`Web-API not found at ${apiPath}`);
@@ -358,7 +393,10 @@ async function startServer(): Promise<void> {
   // Start the bundled native PostgreSQL before the web-api so it has a connection string ready.
   await startEmbeddedPostgres();
 
+  await initializeVaultKey();
+
   process.env['AGENTX_UI_DIR'] = uiDir;
+  process.env['AGENTX_NEURON_DIR'] = neuronDir;
   process.env['PORT'] = String(PORT);
   process.env['NODE_ENV'] = 'production';
 

@@ -90,7 +90,7 @@ export function SetupWizard() {
   const [pgPassword, setPgPassword] = useState('');
   const [pgDatabase, setPgDatabase] = useState('agentx');
   const [pgTesting, setPgTesting] = useState(false);
-  const [pgTestResult, setPgTestResult] = useState<{ ok: boolean; version?: string; tablesCreated?: number; error?: string } | null>(null);
+  const [pgTestResult, setPgTestResult] = useState<{ ok: boolean; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean } | null>(null);
   const [sshEnabled, setSshEnabled] = useState(false);
   const [sshHost, setSshHost] = useState('');
   const [sshPort, setSshPort] = useState('22');
@@ -214,6 +214,7 @@ export function SetupWizard() {
       if (connStr) {
         try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {}
       }
+      try { await settings.db.systemInit(); } catch {}
       try { await personaApi.save(persona); } catch {}
       const r = await config.update({ setupComplete: true, user: { callsign } });
       if (!r.ok) { showError('Failed to save setup.'); setLoading(false); return; }
@@ -420,6 +421,11 @@ export function SetupWizard() {
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: pgTestResult.ok ? `${colors.accent.green}aa` : `${colors.accent.red}aa`, mt: 0.25 }}>
                       {pgTestResult.ok ? `${pgTestResult.version || 'PostgreSQL'} · ${pgTestResult.tablesCreated ? `${pgTestResult.tablesCreated} tables created` : 'Schema verified'}` : pgTestResult.error}
                     </Typography>
+                    {pgTestResult.ok && (
+                      <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: pgTestResult.ageAvailable ? `${colors.accent.green}aa` : colors.accent.orange, mt: 0.25 }}>
+                        {pgTestResult.ageAvailable ? 'Apache AGE: available' : `Apache AGE: unavailable${pgTestResult.ageError ? ` — ${pgTestResult.ageError}` : ''}`}
+                      </Typography>
+                    )}
                   </Box>
                 )}
               </Box>

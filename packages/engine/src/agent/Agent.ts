@@ -47,7 +47,9 @@ import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { MemoryFabric } from '../neural/MemoryFabric.js';
+import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
@@ -240,6 +242,8 @@ export class Agent {
   private _turnFeedbackService: TurnFeedbackService | null = null;
   private _neuralDb: any = null;
   private _pgPool: any = null;
+  private _memoryFabric: MemoryFabric | null = null;
+  private _memoryEmbedder: OnnxEmbeddingProvider | null = null;
 
   // ─── Health & Budget Tracking
   private _llmCallCount = 0;
@@ -1074,6 +1078,7 @@ export class Agent {
     }
     return this._turnFeedbackService;
   }
+
   private getNeuralDb(): any {
     if (!this._neuralDb) {
       try {
@@ -1082,6 +1087,52 @@ export class Agent {
       } catch { this._neuralDb = { prepare: () => ({ run: () => ({ changes: 0 }), get: () => null, all: () => [] }) }; }
     }
     return this._neuralDb;
+  }
+
+  private get memoryFabric(): MemoryFabric | null {
+    if (!this._memoryFabric && this._pgPool) {
+      this._memoryFabric = new MemoryFabric(this._pgPool);
+    }
+    return this._memoryFabric;
+  }
+
+  private get memoryEmbedder(): OnnxEmbeddingProvider | null {
+    if (!this._memoryEmbedder) {
+      this._memoryEmbedder = new OnnxEmbeddingProvider();
+    }
+    return this._memoryEmbedder;
+  }
+
+  private _memoryContextNodeIds: string[] = [];
+
+  private async buildMemoryContext(): Promise<{ episodic: string; semantic: string; graph: string }> {
+    const fabric = this.memoryFabric;
+    const embedder = this.memoryEmbedder;
+    if (!fabric || !embedder) return { episodic: '', semantic: '', graph: '' };
+    try {
+      const lastUser = [...this.messages].reverse().find((m) => m.role === 'user');
+      const query = typeof lastUser?.content === 'string' ? lastUser.content : '';
+      if (!query) return { episodic: '', semantic: '', graph: '' };
+      const embedding = await embedder.embed(query);
+      const result = await fabric.assembleContext(this.sessionId, embedding, { agentId: this.config.user?.callsign, episodicLimit: 5, semanticLimit: 5, graphDepth: 2 });
+      this._memoryContextNodeIds = [...result.episodic, ...result.semantic, ...result.graph].map((n: any) => n.id).filter((id): id is string => !!id);
+      const fmt = (nodes: Array<{ label: string; content: string; category: string }>) =>
+        nodes.map((n) => `- [${n.category}] ${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 200)}`).join('\n');
+      return {
+        episodic: fmt(result.episodic),
+        semantic: fmt(result.semantic),
+        graph: fmt(result.graph),
+      };
+    } catch (e) {
+      this._memoryContextNodeIds = [];
+      return { episodic: '', semantic: '', graph: '' };
+    }
+  }
+
+  private async reinforceMemoryContext(): Promise<void> {
+    const fabric = this.memoryFabric;
+    if (!fabric || this._memoryContextNodeIds.length === 0) return;
+    await Promise.all(this._memoryContextNodeIds.map((id) => fabric.reinforce(id).catch(() => {})));
   }
 
   // ─── Health + Checkpoint
@@ -2249,6 +2300,7 @@ export class Agent {
       }
       this.messages.push({ role: 'assistant', content });
       await this.compactContext();
+      await this.reinforceMemoryContext();
 
       return this.tagCrewPrivateAssistant({
         id: generateMessageId(),
@@ -2410,6 +2462,7 @@ export class Agent {
       experienceEngine: { getProvenContext: () => this.experienceEngine.getProvenContext(), getCautionContext: () => this.experienceEngine.getCautionContext() },
       growthEngine: { getGrowthContext: () => this.growthEngine.getGrowthContext() },
       turnFeedbackService: { buildPromptContext: () => this.turnFeedbackService.buildPromptContext(this.sessionId) },
+      memoryContext: { getContext: () => this.buildMemoryContext() },
     };
   }
 
@@ -2473,6 +2526,7 @@ export class Agent {
       .register(createTaskPanelSection())
       .register(createSoulSection(ctx))
       .register(createNeuralSection(ctx))
+      .register(createMemoryContextSection(ctx))
       .register(createInstructionsSection(ctx.scopePath));
 
     if (systemOverride) {
