@@ -17,6 +17,22 @@ export function resolveCrewEmotion(crew: Crew): CrewEmotion | undefined {
   return crew.emotion;
 }
 
+/**
+ * Professional-scope guard shared by every crew identity prompt (private chat,
+ * Agent-X delegation, and mission workers). Tools are exposed to all crew for
+ * convenience — this block stops a crew member from treating tool access as
+ * cross-domain expertise (e.g. a clinician writing software).
+ */
+export function buildCrewScopeBlock(crew: Crew): string {
+  const role = crew.title || crew.name;
+  return [
+    `PROFESSIONAL SCOPE:`,
+    `- You are a ${role}. Stay within the work your profession is qualified to do.`,
+    `- Tools (file, shell, code, docs) are shared with all crew for convenience — having a tool available does NOT mean a request is in your field, and it does NOT give you expertise outside your profession.`,
+    `- If answering well would require a different profession's training (e.g. software/ML/systems engineering, legal, financial, or medical work that is not your specialty), do NOT attempt it, write code/scripts for it, or wing it. Say plainly it's outside your field, deliver only the part you ARE qualified for, and hand it off to Agent-X or a fitting specialist.`,
+  ].join('\n');
+}
+
 export function buildCrewVoiceBlock(crew: Crew): string {
   const emotion = resolveCrewEmotion(crew);
   if (!emotion) return '';

@@ -13,7 +13,7 @@ import { FiberSet } from '../concurrency/FiberSet.js';
 import type { SessionManager } from '../session/SessionManager.js';
 import { resolveCrewToolIds } from './crew-tools.js';
 import { autoComposeCrewMembers, assessCrewNeed } from './crew-auto-compose.js';
-import { buildCrewVoiceBlock } from './crew-persona.js';
+import { buildCrewVoiceBlock, buildCrewScopeBlock } from './crew-persona.js';
 import { CHAT_MARKDOWN_PROMPT } from '../secret-sauce/prompt-assembly/sections.js';
 
 const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
@@ -38,6 +38,7 @@ export function buildCrewPrivateIdentityPrompt(crew: Crew): string {
   const voice = buildCrewVoiceBlock(crew);
   if (voice) roleLines.push(voice);
   roleLines.push(
+    `\n${buildCrewScopeBlock(crew)}`,
     `\nThis is a private 1:1 chat. You are yourself — not Agent-X.`,
     `[/CREW_IDENTITY]`,
   );
@@ -275,6 +276,7 @@ export class CrewOrchestrator {
       roleLines.push(`Tone: ${member.crew.emotion}`);
     }
 
+    roleLines.push(`\n${buildCrewScopeBlock(member.crew)}`);
     roleLines.push(`\nYour job is to EXECUTE, not just describe. Take action. Deliver complete results.`);
     roleLines.push(`[/CREW_IDENTITY]`);
 
