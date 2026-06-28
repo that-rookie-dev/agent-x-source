@@ -34,8 +34,8 @@ export function deepSearchBundleFromMetadata(meta?: Record<string, unknown>): De
 }
 
 export function upsertDeepSearchPart(parts: MessagePart[], payload: DeepSearchPartPayload): MessagePart[] {
-  const without = parts.filter((p) => !(p.type === 'deep_search' && p.id === payload.toolCallId));
-  const existing = parts.find((p) => p.type === 'deep_search' && p.id === payload.toolCallId);
+  const existingIdx = parts.findIndex((p) => p.type === 'deep_search' && p.id === payload.toolCallId);
+  const existing = existingIdx >= 0 ? parts[existingIdx] : undefined;
   const next: MessagePart = {
     type: 'deep_search',
     id: payload.toolCallId,
@@ -45,7 +45,26 @@ export function upsertDeepSearchPart(parts: MessagePart[], payload: DeepSearchPa
       running: payload.running ?? existing?.deepSearch?.running,
     },
   };
-  return [...without, next];
+  // Update in place so the card keeps its position; moving it to the tail mid-stream
+  // would push still-arriving assistant text into a new segment and split the message.
+  if (existingIdx >= 0) {
+    return [...parts.slice(0, existingIdx), next, ...parts.slice(existingIdx + 1)];
+  }
+  return [...parts, next];
+}
+
+/** Merge consecutive text parts (separated only after non-text parts are lifted out). */
+function mergeAdjacentTextParts(parts: MessagePart[]): MessagePart[] {
+  const merged: MessagePart[] = [];
+  for (const p of parts) {
+    const prev = merged[merged.length - 1];
+    if (p.type === 'text' && prev?.type === 'text') {
+      merged[merged.length - 1] = { ...prev, content: (prev.content || '') + (p.content || '') };
+    } else {
+      merged.push(p);
+    }
+  }
+  return merged;
 }
 
 /** Lift deepSearch metadata from tool parts/calls into dedicated message parts (always last). */
@@ -77,7 +96,9 @@ export function attachDeepSearchPartsFromTools(parts: MessagePart[], toolCalls?:
   for (const t of toolCalls ?? []) {
     consider(t.id, t.name, t.metadata, t.streamOutput);
   }
-  return next;
+  // Lifting deep_search parts out can leave two streamed text parts adjacent; rejoin them
+  // so a single streamed answer never renders as two separate cards.
+  return mergeAdjacentTextParts(next);
 }
 
 export function partitionPartsForRender<T extends { type: string }>(parts: T[]): { main: T[]; deepSearch: T[] } {

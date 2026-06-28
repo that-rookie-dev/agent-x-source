@@ -71,6 +71,25 @@ export function repairMarkdownTables(content: string): string {
     }
 
     const line = lines[i]!;
+
+    // LLMs often insert a blank line before a summary/total row, which breaks the table.
+    // If the gap is followed by a continuation data row (not a new header+separator),
+    // drop the gap so the row stays inside the table instead of becoming its own block.
+    if (inTable && tableHasSeparator && line.trim() === '') {
+      let j = i + 1;
+      while (j < lines.length && lines[j]!.trim() === '') j++;
+      const cont = j < lines.length ? lines[j]! : '';
+      const after = j + 1 < lines.length ? lines[j + 1]! : '';
+      if (cont && isTableRow(cont) && !isSeparatorRow(cont) && !isSeparatorRow(after)) {
+        i = j - 1;
+        continue;
+      }
+      inTable = false;
+      tableHasSeparator = false;
+      out.push(line);
+      continue;
+    }
+
     if (!isTableRow(line)) {
       inTable = false;
       tableHasSeparator = false;
@@ -144,6 +163,13 @@ export function normalizeAssistantMarkdown(content: string): string {
     }
 
     if (inFence) {
+      out.push(line);
+      continue;
+    }
+
+    // Never reinterpret table rows (e.g. an all-caps `| TOTAL | ... |` summary row)
+    // as headings/rules — that would drop the row out of the table.
+    if (isTableRow(trimmed)) {
       out.push(line);
       continue;
     }
