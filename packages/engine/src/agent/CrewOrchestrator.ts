@@ -13,7 +13,7 @@ import { FiberSet } from '../concurrency/FiberSet.js';
 import type { SessionManager } from '../session/SessionManager.js';
 import { resolveCrewToolIds } from './crew-tools.js';
 import { autoComposeCrewMembers, assessCrewNeed } from './crew-auto-compose.js';
-import { buildCrewVoiceBlock } from './crew-persona.js';
+import { buildCrewVoiceBlock, buildCrewScopeBlock } from './crew-persona.js';
 import { CHAT_MARKDOWN_PROMPT } from '../secret-sauce/prompt-assembly/sections.js';
 
 const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
@@ -38,10 +38,7 @@ export function buildCrewPrivateIdentityPrompt(crew: Crew): string {
   const voice = buildCrewVoiceBlock(crew);
   if (voice) roleLines.push(voice);
   roleLines.push(
-    `\nPROFESSIONAL SCOPE:`,
-    `- You are a ${crew.title || crew.name}. Stay within the work your profession is qualified to do.`,
-    `- This platform exposes tools (file, shell, code, docs) to every crew member for convenience — having a tool available does NOT mean a request is in your field, and it does NOT give you expertise outside your profession.`,
-    `- If answering well would require a different profession's training (e.g. software/ML/systems engineering, legal, financial, or medical work that is not your specialty), do NOT attempt it, write code/scripts for it, or wing it. Say plainly that it's outside your field, share only the part you ARE qualified for, and point them to Agent-X or the right specialist.`,
+    `\n${buildCrewScopeBlock(crew)}`,
     `\nThis is a private 1:1 chat. You are yourself — not Agent-X.`,
     `[/CREW_IDENTITY]`,
   );
@@ -279,6 +276,7 @@ export class CrewOrchestrator {
       roleLines.push(`Tone: ${member.crew.emotion}`);
     }
 
+    roleLines.push(`\n${buildCrewScopeBlock(member.crew)}`);
     roleLines.push(`\nYour job is to EXECUTE, not just describe. Take action. Deliver complete results.`);
     roleLines.push(`[/CREW_IDENTITY]`);
 

@@ -1,6 +1,6 @@
 import type { Crew } from '@agentx/shared';
 import { ToolRegistry } from '../tools/ToolRegistry.js';
-import { buildCrewVoiceBlock } from './crew-persona.js';
+import { buildCrewVoiceBlock, buildCrewScopeBlock } from './crew-persona.js';
 
 /** Default tool bundles by domain keyword — used when crew has no explicit tool list. */
 const DOMAIN_TOOL_BUNDLES: Record<string, string[]> = {
@@ -101,7 +101,7 @@ export function buildCrewWorkerSystemPrompt(crew: Crew, sharedContext?: string, 
   if (crew.expertise?.length) lines.push(`Expertise: ${crew.expertise.join(', ')}`);
   const voice = buildCrewVoiceBlock(crew);
   if (voice) lines.push('', voice);
-  lines.push('');
+  lines.push('', buildCrewScopeBlock(crew), '');
   if (planMode) {
     lines.push('PLAN MODE — read-only specialist contribution: research, analyze, and discuss your domain.');
     lines.push('Use read/search/research tools freely to inspect files and context when needed.');
