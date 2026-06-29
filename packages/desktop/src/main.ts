@@ -4,6 +4,7 @@ import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } 
 import type { Server } from 'http';
 import { spawn } from 'child_process';
 import { tmpdir } from 'os';
+import { pathToFileURL } from 'url';
 
 const REPO = 'SlashpanOrg/agent-x';
 
@@ -306,7 +307,7 @@ async function startServer(): Promise<void> {
   process.env['PORT'] = String(PORT);
   process.env['NODE_ENV'] = 'production';
 
-  const mod = await import(apiPath);
+  const mod = await import(pathToFileURL(apiPath).href);
   if (mod.server) server = mod.server as Server;
 }
 
