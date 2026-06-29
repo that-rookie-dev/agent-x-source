@@ -4,6 +4,8 @@ interface AgentXDesktopBridge {
   platform: string;
   isPackaged: boolean;
   isDesktop: boolean;
+  totalMemoryGB: number;
+  localModelSupported: boolean;
   minimize: () => void;
   maximize: () => void;
   close: () => void;

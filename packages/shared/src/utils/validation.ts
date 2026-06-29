@@ -73,6 +73,14 @@ export const localModelConfigSchema = z.object({
   displayName: z.string().optional(),
   cacheDir: z.string().optional(),
   downloadedAt: z.string().optional(),
+  dtype: z.enum(['q4', 'q4f16', 'fp32', 'fp16', 'int8']).optional(),
+  downloadedModels: z.array(z.object({
+    modelId: z.string(),
+    modelName: z.string(),
+    displayName: z.string().optional(),
+    downloadedAt: z.string(),
+    dtype: z.enum(['q4', 'q4f16', 'fp32', 'fp16', 'int8']).optional(),
+  })).optional(),
 }).optional();
 
 export const featureRoutingConfigSchema = z.object({

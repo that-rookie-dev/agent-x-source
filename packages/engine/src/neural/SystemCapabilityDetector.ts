@@ -32,6 +32,10 @@ export interface SystemCapabilities {
 }
 
 export class SystemCapabilityDetector {
+  static isLocalModelSupported(): boolean {
+    return os.totalmem() / (1024 ** 3) >= 32;
+  }
+
   static async detect(): Promise<SystemCapabilities> {
     const totalMemoryGB = os.totalmem() / (1024 ** 3);
     const freeMemoryGB = os.freemem() / (1024 ** 3);

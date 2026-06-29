@@ -12,6 +12,7 @@ import { pipeline } from '@huggingface/transformers';
 import { SystemCapabilityDetector } from '@agentx/engine';
 import { MODEL_CATALOG, getModelById, getCompatibleModels, getRecommendedModel } from '@agentx/engine';
 import { getEngine, syncLocalModelConfig } from './engine.js';
+import type { AgentXConfig, DownloadedLocalModel, LocalModelConfig } from '@agentx/shared';
 
 const router: import('express').Router = Router();
 
@@ -19,7 +20,7 @@ const router: import('express').Router = Router();
 router.get('/local-model/capabilities', async (_req: Request, res: Response) => {
   try {
     const capabilities = await SystemCapabilityDetector.detect();
-    res.json({ capabilities });
+    res.json({ capabilities, localModelSupported: SystemCapabilityDetector.isLocalModelSupported() });
   } catch (e) {
     console.error('Failed to detect system capabilities:', e);
     res.status(500).json({ error: 'Failed to detect system capabilities' });
@@ -131,16 +132,150 @@ router.get('/local-model/download-status/:modelId', async (req: Request, res: Re
   }
 });
 
-// Get local model status (installed model from config)
+function getCacheDir(): string {
+  return path.join(os.homedir(), '.agentx', 'models');
+}
+
+function deleteModelCache(model: { huggingFaceId: string }) {
+  const cacheDir = getCacheDir();
+  rmSync(path.join(cacheDir, model.huggingFaceId), { recursive: true, force: true });
+  const sanitized = model.huggingFaceId.replace(/[^a-zA-Z0-9_.-]/g, '-');
+  rmSync(path.join(cacheDir, `models--${sanitized}`), { recursive: true, force: true });
+}
+
+function isModelCacheOnDisk(model: { huggingFaceId: string }, dtype: string, cacheDir?: string): boolean {
+  const dir = cacheDir ?? getCacheDir();
+  const onnxPath = getModelOnnxPath(dir, model.huggingFaceId, dtype);
+  return existsSync(onnxPath);
+}
+
+export function scanDiskForCatalogModels(cacheDir?: string): DownloadedLocalModel[] {
+  const found: DownloadedLocalModel[] = [];
+  for (const model of MODEL_CATALOG) {
+    const dtype = (model.dtype ?? 'q4') as NonNullable<LocalModelConfig['dtype']>;
+    if (isModelCacheOnDisk(model, dtype, cacheDir)) {
+      found.push({
+        modelId: model.id,
+        modelName: model.huggingFaceId,
+        displayName: model.displayName,
+        downloadedAt: new Date().toISOString(),
+        dtype,
+      });
+    }
+  }
+  return found;
+}
+
+export function mergeDownloadedModels(
+  recorded: DownloadedLocalModel[],
+  disk: DownloadedLocalModel[],
+): DownloadedLocalModel[] {
+  const map = new Map<string, DownloadedLocalModel>();
+  for (const entry of recorded) map.set(entry.modelId, entry);
+  for (const entry of disk) {
+    if (!map.has(entry.modelId)) map.set(entry.modelId, entry);
+  }
+  return Array.from(map.values());
+}
+
+function getActiveModelId(cfg: { localModel?: { modelId?: string } | null }): string | null {
+  return cfg.localModel?.modelId ?? null;
+}
+
+function setActiveModel(
+  cfg: AgentXConfig,
+  model: { id: string; huggingFaceId: string; displayName: string },
+  dtype: NonNullable<LocalModelConfig['dtype']>,
+): AgentXConfig {
+  const cacheDir = getCacheDir();
+  return {
+    ...cfg,
+    localModel: {
+      enabled: true,
+      modelId: model.id,
+      modelName: model.huggingFaceId,
+      displayName: model.displayName,
+      cacheDir,
+      downloadedAt: new Date().toISOString(),
+      dtype,
+      downloadedModels: cfg.localModel?.downloadedModels,
+    },
+  };
+}
+
+function addToDownloadedModels(
+  cfg: AgentXConfig,
+  model: { id: string; huggingFaceId: string; displayName: string },
+  dtype: NonNullable<LocalModelConfig['dtype']>,
+): AgentXConfig {
+  const existing: DownloadedLocalModel[] = cfg.localModel?.downloadedModels ?? [];
+  const filtered = existing.filter((m) => m.modelId !== model.id);
+  const entry: DownloadedLocalModel = {
+    modelId: model.id,
+    modelName: model.huggingFaceId,
+    displayName: model.displayName,
+    downloadedAt: new Date().toISOString(),
+    dtype,
+  };
+  return {
+    ...cfg,
+    localModel: {
+      ...(cfg.localModel || {}),
+      downloadedModels: [...filtered, entry],
+    },
+  };
+}
+
+function removeFromDownloadedModels(cfg: AgentXConfig, modelId: string): AgentXConfig {
+  const existing: DownloadedLocalModel[] = cfg.localModel?.downloadedModels ?? [];
+  const remaining = existing.filter((m) => m.modelId !== modelId);
+  if (remaining.length === existing.length) return cfg;
+  return {
+    ...cfg,
+    localModel: {
+      ...(cfg.localModel || {}),
+      downloadedModels: remaining,
+    },
+  };
+}
+
+function pickNextActiveModel(cfg: AgentXConfig): AgentXConfig | null {
+  const remaining: DownloadedLocalModel[] = cfg.localModel?.downloadedModels ?? [];
+  const next = remaining[0];
+  if (!next) return null;
+  const model = getModelById(next.modelId);
+  if (!model) return null;
+  return setActiveModel(cfg, model, (next.dtype ?? 'q4') as NonNullable<LocalModelConfig['dtype']>);
+}
+
+function clearActiveModel(cfg: AgentXConfig): AgentXConfig {
+  if (!cfg.localModel) return cfg;
+  return {
+    ...cfg,
+    localModel: {
+      ...cfg.localModel,
+      enabled: false,
+      modelId: undefined,
+      modelName: undefined,
+      displayName: undefined,
+      cacheDir: undefined,
+      downloadedAt: undefined,
+      dtype: undefined,
+    },
+  };
+}
+
+// Get local model status (active model from config)
 router.get('/local-model/status', async (_req: Request, res: Response) => {
   try {
     const eng = getEngine();
     const cfg = eng.configManager.load();
-    const modelId = cfg.localModel?.modelId ?? null;
+    const activeModelId = getActiveModelId(cfg);
     const enabled = cfg.localModel?.enabled ?? false;
-    const model = modelId ? getModelById(modelId) : null;
+    const model = activeModelId ? getModelById(activeModelId) : null;
     res.json({
-      installed: modelId,
+      installed: activeModelId,
+      activeModelId,
       enabled,
       model: model
         ? {
@@ -158,15 +293,89 @@ router.get('/local-model/status', async (_req: Request, res: Response) => {
   }
 });
 
-// Delete downloaded model
-function clearLocalModelConfig(eng: ReturnType<typeof getEngine>) {
-  const cfg = eng.configManager.load();
-  if (cfg.localModel?.modelId) {
-    const { localModel: _, ...rest } = cfg;
-    eng.configManager.save(rest);
-  }
-}
+// Get all downloaded models available on disk
+router.get('/local-model/installed', async (_req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+    const activeModelId = getActiveModelId(cfg);
+    const recorded: DownloadedLocalModel[] = cfg.localModel?.downloadedModels ?? [];
+    const diskModels = scanDiskForCatalogModels();
+    const merged = mergeDownloadedModels(recorded, diskModels);
+    const models: (DownloadedLocalModel & { isActive: boolean })[] = [];
+    const stillValid: DownloadedLocalModel[] = [];
 
+    for (const entry of merged) {
+      const model = getModelById(entry.modelId);
+      if (!model) continue;
+      const dtype = (entry.dtype ?? 'q4') as NonNullable<LocalModelConfig['dtype']>;
+      if (!isModelCacheOnDisk(model, dtype)) continue;
+      stillValid.push(entry);
+      models.push({ ...entry, isActive: entry.modelId === activeModelId });
+    }
+
+    // Persist merged/pruned list back to config
+    if (stillValid.length !== recorded.length || diskModels.length > 0) {
+      try {
+        const updated = {
+          ...cfg,
+          localModel: {
+            ...(cfg.localModel || {}),
+            downloadedModels: stillValid,
+          },
+        };
+        const activeStillValid = activeModelId && stillValid.some((m) => m.modelId === activeModelId);
+        if (!activeStillValid && activeModelId) {
+          const next = pickNextActiveModel(updated);
+          eng.configManager.save(next ?? clearActiveModel(updated));
+        } else {
+          eng.configManager.save(updated);
+        }
+        syncLocalModelConfig(eng.configManager);
+      } catch (e) {
+        console.error('Failed to update downloaded models config:', e);
+      }
+    }
+
+    res.json({ models });
+  } catch (e) {
+    console.error('Failed to get installed local models:', e);
+    res.status(500).json({ error: 'Failed to get installed local models' });
+  }
+});
+
+// Activate a downloaded model
+router.post('/local-model/activate/:modelId', async (req: Request, res: Response) => {
+  const modelId = req.params.modelId;
+  if (!modelId) {
+    return res.status(400).json({ error: 'modelId is required' });
+  }
+  const model = getModelById(modelId);
+  if (!model) {
+    return res.status(404).json({ error: 'Model not found' });
+  }
+
+  try {
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+    const dtype = (model.dtype ?? 'q4') as NonNullable<LocalModelConfig['dtype']>;
+    if (!isModelCacheOnDisk(model, dtype)) {
+      return res.status(400).json({ error: 'Model files are missing. Download it again.' });
+    }
+
+    // Ensure the model is recorded as downloaded so it survives config reloads
+    let updated = addToDownloadedModels(cfg, model, dtype);
+    updated = setActiveModel(updated, model, dtype);
+    eng.configManager.save(updated);
+    syncLocalModelConfig(eng.configManager);
+    res.json({ ok: true, modelId, message: 'Model activated' });
+  } catch (e) {
+    console.error('Failed to activate local model:', e);
+    res.status(500).json({ error: 'Failed to activate local model' });
+  }
+});
+
+// Delete downloaded model
 router.delete('/local-model/:modelId', async (req: Request, res: Response) => {
   const modelId = req.params.modelId;
   if (!modelId) {
@@ -179,21 +388,21 @@ router.delete('/local-model/:modelId', async (req: Request, res: Response) => {
   }
 
   try {
-    const cacheDir = path.join(os.homedir(), '.agentx', 'models');
-    // Transformers.js stores the model under a directory named after the model id
-    const modelCacheDir = path.join(cacheDir, model.huggingFaceId);
-    rmSync(modelCacheDir, { recursive: true, force: true });
-    // Also remove the older HuggingFace-style cache directory if it exists
-    const sanitized = model.huggingFaceId.replace(/[^a-zA-Z0-9_.-]/g, '-');
-    rmSync(path.join(cacheDir, `models--${sanitized}`), { recursive: true, force: true });
+    deleteModelCache(model);
 
-    // Clear the localModel config entry so the UI shows no model installed
     const eng = getEngine();
     try {
-      clearLocalModelConfig(eng);
+      let cfg = eng.configManager.load();
+      const wasActive = cfg.localModel?.modelId === modelId;
+      cfg = removeFromDownloadedModels(cfg, modelId);
+      if (wasActive) {
+        const next = pickNextActiveModel(cfg);
+        cfg = next ?? clearActiveModel(cfg);
+      }
+      eng.configManager.save(cfg);
       syncLocalModelConfig(eng.configManager);
     } catch (cfgErr) {
-      console.error('Failed to clear local model config:', cfgErr);
+      console.error('Failed to update local model config after delete:', cfgErr);
     }
 
     res.json({ ok: true, message: 'Model deleted' });
@@ -203,24 +412,13 @@ router.delete('/local-model/:modelId', async (req: Request, res: Response) => {
   }
 });
 
-// Switch back to the primary cloud provider: delete the local model and clear config.
+// Switch back to the primary cloud provider: disable the active local model without deleting files.
 router.post('/local-model/switch-to-primary', async (_req: Request, res: Response) => {
   try {
     const eng = getEngine();
     const cfg = eng.configManager.load();
-    const modelId = cfg.localModel?.modelId;
-
-    if (modelId) {
-      const model = getModelById(modelId);
-      if (model) {
-        const cacheDir = path.join(os.homedir(), '.agentx', 'models');
-        rmSync(path.join(cacheDir, model.huggingFaceId), { recursive: true, force: true });
-        const sanitized = model.huggingFaceId.replace(/[^a-zA-Z0-9_.-]/g, '-');
-        rmSync(path.join(cacheDir, `models--${sanitized}`), { recursive: true, force: true });
-      }
-    }
-
-    clearLocalModelConfig(eng);
+    const updated = clearActiveModel(cfg);
+    eng.configManager.save(updated);
     syncLocalModelConfig(eng.configManager);
     res.json({ ok: true, message: 'Switched to primary provider' });
   } catch (e) {
@@ -276,7 +474,7 @@ async function verifyModelCache(cacheDir: string, model: any, dtype: string): Pr
 
 async function downloadModel(model: any): Promise<void> {
   const cacheDir = path.join(os.homedir(), '.agentx', 'models');
-  const dtype = model.dtype ?? 'q4';
+  const dtype = (model.dtype ?? 'q4') as NonNullable<LocalModelConfig['dtype']>;
 
   // Remove any incomplete/corrupted cache for this model before downloading
   await verifyModelCache(cacheDir, model, dtype);
@@ -306,6 +504,12 @@ async function downloadModel(model: any): Promise<void> {
     await pipeline('text-generation', model.huggingFaceId, {
       dtype,
       cache_dir: cacheDir,
+      session_options: {
+        intraOpNumThreads: 1,
+        interOpNumThreads: 1,
+        enableCpuMemArena: false,
+        enableMemPattern: false,
+      },
     } as any);
 
     // Verify the downloaded file is complete
@@ -324,24 +528,18 @@ async function downloadModel(model: any): Promise<void> {
     try {
       const eng = getEngine();
       const cfg = eng.configManager.load();
-      eng.configManager.save({
-        ...cfg,
-        localModel: {
-          enabled: true,
-          modelId: model.id,
-          modelName: model.huggingFaceId,
-          displayName: model.displayName,
-          cacheDir,
-          downloadedAt: new Date().toISOString(),
-          dtype,
-        },
+      let updated = addToDownloadedModels(cfg, model, dtype);
+      updated = setActiveModel(updated, model, dtype);
+      updated = {
+        ...updated,
         featureRouting: {
           memoryDistillation: 'local',
           memoryExtraction: 'local',
           memoryConsolidation: 'local',
-          ...(cfg.featureRouting || {}),
+          ...(updated.featureRouting || {}),
         },
-      });
+      };
+      eng.configManager.save(updated);
       syncLocalModelConfig(eng.configManager);
     } catch (e) {
       console.error('Failed to save local model config:', e);

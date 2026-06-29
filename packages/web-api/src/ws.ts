@@ -3,17 +3,17 @@ import type { Server } from 'http';
 import { getEngine } from './engine.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
 import type { DeepSearchProgress } from '@agentx/shared';
-import { MemoryFabric, MemoryService, ProviderFactory, UnifiedLocalModelProvider } from '@agentx/engine';
-import type { GenerateFn } from '@agentx/engine';
+import { MemoryFabric, MemoryService } from '@agentx/engine';
+import { buildDistillationGenerator } from './distillation-generator.js';
 
-let onxEmbedder: import('@agentx/engine').OnnxEmbeddingProvider | null = null;
+let localEmbedder: import('@agentx/engine').LocalEmbeddingProvider | null = null;
 async function getEmbedder() {
-  if (onxEmbedder) return onxEmbedder;
+  if (localEmbedder) return localEmbedder;
   try {
-    const { OnnxEmbeddingProvider } = await import('@agentx/engine');
-    // Always use the bundled all-MiniLM-L6-v2 model for embeddings.
-    onxEmbedder = new OnnxEmbeddingProvider();
-    return onxEmbedder;
+    const { LocalEmbeddingProvider } = await import('@agentx/engine');
+    // Use the lightweight deterministic n-gram embedder to avoid loading a large ONNX model in the main process.
+    localEmbedder = new LocalEmbeddingProvider();
+    return localEmbedder;
   } catch (e) {
     getLogger().warn('EMBEDDING', `Failed to initialize embedder: ${e instanceof Error ? e.message : String(e)}`);
     return null;
@@ -52,54 +52,6 @@ async function getMemoryService(): Promise<MemoryService | null> {
   memoryService = new MemoryService(pool, embedder, generate ?? undefined);
   memoryServiceConfigHash = currentHash;
   return memoryService;
-}
-
-async function buildDistillationGenerator(): Promise<GenerateFn | null> {
-  const eng = getEngine();
-  if (!eng.configured) return null;
-  try {
-    const cfg = eng.configManager.load();
-
-    // Use local model for distillation if enabled and configured
-    if (cfg.localModel?.enabled && cfg.localModel.modelName && cfg.localModel.cacheDir) {
-      if (cfg.featureRouting?.memoryDistillation === 'local' || !cfg.featureRouting?.memoryDistillation) {
-        try {
-          const localProvider = new UnifiedLocalModelProvider({
-            modelName: cfg.localModel.modelName,
-            cacheDir: cfg.localModel.cacheDir,
-            dtype: cfg.localModel.dtype ?? 'q4',
-          });
-          return async (prompt: string) => localProvider.generate(prompt, { maxTokens: 512, temperature: 0.1 });
-        } catch (e) {
-          getLogger().warn('DISTILLATION', `Local model failed, falling back to cloud: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-    }
-
-    // Fallback to cloud provider
-    const providerId = cfg.provider.activeProvider;
-    const providerCfg = cfg.provider.providers?.[providerId];
-    if (!providerCfg?.configured || !providerCfg?.apiKey) return null;
-    const provider = ProviderFactory.create(providerId, providerCfg.apiKey, providerCfg.baseUrl);
-    const model = cfg.provider.activeModel || 'gpt-4o-mini';
-    return async (prompt: string) => {
-      let text = '';
-      const request = {
-        model,
-        messages: [{ role: 'user' as const, content: prompt }],
-        temperature: 0,
-        maxTokens: 512,
-        stream: false,
-      };
-      for await (const chunk of provider.complete(request)) {
-        if (chunk.type === 'text_delta' && chunk.content) text += chunk.content;
-      }
-      return text;
-    };
-  } catch (e) {
-    getLogger().warn('DISTILLATION', `Failed to build LLM generator: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
-  }
 }
 
 interface DistillJob {
@@ -151,12 +103,8 @@ async function processDistillationQueue(): Promise<void> {
             y: node.y ?? null,
             timestamp: new Date().toISOString(),
           });
-          const edge = await service.bindEdge({
-            sourceNodeId: job.hubId,
-            targetNodeId: node.id,
-            relationshipType: 'CONTAINS',
-            weight: 1.0,
-          });
+        }
+        for (const edge of result.edges) {
           broadcastBrainActivity({
             type: 'synapse_bound',
             edgeId: edge.id,
@@ -167,14 +115,25 @@ async function processDistillationQueue(): Promise<void> {
             timestamp: new Date().toISOString(),
           });
         }
-        for (const edge of result.edges) {
+
+        // If the extraction produced a connected graph, do not force every node back to the session hub.
+        // Instead, only a single weak anchor edge from the hub to the first node keeps the cluster discoverable
+        // without creating a hub-and-spoke visualization.
+        if (result.nodes.length > 0 && result.edges.length === 0) {
+          const firstNode = result.nodes[0]!;
+          const anchor = await service.bindEdge({
+            sourceNodeId: job.hubId,
+            targetNodeId: firstNode.id,
+            relationshipType: 'RELATED_TO',
+            weight: 0.1,
+          });
           broadcastBrainActivity({
             type: 'synapse_bound',
-            edgeId: edge.id,
-            sourceNodeId: edge.sourceNodeId,
-            targetNodeId: edge.targetNodeId,
-            relationshipType: edge.relationshipType,
-            weight: edge.weight,
+            edgeId: anchor.id,
+            sourceNodeId: anchor.sourceNodeId,
+            targetNodeId: anchor.targetNodeId,
+            relationshipType: anchor.relationshipType,
+            weight: anchor.weight,
             timestamp: new Date().toISOString(),
           });
         }
@@ -550,12 +509,6 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
       if (!sessionId) break;
       try {
         const eng = getEngine();
-        const store = (eng.sessionManager as any).store;
-        if (store?.getSessionEvents) {
-          const sinceSeq = typeof msg.sinceSequence === 'number' ? msg.sinceSequence : undefined;
-          const events = store.getSessionEvents(sessionId, sinceSeq) as Array<Record<string, unknown>>;
-          ws.send(JSON.stringify({ type: 'session_events', data: events, sessionId }));
-        }
         const agent = eng.agent;
         if (agent && agent.events && typeof (agent.events as any).onSessionEvent === 'function') {
           const unsubOld = sessionEventSubscribers.get(ws);

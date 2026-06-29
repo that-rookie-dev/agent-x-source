@@ -12,7 +12,7 @@ import { MemoryPipeline } from './MemoryPipeline.js';
 import { MemoryConsolidator } from './MemoryConsolidator.js';
 import { DocumentIngester } from './DocumentIngester.js';
 import { SynapticPlasticity } from './SynapticPlasticity.js';
-import { OnnxEmbeddingProvider } from './OnnxEmbeddingProvider.js';
+import { LocalEmbeddingProvider } from './LocalEmbeddingProvider.js';
 import { LocalLLMJudge } from './LocalLLMJudge.js';
 
 export interface IngestionWorkerOptions {
@@ -40,7 +40,7 @@ export class IngestionWorker {
   ) {
     this.queue = new IngestionQueue(pool);
     this.embed = options.embed ?? (async (text) => {
-      const provider = new OnnxEmbeddingProvider();
+      const provider = new LocalEmbeddingProvider();
       return provider.embed(text);
     });
   }
@@ -70,7 +70,7 @@ export class IngestionWorker {
   private async tick(): Promise<void> {
     if (!this.running) return;
     const concurrency = this.options.concurrency ?? 1;
-    const kinds = this.options.kinds ?? ['web_distill', 'document_ingest', 'memory_consolidate', 'plasticity', 'louvain_layout', 'rag_telemetry'];
+    const kinds = this.options.kinds ?? ['web_distill', 'document_ingest', 'memory_consolidate', 'plasticity', 'louvain_layout'];
     const limit = Math.max(1, concurrency - this.active);
 
     try {

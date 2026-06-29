@@ -3,7 +3,7 @@ import { join, basename } from 'path';
 import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import type { Server } from 'http';
 import { spawn, execSync } from 'child_process';
-import { tmpdir } from 'os';
+import { tmpdir, totalmem } from 'os';
 import { randomBytes } from 'node:crypto';
 import { PostgresLifecycleManager } from './PostgresLifecycleManager.js';
 
@@ -528,6 +528,12 @@ function registerHotkey(): void {
 // ==================== IPC ====================
 
 ipcMain.on('app:isPackaged', (event) => { event.returnValue = app.isPackaged; });
+ipcMain.on('system:totalMemoryGB', (event) => {
+  event.returnValue = Math.round(totalmem() / (1024 ** 3) * 10) / 10;
+});
+ipcMain.on('system:localModelSupported', (event) => {
+  event.returnValue = totalmem() / (1024 ** 3) >= 32;
+});
 ipcMain.on('window:minimize', () => mainWindow?.minimize());
 ipcMain.on('window:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();

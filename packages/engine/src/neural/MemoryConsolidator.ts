@@ -49,7 +49,7 @@ export class MemoryConsolidator {
     const turnThreshold = options.turnThreshold ?? 20;
     const keepLast = options.keepLast ?? 5;
     const idleMs = options.idleMs ?? 60_000;
-    const summarize = options.summarize ?? this.summarize ?? (await createLocalLLMSummarizer());
+    const summarize = options.summarize ?? this.summarize ?? (async (texts: string[]) => texts.join('\n\n---\n\n'));
 
     const { rows: sessions } = await this.fabric['pool'].query<{ sessionId: string; count: string }>(
       `SELECT session_id AS "sessionId", COUNT(*) AS count

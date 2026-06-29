@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -31,9 +31,10 @@ import { colors } from '../theme';
 import { PersonaConfigPanel } from '../components/settings/PersonaConfigPanel';
 import { LocalModelStep } from '../components/LocalModelStep';
 import type { ActiveDownload } from '../components/DownloadIndicator';
-import type { ProviderInfo, ModelInfo, AgentPersonaConfig } from '../api';
+import type { ProviderInfo, ModelInfo, AgentPersonaConfig, AgentXConfig } from '../api';
+import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 
-const STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Callsign', 'Persona', 'Complete'];
+const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Callsign', 'Persona', 'Complete'];
 const STORAGE_KEY = 'agentx_wizard_progress';
 
 interface WizardProgress {
@@ -65,7 +66,16 @@ function clearProgress() {
 export function SetupWizard() {
   const { setConfig, setAuthState, setView } = useApp();
   const navigate = useNavigate();
+  const localModelSupported = useLocalModelSupported();
+  const steps = useMemo(() => localModelSupported ? ALL_STEPS : ALL_STEPS.filter((s) => s !== 'Local Model'), [localModelSupported]);
   const [step, setStep] = useState(0);
+
+  // If the local-model step becomes unsupported while the user is on it, skip past it.
+  useEffect(() => {
+    if (!localModelSupported && step === 3) {
+      setStep(4);
+    }
+  }, [localModelSupported, step]);
   const { showError, clearError } = useGlobalError();
   const [loading, setLoading] = useState(false);
   const [showBackWarning, setShowBackWarning] = useState(false);
@@ -104,6 +114,7 @@ export function SetupWizard() {
   const [sshKey, setSshKey] = useState('');
   const [selectedLocalModel, setSelectedLocalModel] = useState<string | null>(null);
   const [skipLocalModel, setSkipLocalModel] = useState(false);
+  const [installedLocalModels, setInstalledLocalModels] = useState<Array<{ modelId: string; isActive: boolean }>>([]);
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
 
   const buildPgConnStr = () => {
@@ -150,8 +161,20 @@ export function SetupWizard() {
   }, [step, selectedProvider, selectedModel, callsign, selectedBackend, persona, selectedLocalModel, skipLocalModel]);
   useEffect(() => { persistProgress(); }, [persistProgress]);
 
-  const next = () => { clearError(); setStep(s => s + 1); };
-  const back = () => { clearError(); setStep(s => s - 1); };
+  const next = () => {
+    clearError();
+    setStep((s) => {
+      if (!localModelSupported && s === 2) return 4; // skip Local Model step
+      return s + 1;
+    });
+  };
+  const back = () => {
+    clearError();
+    setStep((s) => {
+      if (!localModelSupported && s === 4) return 2; // skip Local Model step
+      return s - 1;
+    });
+  };
 
   const handleStorageNext = async () => {
     if (selectedBackend === 'embedded-postgres') {
@@ -232,6 +255,10 @@ export function SetupWizard() {
     setActiveDownloads(prev => prev.filter(d => d.modelId !== modelId));
   };
 
+  const handleInstalledModelsChange = (models: Array<{ modelId: string; isActive: boolean }>) => {
+    setInstalledLocalModels(models);
+  };
+
   const handleComplete = async () => {
     setLoading(true);
     try {
@@ -241,12 +268,16 @@ export function SetupWizard() {
       }
       try { await settings.db.systemInit(); } catch {}
       try { await personaApi.save(persona); } catch {}
-      const r = await config.update({ setupComplete: true, user: { callsign } });
+      const setupPatch: Partial<AgentXConfig> = { setupComplete: true, user: { callsign } };
+      if (!localModelSupported) {
+        setupPatch.localModel = { enabled: false };
+      }
+      const r = await config.update(setupPatch);
       if (!r.ok) { showError('Failed to save setup.'); setLoading(false); return; }
       clearProgress();
       setAuthState('authenticated');
       setView('docking');
-      navigate('/', { replace: true });
+      void navigate('/', { replace: true });
       void config.get().then((cfg) => setConfig(cfg)).catch(() => {});
     } catch (err) { showError(err instanceof Error ? err.message : 'Setup could not be saved.'); }
     finally { setLoading(false); }
@@ -257,8 +288,8 @@ export function SetupWizard() {
       <Box sx={{ flexShrink: 0, textAlign: 'center', pt: 4, px: 2, pb: 2 }}>
         <Typography variant="h2" sx={{ mb: 1 }}>SETUP WIZARD</Typography>
         <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 3 }}>Configure your Agent-X instance</Typography>
-        <Stepper activeStep={step} alternativeLabel sx={{ width: '100%', maxWidth: 880, mx: 'auto' }}>
-          {STEPS.map((label) => (
+        <Stepper activeStep={steps.indexOf(ALL_STEPS[step] ?? '')} alternativeLabel sx={{ width: '100%', maxWidth: 880, mx: 'auto' }}>
+          {steps.map((label) => (
             <Step key={label}>
               <StepLabel sx={{ '& .MuiStepLabel-label': { color: colors.text.dim, fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace" } }}>{label}</StepLabel>
             </Step>
@@ -546,6 +577,7 @@ export function SetupWizard() {
                   onStartDownload={startDownload}
                   onUpdateDownload={updateDownload}
                   onClearDownload={clearDownload}
+                  onInstalledModelsChange={handleInstalledModelsChange}
                   activeDownloads={activeDownloads}
                 />
               )}
@@ -625,7 +657,7 @@ export function SetupWizard() {
           {step === 1 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 2 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 3 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 4 && <Button onClick={handleBackToCredentials} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 4 && <Button onClick={localModelSupported ? handleBackToCredentials : back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 5 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 6 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 0 && !showRelayConfig && (
@@ -645,7 +677,11 @@ export function SetupWizard() {
             <Button
               variant="contained"
               onClick={next}
-              disabled={!skipLocalModel && !activeDownloads.some(d => d.modelId === selectedLocalModel && (d.status === 'downloading' || d.status === 'complete'))}
+              disabled={
+                !skipLocalModel &&
+                !installedLocalModels.some(m => m.modelId === selectedLocalModel) &&
+                !activeDownloads.some(d => d.modelId === selectedLocalModel && (d.status === 'downloading' || d.status === 'complete'))
+              }
               sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}
             >
               Next

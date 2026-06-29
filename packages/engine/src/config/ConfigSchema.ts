@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { providerIdSchema } from '@agentx/shared';
+import { providerIdSchema, localModelConfigSchema, featureRoutingConfigSchema } from '@agentx/shared';
 
 export const providerProfileSchema = z.object({
   label: z.string().min(1),
@@ -83,6 +83,27 @@ export const agentXConfigSchema = z.object({
   setupComplete: z.boolean().optional(),
   rag: ragConfigSchema,
   tools: toolsConfigSchema,
+  localModel: localModelConfigSchema,
+  featureRouting: featureRoutingConfigSchema,
+  maxSubAgents: z.number().int().min(1).max(20).optional(),
+  maxSteps: z.number().int().min(1).max(100).optional(),
+  maxRetries: z.number().int().min(0).max(10).optional(),
+  maxOutputTokens: z.number().int().min(256).max(32768).optional(),
+  useSandbox: z.boolean().optional(),
+  permissions: z.record(z.enum(['allow', 'deny', 'ask'])).optional(),
+  agents: z.record(z.object({
+    model: z.string().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    systemPrompt: z.string().optional(),
+    deniedTools: z.array(z.string()).optional(),
+    permissions: z.array(z.object({
+      id: z.string(),
+      action: z.string(),
+      pattern: z.string().optional(),
+      effect: z.string(),
+      comment: z.string().optional(),
+    }).passthrough()).optional(),
+  }).passthrough()).optional(),
 });
 
 export type ValidatedConfig = z.infer<typeof agentXConfigSchema>;

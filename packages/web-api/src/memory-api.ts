@@ -6,6 +6,7 @@ import { getEngine } from './engine.js';
 import { validate, memoryNodeCreateSchema, memoryEdgeCreateSchema, memorySearchSchema, memoryGraphWalkSchema, memoryContextSchema, memorySourceCreateSchema, documentIngestSchema, benchmarkRunSchema } from './validation.js';
 import { getLogger } from '@agentx/shared';
 import { broadcastBrainActivity, broadcast } from './ws.js';
+import { buildDistillationGenerator } from './distillation-generator.js';
 
 const logger = getLogger();
 
@@ -39,8 +40,8 @@ router.post('/memory/context', validate(memoryContextSchema), async (req: Reques
   if (!fabric) return handleFabricUnavailable(res);
   try {
     const { query, sessionId, agentId, limit, useWeights, episodicLimit, semanticLimit, graphDepth } = req.body;
-    const { OnnxEmbeddingProvider } = await import('@agentx/engine');
-    const embedder = new OnnxEmbeddingProvider();
+    const { LocalEmbeddingProvider } = await import('@agentx/engine');
+    const embedder = new LocalEmbeddingProvider();
     const embedding = req.body.embedding ?? await embedder.embed(query);
     const weighted = useWeights
       ? await fabric.searchWeighted(embedding, { limit, agentId })
@@ -363,8 +364,8 @@ router.post('/memory/re-embed', async (_req: Request, res: Response) => {
   const fabric = getFabric();
   if (!fabric) return handleFabricUnavailable(res);
   try {
-    const { OnnxEmbeddingProvider } = await import('@agentx/engine');
-    const embedder = new OnnxEmbeddingProvider();
+    const { LocalEmbeddingProvider } = await import('@agentx/engine');
+    const embedder = new LocalEmbeddingProvider();
     const result = await fabric.reEmbedAll(embedder);
     res.json(result);
   } catch (e) {
@@ -473,8 +474,8 @@ router.post('/memory/pipeline', async (req: Request, res: Response) => {
   if (!fabric) return handleFabricUnavailable(res);
   const { domainCluster } = req.body as Record<string, unknown>;
   try {
-    const { MemoryPipeline, MemoryConsolidator, DocumentIngester, OnnxEmbeddingProvider } = await import('@agentx/engine');
-    const embedder = new OnnxEmbeddingProvider();
+    const { MemoryPipeline, MemoryConsolidator, DocumentIngester, LocalEmbeddingProvider } = await import('@agentx/engine');
+    const embedder = new LocalEmbeddingProvider();
     const pipeline = new MemoryPipeline(fabric, {
       consolidator: new MemoryConsolidator(fabric),
       ingester: new DocumentIngester(fabric),
@@ -557,16 +558,19 @@ router.post('/memory/ingest-file', upload.single('file'), async (req: Request, r
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const { parsePdf } = await import('@agentx/engine');
-    const { OnnxEmbeddingProvider } = await import('@agentx/engine');
+    const { LocalEmbeddingProvider } = await import('@agentx/engine');
     const buffer = await readFile(req.file.path);
     const parsed = await parsePdf(buffer);
-    const ingester = new DocumentIngester(fabric);
-    const embedder = new OnnxEmbeddingProvider();
+    const generate = await buildDistillationGenerator();
+    const ingester = new DocumentIngester(fabric, generate ?? undefined);
+    const embedder = new LocalEmbeddingProvider();
     const result = await ingester.ingest({
       name: req.file.originalname || 'upload.pdf',
       kind: 'pdf',
       content: parsed.text,
       embed: (text) => embedder.embed(text),
+      maxEntitiesPerChunk: 50,
+      maxChunks: 200,
     });
     res.json({ ...result, pages: parsed.pages });
   } catch (e) {
@@ -679,14 +683,19 @@ router.post('/memory/documents', validate(documentIngestSchema), async (req: Req
   const fabric = getFabric();
   if (!fabric) return handleFabricUnavailable(res);
   try {
-    const ingester = new DocumentIngester(fabric);
-    const result = await ingester.ingest(req.body);
+    const generate = await buildDistillationGenerator();
+    const ingester = new DocumentIngester(fabric, generate ?? undefined);
+    const result = await ingester.ingest({
+      ...req.body,
+      maxEntitiesPerChunk: req.body.maxEntitiesPerChunk ?? 50,
+      maxChunks: req.body.maxChunks ?? 200,
+    });
     for (const n of result.nodes) {
       broadcastBrainActivity({
         type: 'neuron_created',
         nodeId: n.id,
         label: n.label,
-        category: 'source_doc',
+        category: (n.category as any) ?? 'source_doc',
         content: n.content,
         x: 0,
         y: 0,
@@ -699,8 +708,8 @@ router.post('/memory/documents', validate(documentIngestSchema), async (req: Req
         edgeId: e.id,
         sourceNodeId: e.sourceNodeId,
         targetNodeId: e.targetNodeId,
-        relationshipType: 'CONTAINS',
-        weight: 1.0,
+        relationshipType: e.relationshipType ?? 'CONTAINS',
+        weight: e.weight ?? 1.0,
         timestamp: new Date().toISOString(),
       });
     }

@@ -48,7 +48,8 @@ import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
 import { MemoryFabric } from '../neural/MemoryFabric.js';
-import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
+import { LocalEmbeddingProvider } from '../neural/LocalEmbeddingProvider.js';
+import type { EmbeddingProvider } from '../neural/LocalEmbeddingProvider.js';
 import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
@@ -243,7 +244,7 @@ export class Agent {
   private _neuralDb: any = null;
   private _pgPool: any = null;
   private _memoryFabric: MemoryFabric | null = null;
-  private _memoryEmbedder: OnnxEmbeddingProvider | null = null;
+  private _memoryEmbedder: EmbeddingProvider | null = null;
 
   // ─── Health & Budget Tracking
   private _llmCallCount = 0;
@@ -1096,9 +1097,9 @@ export class Agent {
     return this._memoryFabric;
   }
 
-  private get memoryEmbedder(): OnnxEmbeddingProvider | null {
+  private get memoryEmbedder(): EmbeddingProvider | null {
     if (!this._memoryEmbedder) {
-      this._memoryEmbedder = new OnnxEmbeddingProvider();
+      this._memoryEmbedder = new LocalEmbeddingProvider();
     }
     return this._memoryEmbedder;
   }

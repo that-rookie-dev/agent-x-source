@@ -3,6 +3,7 @@ import { generateMessageId, appendStreamText, extractStreamTextDelta, estimateTo
 
 interface PartRecord {
   type: string;
+  messageId?: string;
   content?: string;
   toolName?: string;
   toolCallId?: string;
@@ -200,6 +201,8 @@ export function createAiSdkStreamHandler(
     toolExecutions: [],
   };
 
+  const messageId = generateMessageId();
+
   const ctxWindow = contextWindow && contextWindow > 0 ? contextWindow : 128_000;
 
   const applyTokenDelta = (deltaIn: number, deltaOut: number) => {
@@ -273,7 +276,7 @@ export function createAiSdkStreamHandler(
   }
 
   function persist(part: PartRecord) {
-    onPart?.(sessionId, part);
+    onPart?.(sessionId, { ...part, messageId: part.messageId || messageId });
   }
 
    function handleEvent(event: any) {
@@ -339,7 +342,7 @@ export function createAiSdkStreamHandler(
         state.accumulatedContent = appendStreamText(state.accumulatedContent, delta);
         persist({ type: 'text-delta', content: delta, timestamp: Date.now() });
         emit({ type: 'stream_chunk', content: delta, fullContent: state.accumulatedContent });
-        onSessionEvent?.({ type: 'text_delta', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { content: delta, fullContent: state.accumulatedContent } });
+        onSessionEvent?.({ type: 'text_delta', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { content: delta } });
         emitStreamingTokenEstimate();
         break;
       }
@@ -489,7 +492,7 @@ export function createAiSdkStreamHandler(
         const finalContent = trimmedContent || 'I apologize, I was unable to generate a response.';
 
         const assistantMessage: Message = {
-          id: generateMessageId(),
+          id: messageId,
           sessionId,
           role: 'assistant',
           content: finalContent,

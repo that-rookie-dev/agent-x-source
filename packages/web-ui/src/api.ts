@@ -713,6 +713,7 @@ export interface AgentXConfig {
   user?: { callsign: string };
   setupComplete?: boolean;
   rag?: { enabled: boolean; embeddingModel: string; chunkSize: number; topK: number };
+  localModel?: { enabled?: boolean; modelId?: string; modelName?: string; displayName?: string };
   tools?: {
     webSearch?: {
       duckduckgo?: { enabled?: boolean };
@@ -1181,7 +1182,7 @@ export interface DbStatus {
 
 export const localModel = {
   capabilities: () =>
-    request<{ capabilities: any }>('/local-model/capabilities'),
+    request<{ capabilities: any; localModelSupported?: boolean }>('/local-model/capabilities'),
   catalog: () =>
     request<{ catalog: any; compatible: string[]; recommended: string | null }>('/local-model/catalog'),
   download: (modelId: string) =>
@@ -1191,12 +1192,16 @@ export const localModel = {
     }),
   downloadStatus: (modelId: string) =>
     request<{ status: string; progress?: number; error?: string }>(`/local-model/download-status/${modelId}`),
+  installed: () =>
+    request<{ models: Array<{ modelId: string; modelName: string; displayName?: string; downloadedAt: string; dtype?: string; isActive: boolean }> }>('/local-model/installed'),
+  activate: (modelId: string) =>
+    request<{ ok: boolean; modelId: string; message: string }>(`/local-model/activate/${modelId}`, { method: 'POST' }),
   delete: (modelId: string) =>
     request<{ ok: boolean; message: string }>(`/local-model/${modelId}`, { method: 'DELETE' }),
   switchToPrimary: () =>
     request<{ ok: boolean; message: string }>('/local-model/switch-to-primary', { method: 'POST' }),
   status: () =>
-    request<{ installed: string | null; enabled: boolean; model: { id: string; displayName: string; huggingFaceId: string; sizeGB: number; downloadedAt: string | null } | null }>(
+    request<{ installed: string | null; activeModelId: string | null; enabled: boolean; model: { id: string; displayName: string; huggingFaceId: string; sizeGB: number; downloadedAt: string | null } | null }>(
       '/local-model/status',
     ),
 };

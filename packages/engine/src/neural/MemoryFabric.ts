@@ -30,7 +30,28 @@ export type MemoryEdgeType =
   | 'RELATED_TO'
   | 'GENERATED_OUTPUT'
   | 'USING_TOOL'
-  | 'SHARED_INSIGHT';
+  | 'SHARED_INSIGHT'
+  | 'CAUSES'
+  | 'IS_A'
+  | 'PART_OF'
+  | 'HAS_PROPERTY'
+  | 'LOCATED_IN'
+  | 'OCCURRED_IN'
+  | 'MENTIONS'
+  | 'LEADS_TO'
+  | 'INFLUENCES'
+  | 'CONTRIBUTES_TO'
+  | 'RESULTS_IN'
+  | 'DESCRIBES'
+  | 'EXAMPLES'
+  | 'OPPOSES'
+  | 'SYNONYM'
+  | 'PRECEDES'
+  | 'FOLLOWS'
+  | 'PARENT_OF'
+  | 'DEPENDS_ON'
+  | 'MODIFIES'
+  | 'RESONATES_WITH';
 
 export interface MemoryNodeInput {
   id?: string;
@@ -820,7 +841,7 @@ export class MemoryFabric {
          AND n.status = 'active'
        ORDER BY n.embedding <=> $1::vector
        LIMIT 1`,
-      [embedding, 1 - threshold],
+      [`[${embedding.join(',')}]`, 1 - threshold],
     );
     return rows[0] ?? null;
   }
@@ -969,14 +990,60 @@ export class MemoryFabric {
     if (nodes.length === 0) return { epoch, count: 0, communities: 0 };
 
     const graph = new Graph();
+
+    // Group nodes by session so each session starts as its own local nebula.
+    const sessionGroups = new Map<string, MemoryNode[]>();
+    const noSessionNodes: MemoryNode[] = [];
     for (const n of nodes) {
+      if (n.sessionId) {
+        const group = sessionGroups.get(n.sessionId) ?? [];
+        group.push(n);
+        sessionGroups.set(n.sessionId, group);
+      } else {
+        noSessionNodes.push(n);
+      }
+    }
+
+    const sessionIds = Array.from(sessionGroups.keys());
+    const sessionRadius = 100;
+    const sessionAngleStep = sessionIds.length > 0 ? (2 * Math.PI) / sessionIds.length : 0;
+
+    for (let i = 0; i < sessionIds.length; i++) {
+      const sessionId = sessionIds[i]!;
+      const group = sessionGroups.get(sessionId);
+      if (!group) continue;
+      const centerX = Math.cos(i * sessionAngleStep) * sessionRadius;
+      const centerY = Math.sin(i * sessionAngleStep) * sessionRadius;
+      for (let j = 0; j < group.length; j++) {
+        const n = group[j];
+        if (!n) continue;
+        const angle = (j / Math.max(group.length, 1)) * 2 * Math.PI;
+        const radius = 15 + Math.random() * 25;
+        graph.addNode(n.id, {
+          label: n.label,
+          category: n.category,
+          sessionId: n.sessionId,
+          x: centerX + Math.cos(angle) * radius,
+          y: centerY + Math.sin(angle) * radius,
+        });
+      }
+    }
+
+    // Nodes without a session are scattered around the center.
+    for (let i = 0; i < noSessionNodes.length; i++) {
+      const n = noSessionNodes[i];
+      if (!n) continue;
+      const angle = (i / Math.max(noSessionNodes.length, 1)) * 2 * Math.PI;
+      const radius = 15 + Math.random() * 50;
       graph.addNode(n.id, {
         label: n.label,
         category: n.category,
-        x: n.x ?? 0,
-        y: n.y ?? 0,
+        sessionId: n.sessionId,
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius,
       });
     }
+
     for (const e of edges) {
       if (graph.hasNode(e.sourceNodeId) && graph.hasNode(e.targetNodeId)) {
         graph.addEdge(e.sourceNodeId, e.targetNodeId, { weight: e.weight });
@@ -988,13 +1055,14 @@ export class MemoryFabric {
     graph.forEachNode((_node: string, attrs: { community?: string | number }) => communities.add(String(attrs.community)));
 
     const positions = forceAtlas2(graph, {
-      iterations: 120,
+      iterations: 200,
       settings: {
-        gravity: 0.05,
-        scalingRatio: 2,
+        gravity: 0.15,
+        scalingRatio: 1.2,
         strongGravityMode: true,
-        slowDown: 2,
+        slowDown: 1.5,
         barnesHutOptimize: true,
+        adjustSizes: true,
       },
     });
 

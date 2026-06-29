@@ -8,22 +8,28 @@
  */
 export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
+  embedBatch?(texts: string[]): Promise<number[][]>;
 }
 
 export class LocalEmbeddingProvider implements EmbeddingProvider {
-  private readonly dim = 384;
+  readonly model = 'local-ngram';
+  readonly dimensions = 384;
   private readonly n = 3;
+
+  async embedBatch(texts: string[]): Promise<number[][]> {
+    return Promise.all(texts.map((text) => this.embed(text)));
+  }
 
   async embed(text: string): Promise<number[]> {
     const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim();
-    const vector = new Array(this.dim).fill(0);
+    const vector = new Array(this.dimensions).fill(0);
     if (normalized.length === 0) return vector;
 
     const chars = Array.from(normalized);
     const ngrams = new Map<number, number>();
     for (let i = 0; i <= chars.length - this.n; i++) {
       const gram = chars.slice(i, i + this.n).join('');
-      const idx = this.hash(gram) % this.dim;
+      const idx = this.hash(gram) % this.dimensions;
       ngrams.set(idx, (ngrams.get(idx) ?? 0) + 1);
     }
 

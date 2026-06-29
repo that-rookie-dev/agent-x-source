@@ -6,7 +6,9 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Alert from '@mui/material/Alert';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DownloadIcon from '@mui/icons-material/Download';
+import SaveIcon from '@mui/icons-material/Save';
 import CloudIcon from '@mui/icons-material/Cloud';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { localModel } from '../../api';
 import { colors } from '../../theme';
 import { DownloadIndicator, type ActiveDownload } from '../DownloadIndicator';
@@ -57,6 +59,7 @@ interface SystemCapabilities {
 
 interface LocalModelStatus {
   installed: string | null;
+  activeModelId: string | null;
   enabled: boolean;
   model: {
     id: string;
@@ -65,6 +68,15 @@ interface LocalModelStatus {
     sizeGB: number;
     downloadedAt: string | null;
   } | null;
+}
+
+interface InstalledModel {
+  modelId: string;
+  modelName: string;
+  displayName?: string;
+  downloadedAt: string;
+  dtype?: string;
+  isActive: boolean;
 }
 
 const cardSx = {
@@ -86,26 +98,32 @@ export function LocalModelTab() {
   const [status, setStatus] = useState<LocalModelStatus | null>(null);
   const [catalog, setCatalog] = useState<ModelCatalogResponse | null>(null);
   const [capabilities, setCapabilities] = useState<SystemCapabilities | null>(null);
+  const [installedModels, setInstalledModels] = useState<InstalledModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [localModelSupported, setLocalModelSupported] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [statusRes, catalogRes, capRes] = await Promise.all([
+      const [statusRes, catalogRes, capRes, installedRes] = await Promise.all([
         localModel.status(),
         localModel.catalog(),
         localModel.capabilities(),
+        localModel.installed(),
       ]);
       setStatus(statusRes);
       setCatalog(catalogRes);
       setCapabilities(capRes.capabilities);
-      setSelectedModelId(statusRes.installed ?? catalogRes.recommended ?? null);
+      setLocalModelSupported(capRes.localModelSupported !== false);
+      setInstalledModels(installedRes.models);
+      setSelectedModelId(statusRes.activeModelId ?? statusRes.installed ?? catalogRes.recommended ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load local model info');
     } finally {
@@ -113,7 +131,7 @@ export function LocalModelTab() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   const startDownload = (model: ModelOption) => {
     const download: ActiveDownload = {
@@ -137,7 +155,7 @@ export function LocalModelTab() {
           setActiveDownloads((prev) =>
             prev.map((d) => (d.modelId === model.id ? { ...d, status: 'complete', progress: 100 } : d)),
           );
-          load();
+          void load();
         } else if (s.status === 'error') {
           clearInterval(pollInterval);
           setActiveDownloads((prev) =>
@@ -160,16 +178,27 @@ export function LocalModelTab() {
     });
   };
 
-  const handleDelete = async () => {
-    if (!status?.installed) return;
-    setDeleting(true);
+  const handleDelete = async (modelId: string) => {
+    setDeleting(modelId);
     try {
-      await localModel.delete(status.installed);
+      await localModel.delete(modelId);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Delete failed');
     } finally {
-      setDeleting(false);
+      setDeleting(null);
+    }
+  };
+
+  const handleActivate = async (modelId: string) => {
+    setSaving(true);
+    try {
+      await localModel.activate(modelId);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to activate model');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -219,7 +248,28 @@ export function LocalModelTab() {
     );
   }
 
-  const isLocalEnabled = status?.enabled && status?.installed;
+  const activeModelId = status?.activeModelId ?? status?.installed ?? null;
+  const isLocalEnabled = status?.enabled && activeModelId;
+
+  if (!localModelSupported) {
+    return (
+      <Box sx={cardSx}>
+        <Alert
+          severity="info"
+          sx={{
+            bgcolor: colors.accent.blue + '12',
+            border: `1px solid ${colors.accent.blue}30`,
+            color: colors.text.secondary,
+            fontSize: '0.7rem',
+            '& .MuiAlert-icon': { color: colors.accent.blue },
+          }}
+        >
+          Local model is unavailable because this machine has less than 32 GB of RAM.
+          Agent-X will use the Primary Model for generation and memory features.
+        </Alert>
+      </Box>
+    );
+  }
 
   return (
     <Box>
@@ -235,47 +285,31 @@ export function LocalModelTab() {
             '& .MuiAlert-icon': { color: colors.accent.orange },
           }}
         >
-          No local model is enabled. Memory extraction, consolidation, and distillation will run against your primary cloud provider, which can add latency and cost. Download a local model below to keep these background tasks offline.
+          No local model is enabled. Memory extraction, consolidation, and distillation will run against your primary cloud provider, which can add latency and cost. Download or activate a local model below to keep these background tasks offline.
         </Alert>
       )}
 
       <Box sx={cardSx}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, color: colors.text.primary }}>
-            Current Local Model
+            Active Local Model
           </Typography>
           <DownloadIndicator downloads={activeDownloads} onClear={clearDownload} />
         </Box>
 
-        {status?.installed && status.model ? (
+        {activeModelId && status?.model ? (
           <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-              <Typography sx={{ fontSize: '0.75rem', color: colors.accent.green, fontWeight: 600 }}>● Installed</Typography>
+              <Typography sx={{ fontSize: '0.75rem', color: colors.accent.green, fontWeight: 600 }}>● Active</Typography>
               <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>
                 {status.model.displayName} · {status.model.sizeGB} GB
               </Typography>
             </Box>
             <Typography sx={helperSx}>ID: {status.model.huggingFaceId}</Typography>
             {status.model.downloadedAt && (
-              <Typography sx={helperSx}>Downloaded: {new Date(status.model.downloadedAt).toLocaleString()}</Typography>
+              <Typography sx={helperSx}>Activated: {new Date(status.model.downloadedAt).toLocaleString()}</Typography>
             )}
             <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<DeleteIcon />}
-                onClick={handleDelete}
-                disabled={deleting}
-                sx={{
-                  fontSize: '0.7rem',
-                  textTransform: 'none',
-                  borderColor: colors.accent.red + '50',
-                  color: colors.accent.red,
-                  '&:hover': { borderColor: colors.accent.red, bgcolor: colors.accent.red + '10' },
-                }}
-              >
-                {deleting ? 'Deleting…' : 'Delete Model'}
-              </Button>
               <Button
                 variant="outlined"
                 size="small"
@@ -296,14 +330,14 @@ export function LocalModelTab() {
           </Box>
         ) : (
           <Typography sx={{ fontSize: '0.75rem', color: colors.text.dim }}>
-            No local model is currently installed. Select a model below to download.
+            No local model is currently active. Select a downloaded model below and click Save to activate it, or download a new one.
           </Typography>
         )}
       </Box>
 
       <Box sx={cardSx}>
         <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, color: colors.text.primary, mb: 2 }}>
-          Download a Different Model
+          Manage Local Models
         </Typography>
 
         {catalog?.catalog && (
@@ -313,7 +347,9 @@ export function LocalModelTab() {
               .sort((a, b) => a.rank - b.rank)
               .map((model) => {
                 const canRun = canRunModel(model);
-                const isInstalled = status?.installed === model.id;
+                const installed = installedModels.find((m) => m.modelId === model.id);
+                const isInstalled = Boolean(installed);
+                const isActive = activeModelId === model.id;
                 const isSelected = selectedModelId === model.id;
                 const activeDownload = activeDownloads.find((d) => d.modelId === model.id);
                 const isRecommended = model.id === catalog.recommended;
@@ -343,8 +379,11 @@ export function LocalModelTab() {
                         </Typography>
                       </Box>
                       <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center' }}>
-                        {isInstalled && (
-                          <Typography sx={{ fontSize: '0.55rem', color: colors.accent.green, fontWeight: 600 }}>INSTALLED</Typography>
+                        {isActive && (
+                          <Typography sx={{ fontSize: '0.55rem', color: colors.accent.green, fontWeight: 600 }}>ACTIVE</Typography>
+                        )}
+                        {isInstalled && !isActive && (
+                          <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontWeight: 600 }}>INSTALLED</Typography>
                         )}
                         {isRecommended && !isInstalled && (
                           <Typography sx={{ fontSize: '0.55rem', fontWeight: 700, px: 0.6, py: 0.2, bgcolor: colors.accent.blue, color: '#000', borderRadius: '3px' }}>
@@ -382,10 +421,10 @@ export function LocalModelTab() {
                       </Typography>
                     )}
 
-                    {isSelected && canRun && !isInstalled && (
-                      <Box sx={{ mt: 1.5 }}>
+                    {isSelected && canRun && (
+                      <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
                         {activeDownload ? (
-                          <Box>
+                          <Box sx={{ flex: 1 }}>
                             <Box sx={{ height: 3, bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 1, mb: 0.5, overflow: 'hidden' }}>
                               <Box sx={{ height: '100%', bgcolor: colors.accent.blue, width: `${activeDownload.progress}%`, transition: 'width 0.3s' }} />
                             </Box>
@@ -394,22 +433,80 @@ export function LocalModelTab() {
                             </Typography>
                           </Box>
                         ) : (
-                          <Button
-                            variant="contained"
-                            size="small"
-                            startIcon={<DownloadIcon />}
-                            onClick={() => startDownload(model)}
-                            sx={{
-                              fontSize: '0.65rem',
-                              textTransform: 'none',
-                              bgcolor: colors.accent.blue,
-                              color: '#000',
-                              py: 0.5,
-                              minHeight: 28,
-                            }}
-                          >
-                            Download
-                          </Button>
+                          <>
+                            {isInstalled ? (
+                              <>
+                                <Button
+                                  variant="outlined"
+                                  size="small"
+                                  startIcon={<DeleteIcon />}
+                                  onClick={() => handleDelete(model.id)}
+                                  disabled={deleting === model.id}
+                                  sx={{
+                                    fontSize: '0.65rem',
+                                    textTransform: 'none',
+                                    borderColor: colors.accent.red + '50',
+                                    color: colors.accent.red,
+                                    '&:hover': { borderColor: colors.accent.red, bgcolor: colors.accent.red + '10' },
+                                  }}
+                                >
+                                  {deleting === model.id ? 'Deleting…' : 'Delete'}
+                                </Button>
+                                {!isActive && (
+                                  <Button
+                                    variant="contained"
+                                    size="small"
+                                    startIcon={saving ? <CircularProgress size={12} sx={{ color: '#000' }} /> : <SaveIcon />}
+                                    onClick={() => handleActivate(model.id)}
+                                    disabled={saving}
+                                    sx={{
+                                      fontSize: '0.65rem',
+                                      textTransform: 'none',
+                                      bgcolor: colors.accent.green,
+                                      color: '#000',
+                                      py: 0.5,
+                                      minHeight: 28,
+                                    }}
+                                  >
+                                    {saving ? 'Saving…' : 'Save as Active'}
+                                  </Button>
+                                )}
+                                {isActive && (
+                                  <Button
+                                    variant="outlined"
+                                    size="small"
+                                    startIcon={<CheckCircleIcon />}
+                                    disabled
+                                    sx={{
+                                      fontSize: '0.65rem',
+                                      textTransform: 'none',
+                                      borderColor: colors.accent.green + '50',
+                                      color: colors.accent.green,
+                                    }}
+                                  >
+                                    Active
+                                  </Button>
+                                )}
+                              </>
+                            ) : (
+                              <Button
+                                variant="contained"
+                                size="small"
+                                startIcon={<DownloadIcon />}
+                                onClick={() => startDownload(model)}
+                                sx={{
+                                  fontSize: '0.65rem',
+                                  textTransform: 'none',
+                                  bgcolor: colors.accent.blue,
+                                  color: '#000',
+                                  py: 0.5,
+                                  minHeight: 28,
+                                }}
+                              >
+                                Download
+                              </Button>
+                            )}
+                          </>
                         )}
                       </Box>
                     )}

@@ -1,13 +1,14 @@
 /**
  * Document / RAG ingestion pipeline for the unified memory fabric.
  *
- * Breaks documents into atomic nodes, embeds them using the provided
- * embedder, binds them into a source nebula, and creates a top-level source
- * document node. The web-neuron UI will display the resulting cluster with
- * the source color.
+ * Breaks documents into semantic TextUnits, extracts entities and facts from
+ * each chunk (GraphRAG-style), embeds them, binds them into a source nebula,
+ * and creates a top-level source document node. The web-neuron UI will display
+ * the resulting cluster with the source color.
  */
 import type { MemoryFabric } from './MemoryFabric.js';
 import { RagDocument } from './RagDocument.js';
+import { MemoryExtractor, type GenerateFn } from './MemoryExtractor.js';
 
 export interface DocumentIngestInput {
   name: string;
@@ -22,17 +23,27 @@ export interface DocumentIngestInput {
   /** Optional embedding generator. If provided, each chunk node stores an embedding. */
   embed?: (text: string) => Promise<number[]>;
   metadata?: { title?: string; author?: string; pageCount?: number };
+  /** Optional LLM generator for GraphRAG-style entity/fact extraction from chunks. */
+  generate?: GenerateFn;
+  /** Maximum entities/facts to extract per chunk. */
+  maxEntitiesPerChunk?: number;
+  /** Maximum number of chunks to process (useful for very long documents). */
+  maxChunks?: number;
 }
 
 export interface DocumentIngestResult {
   sourceId: string;
   sourceNodeId?: string;
-  nodes: Array<{ id: string; label: string; content: string }>;
-  edges: Array<{ id: string; sourceNodeId: string; targetNodeId: string }>;
+  nodes: Array<{ id: string; label: string; content: string; category?: string }>;
+  edges: Array<{ id: string; sourceNodeId: string; targetNodeId: string; relationshipType?: string; weight?: number }>;
 }
 
 export class DocumentIngester {
-  constructor(private fabric: MemoryFabric) {}
+  private extractor: MemoryExtractor | null;
+
+  constructor(private fabric: MemoryFabric, generate?: GenerateFn) {
+    this.extractor = generate ? new MemoryExtractor(generate) : null;
+  }
 
   async ingest(input: DocumentIngestInput): Promise<DocumentIngestResult> {
     const sourceColor = input.colorHex ?? this.randomColor();
@@ -50,19 +61,21 @@ export class DocumentIngester {
       preserveParagraphs: true,
     });
 
-    const chunks = doc.chunks();
-    const nodes: Array<{ id: string; label: string; content: string }> = [];
-    const edges: Array<{ id: string; sourceNodeId: string; targetNodeId: string }> = [];
+    const allChunks = doc.chunks();
+    const chunks = input.maxChunks ? allChunks.slice(0, input.maxChunks) : allChunks;
+    const nodes: DocumentIngestResult['nodes'] = [];
+    const edges: DocumentIngestResult['edges'] = [];
     let parentNodeId: string | null = null;
 
     const sourceNode = await this.fabric.createNode({
       label: input.metadata?.title ?? input.name,
       category: 'source_doc',
-      content: `# ${input.metadata?.title ?? input.name}\n\n${input.kind.toUpperCase()} source with ${chunks.length} chunks.`,
+      content: `# ${input.metadata?.title ?? input.name}\n\n${input.kind.toUpperCase()} source with ${chunks.length} of ${allChunks.length} chunks processed.`,
       sourceId: source.id,
       sessionId: input.sessionId,
       agentId: input.agentId,
     });
+    nodes.push({ id: sourceNode.id, label: sourceNode.label, content: sourceNode.content, category: sourceNode.category });
     const sourceNodeId = sourceNode.id;
 
     for (let i = 0; i < chunks.length; i++) {
@@ -85,27 +98,73 @@ export class DocumentIngester {
       if (embedding) {
         (nodeInput as any).embedding = embedding;
       }
-      const node = await this.fabric.createNode(nodeInput);
-      nodes.push({ id: node.id, label: node.label, content: node.content });
+      const chunkNode = await this.fabric.createNode(nodeInput);
+      nodes.push({ id: chunkNode.id, label: chunkNode.label, content: chunkNode.content, category: chunkNode.category });
 
       const sourceEdge = await this.fabric.bindEdge({
         sourceNodeId: sourceNodeId,
-        targetNodeId: node.id,
+        targetNodeId: chunkNode.id,
         relationshipType: 'CONTAINS',
         weight: 1.0,
       });
-      edges.push({ id: sourceEdge.id, sourceNodeId: sourceEdge.sourceNodeId, targetNodeId: sourceEdge.targetNodeId });
+      edges.push({ id: sourceEdge.id, sourceNodeId: sourceEdge.sourceNodeId, targetNodeId: sourceEdge.targetNodeId, relationshipType: sourceEdge.relationshipType, weight: sourceEdge.weight });
 
       if (parentNodeId) {
         const edge = await this.fabric.bindEdge({
           sourceNodeId: parentNodeId,
-          targetNodeId: node.id,
+          targetNodeId: chunkNode.id,
           relationshipType: 'NEXT_STEP',
           weight: 1.0,
         });
-        edges.push({ id: edge.id, sourceNodeId: edge.sourceNodeId, targetNodeId: edge.targetNodeId });
+        edges.push({ id: edge.id, sourceNodeId: edge.sourceNodeId, targetNodeId: edge.targetNodeId, relationshipType: edge.relationshipType, weight: edge.weight });
       }
-      parentNodeId = node.id;
+      parentNodeId = chunkNode.id;
+
+      // GraphRAG-style extraction: pull entities and facts out of each chunk.
+      if (this.extractor) {
+        try {
+          const extracted = await this.extractor.extract(chunk.content, {
+            category: 'semantic',
+            sourceId: source.id,
+            sessionId: input.sessionId,
+            agentId: input.agentId,
+            maxNodesPerChunk: input.maxEntitiesPerChunk ?? 20,
+            maxTokens: 2048,
+          });
+          const idMap = new Map<string, string>();
+          for (const n of extracted.nodes) {
+            const originalId = n.id;
+            // If an identical entity already exists in the brain, reuse it; otherwise create.
+            const entityNode = await this.fabric.createNode({
+              ...n,
+              sourceId: source.id,
+              sessionId: input.sessionId,
+              agentId: input.agentId,
+            });
+            nodes.push({ id: entityNode.id, label: entityNode.label, content: entityNode.content, category: entityNode.category });
+            if (originalId) {
+              idMap.set(originalId, entityNode.id);
+            }
+            // Link the extracted entity to the chunk it came from.
+            const entityEdge = await this.fabric.bindEdge({
+              sourceNodeId: chunkNode.id,
+              targetNodeId: entityNode.id,
+              relationshipType: 'DESCRIBES',
+              weight: 0.9,
+            });
+            edges.push({ id: entityEdge.id, sourceNodeId: entityEdge.sourceNodeId, targetNodeId: entityEdge.targetNodeId, relationshipType: entityEdge.relationshipType, weight: entityEdge.weight });
+          }
+          for (const e of extracted.edges) {
+            const sourceNodeId = idMap.get(e.sourceNodeId) ?? e.sourceNodeId;
+            const targetNodeId = idMap.get(e.targetNodeId) ?? e.targetNodeId;
+            if (sourceNodeId === targetNodeId) continue;
+            const edge = await this.fabric.bindEdge({ ...e, sourceNodeId, targetNodeId });
+            edges.push({ id: edge.id, sourceNodeId: edge.sourceNodeId, targetNodeId: edge.targetNodeId, relationshipType: edge.relationshipType, weight: edge.weight });
+          }
+        } catch {
+          // Best-effort extraction; ignore failures so the chunk itself is still stored.
+        }
+      }
     }
 
     return { sourceId: source.id, sourceNodeId, nodes, edges };

@@ -100,12 +100,22 @@ Return only a number: 0, 0.5, or 1.0. Answer with just the number.`;
     const modelName = this.options.modelName ?? cfg?.modelName ?? 'onnx-community/Qwen2.5-0.5B-Instruct';
     const cacheDir = cfg?.cacheDir;
     const dtype = (cfg?.dtype ?? 'q4') as 'q4' | 'q4f16' | 'fp32' | 'fp16' | 'int8';
+    const mem = process.memoryUsage?.();
+    if (mem && mem.rss > 1.5 * 1024 * 1024 * 1024) {
+      throw new Error('Local LLM judge load skipped: process RSS exceeds 1.5 GB');
+    }
     this.pending = pipeline('text-generation', modelName, {
       dtype,
       revision: 'main',
       cache_dir: cacheDir,
       // Disable WASM threading to avoid Electron path issues
       local_files_only: true,
+      session_options: {
+        intraOpNumThreads: 1,
+        interOpNumThreads: 1,
+        enableCpuMemArena: false,
+        enableMemPattern: false,
+      },
     }) as Promise<TextGenerationPipeline>;
     this.pipe = await this.pending;
     this.pending = null;

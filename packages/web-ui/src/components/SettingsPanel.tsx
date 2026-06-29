@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -21,10 +21,11 @@ import { PersonaConfigPanel } from './settings/PersonaConfigPanel';
 import { WebSearchToolsTab, mergeWebSearchConfig } from './settings/WebSearchToolsTab';
 import { LocalModelTab } from './settings/LocalModelTab';
 import { ProvidersPanel } from './ProvidersPanel';
+import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 
 type SettingsTab = 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model';
 
-const TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
+const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'general', label: 'General', icon: <PersonIcon sx={{ fontSize: 16 }} /> },
   { id: 'persona', label: 'Agent Persona', icon: <SmartToyIcon sx={{ fontSize: 16 }} /> },
   { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 16 }} /> },
@@ -52,6 +53,8 @@ const helperSx = {
 
 export function SettingsPanel() {
   const { config: appConfig, setConfig } = useApp();
+  const localModelSupported = useLocalModelSupported();
+  const tabs = useMemo(() => localModelSupported ? ALL_TABS : ALL_TABS.filter((t) => t.id !== 'local-model'), [localModelSupported]);
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [cfg, setCfg] = useState<AgentXConfig | null>(appConfig);
   const [persona, setPersona] = useState<AgentPersonaConfig | null>(null);
@@ -60,6 +63,13 @@ export function SettingsPanel() {
   const [message, setMessage] = useState('');
 
   useEffect(() => { config.get().then(setCfg).catch(() => {}); }, []);
+
+  // If the current tab is hidden because local model is unsupported, switch to General.
+  useEffect(() => {
+    if (!localModelSupported && activeTab === 'local-model') {
+      setActiveTab('general');
+    }
+  }, [localModelSupported, activeTab]);
 
   useEffect(() => {
     if (activeTab === 'persona' && !persona) {
@@ -112,7 +122,7 @@ export function SettingsPanel() {
       />
 
       <Box sx={{ flexShrink: 0, display: 'flex', borderBottom: `1px solid ${crewTheme.border.default}`, px: 4, bgcolor: crewTheme.bg.panel }}>
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <Button key={tab.id} onClick={() => setActiveTab(tab.id)}
             sx={{
               display: 'flex', alignItems: 'center', gap: 0.75, px: 2.5, py: 1.25,

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import { MemoryFabric } from '../src/neural/MemoryFabric.js';
+import { DocumentIngester } from '../src/neural/DocumentIngester.js';
 
 const connectionString = process.env.AGENTX_TEST_PG ?? 'postgresql://agentx:agentx@127.0.0.1:3335/agentx';
 
@@ -36,9 +37,17 @@ describe.runIf(await isPgAvailable() && await hasPgVector())('MemoryFabric', () 
     pool = new Pool({ connectionString, max: 2 });
     fabric = new MemoryFabric(pool);
     await fabric.migrate();
+    // Clean up any leftover nodes/edges from previous runs so tests are isolated.
+    await pool.query('TRUNCATE memory_edges, memory_nodes, neuron_activity CASCADE');
   });
 
   afterAll(async () => {
+    // Remove all test nodes/edges created by this suite so they do not appear in the user's brain.
+    try {
+      await pool.query('TRUNCATE memory_edges, memory_nodes, neuron_activity CASCADE');
+    } catch {
+      // Ignore cleanup errors if the tables were already dropped.
+    }
     await pool.end();
   });
 
@@ -91,5 +100,56 @@ describe.runIf(await isPgAvailable() && await hasPgVector())('MemoryFabric', () 
     const results = await fabric.vectorSearch(embedding, { limit: 5 });
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].label).toBe('Vector match test');
+  });
+
+  it('finds duplicate by vector similarity without raw-array syntax error', async () => {
+    const embedding = Array.from({ length: 384 }, (_, i) => (i === 2 ? 1.0 : 0.0));
+    const node = await fabric.createNode({
+      label: 'Duplicate vector test',
+      category: 'semantic',
+      content: 'Testing duplicate vector detection.',
+      embedding,
+    });
+
+    // Should not throw a pgvector syntax error and should return the same node
+    const duplicate = await fabric.findDuplicate(embedding, 0.95, 'semantic');
+    expect(duplicate).not.toBeNull();
+    expect(duplicate?.id).toBe(node.id);
+  });
+
+  it('ingests a document and extracts semantic entities from chunks', async () => {
+    const generate = async () => JSON.stringify({
+      nodes: [
+        { id: 'e1', label: 'Chicxulub Impact', category: 'semantic', content: 'Asteroid strike 66 million years ago', confidence: 0.9 },
+        { id: 'e2', label: 'K-Pg Extinction', category: 'semantic', content: 'Mass extinction ending dinosaurs', confidence: 0.9 },
+      ],
+      edges: [
+        { sourceNodeId: 'e1', targetNodeId: 'e2', relationshipType: 'CAUSES', weight: 0.95 },
+      ],
+    });
+
+    const ingester = new DocumentIngester(fabric, generate);
+    // Use markdown headings so the chunker splits into multiple units.
+    const sections = Array.from({ length: 10 }, (_, i) => `## Section ${i + 1}\n\nThe Chicxulub impact caused the K-Pg extinction event. The asteroid struck the Yucatan Peninsula and released enormous energy.`);
+    const text = sections.join('\n\n');
+
+    const result = await ingester.ingest({
+      name: 'extinction-doc',
+      kind: 'text',
+      content: text,
+      chunkSize: 500,
+      chunkOverlap: 50,
+      maxEntitiesPerChunk: 10,
+    });
+
+    // Should create at least one chunk node plus extracted entities.
+    expect(result.nodes.length).toBeGreaterThan(1);
+    const labels = result.nodes.map((n) => n.label);
+    expect(labels.some((l) => /Chicxulub/i.test(l))).toBe(true);
+    expect(labels.some((l) => /K-Pg/i.test(l))).toBe(true);
+
+    // Should have edges between chunk nodes and extracted entities, plus semantic edges.
+    expect(result.edges.length).toBeGreaterThan(0);
+    expect(result.edges.some((e) => e.relationshipType === 'CAUSES')).toBe(true);
   });
 });

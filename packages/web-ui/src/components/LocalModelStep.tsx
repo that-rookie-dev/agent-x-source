@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { CapabilityIcon } from './CapabilityIcon';
 import { DownloadIndicator, type ActiveDownload } from './DownloadIndicator';
 import { localModel } from '../api';
@@ -57,11 +58,21 @@ interface LocalModelStepProps {
   onStartDownload: (download: ActiveDownload) => void;
   onUpdateDownload: (modelId: string, updates: Partial<ActiveDownload>) => void;
   onClearDownload: (modelId: string) => void;
+  onInstalledModelsChange?: (models: InstalledModel[]) => void;
   activeDownloads: ActiveDownload[];
 }
 
 interface CapabilitiesResponse {
   capabilities: SystemCapabilities;
+}
+
+interface InstalledModel {
+  modelId: string;
+  modelName: string;
+  displayName?: string;
+  downloadedAt: string;
+  dtype?: string;
+  isActive: boolean;
 }
 
 const baseStyles: Record<string, React.CSSProperties> = {
@@ -210,11 +221,24 @@ export function LocalModelStep({
   onStartDownload,
   onUpdateDownload,
   onClearDownload,
+  onInstalledModelsChange,
   activeDownloads,
 }: LocalModelStepProps) {
   const [systemCapabilities, setSystemCapabilities] = useState<SystemCapabilities | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogResponse | null>(null);
+  const [installedModels, setInstalledModels] = useState<InstalledModel[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const loadInstalled = useCallback(async () => {
+    try {
+      const res = await localModel.installed();
+      setInstalledModels(res.models);
+      onInstalledModelsChange?.(res.models);
+    } catch {
+      // Non-fatal: installed check is optional for the wizard
+    }
+  }, [onInstalledModelsChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,6 +253,7 @@ export function LocalModelStep({
         }
       }
     }).catch(() => setError('Failed to load model catalog.'));
+    void loadInstalled();
     return () => { cancelled = true; };
   }, []);
 
@@ -253,7 +278,7 @@ export function LocalModelStep({
           clearInterval(pollInterval);
           onUpdateDownload(model.id, { status: 'error', error: status.error || 'Download failed' });
         }
-      } catch (e) {
+      } catch {
         clearInterval(pollInterval);
         onUpdateDownload(model.id, { status: 'error', error: 'Failed to check download status' });
       }
@@ -261,9 +286,22 @@ export function LocalModelStep({
 
     try {
       await localModel.download(model.id);
+      await loadInstalled();
     } catch (e) {
       clearInterval(pollInterval);
       onUpdateDownload(model.id, { status: 'error', error: e instanceof Error ? e.message : 'Download failed' });
+    }
+  };
+
+  const deleteModel = async (modelId: string) => {
+    setDeleting(modelId);
+    try {
+      await localModel.delete(modelId);
+      await loadInstalled();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDeleting(null);
     }
   };
 
@@ -335,6 +373,8 @@ export function LocalModelStep({
               );
               const isRecommended = model.id === modelCatalog.recommended;
               const isSelected = selectedModel === model.id;
+              const installed = installedModels.find(m => m.modelId === model.id);
+              const isInstalled = Boolean(installed);
               const activeDownload = activeDownloads.find(d => d.modelId === model.id);
               const status = activeDownload ? activeDownload.status : 'idle';
               const progress = activeDownload ? activeDownload.progress : 0;
@@ -353,19 +393,34 @@ export function LocalModelStep({
                     <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, lineHeight: 1.2 }}>
                       {model.displayName}
                     </Typography>
-                    {isRecommended && (
-                      <Typography sx={{
-                        fontSize: '0.5rem',
-                        fontWeight: 700,
-                        px: 0.6,
-                        py: 0.2,
-                        bgcolor: '#4da6ff',
-                        color: '#000',
-                        borderRadius: '3px',
-                      }}>
-                        BEST
-                      </Typography>
-                    )}
+                    <Box sx={{ display: 'flex', gap: 0.5 }}>
+                      {isInstalled && (
+                        <Typography sx={{
+                          fontSize: '0.5rem',
+                          fontWeight: 700,
+                          px: 0.6,
+                          py: 0.2,
+                          bgcolor: '#4dff88',
+                          color: '#000',
+                          borderRadius: '3px',
+                        }}>
+                          INSTALLED
+                        </Typography>
+                      )}
+                      {isRecommended && !isInstalled && (
+                        <Typography sx={{
+                          fontSize: '0.5rem',
+                          fontWeight: 700,
+                          px: 0.6,
+                          py: 0.2,
+                          bgcolor: '#4da6ff',
+                          color: '#000',
+                          borderRadius: '3px',
+                        }}>
+                          BEST
+                        </Typography>
+                      )}
+                    </Box>
                   </Box>
 
                   <Box sx={{ display: 'flex', gap: 0.6, flexWrap: 'wrap' }}>
@@ -422,25 +477,6 @@ export function LocalModelStep({
 
                   {isSelected && canRun && (
                     <Box sx={{ mt: 'auto' }}>
-                      {status === 'idle' && (
-                        <Button
-                          variant="contained"
-                          size="small"
-                          fullWidth
-                          onClick={() => downloadModel(model)}
-                          sx={{
-                            fontSize: '0.6rem',
-                            fontFamily: '"JetBrains Mono", monospace',
-                            textTransform: 'none',
-                            bgcolor: '#4da6ff',
-                            color: '#000',
-                            py: 0.5,
-                            minHeight: 28,
-                          }}
-                        >
-                          Download
-                        </Button>
-                      )}
                       {status === 'downloading' && (
                         <Box>
                           <Box sx={{ height: 3, bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 1, mb: 0.5, overflow: 'hidden' }}>
@@ -479,6 +515,49 @@ export function LocalModelStep({
                             Retry
                           </Button>
                         </Box>
+                      )}
+                      {status === 'idle' && (
+                        <>
+                          {isInstalled ? (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              fullWidth
+                              startIcon={<DeleteIcon />}
+                              onClick={() => deleteModel(model.id)}
+                              disabled={deleting === model.id}
+                              sx={{
+                                fontSize: '0.6rem',
+                                fontFamily: '"JetBrains Mono", monospace',
+                                textTransform: 'none',
+                                color: '#ff6b6b',
+                                border: '1px solid #ff6b6b',
+                                py: 0.5,
+                                minHeight: 28,
+                              }}
+                            >
+                              {deleting === model.id ? 'Deleting…' : 'Delete'}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="contained"
+                              size="small"
+                              fullWidth
+                              onClick={() => downloadModel(model)}
+                              sx={{
+                                fontSize: '0.6rem',
+                                fontFamily: '"JetBrains Mono", monospace',
+                                textTransform: 'none',
+                                bgcolor: '#4da6ff',
+                                color: '#000',
+                                py: 0.5,
+                                minHeight: 28,
+                              }}
+                            >
+                              Download
+                            </Button>
+                          )}
+                        </>
                       )}
                     </Box>
                   )}

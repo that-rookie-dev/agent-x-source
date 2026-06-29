@@ -26,6 +26,12 @@ async function main() {
       dtype: DTYPE,
       revision: 'main',
       cache_dir: packageModelsDir,
+      session_options: {
+        intraOpNumThreads: 1,
+        interOpNumThreads: 1,
+        enableCpuMemArena: false,
+        enableMemPattern: false,
+      },
     });
   } else {
     console.log(`Embedding model ${MODEL_ID} already present.`);

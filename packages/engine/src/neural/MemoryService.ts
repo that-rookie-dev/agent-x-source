@@ -58,14 +58,25 @@ export class MemoryService {
         agentId: input.agentId,
         sourceId: input.sourceId,
         category: input.category,
+        maxNodesPerChunk: 50,
+        maxTokens: 2048,
       });
 
+      // Map extracted node IDs to actual persisted node IDs (deduplication may reuse an existing node).
+      const idMap = new Map<string, string>();
       for (const n of extracted.nodes) {
+        const originalId = n.id;
         const node = await this.createNode(n, input.embed ?? false);
         nodes.push(node);
+        if (originalId) {
+          idMap.set(originalId, node.id);
+        }
       }
+
       for (const e of extracted.edges) {
-        const edge = await this.fabric.bindEdge(e);
+        const sourceNodeId = idMap.get(e.sourceNodeId) ?? e.sourceNodeId;
+        const targetNodeId = idMap.get(e.targetNodeId) ?? e.targetNodeId;
+        const edge = await this.fabric.bindEdge({ ...e, sourceNodeId, targetNodeId });
         edges.push(edge);
       }
     } else {

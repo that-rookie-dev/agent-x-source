@@ -223,7 +223,11 @@ export const mcpServerSchema = z.object({
 // ─── Memory fabric schemas ──────────────────────────────────────
 
 export const memoryNodeCategorySchema = z.enum(['persona', 'tool', 'episodic', 'semantic', 'source_doc', 'system']);
-export const memoryEdgeTypeSchema = z.enum(['CONTAINS', 'REFERENCES', 'NEXT_STEP', 'REQUIRES', 'RELATED_TO', 'GENERATED_OUTPUT', 'USING_TOOL', 'SHARED_INSIGHT']);
+export const memoryEdgeTypeSchema = z.enum([
+  'CONTAINS', 'REFERENCES', 'NEXT_STEP', 'REQUIRES', 'RELATED_TO', 'GENERATED_OUTPUT', 'USING_TOOL', 'SHARED_INSIGHT',
+  'CAUSES', 'IS_A', 'PART_OF', 'HAS_PROPERTY', 'LOCATED_IN', 'OCCURRED_IN', 'MENTIONS', 'LEADS_TO', 'INFLUENCES',
+  'CONTRIBUTES_TO', 'RESULTS_IN', 'DESCRIBES', 'EXAMPLES', 'OPPOSES', 'SYNONYM', 'PRECEDES', 'FOLLOWS',
+]);
 
 export const memoryNodeCreateSchema = z.object({
   id: z.string().uuid().optional(),
@@ -290,6 +294,8 @@ export const documentIngestSchema = z.object({
   agentId: z.string().optional(),
   chunkSize: z.number().int().min(100).max(5000).optional(),
   chunkOverlap: z.number().int().min(0).max(1000).optional(),
+  maxEntitiesPerChunk: z.number().int().min(1).max(100).optional(),
+  maxChunks: z.number().int().min(1).max(200).optional(),
 });
 
 export const benchmarkRunSchema = z.object({

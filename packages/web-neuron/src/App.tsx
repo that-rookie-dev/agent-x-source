@@ -1,50 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import ForceGraph3D from '3d-force-graph';
 import { api, type SessionInfo } from './api.ts';
-import { neuronTheme } from './theme.ts';
-
-const CATEGORY_COLORS: Record<string, string> = {
-  persona: '#ff4d4d',
-  tool: '#4da6ff',
-  episodic: '#ffd24d',
-  semantic: '#4dff88',
-  source_doc: '#d24dff',
-  system: '#ffffff',
-};
-
-const CATEGORY_NAMES: Record<string, string> = {
-  persona: 'Persona',
-  tool: 'Tool',
-  episodic: 'Episodic',
-  semantic: 'Semantic',
-  source_doc: 'Source Doc',
-  system: 'System',
-};
+import {
+  BASE_NODE_SIZE,
+  FIRED_SIZE,
+  resolvePosition,
+  type EdgeEntry,
+  type NodeEntry,
+  type RenderEdge,
+  type RenderNode,
+  type GraphRenderer,
+  type RendererId,
+} from './renderers/types.ts';
+import { CATEGORY_COLORS, CATEGORY_NAMES, NEON } from './renderers/palette.ts';
+import {
+  createRenderer,
+  listRenderers,
+  resolveRendererId,
+  DEFAULT_RENDERER_ID,
+  type RendererDescriptor,
+} from './renderers/index.ts';
+import { getCapabilities, type CapabilityReport } from './renderers/capability.ts';
+import { RendererSwitcher, FOOTER_HEIGHT } from './components/RendererSwitcher.tsx';
 
 const WS_URL = (import.meta.env.VITE_API_WS_URL as string) || `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
 
-interface NodeEntry {
-  id: string;
-  label: string;
-  category: string;
-  content: string;
-  sourceId: string | null;
-  sessionId: string | null;
-  x: number | undefined;
-  y: number | undefined;
-  z: number | undefined;
-  baseColor: string;
-  baseSize: number;
-}
-
-interface EdgeEntry {
-  id: string;
-  sourceNodeId: string;
-  targetNodeId: string;
-  weight: number;
-  baseColor: string;
-  baseWidth: number;
-}
+const PANEL_WIDTH = 300;
+const LS_RENDERER_KEY = 'agx:renderer';
 
 type BrainActivityEvent =
   | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; x: number | null; y: number | null; timestamp: string }
@@ -96,47 +77,41 @@ function useWebSocket(onEvent: (event: BrainActivityEvent) => void) {
   }, []);
 }
 
-const SPACE_SIZE = 4096;
-const LAYOUT_SCALE = 200;
-
-function resolvePosition(x: number | null | undefined, y: number | null | undefined): { x: number; y: number; z: number } {
-  if (x == null || y == null || (x === 0 && y === 0)) {
-    return {
-      x: (Math.random() - 0.5) * SPACE_SIZE * 0.5,
-      y: (Math.random() - 0.5) * SPACE_SIZE * 0.5,
-      z: (Math.random() - 0.5) * SPACE_SIZE * 0.5,
-    };
-  }
-  return {
-    x: x * LAYOUT_SCALE + SPACE_SIZE / 2,
-    y: y * LAYOUT_SCALE + SPACE_SIZE / 2,
-    z: 0,
-  };
-}
-
-const BASE_NODE_SIZE = 2;
-const FIRED_SIZE = 5;
-
 export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const graphRef = useRef<any>(null);
+  const rendererRef = useRef<GraphRenderer | null>(null);
 
   const nodesRef = useRef<NodeEntry[]>([]);
   const edgesRef = useRef<EdgeEntry[]>([]);
   const idToNodeRef = useRef<Map<string, NodeEntry>>(new Map());
   const nodeSizeMapRef = useRef<Map<string, number>>(new Map());
   const nodeColorMapRef = useRef<Map<string, string>>(new Map());
+  const edgeColorMapRef = useRef<Map<string, string>>(new Map());
+  const edgeWidthMapRef = useRef<Map<string, number>>(new Map());
 
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [booting, setBooting] = useState(true);
+  const [fps, setFps] = useState(60);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
+  const [nodeListOpen, setNodeListOpen] = useState(true);
   const [stats, setStats] = useState({ nodes: 0, edges: 0 });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dbStatus, setDbStatus] = useState({ connected: false });
   const [distillationStatus, setDistillationStatus] = useState<{ sessionId: string | null; status: 'idle' | 'processing' | 'complete' | 'error'; message?: string; nodesCreated?: number; edgesCreated?: number }>({ sessionId: null, status: 'idle' });
+
+  // --- Renderer state -----------------------------------------------------
+  const [caps, setCaps] = useState<CapabilityReport>(() => getCapabilities());
+  const [rendererList, setRendererList] = useState<RendererDescriptor[]>(() => listRenderers(caps));
+  const [activeRendererId, setActiveRendererId] = useState<RendererId>(() => {
+    const saved = typeof localStorage !== 'undefined'
+      ? (localStorage.getItem(LS_RENDERER_KEY) as RendererId | null)
+      : null;
+    return resolveRendererId(saved, caps);
+  });
 
   const categories = useMemo(() => {
     const counts = new Map<string, number>();
@@ -161,9 +136,12 @@ export default function App() {
     return s?.title || `Session ${selectedSessionId.slice(0, 8)}`;
   }, [selectedSessionId, sessions]);
 
-  const syncToGraph = () => {
-    const g = graphRef.current;
-    if (!g) return;
+  // Build render-ready data from the current node/edge refs + override maps,
+  // then hand it to the active renderer. Each renderer decides whether to
+  // apply immediately (force3d) or debounce (Cosmograph).
+  const syncToRenderer = () => {
+    const r = rendererRef.current;
+    if (!r) return;
 
     const visibleNodes = selectedSessionId == null && selectedCluster == null
       ? nodesRef.current
@@ -178,27 +156,26 @@ export default function App() {
       visibleNodeIds.has(e.sourceNodeId) && visibleNodeIds.has(e.targetNodeId)
     );
 
-    const graphData = {
-      nodes: visibleNodes.map((n) => ({
-        id: n.id,
-        label: n.label,
-        category: n.category,
-        x: n.x,
-        y: n.y,
-        z: n.z,
-        val: nodeSizeMapRef.current.get(n.id) ?? BASE_NODE_SIZE,
-        color: nodeColorMapRef.current.get(n.id) ?? n.baseColor,
-      })),
-      links: visibleEdges.map((e) => ({
-        id: e.id,
-        source: e.sourceNodeId,
-        target: e.targetNodeId,
-        val: e.baseWidth,
-        color: e.baseColor,
-      })),
-    };
+    const renderNodes: RenderNode[] = visibleNodes.map((n) => ({
+      id: n.id,
+      label: n.label,
+      category: n.category,
+      x: n.x,
+      y: n.y,
+      z: n.z,
+      color: nodeColorMapRef.current.get(n.id) ?? n.baseColor,
+      size: nodeSizeMapRef.current.get(n.id) ?? n.baseSize,
+    }));
 
-    g.graphData(graphData);
+    const renderEdges: RenderEdge[] = visibleEdges.map((e) => ({
+      id: e.id,
+      source: e.sourceNodeId,
+      target: e.targetNodeId,
+      color: edgeColorMapRef.current.get(e.id) ?? e.baseColor,
+      width: edgeWidthMapRef.current.get(e.id) ?? e.baseWidth,
+    }));
+
+    r.setData(renderNodes, renderEdges);
   };
 
   const addNode = (node: Partial<NodeEntry> & { id: string; label: string; category: string; content: string } | any) => {
@@ -221,7 +198,7 @@ export default function App() {
     nodeSizeMapRef.current.set(newNode.id, BASE_NODE_SIZE);
     nodeColorMapRef.current.set(newNode.id, newNode.baseColor);
     setStats((prev) => ({ nodes: prev.nodes + 1, edges: prev.edges }));
-    syncToGraph();
+    syncToRenderer();
   };
 
   const addEdge = (edge: Partial<EdgeEntry> & { id: string; sourceNodeId: string; targetNodeId: string }) => {
@@ -230,38 +207,57 @@ export default function App() {
       sourceNodeId: edge.sourceNodeId,
       targetNodeId: edge.targetNodeId,
       weight: edge.weight ?? 0.5,
-      baseColor: '#444444',
-      baseWidth: (edge.weight ?? 0.5) * 2,
+      baseColor: NEON.edge,
+      baseWidth: Math.max(0.8, (edge.weight ?? 0.5) * 3),
     };
     edgesRef.current.push(newEdge);
+    edgeColorMapRef.current.set(newEdge.id, newEdge.baseColor);
+    edgeWidthMapRef.current.set(newEdge.id, newEdge.baseWidth);
     setStats((prev) => ({ nodes: prev.nodes, edges: prev.edges + 1 }));
-    syncToGraph();
+    syncToRenderer();
+  };
+
+  const updateEdgeColor = (edgeId: string, color: string) => {
+    edgeColorMapRef.current.set(edgeId, color);
+    syncToRenderer();
+  };
+
+  const updateEdgeWidth = (edgeId: string, width: number) => {
+    edgeWidthMapRef.current.set(edgeId, width);
+    syncToRenderer();
+  };
+
+  const flashEdge = (edgeId: string) => {
+    const edge = edgesRef.current.find(e => e.id === edgeId);
+    if (!edge) return;
+
+    // Lightning flash: bright cyan with increased width, then fade back.
+    updateEdgeColor(edgeId, NEON.brightCyan);
+    updateEdgeWidth(edgeId, edge.baseWidth * 3);
+    rendererRef.current?.emitParticle(edgeId);
+
+    setTimeout(() => {
+      updateEdgeColor(edgeId, edge.baseColor);
+      updateEdgeWidth(edgeId, edge.baseWidth);
+    }, 400);
   };
 
   const updateNodeSize = (nodeId: string, size: number) => {
     nodeSizeMapRef.current.set(nodeId, size);
-    syncToGraph();
+    syncToRenderer();
   };
 
   const updateNodeColor = (nodeId: string, color: string) => {
     nodeColorMapRef.current.set(nodeId, color);
-    syncToGraph();
+    syncToRenderer();
   };
 
   const fitToAll = () => {
-    const g = graphRef.current;
-    if (!g) return;
-    g.zoomToFit();
+    rendererRef.current?.fitToAll();
   };
 
   const focusNode = (nodeId: string) => {
-    const g = graphRef.current;
-    if (!g) return;
-    const node = idToNodeRef.current.get(nodeId);
-    if (!node) return;
-    setFocusedNodeId(nodeId);
-    // Center camera on the node
-    g.cameraPosition({ x: node.x, y: node.y, z: node.z }, node);
+    rendererRef.current?.focusNode(nodeId);
   };
 
   const backToSession = () => {
@@ -269,20 +265,17 @@ export default function App() {
     if (selectedSessionId != null) {
       const sessionNodes = nodesRef.current.filter((n) => n.sessionId === selectedSessionId);
       if (sessionNodes.length > 0) {
-        const g = graphRef.current;
-        if (!g) return;
-        g.zoomToFit(400);
+        fitToAll();
       }
     } else {
       fitToAll();
     }
   };
 
-  const closeSessionCard = () => {
-    setSelectedSessionId(null);
+  // Closes only the bottom node-list panel (keeps the session selected).
+  const closeNodeList = () => {
+    setNodeListOpen(false);
     setFocusedNodeId(null);
-    setExpandedNodeIds(new Set());
-    fitToAll();
   };
 
   const selectSession = (sessionId: string | null) => {
@@ -290,7 +283,8 @@ export default function App() {
     setSelectedCluster(null);
     setFocusedNodeId(null);
     setExpandedNodeIds(new Set());
-    syncToGraph();
+    setNodeListOpen(sessionId != null);
+    syncToRenderer();
     if (sessionId == null) {
       fitToAll();
     } else {
@@ -303,7 +297,7 @@ export default function App() {
     setSelectedSessionId(null);
     setFocusedNodeId(null);
     setExpandedNodeIds(new Set());
-    syncToGraph();
+    syncToRenderer();
     if (category == null) {
       fitToAll();
     } else {
@@ -318,6 +312,27 @@ export default function App() {
       else next.add(nodeId);
       return next;
     });
+  };
+
+  // --- Renderer switching -------------------------------------------------
+
+  const handleSelectRenderer = (id: RendererId) => {
+    if (id === activeRendererId) return;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(LS_RENDERER_KEY, id);
+    }
+    setActiveRendererId(id);
+  };
+
+  const handleCapsChanged = (next: CapabilityReport) => {
+    setCaps(next);
+    const list = listRenderers(next);
+    setRendererList(list);
+    // If the active renderer is no longer available, fall back to default.
+    const stillAvailable = list.find((r) => r.id === activeRendererId)?.available;
+    if (!stillAvailable) {
+      setActiveRendererId(DEFAULT_RENDERER_ID);
+    }
   };
 
   // Initial load
@@ -359,16 +374,21 @@ export default function App() {
             sourceNodeId: e.sourceNodeId,
             targetNodeId: e.targetNodeId,
             weight: e.weight,
-            baseColor: '#444444',
-            baseWidth: e.weight * 2,
+            baseColor: NEON.edge,
+            baseWidth: Math.max(0.8, e.weight * 3),
           };
           edgesRef.current.push(edge);
+          edgeColorMapRef.current.set(edge.id, edge.baseColor);
+          edgeWidthMapRef.current.set(edge.id, edge.baseWidth);
         }
         setStats({ nodes: g.nodes.length, edges: g.edges.length });
-        // Sync to graph after initial load
-        setTimeout(() => syncToGraph(), 100);
+        // Sync to graph after initial load and fit camera so clusters are visible.
+        setTimeout(() => {
+          syncToRenderer();
+          fitToAll();
+        }, 100);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load');
+        setError(err instanceof Error ? err.message : 'Failed to load neural data');
         setLoading(false);
       }
     };
@@ -393,7 +413,7 @@ export default function App() {
               node.z = pos.z;
             }
           }
-          syncToGraph();
+          syncToRenderer();
         }
       } catch (e) {
         // Ignore errors during polling
@@ -404,6 +424,77 @@ export default function App() {
 
   // WebSocket event handling
   useWebSocket((event) => {
+    // Handle new Neural Brain event format
+    if ('event' in event && typeof event.event === 'string') {
+      if (event.event === 'NODE_CREATED' && 'node_id' in event && 'label' in event) {
+        // Particle effect: scale from 0 to full size with opacity pulse
+        const nodeId = (event as any).node_id;
+        const label = (event as any).label;
+        const type = (event as any).type || 'concept';
+        const content = (event as any).content || '';
+        const clusterId = (event as any).cluster_id || null;
+        const x = (event as any).x;
+        const y = (event as any).y;
+        const sourceColor = (event as any).sourceColor;
+        const color = sourceColor || CATEGORY_COLORS[type.toLowerCase()] || '#ffffff';
+
+        addNode({
+          id: nodeId,
+          label,
+          category: type.toLowerCase(),
+          content,
+          sourceId: null,
+          sessionId: clusterId,
+          x: x || undefined,
+          y: y || undefined,
+        });
+        // Animate birth: pulse from 0 to full size
+        updateNodeSize(nodeId, 0);
+        updateNodeColor(nodeId, color);
+        setTimeout(() => updateNodeSize(nodeId, BASE_NODE_SIZE * 1.5), 50);
+        setTimeout(() => updateNodeSize(nodeId, BASE_NODE_SIZE), 300);
+      } else if (event.event === 'SYNAPSE_CONNECTED' && 'source_id' in event && 'target_id' in event) {
+        // Lightning-bolt effect: flash the edge
+        const sourceId = (event as any).source_id;
+        const targetId = (event as any).target_id;
+        const edgeType = (event as any).edge_type || 'RELATED_TO';
+        const weight = (event as any).weight || 0.5;
+        const edgeId = `${sourceId}-${targetId}-${edgeType}`;
+
+        addEdge({
+          id: edgeId,
+          sourceNodeId: sourceId,
+          targetNodeId: targetId,
+          weight,
+        });
+
+        // Flash the edge with lightning effect
+        setTimeout(() => flashEdge(edgeId), 100);
+      } else if (event.event === 'NEURON_ACTIVATED' && 'node_ids' in event) {
+        // Glow effect: intense luminescence with radiating ripples
+        const nodeIds = (event as any).node_ids as string[];
+        const intensity = (event as any).intensity || 1.0;
+
+        for (const nodeId of nodeIds) {
+          const node = idToNodeRef.current.get(nodeId);
+          if (!node) continue;
+          const base = node.baseColor;
+          // Glow: white-hot flash with intensity-based size increase (blooms hard).
+          updateNodeSize(nodeId, BASE_NODE_SIZE * (1 + intensity));
+          updateNodeColor(nodeId, NEON.hot);
+          // Radiate travelling signals out through connected synapses.
+          rendererRef.current?.emitFromNode(nodeId);
+          // Fade back to base over 600ms
+          setTimeout(() => {
+            updateNodeSize(nodeId, BASE_NODE_SIZE);
+            updateNodeColor(nodeId, base);
+          }, 600);
+        }
+      }
+      return;
+    }
+
+    // Handle legacy event format
     if (event.type === 'neuron_created') {
       addNode({
         id: event.nodeId,
@@ -459,7 +550,7 @@ export default function App() {
             });
           }
         }
-        syncToGraph();
+        syncToRenderer();
         fitToAll();
       }).catch(() => {});
     } else if (event.type === 'distillation_started') {
@@ -483,91 +574,103 @@ export default function App() {
     }
   });
 
-  // Initialize 3D graph
+  // Mount / re-mount the active renderer into the canvas container.
+  // Re-runs when loading/error clear (first mount) or when the user switches
+  // renderer via the footer switcher. The cleanup destroys the previous
+  // renderer and clears the container so the new one gets a fresh DOM node.
   useEffect(() => {
+    if (loading || error) return;
     if (!containerRef.current) return;
 
-    // @ts-ignore - 3d-force-graph type definitions are incomplete
-    const g = ForceGraph3D()(containerRef.current as HTMLElement);
-    g.backgroundColor('#000000')
-      .nodeColor((n: any) => n.color)
-      .nodeVal((n: any) => n.val)
-      .nodeLabel((n: any) => n.label)
-      .nodeLabelColor(() => '#ffffff')
-      .nodeLabelFontSize(10)
-      .linkColor((l: any) => l.color)
-      .linkWidth((l: any) => l.val)
-      .linkOpacity(0.6)
-      .onNodeClick((n: any) => {
-        const node = idToNodeRef.current.get(n.id);
-        if (node) {
-          toggleExpand(n.id);
-          focusNode(n.id);
-        }
-      })
-      .onNodeDragEnd((n: any) => {
-        const node = idToNodeRef.current.get(n.id);
-        if (node) {
-          node.x = n.x;
-          node.y = n.y;
-          node.z = n.z;
-        }
-      });
+    // Destroy any previous renderer (async destroy is fire-and-forget; the
+    // innerHTML clear is the synchronous safety net).
+    if (rendererRef.current) {
+      void rendererRef.current.destroy?.();
+      rendererRef.current = null;
+    }
+    if (containerRef.current) {
+      containerRef.current.innerHTML = '';
+    }
 
-    graphRef.current = g;
+    const r = createRenderer(activeRendererId, caps);
+    rendererRef.current = r;
 
-    // Disable rotation on drag for better control
-    g.onNodeDrag(() => {
-      g.controls().autoRotate = false;
+    try {
+      r.mount(containerRef.current);
+    } catch {
+      // If mount fails, fall back to force3d on the next tick.
+      rendererRef.current = null;
+      if (activeRendererId !== DEFAULT_RENDERER_ID) {
+        setActiveRendererId(DEFAULT_RENDERER_ID);
+      }
+      return;
+    }
+
+    // Wire interaction callbacks through the renderer interface.
+    r.onNodeClick?.((id) => {
+      toggleExpand(id);
+      focusNode(id);
+      r.emitFromNode(id);
+    });
+    r.onNodeDragEnd?.((id, x, y, z) => {
+      const node = idToNodeRef.current.get(id);
+      if (node) {
+        node.x = x;
+        node.y = y;
+        node.z = z;
+      }
     });
 
+    // Sync current data into the freshly mounted renderer + frame it.
+    syncToRenderer();
+    setTimeout(() => fitToAll(), 100);
+
     return () => {
-      if (g) {
-        g._destructor();
+      void r.destroy?.();
+      if (rendererRef.current === r) {
+        rendererRef.current = null;
       }
     };
+  }, [loading, error, activeRendererId]);
+
+  // Lightweight FPS telemetry for the HUD.
+  useEffect(() => {
+    let raf = 0;
+    let last = performance.now();
+    let frames = 0;
+    const tick = () => {
+      frames++;
+      const now = performance.now();
+      if (now - last >= 1000) {
+        setFps(Math.round((frames * 1000) / (now - last)));
+        frames = 0;
+        last = now;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, []);
 
-  // Update graph when filters change
+  // Boot sequence overlay fades after the uplink is established.
   useEffect(() => {
-    syncToGraph();
-  }, [selectedSessionId, selectedCluster]);
+    const t = setTimeout(() => setBooting(false), 2600);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Update graph when filters change OR when new data arrives (stats change).
+  // The stats dep is critical: the initial load calls setLoading(false) BEFORE
+  // fetching graph data, so the mount effect runs with empty nodesRef. When
+  // the graph data arrives and setStats() fires, this effect re-runs and
+  // syncs the actual data into the already-mounted renderer.
+  useEffect(() => {
+    syncToRenderer();
+  }, [selectedSessionId, selectedCluster, stats]);
 
   return (
     <div style={styles.page}>
       <div style={styles.starfield} />
       <div style={styles.gridOverlay} />
-
-      <header style={styles.header}>
-        <div style={styles.badge}>AGENT-X // NEURAL BRAIN</div>
-        <div style={styles.statusRow}>
-          <span style={statusDotStyle(dbStatus.connected)} />
-          <span style={styles.statusText}>{dbStatus.connected ? 'POSTGRES ONLINE' : 'POSTGRES OFFLINE'}</span>
-          <span style={styles.statPill}>NODES {stats.nodes}</span>
-          <span style={styles.statPill}>EDGES {stats.edges}</span>
-          <button style={styles.button} onClick={() => fitToAll()}>RESET VIEW</button>
-        </div>
-        {distillationStatus.status !== 'idle' && (
-          <div style={{
-            ...styles.statusRow,
-            marginTop: '8px',
-            padding: '4px 8px',
-            backgroundColor: distillationStatus.status === 'error' ? 'rgba(255, 0, 0, 0.2)' : 'rgba(0, 255, 0, 0.1)',
-            border: `1px solid ${distillationStatus.status === 'error' ? '#ff0000' : '#00ff00'}`,
-            borderRadius: '4px',
-          }}>
-            <span style={{
-              color: distillationStatus.status === 'error' ? '#ff0000' : '#00ff00',
-              fontSize: '11px',
-              fontFamily: 'monospace',
-            }}>
-              {distillationStatus.status === 'processing' && '⚡ '}
-              {distillationStatus.status === 'error' && '⚠️ '}
-              {distillationStatus.message}
-            </span>
-          </div>
-        )}
-      </header>
 
       <main style={styles.main}>
         {loading && (
@@ -587,119 +690,256 @@ export default function App() {
           <>
             <div ref={containerRef} style={styles.canvas} />
 
-            <div style={styles.sidePanel}>
-              <div style={styles.panelTitle}>SESSIONS</div>
-              <div style={styles.list}>
-                <button
-                  style={selectedSessionId === null ? styles.activeItem : styles.item}
-                  onClick={() => selectSession(null)}
-                >
-                  ALL SESSIONS
-                </button>
-                {sessions.map((s) => (
-                  <button
-                    key={s.id}
-                    style={selectedSessionId === s.id ? styles.activeItem : styles.item}
-                    onClick={() => selectSession(s.id)}
-                  >
-                    {s.title || `Session ${s.id.slice(0, 8)}`}
-                  </button>
-                ))}
-              </div>
+            <NeuralHud
+              nodes={stats.nodes}
+              edges={stats.edges}
+              fps={fps}
+              connected={dbStatus.connected}
+              booting={booting}
+              panelWidth={PANEL_WIDTH}
+              footerHeight={FOOTER_HEIGHT}
+            />
 
-              <div style={styles.panelTitle}>CLUSTERS</div>
-              <div style={styles.list}>
-                <button
-                  style={selectedCluster === null ? styles.activeItem : styles.item}
-                  onClick={() => selectCluster(null)}
-                >
-                  ALL CLUSTERS
-                </button>
-                {categories.map((c) => (
-                  <button
-                    key={c}
-                    style={selectedCluster === c ? styles.activeItem : styles.item}
-                    onClick={() => selectCluster(c)}
-                  >
-                    <span style={{ ...styles.colorDot, background: CATEGORY_COLORS[c] || neuronTheme.accent.amber }} />
-                    {CATEGORY_NAMES[c] || c}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {selectedSessionId != null && (
-              <div style={styles.sessionCard}>
-                <div style={styles.sessionCardHeader}>
-                  <span style={styles.sessionCardTitle}>{selectedSessionName?.toUpperCase()}</span>
-                  <div style={styles.sessionCardActions}>
-                    {focusedNodeId && (
-                      <button style={styles.smallButton} onClick={backToSession}>
-                        BACK TO SESSION
-                      </button>
-                    )}
-                    <button style={styles.closeButton} onClick={closeSessionCard}>×</button>
-                  </div>
-                </div>
-                <div style={styles.sessionCardList}>
-                  {selectedSessionNodes.length === 0 && (
-                    <p style={styles.dim}>No neurons in this session.</p>
-                  )}
-                  {selectedSessionNodes.map((n) => {
-                    const expanded = expandedNodeIds.has(n.id);
-                    return (
-                      <div
-                        key={n.id}
-                        style={styles.nodeLine}
-                        onClick={() => {
-                          toggleExpand(n.id);
-                          focusNode(n.id);
-                        }}
-                      >
-                        <div style={styles.nodeLineTop}>
-                          <span style={{ ...styles.colorDot, background: n.baseColor }} />
-                          <span style={expanded ? styles.nodeLineExpanded : styles.nodeLineCollapsed}>
-                            {n.content || n.label}
-                          </span>
-                        </div>
-                        {expanded && (
-                          <div style={styles.nodeLineMeta}>
-                            ID {n.id.slice(0, 8)} · {CATEGORY_NAMES[n.category] || n.category}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+            {/* Distillation toast (replaces the old header status) */}
+            {distillationStatus.status !== 'idle' && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 20,
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  padding: '6px 14px',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 11,
+                  letterSpacing: 1,
+                  color: distillationStatus.status === 'error' ? '#ff6b6b' : NEON.cyan,
+                  background: 'rgba(2,6,15,0.85)',
+                  border: `1px solid ${distillationStatus.status === 'error' ? '#ff6b6b' : 'rgba(125,249,255,0.4)'}`,
+                  borderRadius: 4,
+                  zIndex: 60,
+                }}
+              >
+                {distillationStatus.status === 'processing' && '⚡ '}
+                {distillationStatus.status === 'error' && '⚠ '}
+                {distillationStatus.message}
               </div>
             )}
+
+            <div style={styles.sidePanel}>
+              {/* TOP HALF — navigation controls */}
+              <div style={nodeListOpen && selectedSessionId != null ? styles.panelHalf : styles.panelFull}>
+                <div style={styles.panelRow}>
+                  <span style={styles.panelTitle}>CONTROLS</span>
+                  <button style={styles.button} onClick={() => fitToAll()}>RESET VIEW</button>
+                </div>
+
+                <div style={styles.panelTitle}>SESSIONS</div>
+                <div style={styles.list}>
+                  <button
+                    style={selectedSessionId === null ? styles.activeItem : styles.item}
+                    onClick={() => selectSession(null)}
+                  >
+                    ALL SESSIONS
+                  </button>
+                  {sessions.map((s) => (
+                    <button
+                      key={s.id}
+                      style={selectedSessionId === s.id ? styles.activeItem : styles.item}
+                      onClick={() => selectSession(s.id)}
+                    >
+                      {s.title || `Session ${s.id.slice(0, 8)}`}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={styles.panelTitle}>CLUSTERS</div>
+                <div style={styles.list}>
+                  <button
+                    style={selectedCluster === null ? styles.activeItem : styles.item}
+                    onClick={() => selectCluster(null)}
+                  >
+                    ALL CLUSTERS
+                  </button>
+                  {categories.map((c) => (
+                    <button
+                      key={c}
+                      style={selectedCluster === c ? styles.activeItem : styles.item}
+                      onClick={() => selectCluster(c)}
+                    >
+                      <span style={{ ...styles.colorDot, background: CATEGORY_COLORS[c] || NEON.cyan }} />
+                      {CATEGORY_NAMES[c] || c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* BOTTOM HALF — node list for the selected session (closable, 50:50) */}
+              {selectedSessionId != null && nodeListOpen && (
+                <div style={styles.panelHalfBottom}>
+                  <div style={styles.sessionCardHeader}>
+                    <span style={styles.sessionCardTitle}>{selectedSessionName?.toUpperCase()}</span>
+                    <div style={styles.sessionCardActions}>
+                      {focusedNodeId && (
+                        <button style={styles.smallButton} onClick={backToSession}>BACK</button>
+                      )}
+                      <button style={styles.closeButton} onClick={closeNodeList}>×</button>
+                    </div>
+                  </div>
+                  <div style={styles.sessionCardList}>
+                    {selectedSessionNodes.length === 0 && (
+                      <p style={styles.dim}>No neurons in this session.</p>
+                    )}
+                    {selectedSessionNodes.map((n) => {
+                      const expanded = expandedNodeIds.has(n.id);
+                      return (
+                        <div
+                          key={n.id}
+                          style={styles.nodeLine}
+                          onClick={() => {
+                            toggleExpand(n.id);
+                            focusNode(n.id);
+                          }}
+                        >
+                          <div style={styles.nodeLineTop}>
+                            <span style={{ ...styles.colorDot, background: n.baseColor }} />
+                            <span style={expanded ? styles.nodeLineExpanded : styles.nodeLineCollapsed}>
+                              {n.content || n.label}
+                            </span>
+                          </div>
+                          {expanded && (
+                            <div style={styles.nodeLineMeta}>
+                              ID {n.id.slice(0, 8)} · {CATEGORY_NAMES[n.category] || n.category}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           </>
         )}
       </main>
 
-      <footer style={styles.footer}>
-        <span style={styles.dim}>3D FORCE GRAPH · SELECT A SESSION TO EXPLORE ITS GALAXY</span>
-      </footer>
+      {!loading && !error && (
+        <RendererSwitcher
+          renderers={rendererList}
+          activeId={activeRendererId}
+          caps={caps}
+          onSelect={handleSelectRenderer}
+          onCapabilitiesChanged={handleCapsChanged}
+          panelWidth={PANEL_WIDTH}
+        />
+      )}
     </div>
   );
 }
 
-function statusDotStyle(online: boolean): React.CSSProperties {
-  return {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    backgroundColor: online ? '#00ff00' : '#ff0000',
-    marginRight: 8,
-    boxShadow: online ? '0 0 8px #00ff00' : '0 0 8px #ff0000',
+const HUD_KEYFRAMES = `
+@keyframes agxFlicker { 0%,100% { opacity: 0.9; } 50% { opacity: 0.6; } }
+@keyframes agxBootOut { 0% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+@keyframes agxTyping { from { width: 0; } to { width: 100%; } }
+`;
+
+const C = NEON.cyan;
+
+function NeuralHud({
+  nodes,
+  edges,
+  fps,
+  connected,
+  booting,
+  panelWidth,
+  footerHeight,
+}: {
+  nodes: number;
+  edges: number;
+  fps: number;
+  connected: boolean;
+  booting: boolean;
+  panelWidth: number;
+  footerHeight: number;
+}) {
+  const overlay: React.CSSProperties = {
+    position: 'absolute',
+    inset: 0,
+    right: panelWidth,
+    pointerEvents: 'none',
+    zIndex: 40,
+    fontFamily: "'JetBrains Mono', monospace",
+    color: C,
   };
+  return (
+    <div style={overlay}>
+      <style>{HUD_KEYFRAMES}</style>
+
+      {/* Soft vignette to deepen the void around the brain */}
+      <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,4,12,0.5) 100%)' }} />
+
+      {/* Top-left brand + neural link status */}
+      <div style={{ position: 'absolute', top: 24, left: 28 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 3, color: C, textShadow: `0 0 12px ${C}` }}>
+          AGENT-X <span style={{ opacity: 0.5 }}>// NEURAL BRAIN</span>
+        </div>
+        <div style={{ marginTop: 8, fontSize: 11, letterSpacing: 2, color: connected ? C : '#ff5d5d', animation: 'agxFlicker 4s ease-in-out infinite' }}>
+          {connected ? '◈ NEURAL LINK ACTIVE' : '◈ LINK STANDBY'}
+        </div>
+      </div>
+
+      {/* Bottom-left telemetry (nudged up to clear the renderer footer) */}
+      <div style={{ position: 'absolute', bottom: 24 + footerHeight, left: 28, fontSize: 11, lineHeight: 1.9, letterSpacing: 1.5, textShadow: `0 0 6px ${C}` }}>
+        <div>NEURONS&nbsp;&nbsp;<span style={{ color: '#fff' }}>{nodes.toLocaleString()}</span></div>
+        <div>SYNAPSES&nbsp;<span style={{ color: '#fff' }}>{edges.toLocaleString()}</span></div>
+        <div>RENDER&nbsp;&nbsp;&nbsp;<span style={{ color: fps >= 45 ? C : '#ffb454' }}>{fps} FPS</span></div>
+      </div>
+
+      {/* Boot sequence */}
+      {booting && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(2,6,15,0.82)',
+            animation: 'agxBootOut 2.6s ease-in forwards',
+          }}
+        >
+          <div style={{ fontSize: 24, letterSpacing: 10, color: C, textShadow: `0 0 18px ${C}`, marginBottom: 20 }}>AGENT-X</div>
+          {['INITIALIZING NEURAL FABRIC', 'CALIBRATING SYNAPTIC TOPOLOGY', 'CHARGING BLOOM CORES', 'UPLINK ESTABLISHED'].map((line, i) => (
+            <div
+              key={line}
+              style={{
+                fontSize: 11,
+                letterSpacing: 2,
+                color: C,
+                opacity: 0.85,
+                overflow: 'hidden',
+                whiteSpace: 'nowrap',
+                width: '100%',
+                maxWidth: 320,
+                textAlign: 'left',
+                margin: '2px auto',
+                animation: `agxTyping 0.5s steps(28) ${i * 0.5}s both`,
+              }}
+            >
+              › {line}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
     width: '100vw',
     height: '100vh',
-    backgroundColor: '#000000',
+    backgroundColor: NEON.void,
     color: '#ffffff',
     fontFamily: 'monospace',
     overflow: 'hidden',
@@ -711,9 +951,9 @@ const styles: Record<string, React.CSSProperties> = {
     left: 0,
     width: '100%',
     height: '100%',
-    backgroundImage: 'radial-gradient(white 1px, transparent 1px)',
-    backgroundSize: '50px 50px',
-    opacity: 0.1,
+    backgroundImage: 'radial-gradient(rgba(174,246,255,0.9) 1px, transparent 1px)',
+    backgroundSize: '54px 54px',
+    opacity: 0.08,
     pointerEvents: 'none',
   },
   gridOverlay: {
@@ -745,23 +985,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 'bold',
     letterSpacing: '2px',
     marginBottom: '8px',
-    color: neuronTheme.accent.amber,
-  },
-  statusRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-  },
-  statusText: {
-    fontSize: '11px',
-    fontWeight: 'bold',
-  },
-  statPill: {
-    fontSize: '10px',
-    padding: '4px 8px',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: '2px',
-    border: '1px solid rgba(255, 255, 255, 0.2)',
+    color: NEON.cyan,
+    textShadow: `0 0 10px ${NEON.cyan}`,
   },
   button: {
     fontSize: '10px',
@@ -775,10 +1000,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   main: {
     position: 'absolute',
-    top: '80px',
+    top: 0,
     left: 0,
     right: 0,
-    bottom: '40px',
+    bottom: FOOTER_HEIGHT,
     display: 'flex',
   },
   canvas: {
@@ -790,20 +1015,49 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'absolute',
     top: 0,
     right: 0,
-    width: '250px',
-    maxHeight: '100%',
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    borderLeft: '1px solid rgba(255, 255, 255, 0.1)',
-    padding: '16px',
-    overflowY: 'auto',
+    bottom: FOOTER_HEIGHT,
+    width: `${PANEL_WIDTH}px`,
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: 'rgba(2, 6, 15, 0.82)',
+    borderLeft: '1px solid rgba(125, 249, 255, 0.18)',
     backdropFilter: 'blur(10px)',
+    zIndex: 50,
+  },
+  // Top control section when the bottom node-list is open (50% height).
+  panelHalf: {
+    flex: '1 1 50%',
+    minHeight: 0,
+    overflowY: 'auto',
+    padding: '16px',
+    borderBottom: '1px solid rgba(125, 249, 255, 0.18)',
+  },
+  // Top control section when the bottom panel is closed (full height).
+  panelFull: {
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'auto',
+    padding: '16px',
+  },
+  // Bottom node-list section (50% height).
+  panelHalfBottom: {
+    flex: '1 1 50%',
+    minHeight: 0,
+    overflowY: 'auto',
+    padding: '16px',
+  },
+  panelRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: '12px',
   },
   panelTitle: {
     fontSize: '10px',
     fontWeight: 'bold',
     letterSpacing: '1px',
     marginBottom: '8px',
-    color: neuronTheme.accent.amber,
+    color: NEON.cyan,
   },
   list: {
     display: 'flex',
@@ -825,32 +1079,20 @@ const styles: Record<string, React.CSSProperties> = {
   activeItem: {
     fontSize: '10px',
     padding: '6px 8px',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    color: neuronTheme.accent.amber,
-    border: '1px solid rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(125, 249, 255, 0.12)',
+    color: NEON.cyan,
+    border: '1px solid rgba(125, 249, 255, 0.55)',
     borderRadius: '2px',
     cursor: 'pointer',
     fontFamily: 'monospace',
     textAlign: 'left',
+    boxShadow: '0 0 10px rgba(125, 249, 255, 0.25)',
   },
   colorDot: {
     width: 8,
     height: 8,
     borderRadius: '50%',
     marginRight: 8,
-  },
-  sessionCard: {
-    position: 'absolute',
-    top: '16px',
-    left: '16px',
-    width: '300px',
-    maxHeight: 'calc(100% - 32px)',
-    backgroundColor: 'rgba(0, 0, 0, 0.9)',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
-    borderRadius: '4px',
-    padding: '12px',
-    overflowY: 'auto',
-    backdropFilter: 'blur(10px)',
   },
   sessionCardHeader: {
     display: 'flex',
@@ -864,7 +1106,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '10px',
     fontWeight: 'bold',
     letterSpacing: '1px',
-    color: neuronTheme.accent.amber,
+    color: NEON.cyan,
+    textShadow: `0 0 8px ${NEON.cyan}`,
   },
   sessionCardActions: {
     display: 'flex',
@@ -933,8 +1176,9 @@ const styles: Record<string, React.CSSProperties> = {
   spinner: {
     width: '40px',
     height: '40px',
-    border: '2px solid rgba(255, 255, 255, 0.1)',
-    borderTop: '2px solid neuronTheme.accent.amber',
+    border: '2px solid rgba(125, 249, 255, 0.2)',
+    borderTop: `2px solid ${NEON.cyan}`,
+    boxShadow: `0 0 10px ${NEON.cyan}`,
     borderRadius: '50%',
     animation: 'spin 1s linear infinite',
     margin: '0 auto 16px',
@@ -957,17 +1201,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '12px',
     color: '#ff0000',
     fontFamily: 'monospace',
-  },
-  footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: '8px 24px',
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    borderTop: '1px solid rgba(255, 255, 255, 0.1)',
-    backdropFilter: 'blur(10px)',
-    zIndex: 100,
   },
   dim: {
     fontSize: '10px',

@@ -512,7 +512,6 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
       const totalTokens = (ev['totalTokens'] as number) ?? 0;
       const inputTokens = (ev['inputTokens'] as number) ?? 0;
       const outputTokens = (ev['outputTokens'] as number) ?? 0;
-      const costUsd = (ev['costUsd'] as number) ?? 0;
       const contextWindow = (ev['contextWindow'] as number) ?? undefined;
       const committedUsed = inputTokens + outputTokens > 0 ? inputTokens + outputTokens : totalTokens;
       eng.sessionManager.persistSessionFields(session.id, {
@@ -521,19 +520,6 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
       });
       const smTracker = (eng.sessionManager as any).tokenTracker;
       if (smTracker?.setUsed) smTracker.setUsed(totalTokens);
-      if (inputTokens > 0 || outputTokens > 0) {
-        try {
-          eng.sessionManager.addTokenLog({
-            sessionId: session.id,
-            inputTokens,
-            outputTokens,
-            model: cfg.provider.activeModel,
-            costUsd,
-            providerId: cfg.provider.activeProvider,
-            crewId: (ev['crewId'] as string) || undefined,
-          });
-        } catch { /* best effort */ }
-      }
     }
   });
 

@@ -3,6 +3,7 @@ import type { Express, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import helmet from 'helmet';
 import { createServer } from 'node:http';
+import os from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,12 +23,11 @@ import {
   loadSessionMessagesPage,
   getForceWebSearchError,
 } from './chat-helpers.js';
-import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi, selectRecentMessagesTail } from './message-enrich.js';
+import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
-import { healOrphanedUserMessages } from './message-history-repair.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, LocalEmbeddingProvider, setDeepSearchStageResult } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -411,6 +411,15 @@ app.get('/api/health', (_req, res) => {
       channels: eng.gateway.registry.listChannels(),
     } : null,
     agentHealth: eng?.agent?.getHealth() ?? null,
+  });
+});
+
+// ───── System capabilities ─────
+app.get('/api/system/capabilities', (_req, res) => {
+  const totalMemoryGB = Math.round(os.totalmem() / (1024 ** 3) * 10) / 10;
+  res.json({
+    totalMemoryGB,
+    localModelSupported: totalMemoryGB >= 32,
   });
 });
 
@@ -2803,49 +2812,21 @@ app.post('/api/sessions/:id/restore', async (req, res) => {
         agent.setCrewEnabled(state.crewId, state.enabled);
       }
     }
-    // Read messages from DB
+    // Read messages from DB using pagination so we never load the whole session history on restore.
     let messages: Array<Record<string, unknown>> = [];
     let parts: Array<Record<string, unknown>> = [];
+    let messageTotal = 0;
+    let messagesTruncated = false;
     try {
+      const page = await loadSessionMessagesPage(sessionId, { limit: perRole != null ? perRole * 2 : 50 });
+      messages = page.messages;
+      messageTotal = page.total;
+      messagesTruncated = page.hasMore;
       const store = (eng.sessionManager as any).store;
-      if (store?.getMessages) {
-        messages = store.getMessages(req.params['id']!) as Array<Record<string, unknown>>;
-      }
-      if (store?.getParts) {
-        parts = store.getParts(req.params['id']!) as Array<Record<string, unknown>>;
+      if (store?.getPartsForMessages) {
+        parts = await store.getPartsForMessages(sessionId, messages) as Array<Record<string, unknown>>;
       }
     } catch (e) { getLogger().warn('RESTORE_MESSAGES', e instanceof Error ? e.message : String(e)); }
-
-    try {
-      const store = (eng.sessionManager as unknown as {
-        store?: {
-          listCheckpoints?: (id: string) => Array<{ id: string }>;
-          getCheckpoint?: (sessionId: string, checkpointId: string) => Array<Record<string, unknown>> | null;
-        };
-      }).store;
-      const sid = req.params['id']!;
-      if (store?.listCheckpoints && store?.getCheckpoint) {
-        const snapshots: Array<Array<Record<string, unknown>>> = [];
-        for (const cp of store.listCheckpoints(sid).slice().reverse()) {
-          const snap = store.getCheckpoint(sid, cp.id);
-          if (snap?.length) snapshots.push(snap);
-        }
-        const healed = healOrphanedUserMessages(messages, snapshots);
-        if (healed !== messages) {
-          messages = healed;
-          getLogger().info('RESTORE', `Healed orphaned user turn(s) in session ${sid.slice(0, 8)}`);
-        }
-      }
-    } catch { /* best-effort */ }
-
-    let messageTotal = messages.filter((m) => m['role'] === 'user' || m['role'] === 'assistant').length;
-    let messagesTruncated = false;
-    if (perRole != null && messages.length > 0) {
-      const preview = selectRecentMessagesTail(messages, perRole * 2);
-      messages = preview.messages;
-      messageTotal = preview.total;
-      messagesTruncated = preview.truncated;
-    }
 
     enrichSessionMessagesForUi(eng, messages, parts);
 
@@ -2878,7 +2859,7 @@ app.get('/api/sessions/:id/feedback', (req, res) => {
   }
 });
 
-app.get('/api/sessions/:id/messages', (req, res) => {
+app.get('/api/sessions/:id/messages', async (req, res) => {
   try {
     const sessionId = req.params['id']!;
     const parsed = sessionMessagesQuerySchema.safeParse(req.query);
@@ -2891,11 +2872,11 @@ app.get('/api/sessions/:id/messages', (req, res) => {
     if (!session) { res.status(404).json({ error: 'not-found' }); return; }
 
     const { limit, before } = parsed.data;
-    const page = loadSessionMessagesPage(sessionId, { limit, before });
+    const page = await loadSessionMessagesPage(sessionId, { limit, before });
     let parts: Array<Record<string, unknown>> = [];
     try {
-      const store = (eng.sessionManager as unknown as { store?: { getParts?: (id: string) => Array<Record<string, unknown>> } }).store;
-      parts = store?.getParts?.(sessionId) ?? [];
+      const store = (eng.sessionManager as unknown as { store?: { getPartsForMessages?: (sessionId: string, messages: Array<Record<string, unknown>>) => Promise<Array<Record<string, unknown>>> } }).store;
+      parts = await store?.getPartsForMessages?.(sessionId, page.messages) ?? [];
     } catch { /* best-effort */ }
     const enriched = enrichSessionMessagesForUi(eng, [...page.messages], parts);
     const messages = enriched.map((m) => mergeNormalizedMessageForApi(m));
@@ -4649,7 +4630,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
     const pgPool = (eng as any).pgPool ?? (eng as any).pool;
     if (pgPool) {
       const fabric = new MemoryFabric(pgPool as any);
-      const embedder = new OnnxEmbeddingProvider();
+      const embedder = new LocalEmbeddingProvider();
       ingestionWorker = new IngestionWorker(pgPool as any, fabric, {
         concurrency: 2,
         pollIntervalMs: 5000,
@@ -4668,7 +4649,6 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
           await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
           await queue.enqueue({ kind: 'plasticity', priority: 0 });
           await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
-          await queue.enqueue({ kind: 'rag_telemetry', priority: 0 });
           await fabric.cleanupExpiredWebStaging();
         } catch (e: unknown) {
           getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));
@@ -4682,7 +4662,6 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
           await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
           await queue.enqueue({ kind: 'plasticity', priority: 0 });
           await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
-          await queue.enqueue({ kind: 'rag_telemetry', priority: 0 });
           await fabric.cleanupExpiredWebStaging();
         } catch (e: unknown) {
           getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));

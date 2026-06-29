@@ -64,12 +64,22 @@ export class OnnxEmbeddingProvider {
   private async load(): Promise<FeatureExtractionPipeline> {
     if (this.pipeline) return this.pipeline;
     if (this.pending) return this.pending;
+    const mem = process.memoryUsage?.();
+    if (mem && mem.rss > 1.5 * 1024 * 1024 * 1024) {
+      throw new Error('ONNX embedding load skipped: process RSS exceeds 1.5 GB');
+    }
     this.pending = pipeline('feature-extraction', this.model, {
       dtype: 'q4',
       revision: 'main',
       cache_dir: this.cacheDir,
       // Disable WASM threading to avoid Electron path issues
       local_files_only: true,
+      session_options: {
+        intraOpNumThreads: 1,
+        interOpNumThreads: 1,
+        enableCpuMemArena: false,
+        enableMemPattern: false,
+      },
     }) as Promise<FeatureExtractionPipeline>;
     this.pipeline = await this.pending;
     this.pending = null;

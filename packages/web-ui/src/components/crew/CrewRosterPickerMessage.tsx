@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
@@ -6,6 +6,7 @@ import type { CrewMatchCandidate, CrewSuggestionEvaluation } from '@agentx/share
 import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 import { crewTheme } from '../../styles/crew-theme';
 import { CrewRecruitCard } from './CrewRecruitCard';
+import { PlanModeContext } from '../../chat/PlanModeContext';
 
 export interface CrewRosterPickerRecord {
   id: string;
@@ -17,7 +18,6 @@ export interface CrewRosterPickerRecord {
 
 export interface CrewRosterPickerMessageProps {
   record: CrewRosterPickerRecord;
-  planMode?: boolean;
   onSubmit?: (selected: CrewMatchCandidate[]) => void;
   onSkip?: () => void;
   onViewDossier?: (candidate: CrewMatchCandidate) => void;
@@ -122,11 +122,11 @@ function ResolvedCrewRosterPicker({
 
 export function CrewRosterPickerMessage({
   record,
-  planMode = false,
   onSubmit,
   onSkip,
   onViewDossier,
 }: CrewRosterPickerMessageProps) {
+  const planMode = useContext(PlanModeContext);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [localResolved, setLocalResolved] = useState<{
     status: 'answered' | 'skipped';

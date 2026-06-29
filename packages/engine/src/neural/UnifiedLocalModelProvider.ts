@@ -62,10 +62,17 @@ export class UnifiedLocalModelProvider implements EmbeddingProvider {
     if (this.generator) return this.generator;
     if (this.generatorPending) return this.generatorPending;
     
+    const sessionOptions = {
+      intraOpNumThreads: 1,
+      interOpNumThreads: 1,
+      enableCpuMemArena: false,
+      enableMemPattern: false,
+    };
     this.generatorPending = pipeline('text-generation', this.config.modelName, {
       dtype: this.config.dtype,
       revision: 'main',
       cache_dir: this.config.cacheDir,
+      session_options: sessionOptions,
     }) as Promise<TextGenerationPipeline>;
 
     this.generator = await this.generatorPending;
@@ -77,10 +84,17 @@ export class UnifiedLocalModelProvider implements EmbeddingProvider {
     if (this.embedder) return this.embedder;
     if (this.embedderPending) return this.embedderPending;
 
+    const sessionOptions = {
+      intraOpNumThreads: 1,
+      interOpNumThreads: 1,
+      enableCpuMemArena: false,
+      enableMemPattern: false,
+    };
     this.embedderPending = pipeline('feature-extraction', this.config.modelName, {
       dtype: this.config.dtype,
       revision: 'main',
       cache_dir: this.config.cacheDir,
+      session_options: sessionOptions,
     }) as Promise<FeatureExtractionPipeline>;
     
     this.embedder = await this.embedderPending;

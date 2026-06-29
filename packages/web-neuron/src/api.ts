@@ -60,14 +60,17 @@ export interface MemorySource {
 }
 
 export type BrainActivityEvent =
-  | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; x: number | null; y: number | null; timestamp: string }
+  | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; x: number | null; y: number | null; timestamp: string; sourceColor?: string }
   | { type: 'synapse_bound'; edgeId: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number; timestamp: string }
   | { type: 'neuron_fired'; nodeId: string; timestamp: string }
   | { type: 'neuron_decayed'; nodeId: string; status: string; timestamp: string }
   | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string }
   | { type: 'distillation_started'; sessionId: string; timestamp: string }
   | { type: 'distillation_complete'; sessionId: string; nodesCreated: number; edgesCreated: number; timestamp: string }
-  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string };
+  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string }
+  | { event: 'NODE_CREATED'; node_id: string; cluster_id: string; type: string; label: string; content?: string; x?: number | null; y?: number | null; sourceColor?: string; timestamp: string }
+  | { event: 'SYNAPSE_CONNECTED'; source_id: string; target_id: string; edge_type: string; weight: number; timestamp: string }
+  | { event: 'NEURON_ACTIVATED'; node_ids: string[]; intensity: number; timestamp: string };
 
 export interface TestResult {
   score: number;

@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS message_parts (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  message_id TEXT,
   type TEXT NOT NULL,
   content TEXT,
   tool_name TEXT,
@@ -430,6 +431,10 @@ export class PostgresStorageAdapter implements StorageAdapter {
       await client.query(SCHEMA_SQL);
       // Incremental migrations for columns added after initial schema
       await client.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS parts TEXT');
+      await client.query('ALTER TABLE message_parts ADD COLUMN IF NOT EXISTS message_id TEXT');
+      await client.query('CREATE INDEX IF NOT EXISTS idx_message_parts_message_id ON message_parts(message_id)');
+      await client.query('CREATE INDEX IF NOT EXISTS idx_message_parts_session_created ON message_parts(session_id, created_at)');
+      await client.query('CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at)');
       await client.query('ALTER TABLE crews ADD COLUMN IF NOT EXISTS title TEXT');
       await client.query('ALTER TABLE crews ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT \'\'');
       await client.query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS compaction_count INTEGER NOT NULL DEFAULT 0');
@@ -623,14 +628,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
         msgs.push(msg);
         this.cache.messages.set(msg.sessionId, msgs);
       }
-      const parts = await this.pool.query('SELECT * FROM message_parts ORDER BY created_at ASC');
-      for (const row of parts.rows) {
-        const r = row as Record<string, unknown>;
-        const sid = r['session_id'] as string;
-        const arr = this.cache.parts.get(sid) ?? [];
-        arr.push(r);
-        this.cache.parts.set(sid, arr);
-      }
       const checkpoints = await this.pool.query('SELECT id, session_id, label, messages, created_at FROM checkpoints ORDER BY created_at ASC');
       for (const row of checkpoints.rows) {
         const r = row as { id: string; session_id: string; label: string; messages: string; created_at: string };
@@ -648,7 +645,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
         arr.push(r);
         this.cache.crewStates.set(sid, arr);
       }
-      const sessionEvents = await this.pool.query('SELECT * FROM session_events ORDER BY sequence ASC');
+      const sessionEvents = await this.pool.query("SELECT * FROM session_events WHERE event_type <> 'text_delta' ORDER BY sequence ASC");
       for (const row of sessionEvents.rows) {
         const r = row as Record<string, unknown>;
         const sid = r['session_id'] as string;
@@ -1092,6 +1089,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   insertPart(sessionId: string, part: {
     type: string;
+    messageId?: string;
     content?: string;
     toolName?: string;
     toolCallId?: string;
@@ -1102,9 +1100,10 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }): void {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
+    const messageId = part.messageId ?? null;
     const cached = this.cache.parts.get(sessionId) ?? [];
     cached.push({
-      id, session_id: sessionId, type: part.type,
+      id, session_id: sessionId, message_id: messageId, type: part.type,
       content: part.content || null, tool_name: part.toolName || null,
       tool_call_id: part.toolCallId || null,
       tool_args: part.toolArgs ? JSON.stringify(part.toolArgs) : null,
@@ -1116,10 +1115,10 @@ export class PostgresStorageAdapter implements StorageAdapter {
     });
     this.cache.parts.set(sessionId, cached);
     this.write(
-      `INSERT INTO message_parts (id,session_id,type,content,tool_name,tool_call_id,tool_args,tool_result,tool_success,usage_input,usage_output)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      `INSERT INTO message_parts (id,session_id,message_id,type,content,tool_name,tool_call_id,tool_args,tool_result,tool_success,usage_input,usage_output)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
-        id, sessionId, part.type,
+        id, sessionId, messageId, part.type,
         part.content || null, part.toolName || null, part.toolCallId || null,
         part.toolArgs ? JSON.stringify(part.toolArgs) : null,
         part.toolResult || null,
@@ -1131,6 +1130,36 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   getParts(sessionId: string): Array<Record<string, unknown>> {
     return this.cache.parts.get(sessionId) ?? [];
+  }
+
+  async getPartsForMessages(
+    sessionId: string,
+    messages: Array<Record<string, unknown>>,
+  ): Promise<Array<Record<string, unknown>>> {
+    if (messages.length === 0) return [];
+    const messageIds = messages.map((m) => m['id'] as string).filter((id): id is string => !!id);
+    if (messageIds.length === 0) return [];
+    const times = messages
+      .map((m) => (m['createdAt'] as string) || (m['created_at'] as string))
+      .filter((t): t is string => !!t);
+    const min = times.length ? times.reduce((a, b) => (a < b ? a : b)) : null;
+    const max = times.length ? times.reduce((a, b) => (a > b ? a : b)) : null;
+    const result = await this.pool.query(
+      `SELECT * FROM message_parts
+       WHERE session_id = $1
+         AND (
+           message_id = ANY($2::text[])
+           OR (
+             message_id IS NULL
+             AND $3::timestamptz IS NOT NULL
+             AND $4::timestamptz IS NOT NULL
+             AND created_at >= $3 AND created_at <= $4
+           )
+         )
+       ORDER BY created_at ASC`,
+      [sessionId, messageIds, min, max],
+    );
+    return result.rows as Array<Record<string, unknown>>;
   }
 
   deleteLastMessages(sessionId: string, count: number, roles: string[]): void {
@@ -1614,22 +1643,41 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.write('DELETE FROM session_resume_state WHERE session_id = $1', [sessionId]);
   }
 
-  getMessagesPage(
+  async getMessagesPage(
     sessionId: string,
     opts: { limit?: number; before?: string },
-  ): { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean } {
+  ): Promise<{ messages: Array<Record<string, unknown>>; total: number; hasMore: boolean }> {
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
-    const all = (this.cache.messages.get(sessionId) ?? [])
-      .filter((m) => m.role === 'user' || m.role === 'assistant');
-    const total = all.length;
-    let slice = all;
-    if (opts.before) {
-      const idx = all.findIndex((m) => m.id === opts.before);
-      slice = idx > 0 ? all.slice(0, idx) : [];
-    }
-    const page = slice.slice(-limit);
-    const hasMore = slice.length > limit || (opts.before ? all.findIndex((m) => m.id === opts.before) > limit : total > limit);
-    return { messages: page as unknown as Array<Record<string, unknown>>, total, hasMore };
+    const result = await this.pool.query(
+      `SELECT id, session_id as "sessionId", role, content, tool_calls as "toolCalls",
+              token_count as "tokenCount", parts, metadata, created_at as "createdAt"
+       FROM messages
+       WHERE session_id = $1
+         AND role IN ('user', 'assistant')
+         AND ($2::text IS NULL OR created_at < (SELECT created_at FROM messages WHERE id = $2 AND session_id = $1))
+       ORDER BY created_at DESC
+       LIMIT $3`,
+      [sessionId, opts.before ?? null, limit + 1],
+    );
+    const hasMore = result.rows.length > limit;
+    const rows = result.rows.slice(0, limit);
+    const totalResult = await this.pool.query(
+      `SELECT COUNT(*)::int as cnt FROM messages WHERE session_id = $1 AND role IN ('user', 'assistant')`,
+      [sessionId],
+    );
+    const total = totalResult.rows[0].cnt as number;
+    const messages = rows.reverse().map((raw: Record<string, unknown>) => {
+      let parts = raw['parts'];
+      if (typeof parts === 'string') {
+        try { parts = JSON.parse(parts); } catch { parts = undefined; }
+      }
+      let metadata = raw['metadata'];
+      if (typeof metadata === 'string') {
+        try { metadata = JSON.parse(metadata); } catch { metadata = undefined; }
+      }
+      return { ...raw, parts, metadata } as unknown as Record<string, unknown>;
+    });
+    return { messages, total, hasMore };
   }
 
   // ─── Crew CRUD ─────────────────────────────────────────────────
