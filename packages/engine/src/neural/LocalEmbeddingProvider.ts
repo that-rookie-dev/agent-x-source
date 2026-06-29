@@ -1,15 +1,17 @@
 /**
- * Fully-offline embedding provider.
+ * Deterministic n-gram hash embedding — the zero-dependency last-resort
+ * fallback used when no ONNX model files are available.
  *
- * Produces deterministic 384-dimensional character n-gram fingerprints.
- * This is not as semantically rich as a transformer model, but it requires
- * no network access, no large model download, and no external API keys,
- * making it suitable for verified offline mode.
+ * This is NOT a semantic embedding model. It produces deterministic
+ * 384-dimensional character n-gram fingerprints that are useful for
+ * exact-match / lexical similarity but lack the semantic retrieval
+ * quality of a transformer model. The unified `OnnxEmbeddingProvider`
+ * falls back to this automatically when model files are missing.
+ *
+ * Vectors are 384-dim and zero-padded to 1024-dim by the caller so the
+ * DB schema stays uniform.
  */
-export interface EmbeddingProvider {
-  embed(text: string): Promise<number[]>;
-  embedBatch?(texts: string[]): Promise<number[][]>;
-}
+import type { EmbeddingProvider } from '@agentx/shared';
 
 export class LocalEmbeddingProvider implements EmbeddingProvider {
   readonly model = 'local-ngram';

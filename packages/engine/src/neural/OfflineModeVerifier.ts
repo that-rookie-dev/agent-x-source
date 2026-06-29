@@ -5,11 +5,11 @@
  * can produce output without network access. This is the Group 4 "verified
  * fully-offline mode" check.
  */
-import { LocalEmbeddingProvider } from './LocalEmbeddingProvider.js';
+import { OnnxEmbeddingProvider } from './OnnxEmbeddingProvider.js';
 import { LocalLLMJudge } from './LocalLLMJudge.js';
 
 export interface OfflineVerificationResult {
-  embedding: { ok: boolean; dimension: number; error?: string };
+  embedding: { ok: boolean; dimension: number; tier?: string; error?: string };
   llm: { ok: boolean; sample?: string; error?: string };
   fullyOffline: boolean;
 }
@@ -22,9 +22,9 @@ export async function verifyOfflineMode(options: { checkLlm?: boolean; embedding
   };
 
   try {
-    const embedder = new LocalEmbeddingProvider();
+    const embedder = new OnnxEmbeddingProvider();
     const vector = await embedder.embed('The quick brown fox jumps over the lazy dog.');
-    result.embedding = { ok: true, dimension: vector.length };
+    result.embedding = { ok: true, dimension: vector.length, tier: embedder.activeTier ?? 'ngram' };
   } catch (e) {
     result.embedding.error = e instanceof Error ? e.message : String(e);
   }

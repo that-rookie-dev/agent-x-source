@@ -49,7 +49,7 @@ export class ConfigManager {
     if (!config.featureRouting) {
       config.featureRouting = {};
     }
-    const routes: (keyof FeatureRoutingConfig)[] = ['memoryDistillation', 'memoryExtraction', 'memoryConsolidation'];
+    const routes: (keyof FeatureRoutingConfig)[] = ['memoryDistillation', 'memoryExtraction', 'memoryConsolidation', 'graphRagExtraction', 'graphRagSummarization'];
     for (const key of routes) {
       if (!config.featureRouting[key]) {
         config.featureRouting[key] = 'cloud';

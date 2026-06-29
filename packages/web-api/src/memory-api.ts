@@ -40,8 +40,8 @@ router.post('/memory/context', validate(memoryContextSchema), async (req: Reques
   if (!fabric) return handleFabricUnavailable(res);
   try {
     const { query, sessionId, agentId, limit, useWeights, episodicLimit, semanticLimit, graphDepth } = req.body;
-    const { LocalEmbeddingProvider } = await import('@agentx/engine');
-    const embedder = new LocalEmbeddingProvider();
+    const { OnnxEmbeddingProvider } = await import('@agentx/engine');
+    const embedder = new OnnxEmbeddingProvider();
     const embedding = req.body.embedding ?? await embedder.embed(query);
     const weighted = useWeights
       ? await fabric.searchWeighted(embedding, { limit, agentId })
@@ -360,12 +360,33 @@ router.post('/memory/wipe-benchmark', async (_req: Request, res: Response) => {
   }
 });
 
+router.post('/memory/cleanup-dividers', async (req: Request, res: Response) => {
+  const fabric = getFabric();
+  if (!fabric) return handleFabricUnavailable(res);
+  try {
+    const dryRun = req.body?.dryRun === true;
+    const result = await fabric.cleanupDividerNodes(dryRun);
+    if (!dryRun && result.deletedNodes > 0) {
+      broadcastBrainActivity({
+        type: 'cluster_layout_updated',
+        epoch: 0,
+        count: -result.deletedNodes,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    res.json(result);
+  } catch (e) {
+    logger.error('MEMORY_API', e instanceof Error ? e.message : e);
+    res.status(500).json({ error: 'Failed to cleanup divider nodes' });
+  }
+});
+
 router.post('/memory/re-embed', async (_req: Request, res: Response) => {
   const fabric = getFabric();
   if (!fabric) return handleFabricUnavailable(res);
   try {
-    const { LocalEmbeddingProvider } = await import('@agentx/engine');
-    const embedder = new LocalEmbeddingProvider();
+    const { OnnxEmbeddingProvider } = await import('@agentx/engine');
+    const embedder = new OnnxEmbeddingProvider();
     const result = await fabric.reEmbedAll(embedder);
     res.json(result);
   } catch (e) {
@@ -474,8 +495,8 @@ router.post('/memory/pipeline', async (req: Request, res: Response) => {
   if (!fabric) return handleFabricUnavailable(res);
   const { domainCluster } = req.body as Record<string, unknown>;
   try {
-    const { MemoryPipeline, MemoryConsolidator, DocumentIngester, LocalEmbeddingProvider } = await import('@agentx/engine');
-    const embedder = new LocalEmbeddingProvider();
+    const { MemoryPipeline, MemoryConsolidator, DocumentIngester, OnnxEmbeddingProvider } = await import('@agentx/engine');
+    const embedder = new OnnxEmbeddingProvider();
     const pipeline = new MemoryPipeline(fabric, {
       consolidator: new MemoryConsolidator(fabric),
       ingester: new DocumentIngester(fabric),
@@ -557,13 +578,12 @@ router.post('/memory/ingest-file', upload.single('file'), async (req: Request, r
   if (!fabric) return handleFabricUnavailable(res);
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
-    const { parsePdf } = await import('@agentx/engine');
-    const { LocalEmbeddingProvider } = await import('@agentx/engine');
+    const { parsePdf, OnnxEmbeddingProvider } = await import('@agentx/engine');
     const buffer = await readFile(req.file.path);
     const parsed = await parsePdf(buffer);
     const generate = await buildDistillationGenerator();
     const ingester = new DocumentIngester(fabric, generate ?? undefined);
-    const embedder = new LocalEmbeddingProvider();
+    const embedder = new OnnxEmbeddingProvider();
     const result = await ingester.ingest({
       name: req.file.originalname || 'upload.pdf',
       kind: 'pdf',

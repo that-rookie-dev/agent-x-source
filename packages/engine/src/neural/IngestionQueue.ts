@@ -8,7 +8,7 @@
 import type { Pool } from 'pg';
 
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
-export type JobKind = 'web_distill' | 'document_ingest' | 'memory_consolidate' | 'plasticity' | 'louvain_layout' | 'rag_telemetry';
+export type JobKind = 'web_distill' | 'document_ingest' | 'memory_consolidate' | 'louvain_layout' | 'rag_telemetry' | 'community_summarize';
 
 export interface IngestionJob {
   id: string;

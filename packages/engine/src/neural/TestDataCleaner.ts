@@ -6,6 +6,7 @@
 
 import type { Pool } from 'pg';
 import { getLogger } from '@agentx/shared';
+import { DividerNodeCleaner } from './DividerNodeCleaner.js';
 
 export interface CleanupOptions {
   /** Delete all nodes and edges */
@@ -18,6 +19,8 @@ export interface CleanupOptions {
   tags?: string[];
   /** Delete benchmark nodes */
   wipeBenchmark?: boolean;
+  /** Delete markdown divider-only nodes (---, ***, ___) */
+  wipeDividers?: boolean;
   /** Delete nodes older than this many days */
   olderThanDays?: number;
   /** Dry run - don't actually delete, just report what would be deleted */
@@ -148,6 +151,18 @@ export class TestDataCleaner {
         nodesDeleted += result.nodesDeleted;
         edgesDeleted += result.edgesDeleted;
         details.push(`${action} ${result.nodesDeleted} benchmark nodes`);
+      }
+    }
+
+    // Delete markdown divider-only nodes
+    if (options.wipeDividers) {
+      logger.info('TEST_CLEANUP', `${action} markdown divider nodes`);
+      const dividerCleaner = new DividerNodeCleaner(this.pool);
+      const dividerResult = await dividerCleaner.cleanup({ dryRun });
+      nodesDeleted += dividerResult.nodesDeleted;
+      edgesDeleted += dividerResult.edgesDeleted;
+      if (dividerResult.nodesDeleted > 0) {
+        details.push(`${action} ${dividerResult.nodesDeleted} divider node(s): ${dividerResult.deletedLabels.slice(0, 5).join(', ')}`);
       }
     }
 

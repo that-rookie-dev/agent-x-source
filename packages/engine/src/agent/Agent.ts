@@ -48,8 +48,9 @@ import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
 import { MemoryFabric } from '../neural/MemoryFabric.js';
-import { LocalEmbeddingProvider } from '../neural/LocalEmbeddingProvider.js';
-import type { EmbeddingProvider } from '../neural/LocalEmbeddingProvider.js';
+import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
+import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
+import type { EmbeddingProvider } from '@agentx/shared';
 import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
@@ -1099,30 +1100,49 @@ export class Agent {
 
   private get memoryEmbedder(): EmbeddingProvider | null {
     if (!this._memoryEmbedder) {
-      this._memoryEmbedder = new LocalEmbeddingProvider();
+      this._memoryEmbedder = new OnnxEmbeddingProvider();
     }
     return this._memoryEmbedder;
   }
 
   private _memoryContextNodeIds: string[] = [];
+  private _graphRagRetriever: GraphRagRetriever | null = null;
 
-  private async buildMemoryContext(): Promise<{ episodic: string; semantic: string; graph: string }> {
+  private get graphRagRetriever(): GraphRagRetriever | null {
+    // Neural brain can be disabled if embedding models failed to download.
+    if (this.config.neuralBrain === false) return null;
     const fabric = this.memoryFabric;
     const embedder = this.memoryEmbedder;
-    if (!fabric || !embedder) return { episodic: '', semantic: '', graph: '' };
+    if (!fabric || !embedder) return null;
+    if (!this._graphRagRetriever) {
+      this._graphRagRetriever = new GraphRagRetriever(fabric, embedder);
+    }
+    return this._graphRagRetriever;
+  }
+
+  private async buildMemoryContext(): Promise<{ episodic: string; semantic: string; graph: string; community?: string }> {
+    const retriever = this.graphRagRetriever;
+    if (!retriever) return { episodic: '', semantic: '', graph: '' };
     try {
       const lastUser = [...this.messages].reverse().find((m) => m.role === 'user');
       const query = typeof lastUser?.content === 'string' ? lastUser.content : '';
       if (!query) return { episodic: '', semantic: '', graph: '' };
-      const embedding = await embedder.embed(query);
-      const result = await fabric.assembleContext(this.sessionId, embedding, { agentId: this.config.user?.callsign, episodicLimit: 5, semanticLimit: 5, graphDepth: 2 });
-      this._memoryContextNodeIds = [...result.episodic, ...result.semantic, ...result.graph].map((n: any) => n.id).filter((id): id is string => !!id);
+      const result = await retriever.retrieve(query, {
+        sessionId: this.sessionId,
+        agentId: this.config.user?.callsign,
+        globalLimit: 3,
+        localLimit: 15,
+        vectorLimit: 8,
+        graphDepth: 2,
+      });
+      this._memoryContextNodeIds = result.all.map((n) => n.id).filter((id): id is string => !!id);
       const fmt = (nodes: Array<{ label: string; content: string; category: string }>) =>
         nodes.map((n) => `- [${n.category}] ${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 200)}`).join('\n');
       return {
+        community: result.global.length > 0 ? result.global.map((n) => `${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 300)}`).join('\n') : undefined,
         episodic: fmt(result.episodic),
-        semantic: fmt(result.semantic),
-        graph: fmt(result.graph),
+        semantic: fmt(result.vector),
+        graph: fmt([...result.local, ...result.graph]),
       };
     } catch (e) {
       this._memoryContextNodeIds = [];

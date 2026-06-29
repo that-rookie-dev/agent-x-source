@@ -536,6 +536,8 @@ async function downloadModel(model: any): Promise<void> {
           memoryDistillation: 'local',
           memoryExtraction: 'local',
           memoryConsolidation: 'local',
+          graphRagExtraction: 'local',
+          graphRagSummarization: 'local',
           ...(updated.featureRouting || {}),
         },
       };

@@ -90,7 +90,7 @@ describe.runIf(await isPgAvailable() && await hasPgVector())('MemoryFabric', () 
   });
 
   it('searches by vector similarity', async () => {
-    const embedding = Array.from({ length: 384 }, (_, i) => (i === 0 ? 1.0 : 0.0));
+    const embedding = Array.from({ length: 1024 }, (_, i) => (i === 0 ? 1.0 : 0.0));
     await fabric.createNode({
       label: 'Vector match test',
       category: 'semantic',
@@ -103,7 +103,7 @@ describe.runIf(await isPgAvailable() && await hasPgVector())('MemoryFabric', () 
   });
 
   it('finds duplicate by vector similarity without raw-array syntax error', async () => {
-    const embedding = Array.from({ length: 384 }, (_, i) => (i === 2 ? 1.0 : 0.0));
+    const embedding = Array.from({ length: 1024 }, (_, i) => (i === 2 ? 1.0 : 0.0));
     const node = await fabric.createNode({
       label: 'Duplicate vector test',
       category: 'semantic',

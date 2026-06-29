@@ -36,6 +36,7 @@ export interface RenderNode {
   id: string;
   label: string;
   category: string;
+  sessionId?: string | null;
   x: number | undefined;
   y: number | undefined;
   z: number | undefined;
@@ -52,7 +53,7 @@ export interface RenderEdge {
   width: number;
 }
 
-export type RendererId = 'force3d' | 'cosmograph';
+export type RendererId = 'sigma' | 'nebula' | 'force3d';
 
 /**
  * Every renderer adapter implements this. Methods are best-effort: adapters
@@ -76,6 +77,11 @@ export interface GraphRenderer {
   /** Fire signals outward through every synapse touching a node. No-op if unsupported. */
   emitFromNode(nodeId: string, max?: number): void;
 
+  /** Blink a node and its neighbours for ~2 s (e.g. on focus / read). */
+  pulseNode?(nodeId: string, durationMs?: number): void;
+  pulseCluster?(nodeIds: string[], durationMs?: number): void;
+  animateDecay?(nodeId: string): void;
+
   focusNode(id: string): void;
   fitToAll(): void;
 
@@ -86,8 +92,10 @@ export interface GraphRenderer {
 /** Layout constants shared between App and the adapters. */
 export const LAYOUT_SCALE = 5;
 export const RANDOM_SPREAD = 600; // matches the backend's ~[-200,200] * LAYOUT_SCALE
-export const BASE_NODE_SIZE = 6;
-export const FIRED_SIZE = 12;
+export const BASE_NODE_SIZE = 8;
+export const FIRED_SIZE = 16;
+/** Synapse thickness in screen pixels at default zoom (thin for dense graphs). */
+export const EDGE_WIDTH = 0.72;
 
 export function resolvePosition(
   x: number | null | undefined,
@@ -97,12 +105,16 @@ export function resolvePosition(
     return {
       x: (Math.random() - 0.5) * RANDOM_SPREAD,
       y: (Math.random() - 0.5) * RANDOM_SPREAD,
-      z: (Math.random() - 0.5) * RANDOM_SPREAD * 0.3,
+      z: (Math.random() - 0.5) * RANDOM_SPREAD * 0.5,
     };
   }
+  // Spread z across a meaningful range so the nebula renderer has true 3D depth.
+  // Use a hash of x+y so the same node always gets the same z (stable across refreshes).
+  const hash = Math.sin(x! * 12.9898 + y! * 78.233) * 43758.5453;
+  const zUnit = (hash - Math.floor(hash)) - 0.5; // -0.5 to 0.5
   return {
     x: x * LAYOUT_SCALE,
     y: y * LAYOUT_SCALE,
-    z: (Math.random() - 0.5) * 40, // small z-jitter so the graph isn't flat
+    z: zUnit * RANDOM_SPREAD * 0.5, // ±150 units — real depth
   };
 }

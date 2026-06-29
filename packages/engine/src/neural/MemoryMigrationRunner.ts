@@ -279,6 +279,54 @@ export const MIGRATIONS: Migration[] = [
       END$$;
     `,
   },
+  {
+    version: 8,
+    name: 'node_provenance',
+    sql: `
+      ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS heading_path TEXT[];
+      ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS char_span INT4RANGE;
+      ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS unit_type TEXT;
+      ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS provenance JSONB;
+      CREATE INDEX IF NOT EXISTS idx_memory_nodes_unit_type ON memory_nodes(unit_type);
+    `,
+  },
+  {
+    version: 9,
+    name: 'edge_extraction_method',
+    sql: `
+      ALTER TABLE memory_edges ADD COLUMN IF NOT EXISTS extraction_method TEXT;
+      CREATE INDEX IF NOT EXISTS idx_memory_edges_extraction_method ON memory_edges(extraction_method);
+    `,
+  },
+  {
+    version: 10,
+    name: 'bge_m3_embedding_dim_1024',
+    sql: `
+      -- Bump embedding columns from vector(384) to vector(1024) for BGE-M3.
+      -- Existing 384-dim vectors are zero-padded to 1024 by PostgreSQL's cast.
+      -- Vectors must be re-embedded via reEmbedAll() after this migration;
+      -- old 384-dim values are preserved (zero-padded) until re-embedded.
+      DROP INDEX IF EXISTS idx_memory_nodes_embedding;
+      DROP INDEX IF EXISTS idx_memory_nodes_embedding_halfvec;
+      ALTER TABLE memory_nodes ALTER COLUMN embedding TYPE vector(1024) USING embedding::vector(1024);
+      ALTER TABLE memory_nodes ALTER COLUMN embedding_halfvec TYPE halfvec(1024) USING embedding_halfvec::halfvec(1024);
+      CREATE INDEX IF NOT EXISTS idx_memory_nodes_embedding ON memory_nodes
+        USING hnsw (embedding vector_cosine_ops)
+        WITH (m = 16, ef_construction = 64);
+      CREATE INDEX IF NOT EXISTS idx_memory_nodes_embedding_halfvec ON memory_nodes
+        USING hnsw (embedding_halfvec halfvec_cosine_ops)
+        WITH (m = 16, ef_construction = 64);
+    `,
+  },
+  {
+    version: 11,
+    name: 'graphrag_communities',
+    sql: `
+      -- Track Louvain community membership for GraphRAG hierarchical retrieval.
+      ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS community_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_memory_nodes_community_id ON memory_nodes(community_id) WHERE community_id IS NOT NULL;
+    `,
+  },
 ];
 
 export class MemoryMigrationRunner {

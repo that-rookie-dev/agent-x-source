@@ -11,9 +11,12 @@ import type { MemoryFabric } from './MemoryFabric.js';
 import { MemoryPipeline } from './MemoryPipeline.js';
 import { MemoryConsolidator } from './MemoryConsolidator.js';
 import { DocumentIngester } from './DocumentIngester.js';
-import { SynapticPlasticity } from './SynapticPlasticity.js';
-import { LocalEmbeddingProvider } from './LocalEmbeddingProvider.js';
+import { OnnxEmbeddingProvider } from './OnnxEmbeddingProvider.js';
 import { LocalLLMJudge } from './LocalLLMJudge.js';
+import { CommunitySummarizer } from './CommunitySummarizer.js';
+import type { GenerateFn } from './MemoryExtractor.js';
+import type { EmbeddingProvider } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
 
 export interface IngestionWorkerOptions {
   /** Kinds to process. Defaults to all. */
@@ -24,6 +27,10 @@ export interface IngestionWorkerOptions {
   pollIntervalMs?: number;
   /** Embedding provider. */
   embed?: (text: string) => Promise<number[]>;
+  /** LLM generate function for community summarization (GraphRAG). */
+  generate?: GenerateFn | null;
+  /** Full embedding provider for community summarization (needs embedBatch). */
+  embedder?: EmbeddingProvider | null;
 }
 
 export class IngestionWorker {
@@ -32,6 +39,8 @@ export class IngestionWorker {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private active = 0;
   private embed: (text: string) => Promise<number[]>;
+  private generate: GenerateFn | null;
+  private embedder: EmbeddingProvider | null;
 
   constructor(
     private pool: Pool,
@@ -40,9 +49,11 @@ export class IngestionWorker {
   ) {
     this.queue = new IngestionQueue(pool);
     this.embed = options.embed ?? (async (text) => {
-      const provider = new LocalEmbeddingProvider();
+      const provider = new OnnxEmbeddingProvider();
       return provider.embed(text);
     });
+    this.generate = options.generate ?? null;
+    this.embedder = options.embedder ?? null;
   }
 
   start(): void {
@@ -70,7 +81,7 @@ export class IngestionWorker {
   private async tick(): Promise<void> {
     if (!this.running) return;
     const concurrency = this.options.concurrency ?? 1;
-    const kinds = this.options.kinds ?? ['web_distill', 'document_ingest', 'memory_consolidate', 'plasticity', 'louvain_layout'];
+    const kinds = this.options.kinds ?? ['web_distill', 'document_ingest', 'memory_consolidate', 'louvain_layout', 'community_summarize'];
     const limit = Math.max(1, concurrency - this.active);
 
     try {
@@ -133,13 +144,17 @@ export class IngestionWorker {
         await consolidator.consolidate(job.payload as Record<string, unknown>);
         return;
       }
-      case 'plasticity': {
-        const plasticity = new SynapticPlasticity(this.fabric);
-        await plasticity.run(job.payload as Record<string, unknown>);
-        return;
-      }
       case 'louvain_layout': {
         await this.fabric.computeLouvainLayout();
+        return;
+      }
+      case 'community_summarize': {
+        if (!this.generate || !this.embedder) {
+          getLogger().warn('INGESTION_WORKER', 'community_summarize skipped: no LLM generator or embedder configured');
+          return;
+        }
+        const summarizer = new CommunitySummarizer(this.fabric, this.generate, this.embedder);
+        await summarizer.summarizeAll(job.payload as Record<string, unknown> | undefined);
         return;
       }
       case 'rag_telemetry': {

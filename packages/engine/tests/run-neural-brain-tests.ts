@@ -8,7 +8,6 @@ import { Pool } from 'pg';
 import {
   MemoryFabric,
   NeuralBrainIngestionPipeline,
-  SubAtomicExtractor,
   BrainEventStreamer,
   CrossClusterBridgeGenerator,
   TestDataCleaner,
@@ -140,20 +139,17 @@ class NeuralBrainTestSuite {
   }
 
   async testSubAtomicExtraction(): Promise<void> {
-    const extractor = new SubAtomicExtractor({
+    const text = 'This is a test document. '.repeat(50); // ~100 words
+    const result = await this.pipeline.ingest({
+      text,
       clusterId: `${TEST_CLUSTER_PREFIX}extraction-1`,
       sourceId: `${TEST_SOURCE_PREFIX}doc-1`,
-      targetDensity: 50,
-      maxEdgesPerNode: 7,
-      minDepthTiers: 4,
       generate: mockGenerate,
       embed: mockEmbed,
+      enableBridging: false,
     });
 
-    const text = 'This is a test document. '.repeat(50); // ~100 words
-    const result = await extractor.extract(text);
-
-    if (result.nodes.length === 0) {
+    if (result.nodesCreated === 0) {
       throw new Error('No nodes extracted');
     }
 
@@ -161,7 +157,7 @@ class NeuralBrainTestSuite {
       throw new Error(`Max edges per node (${result.topology.maxEdgesPerNode}) exceeds limit of 7`);
     }
 
-    console.log(`  Extracted ${result.nodes.length} nodes, ${result.edges.length} edges`);
+    console.log(`  Extracted ${result.nodesCreated} nodes, ${result.edgesCreated} edges`);
     console.log(`  Topology: depth=${result.topology.maxDepth}, avgEdges=${result.topology.avgEdgesPerNode.toFixed(2)}`);
   }
 
@@ -222,7 +218,6 @@ class NeuralBrainTestSuite {
       sourceColor: '#3b82f6',
       generate: mockGenerate,
       embed: mockEmbed,
-      targetDensity: 50,
       maxEdgesPerNode: 7,
       minDepthTiers: 4,
       enableBridging: false,

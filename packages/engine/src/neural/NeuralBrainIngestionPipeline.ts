@@ -12,13 +12,13 @@
 
 import type { Pool } from 'pg';
 import { getLogger } from '@agentx/shared';
-import { SubAtomicExtractor, type SubAtomicExtractionOptions } from './SubAtomicExtractor.js';
-import { AtomicExtractor } from './AtomicExtractor.js';
 import { BrainEventStreamer, getGlobalBrainEventStreamer } from './BrainEventStreamer.js';
 import { CrossClusterBridgeGenerator, type BridgeGenerationOptions } from './CrossClusterBridgeGenerator.js';
 import type { MemoryFabric } from './MemoryFabric.js';
 import type { MemoryNodeInput, MemoryEdgeInput } from './MemoryFabric.js';
 import type { GenerateFn } from './MemoryExtractor.js';
+import { sanitizeIngestText } from './sanitizeIngestText.js';
+import { StructuredMemoryPipeline } from './StructuredMemoryPipeline.js';
 
 export interface IngestionPipelineOptions {
   /** The text to ingest */
@@ -33,17 +33,6 @@ export interface IngestionPipelineOptions {
   generate: GenerateFn;
   /** Embedding generator function */
   embed?: (text: string) => Promise<number[]>;
-  /**
-   * Extraction strategy:
-   * - 'dynamic' (default): AtomicExtractor analyzes content complexity and extracts
-   *   as many atoms as the text actually contains (no fixed ratio).
-   * - 'fixed': SubAtomicExtractor targets `targetDensity` nodes per 100 words.
-   */
-  extractionMode?: 'dynamic' | 'fixed';
-  /** Granularity for dynamic extraction. Defaults to 'atomic' (maximum detail). */
-  granularity?: 'atomic' | 'balanced' | 'sparse';
-  /** Target node density (nodes per 100 words) — only used when extractionMode === 'fixed'. */
-  targetDensity?: number;
   /** Maximum edges per node */
   maxEdgesPerNode?: number;
   /** Minimum depth tiers */
@@ -71,22 +60,6 @@ export interface IngestionResult {
     nodeCreated: number;
     synapseConnected: number;
   };
-  /** Content analysis (only present when extractionMode === 'dynamic'). */
-  analysis?: {
-    textComplexity: number;
-    conceptDensity: number;
-    extractionRatio: number;
-    technicalTerms: number;
-    relationships: number;
-  };
-}
-
-/** Common shape returned by both extractors plus optional dynamic analysis. */
-interface ExtractionOutput {
-  nodes: MemoryNodeInput[];
-  edges: MemoryEdgeInput[];
-  topology: IngestionResult['topology'];
-  analysis?: IngestionResult['analysis'];
 }
 
 /**
@@ -113,31 +86,48 @@ export class NeuralBrainIngestionPipeline {
 
     logger.info('NEURAL_INGEST', `Starting ingestion for cluster ${options.clusterId}`);
 
-    // STEP 1 & 2: Parse & Structurize + Verify Topology Constraints
-    const extractionResult = await this.extractStructure(options);
+    const cleanText = sanitizeIngestText(options.text);
 
-    if (extractionResult.analysis) {
-      logger.info('NEURAL_INGEST', `Dynamic analysis: complexity=${extractionResult.analysis.textComplexity.toFixed(2)}, density=${extractionResult.analysis.conceptDensity.toFixed(1)}, ratio=${extractionResult.analysis.extractionRatio.toFixed(1)} nodes/100w`);
+    // STEPS 1-3 + 6: Run the StructuredMemoryPipeline (Normalize → Segment → Extract → Assemble → Validate → Persist)
+    const pipeline = new StructuredMemoryPipeline(this.fabric, options.generate);
+    const pipelineResult = await pipeline.run({
+      text: cleanText,
+      sessionId: options.clusterId,
+      sourceId: options.sourceId,
+      embed: !!options.embed,
+      embedFn: options.embed,
+      maxNodesPerChunk: 50,
+      topology: {
+        maxEdgesPerNode: options.maxEdgesPerNode,
+        minDepthTiers: options.minDepthTiers,
+        clusterId: options.clusterId,
+        sourceId: options.sourceId,
+      },
+    });
+
+    const nodesInserted = pipelineResult.nodes.length;
+    const edgesInserted = pipelineResult.edges.length;
+
+    logger.info('NEURAL_INGEST', `Extracted ${nodesInserted} nodes, ${edgesInserted} edges from ${pipelineResult.textUnitCount} TextUnits`);
+    logger.info('NEURAL_INGEST', `Topology: depth=${pipelineResult.topology.maxDepth}, avgEdges=${pipelineResult.topology.avgEdgesPerNode.toFixed(2)}, maxEdges=${pipelineResult.topology.maxEdgesPerNode}`);
+
+    if (pipelineResult.topology.violatesConstraints) {
+      logger.warn('NEURAL_INGEST', `Topology violations: ${pipelineResult.topology.violations.join('; ')}`);
     }
-    logger.info('NEURAL_INGEST', `Extracted ${extractionResult.nodes.length} nodes, ${extractionResult.edges.length} edges`);
-    logger.info('NEURAL_INGEST', `Topology: depth=${extractionResult.topology.maxDepth}, avgEdges=${extractionResult.topology.avgEdgesPerNode.toFixed(2)}, maxEdges=${extractionResult.topology.maxEdgesPerNode}`);
-
-    if (extractionResult.topology.violatesConstraints) {
-      logger.warn('NEURAL_INGEST', `Topology violations: ${extractionResult.topology.violations.join('; ')}`);
-    }
-
-    // STEP 3: Generate Cypher Transactions (Insert into database)
-    const { nodesInserted, edgesInserted } = await this.insertIntoDatabase(
-      extractionResult.nodes,
-      extractionResult.edges
-    );
 
     logger.info('NEURAL_INGEST', `Inserted ${nodesInserted} nodes, ${edgesInserted} edges into database`);
 
     // STEP 4: Emit Visualization Streams
+    const nodeInputs: MemoryNodeInput[] = pipelineResult.nodes.map((n) => ({
+      id: n.id, label: n.label, category: n.category, content: n.content,
+    }));
+    const edgeInputs: MemoryEdgeInput[] = pipelineResult.edges.map((e) => ({
+      sourceNodeId: e.sourceNodeId, targetNodeId: e.targetNodeId,
+      relationshipType: e.relationshipType, weight: e.weight,
+    }));
     const eventCounts = await this.emitVisualizationEvents(
-      extractionResult.nodes,
-      extractionResult.edges,
+      nodeInputs,
+      edgeInputs,
       options.sourceColor,
       streamer
     );
@@ -178,86 +168,9 @@ export class NeuralBrainIngestionPipeline {
       nodesCreated: nodesInserted,
       edgesCreated: edgesInserted + bridgesCreated,
       bridgesCreated,
-      topology: extractionResult.topology,
+      topology: pipelineResult.topology,
       events: eventCounts,
-      analysis: extractionResult.analysis,
     };
-  }
-
-  /**
-   * STEP 1 & 2: Extract atoms and verify topology.
-   *
-   * Defaults to the dynamic AtomicExtractor (content-aware, no fixed ratio).
-   * Set `extractionMode: 'fixed'` to use the density-targeted SubAtomicExtractor.
-   */
-  private async extractStructure(options: IngestionPipelineOptions): Promise<ExtractionOutput> {
-    const mode = options.extractionMode ?? 'dynamic';
-
-    if (mode === 'fixed') {
-      const extractorOptions: SubAtomicExtractionOptions = {
-        clusterId: options.clusterId,
-        sourceId: options.sourceId,
-        targetDensity: options.targetDensity,
-        maxEdgesPerNode: options.maxEdgesPerNode,
-        minDepthTiers: options.minDepthTiers,
-        generate: options.generate,
-        embed: options.embed,
-      };
-      const extractor = new SubAtomicExtractor(extractorOptions);
-      const result = await extractor.extract(options.text);
-      return { nodes: result.nodes, edges: result.edges, topology: result.topology };
-    }
-
-    // Dynamic, content-aware extraction (default)
-    const extractor = new AtomicExtractor({
-      clusterId: options.clusterId,
-      sourceId: options.sourceId,
-      maxEdgesPerNode: options.maxEdgesPerNode,
-      minDepthTiers: options.minDepthTiers,
-      granularity: options.granularity ?? 'atomic',
-      generate: options.generate,
-      embed: options.embed,
-    });
-    const result = await extractor.extract(options.text);
-    return {
-      nodes: result.nodes,
-      edges: result.edges,
-      topology: result.topology,
-      analysis: result.analysis,
-    };
-  }
-
-  /**
-   * STEP 3: Insert nodes and edges into PostgreSQL
-   */
-  private async insertIntoDatabase(
-    nodes: MemoryNodeInput[],
-    edges: MemoryEdgeInput[]
-  ): Promise<{ nodesInserted: number; edgesInserted: number }> {
-    let nodesInserted = 0;
-    let edgesInserted = 0;
-
-    // Insert nodes
-    for (const node of nodes) {
-      try {
-        await this.fabric.createNode(node);
-        nodesInserted++;
-      } catch (err) {
-        getLogger().error('NEURAL_INGEST', `Failed to insert node ${node.id}: ${err}`);
-      }
-    }
-
-    // Insert edges
-    for (const edge of edges) {
-      try {
-        await this.fabric.bindEdge(edge);
-        edgesInserted++;
-      } catch (err) {
-        getLogger().error('NEURAL_INGEST', `Failed to insert edge ${edge.sourceNodeId}->${edge.targetNodeId}: ${err}`);
-      }
-    }
-
-    return { nodesInserted, edgesInserted };
   }
 
   /**

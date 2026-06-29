@@ -722,6 +722,8 @@ export interface AgentXConfig {
       tavily?: { enabled: boolean; apiKey?: string };
     };
   };
+  /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
+  neuralBrain?: boolean;
 }
 
 export interface ProviderSettings {
@@ -1204,6 +1206,46 @@ export const localModel = {
     request<{ installed: string | null; activeModelId: string | null; enabled: boolean; model: { id: string; displayName: string; huggingFaceId: string; sizeGB: number; downloadedAt: string | null } | null }>(
       '/local-model/status',
     ),
+};
+
+export interface EmbeddingModelStatus {
+  id: string;
+  displayName: string;
+  huggingfaceId: string;
+  approxSizeMB: number;
+  downloaded: boolean;
+  sizeOnDiskMB: number;
+  downloadStatus: 'not_started' | 'pending' | 'downloading' | 'complete' | 'error';
+  percentage: number;
+}
+
+export interface EmbeddingModelProgress {
+  id: string;
+  displayName: string;
+  status: 'not_started' | 'pending' | 'downloading' | 'complete' | 'error';
+  downloadedMB: number;
+  totalMB: number;
+  percentage: number;
+  error?: string;
+}
+
+export const embeddingModels = {
+  status: () =>
+    request<{ models: EmbeddingModelStatus[]; allDownloaded: boolean }>('/embedding-models/status'),
+  download: () =>
+    request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/embedding-models/download', { method: 'POST' }),
+  /**
+   * Opens an SSE connection for download progress. Returns a cleanup function.
+   */
+  progressStream: (onProgress: (data: { type: string; models?: EmbeddingModelProgress[]; allComplete?: boolean; hasError?: boolean }) => void): (() => void) => {
+    const url = `${BASE}/embedding-models/progress`;
+    const es = new EventSource(url);
+    es.onmessage = (ev) => {
+      try { onProgress(JSON.parse(ev.data)); } catch {}
+    };
+    es.onerror = () => { /* SSE will auto-reconnect; ignore */ };
+    return () => es.close();
+  },
 };
 
 export const settings = {

@@ -2,40 +2,35 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, type SessionInfo } from './api.ts';
 import {
   BASE_NODE_SIZE,
-  FIRED_SIZE,
+  EDGE_WIDTH,
   resolvePosition,
   type EdgeEntry,
   type NodeEntry,
   type RenderEdge,
   type RenderNode,
   type GraphRenderer,
-  type RendererId,
 } from './renderers/types.ts';
 import { CATEGORY_COLORS, CATEGORY_NAMES, NEON } from './renderers/palette.ts';
-import {
-  createRenderer,
-  listRenderers,
-  resolveRendererId,
-  DEFAULT_RENDERER_ID,
-  type RendererDescriptor,
-} from './renderers/index.ts';
-import { getCapabilities, type CapabilityReport } from './renderers/capability.ts';
-import { RendererSwitcher, FOOTER_HEIGHT } from './components/RendererSwitcher.tsx';
+import { createRenderer, AVAILABLE_RENDERERS, type RendererId } from './renderers/index.ts';
 
-const WS_URL = (import.meta.env.VITE_API_WS_URL as string) || `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
+const WS_URL =
+  (import.meta.env.VITE_API_WS_URL as string) ||
+  `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
 
-const PANEL_WIDTH = 300;
+const PANEL_WIDTH = 240;
 const LS_RENDERER_KEY = 'agx:renderer';
 
 type BrainActivityEvent =
-  | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; x: number | null; y: number | null; timestamp: string }
+  | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; sessionId?: string | null; x: number | null; y: number | null; sourceColor?: string; timestamp: string }
   | { type: 'synapse_bound'; edgeId: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number; timestamp: string }
   | { type: 'neuron_fired'; nodeId: string; timestamp: string }
   | { type: 'neuron_decayed'; nodeId: string; status: string; timestamp: string }
   | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string }
   | { type: 'distillation_started'; sessionId: string; timestamp: string }
   | { type: 'distillation_complete'; sessionId: string; nodesCreated: number; edgesCreated: number; timestamp: string }
-  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string };
+  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string }
+  | { type: 'session_created'; sessionId: string; title: string; timestamp: string }
+  | { type: 'message_activity'; sessionId: string; role: 'user' | 'assistant'; textLength: number; timestamp: string };
 
 function useWebSocket(onEvent: (event: BrainActivityEvent) => void) {
   const onEventRef = useRef(onEvent);
@@ -80,6 +75,7 @@ function useWebSocket(onEvent: (event: BrainActivityEvent) => void) {
 export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<GraphRenderer | null>(null);
+  const nodeLineRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const nodesRef = useRef<NodeEntry[]>([]);
   const edgesRef = useRef<EdgeEntry[]>([]);
@@ -93,6 +89,10 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [fps, setFps] = useState(60);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  /** Session shown in the node list — independent of graph colour filter. */
+  const [panelSessionId, setPanelSessionId] = useState<string | null>(null);
+  const selectedSessionIdRef = useRef<string | null>(null);
+  selectedSessionIdRef.current = selectedSessionId;
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
@@ -101,16 +101,21 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dbStatus, setDbStatus] = useState({ connected: false });
-  const [distillationStatus, setDistillationStatus] = useState<{ sessionId: string | null; status: 'idle' | 'processing' | 'complete' | 'error'; message?: string; nodesCreated?: number; edgesCreated?: number }>({ sessionId: null, status: 'idle' });
-
-  // --- Renderer state -----------------------------------------------------
-  const [caps, setCaps] = useState<CapabilityReport>(() => getCapabilities());
-  const [rendererList, setRendererList] = useState<RendererDescriptor[]>(() => listRenderers(caps));
-  const [activeRendererId, setActiveRendererId] = useState<RendererId>(() => {
-    const saved = typeof localStorage !== 'undefined'
-      ? (localStorage.getItem(LS_RENDERER_KEY) as RendererId | null)
-      : null;
-    return resolveRendererId(saved, caps);
+  const [distillationStatus, setDistillationStatus] = useState<{
+    sessionId: string | null;
+    status: 'idle' | 'processing' | 'complete' | 'error';
+    message?: string;
+    nodesCreated?: number;
+    edgesCreated?: number;
+  }>({ sessionId: null, status: 'idle' });
+  const [messageActivity, setMessageActivity] = useState<{
+    sessionId: string | null;
+    role: 'user' | 'assistant';
+    textLength: number;
+  } | null>(null);
+  const [rendererId, setRendererId] = useState<RendererId>(() => {
+    const saved = localStorage.getItem(LS_RENDERER_KEY) as RendererId | null;
+    return saved && AVAILABLE_RENDERERS.some((r) => r.id === saved) ? saved : 'nebula';
   });
 
   const categories = useMemo(() => {
@@ -123,62 +128,118 @@ export default function App() {
       .map(([category]) => category);
   }, [stats.nodes]);
 
+  const listSessionId = panelSessionId ?? selectedSessionId;
+
   const selectedSessionNodes = useMemo(() => {
-    if (selectedSessionId == null) return [];
+    if (listSessionId == null) return [];
     return nodesRef.current
-      .filter((n) => n.sessionId === selectedSessionId)
+      .filter((n) => n.sessionId === listSessionId)
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [selectedSessionId, stats.nodes]);
+  }, [listSessionId, stats.nodes]);
+
+  const nodeDegreeMap = useMemo(() => {
+    const deg = new Map<string, number>();
+    for (const n of nodesRef.current) deg.set(n.id, 0);
+    for (const e of edgesRef.current) {
+      deg.set(e.sourceNodeId, (deg.get(e.sourceNodeId) ?? 0) + 1);
+      deg.set(e.targetNodeId, (deg.get(e.targetNodeId) ?? 0) + 1);
+    }
+    return deg;
+  }, [stats.nodes, stats.edges]);
+
+  const getNodeDegree = (nodeId: string): number => {
+    let d = 0;
+    for (const e of edgesRef.current) {
+      if (e.sourceNodeId === nodeId || e.targetNodeId === nodeId) d++;
+    }
+    return d;
+  };
+
+  const selectedSessionOrphans = useMemo(() => {
+    if (listSessionId == null) return 0;
+    return selectedSessionNodes.filter((n) => (nodeDegreeMap.get(n.id) ?? 0) === 0).length;
+  }, [listSessionId, selectedSessionNodes, nodeDegreeMap]);
 
   const selectedSessionName = useMemo(() => {
-    if (selectedSessionId == null) return null;
-    const s = sessions.find((x) => x.id === selectedSessionId);
-    return s?.title || `Session ${selectedSessionId.slice(0, 8)}`;
-  }, [selectedSessionId, sessions]);
+    if (listSessionId == null) return null;
+    const s = sessions.find((x) => x.id === listSessionId);
+    return s?.title || `Session ${listSessionId.slice(0, 8)}`;
+  }, [listSessionId, sessions]);
 
-  // Build render-ready data from the current node/edge refs + override maps,
-  // then hand it to the active renderer. Each renderer decides whether to
-  // apply immediately (force3d) or debounce (Cosmograph).
+  // ── Renderer sync ──────────────────────────────────────────────────────────
+  // Always passes EVERY node and edge — no filtering.
+  // When a session/cluster is selected, the selected cluster glows orange and
+  // everything else fades to near-black.  sigma.js updates colours via
+  // graphology's incremental mergeNodeAttributes() — no scene rebuild.
   const syncToRenderer = () => {
     const r = rendererRef.current;
     if (!r) return;
 
-    const visibleNodes = selectedSessionId == null && selectedCluster == null
-      ? nodesRef.current
-      : nodesRef.current.filter((n) => {
-          if (selectedSessionId != null && n.sessionId !== selectedSessionId) return false;
-          if (selectedCluster != null && n.category !== selectedCluster) return false;
-          return true;
-        });
+    const hasFilter = selectedSessionId != null || selectedCluster != null;
 
-    const visibleNodeIds = new Set(visibleNodes.map((n) => n.id));
-    const visibleEdges = edgesRef.current.filter((e) =>
-      visibleNodeIds.has(e.sourceNodeId) && visibleNodeIds.has(e.targetNodeId)
-    );
+    const highlightedNodeIds: Set<string> | null = hasFilter
+      ? new Set(
+          nodesRef.current
+            .filter((n) => {
+              if (selectedSessionId != null && n.sessionId !== selectedSessionId) return false;
+              if (selectedCluster != null && n.category !== selectedCluster) return false;
+              return true;
+            })
+            .map((n) => n.id),
+        )
+      : null;
 
-    const renderNodes: RenderNode[] = visibleNodes.map((n) => ({
-      id: n.id,
-      label: n.label,
-      category: n.category,
-      x: n.x,
-      y: n.y,
-      z: n.z,
-      color: nodeColorMapRef.current.get(n.id) ?? n.baseColor,
-      size: nodeSizeMapRef.current.get(n.id) ?? n.baseSize,
-    }));
+    const renderNodes: RenderNode[] = nodesRef.current.map((n) => {
+      const degree = getNodeDegree(n.id);
+      let color: string;
+      if (!hasFilter) {
+        color = nodeColorMapRef.current.get(n.id) ?? n.baseColor;
+        if (degree === 0) color = NEON.dimNode;
+      } else if (highlightedNodeIds!.has(n.id)) {
+        color = NEON.orange;
+      } else {
+        color = NEON.dimNode;
+      }
+      return {
+        id: n.id,
+        label: n.label,
+        category: n.category,
+        sessionId: n.sessionId,
+        x: n.x,
+        y: n.y,
+        z: n.z,
+        color,
+        size: nodeSizeMapRef.current.get(n.id) ?? n.baseSize,
+      };
+    });
 
-    const renderEdges: RenderEdge[] = visibleEdges.map((e) => ({
-      id: e.id,
-      source: e.sourceNodeId,
-      target: e.targetNodeId,
-      color: edgeColorMapRef.current.get(e.id) ?? e.baseColor,
-      width: edgeWidthMapRef.current.get(e.id) ?? e.baseWidth,
-    }));
+    const renderEdges: RenderEdge[] = edgesRef.current.map((e) => {
+      let color: string;
+      if (!hasFilter) {
+        color = edgeColorMapRef.current.get(e.id) ?? e.baseColor;
+      } else if (
+        highlightedNodeIds!.has(e.sourceNodeId) &&
+        highlightedNodeIds!.has(e.targetNodeId)
+      ) {
+        color = NEON.orange;
+      } else {
+        color = NEON.dimEdge;
+      }
+      return {
+        id: e.id,
+        source: e.sourceNodeId,
+        target: e.targetNodeId,
+        color,
+        width: edgeWidthMapRef.current.get(e.id) ?? e.baseWidth,
+      };
+    });
 
     r.setData(renderNodes, renderEdges);
   };
 
-  const addNode = (node: Partial<NodeEntry> & { id: string; label: string; category: string; content: string } | any) => {
+  const addNode = (
+    node: Partial<NodeEntry> & { id: string; label: string; category: string; content: string } | any,
+  ) => {
     const pos = resolvePosition(node.x || null, node.y || null);
     const newNode: NodeEntry = {
       id: node.id,
@@ -201,14 +262,16 @@ export default function App() {
     syncToRenderer();
   };
 
-  const addEdge = (edge: Partial<EdgeEntry> & { id: string; sourceNodeId: string; targetNodeId: string }) => {
+  const addEdge = (
+    edge: Partial<EdgeEntry> & { id: string; sourceNodeId: string; targetNodeId: string },
+  ) => {
     const newEdge: EdgeEntry = {
       id: edge.id,
       sourceNodeId: edge.sourceNodeId,
       targetNodeId: edge.targetNodeId,
       weight: edge.weight ?? 0.5,
-      baseColor: NEON.edge,
-      baseWidth: Math.max(0.8, (edge.weight ?? 0.5) * 3),
+      baseColor: NEON.edgeBright,
+      baseWidth: EDGE_WIDTH,
     };
     edgesRef.current.push(newEdge);
     edgeColorMapRef.current.set(newEdge.id, newEdge.baseColor);
@@ -217,34 +280,8 @@ export default function App() {
     syncToRenderer();
   };
 
-  const updateEdgeColor = (edgeId: string, color: string) => {
-    edgeColorMapRef.current.set(edgeId, color);
-    syncToRenderer();
-  };
-
-  const updateEdgeWidth = (edgeId: string, width: number) => {
-    edgeWidthMapRef.current.set(edgeId, width);
-    syncToRenderer();
-  };
-
   const flashEdge = (edgeId: string) => {
-    const edge = edgesRef.current.find(e => e.id === edgeId);
-    if (!edge) return;
-
-    // Lightning flash: bright cyan with increased width, then fade back.
-    updateEdgeColor(edgeId, NEON.brightCyan);
-    updateEdgeWidth(edgeId, edge.baseWidth * 3);
     rendererRef.current?.emitParticle(edgeId);
-
-    setTimeout(() => {
-      updateEdgeColor(edgeId, edge.baseColor);
-      updateEdgeWidth(edgeId, edge.baseWidth);
-    }, 400);
-  };
-
-  const updateNodeSize = (nodeId: string, size: number) => {
-    nodeSizeMapRef.current.set(nodeId, size);
-    syncToRenderer();
   };
 
   const updateNodeColor = (nodeId: string, color: string) => {
@@ -256,23 +293,27 @@ export default function App() {
     rendererRef.current?.fitToAll();
   };
 
-  const focusNode = (nodeId: string) => {
-    rendererRef.current?.focusNode(nodeId);
+  const focusNodeInPanel = (nodeId: string) => {
+    setFocusedNodeId(nodeId);
+  };
+
+  const selectNodeFromGraph = (nodeId: string) => {
+    const node = idToNodeRef.current.get(nodeId);
+    if (node?.sessionId) {
+      setPanelSessionId(node.sessionId);
+      setNodeListOpen(true);
+    }
+    setFocusedNodeId(nodeId);
+    setExpandedNodeIds((prev) => new Set(prev).add(nodeId));
+    requestAnimationFrame(() => {
+      nodeLineRefs.current.get(nodeId)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
   };
 
   const backToSession = () => {
     setFocusedNodeId(null);
-    if (selectedSessionId != null) {
-      const sessionNodes = nodesRef.current.filter((n) => n.sessionId === selectedSessionId);
-      if (sessionNodes.length > 0) {
-        fitToAll();
-      }
-    } else {
-      fitToAll();
-    }
   };
 
-  // Closes only the bottom node-list panel (keeps the session selected).
   const closeNodeList = () => {
     setNodeListOpen(false);
     setFocusedNodeId(null);
@@ -280,29 +321,19 @@ export default function App() {
 
   const selectSession = (sessionId: string | null) => {
     setSelectedSessionId(sessionId);
+    setPanelSessionId(sessionId);
     setSelectedCluster(null);
     setFocusedNodeId(null);
     setExpandedNodeIds(new Set());
     setNodeListOpen(sessionId != null);
-    syncToRenderer();
-    if (sessionId == null) {
-      fitToAll();
-    } else {
-      setTimeout(() => fitToAll(), 100);
-    }
   };
 
   const selectCluster = (category: string | null) => {
     setSelectedCluster(category);
     setSelectedSessionId(null);
+    setPanelSessionId(null);
     setFocusedNodeId(null);
     setExpandedNodeIds(new Set());
-    syncToRenderer();
-    if (category == null) {
-      fitToAll();
-    } else {
-      setTimeout(() => fitToAll(), 100);
-    }
   };
 
   const toggleExpand = (nodeId: string) => {
@@ -314,35 +345,57 @@ export default function App() {
     });
   };
 
-  // --- Renderer switching -------------------------------------------------
+  // ── Renderer mount / remount ───────────────────────────────────────────────
+  // Re-mounts when rendererId changes. Default is 'nebula' (three.js + d3-force).
+  useEffect(() => {
+    if (loading || error) return;
+    if (!containerRef.current) return;
 
-  const handleSelectRenderer = (id: RendererId) => {
-    if (id === activeRendererId) return;
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(LS_RENDERER_KEY, id);
+    // Destroy any previous renderer instance.
+    if (rendererRef.current) {
+      void rendererRef.current.destroy?.();
+      rendererRef.current = null;
     }
-    setActiveRendererId(id);
-  };
-
-  const handleCapsChanged = (next: CapabilityReport) => {
-    setCaps(next);
-    const list = listRenderers(next);
-    setRendererList(list);
-    // If the active renderer is no longer available, fall back to default.
-    const stillAvailable = list.find((r) => r.id === activeRendererId)?.available;
-    if (!stillAvailable) {
-      setActiveRendererId(DEFAULT_RENDERER_ID);
+    if (containerRef.current) {
+      containerRef.current.innerHTML = '';
     }
-  };
 
-  // Initial load
+    const r = createRenderer(rendererId);
+    rendererRef.current = r;
+
+    try {
+      r.mount(containerRef.current);
+    } catch {
+      rendererRef.current = null;
+      return;
+    }
+
+    r.onNodeClick?.((id) => {
+      selectNodeFromGraph(id);
+    });
+    r.onNodeDragEnd?.((id, x, y, z) => {
+      const node = idToNodeRef.current.get(id);
+      if (node) {
+        node.x = x;
+        node.y = y;
+        node.z = z;
+      }
+    });
+
+    syncToRenderer();
+    setTimeout(() => fitToAll(), 100);
+
+    return () => {
+      void r.destroy?.();
+      if (rendererRef.current === r) rendererRef.current = null;
+    };
+  }, [loading, error, rendererId]);
+
+  // ── Initial data load ─────────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
       try {
-        const [sess, db] = await Promise.all([
-          api.sessions(),
-          api.dbStatus(),
-        ]);
+        const [sess, db] = await Promise.all([api.sessions(), api.dbStatus()]);
         setSessions(sess);
         setDbStatus(db);
         setLoading(false);
@@ -374,15 +427,14 @@ export default function App() {
             sourceNodeId: e.sourceNodeId,
             targetNodeId: e.targetNodeId,
             weight: e.weight,
-            baseColor: NEON.edge,
-            baseWidth: Math.max(0.8, e.weight * 3),
+            baseColor: NEON.edgeBright,
+            baseWidth: EDGE_WIDTH,
           };
           edgesRef.current.push(edge);
           edgeColorMapRef.current.set(edge.id, edge.baseColor);
           edgeWidthMapRef.current.set(edge.id, edge.baseWidth);
         }
         setStats({ nodes: g.nodes.length, edges: g.edges.length });
-        // Sync to graph after initial load and fit camera so clusters are visible.
         setTimeout(() => {
           syncToRenderer();
           fitToAll();
@@ -395,7 +447,7 @@ export default function App() {
     load();
   }, []);
 
-  // Layout epoch polling
+  // ── Layout epoch polling ───────────────────────────────────────────────────
   useEffect(() => {
     let lastEpoch = 0;
     const poll = setInterval(async () => {
@@ -415,19 +467,17 @@ export default function App() {
           }
           syncToRenderer();
         }
-      } catch (e) {
-        // Ignore errors during polling
+      } catch {
+        // ignore polling errors
       }
     }, 30000);
     return () => clearInterval(poll);
   }, []);
 
-  // WebSocket event handling
+  // ── WebSocket events ───────────────────────────────────────────────────────
   useWebSocket((event) => {
-    // Handle new Neural Brain event format
     if ('event' in event && typeof event.event === 'string') {
       if (event.event === 'NODE_CREATED' && 'node_id' in event && 'label' in event) {
-        // Particle effect: scale from 0 to full size with opacity pulse
         const nodeId = (event as any).node_id;
         const label = (event as any).label;
         const type = (event as any).type || 'concept';
@@ -437,117 +487,44 @@ export default function App() {
         const y = (event as any).y;
         const sourceColor = (event as any).sourceColor;
         const color = sourceColor || CATEGORY_COLORS[type.toLowerCase()] || '#ffffff';
-
-        addNode({
-          id: nodeId,
-          label,
-          category: type.toLowerCase(),
-          content,
-          sourceId: null,
-          sessionId: clusterId,
-          x: x || undefined,
-          y: y || undefined,
-        });
-        // Animate birth: pulse from 0 to full size
-        updateNodeSize(nodeId, 0);
+        addNode({ id: nodeId, label, category: type.toLowerCase(), content, sourceId: null, sessionId: clusterId, x: x || undefined, y: y || undefined });
         updateNodeColor(nodeId, color);
-        setTimeout(() => updateNodeSize(nodeId, BASE_NODE_SIZE * 1.5), 50);
-        setTimeout(() => updateNodeSize(nodeId, BASE_NODE_SIZE), 300);
       } else if (event.event === 'SYNAPSE_CONNECTED' && 'source_id' in event && 'target_id' in event) {
-        // Lightning-bolt effect: flash the edge
         const sourceId = (event as any).source_id;
         const targetId = (event as any).target_id;
         const edgeType = (event as any).edge_type || 'RELATED_TO';
         const weight = (event as any).weight || 0.5;
         const edgeId = `${sourceId}-${targetId}-${edgeType}`;
-
-        addEdge({
-          id: edgeId,
-          sourceNodeId: sourceId,
-          targetNodeId: targetId,
-          weight,
-        });
-
-        // Flash the edge with lightning effect
+        addEdge({ id: edgeId, sourceNodeId: sourceId, targetNodeId: targetId, weight });
         setTimeout(() => flashEdge(edgeId), 100);
       } else if (event.event === 'NEURON_ACTIVATED' && 'node_ids' in event) {
-        // Glow effect: intense luminescence with radiating ripples
         const nodeIds = (event as any).node_ids as string[];
-        const intensity = (event as any).intensity || 1.0;
-
         for (const nodeId of nodeIds) {
-          const node = idToNodeRef.current.get(nodeId);
-          if (!node) continue;
-          const base = node.baseColor;
-          // Glow: white-hot flash with intensity-based size increase (blooms hard).
-          updateNodeSize(nodeId, BASE_NODE_SIZE * (1 + intensity));
-          updateNodeColor(nodeId, NEON.hot);
-          // Radiate travelling signals out through connected synapses.
           rendererRef.current?.emitFromNode(nodeId);
-          // Fade back to base over 600ms
-          setTimeout(() => {
-            updateNodeSize(nodeId, BASE_NODE_SIZE);
-            updateNodeColor(nodeId, base);
-          }, 600);
         }
       }
       return;
     }
 
-    // Handle legacy event format
     if (event.type === 'neuron_created') {
-      addNode({
-        id: event.nodeId,
-        label: event.label,
-        category: event.category,
-        content: event.content,
-        sourceId: null,
-        sessionId: null,
-        x: event.x || undefined,
-        y: event.y || undefined,
-      });
+      addNode({ id: event.nodeId, label: event.label, category: event.category, content: event.content, sourceId: null, sessionId: event.sessionId ?? null, x: event.x || undefined, y: event.y || undefined });
     } else if (event.type === 'synapse_bound') {
-      addEdge({
-        id: event.edgeId,
-        sourceNodeId: event.sourceNodeId,
-        targetNodeId: event.targetNodeId,
-        weight: event.weight,
-      });
+      addEdge({ id: event.edgeId, sourceNodeId: event.sourceNodeId, targetNodeId: event.targetNodeId, weight: event.weight });
+      setTimeout(() => flashEdge(event.edgeId), 80);
     } else if (event.type === 'neuron_fired') {
-      const node = idToNodeRef.current.get(event.nodeId);
-      if (!node) return;
-      const base = node.baseColor;
-      updateNodeSize(event.nodeId, FIRED_SIZE);
-      updateNodeColor(event.nodeId, '#ffffff');
-      setTimeout(() => {
-        updateNodeSize(event.nodeId, BASE_NODE_SIZE);
-        updateNodeColor(event.nodeId, base);
-      }, 400);
+      rendererRef.current?.emitFromNode(event.nodeId);
     } else if (event.type === 'neuron_decayed') {
-      const node = idToNodeRef.current.get(event.nodeId);
-      if (!node) return;
-      updateNodeColor(event.nodeId, '#ff0000');
-      updateNodeSize(event.nodeId, 1);
+      updateNodeColor(event.nodeId, '#ff4444');
+      rendererRef.current?.animateDecay?.(event.nodeId);
     } else if (event.type === 'cluster_layout_updated') {
       api.graph(5000).then((g) => {
         for (const n of g.nodes) {
           const node = idToNodeRef.current.get(n.id);
           if (node) {
             const pos = resolvePosition(n.x, n.y);
-            node.x = pos.x;
-            node.y = pos.y;
-            node.z = pos.z;
+            node.x = pos.x; node.y = pos.y; node.z = pos.z;
           } else {
-            addNode({
-              id: n.id,
-              label: n.label,
-              category: n.category,
-              content: n.content,
-              sourceId: n.sourceId,
-              sessionId: n.sessionId,
-              x: n.x || undefined,
-              y: n.y || undefined,
-            });
+            addNode({ id: n.id, label: n.label, category: n.category, content: n.content, sourceId: n.sourceId, sessionId: n.sessionId, x: n.x || undefined, y: n.y || undefined });
           }
         }
         syncToRenderer();
@@ -556,84 +533,47 @@ export default function App() {
     } else if (event.type === 'distillation_started') {
       setDistillationStatus({ sessionId: event.sessionId, status: 'processing', message: 'Processing conversation memory...' });
     } else if (event.type === 'distillation_complete') {
-      setDistillationStatus({
-        sessionId: event.sessionId,
-        status: 'complete',
-        message: `Memory distilled: ${event.nodesCreated} nodes, ${event.edgesCreated} edges`,
-        nodesCreated: event.nodesCreated,
-        edgesCreated: event.edgesCreated,
-      });
+      setDistillationStatus({ sessionId: event.sessionId, status: 'complete', message: `Memory distilled: ${event.nodesCreated} nodes, ${event.edgesCreated} edges`, nodesCreated: event.nodesCreated, edgesCreated: event.edgesCreated });
       setTimeout(() => setDistillationStatus({ sessionId: null, status: 'idle' }), 5000);
     } else if (event.type === 'distillation_error') {
-      setDistillationStatus({
-        sessionId: event.sessionId,
-        status: 'error',
-        message: `Distillation error: ${event.error}`,
-      });
+      setDistillationStatus({ sessionId: event.sessionId, status: 'error', message: `Distillation error: ${event.error}` });
       setTimeout(() => setDistillationStatus({ sessionId: null, status: 'idle' }), 5000);
+    } else if (event.type === 'session_created') {
+      // Add new session to the sessions list.
+      setSessions((prev) => {
+        if (prev.some((s) => s.id === event.sessionId)) return prev;
+        return [...prev, {
+          id: event.sessionId,
+          title: event.title,
+          status: 'active',
+          provider: '',
+          model: '',
+          scopePath: '',
+          createdAt: event.timestamp,
+          updatedAt: event.timestamp,
+          messageCount: 0,
+        }];
+      });
+    } else if (event.type === 'message_activity') {
+      setMessageActivity({ sessionId: event.sessionId, role: event.role, textLength: event.textLength });
+      // Clear message activity indicator after 3 seconds.
+      setTimeout(() => setMessageActivity((prev) => (prev?.sessionId === event.sessionId ? null : prev)), 3000);
     }
   });
 
-  // Mount / re-mount the active renderer into the canvas container.
-  // Re-runs when loading/error clear (first mount) or when the user switches
-  // renderer via the footer switcher. The cleanup destroys the previous
-  // renderer and clears the container so the new one gets a fresh DOM node.
+  // ── Recolour graph when filter changes ────────────────────────────────────
   useEffect(() => {
-    if (loading || error) return;
-    if (!containerRef.current) return;
-
-    // Destroy any previous renderer (async destroy is fire-and-forget; the
-    // innerHTML clear is the synchronous safety net).
-    if (rendererRef.current) {
-      void rendererRef.current.destroy?.();
-      rendererRef.current = null;
-    }
-    if (containerRef.current) {
-      containerRef.current.innerHTML = '';
-    }
-
-    const r = createRenderer(activeRendererId, caps);
-    rendererRef.current = r;
-
-    try {
-      r.mount(containerRef.current);
-    } catch {
-      // If mount fails, fall back to force3d on the next tick.
-      rendererRef.current = null;
-      if (activeRendererId !== DEFAULT_RENDERER_ID) {
-        setActiveRendererId(DEFAULT_RENDERER_ID);
-      }
-      return;
-    }
-
-    // Wire interaction callbacks through the renderer interface.
-    r.onNodeClick?.((id) => {
-      toggleExpand(id);
-      focusNode(id);
-      r.emitFromNode(id);
-    });
-    r.onNodeDragEnd?.((id, x, y, z) => {
-      const node = idToNodeRef.current.get(id);
-      if (node) {
-        node.x = x;
-        node.y = y;
-        node.z = z;
-      }
-    });
-
-    // Sync current data into the freshly mounted renderer + frame it.
     syncToRenderer();
-    setTimeout(() => fitToAll(), 100);
+  }, [selectedSessionId, selectedCluster, stats]);
 
-    return () => {
-      void r.destroy?.();
-      if (rendererRef.current === r) {
-        rendererRef.current = null;
-      }
-    };
-  }, [loading, error, activeRendererId]);
+  // ── Window resize ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const onResize = () => rendererRef.current?.resize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
-  // Lightweight FPS telemetry for the HUD.
+  // ── FPS telemetry ─────────────────────────────────────────────────────────
   useEffect(() => {
     let raf = 0;
     let last = performance.now();
@@ -652,26 +592,14 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // Boot sequence overlay fades after the uplink is established.
+  // ── Boot overlay ──────────────────────────────────────────────────────────
   useEffect(() => {
     const t = setTimeout(() => setBooting(false), 2600);
     return () => clearTimeout(t);
   }, []);
 
-  // Update graph when filters change OR when new data arrives (stats change).
-  // The stats dep is critical: the initial load calls setLoading(false) BEFORE
-  // fetching graph data, so the mount effect runs with empty nodesRef. When
-  // the graph data arrives and setStats() fires, this effect re-runs and
-  // syncs the actual data into the already-mounted renderer.
-  useEffect(() => {
-    syncToRenderer();
-  }, [selectedSessionId, selectedCluster, stats]);
-
   return (
     <div style={styles.page}>
-      <div style={styles.starfield} />
-      <div style={styles.gridOverlay} />
-
       <main style={styles.main}>
         {loading && (
           <div style={styles.center}>
@@ -697,56 +625,53 @@ export default function App() {
               connected={dbStatus.connected}
               booting={booting}
               panelWidth={PANEL_WIDTH}
-              footerHeight={FOOTER_HEIGHT}
             />
 
-            {/* Distillation toast (replaces the old header status) */}
             {distillationStatus.status !== 'idle' && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 20,
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  padding: '6px 14px',
-                  fontFamily: "'JetBrains Mono', monospace",
-                  fontSize: 11,
-                  letterSpacing: 1,
-                  color: distillationStatus.status === 'error' ? '#ff6b6b' : NEON.cyan,
-                  background: 'rgba(2,6,15,0.85)',
-                  border: `1px solid ${distillationStatus.status === 'error' ? '#ff6b6b' : 'rgba(125,249,255,0.4)'}`,
-                  borderRadius: 4,
-                  zIndex: 60,
-                }}
-              >
+              <div style={{ position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)', padding: '6px 14px', fontFamily: "'JetBrains Mono', monospace", fontSize: 11, letterSpacing: 1, color: distillationStatus.status === 'error' ? '#ff6b6b' : NEON.cyan, background: 'rgba(2,6,15,0.85)', border: `1px solid ${distillationStatus.status === 'error' ? '#ff6b6b' : 'rgba(125,249,255,0.4)'}`, borderRadius: 4, zIndex: 60 }}>
                 {distillationStatus.status === 'processing' && '⚡ '}
                 {distillationStatus.status === 'error' && '⚠ '}
                 {distillationStatus.message}
               </div>
             )}
 
+            {messageActivity && distillationStatus.status === 'idle' && (
+              <div style={{ position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)', padding: '4px 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: 1, color: messageActivity.role === 'user' ? NEON.cyan : NEON.blue, background: 'rgba(2,6,15,0.7)', border: `1px solid ${messageActivity.role === 'user' ? 'rgba(125,249,255,0.3)' : 'rgba(30,144,255,0.3)'}`, borderRadius: 4, zIndex: 55 }}>
+                {messageActivity.role === 'user' ? '💬 ' : '🤖 '}
+                {messageActivity.role === 'user' ? 'USER' : 'ASSISTANT'} · {messageActivity.textLength} chars
+              </div>
+            )}
+
             <div style={styles.sidePanel}>
-              {/* TOP HALF — navigation controls */}
-              <div style={nodeListOpen && selectedSessionId != null ? styles.panelHalf : styles.panelFull}>
+              <div style={nodeListOpen && listSessionId != null ? styles.panelHalf : styles.panelFull}>
                 <div style={styles.panelRow}>
                   <span style={styles.panelTitle}>CONTROLS</span>
                   <button style={styles.button} onClick={() => fitToAll()}>RESET VIEW</button>
                 </div>
 
+                <div style={styles.panelTitle}>RENDERER</div>
+                <div style={styles.list}>
+                  {AVAILABLE_RENDERERS.map((r) => (
+                    <button
+                      key={r.id}
+                      style={rendererId === r.id ? styles.activeItem : styles.item}
+                      onClick={() => {
+                        setRendererId(r.id);
+                        localStorage.setItem(LS_RENDERER_KEY, r.id);
+                      }}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+
                 <div style={styles.panelTitle}>SESSIONS</div>
                 <div style={styles.list}>
-                  <button
-                    style={selectedSessionId === null ? styles.activeItem : styles.item}
-                    onClick={() => selectSession(null)}
-                  >
+                  <button style={selectedSessionId === null ? styles.activeItem : styles.item} onClick={() => selectSession(null)}>
                     ALL SESSIONS
                   </button>
                   {sessions.map((s) => (
-                    <button
-                      key={s.id}
-                      style={selectedSessionId === s.id ? styles.activeItem : styles.item}
-                      onClick={() => selectSession(s.id)}
-                    >
+                    <button key={s.id} style={selectedSessionId === s.id ? styles.activeItem : styles.item} onClick={() => selectSession(s.id)}>
                       {s.title || `Session ${s.id.slice(0, 8)}`}
                     </button>
                   ))}
@@ -754,18 +679,11 @@ export default function App() {
 
                 <div style={styles.panelTitle}>CLUSTERS</div>
                 <div style={styles.list}>
-                  <button
-                    style={selectedCluster === null ? styles.activeItem : styles.item}
-                    onClick={() => selectCluster(null)}
-                  >
+                  <button style={selectedCluster === null ? styles.activeItem : styles.item} onClick={() => selectCluster(null)}>
                     ALL CLUSTERS
                   </button>
                   {categories.map((c) => (
-                    <button
-                      key={c}
-                      style={selectedCluster === c ? styles.activeItem : styles.item}
-                      onClick={() => selectCluster(c)}
-                    >
+                    <button key={c} style={selectedCluster === c ? styles.activeItem : styles.item} onClick={() => selectCluster(c)}>
                       <span style={{ ...styles.colorDot, background: CATEGORY_COLORS[c] || NEON.cyan }} />
                       {CATEGORY_NAMES[c] || c}
                     </button>
@@ -773,42 +691,45 @@ export default function App() {
                 </div>
               </div>
 
-              {/* BOTTOM HALF — node list for the selected session (closable, 50:50) */}
-              {selectedSessionId != null && nodeListOpen && (
+              {listSessionId != null && nodeListOpen && (
                 <div style={styles.panelHalfBottom}>
                   <div style={styles.sessionCardHeader}>
-                    <span style={styles.sessionCardTitle}>{selectedSessionName?.toUpperCase()}</span>
-                    <div style={styles.sessionCardActions}>
-                      {focusedNodeId && (
-                        <button style={styles.smallButton} onClick={backToSession}>BACK</button>
+                    <span style={styles.sessionCardTitle}>
+                      {selectedSessionName?.toUpperCase()}
+                      {selectedSessionOrphans > 0 && (
+                        <span style={styles.orphanBadge}> · {selectedSessionOrphans} orphan{selectedSessionOrphans === 1 ? '' : 's'}</span>
                       )}
+                    </span>
+                    <div style={styles.sessionCardActions}>
+                      {focusedNodeId && <button style={styles.smallButton} onClick={backToSession}>BACK</button>}
                       <button style={styles.closeButton} onClick={closeNodeList}>×</button>
                     </div>
                   </div>
                   <div style={styles.sessionCardList}>
-                    {selectedSessionNodes.length === 0 && (
-                      <p style={styles.dim}>No neurons in this session.</p>
-                    )}
+                    {selectedSessionNodes.length === 0 && <p style={styles.dim}>No neurons in this session.</p>}
                     {selectedSessionNodes.map((n) => {
                       const expanded = expandedNodeIds.has(n.id);
+                      const focused = focusedNodeId === n.id;
+                      const degree = nodeDegreeMap.get(n.id) ?? 0;
+                      const isOrphan = degree === 0;
                       return (
                         <div
                           key={n.id}
-                          style={styles.nodeLine}
-                          onClick={() => {
-                            toggleExpand(n.id);
-                            focusNode(n.id);
+                          ref={(el) => {
+                            if (el) nodeLineRefs.current.set(n.id, el);
+                            else nodeLineRefs.current.delete(n.id);
                           }}
+                          style={focused ? styles.nodeLineFocused : isOrphan ? styles.nodeLineOrphan : styles.nodeLine}
+                          onClick={() => { toggleExpand(n.id); focusNodeInPanel(n.id); }}
                         >
                           <div style={styles.nodeLineTop}>
-                            <span style={{ ...styles.colorDot, background: n.baseColor }} />
-                            <span style={expanded ? styles.nodeLineExpanded : styles.nodeLineCollapsed}>
-                              {n.content || n.label}
-                            </span>
+                            <span style={{ ...styles.colorDot, background: isOrphan ? NEON.dimNode : n.baseColor }} />
+                            <span style={expanded ? styles.nodeLineExpanded : styles.nodeLineCollapsed}>{n.content || n.label}</span>
                           </div>
                           {expanded && (
                             <div style={styles.nodeLineMeta}>
                               ID {n.id.slice(0, 8)} · {CATEGORY_NAMES[n.category] || n.category}
+                              {isOrphan ? ' · no synapses in graph' : ` · ${degree} synapse${degree === 1 ? '' : 's'}`}
                             </div>
                           )}
                         </div>
@@ -821,20 +742,11 @@ export default function App() {
           </>
         )}
       </main>
-
-      {!loading && !error && (
-        <RendererSwitcher
-          renderers={rendererList}
-          activeId={activeRendererId}
-          caps={caps}
-          onSelect={handleSelectRenderer}
-          onCapabilitiesChanged={handleCapsChanged}
-          panelWidth={PANEL_WIDTH}
-        />
-      )}
     </div>
   );
 }
+
+// ── HUD overlay ──────────────────────────────────────────────────────────────
 
 const HUD_KEYFRAMES = `
 @keyframes agxFlicker { 0%,100% { opacity: 0.9; } 50% { opacity: 0.6; } }
@@ -844,40 +756,18 @@ const HUD_KEYFRAMES = `
 
 const C = NEON.cyan;
 
-function NeuralHud({
-  nodes,
-  edges,
-  fps,
-  connected,
-  booting,
-  panelWidth,
-  footerHeight,
-}: {
-  nodes: number;
-  edges: number;
-  fps: number;
-  connected: boolean;
-  booting: boolean;
-  panelWidth: number;
-  footerHeight: number;
+function NeuralHud({ nodes, edges, fps, connected, booting, panelWidth }: {
+  nodes: number; edges: number; fps: number; connected: boolean; booting: boolean; panelWidth: number;
 }) {
   const overlay: React.CSSProperties = {
-    position: 'absolute',
-    inset: 0,
-    right: panelWidth,
-    pointerEvents: 'none',
-    zIndex: 40,
-    fontFamily: "'JetBrains Mono', monospace",
-    color: C,
+    position: 'absolute', inset: 0, right: panelWidth, pointerEvents: 'none', zIndex: 40,
+    fontFamily: "'JetBrains Mono', monospace", color: C,
   };
   return (
     <div style={overlay}>
       <style>{HUD_KEYFRAMES}</style>
-
-      {/* Soft vignette to deepen the void around the brain */}
       <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,4,12,0.5) 100%)' }} />
 
-      {/* Top-left brand + neural link status */}
       <div style={{ position: 'absolute', top: 24, left: 28 }}>
         <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 3, color: C, textShadow: `0 0 12px ${C}` }}>
           AGENT-X <span style={{ opacity: 0.5 }}>// NEURAL BRAIN</span>
@@ -887,45 +777,18 @@ function NeuralHud({
         </div>
       </div>
 
-      {/* Bottom-left telemetry (nudged up to clear the renderer footer) */}
-      <div style={{ position: 'absolute', bottom: 24 + footerHeight, left: 28, fontSize: 11, lineHeight: 1.9, letterSpacing: 1.5, textShadow: `0 0 6px ${C}` }}>
+      <div style={{ position: 'absolute', bottom: 24, left: 28, fontSize: 11, lineHeight: 1.9, letterSpacing: 1.5, textShadow: `0 0 6px ${C}` }}>
         <div>NEURONS&nbsp;&nbsp;<span style={{ color: '#fff' }}>{nodes.toLocaleString()}</span></div>
         <div>SYNAPSES&nbsp;<span style={{ color: '#fff' }}>{edges.toLocaleString()}</span></div>
         <div>RENDER&nbsp;&nbsp;&nbsp;<span style={{ color: fps >= 45 ? C : '#ffb454' }}>{fps} FPS</span></div>
+        <div style={{ marginTop: 4, opacity: 0.4, fontSize: 9, letterSpacing: 2 }}>SIGMA 2D · MIT</div>
       </div>
 
-      {/* Boot sequence */}
       {booting && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(2,6,15,0.82)',
-            animation: 'agxBootOut 2.6s ease-in forwards',
-          }}
-        >
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(2,6,15,0.82)', animation: 'agxBootOut 2.6s ease-in forwards' }}>
           <div style={{ fontSize: 24, letterSpacing: 10, color: C, textShadow: `0 0 18px ${C}`, marginBottom: 20 }}>AGENT-X</div>
-          {['INITIALIZING NEURAL FABRIC', 'CALIBRATING SYNAPTIC TOPOLOGY', 'CHARGING BLOOM CORES', 'UPLINK ESTABLISHED'].map((line, i) => (
-            <div
-              key={line}
-              style={{
-                fontSize: 11,
-                letterSpacing: 2,
-                color: C,
-                opacity: 0.85,
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
-                width: '100%',
-                maxWidth: 320,
-                textAlign: 'left',
-                margin: '2px auto',
-                animation: `agxTyping 0.5s steps(28) ${i * 0.5}s both`,
-              }}
-            >
+          {['INITIALIZING NEURAL FABRIC', 'CALIBRATING SYNAPTIC TOPOLOGY', 'SIGMA 2D ENGINE READY', 'UPLINK ESTABLISHED'].map((line, i) => (
+            <div key={line} style={{ fontSize: 11, letterSpacing: 2, color: C, opacity: 0.85, overflow: 'hidden', whiteSpace: 'nowrap', width: '100%', maxWidth: 320, textAlign: 'left', margin: '2px auto', animation: `agxTyping 0.5s steps(28) ${i * 0.5}s both` }}>
               › {line}
             </div>
           ))}
@@ -935,285 +798,50 @@ function NeuralHud({
   );
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
 const styles: Record<string, React.CSSProperties> = {
-  page: {
-    width: '100vw',
-    height: '100vh',
-    backgroundColor: NEON.void,
-    color: '#ffffff',
-    fontFamily: 'monospace',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  starfield: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    backgroundImage: 'radial-gradient(rgba(174,246,255,0.9) 1px, transparent 1px)',
-    backgroundSize: '54px 54px',
-    opacity: 0.08,
-    pointerEvents: 'none',
-  },
-  gridOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    backgroundImage: `
-      linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)
-    `,
-    backgroundSize: '100px 100px',
-    pointerEvents: 'none',
-  },
-  header: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    padding: '16px 24px',
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-    backdropFilter: 'blur(10px)',
-    zIndex: 100,
-  },
-  badge: {
-    fontSize: '12px',
-    fontWeight: 'bold',
-    letterSpacing: '2px',
-    marginBottom: '8px',
-    color: NEON.cyan,
-    textShadow: `0 0 10px ${NEON.cyan}`,
-  },
-  button: {
-    fontSize: '10px',
-    padding: '4px 12px',
-    backgroundColor: 'transparent',
-    color: '#ffffff',
-    border: '1px solid rgba(255, 255, 255, 0.3)',
-    borderRadius: '2px',
-    cursor: 'pointer',
-    fontFamily: 'monospace',
-  },
-  main: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: FOOTER_HEIGHT,
-    display: 'flex',
-  },
-  canvas: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-  },
-  sidePanel: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: FOOTER_HEIGHT,
-    width: `${PANEL_WIDTH}px`,
-    display: 'flex',
-    flexDirection: 'column',
-    backgroundColor: 'rgba(2, 6, 15, 0.82)',
-    borderLeft: '1px solid rgba(125, 249, 255, 0.18)',
-    backdropFilter: 'blur(10px)',
-    zIndex: 50,
-  },
-  // Top control section when the bottom node-list is open (50% height).
-  panelHalf: {
-    flex: '1 1 50%',
-    minHeight: 0,
-    overflowY: 'auto',
-    padding: '16px',
-    borderBottom: '1px solid rgba(125, 249, 255, 0.18)',
-  },
-  // Top control section when the bottom panel is closed (full height).
-  panelFull: {
-    flex: 1,
-    minHeight: 0,
-    overflowY: 'auto',
-    padding: '16px',
-  },
-  // Bottom node-list section (50% height).
-  panelHalfBottom: {
-    flex: '1 1 50%',
-    minHeight: 0,
-    overflowY: 'auto',
-    padding: '16px',
-  },
-  panelRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: '12px',
-  },
-  panelTitle: {
-    fontSize: '10px',
-    fontWeight: 'bold',
-    letterSpacing: '1px',
-    marginBottom: '8px',
-    color: NEON.cyan,
-  },
-  list: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-    marginBottom: '16px',
-  },
-  item: {
-    fontSize: '10px',
-    padding: '6px 8px',
-    backgroundColor: 'transparent',
-    color: '#ffffff',
-    border: '1px solid transparent',
-    borderRadius: '2px',
-    cursor: 'pointer',
-    fontFamily: 'monospace',
-    textAlign: 'left',
-  },
-  activeItem: {
-    fontSize: '10px',
-    padding: '6px 8px',
-    backgroundColor: 'rgba(125, 249, 255, 0.12)',
-    color: NEON.cyan,
-    border: '1px solid rgba(125, 249, 255, 0.55)',
-    borderRadius: '2px',
-    cursor: 'pointer',
-    fontFamily: 'monospace',
-    textAlign: 'left',
-    boxShadow: '0 0 10px rgba(125, 249, 255, 0.25)',
-  },
-  colorDot: {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    marginRight: 8,
-  },
-  sessionCardHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '8px',
-    paddingBottom: '8px',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-  },
-  sessionCardTitle: {
-    fontSize: '10px',
-    fontWeight: 'bold',
-    letterSpacing: '1px',
-    color: NEON.cyan,
-    textShadow: `0 0 8px ${NEON.cyan}`,
-  },
-  sessionCardActions: {
-    display: 'flex',
-    gap: '8px',
-  },
-  smallButton: {
-    fontSize: '9px',
-    padding: '2px 6px',
-    backgroundColor: 'transparent',
-    color: '#ffffff',
-    border: '1px solid rgba(255, 255, 255, 0.2)',
-    borderRadius: '2px',
-    cursor: 'pointer',
-    fontFamily: 'monospace',
-  },
-  closeButton: {
-    fontSize: '14px',
-    width: '20px',
-    height: '20px',
-    backgroundColor: 'transparent',
-    color: '#ffffff',
-    border: 'none',
-    borderRadius: '2px',
-    cursor: 'pointer',
-    fontFamily: 'monospace',
-  },
-  sessionCardList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-  },
-  nodeLine: {
-    padding: '6px 8px',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
-    borderRadius: '2px',
-    cursor: 'pointer',
-  },
-  nodeLineTop: {
-    display: 'flex',
-    alignItems: 'center',
-  },
-  nodeLineCollapsed: {
-    fontSize: '10px',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    maxWidth: '200px',
-  },
-  nodeLineExpanded: {
-    fontSize: '10px',
-    wordBreak: 'break-word',
-  },
-  nodeLineMeta: {
-    fontSize: '9px',
-    color: '#888888',
-    marginTop: '4px',
-  },
-  center: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    textAlign: 'center',
-  },
-  spinner: {
-    width: '40px',
-    height: '40px',
-    border: '2px solid rgba(125, 249, 255, 0.2)',
-    borderTop: `2px solid ${NEON.cyan}`,
-    boxShadow: `0 0 10px ${NEON.cyan}`,
-    borderRadius: '50%',
-    animation: 'spin 1s linear infinite',
-    margin: '0 auto 16px',
-  },
-  hudText: {
-    fontSize: '12px',
-    color: '#888888',
-  },
-  panel: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    padding: '16px 24px',
-    backgroundColor: 'rgba(255, 0, 0, 0.1)',
-    border: '1px solid #ff0000',
-    borderRadius: '4px',
-  },
-  alert: {
-    fontSize: '12px',
-    color: '#ff0000',
-    fontFamily: 'monospace',
-  },
-  dim: {
-    fontSize: '10px',
-    color: '#666666',
-  },
+  page: { width: '100vw', height: '100vh', backgroundColor: NEON.void, color: '#ffffff', fontFamily: 'monospace', overflow: 'hidden', position: 'relative' },
+  starfield: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', backgroundImage: 'radial-gradient(rgba(174,246,255,0.9) 1px, transparent 1px)', backgroundSize: '54px 54px', opacity: 0.08, pointerEvents: 'none' },
+  gridOverlay: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', backgroundImage: `linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)`, backgroundSize: '100px 100px', pointerEvents: 'none' },
+  main: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  canvas: { position: 'absolute', top: 0, left: 0, right: `${PANEL_WIDTH}px`, bottom: 0, width: 'auto', height: '100%' },
+  sidePanel: { position: 'absolute', top: 0, right: 0, bottom: 0, width: `${PANEL_WIDTH}px`, display: 'flex', flexDirection: 'column', backgroundColor: 'rgba(2,6,15,0.82)', borderLeft: '1px solid rgba(125,249,255,0.18)', backdropFilter: 'blur(10px)', zIndex: 50 },
+  panelHalf: { flex: '1 1 50%', minHeight: 0, overflowY: 'auto', padding: '16px', borderBottom: '1px solid rgba(125,249,255,0.18)' },
+  panelFull: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px' },
+  panelHalfBottom: { flex: '1 1 50%', minHeight: 0, overflowY: 'auto', padding: '16px' },
+  panelRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' },
+  panelTitle: { fontSize: '10px', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '8px', color: NEON.cyan },
+  list: { display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '16px' },
+  item: { fontSize: '10px', padding: '6px 8px', backgroundColor: 'transparent', color: '#ffffff', border: '1px solid transparent', borderRadius: '2px', cursor: 'pointer', fontFamily: 'monospace', textAlign: 'left' },
+  activeItem: { fontSize: '10px', padding: '6px 8px', backgroundColor: 'rgba(125,249,255,0.12)', color: NEON.cyan, border: '1px solid rgba(125,249,255,0.55)', borderRadius: '2px', cursor: 'pointer', fontFamily: 'monospace', textAlign: 'left', boxShadow: '0 0 10px rgba(125,249,255,0.25)' },
+  colorDot: { width: 8, height: 8, borderRadius: '50%', marginRight: 8 },
+  button: { fontSize: '10px', padding: '4px 12px', backgroundColor: 'transparent', color: '#ffffff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '2px', cursor: 'pointer', fontFamily: 'monospace' },
+  sessionCardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.1)' },
+  sessionCardTitle: { fontSize: '10px', fontWeight: 'bold', letterSpacing: '1px', color: NEON.cyan, textShadow: `0 0 8px ${NEON.cyan}` },
+  sessionCardActions: { display: 'flex', gap: '8px' },
+  smallButton: { fontSize: '9px', padding: '2px 6px', backgroundColor: 'transparent', color: '#ffffff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '2px', cursor: 'pointer', fontFamily: 'monospace' },
+  closeButton: { fontSize: '14px', width: '20px', height: '20px', backgroundColor: 'transparent', color: '#ffffff', border: 'none', borderRadius: '2px', cursor: 'pointer', fontFamily: 'monospace' },
+  sessionCardList: { display: 'flex', flexDirection: 'column', gap: '4px' },
+  nodeLine: { padding: '6px 8px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '2px', cursor: 'pointer' },
+  nodeLineOrphan: { padding: '6px 8px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px dashed rgba(255,255,255,0.18)', borderRadius: '2px', cursor: 'pointer', opacity: 0.75 },
+  nodeLineFocused: { padding: '6px 8px', backgroundColor: 'rgba(255,115,0,0.22)', border: '1px solid rgba(255,115,0,0.65)', borderRadius: '2px', cursor: 'pointer', boxShadow: '0 0 10px rgba(255,115,0,0.28)' },
+  orphanBadge: { fontSize: '9px', color: '#888888', letterSpacing: '0.5px' },
+  nodeLineTop: { display: 'flex', alignItems: 'center' },
+  nodeLineCollapsed: { fontSize: '10px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px' },
+  nodeLineExpanded: { fontSize: '10px', wordBreak: 'break-word' },
+  nodeLineMeta: { fontSize: '9px', color: '#888888', marginTop: '4px' },
+  center: { position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', textAlign: 'center' },
+  spinner: { width: '40px', height: '40px', border: '2px solid rgba(125,249,255,0.2)', borderTop: `2px solid ${NEON.cyan}`, boxShadow: `0 0 10px ${NEON.cyan}`, borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 16px' },
+  hudText: { fontSize: '12px', color: '#888888' },
+  panel: { position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', padding: '16px 24px', backgroundColor: 'rgba(255,0,0,0.1)', border: '1px solid #ff0000', borderRadius: '4px' },
+  alert: { fontSize: '12px', color: '#ff0000', fontFamily: 'monospace' },
+  dim: { fontSize: '10px', color: '#666666' },
 };
 
-// Add spinner animation
 const styleSheet = document.createElement('style');
-styleSheet.textContent = `
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
-`;
+styleSheet.textContent = `@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`;
 document.head.appendChild(styleSheet);
+
+// Clean up unused import — keep localStorage key available for migration.
+void LS_RENDERER_KEY;

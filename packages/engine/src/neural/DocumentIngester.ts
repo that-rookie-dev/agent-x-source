@@ -2,13 +2,16 @@
  * Document / RAG ingestion pipeline for the unified memory fabric.
  *
  * Breaks documents into semantic TextUnits, extracts entities and facts from
- * each chunk (GraphRAG-style), embeds them, binds them into a source nebula,
+ * each chunk, embeds them, binds them into a source nebula,
  * and creates a top-level source document node. The web-neuron UI will display
  * the resulting cluster with the source color.
  */
 import type { MemoryFabric } from './MemoryFabric.js';
 import { RagDocument } from './RagDocument.js';
 import { MemoryExtractor, type GenerateFn } from './MemoryExtractor.js';
+import { validateAndFilter } from './NodeValidator.js';
+import { fastOfflineExtract } from './FastOfflineExtractor.js';
+import { assembleGraph } from './GraphAssembler.js';
 
 export interface DocumentIngestInput {
   name: string;
@@ -23,7 +26,7 @@ export interface DocumentIngestInput {
   /** Optional embedding generator. If provided, each chunk node stores an embedding. */
   embed?: (text: string) => Promise<number[]>;
   metadata?: { title?: string; author?: string; pageCount?: number };
-  /** Optional LLM generator for GraphRAG-style entity/fact extraction from chunks. */
+  /** Optional LLM generator for entity/fact extraction from chunks. */
   generate?: GenerateFn;
   /** Maximum entities/facts to extract per chunk. */
   maxEntitiesPerChunk?: number;
@@ -42,7 +45,7 @@ export class DocumentIngester {
   private extractor: MemoryExtractor | null;
 
   constructor(private fabric: MemoryFabric, generate?: GenerateFn) {
-    this.extractor = generate ? new MemoryExtractor(generate) : null;
+    this.extractor = generate ? new MemoryExtractor(generate, true) : null;
   }
 
   async ingest(input: DocumentIngestInput): Promise<DocumentIngestResult> {
@@ -120,19 +123,40 @@ export class DocumentIngester {
       }
       parentNodeId = chunkNode.id;
 
-      // GraphRAG-style extraction: pull entities and facts out of each chunk.
+      // Extraction: pull entities and facts out of each chunk.
       if (this.extractor) {
         try {
-          const extracted = await this.extractor.extract(chunk.content, {
-            category: 'semantic',
+          // LLM is the primary extraction method. Fast offline path is only
+          // used as a last-resort fallback when no LLM is configured.
+          let extracted;
+          if (this.extractor.hasGenerate()) {
+            extracted = await this.extractor.extract(chunk.content, {
+              category: 'semantic',
+              sourceId: source.id,
+              sessionId: input.sessionId,
+              agentId: input.agentId,
+              maxNodesPerChunk: input.maxEntitiesPerChunk ?? 20,
+              maxTokens: 2048,
+            });
+          } else {
+            const fastResult = fastOfflineExtract(chunk.content, {
+              sessionId: input.sessionId,
+              agentId: input.agentId,
+              sourceId: source.id,
+            });
+            extracted = { nodes: fastResult.nodes, edges: fastResult.edges };
+          }
+
+          // Topology assembly.
+          const assembled = assembleGraph(extracted.nodes, extracted.edges, {
+            clusterId: input.sessionId,
             sourceId: source.id,
-            sessionId: input.sessionId,
-            agentId: input.agentId,
-            maxNodesPerChunk: input.maxEntitiesPerChunk ?? 20,
-            maxTokens: 2048,
           });
+
+          // Validation gate — drop divider/fragment nodes before persistence.
+          const { nodes: validNodes, edges: validEdges } = validateAndFilter(assembled.nodes, assembled.edges);
           const idMap = new Map<string, string>();
-          for (const n of extracted.nodes) {
+          for (const n of validNodes) {
             const originalId = n.id;
             // If an identical entity already exists in the brain, reuse it; otherwise create.
             const entityNode = await this.fabric.createNode({
@@ -154,7 +178,7 @@ export class DocumentIngester {
             });
             edges.push({ id: entityEdge.id, sourceNodeId: entityEdge.sourceNodeId, targetNodeId: entityEdge.targetNodeId, relationshipType: entityEdge.relationshipType, weight: entityEdge.weight });
           }
-          for (const e of extracted.edges) {
+          for (const e of validEdges) {
             const sourceNodeId = idMap.get(e.sourceNodeId) ?? e.sourceNodeId;
             const targetNodeId = idMap.get(e.targetNodeId) ?? e.targetNodeId;
             if (sourceNodeId === targetNodeId) continue;

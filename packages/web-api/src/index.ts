@@ -9,7 +9,8 @@ import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady } from './engine.js';
-import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
+import { buildGraphRagSummarizer } from './distillation-generator.js';
+import { setupWebSocket, ensureSubscribed, persistMessageDirect, broadcastBrainActivity } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import {
   sessionSettings,
@@ -27,7 +28,7 @@ import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi } from './mess
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, LocalEmbeddingProvider, setDeepSearchStageResult } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -49,15 +50,25 @@ import { postCrewChatSession } from './crew-chat.js';
 import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewHonorificToSession } from './host-crew-session.js';
 import { memoryRouter } from './memory-api.js';
 import localModelRouter from './local-model-api.js';
+import embeddingModelRouter from './embedding-model-api.js';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Bundle the default embedding model with the app so users do not need to download it.
+// Embedding models are downloaded at runtime (during the setup wizard) to the
+// user's data directory. The embedding-model-api router sets the cache dir via
+// setDefaultEmbeddingCacheDir() on import. This bundled-dir fallback is kept
+// for backward compatibility with existing installs that bundled the models.
 const BUNDLED_EMBEDDING_MODEL_DIR = join(__dirname, 'models');
-if (existsSync(join(BUNDLED_EMBEDDING_MODEL_DIR, 'Xenova', 'all-MiniLM-L6-v2'))) {
-  setDefaultEmbeddingCacheDir(BUNDLED_EMBEDDING_MODEL_DIR);
+if (existsSync(join(BUNDLED_EMBEDDING_MODEL_DIR, 'Xenova', 'all-MiniLM-L6-v2')) ||
+    existsSync(join(BUNDLED_EMBEDDING_MODEL_DIR, 'Xenova', 'bge-m3'))) {
+  // Only use bundled dir if the runtime-downloaded models aren't present yet.
+  const runtimeModelDir = join(getDataDir(), 'models');
+  if (!existsSync(join(runtimeModelDir, 'Xenova', 'bge-m3')) &&
+      !existsSync(join(runtimeModelDir, 'Xenova', 'all-MiniLM-L6-v2'))) {
+    setDefaultEmbeddingCacheDir(BUNDLED_EMBEDDING_MODEL_DIR);
+  }
 }
 
 const UI_DIST = process.env['AGENTX_UI_DIR'] || join(__dirname, '..', '..', 'web-ui', 'dist');
@@ -331,6 +342,7 @@ app.use('/api', memoryRouter);
 
 // Local model management API
 app.use('/api', localModelRouter);
+app.use('/api', embeddingModelRouter);
 
 // Security headers (content-type sniffing, XSS, clickjacking protection)
 app.use(helmet({
@@ -2676,6 +2688,13 @@ app.post('/api/sessions', validate(createSessionSchema), (req, res) => {
     sessionSettings.mode = 'plan';
     createAgent(undefined, session);
     ensureSubscribed();
+    // Broadcast session creation to the neural frontend.
+    broadcastBrainActivity({
+      type: 'session_created',
+      sessionId: session.id,
+      title: session.title || `Session ${session.id.slice(0, 8)}`,
+      timestamp: new Date().toISOString(),
+    });
     res.json({ sessionId: session.id });
   } catch (e: unknown) {
     getLogger().error('POST_API_SESSIONS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'create-failed' });
@@ -4628,13 +4647,22 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
   try {
     const eng = getEngine();
     const pgPool = (eng as any).pgPool ?? (eng as any).pool;
-    if (pgPool) {
+    // Check if neural brain is disabled (embedding models failed to download).
+    let neuralBrainDisabled = false;
+    try {
+      const cfg = eng.configManager.load();
+      neuralBrainDisabled = cfg.neuralBrain === false;
+    } catch { /* config not ready — proceed as normal */ }
+    if (pgPool && !neuralBrainDisabled) {
+      getLogger().info('INGESTION_WORKER', 'Neural brain enabled — starting ingestion worker.');
       const fabric = new MemoryFabric(pgPool as any);
-      const embedder = new LocalEmbeddingProvider();
+      const embedder = new OnnxEmbeddingProvider();
       ingestionWorker = new IngestionWorker(pgPool as any, fabric, {
         concurrency: 2,
         pollIntervalMs: 5000,
         embed: (text) => embedder.embed(text),
+        generate: null, // populated inside the async IIFE below
+        embedder,
       });
 
       // Seed periodic jobs once after storage is ready; the worker will claim them.
@@ -4643,12 +4671,19 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
         try {
           await eng.storageReady;
         } catch { /* storage may have failed — proceed best-effort */ }
+        // Build the GraphRAG summarizer generator now that config is available.
+        try {
+          const graphRagGenerate = await buildGraphRagSummarizer();
+          if (graphRagGenerate && ingestionWorker) {
+            ingestionWorker['generate'] = graphRagGenerate;
+          }
+        } catch { /* best-effort — community_summarize jobs will skip without a generator */ }
         ingestionWorker.start();
         try {
           await queue.enqueue({ kind: 'web_distill', priority: 1 });
           await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
-          await queue.enqueue({ kind: 'plasticity', priority: 0 });
           await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
+          await queue.enqueue({ kind: 'community_summarize', priority: 0 });
           await fabric.cleanupExpiredWebStaging();
         } catch (e: unknown) {
           getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));
@@ -4660,8 +4695,8 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
         try {
           await queue.enqueue({ kind: 'web_distill', priority: 1 });
           await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
-          await queue.enqueue({ kind: 'plasticity', priority: 0 });
           await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
+          await queue.enqueue({ kind: 'community_summarize', priority: 0 });
           await fabric.cleanupExpiredWebStaging();
         } catch (e: unknown) {
           getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));
@@ -4683,6 +4718,8 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
           getLogger().warn('WEB_STAGING', e instanceof Error ? e.message : String(e));
         }
       });
+    } else if (neuralBrainDisabled) {
+      getLogger().info('INGESTION_WORKER', 'Neural brain disabled — skipping ingestion worker startup.');
     }
   } catch (e: unknown) {
     getLogger().warn('INGESTION_WORKER', e instanceof Error ? e.message : String(e));

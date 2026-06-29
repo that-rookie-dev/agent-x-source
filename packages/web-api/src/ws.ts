@@ -4,15 +4,14 @@ import { getEngine } from './engine.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
 import type { DeepSearchProgress } from '@agentx/shared';
 import { MemoryFabric, MemoryService } from '@agentx/engine';
-import { buildDistillationGenerator } from './distillation-generator.js';
+import { buildDistillationGenerator, buildGraphRagGenerator } from './distillation-generator.js';
 
-let localEmbedder: import('@agentx/engine').LocalEmbeddingProvider | null = null;
+let localEmbedder: import('@agentx/engine').OnnxEmbeddingProvider | null = null;
 async function getEmbedder() {
   if (localEmbedder) return localEmbedder;
   try {
-    const { LocalEmbeddingProvider } = await import('@agentx/engine');
-    // Use the lightweight deterministic n-gram embedder to avoid loading a large ONNX model in the main process.
-    localEmbedder = new LocalEmbeddingProvider();
+    const { OnnxEmbeddingProvider } = await import('@agentx/engine');
+    localEmbedder = new OnnxEmbeddingProvider();
     return localEmbedder;
   } catch (e) {
     getLogger().warn('EMBEDDING', `Failed to initialize embedder: ${e instanceof Error ? e.message : String(e)}`);
@@ -48,8 +47,17 @@ async function getMemoryService(): Promise<MemoryService | null> {
   }
 
   const embedder = await getEmbedder();
-  const generate = await buildDistillationGenerator();
+  const generate = await buildGraphRagGenerator() ?? await buildDistillationGenerator();
+  getLogger().info('GRAPHRAG', `getMemoryService: generate=${generate ? 'OK' : 'NULL'}, embedder=${embedder ? 'OK' : 'NULL'}`);
   memoryService = new MemoryService(pool, embedder, generate ?? undefined);
+  // Broadcast neuron_fired events to the neural frontend in real-time.
+  memoryService.onNeuronFired = (nodeId: string) => {
+    broadcastBrainActivity({
+      type: 'neuron_fired',
+      nodeId,
+      timestamp: new Date().toISOString(),
+    });
+  };
   memoryServiceConfigHash = currentHash;
   return memoryService;
 }
@@ -70,9 +78,11 @@ async function processDistillationQueue(): Promise<void> {
   try {
     const service = await getMemoryService();
     if (!service) {
+      getLogger().warn('DISTILLATION', 'processDistillationQueue: getMemoryService returned null, clearing queue');
       distillationQueue.length = 0;
       return;
     }
+    getLogger().info('DISTILLATION', `processDistillationQueue: service ready, hasGenerate=${service.extractor.hasGenerate()}, queue=${distillationQueue.length}`);
     while (distillationQueue.length > 0) {
       const job = distillationQueue.shift();
       if (!job) continue;
@@ -92,6 +102,7 @@ async function processDistillationQueue(): Promise<void> {
           sessionId: job.sessionId,
           sourceId: job.sourceId,
         });
+        getLogger().info('DISTILLATION', `Session ${job.sessionId.slice(0,8)}: extracted ${result.nodes.length} nodes, ${result.edges.length} edges from ${job.text.length} chars`);
         for (const node of result.nodes) {
           broadcastBrainActivity({
             type: 'neuron_created',
@@ -99,6 +110,7 @@ async function processDistillationQueue(): Promise<void> {
             label: node.label,
             category: node.category,
             content: node.content,
+            sessionId: node.sessionId ?? job.sessionId,
             x: node.x ?? null,
             y: node.y ?? null,
             timestamp: new Date().toISOString(),
@@ -116,26 +128,36 @@ async function processDistillationQueue(): Promise<void> {
           });
         }
 
-        // If the extraction produced a connected graph, do not force every node back to the session hub.
-        // Instead, only a single weak anchor edge from the hub to the first node keeps the cluster discoverable
-        // without creating a hub-and-spoke visualization.
-        if (result.nodes.length > 0 && result.edges.length === 0) {
-          const firstNode = result.nodes[0]!;
-          const anchor = await service.bindEdge({
-            sourceNodeId: job.hubId,
-            targetNodeId: firstNode.id,
-            relationshipType: 'RELATED_TO',
-            weight: 0.1,
-          });
-          broadcastBrainActivity({
-            type: 'synapse_bound',
-            edgeId: anchor.id,
-            sourceNodeId: anchor.sourceNodeId,
-            targetNodeId: anchor.targetNodeId,
-            relationshipType: anchor.relationshipType,
-            weight: anchor.weight,
-            timestamp: new Date().toISOString(),
-          });
+        // Link orphan nodes (no edges) to the session hub so they are
+        // discoverable in graph traversal and visualization. Without this,
+        // extracted nodes that aren't part of any edge become permanently
+        // isolated — the graph has no way to reach them.
+        const connectedNodeIds = new Set<string>();
+        for (const edge of result.edges) {
+          connectedNodeIds.add(edge.sourceNodeId);
+          connectedNodeIds.add(edge.targetNodeId);
+        }
+        for (const node of result.nodes) {
+          if (connectedNodeIds.has(node.id)) continue;
+          // This node has no edges — anchor it to the hub with a weak weight
+          // so it's discoverable but doesn't dominate visualization.
+          try {
+            const anchor = await service.bindEdge({
+              sourceNodeId: job.hubId,
+              targetNodeId: node.id,
+              relationshipType: 'RELATED_TO',
+              weight: 0.1,
+            });
+            broadcastBrainActivity({
+              type: 'synapse_bound',
+              edgeId: anchor.id,
+              sourceNodeId: anchor.sourceNodeId,
+              targetNodeId: anchor.targetNodeId,
+              relationshipType: anchor.relationshipType,
+              weight: anchor.weight,
+              timestamp: new Date().toISOString(),
+            });
+          } catch { /* best-effort */ }
         }
 
         // Broadcast distillation complete event
@@ -146,6 +168,17 @@ async function processDistillationQueue(): Promise<void> {
           edgesCreated: result.edges.length,
           timestamp: new Date().toISOString(),
         });
+
+        // Broadcast cluster layout update so the frontend refetches positions
+        // and discovers any new nodes/edges from the distillation.
+        if (result.nodes.length > 0 || result.edges.length > 0) {
+          broadcastBrainActivity({
+            type: 'cluster_layout_updated',
+            epoch: Date.now(),
+            count: result.nodes.length,
+            timestamp: new Date().toISOString(),
+          });
+        }
       } catch (e) {
         getLogger().warn('DISTILLATION', e instanceof Error ? e.message : String(e));
         // Broadcast distillation error event
@@ -298,6 +331,21 @@ async function getSessionHub(sessionId: string, fabric: MemoryFabric): Promise<{
   const cached = sessionHubMap.get(sessionId);
   if (cached) return cached;
 
+  // Check if a hub already exists in the DB (survives server restarts).
+  const existingNodes = await fabric.findNodesBySessionAndCategory(sessionId, 'episodic');
+  if (existingNodes.length > 0) {
+    const existing = existingNodes[0]!;
+    // Find the source for this hub.
+    let sourceId = existing.sourceId;
+    if (!sourceId) {
+      const source = await fabric.createSource(`Session ${sessionId}`, 'chat_session', sessionColor(sessionId));
+      sourceId = source.id;
+    }
+    const value = { sourceId, hubId: existing.id };
+    sessionHubMap.set(sessionId, value);
+    return value;
+  }
+
   const source = await fabric.createSource(`Session ${sessionId}`, 'chat_session', sessionColor(sessionId));
   const hub = await fabric.createNode({
     label: `Session ${sessionId}`,
@@ -312,6 +360,7 @@ async function getSessionHub(sessionId: string, fabric: MemoryFabric): Promise<{
     label: hub.label,
     category: hub.category,
     content: hub.content,
+    sessionId,
     x: hub.x ?? null,
     y: hub.y ?? null,
     timestamp: new Date().toISOString(),
@@ -328,17 +377,46 @@ function sessionColor(sessionId: string): string {
   return colors[Math.abs(hash) % colors.length] ?? '#ffffff';
 }
 
+// Pending user message per session — when the assistant response arrives, we
+// pair them so the LLM extraction prompt sees the full Q&A context.
+const pendingUserMessages = new Map<string, string>();
+
 async function ingestConversationMemory(sessionId: string, role: 'user' | 'assistant', text: string): Promise<void> {
+  getLogger().info('MEMORY_INGEST', `ingestConversationMemory: session=${sessionId.slice(0,8)}, role=${role}, textLen=${text.length}`);
+  // Broadcast message activity to the neural frontend for live chat visualization.
+  broadcastBrainActivity({
+    type: 'message_activity',
+    sessionId,
+    role,
+    textLength: text.length,
+    timestamp: new Date().toISOString(),
+  });
+
   const fabric = getMemoryFabric();
   if (!fabric) return;
   try {
     const hub = await getSessionHub(sessionId, fabric);
-    // Enqueue an asynchronous cognitive distillation job. The raw chat text is
-    // stored in the relational chat log by appendContextFile/persistMessageDirect;
-    // the brain graph receives only atomic concepts extracted from it.
+
+    if (role === 'user') {
+      // Stash the user message — it will be paired with the assistant response.
+      pendingUserMessages.set(sessionId, text);
+      // Don't ingest the user message alone — it will be paired with the
+      // assistant response for full context extraction. Solo ingestion of
+      // short user messages like "continue" or "yes" produces garbage nodes.
+      return;
+    }
+
+    // Assistant response — pair with the pending user message for full context.
+    const userMsg = pendingUserMessages.get(sessionId);
+    pendingUserMessages.delete(sessionId);
+
+    const combinedText = userMsg
+      ? `user: ${userMsg}\n\nassistant: ${text}`
+      : `assistant: ${text}`;
+
     enqueueDistillation({
       sessionId,
-      text: `${role}: ${text}`,
+      text: combinedText,
       sourceId: hub.sourceId,
       hubId: hub.hubId,
     });
@@ -550,14 +628,16 @@ export function broadcast(data: Record<string, unknown>): void {
 }
 
 export type BrainActivityEvent =
-  | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; x: number | null; y: number | null; sourceColor?: string; timestamp: string }
+  | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; sessionId?: string | null; x: number | null; y: number | null; sourceColor?: string; timestamp: string }
   | { type: 'synapse_bound'; edgeId: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number; timestamp: string }
   | { type: 'neuron_fired'; nodeId: string; timestamp: string }
   | { type: 'neuron_decayed'; nodeId: string; status: string; timestamp: string }
   | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string }
   | { type: 'distillation_started'; sessionId: string; timestamp: string }
   | { type: 'distillation_complete'; sessionId: string; nodesCreated: number; edgesCreated: number; timestamp: string }
-  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string };
+  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string }
+  | { type: 'session_created'; sessionId: string; title: string; timestamp: string }
+  | { type: 'message_activity'; sessionId: string; role: 'user' | 'assistant'; textLength: number; timestamp: string };
 
 let brainActivityBatch: BrainActivityEvent[] = [];
 let brainActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -826,7 +906,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
         const crew = msg?.crew as CrewInfo | undefined;
         if (sessionId && text) {
           appendContextFile(sessionId, 'user', text, crew);
-          ingestConversationMemory(sessionId, 'user', text).catch(() => {});
+          ingestConversationMemory(sessionId, 'user', text).catch((e) => getLogger().warn('MEMORY_INGEST', `user message ingest failed: ${e instanceof Error ? e.message : String(e)}`));
         }
       }
 
@@ -840,7 +920,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
           if (sessionId && text) {
             const thinkingText = accumulatedThinking || undefined;
             appendContextFile(sessionId, 'assistant', text, crew, buildExtra(thinkingText));
-            ingestConversationMemory(sessionId, 'assistant', text).catch(() => {});
+            ingestConversationMemory(sessionId, 'assistant', text).catch((e) => getLogger().warn('MEMORY_INGEST', `assistant message ingest failed: ${e instanceof Error ? e.message : String(e)}`));
           }
         } finally {
           resetAccumulators();

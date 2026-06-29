@@ -61,6 +61,9 @@ export interface AgentXConfig {
   /** Run shell commands in Docker sandbox for isolation (default: false) */
   useSandbox?: boolean;
 
+  /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
+  neuralBrain?: boolean;
+
   permissions?: Record<string, 'allow' | 'deny' | 'ask'>;
   agents?: Record<string, {
     model?: string;
@@ -95,6 +98,10 @@ export interface FeatureRoutingConfig {
   memoryExtraction?: 'cloud' | 'local';
   memoryConsolidation?: 'cloud' | 'local';
   embeddings?: 'cloud' | 'local';
+  /** GraphRAG entity/relation extraction. Defaults to memoryDistillation's value. */
+  graphRagExtraction?: 'cloud' | 'local';
+  /** GraphRAG community summarization. Defaults to graphRagExtraction's value. */
+  graphRagSummarization?: 'cloud' | 'local';
 }
 
 export interface ProviderSettings {

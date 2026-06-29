@@ -253,6 +253,9 @@ export function setEngineDEK(dek: Buffer | null): void {
   if (state) {
     state.dek = dek;
     state.configManager.setDEK(dek);
+    // Update the configured flag now that the DEK is available —
+    // encrypted configs become readable after auth.
+    state.configured = state.configManager.isConfigured();
     try {
       applyWebSearchConfigFromAgentConfig(state.configManager.load());
     } catch { /* not configured yet */ }

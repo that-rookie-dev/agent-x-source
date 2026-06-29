@@ -56,8 +56,10 @@ describe('MemoryExtractor', () => {
 
     const result = await extractor.extract(text, { sessionId: 's3', chunkSize: 1500, chunkOverlap: 100 });
 
-    // Should have made multiple extraction calls (one per chunk).
-    expect(calls.length).toBeGreaterThan(1);
+    // Should have made at least one extraction call. The new batching logic
+    // (planLLMCalls) may combine short TextUnits into a single call, which is
+    // the desired cost-control behavior — so we only assert ≥ 1 call.
+    expect(calls.length).toBeGreaterThanOrEqual(1);
 
     // Entities should be merged across chunks by normalized label.
     const uniqueLabels = new Set(result.nodes.map((n) => n.label));
@@ -84,7 +86,7 @@ describe('MemoryExtractor', () => {
     expect(result.nodes[0].label).toMatch(/global warming/i);
   });
 
-  it('accepts GraphRAG-style semantic relationship types', async () => {
+  it('accepts semantic relationship types', async () => {
     const extractor = new MemoryExtractor(async () => JSON.stringify({
       nodes: [
         { id: '1', label: 'Asteroid', category: 'semantic', content: 'A large space rock', confidence: 0.9 },
@@ -102,13 +104,19 @@ describe('MemoryExtractor', () => {
     expect(result.edges[1].relationshipType).toBe('RESULTS_IN');
   });
 
-  it('uses a meaningful fallback label from the first heading', async () => {
+  it('raw_fallback creates a single node per TextUnit on LLM failure', async () => {
     const extractor = new MemoryExtractor(async () => 'not valid json');
     const result = await extractor.extract('# Chicxulub Impact\n\nSome details here.');
-    expect(result.nodes[0].label).toBe('Chicxulub Impact');
+    // The markdown segmenter splits this into section TextUnits. On LLM failure,
+    // each TextUnit becomes a single raw_fallback episodic node.
+    expect(result.nodes.length).toBeGreaterThanOrEqual(1);
+    const fallbackNodes = result.nodes.filter((n) => n.unitType === 'raw_fallback');
+    expect(fallbackNodes.length).toBeGreaterThanOrEqual(1);
+    expect(fallbackNodes[0].category).toBe('episodic');
+    expect(fallbackNodes[0].confidence).toBeLessThanOrEqual(0.4);
   });
 
-  it('heuristic fallback extracts multiple section/list nodes on LLM failure', async () => {
+  it('raw_fallback produces one node per section on LLM failure (not many fragments)', async () => {
     const text = `Core Expertise
 Connected TV & Streaming Advertising
 Deep knowledge of CTV/OTT platforms
@@ -126,26 +134,28 @@ Pretend to know finance.`;
     const extractor = new MemoryExtractor(async () => 'not valid json');
     const result = await extractor.extract(text, { chunkSize: 1000, chunkOverlap: 0 });
 
-    // Should create parent nodes for each section plus child nodes for list items.
-    expect(result.nodes.length).toBeGreaterThan(5);
-    const labels = result.nodes.map((n) => n.label);
-    expect(labels.some((l) => /Core Expertise/i.test(l))).toBe(true);
-    expect(labels.some((l) => /CTV\/OTT/i.test(l))).toBe(true);
-    expect(labels.some((l) => /How I Help/i.test(l))).toBe(true);
-    expect(labels.some((l) => /Pretend to know finance/i.test(l))).toBe(true);
-
-    // There should be CONTAINS edges from section parents to their items.
-    expect(result.edges.some((e) => e.relationshipType === 'CONTAINS')).toBe(true);
+    // With the new pipeline, each TextUnit becomes at most one raw_fallback node.
+    // The old heuristicExtract created > 5 nodes by splitting sentences; the new
+    // behavior creates one node per section/paragraph TextUnit.
+    expect(result.nodes.length).toBeGreaterThanOrEqual(1);
+    expect(result.nodes.length).toBeLessThanOrEqual(10);
+    // All nodes from LLM failure should be raw_fallback episodic nodes.
+    for (const node of result.nodes) {
+      expect(node.unitType).toBe('raw_fallback');
+      expect(node.category).toBe('episodic');
+    }
   });
 
-  it('heuristic fallback splits a plain paragraph into sentence nodes', async () => {
+  it('raw_fallback creates one node for a plain paragraph on LLM failure', async () => {
     const extractor = new MemoryExtractor(async () => 'not valid json');
     const text = 'The sun is a star. It provides energy to Earth. Plants use sunlight for photosynthesis. Animals eat plants.';
     const result = await extractor.extract(text, { chunkSize: 1000, chunkOverlap: 0 });
 
-    expect(result.nodes.length).toBeGreaterThan(2);
-    const labels = result.nodes.map((n) => n.label);
-    expect(labels.some((l) => /sun/i.test(l))).toBe(true);
-    expect(labels.some((l) => /photosynthesis/i.test(l))).toBe(true);
+    // A single paragraph becomes one raw_fallback node (not many sentence fragments).
+    expect(result.nodes.length).toBeGreaterThanOrEqual(1);
+    expect(result.nodes.length).toBeLessThanOrEqual(4);
+    for (const node of result.nodes) {
+      expect(node.unitType).toBe('raw_fallback');
+    }
   });
 });

@@ -8,8 +8,13 @@ export const NEON = {
   brightCyan: '#aef6ff',
   blue: '#1e90ff',
   edge: '#4a9eff',
+  edgeBright: '#8fd4ff',
   hot: '#ffffff',
   void: '#02060f',
+  // Session-highlight palette: selected cluster glows orange, the rest fades back.
+  orange: '#ff7300',
+  dimNode: '#1a2a40',
+  dimEdge: '#0c1828',
 } as const;
 
 // Category → neon hue. Hues are kept distinct enough to differentiate

@@ -7,7 +7,6 @@ import { Pool } from 'pg';
 import {
   MemoryFabric,
   NeuralBrainIngestionPipeline,
-  SubAtomicExtractor,
   BrainEventStreamer,
   CrossClusterBridgeGenerator,
   type BrainEvent,
@@ -68,8 +67,8 @@ describe('Neural Brain Integration Tests', () => {
 
   // Mock embedding generator
   const mockEmbed = async (text: string): Promise<number[]> => {
-    // Return a mock 384-dimension embedding
-    return new Array(384).fill(0).map(() => Math.random());
+    // Return a mock 1024-dimension embedding (BGE-M3 dimension)
+    return new Array(1024).fill(0).map(() => Math.random());
   };
 
   beforeAll(async () => {
@@ -88,36 +87,30 @@ describe('Neural Brain Integration Tests', () => {
     await pool.end();
   });
 
-  describe('SubAtomicExtractor', () => {
+  describe('StructuredMemoryPipeline (via NeuralBrainIngestionPipeline)', () => {
     it('should extract nodes with target density', async () => {
-      const extractor = new SubAtomicExtractor({
+      const text = 'This is a test text. '.repeat(50); // ~100 words
+      const result = await pipeline.ingest({
+        text,
         clusterId: 'test-cluster-1',
         sourceId: 'test-source-1',
-        targetDensity: 50,
-        maxEdgesPerNode: 7,
-        minDepthTiers: 4,
         generate: mockGenerate,
         embed: mockEmbed,
+        enableBridging: false,
       });
 
-      const text = 'This is a test text. '.repeat(50); // ~100 words
-      const result = await extractor.extract(text);
-
-      expect(result.nodes.length).toBeGreaterThan(0);
-      expect(result.edges.length).toBeGreaterThan(0);
+      expect(result.nodesCreated).toBeGreaterThan(0);
+      expect(result.edgesCreated).toBeGreaterThan(0);
       expect(result.topology.maxEdgesPerNode).toBeLessThanOrEqual(7);
     });
 
     it('should enforce topology constraints', async () => {
-      const extractor = new SubAtomicExtractor({
+      const result = await pipeline.ingest({
+        text: 'Test text',
         clusterId: 'test-cluster-2',
-        targetDensity: 50,
-        maxEdgesPerNode: 7,
-        minDepthTiers: 4,
         generate: mockGenerate,
+        enableBridging: false,
       });
-
-      const result = await extractor.extract('Test text');
 
       expect(result.topology.maxEdgesPerNode).toBeLessThanOrEqual(7);
       expect(result.topology.violatesConstraints).toBe(false);
@@ -234,7 +227,6 @@ describe('Neural Brain Integration Tests', () => {
         sourceColor: '#3b82f6',
         generate: mockGenerate,
         embed: mockEmbed,
-        targetDensity: 50,
         maxEdgesPerNode: 7,
         minDepthTiers: 4,
         enableBridging: false, // Disable for isolated test

@@ -69,14 +69,30 @@ export interface MemoryNodeInput {
   layoutEpoch?: number;
   tag?: string;
   isBenchmark?: boolean;
+  /** Provenance: markdown heading path to the source section (e.g. ["## Auth", "### JWT"]). */
+  headingPath?: string[];
+  /** Provenance: character span [start, end] in the source text. */
+  charSpan?: [number, number];
+  /** Provenance: TextUnit type this node was extracted from (proposition, section, raw_fallback, hub, ...). */
+  unitType?: string;
+  /** Free-form provenance metadata (turn index, content type, extractor version, ...). */
+  provenance?: Record<string, unknown>;
 }
 
-export interface MemoryNode extends MemoryNodeInput {
+export interface MemoryNode extends Omit<MemoryNodeInput, 'charSpan' | 'provenance'> {
   id: string;
   createdAt: Date;
   updatedAt: Date;
   accessCount: number;
   lastAccessedAt: Date | null;
+  /**
+   * Provenance: character span in the source text. On write this is `[start, end]`;
+   * on read from PostgreSQL the INT4RANGE column comes back as a string like `"[0,10]"`.
+   * Callers reading from the DB should parse the string if a numeric tuple is needed.
+   */
+  charSpan?: string | [number, number];
+  /** Provenance: free-form metadata from the DB (parsed JSONB object). */
+  provenance?: Record<string, unknown>;
 }
 
 export interface MemoryEdgeInput {
@@ -84,6 +100,8 @@ export interface MemoryEdgeInput {
   targetNodeId: string;
   relationshipType: MemoryEdgeType;
   weight?: number;
+  /** How the edge was derived: EXTRACTED (directly stated in text) or INFERRED (LLM-inferred). */
+  extractionMethod?: 'EXTRACTED' | 'INFERRED';
 }
 
 export interface MemoryEdge {
@@ -94,6 +112,8 @@ export interface MemoryEdge {
   weight: number;
   createdAt: Date;
   updatedAt: Date;
+  /** How the edge was derived: EXTRACTED (directly stated in text) or INFERRED (LLM-inferred). */
+  extractionMethod?: 'EXTRACTED' | 'INFERRED';
 }
 
 export interface MemorySource {
@@ -123,8 +143,14 @@ export interface ContextAssemblyResult {
   graph: MemoryNode[];
 }
 
-// Default embedding dimension matches the bundled ONNX model (all-MiniLM-L6-v2 / bge-small-en).
-export const DEFAULT_EMBEDDING_DIMENSION = 384;
+// Embedding dimension — 1024 to match BGE-M3 (the primary model).
+// MiniLM (384-dim) and n-gram fallback vectors are zero-padded to 1024.
+export const DEFAULT_EMBEDDING_DIMENSION = 1024;
+
+/** Build a PostgreSQL INT4RANGE literal string '[start,end]' for inclusive bounds. */
+function int4rangeLiteral(start: number, end: number): string {
+  return `[${Math.floor(start)},${Math.floor(end)}]`;
+}
 
 function deterministicLayoutSeed(id: string): number {
   let hash = 0;
@@ -357,12 +383,19 @@ export class MemoryFabric {
     const isBenchmark = input.isBenchmark ?? false;
 
     const halfvec = input.embedding && input.embedding.length > 0 ? toHalfvecLiteral(input.embedding) : null;
+    const headingPath = input.headingPath && input.headingPath.length > 0 ? input.headingPath : null;
+    const charSpan = input.charSpan ? int4rangeLiteral(input.charSpan[0], input.charSpan[1]) : null;
+    const unitType = input.unitType ?? null;
+    const provenance = input.provenance ? JSON.stringify(input.provenance) : null;
     const { rows } = await this.pool.query<MemoryNode>(
       `INSERT INTO memory_nodes
-        (id, label, category, content, embedding, embedding_halfvec, status, source_id, session_id, agent_id, confidence, x, y, layout_epoch, tag, is_benchmark)
-       VALUES ($1, $2, $3, $4, $5::vector, $6::halfvec, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        (id, label, category, content, embedding, embedding_halfvec, status, source_id, session_id, agent_id, confidence, x, y, layout_epoch, tag, is_benchmark,
+         heading_path, char_span, unit_type, provenance)
+       VALUES ($1, $2, $3, $4, $5::vector, $6::halfvec, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+               $17, $18::int4range, $19, $20::jsonb)
        RETURNING id, label, category, content, status, x, y, layout_epoch AS "layoutEpoch", tag, is_benchmark AS "isBenchmark", source_id AS "sourceId", session_id AS "sessionId",
-         agent_id AS "agentId", confidence, created_at AS "createdAt", updated_at AS "updatedAt"`,
+         agent_id AS "agentId", confidence, created_at AS "createdAt", updated_at AS "updatedAt",
+         heading_path AS "headingPath", char_span AS "charSpan", unit_type AS "unitType", provenance AS "provenance"`,
       [
         nodeId,
         input.label,
@@ -380,6 +413,10 @@ export class MemoryFabric {
         layoutEpoch,
         tag,
         isBenchmark,
+        headingPath,
+        charSpan,
+        unitType,
+        provenance,
       ],
     );
 
@@ -393,18 +430,21 @@ export class MemoryFabric {
   async bindEdge(input: MemoryEdgeInput): Promise<MemoryEdge> {
     const { rows } = await this.pool.query<MemoryEdge>(
       `INSERT INTO memory_edges
-        (source_node_id, target_node_id, relationship_type, weight)
-       VALUES ($1, $2, $3, $4)
+        (source_node_id, target_node_id, relationship_type, weight, extraction_method)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (source_node_id, target_node_id, relationship_type)
        DO UPDATE SET weight = GREATEST(memory_edges.weight, EXCLUDED.weight),
+                     extraction_method = COALESCE(EXCLUDED.extraction_method, memory_edges.extraction_method),
                      updated_at = NOW()
        RETURNING id, source_node_id AS "sourceNodeId", target_node_id AS "targetNodeId",
-         relationship_type AS "relationshipType", weight, created_at AS "createdAt", updated_at AS "updatedAt"`,
+         relationship_type AS "relationshipType", weight, created_at AS "createdAt", updated_at AS "updatedAt",
+         extraction_method AS "extractionMethod"`,
       [
         input.sourceNodeId,
         input.targetNodeId,
         input.relationshipType,
         input.weight ?? 0.5,
+        input.extractionMethod ?? null,
       ],
     );
     if (!rows[0]) throw new Error('Failed to bind memory edge');
@@ -421,11 +461,33 @@ export class MemoryFabric {
     );
   }
 
+  /**
+   * Find nodes by session ID and category. Used to check if a session hub
+   * already exists before creating a duplicate (survives server restarts).
+   */
+  async findNodesBySessionAndCategory(sessionId: string, category: MemoryNodeCategory): Promise<MemoryNode[]> {
+    const { rows } = await this.pool.query<MemoryNode>(
+      `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
+              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+              n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
+              n.heading_path AS "headingPath", n.char_span AS "charSpan", n.unit_type AS "unitType", n.provenance AS "provenance",
+              COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
+       FROM memory_nodes n
+       LEFT JOIN neuron_activity a ON a.node_id = n.id
+       WHERE n.session_id = $1 AND n.category = $2
+       ORDER BY n.created_at ASC
+       LIMIT 5`,
+      [sessionId, category],
+    );
+    return rows;
+  }
+
   async getNode(id: string): Promise<MemoryNode | null> {
     const { rows } = await this.pool.query<MemoryNode>(
       `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
               n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
               n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
+              n.heading_path AS "headingPath", n.char_span AS "charSpan", n.unit_type AS "unitType", n.provenance AS "provenance",
               COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
        FROM memory_nodes n
        LEFT JOIN neuron_activity a ON a.node_id = n.id
@@ -1070,9 +1132,10 @@ export class MemoryFabric {
     try {
       await client.query('BEGIN');
       for (const [nodeId, pos] of Object.entries(positions)) {
+        const community = graph.getNodeAttribute(nodeId, 'community');
         await client.query(
-          `UPDATE memory_nodes SET x = $1, y = $2, layout_epoch = $3, updated_at = NOW() WHERE id = $4`,
-          [pos.x, pos.y, epoch, nodeId],
+          `UPDATE memory_nodes SET x = $1, y = $2, layout_epoch = $3, community_id = $4, updated_at = NOW() WHERE id = $5`,
+          [pos.x, pos.y, epoch, community != null ? String(community) : null, nodeId],
         );
       }
       await client.query('COMMIT');
@@ -1084,6 +1147,82 @@ export class MemoryFabric {
     }
 
     return { epoch, count: nodes.length, communities: communities.size };
+  }
+
+  /**
+   * Get all distinct community IDs with their member counts.
+   * Used by the CommunitySummarizer to decide which communities need summarization.
+   */
+  async getCommunities(): Promise<{ communityId: string; memberCount: number }[]> {
+    const { rows } = await this.pool.query<{ communityId: string; memberCount: number }>(
+      `SELECT community_id AS "communityId", COUNT(*)::int AS "memberCount"
+       FROM memory_nodes
+       WHERE community_id IS NOT NULL AND status = 'active'
+       GROUP BY community_id
+       ORDER BY memberCount DESC`,
+    );
+    return rows;
+  }
+
+  /**
+   * Get all nodes in a specific community (for summarization).
+   */
+  async getCommunityMembers(communityId: string, limit = 100): Promise<MemoryNode[]> {
+    const { rows } = await this.pool.query<MemoryNode>(
+      `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
+              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+              n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
+              n.community_id AS "communityId"
+       FROM memory_nodes n
+       WHERE n.community_id = $1 AND n.status = 'active'
+       ORDER BY n.confidence DESC, COALESCE(n.access_count, 0) DESC
+       LIMIT $2`,
+      [communityId, limit],
+    );
+    return rows;
+  }
+
+  /**
+   * Find community summary nodes whose embeddings are closest to the query.
+   * Used as the "global pass" in GraphRAG hierarchical retrieval.
+   */
+  async searchCommunitySummaries(embedding: number[], limit = 3): Promise<MemoryNode[]> {
+    const { rows } = await this.pool.query<MemoryNode>(
+      `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
+              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+              n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
+              n.embedding <=> $1::vector AS distance
+       FROM memory_nodes n
+       WHERE n.tag = 'community_summary'
+         AND n.embedding IS NOT NULL
+         AND n.status = 'active'
+       ORDER BY n.embedding <=> $1::vector
+       LIMIT $2`,
+      [`[${embedding.join(',')}]`, limit],
+    );
+    return rows;
+  }
+
+  /**
+   * Get all nodes in the communities identified by the given community IDs.
+   * Used to expand from community summaries to their member nodes.
+   */
+  async getNodesInCommunities(communityIds: string[], limit = 50): Promise<MemoryNode[]> {
+    if (communityIds.length === 0) return [];
+    const { rows } = await this.pool.query<MemoryNode>(
+      `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
+              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+              n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
+              n.community_id AS "communityId"
+       FROM memory_nodes n
+       WHERE n.community_id = ANY($1::text[])
+         AND n.status = 'active'
+         AND n.tag != 'community_summary'
+       ORDER BY n.confidence DESC
+       LIMIT $2`,
+      [communityIds, limit],
+    );
+    return rows;
   }
 
   async getViewport(
@@ -1199,6 +1338,24 @@ export class MemoryFabric {
     } finally {
       client.release();
     }
+  }
+
+  /** Remove markdown divider-only nodes (---, ***, ___) from the graph. */
+  async cleanupDividerNodes(dryRun = false): Promise<{
+    deletedNodes: number;
+    deletedEdges: number;
+    dryRun: boolean;
+    deletedLabels: string[];
+  }> {
+    const { DividerNodeCleaner } = await import('./DividerNodeCleaner.js');
+    const cleaner = new DividerNodeCleaner(this.pool);
+    const result = await cleaner.cleanup({ dryRun });
+    return {
+      deletedNodes: result.nodesDeleted,
+      deletedEdges: result.edgesDeleted,
+      dryRun: result.dryRun,
+      deletedLabels: result.deletedLabels,
+    };
   }
 
   async saveScorecard(scorecard: ScorecardInput): Promise<Scorecard> {

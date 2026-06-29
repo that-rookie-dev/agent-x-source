@@ -24,17 +24,17 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BoltIcon from '@mui/icons-material/Bolt';
 import HomeIcon from '@mui/icons-material/Home';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
-import { providers as provApi, models as modelsApi, config, settings, personaApi } from '../api';
+import { providers as provApi, models as modelsApi, config, settings } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { colors } from '../theme';
-import { PersonaConfigPanel } from '../components/settings/PersonaConfigPanel';
 import { LocalModelStep } from '../components/LocalModelStep';
+import { EmbeddingModelDownload } from '../components/EmbeddingModelDownload';
 import type { ActiveDownload } from '../components/DownloadIndicator';
-import type { ProviderInfo, ModelInfo, AgentPersonaConfig, AgentXConfig } from '../api';
+import type { ProviderInfo, ModelInfo, AgentXConfig } from '../api';
 import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 
-const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Callsign', 'Persona', 'Complete'];
+const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Neural Core', 'Callsign', 'Complete'];
 const STORAGE_KEY = 'agentx_wizard_progress';
 
 interface WizardProgress {
@@ -43,7 +43,6 @@ interface WizardProgress {
   selectedModel: string;
   callsign: string;
   selectedBackend: string;
-  persona?: AgentPersonaConfig;
   selectedLocalModel?: string | null;
   skipLocalModel?: boolean;
 }
@@ -87,7 +86,6 @@ export function SetupWizard() {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
   const [callsign, setCallsign] = useState('');
-  const [persona, setPersona] = useState<AgentPersonaConfig>({ name: 'JARVIS', description: 'A sophisticated AI assistant that combines British precision with unwavering loyalty. Expert in data analysis, system management, and predictive modeling. Communicates with refined eloquence while maintaining strict operational efficiency.', communicationStyle: 'formal', decisionMaking: 'balanced', domainContext: 'Intelligent system management, data analysis, predictive modeling, and personal assistance with a focus on precision, security, and real-time situational awareness.', traits: ['Loyal', 'Precise', 'Analytical', 'Proactive', 'Witty', 'Calm under pressure'] });
   const [profileName, setProfileName] = useState('');
   const [showCustomConfig, setShowCustomConfig] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -138,7 +136,6 @@ export function SetupWizard() {
       setSelectedModel(saved.selectedModel);
       setCallsign(saved.callsign || '');
       setSelectedBackend('embedded-postgres');
-      if (saved.persona) setPersona(saved.persona);
       if (saved.selectedLocalModel) setSelectedLocalModel(saved.selectedLocalModel);
       if (saved.skipLocalModel) setSkipLocalModel(saved.skipLocalModel);
       if (saved.selectedProvider) {
@@ -157,8 +154,8 @@ export function SetupWizard() {
   }, []);
 
   const persistProgress = useCallback(() => {
-    if (step >= 1) saveProgress({ step, selectedProvider, selectedModel, callsign, selectedBackend, persona, selectedLocalModel, skipLocalModel });
-  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, persona, selectedLocalModel, skipLocalModel]);
+    if (step >= 1) saveProgress({ step, selectedProvider, selectedModel, callsign, selectedBackend, selectedLocalModel, skipLocalModel });
+  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, selectedLocalModel, skipLocalModel]);
   useEffect(() => { persistProgress(); }, [persistProgress]);
 
   const next = () => {
@@ -267,7 +264,6 @@ export function SetupWizard() {
         try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {}
       }
       try { await settings.db.systemInit(); } catch {}
-      try { await personaApi.save(persona); } catch {}
       const setupPatch: Partial<AgentXConfig> = { setupComplete: true, user: { callsign } };
       if (!localModelSupported) {
         setupPatch.localModel = { enabled: false };
@@ -607,6 +603,16 @@ export function SetupWizard() {
 
               {step === 5 && (
                 <Box>
+                  <Typography variant="h6" sx={{ mb: 0.5 }}>Neural Core Initialization</Typography>
+                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>
+                    Downloading local embedding models for the neural brain. This enables offline semantic search and GraphRAG.
+                  </Typography>
+                  <EmbeddingModelDownload onComplete={next} />
+                </Box>
+              )}
+
+              {step === 6 && (
+                <Box>
                   <Typography variant="h6" sx={{ mb: 1 }}>Your Callsign</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>How should Agent-X address you?</Typography>
                   <TextField label="Callsign" value={callsign} onChange={e => setCallsign(e.target.value)} fullWidth placeholder="e.g. Commander"
@@ -622,14 +628,6 @@ export function SetupWizard() {
                 </Box>
               )}
 
-              {step === 6 && (
-                <Box>
-                  <Typography variant="h6" sx={{ mb: 0.5, textAlign: 'center' }}>Agent Persona</Typography>
-                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2, textAlign: 'center' }}>Define how Agent-X presents itself — identity, communication style, and traits.</Typography>
-                  <PersonaConfigPanel value={persona} onChange={p => { if (p) setPersona(p); }} />
-                </Box>
-              )}
-
               {step === 7 && (
                 <Box sx={{ textAlign: 'center' }}>
                   <CheckCircle size={64} color={colors.accent.green} sx={{ mb: 2 }} />
@@ -639,9 +637,11 @@ export function SetupWizard() {
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Storage: {selectedBackend === 'embedded-postgres' ? 'Embedded PostgreSQL (port 3335)' : 'Starfleet Relay (PostgreSQL)'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Provider: {selectedProvider}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Model: {selectedModel}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
+                    {localModelSupported && (
+                      <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
+                    )}
+                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Neural Core: Embedding models downloaded</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Callsign: {callsign || '(not set)'}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Persona: {persona.name || '(none)'}</Typography>
                   </Box>
                 </Box>
               )}
@@ -688,11 +688,9 @@ export function SetupWizard() {
             </Button>
           )}
           {step === 4 && <Button variant="contained" onClick={handleModelNext} disabled={!selectedModel} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
-          {step === 5 && <Button variant="contained" onClick={handleCallsignNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>{callsign.trim() ? 'Next' : 'Skip & Next'}</Button>}
-          {step === 6 && <Button variant="contained" onClick={() => {
-            if (!persona.description.trim()) { showError('Persona description is required'); return; }
-            next();
-          }} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
+          {/* Neural Core step (5) — no Back/Next buttons; the EmbeddingModelDownload
+              component handles its own navigation via onComplete/onBack callbacks. */}
+          {step === 6 && <Button variant="contained" onClick={handleCallsignNext} disabled={!callsign.trim()} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
           {step === 7 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
         </Box>
       </Box>

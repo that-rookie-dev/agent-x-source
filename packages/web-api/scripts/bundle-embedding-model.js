@@ -1,29 +1,36 @@
 #!/usr/bin/env node
 /**
- * Bundle the default embedding model (all-MiniLM-L6-v2) into the web-api dist folder.
+ * Bundle embedding models into the web-api dist folder.
  *
- * This model is small (~23 MB int8 / ~55 MB q4) and ships with the app so users do
- * not need to download it separately. It is used solely for embedding purposes.
+ * Two models are bundled:
+ *   1. BGE-M3 (INT8 ONNX, ~600 MB) — primary, 1024-dim, multilingual
+ *   2. all-MiniLM-L6-v2 (q4 ONNX, ~55 MB) — lightweight fallback, 384-dim
+ *
+ * Both ship with the app so users do not need to download anything.
+ * The OnnxEmbeddingProvider auto-selects which to load at runtime based
+ * on available RAM.
  */
 import { pipeline } from '@huggingface/transformers';
 import { existsSync, mkdirSync, cpSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-const MODEL_ID = 'Xenova/all-MiniLM-L6-v2';
-const DTYPE = 'q4';
+const MODELS = [
+  { id: 'Xenova/bge-m3', dtype: 'int8', subdir: 'bge-m3' },
+  { id: 'Xenova/all-MiniLM-L6-v2', dtype: 'q4', subdir: 'all-MiniLM-L6-v2' },
+];
+
 const packageModelsDir = join(process.cwd(), 'models');
 const distModelsDir = join(process.cwd(), 'dist', 'models');
 
-async function main() {
-  const sourceDir = join(packageModelsDir, MODEL_ID);
-  const targetDir = join(distModelsDir, MODEL_ID);
+async function bundleModel(model) {
+  const sourceDir = join(packageModelsDir, model.id);
+  const targetDir = join(distModelsDir, model.id);
+  const onnxPath = join(sourceDir, 'onnx', `model_${model.dtype}.onnx`);
 
-  // Download the model if it is not already present
-  const onnxPath = join(sourceDir, 'onnx', `model_${DTYPE}.onnx`);
   if (!existsSync(onnxPath)) {
-    console.log(`Downloading embedding model ${MODEL_ID}...`);
-    await pipeline('feature-extraction', MODEL_ID, {
-      dtype: DTYPE,
+    console.log(`Downloading embedding model ${model.id} (${model.dtype})...`);
+    await pipeline('feature-extraction', model.id, {
+      dtype: model.dtype,
       revision: 'main',
       cache_dir: packageModelsDir,
       session_options: {
@@ -34,7 +41,7 @@ async function main() {
       },
     });
   } else {
-    console.log(`Embedding model ${MODEL_ID} already present.`);
+    console.log(`Embedding model ${model.id} already present.`);
   }
 
   if (!existsSync(onnxPath)) {
@@ -42,17 +49,22 @@ async function main() {
   }
 
   const size = statSync(onnxPath).size;
-  console.log(`Embedding model ONNX size: ${size} bytes`);
+  console.log(`  ${model.id} ONNX size: ${(size / 1024 / 1024).toFixed(1)} MB`);
 
-  // Clean and copy to dist
   rmSync(targetDir, { recursive: true, force: true });
   mkdirSync(targetDir, { recursive: true });
   cpSync(sourceDir, targetDir, { recursive: true, dereference: true });
+  console.log(`  Bundled to ${targetDir}`);
+}
 
-  console.log(`Embedding model bundled to ${targetDir}`);
+async function main() {
+  for (const model of MODELS) {
+    await bundleModel(model);
+  }
+  console.log('All embedding models bundled.');
 }
 
 main().catch((e) => {
-  console.error('Failed to bundle embedding model:', e);
+  console.error('Failed to bundle embedding models:', e);
   process.exit(1);
 });
