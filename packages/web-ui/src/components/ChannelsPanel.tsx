@@ -23,6 +23,8 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import PublicIcon from '@mui/icons-material/Public';
 import CircleIcon from '@mui/icons-material/Circle';
+import ChatIcon from '@mui/icons-material/Chat';
+import { PanelHeader } from './PanelHeader';
 import { bridges, gateway, type BridgeStatus } from '../api';
 import { colors } from '../theme';
 
@@ -268,49 +270,47 @@ export function ChannelsPanel() {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <Box sx={{ flexShrink: 0, px: 3, pt: 2.5, pb: 1.5, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <Box>
-          <Typography sx={{ fontSize: '0.95rem', fontWeight: 600 }}>Channels</Typography>
-          <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, mt: 0.25 }}>
-            Communication channels for interacting with Agent-X
-          </Typography>
-        </Box>
-
-        <Box>
-          <Chip
-            icon={<SwapHorizIcon sx={{ fontSize: 13 }} />}
-            label={focus ?? 'auto'}
-            size="small"
-            variant="outlined"
-            onClick={(e) => setFocusAnchor(e.currentTarget)}
-            sx={{ height: 24, cursor: 'pointer', '& .MuiChip-label': { fontSize: 10, px: 0.75 }, borderColor: colors.border.strong }}
-          />
-          <Menu
-            anchorEl={focusAnchor}
-            open={Boolean(focusAnchor)}
-            onClose={() => setFocusAnchor(null)}
-            anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-            PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 180 } }}
-          >
-            <Typography variant="caption" sx={{ px: 2, py: 0.5, display: 'block', color: colors.text.tertiary, fontSize: '0.65rem' }}>
-              Switch focus channel
-            </Typography>
-            {FOCUS_CHANNELS.map((ch) => {
-              const Icon = ch.icon;
-              return (
-                <MenuItem key={ch.id} onClick={() => handleFocusSelect(ch.id)} selected={focus === ch.id}>
-                  <ListItemIcon sx={{ minWidth: 28 }}>
-                    <Icon sx={{ fontSize: 16, color: focus === ch.id ? '#4FC3F7' : colors.text.tertiary }} />
-                  </ListItemIcon>
-                  <ListItemText primary={ch.label} primaryTypographyProps={{ fontSize: 12 }} />
-                  {focus === ch.id && <CircleIcon sx={{ fontSize: 8, color: '#4FC3F7', ml: 1 }} />}
-                </MenuItem>
-              );
-            })}
-          </Menu>
-        </Box>
-      </Box>
+      <PanelHeader
+        title="Channels"
+        subtitle="Communication channels for interacting with Agent-X"
+        icon={<ChatIcon sx={{ fontSize: 20 }} />}
+        action={
+          <Box>
+            <Chip
+              icon={<SwapHorizIcon sx={{ fontSize: 13 }} />}
+              label={focus ?? 'auto'}
+              size="small"
+              variant="outlined"
+              onClick={(e) => setFocusAnchor(e.currentTarget)}
+              sx={{ height: 24, cursor: 'pointer', '& .MuiChip-label': { fontSize: 10, px: 0.75 }, borderColor: colors.border.strong }}
+            />
+            <Menu
+              anchorEl={focusAnchor}
+              open={Boolean(focusAnchor)}
+              onClose={() => setFocusAnchor(null)}
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+              PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 180 } }}
+            >
+              <Typography variant="caption" sx={{ px: 2, py: 0.5, display: 'block', color: colors.text.tertiary, fontSize: '0.65rem' }}>
+                Switch focus channel
+              </Typography>
+              {FOCUS_CHANNELS.map((ch) => {
+                const Icon = ch.icon;
+                return (
+                  <MenuItem key={ch.id} onClick={() => handleFocusSelect(ch.id)} selected={focus === ch.id}>
+                    <ListItemIcon sx={{ minWidth: 28 }}>
+                      <Icon sx={{ fontSize: 16, color: focus === ch.id ? '#4FC3F7' : colors.text.tertiary }} />
+                    </ListItemIcon>
+                    <ListItemText primary={ch.label} primaryTypographyProps={{ fontSize: 12 }} />
+                    {focus === ch.id && <CircleIcon sx={{ fontSize: 8, color: '#4FC3F7', ml: 1 }} />}
+                  </MenuItem>
+                );
+              })}
+            </Menu>
+          </Box>
+        }
+      />
 
       {error && (
         <Box sx={{ px: 3, pb: 1 }}>

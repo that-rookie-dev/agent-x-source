@@ -56,6 +56,7 @@ import { ChatInputBar, type ChatInputBarHandle } from './ChatInputBar';
 import { WebSearchGlobeToggle, readWebSearchForcePreference, writeWebSearchForcePreference } from './WebSearchGlobeToggle';
 import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
+import { PlanModeContext } from '../chat/PlanModeContext';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
 import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard, mergeIncomingMessageParts, applyToolCompleteMetadata, reconcileStreamingMessageParts } from '../chat/utils';
@@ -3346,22 +3347,23 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             </Box>
           )}
 
-          <ChatMessageList
-            items={visibleMessagesWithFlags}
-            loadingSteps={loadingSteps}
-            onResend={handleResend}
-            bottomRef={bottomRef}
-            onOpenChildSession={openChildSession}
-            onQuestionnaireRespond={handleQuestionnaireRespond}
-            onCrewRosterPickerSubmit={handleCrewRosterPickerSubmit}
-            onCrewRosterPickerSkip={handleCrewRosterPickerSkip}
-            onViewCrewDossier={handleViewCrewDossier}
-            pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
-            onTurnFeedback={handleTurnFeedback}
-            feedbackSubmitting={feedbackSubmitting}
-            planMode={agentMode === 'plan'}
-            freezeLayout={freezeMessageLayout || loadingOlderMessages}
-          />
+          <PlanModeContext.Provider value={agentMode === 'plan'}>
+            <ChatMessageList
+              items={visibleMessagesWithFlags}
+              loadingSteps={loadingSteps}
+              onResend={handleResend}
+              bottomRef={bottomRef}
+              onOpenChildSession={openChildSession}
+              onQuestionnaireRespond={handleQuestionnaireRespond}
+              onCrewRosterPickerSubmit={handleCrewRosterPickerSubmit}
+              onCrewRosterPickerSkip={handleCrewRosterPickerSkip}
+              onViewCrewDossier={handleViewCrewDossier}
+              pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
+              onTurnFeedback={handleTurnFeedback}
+              feedbackSubmitting={feedbackSubmitting}
+              freezeLayout={freezeMessageLayout || loadingOlderMessages}
+            />
+          </PlanModeContext.Provider>
 
           {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
             <ThinkingIndicator label={loadingSteps?.[0]?.label} />

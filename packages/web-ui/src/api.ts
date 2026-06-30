@@ -416,15 +416,17 @@ export interface Checkpoint {
   messageCount: number;
 }
 
-export interface DbStatus {
-  dbMode: 'sqlite' | 'memory' | 'unknown' | 'error';
+export interface SessionDbStatus {
+  dbMode: 'postgres' | 'unknown' | 'error';
+  backend: 'postgres' | 'unknown' | 'error';
+  connected: boolean;
   sessionCount: number;
   filesystemRecovered: number;
   schemaVersion: number;
 }
 
 export const sessions = {
-  dbStatus: () => request<DbStatus>('/sessions/db-status'),
+  dbStatus: () => request<SessionDbStatus>('/sessions/db-status'),
   list: () => request<SessionInfo[]>('/sessions'),
   children: (parentId: string) => request<{ children: ChildSessionInfo[] }>(`/sessions/${parentId}/children`).then((r) => r.children ?? []),
   preview: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[] }>(`/sessions/${id}/preview`),
@@ -711,6 +713,7 @@ export interface AgentXConfig {
   user?: { callsign: string };
   setupComplete?: boolean;
   rag?: { enabled: boolean; embeddingModel: string; chunkSize: number; topK: number };
+  localModel?: { enabled?: boolean; modelId?: string; modelName?: string; displayName?: string };
   tools?: {
     webSearch?: {
       duckduckgo?: { enabled?: boolean };
@@ -719,6 +722,8 @@ export interface AgentXConfig {
       tavily?: { enabled: boolean; apiKey?: string };
     };
   };
+  /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
+  neuralBrain?: boolean;
 }
 
 export interface ProviderSettings {
@@ -1154,14 +1159,13 @@ export const webuiActive = {
 
 // ─── Settings: Database ───
 export interface DbStatus {
-  backend: 'sqlite' | 'postgres';
+  backend: 'postgres';
   connected: boolean;
   stats: {
     dbSizeBytes: number;
     dbSizeFormatted: string;
     tableCount: number;
     tables: Record<string, number>;
-    walSizeBytes: number;
   };
   health: {
     status: 'healthy' | 'degraded' | 'unhealthy';
@@ -1178,17 +1182,83 @@ export interface DbStatus {
   };
 }
 
+export const localModel = {
+  capabilities: () =>
+    request<{ capabilities: any; localModelSupported?: boolean }>('/local-model/capabilities'),
+  catalog: () =>
+    request<{ catalog: any; compatible: string[]; recommended: string | null }>('/local-model/catalog'),
+  download: (modelId: string) =>
+    request<{ ok: boolean; modelId: string; sizeGB: number; message: string }>('/local-model/download', {
+      method: 'POST',
+      body: JSON.stringify({ modelId }),
+    }),
+  downloadStatus: (modelId: string) =>
+    request<{ status: string; progress?: number; error?: string }>(`/local-model/download-status/${modelId}`),
+  installed: () =>
+    request<{ models: Array<{ modelId: string; modelName: string; displayName?: string; downloadedAt: string; dtype?: string; isActive: boolean }> }>('/local-model/installed'),
+  activate: (modelId: string) =>
+    request<{ ok: boolean; modelId: string; message: string }>(`/local-model/activate/${modelId}`, { method: 'POST' }),
+  delete: (modelId: string) =>
+    request<{ ok: boolean; message: string }>(`/local-model/${modelId}`, { method: 'DELETE' }),
+  switchToPrimary: () =>
+    request<{ ok: boolean; message: string }>('/local-model/switch-to-primary', { method: 'POST' }),
+  status: () =>
+    request<{ installed: string | null; activeModelId: string | null; enabled: boolean; model: { id: string; displayName: string; huggingFaceId: string; sizeGB: number; downloadedAt: string | null } | null }>(
+      '/local-model/status',
+    ),
+};
+
+export interface EmbeddingModelStatus {
+  id: string;
+  displayName: string;
+  huggingfaceId: string;
+  approxSizeMB: number;
+  downloaded: boolean;
+  sizeOnDiskMB: number;
+  downloadStatus: 'not_started' | 'pending' | 'downloading' | 'complete' | 'error';
+  percentage: number;
+}
+
+export interface EmbeddingModelProgress {
+  id: string;
+  displayName: string;
+  status: 'not_started' | 'pending' | 'downloading' | 'complete' | 'error';
+  downloadedMB: number;
+  totalMB: number;
+  percentage: number;
+  error?: string;
+}
+
+export const embeddingModels = {
+  status: () =>
+    request<{ models: EmbeddingModelStatus[]; allDownloaded: boolean }>('/embedding-models/status'),
+  download: () =>
+    request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/embedding-models/download', { method: 'POST' }),
+  /**
+   * Opens an SSE connection for download progress. Returns a cleanup function.
+   */
+  progressStream: (onProgress: (data: { type: string; models?: EmbeddingModelProgress[]; allComplete?: boolean; hasError?: boolean }) => void): (() => void) => {
+    const url = `${BASE}/embedding-models/progress`;
+    const es = new EventSource(url);
+    es.onmessage = (ev) => {
+      try { onProgress(JSON.parse(ev.data)); } catch {}
+    };
+    es.onerror = () => { /* SSE will auto-reconnect; ignore */ };
+    return () => es.close();
+  },
+};
+
 export const settings = {
   db: {
     get: () => request<DbStatus>('/settings/db'),
     update: (config: { backend: string; postgres?: { connectionString: string } }) =>
       request<{ ok: boolean; backend?: string; tablesCreated?: number }>('/settings/db', { method: 'PUT', body: JSON.stringify(config) }),
     test: (connectionString: string) =>
-      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string }>(
+      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean }>(
         '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh: undefined }) }
       ),
     testAdvanced: (connectionString: string, ssh?: { host: string; port: number; username: string; password?: string; privateKey?: string } | null) =>
-      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string }>(
+      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean }>(
         '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh }) }
       ),
     migrate: () =>
@@ -1201,6 +1271,10 @@ export const settings = {
       request<{ ok: boolean }>('/settings/db/clear', { method: 'POST' }),
     clearCache: () =>
       request<{ ok: boolean; freedFormatted: string }>('/settings/db/clear-cache', { method: 'POST' }),
+    provisionStatus: () =>
+      request<{ postgres: boolean; schemaVersion: number; migrationsApplied: number; age: { available: boolean; error?: string | null }; timestamp: string }>('/memory/storage-status'),
+    systemInit: () =>
+      request<{ ok: boolean; nodeId: string }>('/memory/system-init', { method: 'POST' }),
   },
   webSearch: {
     status: () =>

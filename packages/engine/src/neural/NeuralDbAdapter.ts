@@ -1,8 +1,7 @@
 /**
- * Backend-agnostic DB adapter for neural engines (ExperienceEngine, GrowthEngine).
- * Provides a unified interface over SQLite (better-sqlite3) and PostgreSQL (pg Pool).
- * All methods are sync-compatible: SQLite calls execute immediately, PG calls
- * resolve from an in-memory cache with async write-behind.
+ * PG-backed neural DB adapter for neural engines (ExperienceEngine, GrowthEngine).
+ * Reads from in-memory cache; writes queue to PG in the background.
+ * Gracefully degrades to in-memory-only if PG is unavailable.
  */
 import { getLogger } from '@agentx/shared';
 
@@ -16,31 +15,6 @@ export interface NeuralStatement {
 
 export interface NeuralDb {
   prepare(sql: string): NeuralStatement;
-}
-
-export function createSqliteNeuralDb(dbPath: string): NeuralDb {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const Database = require('better-sqlite3');
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-
-  return {
-    prepare(sql: string): NeuralStatement {
-      const stmt = db.prepare(sql);
-      return {
-        run(...params: unknown[]): { changes: number } {
-          return stmt.run(...params);
-        },
-        get(...params: unknown[]): Record<string, unknown> | undefined {
-          return stmt.get(...params);
-        },
-        all(...params: unknown[]): Record<string, unknown>[] {
-          return stmt.all(...params);
-        },
-      };
-    },
-  };
 }
 
 /**

@@ -3,12 +3,14 @@ import type { Express, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import helmet from 'helmet';
 import { createServer } from 'node:http';
+import os from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady } from './engine.js';
-import { setupWebSocket, ensureSubscribed, persistMessageDirect } from './ws.js';
+import { buildGraphRagSummarizer } from './distillation-generator.js';
+import { setupWebSocket, ensureSubscribed, persistMessageDirect, broadcastBrainActivity } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import {
   sessionSettings,
@@ -22,12 +24,11 @@ import {
   loadSessionMessagesPage,
   getForceWebSearchError,
 } from './chat-helpers.js';
-import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi, selectRecentMessagesTail } from './message-enrich.js';
+import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
-import { healOrphanedUserMessages } from './message-history-repair.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -47,10 +48,31 @@ import { handleClarificationRespond } from './clarification-resume.js';
 import { loadSessionResumeState } from './session-resume-state.js';
 import { postCrewChatSession } from './crew-chat.js';
 import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewHonorificToSession } from './host-crew-session.js';
+import { memoryRouter } from './memory-api.js';
+import localModelRouter from './local-model-api.js';
+import embeddingModelRouter from './embedding-model-api.js';
+import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Embedding models are downloaded at runtime (during the setup wizard) to the
+// user's data directory. The embedding-model-api router sets the cache dir via
+// setDefaultEmbeddingCacheDir() on import. This bundled-dir fallback is kept
+// for backward compatibility with existing installs that bundled the models.
+const BUNDLED_EMBEDDING_MODEL_DIR = join(__dirname, 'models');
+if (existsSync(join(BUNDLED_EMBEDDING_MODEL_DIR, 'Xenova', 'all-MiniLM-L6-v2')) ||
+    existsSync(join(BUNDLED_EMBEDDING_MODEL_DIR, 'Xenova', 'bge-m3'))) {
+  // Only use bundled dir if the runtime-downloaded models aren't present yet.
+  const runtimeModelDir = join(getDataDir(), 'models');
+  if (!existsSync(join(runtimeModelDir, 'Xenova', 'bge-m3')) &&
+      !existsSync(join(runtimeModelDir, 'Xenova', 'all-MiniLM-L6-v2'))) {
+    setDefaultEmbeddingCacheDir(BUNDLED_EMBEDDING_MODEL_DIR);
+  }
+}
+
 const UI_DIST = process.env['AGENTX_UI_DIR'] || join(__dirname, '..', '..', 'web-ui', 'dist');
+const NEURON_DIST = process.env['AGENTX_NEURON_DIR'] || join(__dirname, '..', '..', 'web-neuron', 'dist');
 
 
 
@@ -133,6 +155,9 @@ try {
 // Validate UI dist directory (non-fatal warning only)
 if (!existsSync(UI_DIST)) {
   startupErrors.push(`UI dist directory not found at ${UI_DIST}. The web UI will not be served. Set AGENTX_UI_DIR or build the web-ui package.`);
+}
+if (!existsSync(NEURON_DIST)) {
+  startupErrors.push(`Neuron dist directory not found at ${NEURON_DIST}. The brain visualization will not be served. Set AGENTX_NEURON_DIR or build the web-neuron package.`);
 }
 
 // Validate port availability
@@ -312,6 +337,13 @@ app.use('/api', createAuthRouter());
 // Auth middleware — protects all /api/* routes except auth endpoints
 app.use(authMiddleware);
 
+// Unified memory fabric API — routes inside the router already have /memory/ prefix
+app.use('/api', memoryRouter);
+
+// Local model management API
+app.use('/api', localModelRouter);
+app.use('/api', embeddingModelRouter);
+
 // Security headers (content-type sniffing, XSS, clickjacking protection)
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -391,6 +423,15 @@ app.get('/api/health', (_req, res) => {
       channels: eng.gateway.registry.listChannels(),
     } : null,
     agentHealth: eng?.agent?.getHealth() ?? null,
+  });
+});
+
+// ───── System capabilities ─────
+app.get('/api/system/capabilities', (_req, res) => {
+  const totalMemoryGB = Math.round(os.totalmem() / (1024 ** 3) * 10) / 10;
+  res.json({
+    totalMemoryGB,
+    localModelSupported: totalMemoryGB >= 32,
   });
 });
 
@@ -1007,9 +1048,9 @@ app.get('/api/agent/state', (_req, res) => {
 });
 
 // ───── Agent Vitals (Age, Level, Wisdom, Mood, etc.) ─────
-app.get('/api/agent/vitals', (_req, res) => {
+app.get('/api/agent/vitals', async (_req, res) => {
   try {
-    const vitals = getVitals();
+    const vitals = await getVitals();
     res.json(vitals);
   } catch (e) {
     getLogger().error('GET_API_AGENT_VITALS', e instanceof Error ? e : String(e));
@@ -2019,14 +2060,14 @@ app.get('/api/mode/hyperdrive', (_req, res) => {
 });
 
 // ───── Sessions ─────
-app.get('/api/sessions/db-status', (_req, res) => {
+app.get('/api/sessions/db-status', async (_req, res) => {
   try {
     const eng = getEngine();
     const store = (eng.sessionManager as unknown as { store: { getInfo?: () => { dbMode: string; sessionCount: number; filesystemRecovered: number; schemaVersion: number } } }).store;
-    const info = store?.getInfo?.() ?? { dbMode: 'unknown', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 };
-    res.json(info);
+    const info = store?.getInfo?.() ?? { dbMode: 'postgres', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 };
+    res.json({ ...info, dbMode: 'postgres' });
   } catch (e) {
-    res.json({ dbMode: 'error', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 });
+    res.json({ dbMode: 'postgres', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 });
   }
 });
 
@@ -2041,72 +2082,43 @@ function formatSize(bytes: number): string {
 
 async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<string, unknown>> {
   const store = (eng.sessionManager as any)?.store;
-  const storeIsPg = store && typeof store.isConnected === 'function' && !store.getDb;
-  const pgConnected = store && typeof store.isConnected === 'function' && store.isConnected();
-  const usingPg = storeIsPg || (store && typeof store.isConnected === 'function' && store.isConnected());
-  const db = store?.getDb?.() ?? null;
+  const pgConnected = !!(store && typeof store.isConnected === 'function' && store.isConnected());
   let dbSizeBytes = 0;
-  let walSizeBytes = 0;
   let tableCount = 0;
   const tables: Record<string, number> = {};
   let healthStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
   const checks: Array<{ table: string; rows: number; ok: boolean }> = [];
+  let connectionString = '';
 
-  if (usingPg) {
-    try {
-      const pgPool: any = (store as any).pool;
-      if (pgPool && typeof pgPool.query === 'function') {
-        const tabRows = await pgPool.query(
-          "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename"
-        );
-        tableCount = tabRows.rows.length;
-        for (const r of tabRows.rows) {
-          try {
-            const cnt = await pgPool.query(`SELECT COUNT(*)::int as cnt FROM "${r.tablename}"`);
-            tables[r.tablename] = cnt.rows[0].cnt;
-            checks.push({ table: r.tablename, rows: cnt.rows[0].cnt, ok: true });
-          } catch (e) {
-            tables[r.tablename] = -1;
-            checks.push({ table: r.tablename, rows: -1, ok: false });
-            healthStatus = 'degraded';
-          }
-        }
+  try {
+    const pgPool: any = (store as any).pool ?? eng.pgPool;
+    if (pgPool && typeof pgPool.query === 'function') {
+      const tabRows = await pgPool.query(
+        "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+      );
+      tableCount = tabRows.rows.length;
+      for (const r of tabRows.rows) {
         try {
-          const sizeRes = await pgPool.query("SELECT pg_database_size(current_database()) as size");
-          dbSizeBytes = sizeRes.rows[0].size;
-        } catch (e) { /* db size not available */ }
-        if (tableCount > 0) healthStatus = 'healthy';
-      }
-    } catch (e) {
-      healthStatus = 'unhealthy';
-    }
-  } else if (db) {
-    try {
-      dbSizeBytes = statSync(db.name).size;
-    } catch (e) { dbSizeBytes = 0; }
-    try {
-      const walPath = db.name + '-wal';
-      if (existsSync(walPath)) walSizeBytes = statSync(walPath).size;
-    } catch (e) { walSizeBytes = 0; }
-    try {
-      const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_schema' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>;
-      tableCount = rows.length;
-      for (const r of rows) {
-        try {
-          const c = db.prepare(`SELECT COUNT(*) as cnt FROM "${r.name}"`).get() as { cnt: number };
-          tables[r.name] = c.cnt;
-          checks.push({ table: r.name, rows: c.cnt, ok: true });
+          const cnt = await pgPool.query(`SELECT COUNT(*)::int as cnt FROM "${r.tablename}"`);
+          tables[r.tablename] = cnt.rows[0].cnt;
+          checks.push({ table: r.tablename, rows: cnt.rows[0].cnt, ok: true });
         } catch (e) {
-          tables[r.name] = -1;
-          checks.push({ table: r.name, rows: -1, ok: false });
+          tables[r.tablename] = -1;
+          checks.push({ table: r.tablename, rows: -1, ok: false });
           healthStatus = 'degraded';
         }
       }
-    } catch (e) {
-      tableCount = 0;
-      healthStatus = 'unhealthy';
+      try {
+        const sizeRes = await pgPool.query("SELECT pg_database_size(current_database()) as size");
+        dbSizeBytes = sizeRes.rows[0].size;
+      } catch (e) { /* db size not available */ }
+      if (tableCount > 0) healthStatus = 'healthy';
+      try {
+        const connRes = await pgPool.query('SELECT current_database() as db, inet_server_addr() as host');
+        connectionString = `postgresql://${connRes.rows[0]?.['host'] ?? 'localhost'}/${connRes.rows[0]?.['db'] ?? 'agentx'}`;
+      } catch { /* */ }
     }
-  } else {
+  } catch (e) {
     healthStatus = 'unhealthy';
   }
 
@@ -2131,33 +2143,14 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
     return { path: dir, sizeBytes, sizeFormatted: `${s.toFixed(1)} ${units[i]}` };
   }
 
-  const pgPlugin = eng.pluginRegistry.getPlugin('postgresql');
-  const pgConfig = pgPlugin?.config ?? {};
-  const pgActive = !!(pgPlugin?.enabled && pgConfig['connectionString']);
-
-  if (!pgActive && !usingPg && db) {
-    healthStatus = 'healthy';
-  } else if (!pgActive && !usingPg && !db) {
-    healthStatus = 'unhealthy';
-  }
-
   return {
-    backend: usingPg ? 'postgres' : 'sqlite',
-    connected: usingPg ? pgConnected : !!db,
-    stats: usingPg ? {
+    backend: 'postgres',
+    connected: pgConnected,
+    stats: {
       dbSizeBytes,
-      dbSizeFormatted: dbSizeBytes > 0
-        ? formatSize(dbSizeBytes)
-        : `${tableCount} tables`,
+      dbSizeFormatted: dbSizeBytes > 0 ? formatSize(dbSizeBytes) : `${tableCount} tables`,
       tableCount,
       tables,
-      walSizeBytes: 0,
-    } : {
-      dbSizeBytes,
-      dbSizeFormatted: dirInfo(dataDir).sizeFormatted,
-      tableCount,
-      tables,
-      walSizeBytes,
     },
     health: { status: healthStatus, checks },
     fileStorage: {
@@ -2166,8 +2159,8 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
       cache: dirInfo(cacheDir),
     },
     postgres: {
-      configured: pgActive || usingPg,
-      connectionString: pgConfig['connectionString'] || '',
+      configured: true,
+      connectionString,
     },
   };
 }
@@ -2216,11 +2209,22 @@ app.post('/api/settings/web-search/test', async (req, res) => {
 app.put('/api/settings/db', async (req, res) => {
   try {
     const { backend, postgres } = req.body || {};
-    getLogger().info('SETTINGS_DB_UPDATE', `Backend switch requested: ${backend}`);
+    getLogger().info('SETTINGS_DB_UPDATE', `PostgreSQL connection update requested (backend=${backend ?? 'postgres'})`);
 
-    if (backend === 'postgres' && postgres?.connectionString) {
+    let connectionString = postgres?.connectionString as string | undefined;
+
+    if (backend === 'embedded-postgres') {
+      // The desktop main process starts the bundled native PostgreSQL and sets this env var.
+      connectionString = process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
+      if (!connectionString) {
+        res.status(400).json({ ok: false, error: 'Embedded PostgreSQL is not running. Start the Agent-X desktop app to use the bundled database.' });
+        return;
+      }
+    }
+
+    if (connectionString) {
       const { PostgresStorageAdapter } = await import('@agentx/engine');
-      const test = await PostgresStorageAdapter.testConnection(postgres.connectionString);
+      const test = await PostgresStorageAdapter.testConnection(connectionString);
       if (!test.ok) {
         res.status(400).json({ ok: false, error: test.error ?? 'PostgreSQL connection failed' });
         return;
@@ -2237,7 +2241,7 @@ app.put('/api/settings/db', async (req, res) => {
         eng.pluginRegistry.enable('postgresql');
       }
       eng.pluginRegistry.updateConfig('postgresql', {
-        connectionString: postgres.connectionString,
+        connectionString,
         autoMigrate: true,
         poolSize: 5,
       });
@@ -2245,7 +2249,7 @@ app.put('/api/settings/db', async (req, res) => {
       clearEngine();
     }
 
-    res.json({ ok: true, backend: backend || 'sqlite' });
+    res.json({ ok: true, backend: 'postgres' });
   } catch (e: unknown) {
     getLogger().error('PUT_API_SETTINGS_DB', e instanceof Error ? e : String(e));
     res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-update-failed' });
@@ -2264,10 +2268,24 @@ app.post('/api/settings/db/test', async (req, res) => {
     const client = await pool.connect();
     const result = await client.query('SELECT version() as version');
     const pgVersion = result.rows[0]?.['version'] as string;
+    let ageAvailable = false;
+    let ageError: string | undefined;
+    let extensionsCreated = false;
+    try {
+      await client.query('CREATE EXTENSION IF NOT EXISTS vector');
+      try { await client.query('CREATE EXTENSION IF NOT EXISTS age'); } catch (ageErr) {
+        ageError = ageErr instanceof Error ? ageErr.message : 'AGE not available';
+      }
+      extensionsCreated = true;
+      const { rows } = await client.query(`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'age') AS available`);
+      ageAvailable = rows[0]?.available === true;
+    } catch (extErr) {
+      ageError = extErr instanceof Error ? extErr.message : 'Failed to install extensions';
+    }
     client.release();
     await pool.end();
     getLogger().info('SETTINGS_DB_TEST', `PostgreSQL connection successful: ${pgVersion}`);
-    res.json({ ok: true, version: pgVersion || 'connected' });
+    res.json({ ok: true, version: pgVersion || 'connected', ageAvailable, ageError, extensionsCreated });
   } catch (e: unknown) {
     getLogger().error('POST_API_SETTINGS_DB_TEST', e instanceof Error ? e : String(e));
     res.status(400).json({ ok: false, error: e instanceof Error ? e.message : 'connection-failed' });
@@ -2277,23 +2295,15 @@ app.post('/api/settings/db/test', async (req, res) => {
 app.post('/api/settings/db/migrate', async (_req, res) => {
   try {
     const eng = getEngine();
-    const pgPlugin = eng.pluginRegistry.getPlugin('postgresql');
-    const pgConfig = pgPlugin?.config ?? {};
-    if (pgPlugin?.enabled && pgConfig['connectionString']) {
-      const { PostgresStorageAdapter } = await import('@agentx/engine');
-      const adapter = new PostgresStorageAdapter({
-        connectionString: pgConfig['connectionString'] as string,
-        max: (pgConfig['poolSize'] as number) ?? 5,
-      } as any);
-      const started = Date.now();
-      await adapter.connect();
-      const durationMs = Date.now() - started;
-      await adapter.disconnect();
-      res.json({ ok: true, migrated: {}, durationMs });
-    } else {
-      getLogger().info('SETTINGS_DB_MIGRATE', 'Migration already up to date in SQLite mode');
-      res.json({ ok: true, migrated: {}, durationMs: 0 });
+    const store = (eng.sessionManager as any)?.store as PostgresStorageAdapter | undefined;
+    if (!store || typeof store.connect !== 'function') {
+      res.status(500).json({ ok: false, error: 'PostgreSQL storage not initialized' });
+      return;
     }
+    const started = Date.now();
+    await store.connect();
+    const durationMs = Date.now() - started;
+    res.json({ ok: true, migrated: {}, durationMs });
   } catch (e: unknown) {
     getLogger().error('POST_API_SETTINGS_DB_MIGRATE', e instanceof Error ? e : String(e));
     res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-migrate-failed' });
@@ -2319,16 +2329,12 @@ app.get('/api/settings/db/health', async (_req, res) => {
   }
 });
 
-app.post('/api/settings/db/clear', (_req, res) => {
+app.post('/api/settings/db/clear', async (_req, res) => {
   try {
     const eng = getEngine();
-    const store = (eng.sessionManager as any)?.store;
-    if (store?.deleteMessages) {
-      const sessions = eng.sessionManager.listSessions(9999) as unknown as Array<{ id: string }>;
-      for (const s of sessions) {
-        if (s.id === '__channel__') continue;
-        try { store.deleteMessages(s.id); } catch (e) { /* continue */ }
-      }
+    const store = (eng.sessionManager as any)?.store as PostgresStorageAdapter | undefined;
+    if (store && typeof store.clearAll === 'function') {
+      await store.clearAll();
     }
     getLogger().info('SETTINGS_DB_CLEAR', 'All session data cleared');
     res.json({ ok: true });
@@ -2549,7 +2555,7 @@ User message: "${firstUser.content.slice(0, 500)}"`;
   }
 });
 
-// Cross-session full-text search. Queries the messages table via SQLite.
+// Cross-session full-text search. Queries the messages table via PostgreSQL.
 app.get('/api/sessions/search', (req, res) => {
   try {
     const q = String(req.query['q'] ?? '').trim();
@@ -2682,6 +2688,13 @@ app.post('/api/sessions', validate(createSessionSchema), (req, res) => {
     sessionSettings.mode = 'plan';
     createAgent(undefined, session);
     ensureSubscribed();
+    // Broadcast session creation to the neural frontend.
+    broadcastBrainActivity({
+      type: 'session_created',
+      sessionId: session.id,
+      title: session.title || `Session ${session.id.slice(0, 8)}`,
+      timestamp: new Date().toISOString(),
+    });
     res.json({ sessionId: session.id });
   } catch (e: unknown) {
     getLogger().error('POST_API_SESSIONS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'create-failed' });
@@ -2818,49 +2831,21 @@ app.post('/api/sessions/:id/restore', async (req, res) => {
         agent.setCrewEnabled(state.crewId, state.enabled);
       }
     }
-    // Read messages from DB
+    // Read messages from DB using pagination so we never load the whole session history on restore.
     let messages: Array<Record<string, unknown>> = [];
     let parts: Array<Record<string, unknown>> = [];
+    let messageTotal = 0;
+    let messagesTruncated = false;
     try {
+      const page = await loadSessionMessagesPage(sessionId, { limit: perRole != null ? perRole * 2 : 50 });
+      messages = page.messages;
+      messageTotal = page.total;
+      messagesTruncated = page.hasMore;
       const store = (eng.sessionManager as any).store;
-      if (store?.getMessages) {
-        messages = store.getMessages(req.params['id']!) as Array<Record<string, unknown>>;
-      }
-      if (store?.getParts) {
-        parts = store.getParts(req.params['id']!) as Array<Record<string, unknown>>;
+      if (store?.getPartsForMessages) {
+        parts = await store.getPartsForMessages(sessionId, messages) as Array<Record<string, unknown>>;
       }
     } catch (e) { getLogger().warn('RESTORE_MESSAGES', e instanceof Error ? e.message : String(e)); }
-
-    try {
-      const store = (eng.sessionManager as unknown as {
-        store?: {
-          listCheckpoints?: (id: string) => Array<{ id: string }>;
-          getCheckpoint?: (sessionId: string, checkpointId: string) => Array<Record<string, unknown>> | null;
-        };
-      }).store;
-      const sid = req.params['id']!;
-      if (store?.listCheckpoints && store?.getCheckpoint) {
-        const snapshots: Array<Array<Record<string, unknown>>> = [];
-        for (const cp of store.listCheckpoints(sid).slice().reverse()) {
-          const snap = store.getCheckpoint(sid, cp.id);
-          if (snap?.length) snapshots.push(snap);
-        }
-        const healed = healOrphanedUserMessages(messages, snapshots);
-        if (healed !== messages) {
-          messages = healed;
-          getLogger().info('RESTORE', `Healed orphaned user turn(s) in session ${sid.slice(0, 8)}`);
-        }
-      }
-    } catch { /* best-effort */ }
-
-    let messageTotal = messages.filter((m) => m['role'] === 'user' || m['role'] === 'assistant').length;
-    let messagesTruncated = false;
-    if (perRole != null && messages.length > 0) {
-      const preview = selectRecentMessagesTail(messages, perRole * 2);
-      messages = preview.messages;
-      messageTotal = preview.total;
-      messagesTruncated = preview.truncated;
-    }
 
     enrichSessionMessagesForUi(eng, messages, parts);
 
@@ -2893,7 +2878,7 @@ app.get('/api/sessions/:id/feedback', (req, res) => {
   }
 });
 
-app.get('/api/sessions/:id/messages', (req, res) => {
+app.get('/api/sessions/:id/messages', async (req, res) => {
   try {
     const sessionId = req.params['id']!;
     const parsed = sessionMessagesQuerySchema.safeParse(req.query);
@@ -2906,11 +2891,11 @@ app.get('/api/sessions/:id/messages', (req, res) => {
     if (!session) { res.status(404).json({ error: 'not-found' }); return; }
 
     const { limit, before } = parsed.data;
-    const page = loadSessionMessagesPage(sessionId, { limit, before });
+    const page = await loadSessionMessagesPage(sessionId, { limit, before });
     let parts: Array<Record<string, unknown>> = [];
     try {
-      const store = (eng.sessionManager as unknown as { store?: { getParts?: (id: string) => Array<Record<string, unknown>> } }).store;
-      parts = store?.getParts?.(sessionId) ?? [];
+      const store = (eng.sessionManager as unknown as { store?: { getPartsForMessages?: (sessionId: string, messages: Array<Record<string, unknown>>) => Promise<Array<Record<string, unknown>>> } }).store;
+      parts = await store?.getPartsForMessages?.(sessionId, page.messages) ?? [];
     } catch { /* best-effort */ }
     const enriched = enrichSessionMessagesForUi(eng, [...page.messages], parts);
     const messages = enriched.map((m) => mergeNormalizedMessageForApi(m));
@@ -3426,8 +3411,9 @@ app.post('/api/discord/start', async (req, res) => {
     }
 
     // Persist to disk
-    const store = new DiscordStore(eng.sessionManager.getDb(), eng.dek!);
-    store.save({ botToken: token, channelId });
+    if (!eng.pgPool) throw new Error('PostgreSQL pool not available');
+    const discordStore = new DiscordStore(eng.pgPool, eng.dek!);
+    await discordStore.save({ botToken: token, channelId });
 
     // Stop existing bridge if any
     if (eng.discordBridge) {
@@ -3463,7 +3449,7 @@ app.post('/api/discord/start', async (req, res) => {
   }
 });
 
-app.post('/api/discord/stop', (_req, res) => {
+app.post('/api/discord/stop', async (_req, res) => {
   try {
     const eng = getEngine();
     if (eng.discordBridge) {
@@ -3473,8 +3459,10 @@ app.post('/api/discord/stop', (_req, res) => {
     if (eng.pluginRegistry.isInstalled('discord')) {
       eng.pluginRegistry.uninstall('discord');
     }
-    const store = new DiscordStore(eng.sessionManager.getDb(), eng.dek!);
-    store.clear();
+    if (eng.pgPool) {
+      const discordStore = new DiscordStore(eng.pgPool, eng.dek!);
+      await discordStore.clear();
+    }
     res.json({ ok: true });
   } catch (e) {
     getLogger().error('POST_API_DISCORD_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'clear-failed' });
@@ -3521,34 +3509,40 @@ app.post('/api/slack/start', async (req, res) => {
         pgPool: eng.pgPool ?? undefined,
       });
     });
+    if (!eng.pgPool) throw new Error('PostgreSQL pool not available');
     await bridge.start();
     eng.slackBridge = bridge;
-    new SlackStore(eng.sessionManager.getDb(), eng.dek!).save({ botToken, appToken });
+    const slackStore = new SlackStore(eng.pgPool, eng.dek!);
+    await slackStore.save({ botToken, appToken });
     res.json({ ok: true, message: 'Slack bridge started.', status: bridge.getStatus() });
   } catch (e: unknown) {
     getLogger().error('POST_API_SLACK_START', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'start-failed' });
   }
 });
 
-app.post('/api/slack/stop', (_req, res) => {
+app.post('/api/slack/stop', async (_req, res) => {
   try {
     const eng = getEngine();
     if (eng.slackBridge) {
       eng.slackBridge.stop();
       eng.slackBridge = null;
     }
-    new SlackStore(eng.sessionManager.getDb(), eng.dek!).clear();
+    if (eng.pgPool) {
+      const slackStore = new SlackStore(eng.pgPool, eng.dek!);
+      await slackStore.clear();
+    }
     res.json({ ok: true });
   } catch (e) {
     getLogger().error('POST_API_SLACK_STOP', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'stop-failed' });
   }
 });
 
-app.get('/api/slack/status', (_req, res) => {
+app.get('/api/slack/status', async (_req, res) => {
   try {
     const eng = getEngine();
-    const store = new SlackStore(eng.sessionManager.getDb(), eng.dek!);
-    const cfg = store.load();
+    if (!eng.pgPool) throw new Error('PostgreSQL pool not available');
+    const slackStore = new SlackStore(eng.pgPool, eng.dek!);
+    const cfg = await slackStore.load();
     const bridge = eng.slackBridge;
     const configured = !!cfg?.botToken && !!cfg?.appToken;
     const status = bridge?.getStatus();
@@ -4531,6 +4525,22 @@ app.post('/api/debug/log', (req, res) => {
 // ───── Static file serve ─────
 const UI_PROXY_URL = process.env['AGENTX_UI_PROXY_URL'] || 'http://localhost:5173';
 
+// Serve web-neuron brain visualization from /neuron
+app.get('/neuron*', (req, res, next) => {
+  const subPath = req.path === '/neuron' || req.path === '/neuron/' ? 'index.html' : req.path.slice('/neuron/'.length);
+  const fullPath = join(NEURON_DIST, subPath);
+  if (existsSync(fullPath)) {
+    res.sendFile(fullPath);
+  } else {
+    const index = join(NEURON_DIST, 'index.html');
+    if (existsSync(index)) {
+      res.sendFile(index);
+    } else {
+      next();
+    }
+  }
+});
+
 app.get('*', async (req, res, next) => {
   if (req.path.startsWith('/api') || req.path.startsWith('/ws')) { next(); return; }
 
@@ -4583,6 +4593,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
   });
 
   let shuttingDown = false;
+  const shutdownHandlers: Array<() => void> = [];
 
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
@@ -4618,7 +4629,10 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
       log.info('SHUTDOWN', 'Bridges stopped.');
     } catch (e) { /* best-effort */ }
 
-    // 4. Flush log buffer and exit
+    // 4. Stop background ingestion worker and periodic handlers
+    for (const handler of shutdownHandlers) { try { handler(); } catch {} }
+    ingestionWorker?.stop();
+    // 5. Flush log buffer and exit
     stopGlobalRateLimitCleanup();
     closeLogger();
     clearTimeout(forceExit);
@@ -4627,6 +4641,89 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
 
   // Start periodic cleanup of rate limit stores
   startGlobalRateLimitCleanup();
+
+  // Start background ingestion job worker (Group 3 + 4 + C3): uses ingestion_jobs queue with FOR UPDATE SKIP LOCKED
+  let ingestionWorker: IngestionWorker | null = null;
+  try {
+    const eng = getEngine();
+    const pgPool = (eng as any).pgPool ?? (eng as any).pool;
+    // Check if neural brain is disabled (embedding models failed to download).
+    let neuralBrainDisabled = false;
+    try {
+      const cfg = eng.configManager.load();
+      neuralBrainDisabled = cfg.neuralBrain === false;
+    } catch { /* config not ready — proceed as normal */ }
+    if (pgPool && !neuralBrainDisabled) {
+      getLogger().info('INGESTION_WORKER', 'Neural brain enabled — starting ingestion worker.');
+      const fabric = new MemoryFabric(pgPool as any);
+      const embedder = new OnnxEmbeddingProvider();
+      ingestionWorker = new IngestionWorker(pgPool as any, fabric, {
+        concurrency: 2,
+        pollIntervalMs: 5000,
+        embed: (text) => embedder.embed(text),
+        generate: null, // populated inside the async IIFE below
+        embedder,
+      });
+
+      // Seed periodic jobs once after storage is ready; the worker will claim them.
+      const queue = new IngestionQueue(pgPool as any);
+      void (async () => {
+        try {
+          await eng.storageReady;
+        } catch { /* storage may have failed — proceed best-effort */ }
+        // Build the GraphRAG summarizer generator now that config is available.
+        try {
+          const graphRagGenerate = await buildGraphRagSummarizer();
+          if (graphRagGenerate && ingestionWorker) {
+            ingestionWorker['generate'] = graphRagGenerate;
+          }
+        } catch { /* best-effort — community_summarize jobs will skip without a generator */ }
+        ingestionWorker.start();
+        try {
+          await queue.enqueue({ kind: 'web_distill', priority: 1 });
+          await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
+          await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
+          await queue.enqueue({ kind: 'community_summarize', priority: 0 });
+          await fabric.cleanupExpiredWebStaging();
+        } catch (e: unknown) {
+          getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));
+        }
+      })();
+
+      // Re-enqueue periodic jobs every 60 seconds so the worker has a continuous backlog
+      const periodicInterval = setInterval(async () => {
+        try {
+          await queue.enqueue({ kind: 'web_distill', priority: 1 });
+          await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
+          await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
+          await queue.enqueue({ kind: 'community_summarize', priority: 0 });
+          await fabric.cleanupExpiredWebStaging();
+        } catch (e: unknown) {
+          getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));
+        }
+      }, 60000);
+      shutdownHandlers.push(() => clearInterval(periodicInterval));
+
+      // Wire web search results into the two-tier web staging table (Group 3)
+      setDeepSearchStageResult(async (result) => {
+        try {
+          await fabric.stageWebPayload(
+            result.url,
+            result.domain,
+            result.contentType,
+            result,
+          );
+          await queue.enqueue({ kind: 'web_distill', priority: 2 });
+        } catch (e: unknown) {
+          getLogger().warn('WEB_STAGING', e instanceof Error ? e.message : String(e));
+        }
+      });
+    } else if (neuralBrainDisabled) {
+      getLogger().info('INGESTION_WORKER', 'Neural brain disabled — skipping ingestion worker startup.');
+    }
+  } catch (e: unknown) {
+    getLogger().warn('INGESTION_WORKER', e instanceof Error ? e.message : String(e));
+  }
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));

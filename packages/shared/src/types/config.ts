@@ -48,6 +48,8 @@ export interface AgentXConfig {
   setupComplete?: boolean; // true after Mission Control wizard finishes
   rag?: RAGConfig;
   tools?: ToolsConfig;
+  localModel?: LocalModelConfig;
+  featureRouting?: FeatureRoutingConfig;
   maxSubAgents?: number; // Maximum number of concurrent sub-agents (default: 5, max: 20)
 
   /** Maximum autonomous LLM↔tool cycles per turn (default: 20, increase for complex tasks) */
@@ -59,6 +61,9 @@ export interface AgentXConfig {
   /** Run shell commands in Docker sandbox for isolation (default: false) */
   useSandbox?: boolean;
 
+  /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
+  neuralBrain?: boolean;
+
   permissions?: Record<string, 'allow' | 'deny' | 'ask'>;
   agents?: Record<string, {
     model?: string;
@@ -67,6 +72,36 @@ export interface AgentXConfig {
     deniedTools?: string[];
     permissions?: PermissionRule[];
   }>;
+}
+
+export interface DownloadedLocalModel {
+  modelId: string;
+  modelName: string;
+  displayName?: string;
+  downloadedAt: string;
+  dtype?: 'q4' | 'q4f16' | 'fp32' | 'fp16' | 'int8';
+}
+
+export interface LocalModelConfig {
+  enabled?: boolean;
+  modelId?: string;
+  modelName?: string;
+  displayName?: string;
+  cacheDir?: string;
+  downloadedAt?: string;
+  dtype?: 'q4' | 'q4f16' | 'fp32' | 'fp16' | 'int8';
+  downloadedModels?: DownloadedLocalModel[];
+}
+
+export interface FeatureRoutingConfig {
+  memoryDistillation?: 'cloud' | 'local';
+  memoryExtraction?: 'cloud' | 'local';
+  memoryConsolidation?: 'cloud' | 'local';
+  embeddings?: 'cloud' | 'local';
+  /** GraphRAG entity/relation extraction. Defaults to memoryDistillation's value. */
+  graphRagExtraction?: 'cloud' | 'local';
+  /** GraphRAG community summarization. Defaults to graphRagExtraction's value. */
+  graphRagSummarization?: 'cloud' | 'local';
 }
 
 export interface ProviderSettings {

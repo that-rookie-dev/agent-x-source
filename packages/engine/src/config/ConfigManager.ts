@@ -1,10 +1,11 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, copyFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { AgentXConfig, ProviderProfile } from '@agentx/shared';
+import type { AgentXConfig, ProviderProfile, FeatureRoutingConfig } from '@agentx/shared';
 import { getLogger, encrypt, decrypt } from '@agentx/shared';
 import { agentXConfigSchema } from './ConfigSchema.js';
 import { getConfigPath, getConfigDir, getDataDir, getCacheDir, getLogDir } from './paths.js';
+import { SystemCapabilityDetector } from '../neural/SystemCapabilityDetector.js';
 
 export class ConfigManager {
   private configPath: string;
@@ -27,6 +28,49 @@ export class ConfigManager {
   setDEK(dek: Buffer | null): void {
     this.dek = dek;
     this.config = null; // Force reload with new encryption state
+  }
+
+  /**
+   * Apply system-capability defaults.
+   *
+   * If the machine has less than 32 GB of RAM, local model options are disabled and
+   * memory feature routing defaults to the primary (cloud) model so the app stays
+   * stable and responsive.
+   */
+  private applySystemCapabilityDefaults(config: AgentXConfig): boolean {
+    if (SystemCapabilityDetector.isLocalModelSupported()) return false;
+
+    let changed = false;
+    if (config.localModel?.enabled) {
+      config.localModel.enabled = false;
+      changed = true;
+    }
+
+    if (!config.featureRouting) {
+      config.featureRouting = {};
+    }
+    const routes: (keyof FeatureRoutingConfig)[] = ['memoryDistillation', 'memoryExtraction', 'memoryConsolidation', 'graphRagExtraction', 'graphRagSummarization'];
+    for (const key of routes) {
+      if (!config.featureRouting[key]) {
+        config.featureRouting[key] = 'cloud';
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      getLogger().info('CONFIG', 'Applied system-capability defaults: local model disabled (RAM < 32 GB)');
+    }
+    return changed;
+  }
+
+  private finalizeConfig(config: AgentXConfig): AgentXConfig {
+    if (!config.timezone) {
+      config.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    }
+    if (this.applySystemCapabilityDefaults(config)) {
+      this.save(config);
+    }
+    return config;
   }
 
   private getEncryptedPath(): string {
@@ -135,11 +179,7 @@ export class ConfigManager {
 
       const parsed = JSON.parse(raw) as unknown;
       const validated = agentXConfigSchema.parse(parsed);
-      this.config = validated as AgentXConfig;
-      // Auto-detect timezone if not set (migration for existing configs)
-      if (!this.config.timezone) {
-        this.config.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      }
+      this.config = this.finalizeConfig(validated as AgentXConfig);
       return this.config;
     } catch (err) {
       // Config corrupted — try backup
@@ -155,7 +195,7 @@ export class ConfigManager {
           const raw = decrypt(secureFile.encrypted, this.dek);
           const parsed = JSON.parse(raw) as unknown;
           const validated = agentXConfigSchema.parse(parsed);
-          this.config = validated as AgentXConfig;
+          this.config = this.finalizeConfig(validated as AgentXConfig);
           // Restore backup as primary
           writeFileSync(this.getEncryptedPath(), secureRaw, 'utf-8');
           return this.config;
@@ -170,7 +210,7 @@ export class ConfigManager {
           const raw = readFileSync(this.backupPath, 'utf-8');
           const parsed = JSON.parse(raw) as unknown;
           const validated = agentXConfigSchema.parse(parsed);
-          this.config = validated as AgentXConfig;
+          this.config = this.finalizeConfig(validated as AgentXConfig);
           // Restore backup as primary
           const cfgPath = this.configPath || getConfigPath();
       writeFileSync(cfgPath, raw, 'utf-8');
@@ -186,6 +226,8 @@ export class ConfigManager {
 
   save(config: AgentXConfig): void {
     if (!this.configPath) this.configPath = getConfigPath();
+    // Enforce system-capability defaults before persisting
+    this.applySystemCapabilityDefaults(config);
     const validated = agentXConfigSchema.parse(config);
     const dir = dirname(this.configPath);
     mkdirSync(dir, { recursive: true });

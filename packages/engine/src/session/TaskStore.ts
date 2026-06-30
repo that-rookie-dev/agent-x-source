@@ -1,4 +1,4 @@
-import type { SessionStore } from './SessionStore.js';
+import type { StorageAdapter } from '@agentx/shared';
 import type { TaskPlan } from '../agent/TaskExecutor.js';
 
 export interface TaskStore {
@@ -22,26 +22,26 @@ interface StoredEvent {
  * keyed by a dedicated session ID for the task system.
  */
 export class SessionTaskStore implements TaskStore {
-  private sessionStore: SessionStore;
+  private store: StorageAdapter;
   private static readonly TASK_SESSION_ID = '__task_store__';
 
-  constructor(sessionStore: SessionStore) {
-    this.sessionStore = sessionStore;
+  constructor(store: StorageAdapter) {
+    this.store = store;
   }
 
   async save(plan: TaskPlan): Promise<void> {
-    await this.sessionStore.insertSessionEvent({
+    (this.store as any).insertSessionEvent({
       id: crypto.randomUUID(),
       sessionId: SessionTaskStore.TASK_SESSION_ID,
       sequence: Date.now(),
       type: 'task_plan',
       payload: JSON.stringify(plan),
       created_at: new Date().toISOString(),
-    } as any);
+    });
   }
 
   async load(taskId: string): Promise<TaskPlan | null> {
-    const events = await this.sessionStore.getSessionEvents(SessionTaskStore.TASK_SESSION_ID);
+    const events = (this.store as any).getSessionEvents(SessionTaskStore.TASK_SESSION_ID);
     const stored = events as unknown as StoredEvent[];
     for (let i = stored.length - 1; i >= 0; i--) {
       const ev = stored[i]!;
@@ -58,7 +58,7 @@ export class SessionTaskStore implements TaskStore {
   }
 
   async list(): Promise<TaskPlan[]> {
-    const events = await this.sessionStore.getSessionEvents(SessionTaskStore.TASK_SESSION_ID);
+    const events = (this.store as any).getSessionEvents(SessionTaskStore.TASK_SESSION_ID);
     const stored = events as unknown as StoredEvent[];
     const plans: TaskPlan[] = [];
     const seen = new Set<string>();
@@ -80,13 +80,13 @@ export class SessionTaskStore implements TaskStore {
   }
 
   async delete(taskId: string): Promise<void> {
-    await this.sessionStore.insertSessionEvent({
+    (this.store as any).insertSessionEvent({
       id: crypto.randomUUID(),
       sessionId: SessionTaskStore.TASK_SESSION_ID,
       sequence: Date.now(),
       type: 'task_deleted',
       payload: JSON.stringify({ taskId, deletedAt: new Date().toISOString() }),
       created_at: new Date().toISOString(),
-    } as any);
+    });
   }
 }

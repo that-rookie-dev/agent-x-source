@@ -32,7 +32,7 @@ import {
 import { loadCatalogManifest } from './catalog-manifest.js';
 import { syncCatalogFromManifest } from './catalog-sync.js';
 
-/** Storage operations required for crew catalog + suggestions (SQLite + Postgres). */
+/** Storage operations required for crew catalog + suggestions (Postgres). */
 export interface CrewCatalogStore {
   getCatalogRevision(): Promise<number>;
   getCatalogCount(): Promise<number>;

@@ -15,6 +15,8 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import PowerIcon from '@mui/icons-material/Power';
+import HubIcon from '@mui/icons-material/Hub';
+import { PanelHeader } from './PanelHeader';
 import { mcp, type MCPServer } from '../api';
 import { colors } from '../theme';
 
@@ -112,19 +114,20 @@ export function MCPPanel() {
   const categories = [...new Set(MCP_CATALOG.map((c) => c.category))];
 
   return (
-    <Box sx={{ height: '100%', overflow: 'auto', p: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-        <Typography sx={{ fontSize: '1rem', fontWeight: 600, flex: 1 }}>MCP Servers</Typography>
-        <Button size="small" startIcon={<AddIcon sx={{ fontSize: 14 }} />} onClick={() => setDialogOpen(true)}
-          sx={{ fontSize: '0.6rem', textTransform: 'none', color: colors.accent.blue }}>
-          Custom Server
-        </Button>
-      </Box>
-      <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, mb: 2 }}>
-        Pre-configured open-source and third-party MCP servers. Enable with one click.
-      </Typography>
-
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2, minHeight: 32, '& .MuiTab-root': { minHeight: 32, fontSize: '0.65rem', textTransform: 'none', py: 0.5 } }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <PanelHeader
+        title="MCP Servers"
+        subtitle="Pre-configured open-source and third-party MCP servers. Enable with one click."
+        icon={<HubIcon sx={{ fontSize: 20 }} />}
+        action={
+          <Button size="small" startIcon={<AddIcon sx={{ fontSize: 14 }} />} onClick={() => setDialogOpen(true)}
+            sx={{ fontSize: '0.6rem', textTransform: 'none', color: colors.accent.blue }}>
+            Custom Server
+          </Button>
+        }
+      />
+      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+        <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2, minHeight: 32, '& .MuiTab-root': { minHeight: 32, fontSize: '0.65rem', textTransform: 'none', py: 0.5 } }}>
         <Tab label={`Active (${servers.length})`} />
         <Tab label={`Catalog (${MCP_CATALOG.length})`} />
       </Tabs>
@@ -238,6 +241,7 @@ export function MCPPanel() {
           <Button onClick={handleCatalogConfigSave} variant="contained" sx={{ bgcolor: colors.accent.blue, textTransform: 'none' }}>Enable</Button>
         </DialogActions>
       </Dialog>
+      </Box>
     </Box>
   );
 }

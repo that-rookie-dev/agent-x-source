@@ -1,9 +1,49 @@
 import { describe, it, expect } from 'vitest';
 import { SessionManager } from '../src/session/SessionManager.js';
+import type { StorageAdapter, StorableSession } from '@agentx/shared';
+
+function createMockStorageAdapter(): StorageAdapter {
+  const sessions = new Map<string, StorableSession>();
+  return {
+    connect: () => {},
+    disconnect: () => {},
+    isConnected: () => true,
+    createSession: (input: Omit<StorableSession, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }) => {
+      const session = { id: input.id ?? crypto.randomUUID(), ...input, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as StorableSession;
+      sessions.set(session.id, session);
+      return session;
+    },
+    getSession: (id: string) => sessions.get(id) ?? null,
+    updateSession: (id: string, updates: Partial<StorableSession>) => {
+      const s = sessions.get(id);
+      if (s) Object.assign(s, updates);
+    },
+    deleteSession: (id: string) => { sessions.delete(id); },
+    listSessions: (limit?: number) => Array.from(sessions.values()).slice(0, limit),
+    addMessage: () => ({ id: 'm1', sessionId: 's1', role: 'user', content: '', createdAt: new Date().toISOString() } as any),
+    getMessages: () => [],
+    deleteMessages: () => {},
+    getMessageCount: () => 0,
+    addTokenLog: () => {},
+    getTokenLogs: () => [],
+    addPermission: () => {},
+    getPermissions: () => [],
+    listCrews: () => [],
+    getCrew: () => undefined,
+    getDefaultCrew: () => undefined,
+    createCrew: (input: any) => ({ id: 'c1', ...input }),
+    updateCrew: () => null,
+    deleteCrew: () => {},
+    getPersona: () => null,
+    setPersona: () => {},
+    clearAll: () => sessions.clear(),
+    close: () => sessions.clear(),
+  };
+}
 
 describe('SessionManager crew private sessions', () => {
   it('finds and creates one session per crew', () => {
-    const mgr = new SessionManager();
+    const mgr = new SessionManager({ storageAdapter: createMockStorageAdapter() });
     const crewA = { id: 'crew-a', name: 'Elias', callsign: 'elias_travel' };
     const crewB = { id: 'crew-b', name: 'Maya', callsign: 'maya_ops' };
 
@@ -23,7 +63,7 @@ describe('SessionManager crew private sessions', () => {
   });
 
   it('getSessionById returns crew private without switching active session', () => {
-    const mgr = new SessionManager();
+    const mgr = new SessionManager({ storageAdapter: createMockStorageAdapter() });
     const active = mgr.createSession('openai', 'gpt-4o', process.cwd());
     const crewPrivate = mgr.createCrewPrivateSession('openai', 'gpt-4o', process.cwd(), {
       id: 'crew-x',

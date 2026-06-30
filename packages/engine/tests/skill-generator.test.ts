@@ -3,11 +3,7 @@ import { SkillGenerator } from '../src/agent/SkillGenerator.js';
 
 function mockDb(): any {
   return {
-    prepare: () => ({
-      all: () => [],
-      get: () => null,
-      run: () => ({ changes: 0 }),
-    }),
+    query: async () => ({ rows: [] }),
   };
 }
 
@@ -18,14 +14,13 @@ describe('SkillGenerator', () => {
     const result = generator.shouldGenerateSkill('Build a React component with tests', [
       { name: 'file_write', args: {} as Record<string, unknown> },
       { name: 'test_run', args: {} as Record<string, unknown> },
+      { name: 'code_lint', args: {} as Record<string, unknown> },
     ]);
-    // Two different tool categories = novel enough
     expect(typeof result).toBe('boolean');
   });
 
   it('returns all loaded skills (generated + bundled)', () => {
     const skills = generator.getAll();
-    // At minimum, bundled skills should exist
     expect(Array.isArray(skills)).toBe(true);
   });
 

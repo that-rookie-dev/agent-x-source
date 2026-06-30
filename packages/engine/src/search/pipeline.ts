@@ -15,9 +15,16 @@ import { extractDomain, faviconUrlForDomain, isUrlSafeForFetch } from './url-uti
 
 export type ProgressCallback = (progress: DeepSearchProgress) => void;
 
+let globalStageResult: ((result: DeepSearchResult) => Promise<void> | void) | undefined;
+
+export function setDeepSearchStageResult(stage: (result: DeepSearchResult) => Promise<void> | void): void {
+  globalStageResult = stage;
+}
+
 export async function runDeepSearchPipeline(
   request: DeepSearchRequest,
   onProgress?: ProgressCallback,
+  stageResult?: (result: DeepSearchResult) => Promise<void> | void,
 ): Promise<DeepSearchResultBundle> {
   const started = Date.now();
   const depth: DeepSearchDepth = request.depth ?? 'standard';
@@ -93,7 +100,7 @@ export async function runDeepSearchPipeline(
       excerpt: hit.snippet,
     });
 
-    fetchedResults.push({
+    const result: DeepSearchResult = {
       id: generateId(),
       url: hit.url,
       title: page?.title || hit.title,
@@ -107,7 +114,12 @@ export async function runDeepSearchPipeline(
         provider: hit.provider,
         fetchedAt: new Date().toISOString(),
       },
-    });
+    };
+    fetchedResults.push(result);
+    const stager = stageResult ?? globalStageResult;
+    if (stager) {
+      try { await stager(result); } catch { /* best-effort staging */ }
+    }
   }));
 
   emit({ phase: 'scoring', message: 'Ranking results…', searched, fetched: fetchedCount });

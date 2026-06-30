@@ -17,6 +17,8 @@ import SearchIcon from '@mui/icons-material/Search';
 import UploadIcon from '@mui/icons-material/Upload';
 import DownloadIcon from '@mui/icons-material/Download';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import SchoolIcon from '@mui/icons-material/School';
+import { PanelHeader } from './PanelHeader';
 import { rag, type RAGResult } from '../api';
 import { colors } from '../theme';
 
@@ -32,9 +34,13 @@ export function KnowledgePanel() {
   const [tab, setTab] = useState(0);
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Box sx={{ px: 2, pt: 2, pb: 0, borderBottom: `1px solid ${colors.border.default}` }}>
-        <Typography sx={{ fontSize: '0.95rem', fontWeight: 600, mb: 1 }}>Knowledge Base</Typography>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <PanelHeader
+        title="Knowledge Base"
+        subtitle="Files, context, and RAG search for agent knowledge"
+        icon={<SchoolIcon sx={{ fontSize: 20 }} />}
+      />
+      <Box sx={{ px: 2, borderBottom: `1px solid ${colors.border.default}` }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{
           minHeight: 32,
           '& .MuiTab-root': { minHeight: 32, fontSize: '0.7rem', textTransform: 'none', fontFamily: "'JetBrains Mono', monospace" },

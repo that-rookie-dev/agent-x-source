@@ -5,7 +5,7 @@ type StoreLike = {
   getCrewCatalogStore?: () => CrewCatalogStore;
 };
 
-/** Resolve crew catalog store from SessionStore or PostgresStorageAdapter. */
+/** Resolve crew catalog store from PostgresStorageAdapter. */
 export function getCrewCatalogStoreFromEngine(store: unknown): CrewCatalogStore | null {
   if (!store || typeof store !== 'object') return null;
   const s = store as StoreLike;

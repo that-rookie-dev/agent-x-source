@@ -96,6 +96,11 @@ jobs:
           name: webui-dist
           path: packages/web-ui/dist
 
+      # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
+      - name: Build PostgreSQL extensions
+        run: pnpm --filter @agentx/desktop run setup:extensions
+        timeout-minutes: 60
+
       # --- Desktop ---
       - name: Setup bundled Python
         run: node packages/desktop/scripts/setup-python.mjs
@@ -163,7 +168,7 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libnotify-dev libnss3 libxss1 libasound2t64
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libnotify-dev libnss3 libxss1 libasound2t64 build-essential curl bison flex
 
       - run: pnpm install --frozen-lockfile || pnpm install
 
@@ -173,6 +178,11 @@ jobs:
         with:
           name: webui-dist
           path: packages/web-ui/dist
+
+      # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
+      - name: Build PostgreSQL extensions
+        run: pnpm --filter @agentx/desktop run setup:extensions
+        timeout-minutes: 60
 
       # --- Desktop ---
       - name: Setup bundled Python
@@ -203,7 +213,6 @@ jobs:
           cd packages/desktop
           retry npm install
           retry npm run build
-          retry pnpm exec electron-rebuild -f -w better-sqlite3 -m ../web-api
           retry npx electron-builder --linux ${{ matrix.desktop_targets }}
         env:
           ARCH: ${{ matrix.arch }}
@@ -247,6 +256,12 @@ jobs:
         with:
           name: webui-dist
           path: packages/web-ui/dist
+
+      # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
+      - name: Build PostgreSQL extensions
+        shell: bash
+        run: pnpm --filter @agentx/desktop run setup:extensions
+        timeout-minutes: 60
 
       # --- Desktop ---
       - name: Setup bundled Python

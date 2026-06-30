@@ -13,6 +13,7 @@ import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
 import IndeterminateCheckBoxIcon from '@mui/icons-material/IndeterminateCheckBox';
 import { tools, type ToolInfo, type ToolCategory } from '../api';
 import { colors } from '../theme';
+import { PanelHeader } from './PanelHeader';
 
 const RISK_COLORS: Record<string, string> = {
   low: colors.accent.green,
@@ -98,25 +99,19 @@ export function ToolsPanel() {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
-      <Box sx={{ px: 2, pt: 2, pb: 1.5, borderBottom: `1px solid ${colors.border.default}` }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography sx={{ fontSize: '0.95rem', fontWeight: 600 }}>Tools Registry</Typography>
-            <Chip size="small" label={`${totalEnabled}/${totalTools}`} sx={{
-              fontSize: '0.55rem', height: 18,
-              color: globalState === 'all' ? colors.accent.green : globalState === 'none' ? colors.text.dim : colors.accent.orange,
-            }} />
-          </Box>
+      <PanelHeader
+        title="Tools Registry"
+        subtitle={`${totalEnabled}/${totalTools} enabled`}
+        action={
           <Button
             size="small"
             onClick={handleToggleAll}
-            sx={{ fontSize: '0.6rem', textTransform: 'none', color: globalState === 'all' ? colors.accent.red : colors.accent.green }}
+            sx={{ fontSize: '0.65rem', textTransform: 'none', color: globalState === 'all' ? colors.accent.red : colors.accent.green }}
           >
             {globalState === 'all' ? 'Disable All' : 'Enable All'}
           </Button>
-        </Box>
-      </Box>
+        }
+      />
 
       {/* Tree */}
       <Box sx={{ flex: 1, overflow: 'auto', py: 1 }}>

@@ -5,6 +5,7 @@ export interface RecordMeta {
 }
 
 import type { SessionContextKind } from './session-context.js';
+import type { Crew, CrewCreateInput } from './crew.js';
 
 export interface StorableSession extends RecordMeta {
   title: string;
@@ -58,7 +59,7 @@ export interface StorageAdapter {
   disconnect(): Promise<void> | void;
   isConnected(): boolean;
 
-  createSession(input: Omit<StorableSession, keyof RecordMeta>): StorableSession;
+  createSession(input: Omit<StorableSession, keyof RecordMeta> & { id?: string }): StorableSession;
   getSession(id: string): StorableSession | null;
   updateSession(id: string, updates: Partial<StorableSession>): void;
   deleteSession(id: string): void;
@@ -84,6 +85,15 @@ export interface StorageAdapter {
 
   addPermission(sessionId: string, perm: Omit<StorablePermission, 'id' | 'createdAt'>): void;
   getPermissions(sessionId: string): StorablePermission[] | Promise<StorablePermission[]>;
+
+  listCrews(): Crew[];
+  getCrew(id: string): Crew | undefined;
+  getDefaultCrew(): Crew | undefined;
+  createCrew(input: CrewCreateInput): Crew;
+  updateCrew(id: string, updates: Partial<Crew>): Crew | null;
+  deleteCrew(id: string): void;
+  getPersona(): { name: string; description: string; communicationStyle: string; decisionMaking: string; domainContext: string; traits: string[] } | null;
+  setPersona(persona: { name: string; description: string; communicationStyle: string; decisionMaking: string; domainContext: string; traits: string[] }): void;
 
   clearAll(): void;
   close(): void;

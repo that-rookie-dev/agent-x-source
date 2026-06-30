@@ -11,8 +11,9 @@ import {
   sessions as sessionsApi,
   type HealthStatus,
   type AutonomyStatus,
-  type DbStatus,
+  type SessionDbStatus,
 } from '../api';
+import { colors } from '../theme';
 import {
   healthTheme,
   healthOverlineSx,
@@ -21,6 +22,7 @@ import {
   healthPanelSx,
   barColor,
 } from '../styles/health-theme';
+import { PanelHeader } from './PanelHeader';
 
 function formatMs(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return '—';
@@ -173,7 +175,7 @@ function TextBlock({ text }: { text: string }) {
 export function HealthPanel() {
   const [data, setData] = useState<HealthStatus | null>(null);
   const [autonomy, setAutonomy] = useState<AutonomyStatus | null>(null);
-  const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
+  const [dbStatus, setDbStatus] = useState<SessionDbStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
@@ -227,27 +229,24 @@ export function HealthPanel() {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: healthTheme.bg.void }}>
-      <Box sx={{
-        px: 2, py: 1.25, borderBottom: `1px solid ${healthTheme.border.default}`,
-        display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0,
-      }}>
-        <Box sx={{ flex: 1 }}>
-          <Typography sx={{ ...healthOverlineSx, fontSize: '0.5rem' }}>System Health</Typography>
-          <Typography sx={{ ...healthMonoSx, fontSize: '0.85rem', fontWeight: 700, color: healthTheme.text.primary }}>
-            Monitor
-          </Typography>
-        </Box>
-        {lastRefresh && (
-          <Typography sx={{ ...healthMonoSx, fontSize: '0.5rem', color: healthTheme.text.dim, display: { xs: 'none', sm: 'block' } }}>
-            {lastRefresh.toLocaleTimeString()}
-          </Typography>
-        )}
-        {data?.version && (
-          <Typography sx={{ ...healthMonoSx, fontSize: '0.55rem', color: healthTheme.text.dim }}>
-            v{data.version}
-          </Typography>
-        )}
-      </Box>
+      <PanelHeader
+        title="Health"
+        subtitle="System health · telemetry · budgets"
+        action={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {lastRefresh && (
+              <Typography sx={{ ...healthMonoSx, fontSize: '0.5rem', color: colors.text.dim, display: { xs: 'none', sm: 'block' } }}>
+                {lastRefresh.toLocaleTimeString()}
+              </Typography>
+            )}
+            {data?.version && (
+              <Typography sx={{ ...healthMonoSx, fontSize: '0.55rem', color: colors.text.dim }}>
+                v{data.version}
+              </Typography>
+            )}
+          </Box>
+        }
+      />
 
       <Box sx={{ flex: 1, overflow: 'auto', p: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {error && (
@@ -282,8 +281,8 @@ export function HealthPanel() {
               <MetricRow label="Provider" value={data.config.provider} sub={data.config.model} />
             )}
             {dbStatus && (
-              <MetricRow label="Database" value={dbStatus.dbMode?.toUpperCase() ?? '—'}
-                sub={`${dbStatus.sessionCount} stored · schema v${dbStatus.schemaVersion}`} />
+              <MetricRow label="Database" value={dbStatus.backend?.toUpperCase() ?? '—'}
+                sub={`${dbStatus.connected ? 'Connected' : 'Disconnected'} · ${dbStatus.sessionCount} stored · schema v${dbStatus.schemaVersion}`} />
             )}
             {telegramConfigured && (
               <MetricRow label="Telegram" value={data?.telegramConnected ? 'Connected' : 'Configured'}

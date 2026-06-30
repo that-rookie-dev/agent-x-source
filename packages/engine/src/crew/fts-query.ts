@@ -1,4 +1,4 @@
-/** Tokenize user text for FTS / tsvector queries (shared SQLite + Postgres semantics). */
+/** Tokenize user text for FTS / tsvector queries (Postgres semantics). */
 export function tokenizeFtsQuery(query: string, minLength = 3): string[] {
   return query
     .trim()
@@ -15,21 +15,7 @@ export function tokenizeHubSearchQuery(query: string): string[] {
   return tokenizeFtsQuery(query, 2);
 }
 
-/** SQLite FTS5 MATCH clause — OR across tokens (full word). */
-export function buildSqliteFtsMatch(query: string): string {
-  const words = tokenizeFtsQuery(query);
-  if (words.length === 0) return '';
-  return words.map((w) => `"${w}"`).join(' OR ');
-}
-
-/** SQLite FTS5 prefix MATCH — partial / incomplete keywords (e.g. "card" → cardiology). */
-export function buildSqliteHubFtsMatch(query: string): string {
-  const words = tokenizeHubSearchQuery(query);
-  if (words.length === 0) return '';
-  return words.map((w) => `"${w}"*`).join(' OR ');
-}
-
-/** Postgres to_tsquery string — OR across tokens (parity with SQLite). */
+/** Postgres to_tsquery string — OR across tokens. */
 export function buildPostgresTsQuery(query: string): string {
   const words = tokenizeFtsQuery(query);
   if (words.length === 0) return '';

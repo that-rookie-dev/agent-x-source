@@ -1,4 +1,4 @@
-import React, { Fragment, useMemo } from 'react';
+import React, { Fragment, memo, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import ReactMarkdown from 'react-markdown';
@@ -327,7 +327,7 @@ export function UserMentionText({ content }: { content: string }) {
   );
 }
 
-export function CrewAwareMarkdown({ content }: { content: string }) {
+export const CrewAwareMarkdown = memo(function CrewAwareMarkdown({ content }: { content: string }) {
   const sections = useMemo(() => splitMarkdownSections(content), [content]);
   const compact = useMemo(() => isPlainTextMarkdown(content), [content]);
 
@@ -350,4 +350,4 @@ export function CrewAwareMarkdown({ content }: { content: string }) {
       ))}
     </Box>
   );
-}
+});

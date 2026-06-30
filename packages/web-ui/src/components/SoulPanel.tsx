@@ -10,6 +10,7 @@ import Alert from '@mui/material/Alert';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { PanelHeader } from './PanelHeader';
 import { secretSauce, type SecretSauceFile } from '../api';
 import { colors } from '../theme';
 
@@ -80,17 +81,13 @@ export function SoulPanel() {
   const dirty = content !== original;
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-        <AutoAwesomeIcon sx={{ color: colors.accent.purple }} />
-        <Box sx={{ flex: 1 }}>
-          <Typography sx={{ fontSize: '1rem', fontWeight: 600 }}>Secret Sauce</Typography>
-          <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim }}>
-            The agent's soul, identity, memories, and permissions. Edit with care — these define behavior across every session.
-          </Typography>
-        </Box>
-      </Box>
-
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <PanelHeader
+        title="Soul"
+        subtitle="The agent's soul, identity, memories, and permissions. Edit with care — these define behavior across every session."
+        icon={<AutoAwesomeIcon sx={{ fontSize: 20 }} />}
+      />
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', p: 2 }}>
       <Tabs
         value={activeIdx}
         onChange={(_, v) => setActiveIdx(v)}
@@ -164,6 +161,7 @@ export function SoulPanel() {
         <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
           {content.length} chars · {content.split('\n').length} lines
         </Typography>
+      </Box>
       </Box>
     </Box>
   );
