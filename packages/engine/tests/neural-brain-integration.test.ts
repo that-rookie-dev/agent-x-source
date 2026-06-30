@@ -12,7 +12,36 @@ import {
   type BrainEvent,
 } from '../src/index.js';
 
-describe('Neural Brain Integration Tests', () => {
+const connectionString =
+  process.env['TEST_DATABASE_URL'] ?? 'postgresql://agentx:agentx@127.0.0.1:3335/agentx';
+
+async function isPgAvailable(): Promise<boolean> {
+  const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 2000 });
+  try {
+    await pool.query('SELECT 1');
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await pool.end();
+  }
+}
+
+async function hasPgVector(): Promise<boolean> {
+  const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 2000 });
+  try {
+    const { rows } = await pool.query(
+      `SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') AS available`,
+    );
+    return rows[0]?.available === true;
+  } catch {
+    return false;
+  } finally {
+    await pool.end();
+  }
+}
+
+describe.runIf(await isPgAvailable() && await hasPgVector())('Neural Brain Integration Tests', () => {
   let pool: Pool;
   let fabric: MemoryFabric;
   let pipeline: NeuralBrainIngestionPipeline;
@@ -73,8 +102,7 @@ describe('Neural Brain Integration Tests', () => {
 
   beforeAll(async () => {
     // Setup test database connection
-    const dbUrl = process.env['TEST_DATABASE_URL'] || 'postgresql://localhost:5432/agentx_test';
-    pool = new Pool({ connectionString: dbUrl });
+    pool = new Pool({ connectionString });
     
     fabric = new MemoryFabric(pool);
     await fabric.migrate();

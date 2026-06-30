@@ -11,8 +11,9 @@
 import { readFileSync, cpSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
-const distDir = new URL('../dist', import.meta.url).pathname;
+const distDir = fileURLToPath(new URL('../dist', import.meta.url));
 const targetModulesDir = join(distDir, 'node_modules');
 
 // Packages that are externalized in tsup.config.ts because they load native
@@ -27,7 +28,7 @@ const copied = new Set();
 
 function resolvePackageDir(name, lookupPaths) {
   try {
-    const basePath = lookupPaths[0] ?? new URL('..', import.meta.url).pathname;
+    const basePath = lookupPaths[0] ?? fileURLToPath(new URL('..', import.meta.url));
     const req = createRequire(join(basePath, 'package.json'));
     const entry = req.resolve(name);
     let dir = dirname(entry);
@@ -88,8 +89,8 @@ mkdirSync(targetModulesDir, { recursive: true });
 
 // Start resolution from the web-api package and the workspace root so transitive
 // dependencies of @huggingface/transformers are reachable in all environments.
-const webApiDir = new URL('..', import.meta.url).pathname;
-const workspaceRoot = new URL('../../..', import.meta.url).pathname;
+const webApiDir = fileURLToPath(new URL('..', import.meta.url));
+const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const lookupDirs = [webApiDir, workspaceRoot];
 
 const hfDir = resolvePackageDir('@huggingface/transformers', lookupDirs);

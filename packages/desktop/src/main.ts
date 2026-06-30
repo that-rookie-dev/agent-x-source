@@ -4,6 +4,7 @@ import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync, w
 import type { Server } from 'http';
 import { spawn, execSync } from 'child_process';
 import { tmpdir, totalmem } from 'os';
+import { pathToFileURL } from 'url';
 import { randomBytes } from 'node:crypto';
 import { PostgresLifecycleManager } from './PostgresLifecycleManager.js';
 

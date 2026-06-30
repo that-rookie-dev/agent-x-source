@@ -15,6 +15,7 @@
  * preserves cosine similarity exactly (zero dimensions contribute nothing
  * to the dot product or the L2 norm).
  */
+import { totalmem } from 'os';
 import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import type { EmbeddingProvider } from '@agentx/shared';
 import { LocalEmbeddingProvider } from './LocalEmbeddingProvider.js';
@@ -201,7 +202,7 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
 
   private getRamGb(): number {
     try {
-      return (require('os') as typeof import('os')).totalmem() / (1024 ** 3);
+      return totalmem() / (1024 ** 3);
     } catch {
       return BGE_M3_RAM_THRESHOLD_GB; // assume capable if detection fails
     }

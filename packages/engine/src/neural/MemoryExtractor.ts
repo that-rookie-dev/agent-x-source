@@ -302,7 +302,7 @@ export class MemoryExtractor {
     // Then close all open structures.
     let inString = false;
     let escape = false;
-    let depth: ('obj' | 'arr')[] = [];
+    const depth: ('obj' | 'arr')[] = [];
     for (let i = 0; i < s.length; i++) {
       const ch = s[i]!;
       if (escape) { escape = false; continue; }
