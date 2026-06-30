@@ -124,7 +124,7 @@ function findVcvarsall() {
 }
 
 function withVcvarsEnv(vcvarsallPath, archArg = 'x64') {
-  const result = spawnSync('cmd.exe', ['/c', `${vcvarsallPath} ${archArg} && set`], {
+  const result = spawnSync('cmd.exe', ['/c', `"${vcvarsallPath}" ${archArg} && set`], {
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
   });
