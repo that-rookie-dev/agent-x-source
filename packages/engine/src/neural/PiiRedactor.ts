@@ -27,7 +27,7 @@ const BUILTIN_PATTERNS: Array<{ name: string; regex: RegExp; normalize?: (s: str
   { name: 'phone', regex: /\b(?:\+?\d{1,3}[\s-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g },
   { name: 'ssn', regex: /\b\d{3}-\d{2}-\d{4}\b/g },
   { name: 'credit_card', regex: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g, normalize: (s) => s.replace(/[-\s]/g, '') },
-  { name: 'api_key', regex: /\b(?:sk|api[_-]?key|apikey|token|passwd|password)\s*[:=]\s*["']?[a-zA-Z0-9_\-]{16,}["']?\b/gi },
+  { name: 'api_key', regex: /\b(?:sk|api[_-]?key|apikey|token|passwd|password)\s*[:=]\s*["']?[a-zA-Z0-9_-]{16,}["']?\b/gi },
 ];
 
 export class PiiRedactor {

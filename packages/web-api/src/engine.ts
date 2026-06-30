@@ -127,7 +127,7 @@ export function getEngine(): EngineState {
   // and sets AGENTX_POSTGRES_CONNECTION_STRING. If nothing is configured, fall back to
   // the same embedded PostgreSQL defaults so local development/tests can connect.
   const embeddedPgDefault = 'postgresql://agentx:agentx@127.0.0.1:3335/agentx';
-  let pgConnectionString =
+  const pgConnectionString =
     process.env['AGENTX_POSTGRES_CONNECTION_STRING'] ??
     ((loadedConfig as any)?.postgres?.connectionString as string | undefined) ??
     (configManager as any).getPostgresConnectionString?.() ??
