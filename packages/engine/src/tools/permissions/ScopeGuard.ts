@@ -191,7 +191,11 @@ function getDangerousPaths(): string[] {
     paths.push(...getUnixDangerousPaths(currentPlatform === 'darwin'));
   }
 
-  return paths.map((p) => normalize(p));
+  return paths.map((p) => {
+    const n = normalize(p);
+    // Strip trailing separator so drive roots like D:\ and D: compare equal.
+    return n.endsWith(sep) && n.length > 1 ? n.slice(0, -1) : n;
+  });
 }
 
 function getWindowsDangerousPaths(): string[] {

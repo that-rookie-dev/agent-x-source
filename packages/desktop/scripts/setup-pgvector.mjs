@@ -74,6 +74,39 @@ function execOut(cmd, opts = {}) {
   return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], ...opts }).trim();
 }
 
+function resolveWindowsPostgresBinaryUrl(pgVersion) {
+  const baseUrl = `https://get.enterprisedb.com/postgresql/postgresql-${pgVersion}`;
+  for (let build = 1; build <= 5; build++) {
+    const candidate = `${baseUrl}-${build}-windows-x64-binaries.zip`;
+    const result = spawnSync('curl', ['-sI', '-o', 'NUL', '-w', '%{http_code}', candidate], {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: true,
+    });
+    if (result.status === 0 && result.stdout.trim() === '200') {
+      return candidate;
+    }
+  }
+  throw new Error(
+    `Could not find PostgreSQL ${pgVersion} Windows binary zip at ${baseUrl}-N-windows-x64-binaries.zip`,
+  );
+}
+
+function downloadWindowsPostgresBinaries(pgVersion, pgInstallDir) {
+  const zipUrl = resolveWindowsPostgresBinaryUrl(pgVersion);
+  const zipDir = dirname(pgInstallDir);
+  const zipName = basename(zipUrl);
+  const zipPath = join(zipDir, zipName);
+  if (!existsSync(zipPath)) {
+    console.log(`Downloading PostgreSQL ${pgVersion} Windows binaries from ${zipUrl}...`);
+    exec(`curl -L -o "${zipPath}" "${zipUrl}"`, { cwd: zipDir });
+  }
+  console.log(`Extracting PostgreSQL ${pgVersion} Windows binaries...`);
+  rmSync(pgInstallDir, { recursive: true, force: true });
+  mkdirSync(pgInstallDir, { recursive: true });
+  exec(`tar -xf "${zipPath}" -C "${pgInstallDir}" --strip-components=1`, { cwd: zipDir });
+}
+
 function findVcvarsall() {
   const programFiles = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles, 'C:\\Program Files (x86)', 'C:\\Program Files'];
   const years = ['2022', '2019', '2017', '2015'];
@@ -161,7 +194,6 @@ function buildPgVectorWindows(pgvectorDir, pgInstallDir) {
   }
   const env = withVcvarsEnv(vcvarsall, 'x64');
   env.PGROOT = pgInstallDir;
-  rmSync(join(dirname(pgvectorDir), 'pgvector-install'), { recursive: true, force: true });
   exec('nmake /F Makefile.win clean', { cwd: pgvectorDir, env });
   exec('nmake /F Makefile.win', { cwd: pgvectorDir, env });
   exec('nmake /F Makefile.win install', { cwd: pgvectorDir, env });
@@ -171,11 +203,6 @@ function main() {
   const packageName = getPackageName();
   if (!packageName) {
     throw new Error(`Unsupported platform/architecture: ${platform()}/${arch()}`);
-  }
-
-  if (platform() === 'win32') {
-    console.warn('Building pgvector from source is not supported on Windows. Skipping.');
-    return;
   }
 
   const packageDir = resolvePlatformPackage(packageName);
@@ -197,35 +224,45 @@ function main() {
   const workDir = join(process.cwd(), '.pgvector-build');
   mkdirSync(workDir, { recursive: true });
 
-  const pgSourceUrl = `https://ftp.postgresql.org/pub/source/v${pgVersion}/postgresql-${pgVersion}.tar.gz`;
-  const pgSourceDir = join(workDir, `postgresql-${pgVersion}`);
-  if (!existsSync(pgSourceDir)) {
-    const tarPath = join(workDir, `postgresql-${pgVersion}.tar.gz`);
-    if (!existsSync(tarPath)) {
-      console.log(`Downloading PostgreSQL ${pgVersion} source...`);
-      exec(`curl -L -o ${tarPath} ${pgSourceUrl}`, { cwd: workDir });
-    }
-    console.log(`Extracting PostgreSQL ${pgVersion} source...`);
-    exec(`tar xzf ${tarPath}`, { cwd: workDir });
-  }
-
   const pgInstallDir = join(workDir, 'pg-install');
   const pgConfigBinaryName = getPgConfigBinaryName();
-  if (!existsSync(join(pgInstallDir, 'bin', pgConfigBinaryName))) {
-    console.log('Configuring PostgreSQL source...');
-    const configureArgs = [
-      `--prefix=${pgInstallDir}`,
-      '--without-readline',
-      '--without-zlib',
-      '--without-ldap',
-      '--with-openssl=no',
-      '--without-libxml',
-      '--without-libxslt',
-      '--without-icu',
-    ].join(' ');
-    exec(`./configure ${configureArgs}`, { cwd: pgSourceDir });
-    console.log('Building pg_config and headers...');
-    exec(`make -j${process.env.CI ? '4' : String(cpus().length)} install`, { cwd: pgSourceDir });
+
+  if (platform() === 'win32') {
+    // On Windows, download the official EDB binary distribution which already ships with
+    // headers, import libraries, and pg_config.exe. This is the same MSVC-built PostgreSQL
+    // that the embedded package uses, so the resulting extension is ABI-compatible.
+    if (!existsSync(join(pgInstallDir, 'bin', pgConfigBinaryName))) {
+      downloadWindowsPostgresBinaries(pgVersion, pgInstallDir);
+    }
+  } else {
+    const pgSourceUrl = `https://ftp.postgresql.org/pub/source/v${pgVersion}/postgresql-${pgVersion}.tar.gz`;
+    const pgSourceDir = join(workDir, `postgresql-${pgVersion}`);
+    if (!existsSync(pgSourceDir)) {
+      const tarPath = join(workDir, `postgresql-${pgVersion}.tar.gz`);
+      if (!existsSync(tarPath)) {
+        console.log(`Downloading PostgreSQL ${pgVersion} source...`);
+        exec(`curl -L -o ${tarPath} ${pgSourceUrl}`, { cwd: workDir });
+      }
+      console.log(`Extracting PostgreSQL ${pgVersion} source...`);
+      exec(`tar xzf ${tarPath}`, { cwd: workDir });
+    }
+
+    if (!existsSync(join(pgInstallDir, 'bin', pgConfigBinaryName))) {
+      console.log('Configuring PostgreSQL source...');
+      const configureArgs = [
+        `--prefix=${pgInstallDir}`,
+        '--without-readline',
+        '--without-zlib',
+        '--without-ldap',
+        '--with-openssl=no',
+        '--without-libxml',
+        '--without-libxslt',
+        '--without-icu',
+      ].join(' ');
+      exec(`./configure ${configureArgs}`, { cwd: pgSourceDir });
+      console.log('Building pg_config and headers...');
+      exec(`make -j${process.env.CI ? '4' : String(cpus().length)} install`, { cwd: pgSourceDir });
+    }
   }
 
   const pgvectorDir = join(workDir, 'pgvector');
@@ -243,13 +280,21 @@ function main() {
     buildPgVectorUnix(pgvectorDir, pgInstallDir);
   }
 
-  const installedPrefix = platform() === 'darwin'
-    ? join(workDir, 'pgvector-install', pgInstallDir)
-    : join(workDir, 'pgvector-install', pgInstallDir);
-  const srcLibDir = join(installedPrefix, 'lib', 'postgresql');
-  const srcShareDir = join(installedPrefix, 'share', 'postgresql', 'extension');
-  const destLibDir = join(nativeDir, 'lib', 'postgresql');
-  const destShareDir = join(nativeDir, 'share', 'postgresql', 'extension');
+  let srcLibDir, srcShareDir, destLibDir, destShareDir;
+  if (platform() === 'win32') {
+    // The EDB binary zip and pgvector's Makefile.win install directly into PGROOT\lib
+    // and PGROOT\share\extension. The embedded package lays out extensions the same way.
+    srcLibDir = join(pgInstallDir, 'lib');
+    srcShareDir = join(pgInstallDir, 'share', 'extension');
+    destLibDir = join(nativeDir, 'lib');
+    destShareDir = join(nativeDir, 'share', 'extension');
+  } else {
+    const installedPrefix = join(workDir, 'pgvector-install', pgInstallDir);
+    srcLibDir = join(installedPrefix, 'lib', 'postgresql');
+    srcShareDir = join(installedPrefix, 'share', 'postgresql', 'extension');
+    destLibDir = join(nativeDir, 'lib', 'postgresql');
+    destShareDir = join(nativeDir, 'share', 'postgresql', 'extension');
+  }
 
   mkdirSync(destLibDir, { recursive: true });
   mkdirSync(destShareDir, { recursive: true });
