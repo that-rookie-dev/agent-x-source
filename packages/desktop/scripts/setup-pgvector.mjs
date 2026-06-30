@@ -74,37 +74,32 @@ function execOut(cmd, opts = {}) {
   return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], ...opts }).trim();
 }
 
-function resolveWindowsPostgresBinaryUrl(pgVersion) {
-  const baseUrl = `https://get.enterprisedb.com/postgresql/postgresql-${pgVersion}`;
+function downloadWindowsPostgresBinaries(pgVersion, pgInstallDir) {
+  const zipDir = dirname(pgInstallDir);
+  let lastError;
   for (let build = 1; build <= 5; build++) {
-    const candidate = `${baseUrl}-${build}-windows-x64-binaries.zip`;
-    const result = spawnSync('curl', ['-sI', '-o', 'NUL', '-w', '%{http_code}', candidate], {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true,
-    });
-    if (result.status === 0 && result.stdout.trim() === '200') {
-      return candidate;
+    const zipUrl = `https://get.enterprisedb.com/postgresql/postgresql-${pgVersion}-${build}-windows-x64-binaries.zip`;
+    const zipPath = join(zipDir, `postgresql-${pgVersion}-${build}-windows-x64-binaries.zip`);
+    rmSync(zipPath, { force: true });
+    console.log(`Downloading PostgreSQL ${pgVersion} Windows binaries from ${zipUrl}...`);
+    try {
+      exec(`curl -f -L -o "${zipPath}" "${zipUrl}"`, { cwd: zipDir });
+      if (!existsSync(zipPath)) {
+        throw new Error(`Download succeeded but ${zipPath} was not created`);
+      }
+      console.log(`Extracting PostgreSQL ${pgVersion} Windows binaries...`);
+      rmSync(pgInstallDir, { recursive: true, force: true });
+      mkdirSync(pgInstallDir, { recursive: true });
+      exec(`tar -xf "${zipPath}" -C "${pgInstallDir}" --strip-components=1`, { cwd: zipDir });
+      return;
+    } catch (e) {
+      lastError = e;
+      console.warn(`Failed to download ${zipUrl}: ${e instanceof Error ? e.message : e}`);
     }
   }
   throw new Error(
-    `Could not find PostgreSQL ${pgVersion} Windows binary zip at ${baseUrl}-N-windows-x64-binaries.zip`,
+    `Could not download PostgreSQL ${pgVersion} Windows binaries after trying build numbers 1-5: ${lastError instanceof Error ? lastError.message : lastError}`,
   );
-}
-
-function downloadWindowsPostgresBinaries(pgVersion, pgInstallDir) {
-  const zipUrl = resolveWindowsPostgresBinaryUrl(pgVersion);
-  const zipDir = dirname(pgInstallDir);
-  const zipName = basename(zipUrl);
-  const zipPath = join(zipDir, zipName);
-  if (!existsSync(zipPath)) {
-    console.log(`Downloading PostgreSQL ${pgVersion} Windows binaries from ${zipUrl}...`);
-    exec(`curl -L -o "${zipPath}" "${zipUrl}"`, { cwd: zipDir });
-  }
-  console.log(`Extracting PostgreSQL ${pgVersion} Windows binaries...`);
-  rmSync(pgInstallDir, { recursive: true, force: true });
-  mkdirSync(pgInstallDir, { recursive: true });
-  exec(`tar -xf "${zipPath}" -C "${pgInstallDir}" --strip-components=1`, { cwd: zipDir });
 }
 
 function findVcvarsall() {
