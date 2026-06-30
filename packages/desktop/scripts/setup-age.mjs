@@ -34,6 +34,10 @@ function getPackageName() {
   }
 }
 
+function getPostgresBinaryName() {
+  return platform() === 'win32' ? 'postgres.exe' : 'postgres';
+}
+
 function resolvePlatformPackage(packageName) {
   try {
     const modPath = fileURLToPath(import.meta.resolve(`${packageName}/package.json`));
@@ -158,20 +162,27 @@ function main() {
     throw new Error(`Unsupported platform/architecture: ${platform()}/${arch()}`);
   }
 
+  if (platform() === 'win32') {
+    console.warn('Building Apache AGE from source is not supported on Windows. Skipping.');
+    return;
+  }
+
   const packageDir = resolvePlatformPackage(packageName);
   if (!packageDir) {
     throw new Error(`Could not resolve ${packageName}. Run pnpm install first.`);
   }
 
   const nativeDir = join(packageDir, 'native');
-  if (!existsSync(join(nativeDir, 'bin', 'postgres'))) {
+  const postgresBinaryName = getPostgresBinaryName();
+  if (!existsSync(join(nativeDir, 'bin', postgresBinaryName))) {
     throw new Error(`Embedded PostgreSQL binaries not found in ${nativeDir}`);
   }
 
   const workDir = join(process.cwd(), '.pgvector-build');
   const pgInstallDir = join(workDir, 'pg-install');
 
-  if (!existsSync(join(pgInstallDir, 'bin', 'pg_config'))) {
+  const pgConfigBinaryName = platform() === 'win32' ? 'pg_config.exe' : 'pg_config';
+  if (!existsSync(join(pgInstallDir, 'bin', pgConfigBinaryName))) {
     throw new Error(
       `PostgreSQL source not built at ${pgInstallDir}. Run setup-pgvector.mjs first to download and build PostgreSQL headers.`,
     );
