@@ -400,7 +400,7 @@ async function startServer(): Promise<void> {
   process.env['PORT'] = String(PORT);
   process.env['NODE_ENV'] = 'production';
 
-  const mod = await import(apiPath);
+  const mod = await import(pathToFileURL(apiPath).href);
   if (mod.server) server = mod.server as Server;
 }
 

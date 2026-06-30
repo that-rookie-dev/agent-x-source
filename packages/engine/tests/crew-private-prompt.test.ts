@@ -29,6 +29,14 @@ describe('buildCrewPrivateIdentityPrompt', () => {
     expect(prompt).toContain('INTERNAL REFERENCE');
     expect(prompt).not.toContain('use your full capabilities');
   });
+
+  it('scopes the crew to its profession and warns that tool access is not expertise', () => {
+    const prompt = buildCrewPrivateIdentityPrompt(crew);
+    expect(prompt).toContain('PROFESSIONAL SCOPE');
+    expect(prompt).toContain('Travel Specialist');
+    expect(prompt).toContain('having a tool available does NOT mean');
+    expect(prompt.toLowerCase()).toContain('outside your field');
+  });
 });
 
 describe('buildCrewPrivateFastReplyPrompt', () => {
@@ -60,5 +68,12 @@ describe('createCrewPrivateConductSection', () => {
     expect(conduct).toContain('OUT OF YOUR EXPERTISE');
     expect(conduct).not.toContain('ACT IMMEDIATELY');
     expect(agentRules).toContain('ACT IMMEDIATELY');
+  });
+
+  it('warns that having a tool does not make an out-of-field request in-domain', () => {
+    const conduct = createCrewPrivateConductSection().load();
+    expect(conduct).toContain('Having a tool available');
+    expect(conduct).toContain('does NOT mean a request is in your domain');
+    expect(conduct).toContain('clinician asked to architect software');
   });
 });
