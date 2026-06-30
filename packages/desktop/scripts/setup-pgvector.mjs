@@ -124,9 +124,11 @@ function findVcvarsall() {
 }
 
 function withVcvarsEnv(vcvarsallPath, archArg = 'x64') {
-  const result = spawnSync('cmd.exe', ['/c', `"${vcvarsallPath}" ${archArg} && set`], {
+  const cmd = `"${vcvarsallPath}" ${archArg} && set`;
+  const result = spawnSync(cmd, {
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
+    shell: true,
   });
   if (result.status !== 0) {
     throw new Error(`vcvarsall.bat failed: ${result.stderr}`);
