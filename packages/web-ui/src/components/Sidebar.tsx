@@ -10,7 +10,6 @@ import ChatIcon from '@mui/icons-material/Chat';
 import SettingsIcon from '@mui/icons-material/Settings';
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import StorageIcon from '@mui/icons-material/Storage';
-import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import GroupsIcon from '@mui/icons-material/Groups';
 // import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -31,7 +30,6 @@ const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
   { id: 'health', icon: MonitorHeartIcon, label: 'Health' },
   { id: 'crews', icon: GroupsIcon, label: 'Crews' },
   { id: 'rag-studio', icon: StorageIcon, label: 'RAG Studio' },
-  { id: 'knowledge', icon: LibraryBooksIcon, label: 'Knowledge' },
   { id: 'settings', icon: SettingsIcon, label: 'Settings' },
   // Hidden until wired — see source/MILESTONE.md
   // { id: 'soul', icon: AutoAwesomeIcon, label: 'Soul' },

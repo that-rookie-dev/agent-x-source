@@ -155,7 +155,7 @@ export function RagStudioPanel() {
     if (data.status === 'done' || data.status === 'failed' || data.status === 'cancelled') {
       const close = streamClosers.current.get(jobId);
       if (close) { close(); streamClosers.current.delete(jobId); }
-      // Notify other panels (e.g. KnowledgePanel) to refresh their graph data.
+      // Notify other panels to refresh their graph data.
       window.dispatchEvent(new CustomEvent('ragstudio:job-complete'));
     }
   }, []);

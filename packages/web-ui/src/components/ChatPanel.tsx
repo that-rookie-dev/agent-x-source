@@ -263,7 +263,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [crewMissionActive, setCrewMissionActive] = useState(false);
   const [crewMissionId, setCrewMissionId] = useState<string | null>(null);
   const [crewInterMessages, setCrewInterMessages] = useState<CrewInterMessage[]>([]);
-  const [crewMissionSessionId, setCrewMissionSessionId] = useState<string | null>(null);
   const crewMissionSessionIdRef = useRef<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [permissionPrompt, setPermissionPrompt] = useState<{ requestId: string; tool: string; path: string; riskLevel: string } | null>(null);
@@ -448,7 +447,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               const hydrated = await hydrateCrewDeliverables(sessionId, withFeedback, roster);
               if (hydrated.crewWorkers.length > 0) {
                 setCrewWorkers(hydrated.crewWorkers);
-                setCrewMissionSessionId(sessionId);
                 crewMissionSessionIdRef.current = sessionId;
               }
               setMessages(applyTurnFeedbackRows(hydrated.messages, feedbackRows));
@@ -1757,7 +1755,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             const sid = currentSessionIdRef.current;
             if (!sid) return prev;
             crewMissionSessionIdRef.current = sid;
-            setCrewMissionSessionId(sid);
             setCrewMissionActive(true);
             setCrewWorkers([]);
             setCrewInterMessages([]);
@@ -2650,7 +2647,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setCrewMissionActive(false);
     setCrewMissionId(null);
     setCrewInterMessages([]);
-    setCrewMissionSessionId(null);
     crewMissionSessionIdRef.current = null;
   }, []);
 
@@ -3031,7 +3027,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             const hydrated = await hydrateCrewDeliverables(s.id, withFeedback, roster);
             if (hydrated.crewWorkers.length > 0) {
               setCrewWorkers(hydrated.crewWorkers);
-              setCrewMissionSessionId(s.id);
               crewMissionSessionIdRef.current = s.id;
             }
             setMessages(applyTurnFeedbackRows(hydrated.messages, feedbackRows));
@@ -3966,7 +3961,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         </Box>
 
         {/* ─── Crew Mission ─── */}
-        {!isCrewPrivateSession && crewMissionSessionId === currentSessionId && (
+        {!isCrewPrivateSession && currentSessionId && (
         <Box>
           <Box
             onClick={() => setMissionExpanded(!missionExpanded)}

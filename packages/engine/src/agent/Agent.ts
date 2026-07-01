@@ -614,6 +614,7 @@ export class Agent {
     }
     this.sessionId = options.sessionId;
     this.scopePath = normalize(resolve(options.scopePath!));
+    this._pgPool = options.pgPool ?? null;
     const crewHost = options.crewPrivateHost;
     this.contextTracker = new ContextTracker(null as any, this.sessionId,
       crewHost && options.promptProfile === 'crew_private'
