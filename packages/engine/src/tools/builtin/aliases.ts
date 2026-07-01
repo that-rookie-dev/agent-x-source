@@ -5,6 +5,8 @@ import * as web from './web.js';
 import * as ai from './ai.js';
 import * as shell from './shell.js';
 import { getRAGEngineInstance } from '../../commands/builtin/rag_index.js';
+import { getMemoryFabricInstance } from '../../neural/MemoryFabric.js';
+import { getEmbedderInstance } from '../../neural/OnnxEmbeddingProvider.js';
 
 async function tryImport<T>(path: string, exportName: string): Promise<T | null> {
   try {
@@ -203,5 +205,92 @@ export async function ragSearch(args: Record<string, unknown>, _context: ToolExe
     return { success: true, output: lines.join('\n\n'), metadata: { count: docs.length } };
   } catch (e) {
     return { success: false, output: `RAG search failed: ${e instanceof Error ? e.message : String(e)}`, error: 'RAG_ERROR' };
+  }
+}
+
+/**
+ * Semantic search over ingested documents in the Memory Fabric (RAG Studio).
+ * Uses vector ANN + graph walk to find relevant chunks and entities from
+ * uploaded PDFs, text files, and web distillations.
+ */
+export async function memoryFabricSearch(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+  const query = (args['query'] as string) ?? '';
+  if (!query) return { success: false, output: 'query is required', error: 'INVALID_ARGS' };
+
+  const fabric = getMemoryFabricInstance();
+  const embedder = getEmbedderInstance();
+  if (!fabric || !embedder) {
+    return { success: false, output: 'Memory fabric not available. Upload documents via RAG Studio first.', error: 'FABRIC_UNAVAILABLE' };
+  }
+
+  const topK = (args['limit'] as number) ?? 8;
+  const includeChunks = (args['includeChunks'] as boolean) ?? true;
+  try {
+    const embedding = await embedder.embed(query);
+
+    // Pass 1: Vector search for direct semantic matches (both semantic entities and chunk nodes).
+    const vectorResults = await fabric.vectorSearch(embedding, { limit: topK * 2 });
+
+    // Pass 2: Community summaries for high-level context.
+    const communityResults = await fabric.searchCommunitySummaries(embedding, 3).catch(() => []);
+
+    // Filter: prefer semantic/entity nodes, include chunks only if requested.
+    const seen = new Set<string>();
+    const entities = vectorResults.filter((n) => {
+      if (n.category === 'source_doc' && !includeChunks) return false;
+      if (seen.has(n.id)) return false;
+      seen.add(n.id);
+      return true;
+    });
+
+    // Graph walk from top entity seeds for related context.
+    const seedIds = entities.slice(0, 3).map((n) => n.id).filter((id): id is string => !!id);
+    let graphNodes: typeof vectorResults = [];
+    if (seedIds.length > 0) {
+      try {
+        const walk = await fabric.graphWalk({ startNodeIds: seedIds, maxDepth: 1 });
+        const newIds = walk.nodeIds.filter((id) => !seen.has(id)).slice(0, topK);
+        if (newIds.length > 0) {
+          const { rows } = await (fabric as any)['pool'].query(
+            `SELECT id, label, category, content, source_id AS "sourceId"
+             FROM memory_nodes WHERE id = ANY($1::uuid[]) AND status = 'active'`,
+            [newIds],
+          );
+          graphNodes = rows;
+          for (const r of rows) seen.add(r.id);
+        }
+      } catch { /* best-effort */ }
+    }
+
+    // Format results.
+    const fmtNode = (n: { category?: string; label?: string; content?: string; sourceId?: string }, i: number): string => {
+      const cat = n.category ?? '?';
+      const label = n.label ?? '';
+      const content = (n.content ?? '').replace(/\n+/g, ' ').slice(0, 400);
+      const src = n.sourceId ? ` [src:${n.sourceId.slice(0, 8)}]` : '';
+      return `[${i + 1}] (${cat}) ${label}${src}\n${content}${content.length >= 400 ? '…' : ''}`;
+    };
+
+    const parts: string[] = [];
+    if (communityResults.length > 0) {
+      parts.push('=== COMMUNITY SUMMARIES ===');
+      communityResults.forEach((n, i) => parts.push(fmtNode(n, i)));
+    }
+    if (entities.length > 0) {
+      parts.push('\n=== SEMANTIC MATCHES ===');
+      entities.slice(0, topK).forEach((n, i) => parts.push(fmtNode(n, i)));
+    }
+    if (graphNodes.length > 0) {
+      parts.push('\n=== RELATED (GRAPH WALK) ===');
+      graphNodes.forEach((n, i) => parts.push(fmtNode(n, i)));
+    }
+
+    if (parts.length === 0) {
+      return { success: true, output: 'No matching documents found in the memory fabric. Make sure documents have been ingested via RAG Studio.', metadata: { count: 0 } };
+    }
+
+    return { success: true, output: parts.join('\n\n'), metadata: { count: entities.length + graphNodes.length } };
+  } catch (e) {
+    return { success: false, output: `Memory fabric search failed: ${e instanceof Error ? e.message : String(e)}`, error: 'FABRIC_ERROR' };
   }
 }

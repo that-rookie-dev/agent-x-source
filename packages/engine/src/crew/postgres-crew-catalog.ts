@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS crew_catalog (
   expertise       TEXT,
   traits          TEXT,
   tools           TEXT,
+  tags            TEXT,
   search_text     TEXT NOT NULL DEFAULT '',
   hub_revision    INTEGER NOT NULL DEFAULT 1,
   active          BOOLEAN NOT NULL DEFAULT TRUE,
@@ -83,6 +84,7 @@ function catalogFromRow(row: Record<string, unknown>): CatalogEntry {
     expertise: parseJsonArray(row['expertise']),
     traits: parseJsonArray(row['traits']),
     tools: parseJsonArray(row['tools']),
+    tags: parseJsonArray(row['tags']),
     searchText: (row['search_text'] as string) || '',
     hubRevision: Number(row['hub_revision'] ?? 1),
     active: row['active'] !== false && row['active'] !== 0,
@@ -100,6 +102,8 @@ export async function runPgCrewCatalogMigration(pool: Pool): Promise<void> {
   await pool.query(`ALTER TABLE crews ADD COLUMN IF NOT EXISTS catalog_id TEXT`);
   await pool.query(`ALTER TABLE crews ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT ''`);
   await pool.query(`ALTER TABLE crews ADD COLUMN IF NOT EXISTS suggestable BOOLEAN NOT NULL DEFAULT TRUE`);
+  // tags column added in schema v20 — backfill for existing crew_catalog tables.
+  await pool.query(`ALTER TABLE crew_catalog ADD COLUMN IF NOT EXISTS tags TEXT`);
 
   await pool.query(`
     DO $$ BEGIN
@@ -123,7 +127,7 @@ export async function runPgCrewCatalogMigration(pool: Pool): Promise<void> {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_crews_catalog_id ON crews(catalog_id) WHERE catalog_id IS NOT NULL
   `);
 
-  await pool.query(`INSERT INTO _schema (version) VALUES (19) ON CONFLICT (version) DO NOTHING`);
+  await pool.query(`INSERT INTO _schema (version) VALUES (20) ON CONFLICT (version) DO NOTHING`);
 }
 
 export async function seedPgCatalog(
@@ -147,20 +151,21 @@ export async function seedPgCatalog(
       await client.query(
         `INSERT INTO crew_catalog (
           id, callsign, name, title, category_id, category_label, description,
-          system_prompt, tone, expertise, traits, tools, search_text, hub_revision, active, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,TRUE,NOW())
+          system_prompt, tone, expertise, traits, tools, tags, search_text, hub_revision, active, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,TRUE,NOW())
         ON CONFLICT(id) DO UPDATE SET
           callsign=EXCLUDED.callsign, name=EXCLUDED.name, title=EXCLUDED.title,
           category_id=EXCLUDED.category_id, category_label=EXCLUDED.category_label,
           description=EXCLUDED.description, system_prompt=EXCLUDED.system_prompt,
           tone=EXCLUDED.tone, expertise=EXCLUDED.expertise, traits=EXCLUDED.traits,
-          tools=EXCLUDED.tools, search_text=EXCLUDED.search_text,
+          tools=EXCLUDED.tools, tags=EXCLUDED.tags, search_text=EXCLUDED.search_text,
           hub_revision=EXCLUDED.hub_revision, active=TRUE, updated_at=NOW()`,
         [
           crew.id, crew.callsign, crew.name, crew.title, crew.categoryId, crew.categoryLabel,
           crew.description, crew.systemPrompt, crew.tone,
           JSON.stringify(crew.expertise), JSON.stringify(crew.traits),
           crew.tools ? JSON.stringify(crew.tools) : null,
+          crew.tags ? JSON.stringify(crew.tags) : null,
           crew.searchText, manifest.revision,
         ],
       );
@@ -205,6 +210,8 @@ export async function backfillPgCrewSearchColumns(
       tone: crew.emotion,
       expertise: crew.expertise,
       traits: crew.traits,
+      tools: crew.tools,
+      tags: crew.tags,
       systemPrompt: crew.systemPrompt,
     });
     const source = crew.source ?? (crew.catalogId ? 'hub' : 'custom');

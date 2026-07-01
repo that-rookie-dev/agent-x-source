@@ -12,16 +12,15 @@ import { MCPPanel } from '../components/MCPPanel';
 import { ChannelsPanel } from '../components/ChannelsPanel';
 import { SettingsPanel } from '../components/SettingsPanel';
 import { SchedulerPanel } from '../components/SchedulerPanel';
-import { KnowledgePanel } from '../components/KnowledgePanel';
+import { RagStudioPanel } from '../components/RagStudioPanel';
 import { OrchestratorPanel } from '../components/OrchestratorPanel';
 import { CrewsPanel } from '../components/CrewsPanel';
 import { SoulPanel } from '../components/SoulPanel';
-import { ProvidersPanel } from '../components/ProvidersPanel';
 import { HealthPanel } from '../components/HealthPanel';
 import { NotificationToast } from '../components/NotificationToast';
 import { colors } from '../theme';
 
-export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'knowledge' | 'orchestrator' | 'crews' | 'soul' | 'providers' | 'health';
+export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'health';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -146,11 +145,10 @@ export function Console() {
               {activePanel === 'channels' && <ChannelsPanel />}
               {activePanel === 'settings' && <SettingsPanel />}
               {activePanel === 'scheduler' && <SchedulerPanel />}
-              {activePanel === 'knowledge' && <KnowledgePanel />}
+              {activePanel === 'rag-studio' && <RagStudioPanel />}
               {activePanel === 'orchestrator' && <OrchestratorPanel />}
               {activePanel === 'crews' && <CrewsPanel />}
               {activePanel === 'soul' && <SoulPanel />}
-              {activePanel === 'providers' && <ProvidersPanel />}
               {activePanel === 'health' && <HealthPanel />}
             </PanelErrorBoundary>
           </Box>

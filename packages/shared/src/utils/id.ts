@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
  * - Raw UUIDs (sessions, crews, tool executions)
  * - Prefixed pseudo-IDs (sub-agents, messages, files)
  *
- * SQLite stores all as TEXT. PostgreSQL must use TEXT (not UUID) for the same columns.
+ * All IDs are stored as TEXT so they are portable across PostgreSQL and any user-provided SQLite files.
  */
 export const PSEUDO_ID_PREFIXES = [
   'sub-',       // SmartSubAgent child sessions: sub-{uuid}

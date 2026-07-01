@@ -333,6 +333,32 @@ export function CrewProfileDialog({
           </Box>
         </Box>
 
+        {/* Tools & Software */}
+        {crew.tools && crew.tools.length > 0 && (
+          <Box sx={{ mb: 2 }}>
+            <Typography sx={{ ...crewOverlineSx, mb: 0.75 }}>Tools & Software</Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+              {crew.tools.map((tool) => (
+                <Chip
+                  key={tool}
+                  size="small"
+                  label={tool}
+                  sx={{
+                    height: 22,
+                    fontSize: '0.58rem',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    bgcolor: crewTheme.bg.inset,
+                    color: crewTheme.text.secondary,
+                    border: `1px solid ${crewTheme.border.default}`,
+                    borderRadius: '4px',
+                    '& .MuiChip-label': { px: 0.85 },
+                  }}
+                />
+              ))}
+            </Box>
+          </Box>
+        )}
+
         {/* Traits */}
         <Box sx={{ mb: 2 }}>
           <Typography sx={{ ...crewOverlineSx, mb: 0.75 }}>Psychological Profile</Typography>

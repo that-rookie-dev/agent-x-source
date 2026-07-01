@@ -21,6 +21,7 @@ const CORE_CREW_TOOLS = [
   'shell_exec', 'test_run', 'test_coverage', 'git_status', 'git_diff', 'git_commit',
   'browser_open', 'browser_screenshot', 'http_get', 'http_post',
   'pdf_read', 'csv_parse', 'json_parse', 'doc_markdown',
+  'deep_web_search', 'web_search', 'web_fetch',
   'crew_message', 'crew_response', 'ask_clarification',
 ];
 

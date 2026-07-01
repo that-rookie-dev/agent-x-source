@@ -13,6 +13,7 @@ export type PrebuiltCrewData = {
   expertise: string[];
   traits: string[];
   tools?: string[];
+  tags?: string[];
   honorsDoctorate?: boolean;
 };
 

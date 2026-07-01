@@ -347,7 +347,7 @@ export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts
   return { content, toolCalls };
 }
 
-/** Build parts array for SQLite persistence from turn accumulators. */
+/** Build parts array for session persistence from turn accumulators. */
 export function buildPartsForPersist(events: {
   textChunks: string[];
   tools: Map<string, PersistedToolCall>;

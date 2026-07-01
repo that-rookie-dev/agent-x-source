@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -16,24 +16,25 @@ import { CheckCircle } from '../components/CheckCircle';
 import BadgeIcon from '@mui/icons-material/Badge';
 import StorageIcon from '@mui/icons-material/Storage';
 import CloudIcon from '@mui/icons-material/Cloud';
-import LockIcon from '@mui/icons-material/Lock';
-import BoltIcon from '@mui/icons-material/Bolt';
 import SyncAltIcon from '@mui/icons-material/SyncAlt';
 import ShieldIcon from '@mui/icons-material/Shield';
 import HubIcon from '@mui/icons-material/Hub';
 import PublicIcon from '@mui/icons-material/Public';
-import HomeIcon from '@mui/icons-material/Home';
-import BuildIcon from '@mui/icons-material/Build';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import BoltIcon from '@mui/icons-material/Bolt';
+import HomeIcon from '@mui/icons-material/Home';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
-import { providers as provApi, models as modelsApi, config, settings, personaApi } from '../api';
+import { providers as provApi, models as modelsApi, config, settings } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { colors } from '../theme';
-import { PersonaConfigPanel } from '../components/settings/PersonaConfigPanel';
-import type { ProviderInfo, ModelInfo, AgentPersonaConfig } from '../api';
+import { LocalModelStep } from '../components/LocalModelStep';
+import { EmbeddingModelDownload } from '../components/EmbeddingModelDownload';
+import type { ActiveDownload } from '../components/DownloadIndicator';
+import type { ProviderInfo, ModelInfo, AgentXConfig } from '../api';
+import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 
-const STEPS = ['Storage', 'Provider', 'Profile', 'Model', 'Callsign', 'Persona', 'Complete'];
+const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Neural Core', 'Callsign', 'Complete'];
 const STORAGE_KEY = 'agentx_wizard_progress';
 
 interface WizardProgress {
@@ -42,7 +43,8 @@ interface WizardProgress {
   selectedModel: string;
   callsign: string;
   selectedBackend: string;
-  persona?: AgentPersonaConfig;
+  selectedLocalModel?: string | null;
+  skipLocalModel?: boolean;
 }
 
 function saveProgress(data: WizardProgress) {
@@ -63,7 +65,16 @@ function clearProgress() {
 export function SetupWizard() {
   const { setConfig, setAuthState, setView } = useApp();
   const navigate = useNavigate();
+  const localModelSupported = useLocalModelSupported();
+  const steps = useMemo(() => localModelSupported ? ALL_STEPS : ALL_STEPS.filter((s) => s !== 'Local Model'), [localModelSupported]);
   const [step, setStep] = useState(0);
+
+  // If the local-model step becomes unsupported while the user is on it, skip past it.
+  useEffect(() => {
+    if (!localModelSupported && step === 3) {
+      setStep(4);
+    }
+  }, [localModelSupported, step]);
   const { showError, clearError } = useGlobalError();
   const [loading, setLoading] = useState(false);
   const [showBackWarning, setShowBackWarning] = useState(false);
@@ -75,13 +86,12 @@ export function SetupWizard() {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
   const [callsign, setCallsign] = useState('');
-  const [persona, setPersona] = useState<AgentPersonaConfig>({ name: 'JARVIS', description: 'A sophisticated AI assistant that combines British precision with unwavering loyalty. Expert in data analysis, system management, and predictive modeling. Communicates with refined eloquence while maintaining strict operational efficiency.', communicationStyle: 'formal', decisionMaking: 'balanced', domainContext: 'Intelligent system management, data analysis, predictive modeling, and personal assistance with a focus on precision, security, and real-time situational awareness.', traits: ['Loyal', 'Precise', 'Analytical', 'Proactive', 'Witty', 'Calm under pressure'] });
   const [profileName, setProfileName] = useState('');
   const [showCustomConfig, setShowCustomConfig] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
 
   // DB
-  const [selectedBackend, setSelectedBackend] = useState<'sqlite' | 'postgres'>('sqlite');
+  const [selectedBackend, setSelectedBackend] = useState<'embedded-postgres' | 'postgres'>('embedded-postgres');
   const [showRelayConfig, setShowRelayConfig] = useState(false);
   const [pgMode, setPgMode] = useState<'string' | 'fields'>('string');
   const [pgSsl, setPgSsl] = useState(true);
@@ -92,7 +102,7 @@ export function SetupWizard() {
   const [pgPassword, setPgPassword] = useState('');
   const [pgDatabase, setPgDatabase] = useState('agentx');
   const [pgTesting, setPgTesting] = useState(false);
-  const [pgTestResult, setPgTestResult] = useState<{ ok: boolean; version?: string; tablesCreated?: number; error?: string } | null>(null);
+  const [pgTestResult, setPgTestResult] = useState<{ ok: boolean; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean } | null>(null);
   const [sshEnabled, setSshEnabled] = useState(false);
   const [sshHost, setSshHost] = useState('');
   const [sshPort, setSshPort] = useState('22');
@@ -100,6 +110,10 @@ export function SetupWizard() {
   const [sshAuthMode, setSshAuthMode] = useState<'password' | 'key'>('password');
   const [sshPassword, setSshPassword] = useState('');
   const [sshKey, setSshKey] = useState('');
+  const [selectedLocalModel, setSelectedLocalModel] = useState<string | null>(null);
+  const [skipLocalModel, setSkipLocalModel] = useState(false);
+  const [installedLocalModels, setInstalledLocalModels] = useState<Array<{ modelId: string; isActive: boolean }>>([]);
+  const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
 
   const buildPgConnStr = () => {
     if (pgMode === 'string') return pgConnStr;
@@ -121,8 +135,9 @@ export function SetupWizard() {
       setSelectedProvider(saved.selectedProvider);
       setSelectedModel(saved.selectedModel);
       setCallsign(saved.callsign || '');
-      if (saved.selectedBackend) setSelectedBackend(saved.selectedBackend as 'sqlite' | 'postgres');
-      if (saved.persona) setPersona(saved.persona);
+      setSelectedBackend('embedded-postgres');
+      if (saved.selectedLocalModel) setSelectedLocalModel(saved.selectedLocalModel);
+      if (saved.skipLocalModel) setSkipLocalModel(saved.skipLocalModel);
       if (saved.selectedProvider) {
         setModelsLoading(true);
         provApi.models(saved.selectedProvider).then(m => { setAvailableModels(m); setModelsLoading(false); }).catch(() => setModelsLoading(false));
@@ -139,18 +154,36 @@ export function SetupWizard() {
   }, []);
 
   const persistProgress = useCallback(() => {
-    if (step >= 1) saveProgress({ step, selectedProvider, selectedModel, callsign, selectedBackend, persona });
-  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, persona]);
+    if (step >= 1) saveProgress({ step, selectedProvider, selectedModel, callsign, selectedBackend, selectedLocalModel, skipLocalModel });
+  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, selectedLocalModel, skipLocalModel]);
   useEffect(() => { persistProgress(); }, [persistProgress]);
 
-  const next = () => { clearError(); setStep(s => s + 1); };
-  const back = () => { clearError(); setStep(s => s - 1); };
+  const next = () => {
+    clearError();
+    setStep((s) => {
+      if (!localModelSupported && s === 2) return 4; // skip Local Model step
+      return s + 1;
+    });
+  };
+  const back = () => {
+    clearError();
+    setStep((s) => {
+      if (!localModelSupported && s === 4) return 2; // skip Local Model step
+      return s - 1;
+    });
+  };
 
-  const handleStorageNext = () => {
-    if (selectedBackend === 'postgres') {
-      setShowRelayConfig(true);
+  const handleStorageNext = async () => {
+    if (selectedBackend === 'embedded-postgres') {
+      setLoading(true);
+      try {
+        const r = await settings.db.update({ backend: 'embedded-postgres' });
+        if (!r.ok) { showError('Embedded PostgreSQL failed to start'); setLoading(false); return; }
+        next();
+      } catch (e) { showError(e instanceof Error ? e.message : 'Embedded PostgreSQL failed'); setLoading(false); return; }
+      finally { setLoading(false); }
     } else {
-      next();
+      setShowRelayConfig(true);
     }
   };
 
@@ -203,22 +236,44 @@ export function SetupWizard() {
   };
   const handleCallsignNext = () => { next(); };
 
+  const startDownload = (download: ActiveDownload) => {
+    setActiveDownloads(prev => {
+      const existing = prev.find(d => d.modelId === download.modelId);
+      if (existing) return prev;
+      return [...prev, download];
+    });
+  };
+
+  const updateDownload = (modelId: string, updates: Partial<ActiveDownload>) => {
+    setActiveDownloads(prev => prev.map(d => d.modelId === modelId ? { ...d, ...updates } : d));
+  };
+
+  const clearDownload = (modelId: string) => {
+    setActiveDownloads(prev => prev.filter(d => d.modelId !== modelId));
+  };
+
+  const handleInstalledModelsChange = (models: Array<{ modelId: string; isActive: boolean }>) => {
+    setInstalledLocalModels(models);
+  };
+
   const handleComplete = async () => {
     setLoading(true);
     try {
-      if (selectedBackend === 'postgres') {
-        const connStr = buildPgConnStr();
-        if (connStr) {
-          try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {}
-        }
+      const connStr = buildPgConnStr();
+      if (connStr) {
+        try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {}
       }
-      try { await personaApi.save(persona); } catch {}
-      const r = await config.update({ setupComplete: true, user: { callsign } });
+      try { await settings.db.systemInit(); } catch {}
+      const setupPatch: Partial<AgentXConfig> = { setupComplete: true, user: { callsign } };
+      if (!localModelSupported) {
+        setupPatch.localModel = { enabled: false };
+      }
+      const r = await config.update(setupPatch);
       if (!r.ok) { showError('Failed to save setup.'); setLoading(false); return; }
       clearProgress();
       setAuthState('authenticated');
       setView('docking');
-      navigate('/', { replace: true });
+      void navigate('/', { replace: true });
       void config.get().then((cfg) => setConfig(cfg)).catch(() => {});
     } catch (err) { showError(err instanceof Error ? err.message : 'Setup could not be saved.'); }
     finally { setLoading(false); }
@@ -229,8 +284,8 @@ export function SetupWizard() {
       <Box sx={{ flexShrink: 0, textAlign: 'center', pt: 4, px: 2, pb: 2 }}>
         <Typography variant="h2" sx={{ mb: 1 }}>SETUP WIZARD</Typography>
         <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 3 }}>Configure your Agent-X instance</Typography>
-        <Stepper activeStep={step} alternativeLabel sx={{ width: '100%', maxWidth: 880, mx: 'auto' }}>
-          {STEPS.map((label) => (
+        <Stepper activeStep={steps.indexOf(ALL_STEPS[step] ?? '')} alternativeLabel sx={{ width: '100%', maxWidth: 880, mx: 'auto' }}>
+          {steps.map((label) => (
             <Step key={label}>
               <StepLabel sx={{ '& .MuiStepLabel-label': { color: colors.text.dim, fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace" } }}>{label}</StepLabel>
             </Step>
@@ -253,33 +308,33 @@ export function SetupWizard() {
               </Box>
 
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                <Box onClick={() => { setSelectedBackend('sqlite'); setPgTestResult(null); }}
-                  sx={{ p: 2.5, border: `2px solid ${selectedBackend === 'sqlite' ? colors.accent.green : colors.border.default}`, borderRadius: 2, cursor: 'pointer',
-                    bgcolor: selectedBackend === 'sqlite' ? `${colors.accent.green}05` : colors.bg.secondary,
-                    boxShadow: selectedBackend === 'sqlite' ? `0 0 20px ${colors.accent.green}10` : 'none', display: 'flex', flexDirection: 'column',
-                    transition: 'all 0.2s', '&:hover': { borderColor: selectedBackend === 'sqlite' ? colors.accent.green : colors.border.strong } }}>
+                <Box onClick={() => { setSelectedBackend('embedded-postgres'); setPgTestResult(null); }}
+                  sx={{ p: 2.5, border: `2px solid ${selectedBackend === 'embedded-postgres' ? colors.accent.green : colors.border.default}`, borderRadius: 2, cursor: 'pointer',
+                    bgcolor: selectedBackend === 'embedded-postgres' ? `${colors.accent.green}05` : colors.bg.secondary,
+                    boxShadow: selectedBackend === 'embedded-postgres' ? `0 0 20px ${colors.accent.green}10` : 'none', display: 'flex', flexDirection: 'column',
+                    transition: 'all 0.2s', '&:hover': { borderColor: selectedBackend === 'embedded-postgres' ? colors.accent.green : colors.border.strong } }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
                     <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: `${colors.accent.green}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${colors.accent.green}20`, flexShrink: 0 }}>
                       <StorageIcon sx={{ fontSize: 18, color: colors.accent.green }} />
                     </Box>
                     <Box>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: colors.text.primary }}>Onboard Vault</Typography>
-                      <Typography sx={{ fontSize: '0.52rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.green, letterSpacing: '1.5px' }}>NATIVE SQLITE</Typography>
+                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: colors.text.primary }}>Onboard Core</Typography>
+                      <Typography sx={{ fontSize: '0.52rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.green, letterSpacing: '1.5px' }}>EMBEDDED POSTGRESQL</Typography>
                     </Box>
-                    {selectedBackend === 'sqlite' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.green, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
+                    {selectedBackend === 'embedded-postgres' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.green, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
                   </Box>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
-                    <Punch text="Zero latency. Reads hit memory, not the network." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="One file. Your entire world backs up with a single copy." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Air-gapped by default. No ports. No servers. No attack surface." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="AES-256-GCM. Every byte encrypted before touching disk." icon={<LockIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Zero config. Agent-X builds and manages everything." icon={<BuildIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="WAL mode. Crash-proof. Close your laptop mid-flight." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Instant portability. Move machines by copying a single file." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Everything runs on your Mac — no cloud account or database setup needed." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Your messages, memories, and crew data stay on this machine." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Works offline. Agent-X is ready even without internet." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Automatic brain setup. The database is created and maintained for you." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Simple to back up or move to another Mac." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Best for personal use, solo work, and getting started fast." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
                   </Box>
                   <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: `${colors.accent.green}06`, border: `1px solid ${colors.accent.green}10`, mt: 'auto' }}>
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.green, textAlign: 'center', fontWeight: 600 }}>
-                      For hackers, solo devs, and anyone who wants raw speed.
+                      Recommended. No external database needed.
                     </Typography>
                   </Box>
                 </Box>
@@ -300,17 +355,17 @@ export function SetupWizard() {
                     {selectedBackend === 'postgres' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
                   </Box>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
-                    <Punch text="Desktop. Laptop. Server. One brain, everywhere you go." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Multiple agents. Zero conflicts. PostgreSQL handles the orchestra." icon={<HubIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="AWS · Supabase · Neon · Railway · Raspberry Pi. Your call." icon={<PublicIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Same DEK encryption. PG sees only ciphertext. Always." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="One click. 12 tables. 9 indexes. Schema auto-built on connect." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Managed backups. pg_dump, WAL archiving, point-in-time recovery." icon={<CloudIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Concurrent access. MVCC means zero file locks, zero corruption." icon={<HubIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Connect your own PostgreSQL database — cloud or self-hosted." icon={<CloudIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Access the same brain from multiple Macs or devices." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Share a team brain with shared crews and sessions." icon={<HubIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Your data lives in infrastructure you already control." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Use your existing backups and disaster recovery." icon={<PublicIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Schema and tables are created automatically on first connect." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
+                    <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
                   </Box>
                   <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: `${colors.accent.blue}06`, border: `1px solid ${colors.accent.blue}10`, mt: 'auto' }}>
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.blue, textAlign: 'center', fontWeight: 600 }}>
-                      For multi-machine setups, teams, and cloud-native workflows.
+                      For multi-machine setups, teams, and cloud DBs.
                     </Typography>
                   </Box>
                 </Box>
@@ -418,6 +473,11 @@ export function SetupWizard() {
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: pgTestResult.ok ? `${colors.accent.green}aa` : `${colors.accent.red}aa`, mt: 0.25 }}>
                       {pgTestResult.ok ? `${pgTestResult.version || 'PostgreSQL'} · ${pgTestResult.tablesCreated ? `${pgTestResult.tablesCreated} tables created` : 'Schema verified'}` : pgTestResult.error}
                     </Typography>
+                    {pgTestResult.ok && (
+                      <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: pgTestResult.ageAvailable ? `${colors.accent.green}aa` : colors.accent.orange, mt: 0.25 }}>
+                        {pgTestResult.ageAvailable ? 'Apache AGE: available' : `Apache AGE: unavailable${pgTestResult.ageError ? ` — ${pgTestResult.ageError}` : ''}`}
+                      </Typography>
+                    )}
                   </Box>
                 )}
               </Box>
@@ -505,6 +565,20 @@ export function SetupWizard() {
               )}
 
               {step === 3 && (
+                <LocalModelStep
+                  selectedModel={selectedLocalModel}
+                  onSelectModel={setSelectedLocalModel}
+                  skipLocalModel={skipLocalModel}
+                  onSkipChange={setSkipLocalModel}
+                  onStartDownload={startDownload}
+                  onUpdateDownload={updateDownload}
+                  onClearDownload={clearDownload}
+                  onInstalledModelsChange={handleInstalledModelsChange}
+                  activeDownloads={activeDownloads}
+                />
+              )}
+
+              {step === 4 && (
                 <Box>
                   <Typography variant="h6" sx={{ mb: 0.5 }}>Select Model</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>{availableModels.length} model{availableModels.length !== 1 ? 's' : ''} available from {selectedProviderInfo?.name ?? selectedProvider}</Typography>
@@ -527,7 +601,17 @@ export function SetupWizard() {
                 </Box>
               )}
 
-              {step === 4 && (
+              {step === 5 && (
+                <Box>
+                  <Typography variant="h6" sx={{ mb: 0.5 }}>Neural Core Initialization</Typography>
+                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>
+                    Downloading local embedding models for the neural brain. This enables offline semantic search and GraphRAG.
+                  </Typography>
+                  <EmbeddingModelDownload onComplete={next} />
+                </Box>
+              )}
+
+              {step === 6 && (
                 <Box>
                   <Typography variant="h6" sx={{ mb: 1 }}>Your Callsign</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>How should Agent-X address you?</Typography>
@@ -544,25 +628,20 @@ export function SetupWizard() {
                 </Box>
               )}
 
-              {step === 5 && (
-                <Box>
-                  <Typography variant="h6" sx={{ mb: 0.5, textAlign: 'center' }}>Agent Persona</Typography>
-                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2, textAlign: 'center' }}>Define how Agent-X presents itself — identity, communication style, and traits.</Typography>
-                  <PersonaConfigPanel value={persona} onChange={p => { if (p) setPersona(p); }} />
-                </Box>
-              )}
-
-              {step === 6 && (
+              {step === 7 && (
                 <Box sx={{ textAlign: 'center' }}>
                   <CheckCircle size={64} color={colors.accent.green} sx={{ mb: 2 }} />
                   <Typography variant="h5" sx={{ mb: 1 }}>Setup Complete!</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 3 }}>Your Agent-X instance is ready.</Typography>
                   <Box sx={{ textAlign: 'left', p: 2, border: `1px solid ${colors.border.default}`, borderRadius: 1, mb: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem' }}>
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Storage: {selectedBackend === 'sqlite' ? 'Onboard Vault (SQLite)' : 'Starfleet Relay (PostgreSQL)'}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Storage: {selectedBackend === 'embedded-postgres' ? 'Embedded PostgreSQL (port 3335)' : 'Starfleet Relay (PostgreSQL)'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Provider: {selectedProvider}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Model: {selectedModel}</Typography>
+                    {localModelSupported && (
+                      <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
+                    )}
+                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Neural Core: Embedding models downloaded</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Callsign: {callsign || '(not set)'}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Persona: {persona.name || '(none)'}</Typography>
                   </Box>
                 </Box>
               )}
@@ -574,32 +653,45 @@ export function SetupWizard() {
 
       {/* Bottom Nav */}
       <Box sx={{ flexShrink: 0, borderTop: `1px solid ${colors.border.default}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
-        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 6 ? 'center' : 'space-between' }}>
+        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 7 ? 'center' : 'space-between', alignItems: 'center' }}>
           {step === 1 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 2 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 3 && <Button onClick={handleBackToCredentials} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 4 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 3 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 4 && <Button onClick={localModelSupported ? handleBackToCredentials : back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 5 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 6 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 0 && !showRelayConfig && (
-            <Button variant="contained" onClick={handleStorageNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>
-              {selectedBackend === 'postgres' ? 'Configure Relay →' : 'Next →'}
+            <Button variant="contained" onClick={handleStorageNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>
+              {loading ? 'Starting...' : selectedBackend === 'embedded-postgres' ? 'Start Embedded PostgreSQL →' : 'Configure Relay →'}
             </Button>
           )}
           {step === 0 && showRelayConfig && (
             <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-              <Button onClick={() => { setShowRelayConfig(false); setSelectedBackend('sqlite'); }} sx={{ color: colors.text.secondary }}>← Choose SQLite Instead</Button>
+              <Button onClick={() => { setShowRelayConfig(false); }} sx={{ color: colors.text.secondary }}>← Back</Button>
               <Button variant="contained" onClick={handleRelayNext} disabled={pgTesting} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>{pgTesting ? 'Testing...' : 'Connect & Next →'}</Button>
             </Box>
           )}
           {step === 1 && <Button variant="contained" onClick={handleProviderNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
           {step === 2 && <Button variant="contained" onClick={handleProfileNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>{loading ? 'Validating...' : 'Validate & Next'}</Button>}
-          {step === 3 && <Button variant="contained" onClick={handleModelNext} disabled={!selectedModel} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
-          {step === 4 && <Button variant="contained" onClick={handleCallsignNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>{callsign.trim() ? 'Next' : 'Skip & Next'}</Button>}
-          {step === 5 && <Button variant="contained" onClick={() => {
-            if (!persona.description.trim()) { showError('Persona description is required'); return; }
-            next();
-          }} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
-          {step === 6 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
+          {step === 3 && (
+            <Button
+              variant="contained"
+              onClick={next}
+              disabled={
+                !skipLocalModel &&
+                !installedLocalModels.some(m => m.modelId === selectedLocalModel) &&
+                !activeDownloads.some(d => d.modelId === selectedLocalModel && (d.status === 'downloading' || d.status === 'complete'))
+              }
+              sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}
+            >
+              Next
+            </Button>
+          )}
+          {step === 4 && <Button variant="contained" onClick={handleModelNext} disabled={!selectedModel} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
+          {/* Neural Core step (5) — no Back/Next buttons; the EmbeddingModelDownload
+              component handles its own navigation via onComplete/onBack callbacks. */}
+          {step === 6 && <Button variant="contained" onClick={handleCallsignNext} disabled={!callsign.trim()} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
+          {step === 7 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
         </Box>
       </Box>
 

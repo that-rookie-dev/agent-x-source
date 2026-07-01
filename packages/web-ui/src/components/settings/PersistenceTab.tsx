@@ -16,7 +16,12 @@ import FolderIcon from '@mui/icons-material/Folder';
 import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { settings, factoryReset, setAuthToken, type DbStatus } from '../../api';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorIcon from '@mui/icons-material/Error';
+import HelpIcon from '@mui/icons-material/Help';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
+import { settings, factoryReset, setAuthToken, knowledge, type DbStatus } from '../../api';
 import { useApp } from '../../store/AppContext';
 import { crewTheme } from '../../styles/crew-theme';
 import { colors } from '../../theme';
@@ -54,6 +59,34 @@ export function PersistenceTab() {
   const [resetConfirm, setResetConfirm] = useState('');
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState('');
+  const [provisionMode, setProvisionMode] = useState<'embedded' | 'cloud'>('embedded');
+  const [provisionStatus, setProvisionStatus] = useState<{
+    loading: boolean;
+    postgres?: boolean;
+    schemaVersion?: number;
+    migrationsApplied?: number;
+    ageAvailable?: boolean;
+    ageError?: string | null;
+    timestamp?: string;
+  }>({ loading: false });
+
+  const loadProvisionStatus = useCallback(async () => {
+    setProvisionStatus({ loading: true });
+    try {
+      const s = await settings.db.provisionStatus();
+      setProvisionStatus({
+        loading: false,
+        postgres: s.postgres,
+        schemaVersion: s.schemaVersion,
+        migrationsApplied: s.migrationsApplied,
+        ageAvailable: s.age.available,
+        ageError: s.age.error,
+        timestamp: s.timestamp,
+      });
+    } catch (e) {
+      setProvisionStatus({ loading: false, postgres: false, ageAvailable: false, ageError: e instanceof Error ? e.message : 'Status check failed' });
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,7 +98,7 @@ export function PersistenceTab() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); loadProvisionStatus(); }, [load, loadProvisionStatus]);
 
   const handleTest = async () => {
     if (!pgConnStr) return;
@@ -81,12 +114,6 @@ export function PersistenceTab() {
     setSwitching(true);
     try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: pgConnStr } }); await load(); }
     catch (e) { setTestResult({ ok: false, error: e instanceof Error ? e.message : 'Switch failed' }); }
-    finally { setSwitching(false); }
-  };
-
-  const handleSwitchToSqlite = async () => {
-    setSwitching(true);
-    try { await settings.db.update({ backend: 'sqlite' }); await load(); }
     finally { setSwitching(false); }
   };
 
@@ -145,8 +172,6 @@ export function PersistenceTab() {
     );
   }
 
-  const isSqlite = dbStatus?.backend === 'sqlite';
-  const isPostgres = dbStatus?.backend === 'postgres';
   const fs = dbStatus?.fileStorage;
 
   return (
@@ -161,17 +186,10 @@ export function PersistenceTab() {
         </Box>
 
         <Box sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
-          <Button variant={isSqlite ? 'contained' : 'outlined'} onClick={handleSwitchToSqlite} disabled={switching || isSqlite}
+          <Button variant="contained" disabled
             sx={{ flex: 1, py: 1.5, fontSize: '0.78rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, textTransform: 'none',
-              bgcolor: isSqlite ? colors.text.primary : 'transparent', color: isSqlite ? colors.bg.primary : colors.text.secondary,
-              borderColor: colors.border.default, '&:hover': { borderColor: colors.border.strong, bgcolor: isSqlite ? '#ddd' : undefined } }}>
-            Native SQLite {isSqlite && '✓'}
-          </Button>
-          <Button variant={isPostgres ? 'contained' : 'outlined'} disabled={switching}
-            sx={{ flex: 1, py: 1.5, fontSize: '0.78rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, textTransform: 'none',
-              bgcolor: isPostgres ? colors.text.primary : 'transparent', color: isPostgres ? colors.bg.primary : colors.text.secondary,
-              borderColor: colors.border.default, '&:hover': { borderColor: colors.border.strong } }}>
-            PostgreSQL {isPostgres && '✓'}
+              bgcolor: colors.text.primary, color: colors.bg.primary, borderColor: colors.border.default }}>
+            PostgreSQL ✓
           </Button>
         </Box>
 
@@ -180,9 +198,41 @@ export function PersistenceTab() {
           <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>
             {dbStatus?.connected ? 'Connected' : 'Disconnected'}
             {' · '}
-            {isSqlite ? `domain.db · ${dbStatus?.stats.dbSizeFormatted || '—'}` : 'PostgreSQL'}
+            PostgreSQL · {dbStatus?.stats.dbSizeFormatted || '—'}
           </Typography>
         </Box>
+      </Box>
+
+      {/* ── Provisioning Telemetry ── */}
+      <Box sx={{ ...cardSx, mb: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.text.primary }}>
+            Provisioning Telemetry
+          </Typography>
+          <Button onClick={loadProvisionStatus} disabled={provisionStatus.loading} size="small"
+            sx={{ fontSize: '0.65rem', color: colors.text.secondary, textTransform: 'none', borderColor: colors.border.default }}>
+            {provisionStatus.loading ? <CircularProgress size={12} sx={{ color: colors.text.secondary }} /> : <RefreshIcon sx={{ fontSize: 14 }} />}
+          </Button>
+        </Box>
+
+        <ToggleButtonGroup value={provisionMode} exclusive size="small" fullWidth
+          onChange={(_, v) => v && setProvisionMode(v)} sx={{ mb: 2, '& .MuiToggleButton-root': { fontSize: '0.7rem', textTransform: 'none', color: colors.text.secondary } }}>
+          <ToggleButton value="embedded">Embedded Local</ToggleButton>
+          <ToggleButton value="cloud">External / Cloud</ToggleButton>
+        </ToggleButtonGroup>
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <TelemetryRow label="PostgreSQL connection" status={dbStatus?.connected ? 'ok' : 'fail'} />
+          <TelemetryRow label="pgvector extension" status={provisionStatus.loading ? 'pending' : (provisionStatus.postgres ? 'ok' : 'fail')} />
+          <TelemetryRow label="Schema migrations" status={provisionStatus.loading ? 'pending' : ((provisionStatus.migrationsApplied ?? 0) > 0 ? 'ok' : (provisionStatus.schemaVersion && provisionStatus.schemaVersion > 0 ? 'ok' : 'fail'))} />
+          <TelemetryRow label="Apache AGE graph" status={provisionStatus.loading ? 'pending' : (provisionStatus.ageAvailable ? 'ok' : 'warn')} />
+        </Box>
+
+        {provisionMode === 'cloud' && !provisionStatus.ageAvailable && !provisionStatus.loading && (
+          <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mt: 2, fontSize: '0.7rem', bgcolor: `${crewTheme.accent.alert}15`, border: `1px solid ${crewTheme.accent.alert}40`, color: colors.text.primary }}>
+            This cloud PostgreSQL does not have Apache AGE. Graph walks will use the recursive-CTE fallback; some features may be slower.
+          </Alert>
+        )}
       </Box>
 
       {/* ── PostgreSQL Connection ── */}
@@ -198,12 +248,10 @@ export function PersistenceTab() {
             sx={{ fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', borderColor: colors.border.default, color: colors.text.secondary, '&:hover': { borderColor: colors.border.strong } }}>
             {testing ? <CircularProgress size={14} sx={{ color: colors.text.secondary }} /> : 'Test Connection'}
           </Button>
-          {isSqlite && (
-            <Button variant="contained" onClick={handleSwitch} disabled={switching || !pgConnStr || !!(testResult && !testResult.ok)}
-              sx={{ fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, textTransform: 'none', bgcolor: colors.text.primary, color: colors.bg.primary, '&:hover': { bgcolor: '#ddd' } }}>
-              {switching ? <CircularProgress size={14} sx={{ color: colors.bg.primary }} /> : 'Switch & Migrate'}
-            </Button>
-          )}
+          <Button variant="contained" onClick={handleSwitch} disabled={switching || !pgConnStr || !!(testResult && !testResult.ok)}
+            sx={{ fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, textTransform: 'none', bgcolor: colors.text.primary, color: colors.bg.primary, '&:hover': { bgcolor: '#ddd' } }}>
+            {switching ? <CircularProgress size={14} sx={{ color: colors.bg.primary }} /> : 'Update Connection'}
+          </Button>
         </Box>
         {testResult && (
           <Alert severity={testResult.ok ? 'success' : 'error'} sx={{ fontSize: '0.7rem', py: 0 }}>
@@ -211,7 +259,7 @@ export function PersistenceTab() {
           </Alert>
         )}
         <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, mt: 1, lineHeight: 1.5 }}>
-          Your credentials & API keys always stay in local SQLite. Only sessions, messages, memories, and domain data go to PostgreSQL.
+          Your credentials & API keys stay in local encrypted config files. Sessions, messages, memories, and domain data live in PostgreSQL.
         </Typography>
       </Box>
 
@@ -233,19 +281,17 @@ export function PersistenceTab() {
           <StatItem label="Messages" value={String(dbStatus?.stats.tables?.['messages'] ?? 0)} />
           <StatItem label="Memories" value={String(dbStatus?.stats.tables?.['crew_memories'] ?? 0)} />
         </Box>
-        {isSqlite && !isPostgres && pgConnStr && testResult?.ok && (
-          <Box sx={{ mt: 2 }}>
-            <Button variant="outlined" onClick={handleMigrate} disabled={migrating}
-              sx={{ fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', borderColor: colors.border.default, color: colors.text.secondary, '&:hover': { borderColor: colors.border.strong } }}>
-              {migrating ? <CircularProgress size={14} sx={{ color: colors.text.secondary }} /> : 'Migrate Data to PostgreSQL'}
-            </Button>
-            {migrateResult && (
-              <Typography sx={{ fontSize: '0.65rem', color: migrateResult.includes('failed') ? colors.accent.red : colors.accent.green, mt: 1, fontFamily: "'JetBrains Mono', monospace" }}>
-                {migrateResult}
-              </Typography>
-            )}
-          </Box>
-        )}
+        <Box sx={{ mt: 2 }}>
+          <Button variant="outlined" onClick={handleMigrate} disabled={migrating}
+            sx={{ fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', borderColor: colors.border.default, color: colors.text.secondary, '&:hover': { borderColor: colors.border.strong } }}>
+            {migrating ? <CircularProgress size={14} sx={{ color: colors.text.secondary }} /> : 'Run Schema Migration'}
+          </Button>
+          {migrateResult && (
+            <Typography sx={{ fontSize: '0.65rem', color: migrateResult.includes('failed') ? colors.accent.red : colors.accent.green, mt: 1, fontFamily: "'JetBrains Mono', monospace" }}>
+              {migrateResult}
+            </Typography>
+          )}
+        </Box>
       </Box>
 
       {/* ── File Storage ── */}
@@ -261,7 +307,7 @@ export function PersistenceTab() {
           <FilePathRow label="Config" path={fs?.config.path ?? '~/.config/agentx'} size={fs?.config.sizeFormatted ?? '—'}
             desc="Provider configs, plugin registry, MCP/ACP settings, crew registry" />
           <FilePathRow label="Data" path={fs?.data.path ?? '~/.local/share/agentx'} size={fs?.data.sizeFormatted ?? '—'}
-            desc="SQLite database, session files, secret sauce (soul, memories, diary, identity)" />
+            desc="Session files, secret sauce (soul, memories, diary, identity)" />
           <FilePathRow label="Cache" path={fs?.cache.path ?? '~/.cache/agentx'} size={fs?.cache.sizeFormatted ?? '—'}
             desc="Temporary files, content cache, compaction buffers" />
         </Box>
@@ -285,6 +331,9 @@ export function PersistenceTab() {
           )}
         </Box>
       </Box>
+
+      {/* ── RAG Studio Storage ── */}
+      <RagStudioStorageCard />
 
       {/* ── Soft Reset ── */}
       <Box sx={{ ...cardSx, mb: 2, border: `1px solid ${colors.accent.orange}20`, bgcolor: `${colors.accent.orange}05` }}>
@@ -310,135 +359,205 @@ export function PersistenceTab() {
         <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, mb: 2, lineHeight: 1.6 }}>
           Same as Soft Reset but with explicit confirmation. Erases all domain data while keeping credentials and auth.
         </Typography>
-        <Button variant="outlined" startIcon={<DeleteOutlineIcon />} onClick={() => setClearOpen(true)}
+        <Button variant="outlined" startIcon={<DeleteOutlineIcon />} onClick={() => setClearOpen(true)} disabled={clearing}
           sx={{ borderColor: colors.accent.red, color: colors.accent.red, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none',
             '&:hover': { borderColor: colors.accent.red, bgcolor: `${colors.accent.red}10` } }}>
-          Clear Domain Data...
+          {clearing ? 'Clearing...' : 'Clear Domain Data'}
         </Button>
       </Box>
 
       {/* ── Factory Reset ── */}
-      <Box sx={{ ...dangerCardSx, mb: 0 }}>
+      <Box sx={{ ...dangerCardSx, mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <WarningAmberIcon sx={{ fontSize: 18, color: colors.accent.red }} />
-          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.accent.red }}>
-            Factory Reset
-          </Typography>
+          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.accent.red }}>Factory Reset</Typography>
         </Box>
         <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, mb: 2, lineHeight: 1.6 }}>
-          Permanently erase everything — configuration, credentials, API keys, all sessions, messages, memories, plugins, preferences, and logs. You will be signed out and redirected to setup.
+          Irreversibly deletes all local files, domain data, and credentials. This logs you out and wipes the agent. Use only when you want a completely fresh install.
         </Typography>
-        <Button variant="outlined" startIcon={<WarningAmberIcon />} onClick={() => setResetOpen(true)}
+        <Button variant="outlined" onClick={() => setResetOpen(true)} disabled={resetting}
           sx={{ borderColor: colors.accent.red, color: colors.accent.red, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none',
             '&:hover': { borderColor: colors.accent.red, bgcolor: `${colors.accent.red}10` } }}>
-          Factory Reset...
+          {resetting ? <CircularProgress size={14} sx={{ color: colors.accent.red }} /> : 'Factory Reset'}
         </Button>
       </Box>
 
-      {/* Clear Domain Data Dialog */}
-      <ConfirmDialog open={clearOpen} title="Clear Domain Data" confirmLabel="CLEAR"
-        message="This will permanently delete all domain data:"
-        items={[
-          `Sessions (${dbStatus?.stats.tables?.['sessions'] ?? 0}) and messages (${dbStatus?.stats.tables?.['messages'] ?? 0})`,
-          'Crews, memories, and diary entries',
-          'Token logs, permissions, and tool executions',
-          'Session context and todos',
-        ]}
-        note="Your credentials, API keys, and auth session remain safe."
-        confirm={clearConfirm} setConfirm={setClearConfirm}
-        loading={clearing} loadingText="Clearing..."
-        actionText="Clear All Domain Data" onAction={handleClear}
-        onClose={() => { if (!clearing) { setClearOpen(false); setClearConfirm(''); } }} />
+      <Dialog open={clearOpen} onClose={() => setClearOpen(false)} PaperProps={{ sx: { bgcolor: colors.bg.primary, border: `1px solid ${colors.border.default}` } }}>
+        <DialogTitle sx={{ fontSize: '0.85rem', color: colors.text.primary }}>Confirm Clear Domain Data</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, mb: 2 }}>
+            Type <strong>DELETE</strong> to confirm. This removes sessions, messages, memories, crews, and plugins from PostgreSQL. Credentials and auth are preserved.
+          </Typography>
+          <TextField size="small" fullWidth value={clearConfirm} onChange={(e) => setClearConfirm(e.target.value)}
+            placeholder="DELETE" sx={{ fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace" }} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setClearOpen(false)} sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>Cancel</Button>
+          <Button onClick={handleClear} disabled={clearConfirm !== 'DELETE' || clearing} sx={{ fontSize: '0.7rem', color: colors.accent.red }}>
+            {clearing ? 'Clearing...' : 'Clear'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
-      {/* Factory Reset Dialog */}
-      <ConfirmDialog open={resetOpen} title="Factory Reset" confirmLabel="RESET"
-        message="This will permanently delete everything stored locally:"
-        items={[
-          'Authentication credentials and active sessions',
-          'Provider API keys and model configurations',
-          'All chat history, conversations, and message logs',
-          'Crew definitions and orchestration settings',
-          'User preferences and UI settings',
-          'All log files and cached data',
-        ]}
-        note="This cannot be undone. You will need to reconfigure Agent-X from scratch."
-        error={resetError}
-        confirm={resetConfirm} setConfirm={setResetConfirm}
-        loading={resetting} loadingText="Deleting..."
-        actionText="Delete Everything" onAction={handleFactoryReset}
-        onClose={() => { if (!resetting) { setResetOpen(false); setResetConfirm(''); setResetError(''); } }} />
+      <Dialog open={resetOpen} onClose={() => setResetOpen(false)} PaperProps={{ sx: { bgcolor: colors.bg.primary, border: `1px solid ${colors.border.default}` } }}>
+        <DialogTitle sx={{ fontSize: '0.85rem', color: colors.text.primary }}>Confirm Factory Reset</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, mb: 2 }}>
+            This will delete all local files, domain data, credentials, and API keys. You will be logged out. Type <strong>RESET</strong> to confirm.
+          </Typography>
+          {resetError && <Alert severity="error" sx={{ fontSize: '0.7rem', mb: 1 }}>{resetError}</Alert>}
+          <TextField size="small" fullWidth value={resetConfirm} onChange={(e) => setResetConfirm(e.target.value)}
+            placeholder="RESET" sx={{ fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace" }} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setResetOpen(false)} sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>Cancel</Button>
+          <Button onClick={handleFactoryReset} disabled={resetConfirm !== 'RESET' || resetting} sx={{ fontSize: '0.7rem', color: colors.accent.red }}>
+            {resetting ? 'Resetting...' : 'Reset Everything'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+}
+
+function TelemetryRow({ label, status }: { label: string; status: 'ok' | 'warn' | 'fail' | 'pending' }) {
+  const icon = status === 'ok' ? <CheckCircleIcon sx={{ fontSize: 16, color: colors.accent.green }} />
+    : status === 'warn' ? <WarningAmberIcon sx={{ fontSize: 16, color: colors.accent.orange }} />
+    : status === 'fail' ? <ErrorIcon sx={{ fontSize: 16, color: colors.accent.red }} />
+    : <HelpIcon sx={{ fontSize: 16, color: colors.text.secondary }} />;
+  const text = status === 'ok' ? 'OK' : status === 'warn' ? 'Warning' : status === 'fail' ? 'Failed' : 'Checking';
+  const color = status === 'ok' ? colors.accent.green : status === 'warn' ? colors.accent.orange : status === 'fail' ? colors.accent.red : colors.text.secondary;
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5, borderBottom: `1px solid ${colors.border.default}` }}>
+      <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>{label}</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        {icon}
+        <Typography sx={{ fontSize: '0.65rem', color, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>{text}</Typography>
+      </Box>
     </Box>
   );
 }
 
 function StatItem({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Typography sx={{ fontSize: '0.65rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{label}</Typography>
-      <Typography sx={{ fontSize: '0.68rem', fontWeight: 600, color: color || colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>{value}</Typography>
+    <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: `${colors.text.dim}05`, border: `1px solid ${colors.border.default}` }}>
+      <Typography sx={{ fontSize: '0.58rem', color: colors.text.dim, mb: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>{label}</Typography>
+      <Typography sx={{ fontSize: '0.75rem', color: color || colors.text.primary, fontWeight: 600 }}>{value}</Typography>
     </Box>
   );
 }
 
 function FilePathRow({ label, path, size, desc }: { label: string; path: string; size: string; desc: string }) {
   return (
-    <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
-      <FolderIcon sx={{ fontSize: 15, color: colors.text.dim, mt: '1px', flexShrink: 0 }} />
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.25 }}>
-          <Typography sx={{ fontSize: '0.68rem', fontWeight: 600, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
-            {label}
-          </Typography>
-          <Typography sx={{ fontSize: '0.6rem', color: colors.accent.blue, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
-            {size}
-          </Typography>
-        </Box>
-        <Typography sx={{ fontSize: '0.58rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", wordBreak: 'break-all', mb: 0.25 }}>
-          {path}
-        </Typography>
-        <Typography sx={{ fontSize: '0.58rem', color: colors.text.dim, lineHeight: 1.4 }}>
-          {desc}
-        </Typography>
+    <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2 }}>
+      <Box>
+        <Typography sx={{ fontSize: '0.65rem', color: colors.text.primary, fontWeight: 600 }}>{label}</Typography>
+        <Typography sx={{ fontSize: '0.58rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{path}</Typography>
+        <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, mt: 0.3 }}>{desc}</Typography>
       </Box>
+      <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'nowrap' }}>{size}</Typography>
     </Box>
   );
 }
 
-function ConfirmDialog({ open, title, confirmLabel, message, items, note, error, confirm, setConfirm, loading, loadingText, actionText, onAction, onClose }: {
-  open: boolean; title: string; confirmLabel: string; message: string; items: string[];
-  note?: string; error?: string;
-  confirm: string; setConfirm: (v: string) => void;
-  loading: boolean; loadingText: string; actionText: string;
-  onAction: () => void; onClose: () => void;
-}) {
+function formatBytes(n: number): string {
+  if (n >= 1073741824) return `${(n / 1073741824).toFixed(2)} GB`;
+  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+function RagStudioStorageCard() {
+  const [stats, setStats] = useState<{ fileCount: number; totalBytes: number; path: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setStats(await knowledge.storageStats()); } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleClear = async () => {
+    setClearing(true);
+    try {
+      const r = await knowledge.clearStorage();
+      setResult(`Deleted ${r.deletedFiles} files, freed ${formatBytes(r.freedBytes)}`);
+      setConfirmOpen(false);
+      await load();
+      setTimeout(() => setResult(null), 4000);
+    } catch (e) { setResult(e instanceof Error ? e.message : 'Failed'); }
+    finally { setClearing(false); }
+  };
+
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
-      PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}` } }}>
-      <DialogTitle sx={{ fontSize: '0.9rem', fontWeight: 700, pb: 1 }}>{title}</DialogTitle>
-      <DialogContent>
-        <Typography sx={{ fontSize: '0.75rem', color: colors.text.secondary, mb: 2, lineHeight: 1.7 }}>{message}</Typography>
-        <Box component="ul" sx={{ m: 0, pl: 2, mb: 2, fontSize: '0.7rem', color: colors.text.dim, lineHeight: 2.1 }}>
-          {items.map((item, i) => <li key={i}>{item}</li>)}
-        </Box>
-        {note && (
-          <Typography sx={{ fontSize: '0.75rem', color: colors.accent.red, fontWeight: 600, mb: 1.5 }}>{note}</Typography>
-        )}
-        {error && <Alert severity="error" sx={{ mb: 1.5, fontSize: '0.7rem' }}>{error}</Alert>}
-        <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, mb: 1 }}>
-          Type <strong style={{ color: colors.text.primary }}>{confirmLabel}</strong> to confirm.
+    <Box sx={{ ...cardSx, mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+        <StorageIcon sx={{ fontSize: 18, color: colors.text.secondary }} />
+        <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.text.primary }}>
+          RAG Studio Storage
         </Typography>
-        <TextField size="small" fullWidth value={confirm} onChange={(e) => setConfirm(e.target.value)}
-          placeholder={`Type ${confirmLabel} to confirm`}
-          slotProps={{ input: { sx: { fontSize: '0.75rem' } } }} />
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} disabled={loading} sx={{ fontSize: '0.75rem', textTransform: 'none', color: colors.text.secondary }}>Cancel</Button>
-        <Button onClick={onAction} disabled={confirm !== confirmLabel || loading} variant="contained"
-          sx={{ bgcolor: colors.accent.red, color: '#fff', fontSize: '0.75rem', fontWeight: 600, textTransform: 'none',
-            '&:hover': { bgcolor: '#d32f2f' }, '&.Mui-disabled': { bgcolor: `${colors.accent.red}40`, color: '#ffffff60' } }}>
-          {loading ? loadingText : actionText}
-        </Button>
-      </DialogActions>
-    </Dialog>
+      </Box>
+
+      <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, mb: 2, lineHeight: 1.5 }}>
+        Original copies of documents uploaded via RAG Studio are kept here so you can re-download or re-ingest them. Clearing this folder does NOT delete the knowledge entries already in the neural brain.
+      </Typography>
+
+      {loading ? (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+          <CircularProgress size={18} sx={{ color: colors.text.secondary }} />
+        </Box>
+      ) : (
+        <Box sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
+          <StatItem label="Files" value={stats ? String(stats.fileCount) : '—'} />
+          <StatItem label="Total Size" value={stats ? formatBytes(stats.totalBytes) : '—'} />
+        </Box>
+      )}
+
+      {stats && stats.fileCount > 0 && (
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+          <Button
+            variant="outlined"
+            startIcon={<DeleteOutlineIcon />}
+            onClick={() => setConfirmOpen(true)}
+            disabled={clearing}
+            sx={{
+              fontSize: '0.68rem',
+              fontFamily: "'JetBrains Mono', monospace",
+              textTransform: 'none',
+              borderColor: colors.accent.red + '40',
+              color: colors.accent.red,
+              '&:hover': { borderColor: colors.accent.red },
+            }}
+          >
+            {clearing ? <CircularProgress size={14} sx={{ color: colors.accent.red }} /> : 'Clear RAG Studio Files'}
+          </Button>
+          {result && (
+            <Typography sx={{ fontSize: '0.65rem', color: colors.accent.green, fontFamily: "'JetBrains Mono', monospace" }}>
+              {result}
+            </Typography>
+          )}
+        </Box>
+      )}
+
+      {confirmOpen && (
+        <Box sx={{ mt: 2, p: 2, borderRadius: 1, bgcolor: `${colors.accent.red}08`, border: `1px solid ${colors.accent.red}30` }}>
+          <Typography sx={{ fontSize: '0.68rem', color: colors.text.secondary, mb: 1.5 }}>
+            Are you sure? This will delete all original file copies. Knowledge entries in the neural brain will remain.
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button size="small" onClick={() => setConfirmOpen(false)} sx={{ fontSize: '0.65rem', color: colors.text.secondary }}>Cancel</Button>
+            <Button size="small" variant="contained" onClick={handleClear} disabled={clearing}
+              sx={{ fontSize: '0.65rem', bgcolor: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + 'cc' } }}>
+              {clearing ? 'Clearing…' : 'Yes, Delete Files'}
+            </Button>
+          </Box>
+        </Box>
+      )}
+    </Box>
   );
 }

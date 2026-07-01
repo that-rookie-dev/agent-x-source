@@ -27,6 +27,7 @@ export interface SectionContext {
   experienceEngine: { getProvenContext(): string; getCautionContext(): string } | null;
   growthEngine: { getGrowthContext(): string } | null;
   turnFeedbackService: { buildPromptContext(): string } | null;
+  memoryContext?: { getContext(): Promise<MemoryContextState> } | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -131,6 +132,14 @@ export function createRulesSection(): PromptSection<string> {
     `- ALWAYS use ask_clarification — the UI renders a structured form, never plain chat questions.`,
     `- DEFAULT: one question per ask_clarification call. Wait for the answer before asking the next.`,
     `- MULTI-QUESTION form (questions[] with 2+ items) only when gathering related fields together is clearly better (intake forms, trip setup, config wizard) — not for a simple back-and-forth.`,
+    ``,
+    `KNOWLEDGE RETRIEVAL (MANDATORY):`,
+    `- ALWAYS call memory_fabric_search as your FIRST action before answering any question.`,
+    `- This searches all documents uploaded via RAG Studio (PDFs, text files, web distillations).`,
+    `- Even if you think you know the answer from training data, search first — the user's documents may contain specific information they want you to reference.`,
+    `- Only skip memory_fabric_search if the question is clearly about real-time actions (file operations, tool execution, scheduling) or personal conversation.`,
+    `- If memory_fabric_search returns results, base your answer on those results and cite the source.`,
+    `- If it returns "No matching documents", fall back to your knowledge or web_search.`,
     `[/RULES]`,
   ].join('\n');
   return {
@@ -180,6 +189,14 @@ export function createCrewPrivateConductSection(): PromptSection<string> {
     `- After the final clarification answer, deliver the full plan or response immediately — never stop at a transition phrase like "let me build your plan" without the actual plan in the same turn.`,
     `- DEFAULT: one question per tool call — wait for the answer, then continue naturally.`,
     `- Bundle multiple questions in one call only for complex/related intake (see [QUESTIONNAIRE]).`,
+    ``,
+    `KNOWLEDGE RETRIEVAL (MANDATORY):`,
+    `- ALWAYS call memory_fabric_search as your FIRST action before answering any question that could reference uploaded documents.`,
+    `- This searches all documents uploaded via RAG Studio (PDFs, text files, web distillations).`,
+    `- Even if you think you know the answer from training data, search first — the user's documents may contain specific information they want you to reference.`,
+    `- Only skip memory_fabric_search for casual conversation (greetings, small talk) or real-time actions (file operations, tool execution).`,
+    `- If memory_fabric_search returns results, base your answer on those results and cite the source.`,
+    `- If it returns "No matching documents", fall back to your knowledge or web_search.`,
     `[/CREW_PRIVATE_CONDUCT]`,
   ].join('\n');
   return {
@@ -798,6 +815,47 @@ export function createNeuralSection(ctx: SectionContext): PromptSection<NeuralSt
       if (current.caution) parts.push(current.caution);
       if (current.growth) parts.push(current.growth);
       return parts.join('\n');
+    },
+  };
+}
+
+export interface MemoryContextState {
+  episodic: string;
+  semantic: string;
+  graph: string;
+  /** GraphRAG community summaries (global pass). */
+  community?: string;
+}
+
+export function createMemoryContextSection(ctx: SectionContext): PromptSection<MemoryContextState | null> {
+  return {
+    key: 'core/memory-context',
+    load: async () => {
+      if (!ctx.memoryContext) return null;
+      const state = await ctx.memoryContext.getContext();
+      if (!state.episodic && !state.semantic && !state.graph && !state.community) return null;
+      return state;
+    },
+    render: (state) => {
+      if (!state) return '';
+      const parts: string[] = [];
+      if (state.community) parts.push(`[COMMUNITY CONTEXT]\n${state.community}\n[/COMMUNITY CONTEXT]`);
+      if (state.episodic) parts.push(`[EPISODIC MEMORY]\n${state.episodic}\n[/EPISODIC MEMORY]`);
+      if (state.semantic) parts.push(`[SEMANTIC MEMORY]\n${state.semantic}\n[/SEMANTIC MEMORY]`);
+      if (state.graph) parts.push(`[GRAPH CONTEXT]\n${state.graph}\n[/GRAPH CONTEXT]`);
+      return parts.join('\n\n');
+    },
+    diff: (prev, current) => {
+      const prevStr = JSON.stringify(prev);
+      const curStr = JSON.stringify(current);
+      if (prevStr === curStr) return null;
+      if (!current) return '';
+      const parts: string[] = [];
+      if (current.community) parts.push(`[COMMUNITY CONTEXT]\n${current.community}\n[/COMMUNITY CONTEXT]`);
+      if (current.episodic) parts.push(`[EPISODIC MEMORY]\n${current.episodic}\n[/EPISODIC MEMORY]`);
+      if (current.semantic) parts.push(`[SEMANTIC MEMORY]\n${current.semantic}\n[/SEMANTIC MEMORY]`);
+      if (current.graph) parts.push(`[GRAPH CONTEXT]\n${current.graph}\n[/GRAPH CONTEXT]`);
+      return parts.join('\n\n');
     },
   };
 }

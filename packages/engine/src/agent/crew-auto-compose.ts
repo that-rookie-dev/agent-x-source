@@ -87,7 +87,9 @@ function memberExpertise(member: CrewMember): string[] {
   const fromCrew = member.crew.expertise ?? [];
   const fromMember = member.expertise ?? [];
   const traits = member.crew.traits ?? [];
-  return [...new Set([...fromMember, ...fromCrew, ...traits])];
+  const tools = member.crew.tools ?? [];
+  const tags = member.crew.tags ?? [];
+  return [...new Set([...fromMember, ...fromCrew, ...traits, ...tools, ...tags])];
 }
 
 function memberProfileBlob(member: CrewMember): string {
@@ -97,6 +99,7 @@ function memberProfileBlob(member: CrewMember): string {
     member.crew.title ?? '',
     member.crew.name,
     ...memberExpertise(member),
+    member.crew.searchText ?? '',
   ].join(' ').toLowerCase();
 }
 

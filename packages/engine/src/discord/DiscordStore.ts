@@ -6,27 +6,40 @@ interface DiscordStoredConfig {
   channelId?: string;
 }
 
+type PgPool = {
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+};
+
 export class DiscordStore {
-  private db: any;
+  private pool: PgPool;
   private dek: Buffer;
 
-  constructor(db: any, dek: Buffer) {
-    this.db = db;
+  constructor(pool: PgPool, dek: Buffer) {
+    this.pool = pool;
     this.dek = dek;
   }
 
-  save(config: DiscordStoredConfig): void {
+  async save(config: DiscordStoredConfig): Promise<void> {
     const encrypted = encryptJSON(config, this.dek);
-    this.db.prepare(
-      `INSERT OR REPLACE INTO bot_credentials (platform, config_enc, iv, tag, version, updated_at)
-       VALUES (?, ?, ?, ?, '1.0', datetime('now'))`
-    ).run('discord', encrypted.ciphertext, encrypted.iv, encrypted.tag);
+    await this.pool.query(
+      `INSERT INTO bot_credentials (platform, config_enc, iv, tag, version, updated_at)
+       VALUES ($1, $2, $3, $4, '1.0', NOW())
+       ON CONFLICT (platform) DO UPDATE SET
+         config_enc = EXCLUDED.config_enc,
+         iv = EXCLUDED.iv,
+         tag = EXCLUDED.tag,
+         version = EXCLUDED.version,
+         updated_at = NOW()`,
+      ['discord', encrypted.ciphertext, encrypted.iv, encrypted.tag],
+    );
   }
 
-  load(): DiscordStoredConfig | null {
-    const row = this.db.prepare(
-      'SELECT config_enc, iv, tag FROM bot_credentials WHERE platform = ?'
-    ).get('discord') as { config_enc: string; iv: string; tag: string } | undefined;
+  async load(): Promise<DiscordStoredConfig | null> {
+    const res = await this.pool.query(
+      'SELECT config_enc, iv, tag FROM bot_credentials WHERE platform = $1',
+      ['discord'],
+    );
+    const row = res.rows[0] as { config_enc: string; iv: string; tag: string } | undefined;
 
     if (!row) return null;
 
@@ -38,12 +51,12 @@ export class DiscordStore {
     return decryptJSON<DiscordStoredConfig>(encrypted, this.dek);
   }
 
-  isConfigured(): boolean {
-    const cfg = this.load();
+  async isConfigured(): Promise<boolean> {
+    const cfg = await this.load();
     return cfg !== null && !!cfg.botToken;
   }
 
-  clear(): void {
-    this.db.prepare('DELETE FROM bot_credentials WHERE platform = ?').run('discord');
+  async clear(): Promise<void> {
+    await this.pool.query('DELETE FROM bot_credentials WHERE platform = $1', ['discord']);
   }
 }

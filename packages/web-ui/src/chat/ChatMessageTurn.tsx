@@ -44,7 +44,6 @@ function renderParts(
   onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void,
   onCrewRosterPickerSkip?: (messageId: string) => void,
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void,
-  planMode?: boolean,
 ) {
   const filtered = parts.filter((p) => {
     if (p.type === 'deep_search') {
@@ -83,7 +82,6 @@ function renderParts(
           <CrewRosterPickerMessage
             key={part.id}
             record={part.crewRosterPicker}
-            planMode={planMode}
             onSubmit={
               part.crewRosterPicker.status === 'pending' && onCrewRosterPickerSubmit && messageId
                 ? (selected) => onCrewRosterPickerSubmit(messageId, selected)
@@ -157,7 +155,7 @@ function renderParts(
   );
 }
 
-function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, showFeedback, onTurnFeedback, feedbackSubmitting, planMode }: {
+function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, showFeedback, onTurnFeedback, feedbackSubmitting }: {
   message: UIMessage;
   loadingSteps?: Array<{ id: string; label: string; status: string }> | null;
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void;
@@ -168,7 +166,6 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   showFeedback?: boolean;
   onTurnFeedback?: (messageId: string, rating: TurnFeedbackRating) => void;
   feedbackSubmitting?: boolean;
-  planMode?: boolean;
 }) {
   const crewInfo = message.crew;
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
@@ -202,7 +199,6 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     onCrewRosterPickerSubmit,
     onCrewRosterPickerSkip,
     onViewCrewDossier,
-    planMode,
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       {cleanContent && <CrewAwareMarkdown content={cleanContent} />}
@@ -298,8 +294,8 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   );
 }
 
-function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean; planMode?: boolean },
-  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean; planMode?: boolean }) {
+function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean },
+  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean }) {
   if (prev.loadingSteps !== next.loadingSteps) return false;
   if (prev.onOpenChildSession !== next.onOpenChildSession) return false;
   if (prev.onQuestionnaireRespond !== next.onQuestionnaireRespond) return false;
@@ -309,7 +305,6 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   if (prev.showFeedback !== next.showFeedback) return false;
   if (prev.onTurnFeedback !== next.onTurnFeedback) return false;
   if (prev.feedbackSubmitting !== next.feedbackSubmitting) return false;
-  if (prev.planMode !== next.planMode) return false;
   const pm = prev.message;
   const nm = next.message;
   if (pm.id !== nm.id || pm.content !== nm.content || pm.streaming !== nm.streaming) return false;

@@ -228,9 +228,10 @@ type MessagePageStore = {
   getMessagesPage?: (
     sessionId: string,
     opts: { limit?: number; before?: string },
-  ) => { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean };
+  ) => { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean } | Promise<{ messages: Array<Record<string, unknown>>; total: number; hasMore: boolean }>;
   getMessages?: (sessionId: string) => Array<Record<string, unknown>>;
   getParts?: (sessionId: string) => Array<Record<string, unknown>>;
+  getPartsForMessages?: (sessionId: string, messages: Array<Record<string, unknown>>) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
 };
 
 export function getMessageStore(): MessagePageStore | null {
@@ -238,15 +239,15 @@ export function getMessageStore(): MessagePageStore | null {
   return (eng.sessionManager as unknown as { store?: MessagePageStore })?.store ?? null;
 }
 
-export function loadSessionMessagesPage(
+export async function loadSessionMessagesPage(
   sessionId: string,
   opts: { limit?: number; before?: string },
-): { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean } {
+): Promise<{ messages: Array<Record<string, unknown>>; total: number; hasMore: boolean }> {
   const store = getMessageStore();
   if (!store) return { messages: [], total: 0, hasMore: false };
 
   if (store.getMessagesPage) {
-    return store.getMessagesPage(sessionId, opts);
+    return await store.getMessagesPage(sessionId, opts);
   }
 
   const all = (store.getMessages?.(sessionId) ?? [])

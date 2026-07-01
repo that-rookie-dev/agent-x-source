@@ -10,27 +10,18 @@ export const IS_LINUX = currentPlatform === 'linux';
 const HOME = homedir();
 
 export function getConfigDir(): string {
-  if (IS_WINDOWS) {
-    return join(process.env['APPDATA'] || join(HOME, 'AppData', 'Roaming'), 'agentx');
-  }
   return process.env['XDG_CONFIG_HOME']
     ? join(process.env['XDG_CONFIG_HOME'], 'agentx')
     : join(HOME, '.config', 'agentx');
 }
 
 export function getDataDir(): string {
-  if (IS_WINDOWS) {
-    return join(process.env['LOCALAPPDATA'] || join(HOME, 'AppData', 'Local'), 'agentx');
-  }
   return process.env['XDG_DATA_HOME']
     ? join(process.env['XDG_DATA_HOME'], 'agentx')
     : join(HOME, '.local', 'share', 'agentx');
 }
 
 export function getCacheDir(): string {
-  if (IS_WINDOWS) {
-    return join(process.env['LOCALAPPDATA'] || join(HOME, 'AppData', 'Local'), 'agentx', 'Cache');
-  }
   return process.env['XDG_CACHE_HOME']
     ? join(process.env['XDG_CACHE_HOME'], 'agentx')
     : join(HOME, '.cache', 'agentx');

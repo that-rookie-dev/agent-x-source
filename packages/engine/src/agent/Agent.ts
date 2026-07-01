@@ -46,8 +46,12 @@ import { SecretSauceManager } from '../secret-sauce/index.js';
 import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
-import { createSqliteNeuralDb, createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
+import { MemoryFabric, type MemoryNode } from '../neural/MemoryFabric.js';
+import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
+import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
+import type { EmbeddingProvider } from '@agentx/shared';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
@@ -160,6 +164,8 @@ export interface AgentOptions {
   crewPrivateHost?: import('@agentx/shared').Crew;
   /** Background worker (sub-agent / crew) — skip interactive plan approval & mode escalation UI gates. */
   delegatedWorker?: boolean;
+  /** Parent session ID — for crew workers to access the host conversation's neural brain memory. */
+  parentSessionId?: string;
 }
 
 export class Agent {
@@ -171,6 +177,8 @@ export class Agent {
   private persona: AgentPersonaConfig | null = null;
   private sessionId: string;
   private scopePath: string;
+  /** Public accessor for session ID — needed by SmartSubAgent to pass parentSessionId to crew workers. */
+  get currentSessionId(): string { return this.sessionId; }
   private isProcessing = false;
   readonly lifecycle = new AgentLifecycle();
   private scope: Scope | null = null;
@@ -240,6 +248,8 @@ export class Agent {
   private _turnFeedbackService: TurnFeedbackService | null = null;
   private _neuralDb: any = null;
   private _pgPool: any = null;
+  private _memoryFabric: MemoryFabric | null = null;
+  private _memoryEmbedder: EmbeddingProvider | null = null;
 
   // ─── Health & Budget Tracking
   private _llmCallCount = 0;
@@ -604,6 +614,7 @@ export class Agent {
     }
     this.sessionId = options.sessionId;
     this.scopePath = normalize(resolve(options.scopePath!));
+    this._pgPool = options.pgPool ?? null;
     const crewHost = options.crewPrivateHost;
     this.contextTracker = new ContextTracker(null as any, this.sessionId,
       crewHost && options.promptProfile === 'crew_private'
@@ -1074,14 +1085,262 @@ export class Agent {
     }
     return this._turnFeedbackService;
   }
+
   private getNeuralDb(): any {
     if (!this._neuralDb) {
       try {
         if (this._pgPool) { this._neuralDb = createPgNeuralDb(this._pgPool); }
-        else { this._neuralDb = createSqliteNeuralDb(join(getConfigDir(), 'neural.db')); }
+        else { this._neuralDb = { prepare: () => ({ run: () => ({ changes: 0 }), get: () => null, all: () => [] }) }; }
       } catch { this._neuralDb = { prepare: () => ({ run: () => ({ changes: 0 }), get: () => null, all: () => [] }) }; }
     }
     return this._neuralDb;
+  }
+
+  private get memoryFabric(): MemoryFabric | null {
+    if (!this._memoryFabric && this._pgPool) {
+      this._memoryFabric = new MemoryFabric(this._pgPool);
+    }
+    return this._memoryFabric;
+  }
+
+  private get memoryEmbedder(): EmbeddingProvider | null {
+    if (!this._memoryEmbedder) {
+      this._memoryEmbedder = new OnnxEmbeddingProvider();
+    }
+    return this._memoryEmbedder;
+  }
+
+  private _memoryContextNodeIds: string[] = [];
+
+  /** Tools whose results should be ingested into the neural brain for future RAG retrieval. */
+  private static readonly WEB_SEARCH_TOOLS = new Set([
+    'web_search', 'deep_web_search', 'web_fetch', 'web_scrape',
+  ]);
+  private _graphRagRetriever: GraphRagRetriever | null = null;
+
+  private get graphRagRetriever(): GraphRagRetriever | null {
+    // Neural brain can be disabled if embedding models failed to download.
+    if (this.config.neuralBrain === false) return null;
+    const fabric = this.memoryFabric;
+    const embedder = this.memoryEmbedder;
+    if (!fabric || !embedder) return null;
+    if (!this._graphRagRetriever) {
+      this._graphRagRetriever = new GraphRagRetriever(fabric, embedder);
+    }
+    return this._graphRagRetriever;
+  }
+
+  private async buildMemoryContext(): Promise<{ episodic: string; semantic: string; graph: string; community?: string }> {
+    const retriever = this.graphRagRetriever;
+    if (!retriever) return { episodic: '', semantic: '', graph: '' };
+    try {
+      const lastUser = [...this.messages].reverse().find((m) => m.role === 'user');
+      const rawQuery = typeof lastUser?.content === 'string' ? lastUser.content : '';
+      if (!rawQuery) return { episodic: '', semantic: '', graph: '' };
+
+      // Query reformulation — rewrite follow-up messages into standalone search queries.
+      const query = await this.reformulateQuery(rawQuery);
+
+      // Use parent session ID for crew workers so they can access the host conversation's memory.
+      const sessionId = this.options.parentSessionId ?? this.sessionId;
+      const result = await retriever.retrieve(query, {
+        sessionId,
+        agentId: this.config.user?.callsign,
+        globalLimit: 3,
+        localLimit: 15,
+        vectorLimit: 8,
+        graphDepth: 2,
+        minRelevance: 0.35,
+      });
+
+      // Additional pass: direct chunk search with a lower threshold to ensure
+      // uploaded document chunks are always included in context, even when
+      // entity extraction hasn't run yet or similarity is moderate.
+      const fabric = this.memoryFabric;
+      const embedder = this.memoryEmbedder;
+      let chunkNodes: MemoryNode[] = [];
+      if (fabric && embedder) {
+        try {
+          const chunkEmbedding = await embedder.embed(query);
+          chunkNodes = await fabric.vectorSearch(chunkEmbedding, { limit: 5, category: 'source_doc' });
+          // Filter by a lower threshold for chunks (0.25 — chunks are noisier).
+          chunkNodes = chunkNodes.filter((n) => {
+            const distance = (n as unknown as { distance?: number }).distance;
+            return distance == null || (1 - distance) >= 0.25;
+          });
+        } catch { /* best-effort */ }
+      }
+
+      // Merge chunk nodes into the result set.
+      const allNodeIds = new Set(result.all.map((n) => n.id));
+      for (const cn of chunkNodes) {
+        if (!allNodeIds.has(cn.id)) {
+          result.vector.push(cn);
+          result.all.push(cn);
+          allNodeIds.add(cn.id);
+        }
+      }
+      this._memoryContextNodeIds = result.all.map((n) => n.id).filter((id): id is string => !!id);
+
+      // Token budget for memory context — prioritize community > episodic > semantic > graph.
+      // Approximation: 4 chars ≈ 1 token. Budget: ~2000 tokens (≈ 8000 chars).
+      const MAX_CHARS = 8000;
+      const fmt = (nodes: Array<{ label: string; content: string; category: string }>, maxChars: number) => {
+        const lines: string[] = [];
+        let used = 0;
+        for (const n of nodes) {
+          const line = `- [${n.category}] ${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 200)}`;
+          if (used + line.length > maxChars) break;
+          lines.push(line);
+          used += line.length + 1;
+        }
+        return lines.join('\n');
+      };
+      const communityText = result.global.length > 0
+        ? result.global.map((n) => `${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 300)}`).join('\n')
+        : undefined;
+      const communityChars = communityText?.length ?? 0;
+      const remainingAfterCommunity = Math.max(0, MAX_CHARS - communityChars);
+      // Split remaining budget: 40% episodic, 30% semantic (incl. chunks), 30% graph.
+      const episodicText = fmt(result.episodic, Math.floor(remainingAfterCommunity * 0.4));
+      const semanticText = fmt(result.vector, Math.floor(remainingAfterCommunity * 0.3));
+      const graphText = fmt([...result.local, ...result.graph], Math.floor(remainingAfterCommunity * 0.3));
+
+      if (semanticText || communityText || episodicText || graphText) {
+        getLogger().info('AGENT', `buildMemoryContext: ${result.all.length} nodes (community=${result.global.length}, episodic=${result.episodic.length}, semantic=${result.vector.length}, graph=${result.local.length + result.graph.length}, chunks=${chunkNodes.length})`);
+      }
+
+      return {
+        community: communityText,
+        episodic: episodicText,
+        semantic: semanticText,
+        graph: graphText,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      getLogger().warn('AGENT', `buildMemoryContext failed: ${msg}`);
+      this._memoryContextNodeIds = [];
+      return { episodic: '', semantic: '', graph: '' };
+    }
+  }
+
+  /**
+   * Reformulate a user message into a standalone search query using conversation context.
+   * Short follow-ups like "yes", "continue", "what about X?" get expanded into full
+   * queries so RAG retrieval finds relevant memory instead of matching on noise.
+   * Falls back to the raw message if reformulation fails.
+   */
+  private async reformulateQuery(rawQuery: string): Promise<string> {
+    // Fast path: if the message is long and self-contained, skip reformulation.
+    const trimmed = rawQuery.trim();
+    if (trimmed.length > 120 && /[.!?]$/.test(trimmed)) return trimmed;
+    // Fast path: single-word or very short messages always need context.
+    if (trimmed.split(/\s+/).length <= 3) {
+      // Find the last substantive user message for context.
+      const recentUserMsgs = this.messages
+        .filter((m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 20)
+        .slice(-3)
+        .map((m) => (m as any).content as string);
+      if (recentUserMsgs.length === 0) return trimmed;
+    }
+
+    try {
+      const recentContext = this.messages
+        .slice(-6)
+        .filter((m) => typeof m.content === 'string')
+        .map((m) => `${m.role}: ${(m as any).content as string}`.slice(0, 200))
+        .join('\n');
+
+      const prompt = `Rewrite the user's latest message into a standalone search query for a knowledge retrieval system.
+
+Conversation context (most recent first):
+${recentContext}
+
+Latest user message: "${rawQuery}"
+
+Rules:
+- Output ONLY the reformulated search query, nothing else.
+- Incorporate context from the conversation so the query is self-contained.
+- If the message is already a clear standalone question, return it as-is.
+- Keep it concise (1-2 sentences max).
+- Do not add quotes or prefixes.`;
+
+      let reformulated = '';
+      const request = {
+        model: this.config.provider.activeModel,
+        messages: [{ role: 'user' as const, content: prompt }],
+        temperature: 0,
+        maxTokens: 150,
+        stream: false,
+      };
+      for await (const chunk of this.provider.complete(request)) {
+        if (chunk.type === 'text_delta' && chunk.content) reformulated += chunk.content;
+      }
+      const cleaned = reformulated.trim().replace(/^["']|["']$/g, '');
+      return cleaned || rawQuery;
+    } catch {
+      return rawQuery;
+    }
+  }
+
+  private async reinforceMemoryContext(): Promise<void> {
+    const fabric = this.memoryFabric;
+    if (!fabric || this._memoryContextNodeIds.length === 0) return;
+    await Promise.all(this._memoryContextNodeIds.map((id) => fabric.reinforce(id).catch(() => {})));
+  }
+
+  /**
+   * Ingest web search / fetch tool results into the neural brain so discovered
+   * knowledge is persisted for future RAG retrieval across all agents and crew.
+   * Uses the shared MemoryService via the engine's neural brain pipeline.
+   */
+  private async ingestWebSearchResult(toolId: string, args: Record<string, unknown> | undefined, output: string): Promise<void> {
+    try {
+      if (!this._pgPool) return;
+      const query = typeof args?.['query'] === 'string' ? args['query'] : '';
+      const url = typeof args?.['url'] === 'string' ? args['url'] : '';
+      const label = query
+        ? `Web Search: ${query.slice(0, 80)}`
+        : url
+          ? `Web Fetch: ${url.slice(0, 80)}`
+          : `Web Result (${toolId})`;
+      const content = query
+        ? `Search query: ${query}\n\nResults:\n${output.slice(0, 4000)}`
+        : `Source: ${url}\n\nContent:\n${output.slice(0, 4000)}`;
+
+      // Use the engine's MemoryService for structured extraction + embedding.
+      const { MemoryService } = await import('../neural/MemoryService.js');
+      const { OnnxEmbeddingProvider } = await import('../neural/OnnxEmbeddingProvider.js');
+      const embedder = new OnnxEmbeddingProvider();
+      // Build a generate function from the agent's provider for LLM-based extraction.
+      const generate = async (prompt: string) => {
+        let text = '';
+        const request = {
+          model: this.config.provider.activeModel,
+          messages: [{ role: 'user' as const, content: prompt }],
+          temperature: 0,
+          maxTokens: 2048,
+          stream: false,
+        };
+        for await (const chunk of this.provider.complete(request)) {
+          if (chunk.type === 'text_delta' && chunk.content) text += chunk.content;
+        }
+        return text;
+      };
+      const service = new MemoryService(this._pgPool as any, embedder, generate);
+      await service.ingest({
+        text: content,
+        label,
+        category: 'source_doc',
+        extract: true,
+        embed: true,
+        sessionId: this.options.parentSessionId ?? this.sessionId,
+        sourceId: `web:${toolId}`,
+      });
+      getLogger().info('WEB_INGEST', `Ingested ${toolId} result (${output.length} chars) into neural brain`);
+    } catch (e) {
+      getLogger().warn('WEB_INGEST', `Failed to ingest web result: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   // ─── Health + Checkpoint
@@ -1502,6 +1761,7 @@ export class Agent {
           expandKeywords: createCrewKeywordExpander({
             provider: this.provider,
             model: this.config.provider.activeModel,
+            requireExpertisePattern: false,
           }),
         });
         if (rosterHint) {
@@ -2039,6 +2299,12 @@ export class Agent {
         this.toolLedger.record({ name: toolId, success, output, elapsed, path });
         this.toolCallLogForReflection.push({ name: toolId, success, output, elapsed });
         this.turnState.touch();
+        // Ingest web search / fetch results into the neural brain for future RAG retrieval.
+        // This ensures knowledge discovered via web tools is persisted and searchable
+        // in subsequent turns — not lost after the current conversation.
+        if (success && Agent.WEB_SEARCH_TOOLS.has(toolId) && output && output.length > 50) {
+          this.ingestWebSearchResult(toolId, args, output).catch(() => {});
+        }
       },
       this.options.promptProfile ?? 'default',
     );
@@ -2249,6 +2515,7 @@ export class Agent {
       }
       this.messages.push({ role: 'assistant', content });
       await this.compactContext();
+      await this.reinforceMemoryContext();
 
       return this.tagCrewPrivateAssistant({
         id: generateMessageId(),
@@ -2410,6 +2677,7 @@ export class Agent {
       experienceEngine: { getProvenContext: () => this.experienceEngine.getProvenContext(), getCautionContext: () => this.experienceEngine.getCautionContext() },
       growthEngine: { getGrowthContext: () => this.growthEngine.getGrowthContext() },
       turnFeedbackService: { buildPromptContext: () => this.turnFeedbackService.buildPromptContext(this.sessionId) },
+      memoryContext: { getContext: () => this.buildMemoryContext() },
     };
   }
 
@@ -2420,7 +2688,8 @@ export class Agent {
         .register(createRulesSection())
         .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
-        .register(createCurrentTimeSection(ctx));
+        .register(createCurrentTimeSection(ctx))
+        .register(createMemoryContextSection(ctx));
       if (systemOverride) {
         this.promptAssembly.register(createSystemOverrideSection(systemOverride));
       }
@@ -2443,6 +2712,7 @@ export class Agent {
         .register(createUserSection(ctx))
         .register(createSoulSection(ctx))
         .register(createNeuralSection(ctx))
+        .register(createMemoryContextSection(ctx))
         .register(createInstructionsSection(ctx.scopePath));
       if (systemOverride) {
         this.promptAssembly.register(createSystemOverrideSection(systemOverride));
@@ -2473,6 +2743,7 @@ export class Agent {
       .register(createTaskPanelSection())
       .register(createSoulSection(ctx))
       .register(createNeuralSection(ctx))
+      .register(createMemoryContextSection(ctx))
       .register(createInstructionsSection(ctx.scopePath));
 
     if (systemOverride) {

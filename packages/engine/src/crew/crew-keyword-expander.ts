@@ -9,10 +9,15 @@ const EXPERTISE_OPINION_PATTERNS = [
   /\b(specialist|expert|advisor|consultant)\b.{0,32}\b(for|on|in|about)\b/i,
 ] as const;
 
-const EXPANDER_PROMPT = `You map user questions to specialist job-domain search keywords for a crew catalog.
-Given the user message, return 3-6 short English keywords (job titles, fields, disciplines) that would match relevant specialists.
-Focus on the SUBJECT DOMAIN, not filler words like "know", "help", or "about".
-Reply with ONLY a JSON array of strings, no markdown. Example: ["astrophysics","astronomy","theoretical physics"]`;
+const EXPANDER_PROMPT = `You map a user request to search keys that will find the best specialist in a crew catalog.
+Extract concrete, searchable keys from the message: tools, software, frameworks, skills, expertise domains, disciplines, methodologies, and traits the task implies.
+Return 3-8 short lowercase English keys. Include specific tool/technology names when present (e.g. "kubernetes", "terraform", "aws", "python", "tableau").
+Focus on the SUBJECT DOMAIN and concrete capabilities — not filler words like "know", "help", "about", "need", "want".
+If the message has no discernible specialist domain, return an empty array [].
+Reply with ONLY a JSON array of strings, no markdown. Examples:
+- "help me deploy a docker app to AWS" → ["docker","aws","deployment","cloud","devops","containerization"]
+- "I want to learn about black holes" → ["astrophysics","astronomy","black holes","cosmology"]
+- "hello, how are you?" → []`;
 
 export type CrewKeywordExpandFn = (message: string) => Promise<string[]>;
 
@@ -98,12 +103,16 @@ export function createCrewKeywordExpander(opts: {
   provider: ProviderInterface;
   model: string;
   timeoutMs?: number;
+  /** When false, skip the expertise-opinion pattern gate and run for any non-empty message (LLM-first mode). */
+  requireExpertisePattern?: boolean;
 }): CrewKeywordExpandFn {
   const timeoutMs = opts.timeoutMs ?? 4000;
+  const requireExpertisePattern = opts.requireExpertisePattern ?? true;
 
   return async (message: string): Promise<string[]> => {
     const trimmed = message.trim();
-    if (!trimmed || !isExpertiseOpinionQuery(trimmed)) return [];
+    if (!trimmed) return [];
+    if (requireExpertisePattern && !isExpertiseOpinionQuery(trimmed)) return [];
 
     const cacheKey = trimmed.toLowerCase();
     const cached = cacheGet(cacheKey);

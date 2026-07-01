@@ -1,10 +1,12 @@
-import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage, shell, safeStorage } from 'electron';
 import { join, basename } from 'path';
-import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } from 'fs';
+import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import type { Server } from 'http';
-import { spawn } from 'child_process';
-import { tmpdir } from 'os';
+import { spawn, execSync } from 'child_process';
+import { tmpdir, totalmem } from 'os';
 import { pathToFileURL } from 'url';
+import { randomBytes } from 'node:crypto';
+import { PostgresLifecycleManager } from './PostgresLifecycleManager.js';
 
 const REPO = 'SlashpanOrg/agent-x';
 
@@ -12,7 +14,9 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let server: Server | null = null;
+let pgManager: PostgresLifecycleManager | null = null;
 const PORT = 3333;
+const EMBEDDED_PG_PORT = 3335;
 
 const isDev = process.env['NODE_ENV'] === 'development' || !app.isPackaged;
 
@@ -295,15 +299,105 @@ function getWebUiDir(): string {
   return join(process.resourcesPath, 'web-ui');
 }
 
+function getWebNeuronDir(): string {
+  if (isDev) return join(__dirname, '..', '..', 'web-neuron', 'dist');
+  return join(process.resourcesPath, 'web-neuron');
+}
+
+function loadShellPath(): void {
+  if (process.platform !== 'darwin') return;
+  try {
+    const shellPath = execSync('/bin/bash -l -c "echo $PATH"', { encoding: 'utf-8', timeout: 5000 }).trim();
+    if (shellPath && shellPath !== process.env['PATH']) {
+      process.env['PATH'] = shellPath;
+    }
+  } catch {
+    /* ignore — binaries are bundled */
+  }
+}
+
+async function startEmbeddedPostgres(): Promise<string | null> {
+  // If a connection string is already provided externally, do not start embedded PG.
+  if (process.env['AGENTX_POSTGRES_CONNECTION_STRING']) {
+    return process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
+  }
+
+  const dataDir = join(app.getPath('userData'), 'brain_db');
+  pgManager = new PostgresLifecycleManager({
+    dataDir,
+    port: EMBEDDED_PG_PORT,
+    host: '127.0.0.1',
+    user: 'agentx',
+    password: 'agentx',
+    database: 'agentx',
+    onLog: (msg) => console.log(`[PG] ${msg}`),
+    onError: (msg) => console.error(`[PG] ${msg}`),
+  });
+
+  try {
+    const connectionString = await pgManager.start();
+    process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = connectionString;
+    process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '1';
+    return connectionString;
+  } catch (e) {
+    pgManager = null;
+    throw e;
+  }
+}
+
+async function stopEmbeddedPostgres(): Promise<void> {
+  if (pgManager) {
+    await pgManager.stop();
+    pgManager = null;
+  }
+}
+
+async function initializeVaultKey(): Promise<void> {
+  const configDir = join(app.getPath('userData'), 'vault');
+  mkdirSync(configDir, { recursive: true });
+  const keyFile = join(configDir, 'vault-key.enc');
+
+  if (safeStorage.isEncryptionAvailable() && existsSync(keyFile)) {
+    try {
+      const encrypted = readFileSync(keyFile);
+      const key = safeStorage.decryptString(encrypted);
+      process.env['AGENTX_VAULT_KEY'] = key;
+      return;
+    } catch (e) {
+      console.error('Failed to decrypt vault key, generating new one:', e);
+    }
+  }
+
+  const key = randomBytes(32).toString('base64');
+  if (safeStorage.isEncryptionAvailable()) {
+    try {
+      const encrypted = safeStorage.encryptString(key);
+      writeFileSync(keyFile, encrypted);
+    } catch (e) {
+      console.error('Failed to encrypt vault key:', e);
+    }
+  }
+  process.env['AGENTX_VAULT_KEY'] = key;
+}
+
 async function startServer(): Promise<void> {
   const apiPath = getWebApiPath();
   const uiDir = getWebUiDir();
+  const neuronDir = getWebNeuronDir();
 
   if (!existsSync(apiPath)) {
     throw new Error(`Web-API not found at ${apiPath}`);
   }
 
+  loadShellPath();
+
+  // Start the bundled native PostgreSQL before the web-api so it has a connection string ready.
+  await startEmbeddedPostgres();
+
+  await initializeVaultKey();
+
   process.env['AGENTX_UI_DIR'] = uiDir;
+  process.env['AGENTX_NEURON_DIR'] = neuronDir;
   process.env['PORT'] = String(PORT);
   process.env['NODE_ENV'] = 'production';
 
@@ -316,6 +410,7 @@ async function stopServer(): Promise<void> {
     await new Promise<void>((resolve) => server!.close(() => resolve()));
     server = null;
   }
+  await stopEmbeddedPostgres();
 }
 
 // ==================== External links ====================
@@ -434,6 +529,12 @@ function registerHotkey(): void {
 // ==================== IPC ====================
 
 ipcMain.on('app:isPackaged', (event) => { event.returnValue = app.isPackaged; });
+ipcMain.on('system:totalMemoryGB', (event) => {
+  event.returnValue = Math.round(totalmem() / (1024 ** 3) * 10) / 10;
+});
+ipcMain.on('system:localModelSupported', (event) => {
+  event.returnValue = totalmem() / (1024 ** 3) >= 32;
+});
 ipcMain.on('window:minimize', () => mainWindow?.minimize());
 ipcMain.on('window:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
@@ -451,6 +552,20 @@ ipcMain.handle('dialog:openFolder', async () => {
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 ipcMain.handle('shell:openExternal', async (_event, url: string) => openExternalLink(url));
+ipcMain.handle('window:openInternal', async (_event, url: string) => {
+  const internal = new BrowserWindow({
+    width: 1280, height: 800,
+    minWidth: 800, minHeight: 600,
+    backgroundColor: '#0a0a0a',
+    webPreferences: {
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  const target = url.startsWith('http') ? url : `http://localhost:${PORT}${url.startsWith('/') ? '' : '/'}${url}`;
+  await internal.loadURL(target);
+  return true;
+});
 
 // ==================== App Lifecycle ====================
 
@@ -477,7 +592,24 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on('will-quit', () => { globalShortcut.unregisterAll(); stopServer(); });
+app.on('will-quit', async () => {
+  globalShortcut.unregisterAll();
+  await stopServer();
+});
+
+app.on('before-quit', async () => {
+  await stopEmbeddedPostgres();
+});
+
+process.on('SIGTERM', async () => {
+  await stopEmbeddedPostgres();
+  app.quit();
+});
+
+process.on('SIGINT', async () => {
+  await stopEmbeddedPostgres();
+  app.quit();
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();

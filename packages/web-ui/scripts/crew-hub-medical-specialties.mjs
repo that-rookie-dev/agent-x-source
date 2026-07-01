@@ -14,7 +14,8 @@ const medicalTraits = ['ethical', 'empathetic', 'evidence-minded', 'patient-focu
 const medicalSkillBank = [
   'Clinical Literacy', 'Care Pathways', 'Patient Education', 'Medical Terminology', 'Evidence Review',
   'Care Coordination', 'Health Literacy', 'Risk Communication', 'Preventive Health', 'Chronic Disease Support',
-  'Referral Navigation', 'Documentation',
+  'Referral Navigation', 'Documentation', 'Shared Decision Making', 'Symptom Triage',
+  'Medication Literacy', 'Lifestyle Counseling', 'Screening Guidance', 'Discharge Planning',
 ];
 
 /** @returns {import('./generate-crew-hub.mjs').CategoryDef[]} */

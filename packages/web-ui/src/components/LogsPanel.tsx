@@ -8,6 +8,8 @@ import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import ViewStreamIcon from '@mui/icons-material/ViewStream';
+import ArticleIcon from '@mui/icons-material/Article';
+import { PanelHeader } from './PanelHeader';
 import { colors } from '../theme';
 import { getAuthToken } from '../api';
 
@@ -176,6 +178,7 @@ export function LogsPanel({ onClose, onTogglePosition, position }: LogsPanelProp
   return (
     <Box
       sx={{
+        height: '100%',
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
@@ -183,102 +186,23 @@ export function LogsPanel({ onClose, onTogglePosition, position }: LogsPanelProp
         overflow: 'hidden',
       }}
     >
-      {/* Header */}
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 1,
-          px: 2,
-          py: 0.75,
-          borderBottom: `1px solid ${colors.border.subtle}`,
-          flexShrink: 0,
-        }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
-            Logs
-          </span>
-          <span
-            style={{
-              fontSize: '0.6rem',
-              color: connected ? colors.accent.green : colors.accent.red,
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            {connected ? '● LIVE' : '○ disconnected'}
-          </span>
-          <span style={{ fontSize: '0.6rem', color: colors.text.muted, fontFamily: "'JetBrains Mono', monospace" }}>
-            {counts.total} total
-          </span>
-        </Box>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', ml: 'auto' }}>
-          {/* Level filter chips */}
-          {(['all', 'error', 'warn', 'info'] as LevelFilter[]).map((level) => (
-            <Chip
-              key={level}
-              label={
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.6rem' }}>
-                  {level === 'all' ? `all (${counts.total})` : `${level} (${counts[level]})`}
-                </span>
-              }
-              size="small"
-              variant={filter === level ? 'filled' : 'outlined'}
-              onClick={() => setFilter(level)}
-              sx={{
-                height: 22,
-                borderRadius: '4px',
-                ...(filter === level
-                  ? {
-                      bgcolor: level === 'all' ? colors.bg.hover : LEVEL_BG[level],
-                      color: level === 'all' ? colors.text.primary : LEVEL_COLORS[level],
-                      borderColor: level === 'all' ? colors.border.default : LEVEL_COLORS[level],
-                      '&:hover': { bgcolor: level === 'all' ? colors.bg.tertiary : LEVEL_BG[level] },
-                    }
-                  : {
-                      color: colors.text.tertiary,
-                      borderColor: colors.border.subtle,
-                      '&:hover': { borderColor: colors.border.default, color: colors.text.secondary },
-                    }),
-              }}
-            />
-          ))}
-
-          {/* Search */}
-          <Box
-            component="input"
-            placeholder="Search..."
-            value={search}
-            onChange={(e) => setSearch((e.target as HTMLInputElement).value)}
-            sx={{
-              width: 140,
-              height: 24,
-              px: 1,
-              fontSize: '0.65rem',
-              fontFamily: "'JetBrains Mono', monospace",
-              bgcolor: colors.bg.primary,
-              color: colors.text.primary,
-              border: `1px solid ${colors.border.subtle}`,
-              borderRadius: '4px',
-              outline: 'none',
-              '&:focus': { borderColor: colors.border.default },
-              '&::placeholder': { color: colors.text.muted },
-            }}
-          />
-
-          <Tooltip title="Copy logs">
-            <IconButton size="small" onClick={handleCopy} sx={{ color: colors.text.tertiary }}>
-              <ContentCopyIcon sx={{ fontSize: 14 }} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Clear logs">
-            <IconButton size="small" onClick={handleClear} sx={{ color: colors.text.tertiary }}>
-              <DeleteSweepIcon sx={{ fontSize: 14 }} />
-            </IconButton>
-          </Tooltip>
-          {onTogglePosition && (
+      <PanelHeader
+        title="System Logs"
+        subtitle={`Live system event stream · ${connected ? '● LIVE' : '○ disconnected'} · ${counts.total} total`}
+        icon={<ArticleIcon sx={{ fontSize: 20 }} />}
+        action={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Tooltip title="Copy logs">
+              <IconButton size="small" onClick={handleCopy} sx={{ color: colors.text.tertiary }}>
+                <ContentCopyIcon sx={{ fontSize: 14 }} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Clear logs">
+              <IconButton size="small" onClick={handleClear} sx={{ color: colors.text.tertiary }}>
+                <DeleteSweepIcon sx={{ fontSize: 14 }} />
+              </IconButton>
+            </Tooltip>
+            {onTogglePosition && (
             <Tooltip title={position === 'right' ? 'Move to bottom' : 'Move to right'}>
               <IconButton size="small" onClick={onTogglePosition} sx={{ color: colors.text.tertiary }}>
                 {position === 'right' ? <ViewStreamIcon sx={{ fontSize: 14 }} /> : <ViewColumnIcon sx={{ fontSize: 14 }} />}
@@ -291,7 +215,64 @@ export function LogsPanel({ onClose, onTogglePosition, position }: LogsPanelProp
             </IconButton>
           </Tooltip>
         </Box>
-      </Box>
+      }
+    />
+
+    {/* Toolbar */}
+    <Box sx={{ px: 2, py: 0.75, borderBottom: `1px solid ${colors.border.subtle}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+      {/* Level filter chips */}
+      {(['all', 'error', 'warn', 'info'] as LevelFilter[]).map((level) => (
+        <Chip
+          key={level}
+          label={
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.6rem' }}>
+              {level === 'all' ? `all (${counts.total})` : `${level} (${counts[level]})`}
+            </span>
+          }
+          size="small"
+          variant={filter === level ? 'filled' : 'outlined'}
+          onClick={() => setFilter(level)}
+          sx={{
+            height: 22,
+            borderRadius: '4px',
+            ...(filter === level
+              ? {
+                  bgcolor: level === 'all' ? colors.bg.hover : LEVEL_BG[level],
+                  color: level === 'all' ? colors.text.primary : LEVEL_COLORS[level],
+                  borderColor: level === 'all' ? colors.border.default : LEVEL_COLORS[level],
+                  '&:hover': { bgcolor: level === 'all' ? colors.bg.tertiary : LEVEL_BG[level] },
+                }
+              : {
+                  color: colors.text.tertiary,
+                  borderColor: colors.border.subtle,
+                  '&:hover': { borderColor: colors.border.default, color: colors.text.secondary },
+                }),
+          }}
+        />
+      ))}
+
+      {/* Search */}
+      <Box
+        component="input"
+        placeholder="Search..."
+        value={search}
+        onChange={(e) => setSearch((e.target as HTMLInputElement).value)}
+        sx={{
+          width: 140,
+          height: 24,
+          px: 1,
+          fontSize: '0.65rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          bgcolor: colors.bg.primary,
+          color: colors.text.primary,
+          border: `1px solid ${colors.border.subtle}`,
+          borderRadius: '4px',
+          outline: 'none',
+          '&:focus': { borderColor: colors.border.default },
+          '&::placeholder': { color: colors.text.muted },
+        }}
+      />
+    </Box>
 
       {/* Log entries */}
       <Box

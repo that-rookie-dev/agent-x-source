@@ -219,3 +219,89 @@ export const mcpServerSchema = z.object({
   permissionLevel: z.enum(['low', 'medium', 'high', 'critical']).optional(),
   maxOutputSize: z.number().positive().optional(),
 });
+
+// ─── Memory fabric schemas ──────────────────────────────────────
+
+export const memoryNodeCategorySchema = z.enum(['persona', 'tool', 'episodic', 'semantic', 'source_doc', 'system']);
+export const memoryEdgeTypeSchema = z.enum([
+  'CONTAINS', 'REFERENCES', 'NEXT_STEP', 'REQUIRES', 'RELATED_TO', 'GENERATED_OUTPUT', 'USING_TOOL', 'SHARED_INSIGHT',
+  'CAUSES', 'IS_A', 'PART_OF', 'HAS_PROPERTY', 'LOCATED_IN', 'OCCURRED_IN', 'MENTIONS', 'LEADS_TO', 'INFLUENCES',
+  'CONTRIBUTES_TO', 'RESULTS_IN', 'DESCRIBES', 'EXAMPLES', 'OPPOSES', 'SYNONYM', 'PRECEDES', 'FOLLOWS',
+]);
+
+export const memoryNodeCreateSchema = z.object({
+  id: z.string().uuid().optional(),
+  label: z.string().min(1, 'label is required'),
+  category: memoryNodeCategorySchema,
+  content: z.string().min(1, 'content is required'),
+  embedding: z.array(z.number()).optional(),
+  sourceId: z.string().uuid().optional(),
+  sessionId: z.string().optional(),
+  agentId: z.string().optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  status: z.enum(['active', 'failed', 'decayed', 'archived']).optional(),
+  tag: z.string().optional(),
+  isBenchmark: z.boolean().optional(),
+});
+
+export const memoryEdgeCreateSchema = z.object({
+  sourceNodeId: z.string().uuid(),
+  targetNodeId: z.string().uuid(),
+  relationshipType: memoryEdgeTypeSchema,
+  weight: z.number().min(0).max(1).optional(),
+});
+
+export const memorySearchSchema = z.object({
+  embedding: z.array(z.number()),
+  limit: z.number().int().min(1).max(100).optional(),
+  category: memoryNodeCategorySchema.optional(),
+  agentId: z.string().optional(),
+});
+
+export const memoryGraphWalkSchema = z.object({
+  startNodeIds: z.array(z.string().uuid()).min(1),
+  maxDepth: z.number().int().min(1).max(10).optional(),
+  maxFanOut: z.number().int().min(1).max(100).optional(),
+  minWeight: z.number().min(0).max(1).optional(),
+  relationshipTypes: z.array(memoryEdgeTypeSchema).optional(),
+});
+
+export const memoryContextSchema = z.object({
+  query: z.string().min(1),
+  sessionId: z.string().min(1).optional(),
+  embedding: z.array(z.number()).optional(),
+  agentId: z.string().optional(),
+  episodicLimit: z.number().int().min(1).max(100).optional(),
+  semanticLimit: z.number().int().min(1).max(100).optional(),
+  graphDepth: z.number().int().min(1).max(10).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+  useWeights: z.boolean().optional(),
+});
+
+export const memorySourceCreateSchema = z.object({
+  name: z.string().min(1),
+  kind: z.string().min(1),
+  colorHex: z.string().min(1),
+});
+
+export const documentIngestSchema = z.object({
+  name: z.string().min(1),
+  kind: z.enum(['pdf', 'web', 'markdown', 'text', 'json']),
+  content: z.string().min(1),
+  colorHex: z.string().optional(),
+  sourceId: z.string().optional(),
+  sessionId: z.string().optional(),
+  agentId: z.string().optional(),
+  chunkSize: z.number().int().min(100).max(5000).optional(),
+  chunkOverlap: z.number().int().min(0).max(1000).optional(),
+  maxEntitiesPerChunk: z.number().int().min(1).max(100).optional(),
+  maxChunks: z.number().int().min(1).max(200).optional(),
+});
+
+export const benchmarkRunSchema = z.object({
+  model: z.string().min(1),
+  provider: z.string().min(1),
+  tag: z.string().optional(),
+});
+
+

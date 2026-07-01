@@ -33,6 +33,7 @@ function summaryToPrebuilt(crew: CatalogSummary): PrebuiltCrew {
     expertise: crew.expertise,
     traits: crew.traits,
     tools: crew.tools,
+    tags: crew.tags,
   };
 }
 
@@ -51,6 +52,7 @@ function entryToPrebuilt(entry: CatalogEntry): PrebuiltCrew {
     expertise: entry.expertise,
     traits: entry.traits,
     tools: entry.tools,
+    tags: entry.tags,
   };
 }
 

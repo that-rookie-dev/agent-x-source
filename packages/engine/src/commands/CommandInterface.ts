@@ -1,4 +1,4 @@
-import type { SessionStore } from '../session/SessionStore.js';
+import type { StorageAdapter } from '@agentx/shared';
 import type { SessionManager } from '../session/SessionManager.js';
 
 export interface CommandInterface {
@@ -15,7 +15,7 @@ export interface CommandContext {
   providerId: string;
   modelId: string;
   emit: (message: string) => void;
-  sessionStore?: SessionStore | SessionManager;
+  sessionStore?: StorageAdapter | SessionManager;
 }
 
 export interface CommandResult {

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { memo, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import ReplayIcon from '@mui/icons-material/Replay';
@@ -21,13 +21,12 @@ interface ChatMessageListProps {
   pendingFeedbackMessageId?: string | null;
   onTurnFeedback?: (messageId: string, rating: import('@agentx/shared/browser').TurnFeedbackRating) => void;
   feedbackSubmitting?: boolean;
-  planMode?: boolean;
   /** Disable content-visibility sizing while prepending older messages (prevents scroll jumps). */
   freezeLayout?: boolean;
 }
 
 /** Virtual-ish message list — content-visibility keeps long sessions smooth. */
-export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting, planMode, freezeLayout }: ChatMessageListProps) {
+export const ChatMessageList = memo(function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting, freezeLayout }: ChatMessageListProps) {
   const renderMessage = useCallback((msg: UIMessage, idx: number) => {
     const isLast = idx === items.length - 1;
     const hasText = !!(msg.content?.trim() || msg.parts?.some((p) => p.type === 'text' && p.content?.trim()));
@@ -53,10 +52,9 @@ export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOp
         showFeedback={pendingFeedbackMessageId === msg.id}
         onTurnFeedback={onTurnFeedback}
         feedbackSubmitting={feedbackSubmitting}
-        planMode={planMode}
       />
     );
-  }, [items.length, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting, planMode]);
+  }, [items.length, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting]);
 
   return (
     <>
@@ -87,4 +85,4 @@ export function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOp
       <div ref={bottomRef} />
     </>
   );
-}
+});

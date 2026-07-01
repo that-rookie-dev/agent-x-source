@@ -30,6 +30,10 @@ interface SkillRow {
   updated_at: string;
 }
 
+interface DbLike {
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }>;
+}
+
 /**
  * Automatically generates reusable skills when the agent
  * solves a novel problem successfully.
@@ -37,17 +41,19 @@ interface SkillRow {
  * Skills are persisted in the `skills` database table.
  */
 export class SkillGenerator {
-  private db: any;
+  private db: DbLike;
   private skills: Map<string, GeneratedSkill> = new Map();
+  private loadPromise: Promise<void>;
 
   constructor(db: any) {
-    this.db = db;
-    this.loadAll();
+    this.db = db as DbLike;
+    this.loadPromise = this.loadAll();
   }
 
-  private loadAll(): void {
+  private async loadAll(): Promise<void> {
     try {
-      const rows = this.db.prepare('SELECT * FROM skills').all() as SkillRow[];
+      const res = await this.db.query('SELECT * FROM skills');
+      const rows = (res.rows ?? []) as SkillRow[];
       for (const row of rows) {
         const skill: GeneratedSkill = {
           id: row.id,
@@ -68,21 +74,22 @@ export class SkillGenerator {
     // If empty, seed bundled skills into DB
     if (this.skills.size === 0) {
       try {
-        const insert = this.db.prepare(
-          `INSERT OR IGNORE INTO skills (id, name, description, trigger_patterns_json, prompt, tools_json, is_bundled, usage_count, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
-        );
         const now = new Date().toISOString();
         for (const skill of BUNDLED_SKILLS) {
-          insert.run(
-            skill.id,
-            skill.name,
-            skill.description,
-            JSON.stringify(skill.triggerPatterns),
-            skill.prompt,
-            JSON.stringify(skill.tools),
-            now,
-            now,
+          await this.db.query(
+            `INSERT INTO skills (id, name, description, trigger_patterns_json, prompt, tools_json, is_bundled, usage_count, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 1, 0, $7, $8)
+             ON CONFLICT (id) DO NOTHING`,
+            [
+              skill.id,
+              skill.name,
+              skill.description,
+              JSON.stringify(skill.triggerPatterns),
+              skill.prompt,
+              JSON.stringify(skill.tools),
+              now,
+              now,
+            ],
           );
           this.skills.set(skill.id, { ...skill, usageCount: 0 });
         }
@@ -95,6 +102,10 @@ export class SkillGenerator {
     logger.info('SKILL_GEN', `Loaded ${this.skills.size} skills from DB`);
   }
 
+  private async ensureLoaded(): Promise<void> {
+    await this.loadPromise;
+  }
+
   /**
    * Check if a task is novel enough to warrant skill generation.
    * Novelty criteria:
@@ -103,6 +114,7 @@ export class SkillGenerator {
    * - No existing skill matches the task description
    */
   shouldGenerateSkill(instruction: string, toolCallsUsed: Array<{ name: string }>): boolean {
+    this.ensureLoaded();
     if (toolCallsUsed.length < 3) return false;
 
     const uniqueCategories = new Set(
@@ -140,6 +152,7 @@ export class SkillGenerator {
     toolCallsUsed: Array<{ name: string; args: Record<string, unknown> }>,
     result: string,
   ): Promise<GeneratedSkill | null> {
+    await this.ensureLoaded();
     const id = `skill-${Date.now()}`;
     const toolsUsed = [...new Set(toolCallsUsed.map((t) => t.name))];
 
@@ -199,18 +212,28 @@ Description:`;
       };
 
       // Write to DB
-      this.db.prepare(
-        `INSERT OR REPLACE INTO skills (id, name, description, trigger_patterns_json, prompt, tools_json, is_bundled, usage_count, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
-      ).run(
-        skill.id,
-        skill.name,
-        skill.description,
-        JSON.stringify(skill.triggerPatterns),
-        skill.prompt,
-        JSON.stringify(skill.tools),
-        skill.createdAt,
-        new Date().toISOString(),
+      await this.db.query(
+        `INSERT INTO skills (id, name, description, trigger_patterns_json, prompt, tools_json, is_bundled, usage_count, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           description = EXCLUDED.description,
+           trigger_patterns_json = EXCLUDED.trigger_patterns_json,
+           prompt = EXCLUDED.prompt,
+           tools_json = EXCLUDED.tools_json,
+           is_bundled = EXCLUDED.is_bundled,
+           usage_count = EXCLUDED.usage_count,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          skill.id,
+          skill.name,
+          skill.description,
+          JSON.stringify(skill.triggerPatterns),
+          skill.prompt,
+          JSON.stringify(skill.tools),
+          skill.createdAt,
+          new Date().toISOString(),
+        ],
       );
       this.skills.set(id, skill);
 
@@ -223,7 +246,8 @@ Description:`;
   }
 
   /**
-   * Get all loaded skills.
+   * Get all loaded skills. Synchronous — returns whatever is currently in memory.
+   * The constructor starts an async load; skills will appear once that completes.
    */
   getAll(): GeneratedSkill[] {
     // Merge generated + bundled skills, remove duplicates by id
@@ -236,7 +260,7 @@ Description:`;
   }
 
   /**
-   * Find the best matching skill for a user query.
+   * Find the best matching skill for a user query. Synchronous.
    */
   findBestMatch(query: string): GeneratedSkill | null {
     // First check generated skills
@@ -269,13 +293,17 @@ Description:`;
   /**
    * Record usage of a skill.
    */
-  recordUsage(skillId: string): void {
+  async recordUsage(skillId: string): Promise<void> {
+    await this.ensureLoaded();
     const skill = this.skills.get(skillId);
     if (skill) {
       skill.usageCount++;
       try {
-        this.db.prepare('UPDATE skills SET usage_count = ?, updated_at = ? WHERE id = ?')
-          .run(skill.usageCount, new Date().toISOString(), skillId);
+        await this.db.query('UPDATE skills SET usage_count = $1, updated_at = $2 WHERE id = $3', [
+          skill.usageCount,
+          new Date().toISOString(),
+          skillId,
+        ]);
       } catch {
         /* ignore */
       }
@@ -289,12 +317,23 @@ Description:`;
     // Extract 2-3 word phrases
     for (let i = 0; i < words.length - 1; i++) {
       const phrase = words.slice(i, i + 2).join(' ');
-      if (phrase.length > 5 && !keyPhrases.includes(phrase)) {
-        keyPhrases.push(phrase);
+      if (phrase.length > 5) keyPhrases.push(phrase);
+      if (i < words.length - 2) {
+        const phrase3 = words.slice(i, i + 3).join(' ');
+        if (phrase3.length > 8) keyPhrases.push(phrase3);
       }
     }
 
-    return keyPhrases.slice(0, 5);
+    // Add individual action words
+    const actionWords = ['create', 'build', 'fix', 'refactor', 'test', 'deploy', 'analyze', 'generate', 'write', 'update', 'delete', 'implement', 'configure'];
+    for (const word of words) {
+      if (actionWords.includes(word) && !keyPhrases.includes(word)) {
+        keyPhrases.push(word);
+      }
+    }
+
+    // Remove duplicates and limit
+    return [...new Set(keyPhrases)].slice(0, 8);
   }
 
   private buildSkillPrompt(
@@ -302,78 +341,45 @@ Description:`;
     toolCallsUsed: Array<{ name: string; args: Record<string, unknown> }>,
     result: string,
   ): string {
-    const steps = toolCallsUsed.map((tc, i) => `${i + 1}. ${tc.name}(${JSON.stringify(tc.args).slice(0, 100)})`);
+    const toolsList = toolCallsUsed.map((t) => `- ${t.name}: ${JSON.stringify(t.args)}`).join('\n');
+    return `You are an expert at the following task. Execute it carefully.
 
-    return `[SKILL: ${instruction.slice(0, 100)}]
-Steps:
-${steps.join('\n')}
+Task: ${instruction}
 
-Expected outcome:
-${result.slice(0, 500)}
+Approach (based on a successful previous execution):
+${toolsList}
 
-Apply this pattern when the user requests similar work. Follow the same sequence of tool calls, adapting parameters as needed.`;
+Expected outcome: ${result.slice(0, 500)}`;
   }
 
   private computeSimilarity(a: string, b: string): number {
-    const wordsA = new Set(a.split(/\s+/).filter((w) => w.length > 2));
-    const wordsB = new Set(b.split(/\s+/).filter((w) => w.length > 2));
-    if (wordsA.size === 0 || wordsB.size === 0) return 0;
-
-    let matchCount = 0;
-    for (const w of wordsA) {
-      if (wordsB.has(w)) matchCount++;
-      else {
-        // Check for partial match (e.g., "deploy" matches "deploying")
-        for (const wb of wordsB) {
-          if (wb.includes(w) || w.includes(wb)) { matchCount += 0.5; break; }
-        }
-      }
-    }
-
-    return matchCount / Math.max(wordsA.size, wordsB.size);
+    if (a === b) return 1;
+    const aWords = new Set(a.split(/\s+/));
+    const bWords = new Set(b.split(/\s+/));
+    const intersection = new Set([...aWords].filter((x) => bWords.has(x)));
+    const union = new Set([...aWords, ...bWords]);
+    return union.size === 0 ? 0 : intersection.size / union.size;
   }
 }
 
 /**
- * Migration helper: reads old `skills/*.json` files from disk and inserts them into
- * the `skills` database table. Skips entries whose IDs already exist in the DB.
- *
- * @param db      The database connection (better-sqlite3 style).
- * @param skillsDir  Path to the old skills directory (e.g. `~/.config/agentx/skills/`).
- * @returns The number of skills migrated.
+ * Load skill files from the filesystem.
+ * Each .skill file is a JSON file containing a GeneratedSkill object.
  */
-export function migrateSkillsFromDisk(db: any, skillsDir: string): number {
-  if (!existsSync(skillsDir)) return 0;
+export function loadSkillFiles(skillDir?: string): GeneratedSkill[] {
+  const dir = skillDir ?? join(process.cwd(), 'skills');
+  if (!existsSync(dir)) return [];
 
-  const files = readdirSync(skillsDir).filter((f) => f.endsWith('.json'));
-  if (files.length === 0) return 0;
-
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO skills (id, name, description, trigger_patterns_json, prompt, tools_json, is_bundled, usage_count, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-  );
-
-  let count = 0;
-  for (const file of files) {
+  const skills: GeneratedSkill[] = [];
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.skill')) continue;
     try {
-      const skill = JSON.parse(readFileSync(join(skillsDir, file), 'utf-8')) as GeneratedSkill;
-      const result = insert.run(
-        skill.id,
-        skill.name,
-        skill.description,
-        JSON.stringify(skill.triggerPatterns ?? []),
-        skill.prompt,
-        JSON.stringify(skill.tools ?? []),
-        skill.usageCount ?? 0,
-        skill.createdAt ?? new Date().toISOString(),
-        new Date().toISOString(),
-      );
-      if (result.changes > 0) count++;
-    } catch {
-      /* skip malformed */
+      const content = readFileSync(join(dir, file), 'utf-8');
+      const skill = JSON.parse(content) as GeneratedSkill;
+      skills.push(skill);
+    } catch (e) {
+      logger.warn('SKILL_GEN', `Failed to load skill file ${file}: ${e}`);
     }
   }
-
-  logger.info('SKILL_GEN', `Migrated ${count} skills from ${skillsDir} to DB`);
-  return count;
+  return skills;
 }

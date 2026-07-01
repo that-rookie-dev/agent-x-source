@@ -126,6 +126,7 @@ export const providers = {
   switch: (provider: string) => request<{ ok: boolean; provider: string; model: string }>('/provider/switch', { method: 'POST', body: JSON.stringify({ provider }) }),
   createProfile: (provider: string, label: string, apiKey: string, baseUrl?: string, setActive?: boolean) => request<{ ok: boolean; provider: string; profileId: string }>('/provider/profile', { method: 'POST', body: JSON.stringify({ provider, profileId: label, label, apiKey, baseUrl, setActive }) }),
   switchProfile: (providerId: string, profileId: string) => request<{ ok: boolean }>('/provider/profile/switch', { method: 'POST', body: JSON.stringify({ providerId, profileId }) }),
+  deleteProfile: (providerId: string, profileId: string) => request<{ ok: boolean }>(`/provider/${providerId}/profile/${profileId}`, { method: 'DELETE' }),
 };
 
 // ─── Models ───
@@ -416,15 +417,17 @@ export interface Checkpoint {
   messageCount: number;
 }
 
-export interface DbStatus {
-  dbMode: 'sqlite' | 'memory' | 'unknown' | 'error';
+export interface SessionDbStatus {
+  dbMode: 'postgres' | 'unknown' | 'error';
+  backend: 'postgres' | 'unknown' | 'error';
+  connected: boolean;
   sessionCount: number;
   filesystemRecovered: number;
   schemaVersion: number;
 }
 
 export const sessions = {
-  dbStatus: () => request<DbStatus>('/sessions/db-status'),
+  dbStatus: () => request<SessionDbStatus>('/sessions/db-status'),
   list: () => request<SessionInfo[]>('/sessions'),
   children: (parentId: string) => request<{ children: ChildSessionInfo[] }>(`/sessions/${parentId}/children`).then((r) => r.children ?? []),
   preview: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[] }>(`/sessions/${id}/preview`),
@@ -564,6 +567,220 @@ export const rag = {
   index: (content: string, metadata?: Record<string, string>) => request<{ ok: boolean }>('/rag/index', { method: 'POST', body: JSON.stringify({ content, metadata }) }),
   search: (query: string, topK?: number) => request<RAGResult[]>('/rag/search', { method: 'POST', body: JSON.stringify({ query, topK }) }),
   clear: () => request<{ ok: boolean }>('/rag/clear', { method: 'POST' }),
+};
+
+// ─── RAG Studio (async document ingestion + job tracking) ───
+
+/** Atomic stage detail persisted alongside job progress. */
+export interface StageDetail {
+  stage: string;
+  detail?: string;
+  chunkIndex?: number;
+  chunkCount?: number;
+  batchIndex?: number;
+  batchCount?: number;
+}
+
+export interface IngestionJob {
+  id: string;
+  kind: string;
+  payload: unknown;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+  priority: number;
+  attemptCount: number;
+  maxAttempts: number;
+  error?: string;
+  progress: number;
+  result?: unknown;
+  stageDetail?: StageDetail | null;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  lockedUntil: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Full atomic event delivered via the SSE stream. */
+export interface IngestStreamEvent {
+  jobId: string;
+  stage: string;
+  progress: number;
+  status: string;
+  detail?: string;
+  chunkIndex?: number;
+  chunkCount?: number;
+  batchIndex?: number;
+  batchCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  error?: string;
+  updatedAt?: string;
+}
+
+export interface IngestAsyncResult {
+  jobId: string;
+  status: string;
+  name: string;
+  kind: string;
+}
+
+export const ragStudio = {
+  /** Enqueue a file for async ingestion. Returns the job ID. */
+  ingestFile: async (file: File, opts?: { chunkSize?: number; chunkOverlap?: number }): Promise<IngestAsyncResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    if (opts?.chunkSize) form.append('chunkSize', String(opts.chunkSize));
+    if (opts?.chunkOverlap) form.append('chunkOverlap', String(opts.chunkOverlap));
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const res = await fetch(`${BASE}/memory/ingest-async`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: form,
+    });
+    if (!res.ok) throw new Error(`Failed to enqueue file: ${res.statusText}`);
+    return res.json();
+  },
+
+  /** Enqueue a web URL for async ingestion. */
+  ingestUrl: async (url: string, name?: string): Promise<IngestAsyncResult> => {
+    return request<IngestAsyncResult>('/memory/ingest-async', {
+      method: 'POST',
+      body: JSON.stringify({ url, name }),
+    });
+  },
+
+  /** Enqueue raw text content for async ingestion. */
+  ingestText: async (content: string, name: string, kind: 'text' | 'markdown' | 'json' = 'text'): Promise<IngestAsyncResult> => {
+    return request<IngestAsyncResult>('/memory/ingest-async', {
+      method: 'POST',
+      body: JSON.stringify({ content, name, kind }),
+    });
+  },
+
+  /** List recent ingestion jobs (filtered to document_ingest only by default). */
+  jobs: (limit = 50, kind = 'document_ingest') => request<{ jobs: IngestionJob[] }>(`/memory/jobs?limit=${limit}&kind=${kind}`),
+
+  /** Get a single job by ID. */
+  job: (id: string) => request<IngestionJob>(`/memory/jobs/${id}`),
+
+  /** Fetch the full event log for a job (for populating the log on selection). */
+  jobEvents: (id: string) => request<{ events: IngestStreamEvent[] }>(`/memory/jobs/${id}/events`),
+
+  /** Cancel a running or pending job. */
+  cancelJob: (id: string) => request<{ ok: boolean }>(`/memory/jobs/${id}/cancel`, { method: 'POST' }),
+
+  /** Delete a job and all its events. */
+  deleteJob: (id: string) => request<{ ok: boolean }>(`/memory/jobs/${id}`, { method: 'DELETE' }),
+
+  /** Open an SSE stream that polls job progress until terminal state. */
+  streamJob: (jobId: string, onEvent: (data: IngestStreamEvent) => void): (() => void) => {
+    const url = authToken
+      ? `${BASE}/memory/jobs/${jobId}/stream?token=${encodeURIComponent(authToken)}`
+      : `${BASE}/memory/jobs/${jobId}/stream`;
+    const es = new EventSource(url, { withCredentials: true });
+    es.onmessage = (e) => {
+      try { onEvent(JSON.parse(e.data)); } catch { /* ignore parse errors */ }
+    };
+    return () => es.close();
+  },
+};
+
+// ─── Knowledge Base (memory browsing) ───
+
+export interface MemorySource {
+  id: string;
+  name: string;
+  kind: string;
+  colorHex: string;
+  createdAt: string;
+  filePath?: string | null;
+  fileSize?: number | null;
+  fileMime?: string | null;
+}
+
+export type MemoryNodeCategory = 'persona' | 'tool' | 'episodic' | 'semantic' | 'source_doc' | 'system';
+
+export interface MemoryNode {
+  id: string;
+  label: string;
+  category: MemoryNodeCategory;
+  content: string;
+  status: string;
+  x: number | null;
+  y: number | null;
+  layoutEpoch: number;
+  tag?: string;
+  isBenchmark: boolean;
+  sourceId?: string;
+  sessionId?: string;
+  agentId?: string;
+  confidence?: number;
+  createdAt: string;
+  updatedAt: string;
+  accessCount: number;
+  lastAccessedAt: string | null;
+}
+
+export interface MemoryEdge {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  relationshipType: string;
+  weight: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GraphSnapshot {
+  nodes: MemoryNode[];
+  edges: MemoryEdge[];
+}
+
+export interface SourceNodesResult {
+  nodes: MemoryNode[];
+  total: number;
+}
+
+export const knowledge = {
+  /** List all knowledge sources. */
+  sources: () => request<MemorySource[]>('/memory/sources'),
+
+  /** Get all nodes for a specific source (paginated). */
+  sourceNodes: (sourceId: string, opts?: { limit?: number; offset?: number; category?: MemoryNodeCategory }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.offset) params.set('offset', String(opts.offset));
+    if (opts?.category) params.set('category', opts.category);
+    const qs = params.toString();
+    return request<SourceNodesResult>(`/memory/sources/${sourceId}/nodes${qs ? `?${qs}` : ''}`);
+  },
+
+  /** Get a graph snapshot of recent nodes (optionally filtered). */
+  graph: (opts?: { limit?: number; category?: MemoryNodeCategory; sourceId?: string; tag?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.category) params.set('category', opts.category);
+    if (opts?.sourceId) params.set('sourceId', opts.sourceId);
+    if (opts?.tag) params.set('tag', opts.tag);
+    const qs = params.toString();
+    return request<GraphSnapshot>(`/memory/graph${qs ? `?${qs}` : ''}`);
+  },
+
+  /** Get a single node by ID. */
+  node: (id: string) => request<MemoryNode>(`/memory/nodes/${id}`),
+
+  /** Download the original file for a source (returns a URL for an anchor click). */
+  sourceFileUrl: (sourceId: string) => `${BASE}/memory/sources/${sourceId}/file`,
+
+  /** Get RAG Studio storage stats (file count, total size). */
+  storageStats: () => request<{ fileCount: number; totalBytes: number; path: string }>('/memory/rag-studio/storage'),
+
+  /** Clear all persisted RAG Studio files (does NOT delete knowledge nodes). */
+  clearStorage: () => request<{ ok: boolean; deletedFiles: number; freedBytes: number }>('/memory/rag-studio/storage', { method: 'DELETE' }),
 };
 
 // ─── Bridges ───
@@ -711,6 +928,7 @@ export interface AgentXConfig {
   user?: { callsign: string };
   setupComplete?: boolean;
   rag?: { enabled: boolean; embeddingModel: string; chunkSize: number; topK: number };
+  localModel?: { enabled?: boolean; modelId?: string; modelName?: string; displayName?: string };
   tools?: {
     webSearch?: {
       duckduckgo?: { enabled?: boolean };
@@ -719,6 +937,8 @@ export interface AgentXConfig {
       tavily?: { enabled: boolean; apiKey?: string };
     };
   };
+  /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
+  neuralBrain?: boolean;
 }
 
 export interface ProviderSettings {
@@ -825,6 +1045,7 @@ export interface CatalogSummary {
   traits: string[];
   tone?: string;
   tools?: string[];
+  tags?: string[];
   requiresMedicalDisclaimer?: boolean;
   honorsDoctorate?: boolean;
 }
@@ -842,6 +1063,7 @@ export interface CatalogEntry {
   expertise: string[];
   traits: string[];
   tools?: string[];
+  tags?: string[];
   searchText: string;
   hubRevision: number;
   active: boolean;
@@ -866,6 +1088,8 @@ export interface CrewMatchCandidate {
   categoryId?: string;
   categoryLabel?: string;
   tone?: string;
+  tools?: string[];
+  tags?: string[];
   requiresMedicalDisclaimer?: boolean;
   honorsDoctorate?: boolean;
 }
@@ -1154,14 +1378,13 @@ export const webuiActive = {
 
 // ─── Settings: Database ───
 export interface DbStatus {
-  backend: 'sqlite' | 'postgres';
+  backend: 'postgres';
   connected: boolean;
   stats: {
     dbSizeBytes: number;
     dbSizeFormatted: string;
     tableCount: number;
     tables: Record<string, number>;
-    walSizeBytes: number;
   };
   health: {
     status: 'healthy' | 'degraded' | 'unhealthy';
@@ -1178,17 +1401,83 @@ export interface DbStatus {
   };
 }
 
+export const localModel = {
+  capabilities: () =>
+    request<{ capabilities: any; localModelSupported?: boolean }>('/local-model/capabilities'),
+  catalog: () =>
+    request<{ catalog: any; compatible: string[]; recommended: string | null }>('/local-model/catalog'),
+  download: (modelId: string) =>
+    request<{ ok: boolean; modelId: string; sizeGB: number; message: string }>('/local-model/download', {
+      method: 'POST',
+      body: JSON.stringify({ modelId }),
+    }),
+  downloadStatus: (modelId: string) =>
+    request<{ status: string; progress?: number; error?: string }>(`/local-model/download-status/${modelId}`),
+  installed: () =>
+    request<{ models: Array<{ modelId: string; modelName: string; displayName?: string; downloadedAt: string; dtype?: string; isActive: boolean }> }>('/local-model/installed'),
+  activate: (modelId: string) =>
+    request<{ ok: boolean; modelId: string; message: string }>(`/local-model/activate/${modelId}`, { method: 'POST' }),
+  delete: (modelId: string) =>
+    request<{ ok: boolean; message: string }>(`/local-model/${modelId}`, { method: 'DELETE' }),
+  switchToPrimary: () =>
+    request<{ ok: boolean; message: string }>('/local-model/switch-to-primary', { method: 'POST' }),
+  status: () =>
+    request<{ installed: string | null; activeModelId: string | null; enabled: boolean; model: { id: string; displayName: string; huggingFaceId: string; sizeGB: number; downloadedAt: string | null } | null }>(
+      '/local-model/status',
+    ),
+};
+
+export interface EmbeddingModelStatus {
+  id: string;
+  displayName: string;
+  huggingfaceId: string;
+  approxSizeMB: number;
+  downloaded: boolean;
+  sizeOnDiskMB: number;
+  downloadStatus: 'not_started' | 'pending' | 'downloading' | 'complete' | 'error';
+  percentage: number;
+}
+
+export interface EmbeddingModelProgress {
+  id: string;
+  displayName: string;
+  status: 'not_started' | 'pending' | 'downloading' | 'complete' | 'error';
+  downloadedMB: number;
+  totalMB: number;
+  percentage: number;
+  error?: string;
+}
+
+export const embeddingModels = {
+  status: () =>
+    request<{ models: EmbeddingModelStatus[]; allDownloaded: boolean }>('/embedding-models/status'),
+  download: () =>
+    request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/embedding-models/download', { method: 'POST' }),
+  /**
+   * Opens an SSE connection for download progress. Returns a cleanup function.
+   */
+  progressStream: (onProgress: (data: { type: string; models?: EmbeddingModelProgress[]; allComplete?: boolean; hasError?: boolean }) => void): (() => void) => {
+    const url = `${BASE}/embedding-models/progress`;
+    const es = new EventSource(url);
+    es.onmessage = (ev) => {
+      try { onProgress(JSON.parse(ev.data)); } catch {}
+    };
+    es.onerror = () => { /* SSE will auto-reconnect; ignore */ };
+    return () => es.close();
+  },
+};
+
 export const settings = {
   db: {
     get: () => request<DbStatus>('/settings/db'),
     update: (config: { backend: string; postgres?: { connectionString: string } }) =>
       request<{ ok: boolean; backend?: string; tablesCreated?: number }>('/settings/db', { method: 'PUT', body: JSON.stringify(config) }),
     test: (connectionString: string) =>
-      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string }>(
+      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean }>(
         '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh: undefined }) }
       ),
     testAdvanced: (connectionString: string, ssh?: { host: string; port: number; username: string; password?: string; privateKey?: string } | null) =>
-      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string }>(
+      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean }>(
         '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh }) }
       ),
     migrate: () =>
@@ -1201,6 +1490,10 @@ export const settings = {
       request<{ ok: boolean }>('/settings/db/clear', { method: 'POST' }),
     clearCache: () =>
       request<{ ok: boolean; freedFormatted: string }>('/settings/db/clear-cache', { method: 'POST' }),
+    provisionStatus: () =>
+      request<{ postgres: boolean; schemaVersion: number; migrationsApplied: number; age: { available: boolean; error?: string | null }; timestamp: string }>('/memory/storage-status'),
+    systemInit: () =>
+      request<{ ok: boolean; nodeId: string }>('/memory/system-init', { method: 'POST' }),
   },
   webSearch: {
     status: () =>

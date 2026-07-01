@@ -240,6 +240,8 @@ function ephemeralCrewFromCatalogEntry(entry: CatalogEntry): Crew {
     expertise: entry.expertise,
     traits: entry.traits,
     tools: entry.tools,
+    tags: entry.tags,
+    searchText: entry.searchText,
     source: 'hub',
     catalogId: entry.id,
     isDefault: false,
@@ -267,6 +269,8 @@ export function recruitCrewFromCatalogEntry(crewManager: CrewManagerLike, entry:
     expertise: entry.expertise,
     traits: entry.traits,
     tools: entry.tools,
+    tags: entry.tags,
+    searchText: entry.searchText,
     source: 'hub',
     catalogId: entry.id,
   });
@@ -299,7 +303,7 @@ export function crewFromSessionSnapshot(session: Session): Crew | undefined {
   };
 }
 
-/** Sync resolve for createAgent — roster, sqlite catalog snapshot, then session fields (no roster recruit). */
+/** Sync resolve for createAgent — roster, Postgres catalog snapshot, then session fields (no roster recruit). */
 export function resolveCrewPrivateHostForAgent(
   crewManager: CrewManagerLike,
   session: Session,

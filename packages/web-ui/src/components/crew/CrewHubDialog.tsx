@@ -40,6 +40,7 @@ export interface PrebuiltCrew {
   expertise: string[];
   traits: string[];
   tools?: string[];
+  tags?: string[];
 }
 
 export interface PrebuiltCategory {

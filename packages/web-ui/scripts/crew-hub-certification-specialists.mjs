@@ -353,18 +353,30 @@ const cloudSkillBank = [
   'Cloud Architecture', 'IAM', 'Networking', 'Security', 'Cost Optimization',
   'High Availability', 'Disaster Recovery', 'Infrastructure as Code', 'Containers',
   'Serverless', 'Observability', 'Compliance',
+  'AWS', 'Azure', 'GCP', 'Google Cloud', 'EC2', 'S3', 'Lambda', 'RDS', 'VPC',
+  'EKS', 'GKE', 'AKS', 'CloudFront', 'Route 53', 'IAM Roles', 'KMS',
+  'Terraform', 'CloudFormation', 'ARM', 'Bicep', 'Pulumi', 'Compute Engine',
+  'Cloud Storage', 'BigQuery', 'Cloud Run', 'App Service', 'Azure Functions',
+  'Well-Architected Framework', 'Landing Zones', 'Multi-Account Strategy',
 ];
 
 const securitySkillBank = [
   'Threat Modeling', 'Risk Assessment', 'Incident Response', 'Cryptography',
   'Identity Management', 'Vulnerability Management', 'Security Operations',
   'Governance', 'Penetration Testing', 'Forensics', 'Cloud Security', 'Compliance',
+  'CISSP', 'CCSP', 'SSCP', 'CISM', 'CISA', 'CRISC', 'Security+', 'CySA+',
+  'PenTest+', 'CASP+', 'CEH', 'OSCP', 'OSWE', 'GSEC', 'GPEN', 'GWAPT', 'CCSK',
+  'ISC2', 'ISACA', 'CompTIA', 'EC-Council', 'Offensive Security', 'GIAC', 'SANS',
+  'OWASP', 'MITRE ATT&CK', 'NIST', 'Zero Trust', 'SIEM', 'SOAR', 'Active Directory',
 ];
 
 const financeSkillBank = [
   'Financial Reporting', 'Taxation', 'Audit', 'Risk Management', 'Portfolio Management',
   'Corporate Finance', 'Ethics', 'Regulation', 'Valuation', 'Investment Analysis',
   'Accounting Standards', 'Compliance',
+  'CPA', 'CFA', 'CMA', 'ACCA', 'FRM', 'CFP', 'EA', 'Series 7', 'Series 63',
+  'Series 65', 'Series 66', 'CAIA', 'CIMA', 'SOA', 'CPCU', 'CAMS', 'AICPA',
+  'GAAP', 'IFRS', 'SEC', 'FINRA', 'Anti-Money Laundering', 'AML', 'KYC',
 ];
 
 /** @returns {object[]} */
@@ -378,25 +390,43 @@ export function certificationCategoryDefinitions() {
     certCategory('networking-certification-prep', 'Networking Certification Prep', 'lan', [
       'Routing', 'Switching', 'BGP', 'OSPF', 'VPN', 'Firewalls', 'Load Balancing',
       'SD-WAN', 'Wireless', 'Network Security', 'Automation', 'Troubleshooting',
+      'Cisco', 'CCNA', 'CCNP', 'CCIE', 'Juniper', 'JNCIA', 'JNCIS', 'Palo Alto',
+      'PCNSA', 'PCNSE', 'Fortinet', 'NSE4', 'CompTIA', 'Network+', 'Server+',
+      'F5', 'BIG-IP', 'LTM', 'Aruba', 'ACMA', 'Cloudflare', 'Aviatrix',
+      'DevNet', 'IP Connectivity', 'Subnetting', 'VLAN', 'ExpressRoute', 'Direct Connect',
     ], examsFromRows(NETWORKING_EXAMS)),
     certCategory('pm-agile-certification-prep', 'Project Management & Agile Certification Prep', 'groups', [
       'Agile', 'Scrum', 'Kanban', 'SAFe', 'Risk Management', 'Stakeholder Management',
       'Scheduling', 'Budgeting', 'Process Improvement', 'ITIL', 'PRINCE2', 'Business Analysis',
+      'PMP', 'CAPM', 'PMI-ACP', 'PMI-PBA', 'PgMP', 'CSM', 'CSPO', 'PSM-I', 'PSM-II',
+      'PSPO-I', 'SAFe Agilist', 'SAFe Scrum Master', 'ICP-ACC', 'ITIL 4', 'PRINCE2',
+      'PMI', 'Scrum Alliance', 'Scrum.org', 'Scaled Agile', 'ICAgile', 'AXELOS', 'IIBA',
+      'ECBA', 'CCBA', 'CBAP', 'Lean Six Sigma', 'DMAIC', 'KMP-I', 'PI Planning',
     ], examsFromRows(PM_AGILE_EXAMS)),
     certCategory('finance-accounting-certification-prep', 'Finance & Accounting Certification Prep', 'balance', financeSkillBank, examsFromRows(FINANCE_EXAMS)),
     certCategory('data-analytics-certification-prep', 'Data & Analytics Certification Prep', 'analytics', [
       'SQL', 'ETL', 'Data Modeling', 'Business Intelligence', 'Data Warehousing',
       'Spark', 'Machine Learning', 'Data Governance', 'Visualization', 'Python', 'R', 'Statistics',
+      'Databricks', 'Snowflake', 'SnowPro', 'Power BI', 'PL-300', 'Tableau', 'MongoDB',
+      'Oracle', 'OCA', 'OCP', 'PostgreSQL', 'PGCA', 'Redis', 'Cloudera', 'CCA', 'Informatica',
+      'Talend', 'dbt', 'Alteryx', 'SAS', 'Hive', 'Impala', 'Google Data Analytics',
+      'Lakehouse', 'ELT', 'Data Engineering', 'PySpark', 'Spark SQL',
     ], examsFromRows(DATA_ANALYTICS_EXAMS)),
     certCategory('hr-legal-professional-certification-prep', 'HR, Legal & Professional Certification Prep', 'gavel', [
       'Employment Law', 'Compensation', 'Talent Management', 'Organizational Development',
       'Legal Research', 'Bar Exam Prep', 'Ethics', 'Compliance', 'Audit', 'Engineering Licensure',
       'Architecture Licensure', 'Sustainability', 'Risk Management',
+      'PHR', 'SPHR', 'SHRM-CP', 'SHRM-SCP', 'CCP', 'GRP', 'CIPD', 'UBE', 'LSAT',
+      'CP', 'ACP', 'CFE', 'ARE-5', 'FE', 'PE', 'LEED-AP', 'PMI-RMP', 'PMI-SP',
+      'ISO 9001', 'ISO 27001', 'HRCI', 'SHRM', 'WorldatWork', 'NALA', 'ACFE', 'NCARB', 'NCEES',
     ], examsFromRows(HR_LEGAL_EXAMS)),
     certCategory('medical-nursing-certification-prep', 'Medical & Nursing Board Certification Prep', 'local_hospital', [
       'Clinical Medicine', 'Pharmacology', 'Pathophysiology', 'Patient Safety',
       'Evidence-Based Practice', 'Diagnostics', 'Board Exam Strategy', 'Medical Ethics',
       'Nursing Practice', 'Acute Care', 'Primary Care', 'Emergency Medicine',
+      'USMLE', 'Step 1', 'Step 2 CK', 'Step 3', 'NCLEX-RN', 'NCLEX-PN', 'ABIM', 'ABEM',
+      'ABP', 'ABOG', 'ABPN', 'ABFM', 'ABR', 'ABA', 'ABOS', 'FNP', 'AGACNP', 'CCRN',
+      'ACLS', 'PALS', 'EMT', 'Paramedic', 'NBME', 'NCSBN', 'ANCC', 'AANP', 'BLS',
     ], examsFromRows(MEDICAL_NURSING_EXAMS)),
   ];
 }

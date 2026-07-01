@@ -24,36 +24,51 @@ function resolvePnpmStore(context) {
   return null;
 }
 
+function bundlePackageFromPnpmStore(webApiDir, pnpmStore, dep) {
+  const destDir = join(webApiDir, 'node_modules', dep);
+  if (existsSync(destDir)) {
+    console.log(`afterPack: ${dep} already present, skipping`);
+    return;
+  }
+
+  // Find the matching directory in pnpm store
+  let found = null;
+  for (const entry of readdirSync(pnpmStore)) {
+    if (entry.startsWith(dep + '@')) {
+      const src = join(pnpmStore, entry, 'node_modules', dep);
+      if (existsSync(src)) {
+        found = src;
+        break;
+      }
+    }
+  }
+
+  if (!found) {
+    console.warn(`afterPack: could not find ${dep} in pnpm store`);
+    return;
+  }
+
+  mkdirSync(dirname(destDir), { recursive: true });
+  cpSync(found, destDir, { recursive: true, force: true });
+  console.log(`afterPack: bundled ${dep} from pnpm store`);
+}
+
 function bundleMissingNativeDeps(webApiDir, pnpmStore) {
   const needed = ['bindings', 'file-uri-to-path'];
   for (const dep of needed) {
-    const destDir = join(webApiDir, 'node_modules', dep);
-    if (existsSync(destDir)) {
-      console.log(`afterPack: ${dep} already present, skipping`);
-      continue;
-    }
-
-    // Find the matching directory in pnpm store
-    let found = null;
-    for (const entry of readdirSync(pnpmStore)) {
-      if (entry.startsWith(dep + '@')) {
-        const src = join(pnpmStore, entry, 'node_modules', dep);
-        if (existsSync(src)) {
-          found = src;
-          break;
-        }
-      }
-    }
-
-    if (!found) {
-      console.warn(`afterPack: could not find ${dep} in pnpm store`);
-      continue;
-    }
-
-    mkdirSync(dirname(destDir), { recursive: true });
-    cpSync(found, destDir, { recursive: true, force: true });
-    console.log(`afterPack: bundled ${dep} from pnpm store`);
+    bundlePackageFromPnpmStore(webApiDir, pnpmStore, dep);
   }
+}
+
+function bundleOnnxRuntimeDeps(webApiDir, pnpmStore) {
+  const needed = ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common'];
+  for (const dep of needed) {
+    bundlePackageFromPnpmStore(webApiDir, pnpmStore, dep);
+  }
+}
+
+function bundlePdfjsDist(webApiDir, pnpmStore) {
+  bundlePackageFromPnpmStore(webApiDir, pnpmStore, 'pdfjs-dist');
 }
 
 module.exports = async function afterPack(context) {
@@ -71,6 +86,8 @@ module.exports = async function afterPack(context) {
   const pnpmStore = resolvePnpmStore(context);
   if (pnpmStore) {
     bundleMissingNativeDeps(webApiDir, pnpmStore);
+    bundleOnnxRuntimeDeps(webApiDir, pnpmStore);
+    bundlePdfjsDist(webApiDir, pnpmStore);
   } else {
     console.warn('afterPack: pnpm store not found, skipping native dep bundling');
   }

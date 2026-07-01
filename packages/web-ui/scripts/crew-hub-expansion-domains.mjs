@@ -14,10 +14,10 @@ function rolesFromTitles(categoryLabel, titles, specialtyPrefix) {
   }));
 }
 
-const medicalTraits = ['ethical', 'empathetic', 'evidence-minded', 'patient-focused', 'clear', 'cautious'];
-const scienceTraits = ['analytical', 'curious', 'methodical', 'rigorous', 'collaborative', 'precise'];
-const fieldTraits = ['practical', 'hands-on', 'safety-conscious', 'detail-oriented', 'patient', 'resourceful'];
-const govTraits = ['procedural', 'impartial', 'policy-aware', 'thorough', 'communicative', 'accountable'];
+const medicalTraits = ['ethical', 'empathetic', 'evidence-minded', 'patient-focused', 'clear', 'cautious', 'compassionate'];
+const scienceTraits = ['analytical', 'curious', 'methodical', 'rigorous', 'collaborative', 'precise', 'skeptical', 'innovative'];
+const fieldTraits = ['practical', 'hands-on', 'safety-conscious', 'detail-oriented', 'patient', 'resourceful', 'adaptable'];
+const govTraits = ['procedural', 'impartial', 'policy-aware', 'thorough', 'communicative', 'accountable', 'transparent'];
 
 /** @returns {import('./generate-crew-hub.mjs').CategoryDef[]} */
 export function expansionCategoryDefinitions() {
@@ -29,7 +29,7 @@ export function expansionCategoryDefinitions() {
       label,
       iconId: 'local_hospital',
       medicalCategory: true,
-      skillBank: ['Clinical Literacy', 'Care Pathways', 'Patient Education', 'Medical Terminology', 'Evidence Review', 'Care Coordination', 'Health Literacy', 'Risk Communication', 'Preventive Health', 'Chronic Disease Support', 'Referral Navigation', 'Documentation'],
+      skillBank: ['Clinical Literacy', 'Care Pathways', 'Patient Education', 'Medical Terminology', 'Evidence Review', 'Care Coordination', 'Health Literacy', 'Risk Communication', 'Preventive Health', 'Chronic Disease Support', 'Referral Navigation', 'Documentation', 'Shared Decision Making', 'Symptom Triage', 'Medication Literacy', 'Discharge Planning'],
       traitBank: medicalTraits,
       roles: rolesFromTitles(label, titles, 'informational health education and care navigation'),
     });
@@ -208,7 +208,7 @@ export function expansionCategoryDefinitions() {
       label,
       iconId,
       scienceCategory: true,
-      skillBank: ['Scientific Method', 'Literature Review', 'Experimental Design', 'Data Analysis', 'Peer Review', 'Lab Safety', 'Reproducibility', 'Hypothesis Testing', 'Instrumentation', 'Technical Writing', 'Grant Writing', 'Ethics Compliance'],
+      skillBank: ['Scientific Method', 'Literature Review', 'Experimental Design', 'Data Analysis', 'Peer Review', 'Lab Safety', 'Reproducibility', 'Hypothesis Testing', 'Instrumentation', 'Technical Writing', 'Grant Writing', 'Ethics Compliance', 'Statistical Analysis', 'Computational Modeling', 'Field Research', 'Data Visualization'],
       traitBank: scienceTraits,
       roles: rolesFromTitles(label, titles, 'research methodology and applied science guidance'),
     });
@@ -274,7 +274,7 @@ export function expansionCategoryDefinitions() {
       id,
       label,
       iconId,
-      skillBank: skillBank ?? ['Crop Management', 'Soil Health', 'Irrigation', 'Pest Management', 'Harvest Logistics', 'Farm Economics', 'Sustainability', 'Equipment Ops', 'Food Safety', 'Supply Chain', 'Regulatory Compliance', 'Extension Education'],
+      skillBank: skillBank ?? ['Crop Management', 'Soil Health', 'Irrigation', 'Pest Management', 'Harvest Logistics', 'Farm Economics', 'Sustainability', 'Equipment Ops', 'Food Safety', 'Supply Chain', 'Regulatory Compliance', 'Extension Education', 'Precision Agriculture', 'Weather Monitoring', 'Crop Rotation', 'Yield Optimization'],
       traitBank: fieldTraits,
       roles: rolesFromTitles(label, titles, 'field operations and agri-food systems guidance'),
     });
@@ -342,7 +342,7 @@ export function expansionCategoryDefinitions() {
       label,
       iconId,
       businessCategory: true,
-      skillBank: ['Public Policy', 'Regulatory Compliance', 'Administrative Law', 'Program Management', 'Stakeholder Engagement', 'Public Records', 'Budgeting', 'Ethics', 'Civic Process', 'Grant Administration', 'Emergency Management', 'Community Outreach'],
+      skillBank: ['Public Policy', 'Regulatory Compliance', 'Administrative Law', 'Program Management', 'Stakeholder Engagement', 'Public Records', 'Budgeting', 'Ethics', 'Civic Process', 'Grant Administration', 'Emergency Management', 'Community Outreach', 'Procurement', 'Interagency Coordination', 'Constituent Services', 'Public Accountability'],
       traitBank: govTraits,
       roles: rolesFromTitles(label, titles, 'public sector process and policy navigation'),
     });
@@ -399,7 +399,7 @@ export function expansionCategoryDefinitions() {
     label: 'Legal Practice Specialties',
     iconId: 'gavel',
     businessCategory: true,
-    skillBank: ['Legal Research', 'Case Strategy', 'Contract Drafting', 'Compliance', 'Litigation Support', 'Discovery', 'Legal Writing', 'Client Counseling', 'Regulatory Analysis', 'Alternative Dispute Resolution', 'Legal Ethics', 'Court Procedure'],
+    skillBank: ['Legal Research', 'Case Strategy', 'Contract Drafting', 'Compliance', 'Litigation Support', 'Discovery', 'Legal Writing', 'Client Counseling', 'Regulatory Analysis', 'Alternative Dispute Resolution', 'Legal Ethics', 'Court Procedure', 'Westlaw', 'LexisNexis', 'E-Discovery', 'Deposition Prep'],
     traitBank: govTraits,
     roles: rolesFromTitles('Legal Practice', [
       'Corporate Transaction Attorney Advisor', 'Mergers & Acquisitions Counsel', 'Securities Law Specialist', 'Intellectual Property Strategist',

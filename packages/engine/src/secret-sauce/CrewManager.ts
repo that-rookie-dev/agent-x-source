@@ -1,22 +1,22 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Crew, CrewEmotion, CrewCreateInput, CollaborationProtocol, CrewResourceQuota, PermissionRule } from '@agentx/shared';
+import type { StorageAdapter } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import { getSecretSauceDir } from '../config/paths.js';
-import type { SessionStore } from '../session/SessionStore.js';
 
 export class CrewManager {
   private crews: Crew[] = [];
   private secretSauceDir: string;
-  private store: SessionStore | null = null;
+  private store: StorageAdapter | null = null;
 
-  constructor(store?: SessionStore) {
+  constructor(store?: StorageAdapter) {
     this.secretSauceDir = getSecretSauceDir();
     this.store = store ?? null;
     this.loadCrews();
   }
 
-  setStore(store: SessionStore): void {
+  setStore(store: StorageAdapter): void {
     this.store = store;
     this.loadCrews();
   }

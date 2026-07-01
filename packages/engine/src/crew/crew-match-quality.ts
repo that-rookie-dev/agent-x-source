@@ -17,6 +17,9 @@ export function rowSearchBlob(row: RawMatchRow): string {
     row.callsign,
     ...row.expertise,
     ...row.traits,
+    ...(row.tools ?? []),
+    ...(row.tags ?? []),
+    row.searchText ?? '',
   ]
     .filter(Boolean)
     .join(' ')

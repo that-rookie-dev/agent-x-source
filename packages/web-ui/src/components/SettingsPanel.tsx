@@ -1,27 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import SettingsIcon from '@mui/icons-material/Settings';
+import { PanelHeader } from './PanelHeader';
 import PersonIcon from '@mui/icons-material/Person';
 import StorageIcon from '@mui/icons-material/Storage';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import BuildIcon from '@mui/icons-material/Build';
+import ModelIcon from '@mui/icons-material/Psychology';
+import BrainIcon from '@mui/icons-material/Memory';
 import { CheckCircle } from './CheckCircle';
 import { config, personaApi, type AgentXConfig, type AgentPersonaConfig } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
-import { crewTheme, crewHubScanlineSx, crewOverlineSx } from '../styles/crew-theme';
+import { crewTheme, crewOverlineSx } from '../styles/crew-theme';
 import { PersistenceTab } from './settings/PersistenceTab';
 import { PersonaConfigPanel } from './settings/PersonaConfigPanel';
 import { WebSearchToolsTab, mergeWebSearchConfig } from './settings/WebSearchToolsTab';
+import { LocalModelTab } from './settings/LocalModelTab';
+import { ProvidersPanel } from './ProvidersPanel';
+import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 
-type SettingsTab = 'general' | 'persona' | 'tools' | 'persistence';
+type SettingsTab = 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model';
 
-const TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
+const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'general', label: 'General', icon: <PersonIcon sx={{ fontSize: 16 }} /> },
   { id: 'persona', label: 'Agent Persona', icon: <SmartToyIcon sx={{ fontSize: 16 }} /> },
+  { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 16 }} /> },
+  { id: 'local-model', label: 'Local Model', icon: <BrainIcon sx={{ fontSize: 16 }} /> },
   { id: 'tools', label: 'Tools', icon: <BuildIcon sx={{ fontSize: 16 }} /> },
   { id: 'persistence', label: 'Persistence', icon: <StorageIcon sx={{ fontSize: 16 }} /> },
 ];
@@ -45,6 +53,8 @@ const helperSx = {
 
 export function SettingsPanel() {
   const { config: appConfig, setConfig } = useApp();
+  const localModelSupported = useLocalModelSupported();
+  const tabs = useMemo(() => localModelSupported ? ALL_TABS : ALL_TABS.filter((t) => t.id !== 'local-model'), [localModelSupported]);
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [cfg, setCfg] = useState<AgentXConfig | null>(appConfig);
   const [persona, setPersona] = useState<AgentPersonaConfig | null>(null);
@@ -53,6 +63,13 @@ export function SettingsPanel() {
   const [message, setMessage] = useState('');
 
   useEffect(() => { config.get().then(setCfg).catch(() => {}); }, []);
+
+  // If the current tab is hidden because local model is unsupported, switch to General.
+  useEffect(() => {
+    if (!localModelSupported && activeTab === 'local-model') {
+      setActiveTab('general');
+    }
+  }, [localModelSupported, activeTab]);
 
   useEffect(() => {
     if (activeTab === 'persona' && !persona) {
@@ -98,24 +115,14 @@ export function SettingsPanel() {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: crewTheme.bg.void }}>
-      <Box sx={{
-        flexShrink: 0, px: 4, pt: 3, pb: 2,
-        borderBottom: `1px solid ${crewTheme.border.default}`,
-        position: 'relative', overflow: 'hidden',
-        backgroundImage: `linear-gradient(180deg, ${crewTheme.bg.panel} 0%, ${crewTheme.bg.void} 100%)`,
-      }}>
-        <Box sx={{ ...crewHubScanlineSx, opacity: 0.02 }} />
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.5, position: 'relative' }}>
-          <SettingsIcon sx={{ fontSize: 20, color: crewTheme.accent.hud }} />
-          <Typography sx={{ fontSize: '0.95rem', fontWeight: 600, color: crewTheme.text.primary }}>Settings</Typography>
-        </Box>
-        <Typography sx={{ ...crewOverlineSx, ml: 4.5, letterSpacing: '1.5px' }}>
-          Mission control · profile · tools · persistence
-        </Typography>
-      </Box>
+      <PanelHeader
+        title="Settings"
+        subtitle="Mission control · profile · models · tools · persistence"
+        icon={<SettingsIcon sx={{ fontSize: 20 }} />}
+      />
 
       <Box sx={{ flexShrink: 0, display: 'flex', borderBottom: `1px solid ${crewTheme.border.default}`, px: 4, bgcolor: crewTheme.bg.panel }}>
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <Button key={tab.id} onClick={() => setActiveTab(tab.id)}
             sx={{
               display: 'flex', alignItems: 'center', gap: 0.75, px: 2.5, py: 1.25,
@@ -157,6 +164,8 @@ export function SettingsPanel() {
             <PersonaConfigPanel value={persona} onChange={setPersona} />
           )
         )}
+        {activeTab === 'models' && <ProvidersPanel />}
+        {activeTab === 'local-model' && <LocalModelTab />}
         {activeTab === 'tools' && (
           <WebSearchToolsTab
             value={webSearchConfig}
