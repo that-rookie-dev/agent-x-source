@@ -23,7 +23,9 @@ function getPackageName() {
   const currentArch = arch();
   switch (currentPlatform) {
     case 'darwin':
-      return currentArch === 'arm64' || currentArch === 'x64' ? '@embedded-postgres/darwin-arm64' : null;
+      if (currentArch === 'arm64') return '@embedded-postgres/darwin-arm64';
+      if (currentArch === 'x64') return '@embedded-postgres/darwin-x64';
+      return null;
     case 'linux':
       return currentArch === 'arm64' ? '@embedded-postgres/linux-arm64' : currentArch === 'x64' ? '@embedded-postgres/linux-x64' : null;
     case 'win32':
