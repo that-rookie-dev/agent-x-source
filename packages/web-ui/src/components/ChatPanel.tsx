@@ -35,6 +35,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import HistoryIcon from '@mui/icons-material/History';
 import ForumIcon from '@mui/icons-material/Forum';
 import DownloadIcon from '@mui/icons-material/Download';
+import GroupsIcon from '@mui/icons-material/Groups';
 
 import {
   ConnectionHealthDot,
@@ -44,7 +45,7 @@ import {
   CheckpointDrawer,
   type PaletteAction,
 } from './ChatEnhancements';
-import { chat, sessions, todos, tools, models, crews, crewSuggestions, providers, system, sessionSettings, agent, settings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate } from '../api';
+import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary } from '../api';
 import { colors } from '../theme';
 import ModeEscalationModal from './ModeEscalationModal';
 import StepCapModal from './StepCapModal';
@@ -59,6 +60,7 @@ import { ChatMessageList } from '../chat/ChatMessageList';
 import { PlanModeContext } from '../chat/PlanModeContext';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
+import { crewTheme } from '../styles/crew-theme';
 import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard, mergeIncomingMessageParts, applyToolCompleteMetadata, reconcileStreamingMessageParts } from '../chat/utils';
 import { CHAT_INITIAL_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
 import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
@@ -493,6 +495,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [contextExpanded, setContextExpanded] = useState(false);
   const [tokenExpanded, setTokenExpanded] = useState(true);
   const [tasksExpanded, setTasksExpanded] = useState(true);
+  const [missionExpanded, setMissionExpanded] = useState(true);
+  const [crewAddQuery, setCrewAddQuery] = useState('');
+  const [crewAddResults, setCrewAddResults] = useState<CatalogSummary[]>([]);
+  const [crewAddOpen, setCrewAddOpen] = useState(false);
+  const [crewAddLoading, setCrewAddLoading] = useState(false);
   const [contextData, setContextData] = useState('');
   const [rebuildingContext, setRebuildingContext] = useState(false);
 
@@ -2533,6 +2540,78 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }
   }, [messages, markCrewRosterPickerResolved, revertCrewRosterPickerPending, ensureSession, executeSend, replaceWarning]);
 
+  // ── Sidebar crew mission: manual add/remove ───────────────────────────
+  const crewAddSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCrewAddSearch = useCallback((q: string) => {
+    setCrewAddQuery(q);
+    if (crewAddSearchRef.current) clearTimeout(crewAddSearchRef.current);
+    if (q.trim().length < 2) {
+      setCrewAddResults([]);
+      setCrewAddLoading(false);
+      return;
+    }
+    setCrewAddLoading(true);
+    crewAddSearchRef.current = setTimeout(async () => {
+      try {
+        const res = await crewCatalog.search(q.trim(), 8);
+        setCrewAddResults(res.crews ?? []);
+      } catch {
+        setCrewAddResults([]);
+      } finally {
+        setCrewAddLoading(false);
+      }
+    }, 250);
+  }, []);
+
+  const handleCrewAddSelect = useCallback(async (entry: CatalogSummary) => {
+    setCrewAddOpen(false);
+    setCrewAddQuery('');
+    setCrewAddResults([]);
+    try {
+      const sessionId = await ensureSession();
+      if (!sessionId) return;
+      const candidate: CrewMatchCandidate = {
+        id: entry.id,
+        origin: 'hub_catalog',
+        callsign: entry.callsign,
+        name: entry.name,
+        title: entry.title,
+        categoryId: entry.categoryId,
+        categoryLabel: entry.categoryLabel,
+        description: entry.description,
+        expertise: entry.expertise,
+        traits: entry.traits,
+        tone: entry.tone,
+        matchScore: 1,
+        reasons: ['manual-add'],
+        onRoster: false,
+        catalogId: entry.id,
+        requiresMedicalDisclaimer: entry.requiresMedicalDisclaimer,
+        honorsDoctorate: entry.honorsDoctorate,
+      };
+      await crewSuggestions.resolve({
+        sessionId,
+        action: 'deploy',
+        selectedCandidateIds: [entry.id],
+        candidates: [candidate],
+      });
+      crews.list().then((list) => setCrewList(list)).catch(() => {});
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to add crew member'));
+    }
+  }, [ensureSession, replaceWarning]);
+
+  const handleCrewRemove = useCallback(async (crewId: string, crewName: string) => {
+    try {
+      await crews.toggle(crewId, false);
+      crews.list().then((list) => setCrewList(list)).catch(() => {});
+      setCrewWorkers((prev) => prev.filter((w) => w.crewId !== crewId));
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : `Failed to remove ${crewName}`));
+    }
+  }, [replaceWarning]);
+
   const handleQuestionnaireRespond = useCallback(async (messageId: string, response: string) => {
     const markAnswered = () => {
       setMessages((prev) => prev.map((m) => {
@@ -3457,21 +3536,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             </Box>
           )}
 
-          {/* Crew mission status — scoped to the session that started it */}
-          {!isCrewPrivateSession && crewMissionSessionId === currentSessionId && (
-          <CrewMissionCard
-            workers={crewWorkers}
-            missionActive={crewMissionActive}
-            missionId={crewMissionId}
-            interMessages={crewInterMessages}
-            placement="standalone"
-            onViewWorker={(workerId, crewName) => openChildSession({
-              childSessionId: workerId,
-              label: crewName,
-              kind: 'crew_worker',
-            })}
-          />
-          )}
 
           {/* Single unified box: input + toolbar — border tinted by mode */}
           <Box sx={{
@@ -3900,6 +3964,116 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           </Box>
           )}
         </Box>
+
+        {/* ─── Crew Mission ─── */}
+        {!isCrewPrivateSession && crewMissionSessionId === currentSessionId && (
+        <Box>
+          <Box
+            onClick={() => setMissionExpanded(!missionExpanded)}
+            sx={sidebarSectionHeaderSx}
+          >
+            <GroupsIcon sx={{ fontSize: 12, color: crewTheme.accent.tactical }} />
+            <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              {missionExpanded ? '▾' : '▸'} CREW MISSION
+              {crewMissionActive && (
+                <Box component="span" sx={{ width: 4, height: 4, borderRadius: '50%', bgcolor: crewTheme.accent.signal, boxShadow: `0 0 5px ${crewTheme.accent.signal}` }} />
+              )}
+            </Typography>
+            {crewWorkers.length > 0 && (
+              <Chip size="small" label={crewWorkers.length} sx={{ fontSize: '0.45rem', height: 15 }} />
+            )}
+            <Tooltip title="Add crew member" arrow>
+              <IconButton
+                size="small"
+                onClick={(e) => { e.stopPropagation(); setCrewAddOpen((v) => !v); setCrewAddQuery(''); setCrewAddResults([]); }}
+                sx={{ p: 0.25, width: 20, height: 20, color: crewAddOpen ? crewTheme.accent.tactical : colors.text.dim, '&:hover': { color: crewTheme.accent.tactical } }}
+              >
+                <AddIcon sx={{ fontSize: 12 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+
+          {missionExpanded && (
+          <Box sx={{ px: 1.5, pb: 1.5 }}>
+            {/* Manual add-crew search */}
+            {crewAddOpen && (
+              <Box sx={{ mb: 1, position: 'relative' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, bgcolor: colors.bg.tertiary, borderRadius: 0.75, px: 0.75, py: 0.4 }}>
+                  <SearchIcon sx={{ fontSize: 11, color: colors.text.dim }} />
+                  <input
+                    autoFocus
+                    value={crewAddQuery}
+                    onChange={(e) => handleCrewAddSearch(e.target.value)}
+                    placeholder="Search crew hub…"
+                    style={{
+                      flex: 1, border: 'none', outline: 'none', background: 'transparent',
+                      fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace",
+                      color: colors.text.secondary,
+                    }}
+                  />
+                  {crewAddLoading && <CircularProgress size={9} sx={{ color: colors.text.dim }} />}
+                </Box>
+                {crewAddResults.length > 0 && (
+                  <Box sx={{
+                    mt: 0.25, maxHeight: 160, overflowY: 'auto',
+                    border: `1px solid ${colors.border.default}`, borderRadius: 0.75,
+                    bgcolor: colors.bg.secondary,
+                  }}>
+                    {crewAddResults.map((entry) => (
+                      <Box
+                        key={entry.id}
+                        onClick={() => handleCrewAddSelect(entry)}
+                        sx={{
+                          px: 0.75, py: 0.5, cursor: 'pointer',
+                          borderBottom: `1px solid ${colors.border.subtle}`,
+                          '&:last-child': { borderBottom: 'none' },
+                          '&:hover': { bgcolor: colors.bg.tertiary },
+                        }}
+                      >
+                        <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary }}>
+                          @{entry.callsign}
+                        </Typography>
+                        <Typography sx={{ fontSize: '0.48rem', color: colors.text.dim, mt: 0.15 }}>
+                          {entry.title}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Box>
+                )}
+                {crewAddQuery.trim().length >= 2 && !crewAddLoading && crewAddResults.length === 0 && (
+                  <Typography sx={{ fontSize: '0.48rem', color: colors.text.dim, fontStyle: 'italic', px: 0.75, py: 0.5 }}>
+                    No matches
+                  </Typography>
+                )}
+              </Box>
+            )}
+
+            {/* Worker list + comms (embedded, header-less) */}
+            <CrewMissionCard
+              workers={crewWorkers}
+              missionActive={crewMissionActive}
+              missionId={crewMissionId}
+              interMessages={crewInterMessages}
+              placement="embedded"
+              showHeader={false}
+              onViewWorker={(workerId, crewName) => openChildSession({
+                childSessionId: workerId,
+                label: crewName,
+                kind: 'crew_worker',
+              })}
+              onRemoveWorker={handleCrewRemove}
+            />
+
+            {/* Empty state */}
+            {crewWorkers.length === 0 && !crewMissionActive && (
+              <Typography sx={{ fontSize: '0.52rem', color: colors.text.dim, fontStyle: 'italic', textAlign: 'center', py: 1, fontFamily: "'JetBrains Mono', monospace" }}>
+                No crew assigned — use + to add a specialist
+              </Typography>
+            )}
+          </Box>
+          )}
+        </Box>
+        )}
 
         {/* ─── Tasks ─── */}
         <Box sx={{ flex: 1, overflow: 'auto' }}>

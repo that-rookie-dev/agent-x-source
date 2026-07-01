@@ -277,6 +277,7 @@ const CORE_TOOLS: ToolDefinition[] = [
   { id: 'memory_read', name: 'Memory Read', description: 'Read agent memory by key', modelDescription: 'Read persistent agent memory by key (alias for memory_recall).', category: 'ai_meta', riskLevel: 'low', schema: { type: 'object', properties: { key: { type: 'string', description: 'Memory key' } }, required: ['key'] }, composable: true, source: 'builtin' },
   { id: 'memory_search', name: 'Memory Search', description: 'Search agent memory by keyword', modelDescription: 'Search stored agent memories by key or value substring. Read-only.', category: 'ai_meta', riskLevel: 'low', schema: { type: 'object', properties: { query: { type: 'string', description: 'Search keyword' } }, required: ['query'] }, composable: true, source: 'builtin' },
   { id: 'rag_search', name: 'RAG Search', description: 'Semantic search over indexed codebase', modelDescription: 'Search indexed codebase chunks by meaning (requires /index or rag.enabled). Read-only — use for @codebase-style context.', category: 'ai_meta', riskLevel: 'low', schema: { type: 'object', properties: { query: { type: 'string', description: 'Natural language search query' }, limit: { type: 'number', description: 'Max results (default: 8)' } }, required: ['query'] }, composable: true, source: 'builtin' },
+  { id: 'memory_fabric_search', name: 'Memory Fabric Search', description: 'Semantic search over ingested RAG Studio documents', modelDescription: 'Search documents uploaded via RAG Studio (PDFs, text files, web distillations) by semantic meaning. Returns relevant chunks, extracted entities, and graph-walked related context. Use this when the user asks about content from uploaded documents. Read-only.', category: 'ai_meta', riskLevel: 'low', schema: { type: 'object', properties: { query: { type: 'string', description: 'Natural language search query' }, limit: { type: 'number', description: 'Max results (default: 8)' }, includeChunks: { type: 'boolean', description: 'Include raw document chunks in results (default: true)' } }, required: ['query'] }, composable: true, source: 'builtin' },
 
   // ═══ COMMUNICATION ═══
   { id: 'notify_desktop', name: 'Desktop Notification', description: 'Send a desktop notification', modelDescription: 'Display a desktop notification to the user. Works on macOS, Linux, and Windows.', category: 'communication', riskLevel: 'low', schema: { type: 'object', properties: { title: { type: 'string', description: 'Notification title' }, message: { type: 'string', description: 'Notification message body' } }, required: ['title', 'message'] }, composable: true, source: 'builtin' },
@@ -564,6 +565,7 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('memory_read', aliases.memoryRead);
   executor.registerHandler('memory_search', aliases.memorySearch);
   executor.registerHandler('rag_search', aliases.ragSearch);
+  executor.registerHandler('memory_fabric_search', aliases.memoryFabricSearch);
 
   // ═══ Communication ═══
   executor.registerHandler('notify_desktop', notifications.notifyDesktop);

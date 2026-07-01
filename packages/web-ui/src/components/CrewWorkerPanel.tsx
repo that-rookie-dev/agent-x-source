@@ -1,9 +1,11 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
 import CircularProgress from '@mui/material/CircularProgress';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import CloseIcon from '@mui/icons-material/Close';
 import { crewTheme } from '../styles/crew-theme';
 
 export interface CrewWorkerState {
@@ -22,6 +24,7 @@ interface CrewWorkerPanelProps {
   missionActive?: boolean;
   embedded?: boolean;
   onViewWorker?: (workerId: string, crewName: string) => void;
+  onRemoveWorker?: (crewId: string, crewName: string) => void;
 }
 
 function statusColor(status: CrewWorkerState['status']): string {
@@ -34,7 +37,7 @@ function statusColor(status: CrewWorkerState['status']): string {
   }
 }
 
-export function CrewWorkerPanel({ workers, missionActive, embedded, onViewWorker }: CrewWorkerPanelProps) {
+export function CrewWorkerPanel({ workers, missionActive, embedded, onViewWorker, onRemoveWorker }: CrewWorkerPanelProps) {
   if (workers.length === 0 && !missionActive) return null;
 
   return (
@@ -96,6 +99,16 @@ export function CrewWorkerPanel({ workers, missionActive, embedded, onViewWorker
                 <Typography sx={{ fontSize: '0.48rem', color: crewTheme.text.dim }}>
                   {(w.elapsed / 1000).toFixed(1)}s
                 </Typography>
+              )}
+              {onRemoveWorker && (
+                <IconButton
+                  size="small"
+                  onClick={(e) => { e.stopPropagation(); onRemoveWorker(w.crewId, w.crewName); }}
+                  sx={{ p: 0.15, color: crewTheme.text.dim, '&:hover': { color: crewTheme.accent.alert } }}
+                  title={`Remove ${w.crewName} from session`}
+                >
+                  <CloseIcon sx={{ fontSize: 11 }} />
+                </IconButton>
               )}
             </Box>
           );

@@ -17,11 +17,12 @@ const distDir = fileURLToPath(new URL('../dist', import.meta.url));
 const targetModulesDir = join(distDir, 'node_modules');
 
 // Packages that are externalized in tsup.config.ts because they load native
-// binaries or are bundled via their own package structure.
+// binaries or use runtime dynamic imports that can't be bundled.
 const externalPackages = [
   'onnxruntime-node',
   'onnxruntime-web',
   'onnxruntime-common',
+  'pdfjs-dist',
 ];
 
 const copied = new Set();

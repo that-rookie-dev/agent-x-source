@@ -16,7 +16,7 @@ export const CREW_MATCH_THRESHOLDS = {
   /** Higher bar when a crew is already active — avoids noise on continuations. */
   minSuggestWithActiveCrew: 0.52,
   /** Max candidates shown in popup. */
-  maxCandidates: 5,
+  maxCandidates: 3,
   /** Boost for user-created crews. */
   customBoost: 0.15,
   /** Boost when crew already used in session. */
@@ -37,6 +37,9 @@ export interface RawMatchRow {
   expertise: string[];
   traits: string[];
   tone?: string;
+  tools?: string[];
+  tags?: string[];
+  searchText?: string;
   catalogId?: string;
   onRoster: boolean;
   enabled?: boolean;
@@ -74,6 +77,9 @@ function crewMemberFromRow(row: RawMatchRow): CrewMember {
     description: row.description,
     expertise: row.expertise,
     traits: row.traits,
+    tools: row.tools,
+    tags: row.tags,
+    searchText: row.searchText,
     emotion: row.tone as Crew['emotion'],
     source: row.origin === 'custom' ? 'custom' : 'hub',
     catalogId: row.catalogId,
@@ -143,6 +149,8 @@ export function scoreMatchCandidates(
       expertise: row.expertise,
       traits: row.traits,
       tone: row.tone,
+      tools: row.tools,
+      tags: row.tags,
       matchScore,
       reasons: heuristicReasons.slice(0, 4),
       onRoster: row.onRoster,

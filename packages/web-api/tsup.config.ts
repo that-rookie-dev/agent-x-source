@@ -31,10 +31,13 @@ export default defineConfig({
   // NOTE: ONNX runtime packages must stay external because they load native
   // .node binaries via relative paths inside the package. They are copied into
   // dist/node_modules by the post-build script.
-  noExternal: [/^(?!onnxruntime-).*$/],
-  external: ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common'],
+  // NOTE: pdfjs-dist must stay external because it dynamically imports
+  // pdf.worker.mjs via a relative path at runtime. Bundling it breaks that
+  // import because the worker file is not emitted alongside the bundle.
+  noExternal: [/^(?!onnxruntime-|pdfjs-dist).*$/],
+  external: ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common', 'pdfjs-dist'],
   banner: {
-    js: "import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url); import { fileURLToPath as __futp } from 'node:url'; import { dirname as __dn } from 'node:path'; const __filename = __futp(import.meta.url); const __dirname = __dn(__filename);",
+    js: "import { createRequire as __bannerCr } from 'module'; const require = __bannerCr(import.meta.url); import { fileURLToPath as __futp } from 'node:url'; import { dirname as __dn } from 'node:path'; const __filename = __futp(import.meta.url); const __dirname = __dn(__filename);",
   },
   esbuildPlugins: [sharpAliasPlugin],
 });

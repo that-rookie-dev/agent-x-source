@@ -327,6 +327,63 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_memory_nodes_community_id ON memory_nodes(community_id) WHERE community_id IS NOT NULL;
     `,
   },
+  {
+    version: 12,
+    name: 'source_file_path',
+    sql: `
+      -- Track the original file path for each knowledge source so users can
+      -- re-download or re-ingest documents uploaded via RAG Studio.
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS file_path TEXT;
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS file_size BIGINT;
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS file_mime TEXT;
+    `,
+  },
+  {
+    version: 13,
+    name: 'ingestion_jobs_stage_detail',
+    sql: `
+      -- Persist the full atomic IngestProgressEvent (stage/detail/chunkIndex/
+      -- chunkCount) alongside the integer progress so the RAG Studio UI can
+      -- render a live stage pipeline tracker, log stream, and telemetry.
+      ALTER TABLE ingestion_jobs ADD COLUMN IF NOT EXISTS stage_detail JSONB;
+    `,
+  },
+  {
+    version: 14,
+    name: 'ingestion_events_log',
+    sql: `
+      -- Append-only event log for ingestion jobs. Every atomic progress event
+      -- (chunk embedded, LLM batch started, entity parsed, etc.) is inserted
+      -- here so the SSE stream can deliver them to the UI without loss.
+      -- The stage_detail column on ingestion_jobs only holds the LATEST state;
+      -- this table holds the full history for the log stream.
+      CREATE TABLE IF NOT EXISTS ingestion_events (
+        id BIGSERIAL PRIMARY KEY,
+        job_id UUID NOT NULL REFERENCES ingestion_jobs(id) ON DELETE CASCADE,
+        stage TEXT NOT NULL,
+        detail TEXT,
+        chunk_index INTEGER,
+        chunk_count INTEGER,
+        batch_index INTEGER,
+        batch_count INTEGER,
+        progress INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_ingestion_events_job_id ON ingestion_events(job_id, id);
+    `,
+  },
+  {
+    version: 15,
+    name: 'ingestion_token_tracking',
+    sql: `
+      -- Track LLM token usage per event and per job so users can see
+      -- real-time token spend during document ingestion.
+      ALTER TABLE ingestion_events ADD COLUMN IF NOT EXISTS input_tokens INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE ingestion_events ADD COLUMN IF NOT EXISTS output_tokens INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE ingestion_jobs ADD COLUMN IF NOT EXISTS total_input_tokens INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE ingestion_jobs ADD COLUMN IF NOT EXISTS total_output_tokens INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export class MemoryMigrationRunner {

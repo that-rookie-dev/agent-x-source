@@ -11,14 +11,13 @@ import {
   type GraphRenderer,
 } from './renderers/types.ts';
 import { CATEGORY_COLORS, CATEGORY_NAMES, NEON } from './renderers/palette.ts';
-import { createRenderer, AVAILABLE_RENDERERS, type RendererId } from './renderers/index.ts';
+import { createRenderer, type RendererId } from './renderers/index.ts';
 
 const WS_URL =
   (import.meta.env.VITE_API_WS_URL as string) ||
   `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
 
 const PANEL_WIDTH = 240;
-const LS_RENDERER_KEY = 'agx:renderer';
 
 type BrainActivityEvent =
   | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; sessionId?: string | null; x: number | null; y: number | null; sourceColor?: string; timestamp: string }
@@ -113,10 +112,7 @@ export default function App() {
     role: 'user' | 'assistant';
     textLength: number;
   } | null>(null);
-  const [rendererId, setRendererId] = useState<RendererId>(() => {
-    const saved = localStorage.getItem(LS_RENDERER_KEY) as RendererId | null;
-    return saved && AVAILABLE_RENDERERS.some((r) => r.id === saved) ? saved : 'nebula';
-  });
+  const rendererId: RendererId = 'force3d';
 
   const categories = useMemo(() => {
     const counts = new Map<string, number>();
@@ -169,8 +165,7 @@ export default function App() {
   // ── Renderer sync ──────────────────────────────────────────────────────────
   // Always passes EVERY node and edge — no filtering.
   // When a session/cluster is selected, the selected cluster glows orange and
-  // everything else fades to near-black.  sigma.js updates colours via
-  // graphology's incremental mergeNodeAttributes() — no scene rebuild.
+  // everything else fades to near-black.
   const syncToRenderer = () => {
     const r = rendererRef.current;
     if (!r) return;
@@ -346,7 +341,7 @@ export default function App() {
   };
 
   // ── Renderer mount / remount ───────────────────────────────────────────────
-  // Re-mounts when rendererId changes. Default is 'nebula' (three.js + d3-force).
+  // Re-mounts when rendererId changes. Default is 'force3d' (3d-force-graph).
   useEffect(() => {
     if (loading || error) return;
     if (!containerRef.current) return;
@@ -649,22 +644,6 @@ export default function App() {
                   <button style={styles.button} onClick={() => fitToAll()}>RESET VIEW</button>
                 </div>
 
-                <div style={styles.panelTitle}>RENDERER</div>
-                <div style={styles.list}>
-                  {AVAILABLE_RENDERERS.map((r) => (
-                    <button
-                      key={r.id}
-                      style={rendererId === r.id ? styles.activeItem : styles.item}
-                      onClick={() => {
-                        setRendererId(r.id);
-                        localStorage.setItem(LS_RENDERER_KEY, r.id);
-                      }}
-                    >
-                      {r.label}
-                    </button>
-                  ))}
-                </div>
-
                 <div style={styles.panelTitle}>SESSIONS</div>
                 <div style={styles.list}>
                   <button style={selectedSessionId === null ? styles.activeItem : styles.item} onClick={() => selectSession(null)}>
@@ -842,6 +821,3 @@ const styles: Record<string, React.CSSProperties> = {
 const styleSheet = document.createElement('style');
 styleSheet.textContent = `@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`;
 document.head.appendChild(styleSheet);
-
-// Clean up unused import — keep localStorage key available for migration.
-void LS_RENDERER_KEY;

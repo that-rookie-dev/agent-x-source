@@ -26,6 +26,7 @@ import {
 } from './chat-helpers.js';
 import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
+import { setIngestionWorkerRef, refreshIngestionWorkerGenerator } from './ingestion-worker-ref.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
 import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult } from '@agentx/engine';
@@ -482,8 +483,18 @@ app.put('/api/config', (req, res) => {
     } else if (req.body.tools) {
       merged.tools = { ...existing.tools, ...req.body.tools };
     }
+    // Validate provider config — reject if it would leave zero configured providers
+    // or unset the active provider. This ensures the ingestion worker's LLM
+    // generator can always be built after login.
+    const providerError = validateProviderConfig(merged);
+    if (providerError) {
+      res.status(400).json({ error: 'invalid-provider-config', message: providerError });
+      return;
+    }
     eng.configManager.save(merged);
     applyWebSearchConfigFromAgentConfig(merged);
+    // Rebuild the ingestion worker's LLM generator in case provider config changed
+    void refreshIngestionWorkerGenerator();
     res.json({ ok: true });
   } catch (err) {
     // If load failed (e.g. DEK mismatch from different auth), save raw body as new config
@@ -580,6 +591,43 @@ const AVAILABLE_PROVIDERS = [
   { id: 'ollama', name: 'Ollama', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:11434' },
   { id: 'lmstudio', name: 'LM Studio', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:1234/v1' },
 ];
+
+/**
+ * Validate that a config has at least one usable provider with an API key
+ * (or a local provider that doesn't require one) and that activeProvider
+ * points to a configured provider. Returns an error message string if
+ * invalid, or null if valid.
+ */
+function validateProviderConfig(cfg: AgentXConfig): string | null {
+  if (!cfg.provider) return 'Missing provider configuration';
+  const providers = cfg.provider.providers ?? {};
+  // Local providers that don't require an API key
+  const LOCAL_PROVIDER_IDS = new Set(AVAILABLE_PROVIDERS.filter(p => p.type === 'local' || !p.requiresApiKey).map(p => p.id));
+  // Count configured providers (have apiKey or are local/no-key providers)
+  const configuredProviders = Object.entries(providers).filter(([id, p]) => {
+    if (!p?.configured) return false;
+    if (LOCAL_PROVIDER_IDS.has(id as ProviderId)) return true;
+    // Has direct apiKey, or has at least one profile with an apiKey
+    return !!p.apiKey || (!!p.profiles && Object.values(p.profiles).some(prof => !!prof.apiKey));
+  });
+  if (configuredProviders.length === 0) {
+    return 'Cannot save configuration with no configured providers. At least one provider with a valid API key is required.';
+  }
+  // Check that activeProvider is configured
+  const activeId = cfg.provider.activeProvider;
+  if (!activeId || !providers[activeId]?.configured) {
+    return `Active provider "${activeId ?? 'none'}" is not configured. Set activeProvider to a configured provider.`;
+  }
+  // If the active provider has profiles, check it has at least one
+  const activeProv = providers[activeId];
+  if (activeProv.profiles) {
+    const profileCount = Object.keys(activeProv.profiles).length;
+    if (profileCount === 0) {
+      return `Active provider "${activeId}" has no profiles. Add at least one profile before removing others.`;
+    }
+  }
+  return null;
+}
 
 app.get('/api/providers/available', (_req, res) => {
   res.json({ providers: AVAILABLE_PROVIDERS });
@@ -776,6 +824,63 @@ app.post('/api/provider/profile/rename', (req, res) => {
     res.json({ ok: true });
   } catch (e: unknown) {
     getLogger().error('POST_API_PROVIDER_PROFILE_RENAME', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'rename-failed' });
+  }
+});
+
+/**
+ * DELETE /api/provider/:providerId/profile/:profileId
+ * Delete a provider profile with guards:
+ * - Cannot delete the last remaining profile across ALL providers
+ * - Cannot delete the active profile if it's the only profile for the active provider
+ */
+app.delete('/api/provider/:providerId/profile/:profileId', (req, res) => {
+  try {
+    const { providerId, profileId } = req.params;
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+
+    // Count total configured profiles across all providers
+    const allProviders = cfg.provider.providers ?? {};
+    let totalProfiles = 0;
+    let providerProfileCount = 0;
+    for (const [id, p] of Object.entries(allProviders)) {
+      if (p?.profiles) {
+        const count = Object.keys(p.profiles).length;
+        totalProfiles += count;
+        if (id === providerId) providerProfileCount = count;
+      } else if (p?.configured && p?.apiKey) {
+        // Legacy single-key provider (no profiles) counts as 1
+        totalProfiles += 1;
+        if (id === providerId) providerProfileCount += 1;
+      }
+    }
+
+    // Guard 1: Cannot delete if this is the last profile overall
+    if (totalProfiles <= 1) {
+      res.status(400).json({
+        error: 'last-profile',
+        message: 'Cannot delete the last remaining provider profile. At least one provider must be configured at all times.',
+      });
+      return;
+    }
+
+    // Guard 2: Cannot delete the last profile for the active provider
+    const isActiveProvider = cfg.provider.activeProvider === providerId;
+    if (isActiveProvider && providerProfileCount <= 1) {
+      res.status(400).json({
+        error: 'last-active-profile',
+        message: 'Cannot delete the last profile for the active provider. Switch to another provider first or add another profile.',
+      });
+      return;
+    }
+
+    eng.configManager.removeProviderProfile(providerId, profileId);
+    // Rebuild ingestion worker generator in case provider config changed
+    void refreshIngestionWorkerGenerator();
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    getLogger().error('DELETE_API_PROVIDER_PROFILE', e instanceof Error ? e : String(e));
+    res.status(400).json({ error: e instanceof Error ? e.message : 'delete-failed' });
   }
 });
 
@@ -4644,6 +4749,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
 
   // Start background ingestion job worker (Group 3 + 4 + C3): uses ingestion_jobs queue with FOR UPDATE SKIP LOCKED
   let ingestionWorker: IngestionWorker | null = null;
+  setIngestionWorkerRef(null);
   try {
     const eng = getEngine();
     const pgPool = (eng as any).pgPool ?? (eng as any).pool;
@@ -4661,42 +4767,63 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
         concurrency: 2,
         pollIntervalMs: 5000,
         embed: (text) => embedder.embed(text),
-        generate: null, // populated inside the async IIFE below
+        generate: null, // populated inside the async IIFE below or after login
         embedder,
       });
+      setIngestionWorkerRef(ingestionWorker);
 
       // Seed periodic jobs once after storage is ready; the worker will claim them.
       const queue = new IngestionQueue(pgPool as any);
+      let graphRagAvailable = false;
       void (async () => {
         try {
           await eng.storageReady;
         } catch { /* storage may have failed — proceed best-effort */ }
         // Build the GraphRAG summarizer generator now that config is available.
+        // This will fail at startup if the config is encrypted (no DEK yet) —
+        // the generator is rebuilt after user login via refreshIngestionWorkerGenerator().
         try {
           const graphRagGenerate = await buildGraphRagSummarizer();
           if (graphRagGenerate && ingestionWorker) {
-            ingestionWorker['generate'] = graphRagGenerate;
+            ingestionWorker.setGenerate(graphRagGenerate);
+            graphRagAvailable = true;
           }
-        } catch { /* best-effort — community_summarize jobs will skip without a generator */ }
+        } catch { /* best-effort — will retry after user login */ }
         ingestionWorker.start();
         try {
           await queue.enqueue({ kind: 'web_distill', priority: 1 });
           await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
           await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
-          await queue.enqueue({ kind: 'community_summarize', priority: 0 });
+          // Only enqueue community_summarize if a generator is available —
+          // otherwise the worker will just skip it and log a warning every cycle.
+          if (graphRagAvailable) {
+            await queue.enqueue({ kind: 'community_summarize', priority: 0 });
+          }
           await fabric.cleanupExpiredWebStaging();
         } catch (e: unknown) {
           getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));
         }
       })();
 
-      // Re-enqueue periodic jobs every 60 seconds so the worker has a continuous backlog
+      // Re-enqueue periodic jobs every 60 seconds so the worker has a continuous backlog.
+      // Skip enqueuing a job kind if it already has a pending/running instance to
+      // avoid flooding the queue with no-op jobs that just log warnings and exit.
       const periodicInterval = setInterval(async () => {
         try {
-          await queue.enqueue({ kind: 'web_distill', priority: 1 });
-          await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
-          await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
-          await queue.enqueue({ kind: 'community_summarize', priority: 0 });
+          // Only enqueue each kind if no active instance exists
+          if (!await queue.hasActiveJob('web_distill')) {
+            await queue.enqueue({ kind: 'web_distill', priority: 1 });
+          }
+          if (!await queue.hasActiveJob('memory_consolidate')) {
+            await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
+          }
+          if (!await queue.hasActiveJob('louvain_layout')) {
+            await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
+          }
+          // Only enqueue community_summarize if a generator was built successfully
+          if (graphRagAvailable && !await queue.hasActiveJob('community_summarize')) {
+            await queue.enqueue({ kind: 'community_summarize', priority: 0 });
+          }
           await fabric.cleanupExpiredWebStaging();
         } catch (e: unknown) {
           getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));

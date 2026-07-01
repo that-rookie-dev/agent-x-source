@@ -8,7 +8,24 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = join(scriptDir, '..', '..', '..');
 const storeDir = join(workspaceRoot, 'node_modules', '.pnpm');
 
-const releaseDir = join(scriptDir, '..', 'release', 'mac-arm64');
+// Detect the release directory — electron-builder outputs to mac-<arch>
+// (e.g. mac-arm64, mac-x64). Find whichever exists.
+const releaseBase = join(scriptDir, '..', 'release');
+let releaseDir = null;
+for (const name of readdirSync(releaseBase)) {
+  if (name.startsWith('mac-')) {
+    const candidate = join(releaseBase, name);
+    if (existsSync(join(candidate, 'Agent-X.app'))) {
+      releaseDir = candidate;
+      break;
+    }
+  }
+}
+if (!releaseDir) {
+  console.error('Could not find mac-* release directory with Agent-X.app');
+  process.exit(1);
+}
+console.log('Bundle PG deps for release:', releaseDir);
 
 if (!existsSync(storeDir)) {
   console.error('pnpm store not found at', storeDir);

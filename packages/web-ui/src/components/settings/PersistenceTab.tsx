@@ -21,7 +21,7 @@ import ErrorIcon from '@mui/icons-material/Error';
 import HelpIcon from '@mui/icons-material/Help';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
-import { settings, factoryReset, setAuthToken, type DbStatus } from '../../api';
+import { settings, factoryReset, setAuthToken, knowledge, type DbStatus } from '../../api';
 import { useApp } from '../../store/AppContext';
 import { crewTheme } from '../../styles/crew-theme';
 import { colors } from '../../theme';
@@ -332,6 +332,9 @@ export function PersistenceTab() {
         </Box>
       </Box>
 
+      {/* ── RAG Studio Storage ── */}
+      <RagStudioStorageCard />
+
       {/* ── Soft Reset ── */}
       <Box sx={{ ...cardSx, mb: 2, border: `1px solid ${colors.accent.orange}20`, bgcolor: `${colors.accent.orange}05` }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
@@ -453,6 +456,108 @@ function FilePathRow({ label, path, size, desc }: { label: string; path: string;
         <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, mt: 0.3 }}>{desc}</Typography>
       </Box>
       <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'nowrap' }}>{size}</Typography>
+    </Box>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n >= 1073741824) return `${(n / 1073741824).toFixed(2)} GB`;
+  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+function RagStudioStorageCard() {
+  const [stats, setStats] = useState<{ fileCount: number; totalBytes: number; path: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setStats(await knowledge.storageStats()); } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleClear = async () => {
+    setClearing(true);
+    try {
+      const r = await knowledge.clearStorage();
+      setResult(`Deleted ${r.deletedFiles} files, freed ${formatBytes(r.freedBytes)}`);
+      setConfirmOpen(false);
+      await load();
+      setTimeout(() => setResult(null), 4000);
+    } catch (e) { setResult(e instanceof Error ? e.message : 'Failed'); }
+    finally { setClearing(false); }
+  };
+
+  return (
+    <Box sx={{ ...cardSx, mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+        <StorageIcon sx={{ fontSize: 18, color: colors.text.secondary }} />
+        <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.text.primary }}>
+          RAG Studio Storage
+        </Typography>
+      </Box>
+
+      <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, mb: 2, lineHeight: 1.5 }}>
+        Original copies of documents uploaded via RAG Studio are kept here so you can re-download or re-ingest them. Clearing this folder does NOT delete the knowledge entries already in the neural brain.
+      </Typography>
+
+      {loading ? (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+          <CircularProgress size={18} sx={{ color: colors.text.secondary }} />
+        </Box>
+      ) : (
+        <Box sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
+          <StatItem label="Files" value={stats ? String(stats.fileCount) : '—'} />
+          <StatItem label="Total Size" value={stats ? formatBytes(stats.totalBytes) : '—'} />
+        </Box>
+      )}
+
+      {stats && stats.fileCount > 0 && (
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+          <Button
+            variant="outlined"
+            startIcon={<DeleteOutlineIcon />}
+            onClick={() => setConfirmOpen(true)}
+            disabled={clearing}
+            sx={{
+              fontSize: '0.68rem',
+              fontFamily: "'JetBrains Mono', monospace",
+              textTransform: 'none',
+              borderColor: colors.accent.red + '40',
+              color: colors.accent.red,
+              '&:hover': { borderColor: colors.accent.red },
+            }}
+          >
+            {clearing ? <CircularProgress size={14} sx={{ color: colors.accent.red }} /> : 'Clear RAG Studio Files'}
+          </Button>
+          {result && (
+            <Typography sx={{ fontSize: '0.65rem', color: colors.accent.green, fontFamily: "'JetBrains Mono', monospace" }}>
+              {result}
+            </Typography>
+          )}
+        </Box>
+      )}
+
+      {confirmOpen && (
+        <Box sx={{ mt: 2, p: 2, borderRadius: 1, bgcolor: `${colors.accent.red}08`, border: `1px solid ${colors.accent.red}30` }}>
+          <Typography sx={{ fontSize: '0.68rem', color: colors.text.secondary, mb: 1.5 }}>
+            Are you sure? This will delete all original file copies. Knowledge entries in the neural brain will remain.
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button size="small" onClick={() => setConfirmOpen(false)} sx={{ fontSize: '0.65rem', color: colors.text.secondary }}>Cancel</Button>
+            <Button size="small" variant="contained" onClick={handleClear} disabled={clearing}
+              sx={{ fontSize: '0.65rem', bgcolor: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + 'cc' } }}>
+              {clearing ? 'Clearing…' : 'Yes, Delete Files'}
+            </Button>
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 }

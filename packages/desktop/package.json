@@ -1,6 +1,6 @@
 {
   "name": "@agentx/desktop",
-  "version": "0.8.2",
+  "version": "0.8.4",
   "private": true,
   "description": "Agent-X — Your AI Wingman (Desktop)",
   "homepage": "https://github.com/SlashpanOrg/agent-x",
@@ -19,6 +19,8 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:mac": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
+    "dist:mac:arm64": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --mac --arm64 && node scripts/bundle-pg-deps.mjs",
+    "dist:mac:x64": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --mac --x64 && node scripts/bundle-pg-deps.mjs",
     "dist:linux": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --linux",
     "dist:win": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --win"
   },

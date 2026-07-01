@@ -67,6 +67,10 @@ function bundleOnnxRuntimeDeps(webApiDir, pnpmStore) {
   }
 }
 
+function bundlePdfjsDist(webApiDir, pnpmStore) {
+  bundlePackageFromPnpmStore(webApiDir, pnpmStore, 'pdfjs-dist');
+}
+
 module.exports = async function afterPack(context) {
   const webApiDir = getWebApiDir(context);
   if (!webApiDir || !existsSync(webApiDir)) {
@@ -83,6 +87,7 @@ module.exports = async function afterPack(context) {
   if (pnpmStore) {
     bundleMissingNativeDeps(webApiDir, pnpmStore);
     bundleOnnxRuntimeDeps(webApiDir, pnpmStore);
+    bundlePdfjsDist(webApiDir, pnpmStore);
   } else {
     console.warn('afterPack: pnpm store not found, skipping native dep bundling');
   }

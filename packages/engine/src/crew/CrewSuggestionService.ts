@@ -26,7 +26,6 @@ import {
 import { filterSubstantiveMatches } from './crew-match-quality.js';
 import {
   buildExpandedSearchQuery,
-  isExpertiseOpinionQuery,
   type CrewKeywordExpandFn,
 } from './crew-keyword-expander.js';
 import { loadCatalogManifest } from './catalog-manifest.js';
@@ -97,32 +96,29 @@ export class CrewSuggestionService {
     const priorMessages = input.priorUserMessages ?? [];
     const rosterFirst = (input.explicitCrewRequest ?? false) || isWorkforceOrSpecialistNeed(input.message);
 
-    // Phase 1 — domain hints + substantive user tokens only
-    const phase1Tokens = extractSubstantiveSearchTokens(gate.task);
-    const phase1Query = buildCrewSuggestionSearchQuery(gate.task);
+    // ── LLM-first key extraction (primary path) ──────────────────────────
+    // When an LLM expander is configured, extract concrete tool/skill/expertise
+    // keys from the message first, then match against the catalog FTS index.
+    // Falls back to local token extraction when the LLM is unavailable or empty.
     let matchReason = 'matched-specialists';
+    let candidates: CrewMatchCandidate[] = [];
+    let llmKeys: string[] = [];
 
-    let candidates = await this.searchAndScore({
-      task: gate.task,
-      searchQuery: phase1Query,
-      matchTokens: phase1Tokens,
-      recruited,
-      sessionCounts,
-    });
+    if (input.expandKeywords) {
+      try {
+        llmKeys = await input.expandKeywords(gate.task);
+      } catch {
+        llmKeys = [];
+      }
+    }
 
-    // Phase 2 — LLM keyword expansion for expertise questions when phase 1 is empty
-    if (
-      candidates.length === 0
-      && input.expandKeywords
-      && isExpertiseOpinionQuery(gate.task)
-    ) {
-      const expanded = await input.expandKeywords(gate.task);
-      const expandedQuery = buildExpandedSearchQuery(expanded);
-      if (expandedQuery) {
+    if (llmKeys.length > 0) {
+      const llmQuery = buildExpandedSearchQuery(llmKeys);
+      if (llmQuery) {
         candidates = await this.searchAndScore({
           task: gate.task,
-          searchQuery: expandedQuery,
-          matchTokens: expanded,
+          searchQuery: llmQuery,
+          matchTokens: llmKeys,
           recruited,
           sessionCounts,
           minScore: 0.15,
@@ -131,10 +127,42 @@ export class CrewSuggestionService {
       }
     }
 
+    // ── Fallback: local token extraction (FTS) ───────────────────────────
+    // Used when no LLM expander is configured, the LLM returned no keys, or the
+    // LLM-keyed search produced no candidates.
+    if (candidates.length === 0) {
+      const phase1Tokens = extractSubstantiveSearchTokens(gate.task, llmKeys);
+      const phase1Query = buildCrewSuggestionSearchQuery(gate.task, llmKeys);
+      if (phase1Query) {
+        candidates = await this.searchAndScore({
+          task: gate.task,
+          searchQuery: phase1Query,
+          matchTokens: phase1Tokens,
+          recruited,
+          sessionCounts,
+        });
+      }
+      if (candidates.length === 0 && llmKeys.length > 0) {
+        // One more pass: LLM keys alone (without local tokens) as a broader query.
+        const llmOnlyQuery = buildExpandedSearchQuery(llmKeys);
+        if (llmOnlyQuery) {
+          candidates = await this.searchAndScore({
+            task: gate.task,
+            searchQuery: llmOnlyQuery,
+            matchTokens: llmKeys,
+            recruited,
+            sessionCounts,
+            minScore: 0.12,
+          });
+          if (candidates.length > 0) matchReason = 'llm-keyword-match';
+        }
+      }
+    }
+
     if (candidates.length === 0) {
       return {
         ...empty,
-        reasons: phase1Query
+        reasons: llmKeys.length > 0
           ? ['no-keyword-match']
           : ['no-substantive-tokens'],
       };
@@ -226,6 +254,9 @@ export class CrewSuggestionService {
         expertise: hit.expertise,
         traits: hit.traits,
         tone: hit.tone,
+        tools: hit.tools,
+        tags: hit.tags,
+        searchText: hit.searchText,
         catalogId: hit.id,
         onRoster: false,
         enabled: false,
@@ -250,6 +281,9 @@ export class CrewSuggestionService {
         expertise: crew.expertise ?? [],
         traits: crew.traits ?? [],
         tone: crew.emotion,
+        tools: crew.tools,
+        tags: crew.tags,
+        searchText: crew.searchText,
         catalogId: crew.catalogId,
         onRoster: true,
         enabled: crew.enabled,

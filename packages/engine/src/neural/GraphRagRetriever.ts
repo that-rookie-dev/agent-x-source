@@ -26,6 +26,8 @@ export interface GraphRagRetrievalOptions {
   agentId?: string;
   /** Session ID for episodic context. */
   sessionId?: string;
+  /** Minimum cosine similarity (0–1) for the vector pass. Results below this are filtered out. */
+  minRelevance?: number;
 }
 
 export interface GraphRagResult {
@@ -56,6 +58,7 @@ export class GraphRagRetriever {
     const localLimit = options.localLimit ?? 20;
     const vectorLimit = options.vectorLimit ?? 10;
     const graphDepth = options.graphDepth ?? 2;
+    const minRelevance = options.minRelevance ?? 0;
 
     const embedding = await this.embedder.embed(query);
 
@@ -96,9 +99,17 @@ export class GraphRagRetriever {
       }
     }
 
-    // Pass 3: Vector — direct semantic matches (falls back to existing assembleContext).
-    const vector = await this.fabric.vectorSearch(embedding, { limit: vectorLimit, agentId: options.agentId });
-    getLogger().info('GRAPHRAG_RETRIEVE', `Vector pass: ${vector.length} direct matches`);
+    // Pass 3: Vector — direct semantic matches, filtered by minimum relevance.
+    const vectorRaw = await this.fabric.vectorSearch(embedding, { limit: vectorLimit, agentId: options.agentId });
+    // Filter by cosine similarity: similarity = 1 - distance. The vectorSearch query
+    // attaches a `distance` field to each row (not in the MemoryNode type, hence the cast).
+    const vector = minRelevance > 0
+      ? vectorRaw.filter((n) => {
+          const distance = (n as unknown as { distance?: number }).distance;
+          return distance == null || (1 - distance) >= minRelevance;
+        })
+      : vectorRaw;
+    getLogger().info('GRAPHRAG_RETRIEVE', `Vector pass: ${vector.length} direct matches (after relevance filter, min=${minRelevance})`);
 
     // Episodic: session-scoped recent memory.
     let episodic: MemoryNode[] = [];

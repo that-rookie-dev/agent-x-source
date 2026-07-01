@@ -57,6 +57,20 @@ installDomMatrixPolyfill();
 export async function parsePdf(buffer: Buffer | ArrayBuffer): Promise<PdfParseResult> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const getDoc = (pdfjs as any).getDocument;
+
+  // In a Node.js (non-browser) environment, pdfjs-dist tries to set up a
+  // "fake worker" on the main thread. It dynamically imports pdf.worker.mjs
+  // relative to the pdf.mjs module. When bundled, this import can break.
+  // By explicitly setting workerSrc to the resolved path, we ensure the
+  // worker module is found at runtime.
+  try {
+    const workerUrl = await import('node:url');
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
+    const workerModulePath = req.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
+    (pdfjs as any).GlobalWorkerOptions.workerSrc = workerUrl.pathToFileURL(workerModulePath).href;
+  } catch { /* best-effort — if this fails, pdfjs will try its default resolution */ }
+
   const data = new Uint8Array(buffer);
   const doc = await getDoc({ data, useSystemFonts: true }).promise;
   const pages = doc.numPages;

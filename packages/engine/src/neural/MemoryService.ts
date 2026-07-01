@@ -95,8 +95,18 @@ export class MemoryService {
         sourceId: input.sourceId,
       });
 
+      // Quality gate — filter out low-confidence extracted nodes.
+      // Nodes without an explicit confidence default to 0.8 (trusted unless marked otherwise).
+      // Fallback nodes from failed LLM batches get 0.3 and are filtered out here.
+      const MIN_CONFIDENCE = 0.4;
+      const confidentNodes = assembled.nodes.filter((n) => (n.confidence ?? 0.8) >= MIN_CONFIDENCE);
+      const confidentNodeIds = new Set(confidentNodes.map((n) => n.id));
+      const confidentEdges = assembled.edges.filter(
+        (e) => confidentNodeIds.has(e.sourceNodeId) && confidentNodeIds.has(e.targetNodeId),
+      );
+
       // Validation gate — drop divider/fragment/heading-only nodes before persistence.
-      const { nodes: validNodes, edges: validEdges } = validateAndFilter(assembled.nodes, assembled.edges);
+      const { nodes: validNodes, edges: validEdges } = validateAndFilter(confidentNodes, confidentEdges);
 
       // Map extracted node IDs to actual persisted node IDs (deduplication may reuse an existing node).
       const idMap = new Map<string, string>();

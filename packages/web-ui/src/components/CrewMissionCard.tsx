@@ -23,6 +23,10 @@ interface CrewMissionCardProps {
   interMessages?: CrewInterMessage[];
   /** Standalone = above chat input; embedded = inside another panel */
   placement?: 'standalone' | 'embedded';
+  /** When true, hide the outer header + collapse wrapper (parent controls visibility). */
+  showHeader?: boolean;
+  /** Per-worker remove callback (renders a × button on each worker row). */
+  onRemoveWorker?: (crewId: string, crewName: string) => void;
   onViewWorker?: (workerId: string, crewName: string) => void;
 }
 
@@ -32,14 +36,55 @@ export function CrewMissionCard({
   missionId,
   interMessages = [],
   placement = 'standalone',
+  showHeader = true,
+  onRemoveWorker,
   onViewWorker,
 }: CrewMissionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [threadOpen, setThreadOpen] = useState(false);
 
-  if (workers.length === 0 && !missionActive && interMessages.length === 0) return null;
+  if (workers.length === 0 && !missionActive && interMessages.length === 0 && showHeader) return null;
 
   const standalone = placement === 'standalone';
+
+  const content = (
+    <>
+      <CrewWorkerPanel workers={workers} missionActive={missionActive} embedded onViewWorker={onViewWorker} onRemoveWorker={onRemoveWorker} />
+
+      {interMessages.length > 0 && (
+        <Box sx={{ px: 1, pb: 0.75, borderTop: `1px solid ${crewTheme.border.subtle}` }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.4 }}>
+            <Typography sx={{ fontSize: '0.48rem', color: crewTheme.text.dim, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px' }}>
+              COMMS ({interMessages.length})
+            </Typography>
+            <IconButton size="small" onClick={() => setThreadOpen((v) => !v)} sx={{ p: 0.25 }}>
+              {threadOpen ? <ExpandLessIcon sx={{ fontSize: 12, color: crewTheme.text.dim }} /> : <ExpandMoreIcon sx={{ fontSize: 12, color: crewTheme.text.dim }} />}
+            </IconButton>
+          </Box>
+          <Collapse in={threadOpen}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.35, maxHeight: 120, overflowY: 'auto' }}>
+              {interMessages.slice(-12).map((m) => (
+                <Typography key={m.id} sx={{
+                  fontSize: '0.52rem', fontFamily: "'JetBrains Mono', monospace",
+                  color: crewTheme.text.secondary, lineHeight: 1.4,
+                }}>
+                  <Box component="span" sx={{ color: crewTheme.accent.tactical }}>{m.from}</Box>
+                  {' → '}
+                  <Box component="span" sx={{ color: crewTheme.accent.hud }}>{m.to}</Box>
+                  {': '}
+                  {m.content}
+                </Typography>
+              ))}
+            </Box>
+          </Collapse>
+        </Box>
+      )}
+    </>
+  );
+
+  if (!showHeader) {
+    return <Box sx={{ mx: 0.5, mb: 0.5 }}>{content}</Box>;
+  }
 
   return (
     <Box sx={{
@@ -75,36 +120,7 @@ export function CrewMissionCard({
       </Box>
 
       <Collapse in={expanded}>
-        <CrewWorkerPanel workers={workers} missionActive={missionActive} embedded onViewWorker={onViewWorker} />
-
-        {interMessages.length > 0 && (
-          <Box sx={{ px: 1, pb: 0.75, borderTop: `1px solid ${crewTheme.border.subtle}` }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.4 }}>
-              <Typography sx={{ fontSize: '0.48rem', color: crewTheme.text.dim, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px' }}>
-                COMMS ({interMessages.length})
-              </Typography>
-              <IconButton size="small" onClick={() => setThreadOpen((v) => !v)} sx={{ p: 0.25 }}>
-                {threadOpen ? <ExpandLessIcon sx={{ fontSize: 12, color: crewTheme.text.dim }} /> : <ExpandMoreIcon sx={{ fontSize: 12, color: crewTheme.text.dim }} />}
-              </IconButton>
-            </Box>
-            <Collapse in={threadOpen}>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.35, maxHeight: 120, overflowY: 'auto' }}>
-                {interMessages.slice(-12).map((m) => (
-                  <Typography key={m.id} sx={{
-                    fontSize: '0.52rem', fontFamily: "'JetBrains Mono', monospace",
-                    color: crewTheme.text.secondary, lineHeight: 1.4,
-                  }}>
-                    <Box component="span" sx={{ color: crewTheme.accent.tactical }}>{m.from}</Box>
-                    {' → '}
-                    <Box component="span" sx={{ color: crewTheme.accent.hud }}>{m.to}</Box>
-                    {': '}
-                    {m.content}
-                  </Typography>
-                ))}
-              </Box>
-            </Collapse>
-          </Box>
-        )}
+        {content}
       </Collapse>
     </Box>
   );

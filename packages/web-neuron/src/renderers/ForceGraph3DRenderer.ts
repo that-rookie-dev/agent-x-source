@@ -1,8 +1,8 @@
 // ForceGraph3D renderer — react-force-graph-3d (3d-force-graph + three.js).
 //
 // Matches the vasturiano "large-graph" example: 3D force-directed layout
-// with d3-force-3d, directional travelling particles on links, auto-color
-// by category, dark background, zoom/pan/orbit, node drag.
+// with d3-force-3d, auto-color by category, pure black background, small
+// star-like nodes, thin faint constellation links, zoom/pan/orbit, node drag.
 //
 // react-force-graph-3d is a React component, so this adapter creates a
 // React root inside the container element and renders the component there.
@@ -10,7 +10,6 @@
 import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import ForceGraph3D, { type ForceGraphMethods, type GraphData } from 'react-force-graph-3d';
-import { NEON } from './palette.ts';
 import {
   type GraphRenderer,
   type RenderEdge,
@@ -71,6 +70,7 @@ export class ForceGraph3DRenderer implements GraphRenderer {
     this.nodes = nodes;
     this.edges = edges;
     this.renderGraph();
+    this.applyForceTuning();
   }
 
   private buildGraphData(): GraphData<FGNode, FGLink> {
@@ -108,34 +108,29 @@ export class ForceGraph3DRenderer implements GraphRenderer {
         linkSource: 'source',
         linkTarget: 'target',
 
-        // Dark background — same as nebula/sigma
-        backgroundColor: NEON.void,
+        // Pure black background — matches the large-graph example's void
+        backgroundColor: '#000000',
 
-        // Node styling
-        nodeRelSize: 6,
+        // Node styling — small, slightly transparent for a star-like glow
+        nodeRelSize: 4,
         nodeColor: 'color',
         nodeLabel: 'name',
+        nodeOpacity: 0.75,
 
-        // Link styling — directional particles like the large-graph example
+        // Link styling — thin, faint constellation lines (no flowing particles)
         linkColor: 'color',
         linkWidth: 'width',
-        linkDirectionalParticles: 2,
-        linkDirectionalParticleWidth: 1.5,
-        linkDirectionalParticleSpeed: 0.006,
-        linkDirectionalParticleColor: NEON.brightCyan,
+        linkOpacity: 0.3,
+        linkDirectionalParticles: 0,
 
         // Controls
         showNavInfo: false,
         enableNodeDrag: true,
         enablePointerInteraction: true,
 
-        // Force simulation tuning for large graphs
-        cooldownTicks: 100,
+        // Force simulation — let it run naturally for wide, organic clustering
         d3AlphaDecay: 0.0228,
         d3VelocityDecay: 0.4,
-
-        // Warm-up ticks before first render (reduces initial jumpiness)
-        warmupTicks: 50,
 
         // Event handlers
         onNodeClick: (node: any) => {
@@ -152,10 +147,24 @@ export class ForceGraph3DRenderer implements GraphRenderer {
           }
         },
 
-        // Ref to access imperative API (zoomToFit, cameraPosition, etc.)
+        // Ref to access imperative API (zoomToFit, cameraPosition, force tuning)
         ref: this.fgRef,
       }),
     );
+  }
+
+  /** Tune d3-force parameters for a spacious, universe-like spread. */
+  private applyForceTuning(): void {
+    const fg = this.fgRef.current;
+    if (!fg) return;
+    // Wider charge repulsion — nodes drift apart like stars in space
+    const charge = (fg as any).d3Force('charge');
+    if (charge) charge.strength(-30);
+    // Shorter link distance — tighter constellation clusters
+    const link = (fg as any).d3Force('link');
+    if (link) link.distance(30);
+    // Reheat so the new forces take effect
+    (fg as any).d3ReheatSimulation();
   }
 
   emitParticle(_edgeId: string): void {

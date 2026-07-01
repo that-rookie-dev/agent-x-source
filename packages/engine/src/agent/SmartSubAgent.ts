@@ -131,6 +131,7 @@ export class SmartSubAgent {
         systemPrompt: this.buildSubAgentPrompt(),
         promptProfile: this.systemPromptOverride ? 'crew_worker' : 'default',
         delegatedWorker: true,
+        parentSessionId: this.parentAgent.currentSessionId,
         toolRegistry,
         toolExecutor,
         eventBus: subEventBus,

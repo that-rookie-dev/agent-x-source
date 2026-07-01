@@ -10,9 +10,9 @@ function rolesFromTitles(categoryLabel, titles, specialtyPrefix) {
   }));
 }
 
-const businessTraits = ['strategic', 'organized', 'communicative', 'results-driven', 'adaptable', 'detail-oriented'];
-const fieldTraits = ['practical', 'hands-on', 'safety-conscious', 'detail-oriented', 'patient', 'resourceful'];
-const serviceTraits = ['customer-focused', 'reliable', 'empathetic', 'efficient', 'professional', 'adaptable'];
+const businessTraits = ['strategic', 'organized', 'communicative', 'results-driven', 'adaptable', 'detail-oriented', 'collaborative'];
+const fieldTraits = ['practical', 'hands-on', 'safety-conscious', 'detail-oriented', 'patient', 'resourceful', 'adaptable'];
+const serviceTraits = ['customer-focused', 'reliable', 'empathetic', 'efficient', 'professional', 'adaptable', 'attentive'];
 
 /** @returns {import('./generate-crew-hub.mjs').CategoryDef[]} */
 export function worldOccupationCategoryDefinitions() {
@@ -24,7 +24,7 @@ export function worldOccupationCategoryDefinitions() {
       label,
       iconId,
       businessCategory: true,
-      skillBank: ['Operations', 'Stakeholder Management', 'Process Design', 'Compliance', 'Budgeting', 'Communication', 'Quality Control', 'Scheduling', 'Vendor Management', 'Reporting', 'Team Leadership', 'Customer Service'],
+      skillBank: ['Operations', 'Stakeholder Management', 'Process Design', 'Compliance', 'Budgeting', 'Communication', 'Quality Control', 'Scheduling', 'Vendor Management', 'Reporting', 'Team Leadership', 'Customer Service', 'Project Planning', 'Risk Management', 'Performance Metrics', 'Strategic Planning'],
       traitBank: businessTraits,
       roles: rolesFromTitles(label, titles, 'business operations and professional practice'),
     });
@@ -35,7 +35,7 @@ export function worldOccupationCategoryDefinitions() {
       id,
       label,
       iconId,
-      skillBank: skillBank ?? ['Safety Protocols', 'Tool Mastery', 'Blueprint Reading', 'Code Compliance', 'Troubleshooting', 'Customer Communication', 'Estimating', 'Material Selection', 'Quality Inspection', 'Maintenance', 'Site Management', 'Regulatory Standards'],
+      skillBank: skillBank ?? ['Safety Protocols', 'Tool Mastery', 'Blueprint Reading', 'Code Compliance', 'Troubleshooting', 'Customer Communication', 'Estimating', 'Material Selection', 'Quality Inspection', 'Maintenance', 'Site Management', 'Regulatory Standards', 'Equipment Calibration', 'Preventive Maintenance'],
       traitBank: fieldTraits,
       roles: rolesFromTitles(label, titles, 'trade practice and field operations'),
     });
@@ -46,7 +46,7 @@ export function worldOccupationCategoryDefinitions() {
       id,
       label,
       iconId,
-      skillBank: ['Client Service', 'Scheduling', 'Quality Standards', 'Safety', 'Inventory', 'Communication', 'Problem Solving', 'Upselling', 'Compliance', 'Team Coordination', 'Feedback Handling', 'Local Marketing'],
+      skillBank: ['Client Service', 'Scheduling', 'Quality Standards', 'Safety', 'Inventory', 'Communication', 'Problem Solving', 'Upselling', 'Compliance', 'Team Coordination', 'Feedback Handling', 'Local Marketing', 'Conflict Resolution', 'Time Management'],
       traitBank: serviceTraits,
       roles: rolesFromTitles(label, titles, 'service delivery and client experience'),
     });

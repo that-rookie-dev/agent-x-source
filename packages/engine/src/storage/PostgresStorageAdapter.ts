@@ -529,6 +529,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       traits: metadata.traits ?? (row['traits'] ? (row['traits'] as string).split(',') : undefined),
       toolPreferences: metadata.toolPreferences,
       tools: metadata.tools,
+      tags: metadata.tags,
       permissions: metadata.permissions,
       model: metadata.model,
       protocol: metadata.protocol,
@@ -1704,6 +1705,8 @@ export class PostgresStorageAdapter implements StorageAdapter {
       tone: input.emotion,
       expertise: input.expertise,
       traits: input.traits,
+      tools: input.tools,
+      tags: input.tags,
       systemPrompt: input.systemPrompt,
     });
     const crew: Crew = {
@@ -1724,6 +1727,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       traits: input.traits,
       toolPreferences: input.toolPreferences,
       tools: input.tools,
+      tags: input.tags,
       permissions: input.permissions,
       model: input.model,
       protocol: input.protocol,
@@ -1790,6 +1794,8 @@ export class PostgresStorageAdapter implements StorageAdapter {
       tone: crew.emotion,
       expertise: crew.expertise,
       traits: crew.traits,
+      tools: crew.tools,
+      tags: crew.tags,
       systemPrompt: crew.systemPrompt,
     });
     this.cache.crews[idx] = crew;

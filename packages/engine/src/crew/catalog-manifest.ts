@@ -49,6 +49,7 @@ export function buildManifestFromCategories(
       expertise: string[];
       traits: string[];
       tools?: string[];
+      tags?: string[];
     }>;
   }>,
   revision = 1,
@@ -73,6 +74,7 @@ export function buildManifestFromCategories(
       expertise: crew.expertise,
       traits: crew.traits,
       tools: crew.tools,
+      tags: crew.tags,
       searchText: buildCrewSearchText({
         name: crew.name,
         title: crew.title,
@@ -81,6 +83,8 @@ export function buildManifestFromCategories(
         tone: crew.tone,
         expertise: crew.expertise,
         traits: crew.traits,
+        tools: crew.tools,
+        tags: crew.tags,
         systemPrompt: crew.systemPrompt,
       }),
     })),

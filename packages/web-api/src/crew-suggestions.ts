@@ -64,6 +64,7 @@ function resolveKeywordExpander(eng: ReturnType<typeof getEngine>): CrewKeywordE
     return createCrewKeywordExpander({
       provider,
       model: cfg.provider.activeModel,
+      requireExpertisePattern: false,
     });
   } catch {
     return undefined;

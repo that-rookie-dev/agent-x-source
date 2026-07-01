@@ -132,6 +132,14 @@ export function createRulesSection(): PromptSection<string> {
     `- ALWAYS use ask_clarification — the UI renders a structured form, never plain chat questions.`,
     `- DEFAULT: one question per ask_clarification call. Wait for the answer before asking the next.`,
     `- MULTI-QUESTION form (questions[] with 2+ items) only when gathering related fields together is clearly better (intake forms, trip setup, config wizard) — not for a simple back-and-forth.`,
+    ``,
+    `KNOWLEDGE RETRIEVAL (MANDATORY):`,
+    `- ALWAYS call memory_fabric_search as your FIRST action before answering any question.`,
+    `- This searches all documents uploaded via RAG Studio (PDFs, text files, web distillations).`,
+    `- Even if you think you know the answer from training data, search first — the user's documents may contain specific information they want you to reference.`,
+    `- Only skip memory_fabric_search if the question is clearly about real-time actions (file operations, tool execution, scheduling) or personal conversation.`,
+    `- If memory_fabric_search returns results, base your answer on those results and cite the source.`,
+    `- If it returns "No matching documents", fall back to your knowledge or web_search.`,
     `[/RULES]`,
   ].join('\n');
   return {
@@ -181,6 +189,14 @@ export function createCrewPrivateConductSection(): PromptSection<string> {
     `- After the final clarification answer, deliver the full plan or response immediately — never stop at a transition phrase like "let me build your plan" without the actual plan in the same turn.`,
     `- DEFAULT: one question per tool call — wait for the answer, then continue naturally.`,
     `- Bundle multiple questions in one call only for complex/related intake (see [QUESTIONNAIRE]).`,
+    ``,
+    `KNOWLEDGE RETRIEVAL (MANDATORY):`,
+    `- ALWAYS call memory_fabric_search as your FIRST action before answering any question that could reference uploaded documents.`,
+    `- This searches all documents uploaded via RAG Studio (PDFs, text files, web distillations).`,
+    `- Even if you think you know the answer from training data, search first — the user's documents may contain specific information they want you to reference.`,
+    `- Only skip memory_fabric_search for casual conversation (greetings, small talk) or real-time actions (file operations, tool execution).`,
+    `- If memory_fabric_search returns results, base your answer on those results and cite the source.`,
+    `- If it returns "No matching documents", fall back to your knowledge or web_search.`,
     `[/CREW_PRIVATE_CONDUCT]`,
   ].join('\n');
   return {

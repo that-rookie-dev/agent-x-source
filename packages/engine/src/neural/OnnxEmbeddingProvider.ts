@@ -53,6 +53,17 @@ interface LoadedModel {
   nativeDim: number;
 }
 
+// ── Module-level singleton for tool access ──
+let _embedderInstance: OnnxEmbeddingProvider | null = null;
+
+export function setEmbedderInstance(embedder: OnnxEmbeddingProvider | null): void {
+  _embedderInstance = embedder;
+}
+
+export function getEmbedderInstance(): OnnxEmbeddingProvider | null {
+  return _embedderInstance;
+}
+
 export class OnnxEmbeddingProvider implements EmbeddingProvider {
   readonly model: string;
   readonly dimensions = EMBEDDING_DIMENSION;

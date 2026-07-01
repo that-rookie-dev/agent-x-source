@@ -113,18 +113,604 @@ function hashText(text) {
 }
 
 function pickUnique(pool, count, seedText) {
+  if (pool.length === 0) return [];
   const result = [];
   const used = new Set();
   let idx = hashText(seedText) % pool.length;
-  while (result.length < count) {
+  // Strided pass — deterministic ordering seeded by seedText.
+  for (let i = 0; i < pool.length && result.length < count; i++) {
     const value = pool[idx % pool.length];
     if (!used.has(value)) {
       used.add(value);
       result.push(value);
     }
-    idx += 5;
+    idx += 7;
+  }
+  // Linear fill — guarantees we reach `count` even when stride and pool length
+  // share a common divisor (e.g. stride 7, pool 14 → only 2 strided hits).
+  for (let i = 0; i < pool.length && result.length < count; i++) {
+    const value = pool[i];
+    if (!used.has(value)) {
+      used.add(value);
+      result.push(value);
+    }
   }
   return result;
+}
+
+// ─── Per-crew tools + synonym tags ─────────────────────────────────────────
+// Concrete software / frameworks / platforms that appear across skillBanks.
+// Used to (a) classify skillBank items as "tools" vs conceptual skills, and
+// (b) expand each crew's tags with synonyms / alternate spellings so user
+// queries like "k8s", "pg", or "nodejs" match the right specialist.
+const TOOL_NAMES = new Set([
+  // Backend
+  'Node.js', 'Redis', 'Kafka', 'RabbitMQ', 'Elasticsearch', 'OpenSearch',
+  'PostgreSQL', 'MySQL', 'MongoDB', 'Cassandra', 'DynamoDB', 'CockroachDB',
+  'Spanner', 'Aurora', 'SQLite', 'MariaDB', 'Oracle', 'SQL Server', 'Neo4j',
+  'InfluxDB', 'TimescaleDB', 'ClickHouse', 'Snowflake', 'BigQuery', 'Redshift',
+  'DuckDB', 'Vitess', 'PgBouncer', 'Patroni', 'pgvector', 'Memcached', 'HBase',
+  'GraphQL', 'gRPC', 'REST', 'OpenAPI', 'Swagger', 'OAuth2', 'JWT', 'WebSockets',
+  'Spring Boot', 'FastAPI', 'Django', 'Flask', 'Rails', 'Express', 'Java', 'Go',
+  'Rust', 'Python', 'TypeScript', 'JavaScript', 'C#', 'C++', 'C', 'Kotlin',
+  'Swift', 'Ruby', 'OpenTelemetry', 'Jaeger', 'Zipkin',
+  // Frontend
+  'React', 'Vue', 'Angular', 'Svelte', 'Next.js', 'Nuxt', 'Remix', 'Astro',
+  'Tailwind', 'Sass', 'Webpack', 'Vite', 'Rollup', 'esbuild', 'Jest', 'Vitest',
+  'Mocha', 'Cypress', 'Playwright', 'Storybook', 'Redux', 'Zustand',
+  'TanStack Query', 'Framer Motion', 'D3.js', 'Electron',
+  // Platform / fullstack
+  'Turborepo', 'Nx', 'pnpm', 'Apollo', 'Relay', 'tRPC', 'Terraform', 'Docker',
+  'Kubernetes', 'GitHub Actions', 'CircleCI', 'LaunchDarkly', 'Sentry',
+  'Datadog', 'Prisma',
+  // DevOps / SRE
+  'Helm', 'Ansible', 'Jenkins', 'ArgoCD', 'Flux', 'Prometheus', 'Grafana',
+  'AWS', 'Azure', 'GCP', 'Pulumi', 'CloudFormation', 'Vault', 'Consul', 'Istio',
+  'Linkerd', 'Envoy', 'Splunk', 'ELK', 'PagerDuty', 'Chaos Mesh', 'EKS', 'GKE',
+  'AKS', 'Fargate', 'Lambda', 'CloudRun',
+  // Security
+  'OWASP', 'Burp Suite', 'Metasploit', 'Nessus', 'Nmap', 'Wireshark', 'Snort',
+  'Suricata', 'Yara', 'Falco', 'Trivy', 'Clair', 'Vault', 'OIDC', 'SAML', 'KMS',
+  'HSM', 'TLS', 'mTLS',
+  // Mobile / embedded / IoT
+  'SwiftUI', 'Objective-C', 'Jetpack Compose', 'Xcode', 'Android Studio',
+  'Flutter', 'Dart', 'Expo', 'Embedded C', 'ARM', 'ESP32', 'Arduino',
+  'Raspberry Pi', 'Zephyr', 'FreeRTOS', 'MQTT', 'CoAP', 'LoRaWAN', 'Zigbee',
+  'Matter', 'Thread', 'AWS IoT', 'Azure IoT Hub', 'BLE', 'JTAG',
+  // Data engineering
+  'Pandas', 'PySpark', 'Spark', 'Airflow', 'dbt', 'Flink', 'Beam', 'Tableau',
+  'Power BI', 'Looker', 'Prefect', 'Dagster', 'Trino', 'Presto', 'DataHub',
+  'OpenLineage', 'Airbyte', 'Fivetran', 'Iceberg', 'Delta Lake', 'Hudi',
+  'Great Expectations',
+  // ML / AI
+  'PyTorch', 'TensorFlow', 'JAX', 'scikit-learn', 'XGBoost', 'LightGBM',
+  'Hugging Face', 'Transformers', 'LangChain', 'LlamaIndex', 'Pinecone',
+  'Weaviate', 'Milvus', 'Chroma', 'OpenAI', 'Anthropic', 'Llama', 'MLflow',
+  'Weights & Biases', 'Ray', 'SageMaker', 'Vertex AI', 'Azure ML', 'Kubeflow',
+  'vLLM', 'TensorRT', 'ONNX', 'CUDA', 'GPU',
+  // QA
+  'Selenium', 'Puppeteer', 'JUnit', 'pytest', 'TestNG', 'k6', 'Gatling',
+  'JMeter', 'Locust', 'Appium', 'Detox', 'Cucumber', 'Postman', 'Newman',
+  'RestAssured', 'Pact', 'Stryker', 'Axe', 'Lighthouse', 'TestRail', 'Zephyr',
+  // Game / graphics
+  'Unity', 'Unreal Engine', 'Godot', 'OpenGL', 'Vulkan', 'DirectX', 'Metal',
+  'WebGL', 'WebGPU', 'HLSL', 'GLSL', 'Shader Graph', 'VFX Graph', 'Blender',
+  'Maya', 'Substance', 'Houdini', 'PhysX', 'Havok', 'Photon', 'Steamworks',
+  'PlayFab', 'GameLift', 'OpenXR', 'WebXR',
+  // Networking
+  'BGP', 'OSPF', 'EIGRP', 'MPLS', 'VXLAN', 'SD-WAN', 'Cisco IOS', 'Juniper Junos',
+  'Arista EOS', 'FRR', 'iptables', 'nftables', 'pfSense', 'WireGuard', 'IPsec',
+  'OpenVPN', 'Tailscale', 'HAProxy', 'NGINX', 'Keepalived', 'CoreDNS', 'PowerDNS',
+  'Cilium', 'tcpdump', 'Wireshark', 'nmap', 'mtr',
+  // Design
+  'Figma', 'Sketch', 'Adobe XD', 'Framer', 'Miro', 'Mural', 'Notion',
+  'Confluence', 'Jira', 'Hotjar', 'Mixpanel', 'Amplitude',
+  // Compliance
+  'Drata', 'Vanta', 'Secureframe', 'OneTrust', 'AuditBoard', 'ServiceNow GRC',
+  'AWS Artifact',
+]);
+
+// Synonyms / alternate spellings / related terms for common skills + tools.
+// Keys are canonical names (as they appear in skillBanks); values are extra
+// search tags. Items not in this map get auto-generated lowercase variants.
+const SYNONYM_MAP = {
+  // ── Backend / languages
+  'Node.js': ['nodejs', 'node js', 'node', 'express', 'npm'],
+  'Python': ['python3', 'py', 'pip'],
+  'Java': ['java se', 'jvm', 'jdk'],
+  'Go': ['golang', 'go lang'],
+  'Rust': ['rustlang', 'cargo'],
+  'TypeScript': ['ts', 'typescript lang'],
+  'JavaScript': ['js', 'ecmascript'],
+  'C#': ['csharp', 'dotnet', '.net', 'asp.net', 'c sharp'],
+  'C++': ['cpp', 'cxx', 'c plus plus'],
+  'Kotlin': ['kt', 'kotlinlang'],
+  'Ruby': ['rb', 'ruby lang'],
+  'Spring Boot': ['springboot', 'spring-boot', 'spring framework'],
+  'FastAPI': ['fast api', 'fast-api'],
+  'Django': ['django framework'],
+  'Flask': ['flask framework'],
+  'Rails': ['ruby on rails', 'ror', 'rails framework'],
+  'GraphQL': ['gql', 'graph ql'],
+  'gRPC': ['grpc', 'google rpc', 'remote procedure call'],
+  'REST': ['restful', 'rest api', 'restful api'],
+  'OpenAPI': ['openapi spec', 'swagger spec', 'open api'],
+  'Swagger': ['openapi', 'swagger ui'],
+  'OAuth2': ['oauth 2', 'oauth 2.0', 'oauth2.0'],
+  'JWT': ['json web token', 'jws', 'jwe'],
+  'WebSockets': ['websocket', 'ws', 'wss'],
+  'Kafka': ['apache kafka', 'confluent'],
+  'RabbitMQ': ['rabbit mq', 'amqp'],
+  'Redis': ['redis cache', 'valkey'],
+  'Elasticsearch': ['elastic', 'es', 'opensearch', 'elastic search'],
+  'OpenSearch': ['opensearch', 'elastic search'],
+  'PostgreSQL': ['postgres', 'pg', 'psql', 'postgresql db'],
+  'MySQL': ['mysql db', 'maria'],
+  'MongoDB': ['mongo', 'mongodb atlas', 'mongoose'],
+  'Cassandra': ['apache cassandra', 'cql'],
+  'DynamoDB': ['aws dynamo', 'dynamo'],
+  'CockroachDB': ['cockroach', 'crdb'],
+  'Snowflake': ['snowflake db', 'snowflake cloud'],
+  'BigQuery': ['big query', 'google bigquery', 'bq'],
+  'Redshift': ['aws redshift'],
+  'ClickHouse': ['click house'],
+  'Neo4j': ['neo4j graph', 'cypher'],
+  'pgvector': ['pg vector', 'postgres vector', 'pgvector extension'],
+  'CQRS': ['command query responsibility segregation'],
+  'Event Sourcing': ['event-sourcing', 'event sourced'],
+  'Domain Driven Design': ['ddd', 'domain-driven', 'domain driven'],
+  'Microservices': ['microservice', 'microservice architecture', 'micro-services'],
+  'Observability': ['o11y', 'observability monitoring', 'telemetry'],
+  'OpenTelemetry': ['otel', 'opentelemetry sdk'],
+  'Asynchronous Processing': ['async processing', 'async', 'asynchronous'],
+  'Caching Strategies': ['caching', 'cache strategy', 'cache'],
+  'AuthN/AuthZ': ['authentication', 'authorization', 'authn', 'authz', 'auth'],
+  'API Design': ['api architecture', 'api gateway', 'api contract'],
+  'Data Modeling': ['data model', 'data modelling', 'schema design'],
+  // ── Frontend
+  'React': ['reactjs', 'react js', 'react.js'],
+  'Vue': ['vuejs', 'vue js', 'vue.js'],
+  'Angular': ['angularjs', 'angular js', 'ng'],
+  'Svelte': ['sveltekit', 'svelte js'],
+  'Next.js': ['nextjs', 'next js', 'next.js framework'],
+  'Nuxt': ['nuxtjs', 'nuxt js'],
+  'Remix': ['remix js', 'remix run'],
+  'Astro': ['astro js', 'astrojs'],
+  'Tailwind': ['tailwindcss', 'tailwind css'],
+  'Sass': ['scss', 'syntactically awesome stylesheets'],
+  'Webpack': ['webpack bundler'],
+  'Vite': ['vite js', 'vitejs'],
+  'Jest': ['jest js', 'jest testing'],
+  'Vitest': ['vitest js', 'vite test'],
+  'Cypress': ['cypress io', 'cypress testing'],
+  'Playwright': ['playwright testing', 'playwright js'],
+  'Storybook': ['storybook js', 'storybook ui'],
+  'Redux': ['redux js', 'redux state'],
+  'Zustand': ['zustand state'],
+  'TanStack Query': ['react query', 'react-query', 'tanstack'],
+  'Framer Motion': ['framer', 'motion library'],
+  'D3.js': ['d3', 'd3js', 'data driven documents'],
+  'Electron': ['electron js', 'electronjs'],
+  'Modern CSS': ['css3', 'flexbox', 'grid', 'css grid'],
+  'Accessibility': ['a11y', 'wcag', 'aria', 'accessible'],
+  'Web Performance': ['web vitals', 'core web vitals', 'lighthouse'],
+  'State Management': ['state mgmt', 'client state'],
+  'Design Systems': ['design system', 'component library'],
+  'SSR/SSG': ['server side rendering', 'static site generation', 'ssr', 'ssg', 'isr'],
+  'Internationalization': ['i18n', 'l10n', 'localization', 'translation'],
+  'PWA': ['progressive web app', 'progressive web apps'],
+  'Web Components': ['web component', 'custom elements', 'shadow dom'],
+  // ── DevOps / cloud / SRE
+  'Kubernetes': ['k8s', 'kubernetes cluster', 'kube'],
+  'Terraform': ['tf', 'terraform iac', 'hashicorp terraform'],
+  'Docker': ['docker container', 'containerization', 'containers', 'dockerfile'],
+  'Helm': ['helm charts', 'helm3'],
+  'Ansible': ['ansible playbook', 'ansible automation'],
+  'Jenkins': ['jenkins ci', 'jenkins pipeline'],
+  'ArgoCD': ['argo cd', 'argocd gitops'],
+  'Flux': ['flux cd', 'flux gitops'],
+  'Prometheus': ['prom', 'prometheus monitoring', 'promql'],
+  'Grafana': ['grafana dashboards', 'grafana loki'],
+  'AWS': ['amazon web services', 'amazon aws'],
+  'Azure': ['microsoft azure', 'azure cloud'],
+  'GCP': ['google cloud', 'google cloud platform'],
+  'Pulumi': ['pulumi iac'],
+  'CloudFormation': ['cfn', 'aws cloudformation'],
+  'Vault': ['hashicorp vault', 'secrets management'],
+  'Consul': ['hashicorp consul', 'service discovery'],
+  'Istio': ['istio service mesh', 'service mesh'],
+  'Linkerd': ['linkerd service mesh'],
+  'Envoy': ['envoy proxy', 'lyft envoy'],
+  'Datadog': ['dd', 'datadog monitoring'],
+  'Splunk': ['splunk siem', 'splunk search'],
+  'ELK': ['elasticsearch logstash kibana', 'elastic stack'],
+  'Jaeger': ['jaeger tracing', 'distributed tracing'],
+  'PagerDuty': ['pager duty', 'incident alerting'],
+  'EKS': ['aws eks', 'elastic kubernetes service'],
+  'GKE': ['gcp gke', 'google kubernetes engine'],
+  'AKS': ['azure aks', 'azure kubernetes service'],
+  'Fargate': ['aws fargate', 'fargate containers'],
+  'Lambda': ['aws lambda', 'serverless functions', 'lambda functions'],
+  'CloudRun': ['google cloud run', 'gcp cloud run'],
+  'CI/CD Pipelines': ['ci cd', 'cicd', 'continuous integration', 'continuous deployment', 'continuous delivery'],
+  'Infrastructure as Code': ['iac', 'infrastructure as code'],
+  'GitOps': ['git ops', 'gitops workflow'],
+  'SLO/SLI': ['slo', 'sli', 'service level objective', 'service level indicator', 'error budget'],
+  'Incident Response': ['incident management', 'on-call', 'on call', 'postmortem'],
+  'Disaster Recovery': ['dr', 'dr plan', 'business continuity'],
+  'Cost Optimization': ['finops', 'cloud cost', 'cost optimization cloud'],
+  'Chaos Mesh': ['chaos engineering', 'chaos testing'],
+  // ── Security
+  'Threat Modeling': ['threat model', 'threat modelling', 'stride'],
+  'Application Security': ['appsec', 'app security', 'secure coding'],
+  'Cloud Security': ['cloud sec', 'cloudsecurity', 'cspm'],
+  'Vulnerability Management': ['vuln management', 'vulnerability scanning', 'vuln'],
+  'Penetration Testing': ['pentest', 'pentesting', 'pen test', 'ethical hacking'],
+  'OWASP': ['owasp top 10', 'owasp zap'],
+  'Burp Suite': ['burpsuite', 'burp', 'portswigger'],
+  'Metasploit': ['metasploit framework', 'msf'],
+  'Nessus': ['tenable nessus', 'nessus scanner'],
+  'Nmap': ['network mapper', 'nmap scanner'],
+  'Wireshark': ['wireshark capture', 'packet capture'],
+  'SIEM': ['security information event management', 'siem platform'],
+  'SOAR': ['security orchestration automation response'],
+  'SAST': ['static application security testing', 'static analysis'],
+  'DAST': ['dynamic application security testing', 'dynamic analysis'],
+  'SCA': ['software composition analysis', 'dependency scanning'],
+  'SBOM': ['software bill of materials', 'bom'],
+  'MITRE ATT&CK': ['mitre attack', 'mitre attck', 'attack framework'],
+  'CVE': ['common vulnerabilities exposures', 'cve id'],
+  'TLS': ['transport layer security', 'ssl', 'tls ssl'],
+  'mTLS': ['mutual tls', 'mutual authentication'],
+  'OIDC': ['openid connect', 'openid'],
+  'SAML': ['security assertion markup language', 'saml sso'],
+  'KMS': ['key management service', 'aws kms'],
+  'HSM': ['hardware security module'],
+  'Zero Trust': ['zero-trust', 'zero trust architecture'],
+  // ── Mobile / embedded / IoT
+  'iOS Development': ['ios', 'iphone', 'ipad', 'ios app'],
+  'Android Development': ['android', 'android app', 'apk'],
+  'React Native': ['reactnative', 'react-native', 'rn'],
+  'Flutter': ['flutter sdk', 'flutter app', 'dart flutter'],
+  'Dart': ['dart lang', 'dart language'],
+  'Swift': ['swift lang', 'swift programming'],
+  'SwiftUI': ['swift ui', 'swift ui framework'],
+  'Objective-C': ['objc', 'objective c', 'obj-c'],
+  'Kotlin': ['kt', 'kotlin android'],
+  'Jetpack Compose': ['compose', 'compose ui', 'jetpack compose ui'],
+  'Xcode': ['xcode ide', 'apple xcode'],
+  'Android Studio': ['android ide', 'jetbrains android'],
+  'Expo': ['expo go', 'expo react native'],
+  'Embedded C': ['embedded c programming', 'firmware c'],
+  'ARM': ['arm architecture', 'arm cortex'],
+  'ESP32': ['espressif', 'esp32 mcu'],
+  'Arduino': ['arduino ide', 'arduino mcu'],
+  'Raspberry Pi': ['rpi', 'raspberry pi pico', 'rpi4'],
+  'Zephyr': ['zephyr rtos'],
+  'FreeRTOS': ['free rtos', 'freertos kernel'],
+  'RTOS': ['real time operating system', 'real-time os'],
+  'MQTT': ['mqtt protocol', 'mqtt broker'],
+  'CoAP': ['constrained application protocol'],
+  'LoRaWAN': ['lora', 'lora wan', 'lorawan network'],
+  'Zigbee': ['zigbee protocol', 'zigbee mesh'],
+  'Matter': ['matter protocol', 'matter smart home'],
+  'Thread': ['thread protocol', 'thread mesh'],
+  'BLE': ['bluetooth low energy', 'bluetooth le', 'bluetooth'],
+  'AWS IoT': ['aws iot core', 'aws iot'],
+  'Azure IoT Hub': ['azure iot', 'iot hub'],
+  'Edge Computing': ['edge compute', 'edge devices', 'edge'],
+  'Firmware': ['firmware development', 'embedded firmware'],
+  'Sensor Integration': ['sensors', 'sensor fusion', 'iot sensors'],
+  'OTA': ['over the air', 'ota update', 'firmware ota'],
+  // ── Data engineering
+  'ETL/ELT': ['etl', 'elt', 'extract transform load'],
+  'Data Warehousing': ['data warehouse', 'dwh', 'warehouse'],
+  'Spark': ['apache spark', 'pyspark', 'spark sql'],
+  'PySpark': ['pyspark', 'python spark'],
+  'Pandas': ['pandas python', 'python pandas'],
+  'Airflow': ['apache airflow', 'airflow dag'],
+  'dbt': ['data build tool', 'dbt core', 'dbt cloud'],
+  'Flink': ['apache flink', 'flink streaming'],
+  'Beam': ['apache beam', 'dataflow'],
+  'Tableau': ['tableau dashboard', 'tableau viz'],
+  'Power BI': ['powerbi', 'microsoft power bi', 'powerbi dashboard'],
+  'Looker': ['looker studio', 'looker bi', 'google looker'],
+  'Prefect': ['prefect workflow', 'prefect orchestration'],
+  'Dagster': ['dagster io', 'dagster pipeline'],
+  'Trino': ['trino sql', 'trino query'],
+  'Presto': ['presto sql', 'presto db'],
+  'DataHub': ['datahub catalog', 'data catalog'],
+  'OpenLineage': ['open lineage', 'data lineage'],
+  'Airbyte': ['airbyte etl', 'airbyte connector'],
+  'Fivetran': ['fivetran etl', 'fivetran connector'],
+  'Iceberg': ['apache iceberg', 'iceberg table'],
+  'Delta Lake': ['delta lakehouse', 'delta table'],
+  'Hudi': ['apache hudi', 'hudi table'],
+  'Great Expectations': ['great expectations', 'data quality testing', 'gx'],
+  'Data Quality': ['data quality', 'data validation', 'data profiling'],
+  'Data Governance': ['data governance', 'data stewardship', 'governance'],
+  'Streaming Data': ['streaming', 'stream processing', 'real-time data'],
+  'SQL Optimization': ['sql tuning', 'query optimization', 'sql performance'],
+  // ── ML / AI
+  'Machine Learning': ['ml', 'machine-learning', 'ml models'],
+  'Model Training': ['training', 'model training', 'train model'],
+  'MLOps': ['ml ops', 'ml operations', 'ml lifecycle'],
+  'Prompt Engineering': ['prompting', 'prompt design', 'prompt eng'],
+  'RAG Systems': ['rag', 'retrieval augmented generation', 'rag pipeline'],
+  'NLP': ['natural language processing', 'natural language', 'text processing'],
+  'Computer Vision': ['cv', 'vision', 'image recognition', 'image processing'],
+  'Feature Engineering': ['feature extraction', 'feature selection', 'features'],
+  'Inference Optimization': ['inference', 'model serving', 'low latency inference'],
+  'Experiment Tracking': ['experiment management', 'model tracking', 'mlflow tracking'],
+  'Responsible AI': ['ai ethics', 'ai safety', 'responsible ai', 'ai governance'],
+  'PyTorch': ['torch', 'pytorch lightning'],
+  'TensorFlow': ['tf', 'tensorflow js', 'tfjs'],
+  'JAX': ['jax ml', 'google jax'],
+  'scikit-learn': ['sklearn', 'scikit', 'sk-learn'],
+  'XGBoost': ['xgb', 'extreme gradient boosting'],
+  'LightGBM': ['lgbm', 'light gbm', 'light gradient boosting'],
+  'Hugging Face': ['huggingface', 'hf', 'transformers hub'],
+  'Transformers': ['transformer model', 'attention model', 'transformer architecture'],
+  'LangChain': ['lang chain', 'langchain js', 'langchain python'],
+  'LlamaIndex': ['llama index', 'llamaindex rag'],
+  'Pinecone': ['pinecone vector', 'pinecone db'],
+  'Weaviate': ['weaviate vector', 'weaviate db'],
+  'Milvus': ['milvus vector', 'milvus db'],
+  'Chroma': ['chroma db', 'chromadb', 'chroma vector'],
+  'OpenAI': ['openai api', 'gpt', 'chatgpt', 'openai gpt'],
+  'Anthropic': ['anthropic claude', 'claude', 'claude ai'],
+  'Llama': ['llama model', 'meta llama', 'llama2', 'llama3'],
+  'MLflow': ['mlflow tracking', 'mlflow model'],
+  'Weights & Biases': ['wandb', 'w and b', 'wandb tracking'],
+  'Ray': ['ray distributed', 'ray cluster', 'ray serve'],
+  'SageMaker': ['aws sagemaker', 'sagemaker studio'],
+  'Vertex AI': ['gcp vertex', 'vertex ai platform', 'google vertex'],
+  'Azure ML': ['azure machine learning', 'azureml'],
+  'Kubeflow': ['kubeflow pipelines', 'kubeflow ml'],
+  'vLLM': ['vllm server', 'vllm inference'],
+  'TensorRT': ['tensor rt', 'nvidia tensorrt'],
+  'ONNX': ['onnx runtime', 'onnx model'],
+  'CUDA': ['nvidia cuda', 'cuda cores', 'gpu cuda'],
+  'GPU': ['gpus', 'nvidia gpu', 'gpu computing'],
+  'Embeddings': ['embedding', 'vector embedding', 'text embedding'],
+  'Fine-tuning': ['fine tuning', 'finetuning', 'fine tune', 'model fine-tuning'],
+  'LoRA': ['low rank adaptation', 'lora fine-tuning', 'qlora'],
+  'RLHF': ['reinforcement learning human feedback', 'rlhf training'],
+  'Vector Database': ['vector db', 'vectordb', 'vector store'],
+  // ── QA
+  'Test Strategy': ['testing strategy', 'test plan', 'qa strategy'],
+  'Unit Testing': ['unit test', 'unit tests', 'unittest'],
+  'Integration Testing': ['integration test', 'integration tests'],
+  'E2E Testing': ['e2e', 'end to end test', 'end-to-end testing', 'e2e test'],
+  'Performance Testing': ['load test', 'perf testing', 'performance test'],
+  'Security Testing': ['security test', 'security qa', 'pentest qa'],
+  'Accessibility Testing': ['a11y testing', 'accessibility qa', 'wcag testing'],
+  'Test Automation': ['automation testing', 'automated tests', 'test automation framework'],
+  'Mutation Testing': ['mutation test', 'mutation analysis'],
+  'Bug Triage': ['bug tracking', 'defect triage', 'issue triage'],
+  'Selenium': ['selenium webdriver', 'selenium grid'],
+  'Puppeteer': ['puppeteer js', 'puppeteer automation'],
+  'JUnit': ['junit5', 'junit4', 'junit testing'],
+  'pytest': ['py test', 'pytest python', 'pytest framework'],
+  'TestNG': ['test ng', 'testng java'],
+  'k6': ['k6 io', 'k6 load testing', 'grafana k6'],
+  'Gatling': ['gatling load', 'gatling simulation'],
+  'JMeter': ['jmeter load', 'apache jmeter'],
+  'Locust': ['locust io', 'locust load testing'],
+  'Appium': ['appium mobile', 'appium automation'],
+  'Detox': ['detox mobile', 'detox react native'],
+  'Cucumber': ['cucumber bdd', 'gherkin', 'behavior driven'],
+  'Postman': ['postman api', 'postman collection'],
+  'Newman': ['newman cli', 'newman postman'],
+  'RestAssured': ['rest assured', 'rest assured java'],
+  'Pact': ['pact contract', 'consumer driven contracts', 'pact testing'],
+  'Stryker': ['stryker mutation', 'stryker js'],
+  'Axe': ['axe accessibility', 'axe devtools'],
+  'Lighthouse': ['lighthouse audit', 'lighthouse ci', 'google lighthouse'],
+  'TestRail': ['testrail case', 'testrail management'],
+  'Zephyr': ['zephyr scale', 'zephyr jira'],
+  // ── Game / graphics
+  'Unity': ['unity3d', 'unity engine', 'unity c#'],
+  'Unreal Engine': ['unreal', 'ue5', 'ue4', 'unreal5'],
+  'Godot': ['godot engine', 'godot gdscript'],
+  'OpenGL': ['opengl gl', 'gl'],
+  'Vulkan': ['vulkan api', 'vulkan graphics'],
+  'DirectX': ['dx11', 'dx12', 'direct3d', 'd3d'],
+  'Metal': ['metal api', 'apple metal'],
+  'WebGL': ['webgl gl', 'webgl2'],
+  'WebGPU': ['web gpu', 'wgpu'],
+  'HLSL': ['high level shader language'],
+  'GLSL': ['glsl shader', 'opengl shader'],
+  'Shader Graph': ['shader graph unity', 'node shader'],
+  'Blender': ['blender 3d', 'blender modeling'],
+  'Maya': ['autodesk maya', 'maya 3d'],
+  'Substance': ['substance painter', 'substance designer', 'adobe substance'],
+  'Houdini': ['sidefx houdini', 'houdini fx'],
+  'PhysX': ['nvidia physx', 'physics engine'],
+  'Havok': ['havok physics', 'havok engine'],
+  'Photon': ['photon network', 'photon unity'],
+  'Steamworks': ['steam sdk', 'steam api', 'valve steam'],
+  'PlayFab': ['playfab backend', 'ms playfab'],
+  'GameLift': ['aws gamelift', 'gamelift fleet'],
+  'ECS': ['entity component system', 'ecs architecture'],
+  'VR': ['virtual reality', 'vr headset', 'vr development'],
+  'AR': ['augmented reality', 'ar development', 'arkit', 'arcore'],
+  'XR': ['extended reality', 'mixed reality', 'xr development'],
+  'OpenXR': ['open xr', 'openxr api'],
+  'WebXR': ['web xr', 'webxr api'],
+  'Rendering Pipelines': ['rendering pipeline', 'render pipeline', 'graphics pipeline'],
+  'Shaders': ['shader', 'shader programming', 'gpu shader'],
+  'Physics Systems': ['physics simulation', 'game physics', 'collision detection'],
+  'Procedural Generation': ['procgen', 'procedural gen', 'pcg'],
+  // ── Networking
+  'TCP/IP': ['tcp ip', 'tcp', 'ip', 'network protocol'],
+  'DNS': ['domain name system', 'dns server'],
+  'Load Balancing': ['load balancer', 'lb', 'traffic distribution'],
+  'Network Security': ['network sec', 'netsec', 'network hardening'],
+  'Routing': ['route', 'router', 'route table'],
+  'Linux Systems': ['linux', 'linux admin', 'linux server'],
+  'Linux Operations': ['linux ops', 'linux administration', 'sysadmin'],
+  'BGP': ['border gateway protocol', 'bgp routing'],
+  'OSPF': ['open shortest path first', 'ospf routing'],
+  'MPLS': ['multiprotocol label switching'],
+  'VXLAN': ['vxlan overlay', 'virtual extensible lan'],
+  'SD-WAN': ['sdwan', 'software defined wan'],
+  'Cisco IOS': ['cisco ios xe', 'cisco router'],
+  'Juniper Junos': ['junos os', 'juniper router'],
+  'Arista EOS': ['arista switch', 'eos os'],
+  'WireGuard': ['wireguard vpn', 'wireguard tunnel'],
+  'IPsec': ['ip sec', 'ipsec vpn', 'ip security'],
+  'OpenVPN': ['open vpn', 'openvpn server'],
+  'Tailscale': ['tailscale vpn', 'tailscale mesh'],
+  'HAProxy': ['ha proxy', 'haproxy lb'],
+  'NGINX': ['nginx server', 'nginx proxy', 'engine x'],
+  'Keepalived': ['keepalived vrrp', 'vrrp'],
+  'CoreDNS': ['core dns', 'coredns server'],
+  'PowerDNS': ['power dns', 'pdns'],
+  'Cilium': ['cilium ebpf', 'cilium network'],
+  'eBPF': ['ebpf', 'extended berkeley packet filter'],
+  'XDP': ['xdp', 'express data path'],
+  'tcpdump': ['tcp dump', 'packet capture'],
+  'nmap': ['nmap scanner', 'network mapper'],
+  'mtr': ['my traceroute', 'traceroute'],
+  // ── Design
+  'UX Research': ['user research', 'ux research methods', 'user studies'],
+  'Interaction Design': ['ixd', 'interaction design', 'ui interaction'],
+  'Information Architecture': ['ia', 'info architecture', 'content structure'],
+  'Design Systems': ['design system', 'design tokens', 'component library'],
+  'Prototyping': ['prototype', 'prototypes', 'wireframing', 'wireframe'],
+  'Visual Design': ['visual design', 'graphic design', 'ui visual'],
+  'Service Design': ['service design', 'customer journey', 'service blueprint'],
+  'Journey Mapping': ['customer journey map', 'journey map', 'user journey'],
+  'Usability Testing': ['usability test', 'usability study', 'ux testing'],
+  'Figma': ['figma design', 'figma file'],
+  'Sketch': ['sketch app', 'sketch design'],
+  'Adobe XD': ['adobe experience design', 'xd'],
+  'Framer': ['framer js', 'framer motion', 'framer design'],
+  'Miro': ['miro board', 'miro whiteboard'],
+  'Mural': ['mural board', 'mural collaboration'],
+  'Notion': ['notion app', 'notion docs'],
+  'Confluence': ['atlassian confluence', 'confluence wiki'],
+  'Jira': ['atlassian jira', 'jira tickets', 'jira board'],
+  'Hotjar': ['hotjar analytics', 'hotjar heatmap'],
+  'Mixpanel': ['mixpanel analytics', 'mixpanel events'],
+  'Amplitude': ['amplitude analytics', 'amplitude product'],
+  // ── Compliance
+  'PCI-DSS': ['pci dss', 'pci', 'payment card industry'],
+  'HIPAA': ['hipaa compliance', 'health insurance portability'],
+  'GDPR': ['gdpr compliance', 'general data protection regulation'],
+  'SOC 2': ['soc2', 'soc 2 compliance', 'soc2 type ii'],
+  'ISO 27001': ['iso27001', 'iso 27001 compliance', 'isms'],
+  'FedRAMP': ['fed ramp', 'federal risk authorization'],
+  'SOX': ['sarbanes oxley', 'sox compliance'],
+  'NIST': ['nist framework', 'nist csf', 'nist 800-53'],
+  'CCPA': ['california consumer privacy act', 'cpra'],
+  'CIS Controls': ['cis benchmarks', 'cis hardening'],
+  'Drata': ['drata compliance', 'drata soc2'],
+  'Vanta': ['vanta compliance', 'vanta soc2'],
+  'Secureframe': ['secureframe compliance', 'secureframe soc2'],
+  'OneTrust': ['onetrust privacy', 'onetrust gtm'],
+  'AuditBoard': ['auditboard grc', 'auditboard compliance'],
+  'ServiceNow GRC': ['servicenow governance', 'servicenow grc'],
+  // ── Database infra
+  'Replication': ['replica', 'database replication', 'replication lag'],
+  'Sharding': ['shard', 'database sharding', 'partitioning'],
+  'Backup and Recovery': ['backup', 'recovery', 'database backup', 'restore'],
+  'Query Optimization': ['query tuning', 'sql optimization', 'query plan'],
+  'High Availability': ['ha', 'high-availability', 'fault tolerance', 'ha cluster'],
+  'Capacity Planning': ['capacity', 'scaling planning', 'resource planning'],
+  'Migration Strategy': ['database migration', 'db migration', 'data migration'],
+  'NoSQL': ['nosql db', 'non relational', 'document store'],
+  // ── Sales / marketing / business
+  'Pipeline Management': ['sales pipeline', 'deal pipeline', 'crm pipeline'],
+  'Account Planning': ['account plan', 'strategic account', 'key account'],
+  'Discovery Calls': ['discovery', 'discovery call', 'qualifying calls'],
+  'Objection Handling': ['objections', 'handling objections', 'sales objections'],
+  'Negotiation': ['negotiate', 'deal negotiation', 'contract negotiation'],
+  'Closing Techniques': ['closing', 'close deals', 'sales closing'],
+  'CRM Hygiene': ['crm', 'crm data', 'crm management', 'salesforce'],
+  'Forecasting': ['sales forecast', 'revenue forecast', 'pipeline forecast'],
+  'Territory Planning': ['territory', 'sales territory', 'territory management'],
+  'Sales Enablement': ['enablement', 'sales enablement content', 'rep enablement'],
+  'Upsell Strategy': ['upsell', 'upselling', 'cross-sell', 'cross sell'],
+  'Brand Strategy': ['branding', 'brand positioning', 'brand identity'],
+  'Content Marketing': ['content strategy', 'content creation', 'blog marketing'],
+  'SEO/SEM': ['seo', 'sem', 'search engine optimization', 'search engine marketing'],
+  'Social Media Marketing': ['social media', 'social marketing', 'smm'],
+  'Email Marketing': ['email campaigns', 'email automation', 'drip campaigns'],
+  'Marketing Analytics': ['marketing data', 'campaign analytics', 'marketing roi'],
+  'Campaign Management': ['campaigns', 'ad campaigns', 'marketing campaigns'],
+  'Stakeholder Management': ['stakeholders', 'stakeholder engagement'],
+  'Process Design': ['process improvement', 'process optimization', 'workflow design'],
+  'Project Planning': ['project management', 'pm', 'project plan'],
+  'Risk Management': ['risk', 'risk assessment', 'risk mitigation'],
+  'Performance Metrics': ['kpi', 'kpis', 'metrics', 'okr', 'okrs'],
+  'Strategic Planning': ['strategy', 'strategic plan', 'business strategy'],
+};
+
+/**
+ * Auto-generate lowercase search variants for a skill/tool label that isn't in
+ * the curated SYNONYM_MAP: strips punctuation, splits on separators, and emits
+ * compact (no-space/no-punct) forms.
+ * @param {string} label
+ * @returns {string[]}
+ */
+function autoSynonyms(label) {
+  const lower = String(label).toLowerCase().trim();
+  if (!lower) return [];
+  const variants = new Set([lower]);
+  // Remove punctuation variants: "CI/CD Pipelines" → "ci cd pipelines"
+  const noPunct = lower.replace(/[/\\,.()-]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (noPunct && noPunct !== lower) variants.add(noPunct);
+  // Compact form: "Node.js" → "nodejs", "CI/CD Pipelines" → "cicdpipelines"
+  const compact = lower.replace(/[^a-z0-9+]/g, '');
+  if (compact && compact !== lower) variants.add(compact);
+  // Hyphen→space and space→hyphen variants
+  if (lower.includes('-')) variants.add(lower.replace(/-/g, ' '));
+  if (lower.includes(' ')) variants.add(lower.replace(/\s+/g, '-'));
+  // Singular/plural naive toggle for common suffixes
+  if (lower.endsWith('s') && lower.length > 4) variants.add(lower.slice(0, -1));
+  if (!lower.endsWith('s') && lower.length > 4) variants.add(`${lower}s`);
+  return [...variants].filter((v) => v.length >= 2);
+}
+
+/**
+ * Build the per-crew `tags` array: curated synonyms (from SYNONYM_MAP) for each
+ * expertise + tool item, plus auto-generated variants for items not in the map.
+ * @param {string[]} items
+ * @returns {string[]}
+ */
+function buildCrewTags(items) {
+  const tags = new Set();
+  for (const item of items) {
+    const canonical = String(item).trim();
+    if (!canonical) continue;
+    const curated = SYNONYM_MAP[canonical];
+    if (curated) {
+      for (const t of curated) {
+        if (t.length >= 2) tags.add(t.toLowerCase());
+      }
+    }
+    for (const t of autoSynonyms(canonical)) {
+      if (t.length >= 2) tags.add(t);
+    }
+  }
+  return [...tags].slice(0, 40);
+}
+
+/**
+ * Pick the concrete tools (software/frameworks/platforms) for a crew from the
+ * skillBank — items that appear in the TOOL_NAMES set. Deterministic via the
+ * seed text so regeneration is stable.
+ * @param {string[]} skillBank
+ * @param {number} count
+ * @param {string} seedText
+ * @returns {string[]}
+ */
+function pickTools(skillBank, count, seedText) {
+  const toolPool = skillBank.filter((s) => TOOL_NAMES.has(s));
+  if (toolPool.length === 0) return [];
+  return pickUnique(toolPool, count, `${seedText}:tools`);
 }
 
 const COMPLIANCE_AUDIT_TOOLS = [
@@ -152,6 +738,7 @@ function buildComplianceAuditorCrew(categoryId, role, roleIndex) {
     'Evidence Collection',
   ];
   const traits = ['meticulous', 'risk-aware', 'evidence-driven', 'impartial'];
+  const tags = buildCrewTags([...expertise, ...COMPLIANCE_AUDIT_TOOLS]);
   const description = `${title} — ${role.framework} specialist who performs technical compliance audits across application code, configuration, and cloud infrastructure. Maps findings to control requirements with severity, evidence, and remediation guidance.`;
   const systemPrompt = [
     `You are ${name}, a ${title} specializing in ${role.specialty}.`,
@@ -194,6 +781,7 @@ function buildComplianceAuditorCrew(categoryId, role, roleIndex) {
     expertise,
     traits,
     tools: COMPLIANCE_AUDIT_TOOLS,
+    tags,
   };
 }
 
@@ -203,9 +791,11 @@ function buildCertPrepCrew(categoryId, skillBank, traitBank, role, roleIndex) {
   const callsign = toCallsign(name, title, categoryId);
   const tone = role.tone ?? TONES[roleIndex % TONES.length];
   const domainExpertise = role.examDomains ?? [];
-  const extraFromBank = pickUnique(skillBank, Math.max(0, 6 - domainExpertise.length), `${categoryId}:${title}:expertise`);
+  const extraFromBank = pickUnique(skillBank, Math.max(0, 11 - domainExpertise.length), `${categoryId}:${title}:expertise`);
   const expertise = role.expertise ?? [...domainExpertise, ...extraFromBank].slice(0, 12);
   const traits = role.traits ?? pickUnique(traitBank, 4, `${categoryId}:${title}:traits`);
+  const tools = role.tools ?? pickTools(skillBank, 10, `${categoryId}:${title}`);
+  const tags = buildCrewTags([...expertise, ...tools]);
   const specialty = role.specialty;
   const secondaryLine = role.secondaryCerts?.length
     ? ` Also credentialed in: ${role.secondaryCerts.join(', ')}.`
@@ -241,7 +831,7 @@ function buildCertPrepCrew(categoryId, skillBank, traitBank, role, roleIndex) {
     '- Be structured, encouraging, and exam-blueprint aligned.',
     '- Prefer checklists, domain maps, and practice question walkthroughs over generic advice.',
   ].join('\n');
-  const base = { name, title, callsign, description, systemPrompt, tone, expertise, traits };
+  const base = { name, title, callsign, description, systemPrompt, tone, expertise, traits, tools, tags };
   return applyDrHonorificIfQualified(base, { medicalCategory: false, scienceCategory: false, categoryId });
 }
 
@@ -256,8 +846,10 @@ function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCa
   const title = role.title;
   const callsign = toCallsign(name, title, categoryId);
   const tone = role.tone ?? TONES[roleIndex % TONES.length];
-  const expertise = role.expertise ?? pickUnique(skillBank, 6, `${categoryId}:${title}:expertise`);
+  const expertise = role.expertise ?? pickUnique(skillBank, 11, `${categoryId}:${title}:expertise`);
   const traits = role.traits ?? pickUnique(traitBank, 4, `${categoryId}:${title}:traits`);
+  const tools = role.tools ?? pickTools(skillBank, 10, `${categoryId}:${title}`);
+  const tags = buildCrewTags([...expertise, ...tools]);
   const specialty = role.specialty;
   const description = medicalCategory
     ? `${title} focused on ${specialty}. Informational health education only — not diagnosis, treatment, or emergency care.`
@@ -325,7 +917,7 @@ function buildCrew(categoryId, skillBank, traitBank, role, roleIndex, businessCa
         '- Be specific, pragmatic, and technically accurate.',
         '- Prefer examples, checklists, and decision frameworks over generic advice.',
       ].join('\n');
-  const base = { name, title, callsign, description, systemPrompt, tone, expertise, traits };
+  const base = { name, title, callsign, description, systemPrompt, tone, expertise, traits, tools, tags };
   return applyDrHonorificIfQualified(base, { medicalCategory, scienceCategory, categoryId });
 }
 
@@ -343,7 +935,7 @@ const categoryDefinitions = [
     id: 'backend-engineering',
     label: 'Backend Engineering',
     iconId: 'code',
-    skillBank: ['Distributed Systems', 'API Design', 'Microservices', 'Event-Driven Architecture', 'Service Reliability', 'Data Modeling', 'Asynchronous Processing', 'Caching Strategies', 'AuthN/AuthZ', 'Observability', 'Performance Tuning', 'Queue Systems'],
+    skillBank: ['Distributed Systems', 'API Design', 'Microservices', 'Event-Driven Architecture', 'Service Reliability', 'Data Modeling', 'Asynchronous Processing', 'Caching Strategies', 'AuthN/AuthZ', 'Observability', 'Performance Tuning', 'Queue Systems', 'Java', 'Spring Boot', 'Go', 'Rust', 'Python', 'FastAPI', 'Node.js', 'TypeScript', 'GraphQL', 'gRPC', 'REST', 'Kafka', 'RabbitMQ', 'Redis', 'OAuth2', 'JWT', 'WebSockets', 'OpenAPI', 'Elasticsearch', 'OpenTelemetry', 'CQRS', 'Event Sourcing', 'Domain Driven Design', 'PostgreSQL', 'MongoDB'],
     traitBank: sharedTechTraits,
     roles: [
       role('Backend Architect', 'distributed backend architecture and resilient service boundaries', 'Raj Patel', 'professional'),
@@ -372,7 +964,7 @@ const categoryDefinitions = [
     id: 'frontend-engineering',
     label: 'Frontend Engineering',
     iconId: 'web',
-    skillBank: ['React', 'TypeScript', 'Modern CSS', 'Accessibility', 'Web Performance', 'State Management', 'Component Architecture', 'UI Testing', 'Design Systems', 'SSR/SSG', 'Security Hardening', 'Internationalization'],
+    skillBank: ['React', 'TypeScript', 'Modern CSS', 'Accessibility', 'Web Performance', 'State Management', 'Component Architecture', 'UI Testing', 'Design Systems', 'SSR/SSG', 'Security Hardening', 'Internationalization', 'JavaScript', 'Vue', 'Angular', 'Svelte', 'Next.js', 'Nuxt', 'Remix', 'Astro', 'Tailwind', 'Sass', 'Webpack', 'Vite', 'Rollup', 'esbuild', 'Jest', 'Vitest', 'Cypress', 'Playwright', 'Storybook', 'Redux', 'Zustand', 'TanStack Query', 'Web Components', 'PWA', 'WCAG', 'ARIA', 'Framer Motion', 'D3.js', 'Electron'],
     traitBank: sharedTechTraits,
     roles: [
       role('Frontend Specialist', 'React interfaces and UX execution', 'Maria Santos', 'friendly'),
@@ -401,7 +993,7 @@ const categoryDefinitions = [
     id: 'platform-fullstack',
     label: 'Platform & Fullstack',
     iconId: 'layers',
-    skillBank: ['Fullstack Architecture', 'Monorepos', 'API Gateway Patterns', 'Developer Experience', 'CI Tooling', 'Feature Flags', 'Internal Tooling', 'GraphQL', 'BFF Patterns', 'Release Engineering', 'Observability', 'Platform Governance'],
+    skillBank: ['Fullstack Architecture', 'Monorepos', 'API Gateway Patterns', 'Developer Experience', 'CI Tooling', 'Feature Flags', 'Internal Tooling', 'GraphQL', 'BFF Patterns', 'Release Engineering', 'Observability', 'Platform Governance', 'Turborepo', 'Nx', 'pnpm', 'Apollo', 'Relay', 'tRPC', 'Vite', 'Webpack', 'Terraform', 'Docker', 'Kubernetes', 'GitHub Actions', 'CircleCI', 'LaunchDarkly', 'Sentry', 'Datadog', 'OpenTelemetry', 'Next.js', 'Remix', 'Node.js', 'TypeScript', 'PostgreSQL', 'Prisma'],
     traitBank: sharedTechTraits,
     roles: [
       role('Fullstack Architect', 'cross-stack architecture and delivery standards'),
@@ -430,7 +1022,7 @@ const categoryDefinitions = [
     id: 'devops-cloud-sre',
     label: 'DevOps, Cloud & SRE',
     iconId: 'cloud',
-    skillBank: ['Kubernetes', 'Terraform', 'CI/CD Pipelines', 'Incident Response', 'SLO/SLI', 'Cloud Networking', 'Linux Operations', 'Observability', 'Infrastructure as Code', 'Disaster Recovery', 'Cost Optimization', 'Release Automation'],
+    skillBank: ['Kubernetes', 'Terraform', 'CI/CD Pipelines', 'Incident Response', 'SLO/SLI', 'Cloud Networking', 'Linux Operations', 'Observability', 'Infrastructure as Code', 'Disaster Recovery', 'Cost Optimization', 'Release Automation', 'Docker', 'Helm', 'Ansible', 'Jenkins', 'ArgoCD', 'GitOps', 'Flux', 'Prometheus', 'Grafana', 'AWS', 'Azure', 'GCP', 'Pulumi', 'CloudFormation', 'Vault', 'Consul', 'Istio', 'Linkerd', 'Envoy', 'Datadog', 'Splunk', 'ELK', 'Jaeger', 'OpenTelemetry', 'PagerDuty', 'Chaos Mesh', 'EKS', 'GKE', 'AKS', 'Fargate', 'Lambda', 'CloudRun'],
     traitBank: sharedOpsTraits,
     roles: [
       role('DevOps Engineer', 'automation-first infrastructure operations'),
@@ -459,8 +1051,8 @@ const categoryDefinitions = [
     id: 'security-compliance',
     label: 'Security & Compliance',
     iconId: 'verified',
-    skillBank: ['Threat Modeling', 'Application Security', 'Cloud Security', 'Identity Security', 'Vulnerability Management', 'Incident Response', 'Penetration Testing', 'Compliance Auditing', 'Security Architecture', 'Cryptography Basics', 'OWASP', 'Risk Management'],
-    traitBank: ['vigilant', 'precise', 'risk-aware', 'thorough', 'principled', 'calm', 'skeptical', 'methodical'],
+    skillBank: ['Threat Modeling', 'Application Security', 'Cloud Security', 'Identity Security', 'Vulnerability Management', 'Incident Response', 'Penetration Testing', 'Compliance Auditing', 'Security Architecture', 'Cryptography Basics', 'OWASP', 'Risk Management', 'OWASP Top 10', 'Burp Suite', 'Metasploit', 'Nessus', 'Nmap', 'Wireshark', 'Splunk', 'SIEM', 'SOAR', 'SAST', 'DAST', 'SCA', 'SBOM', 'OAuth2', 'OIDC', 'SAML', 'KMS', 'HSM', 'TLS', 'mTLS', 'Vault', 'Falco', 'Trivy', 'Snort', 'Yara', 'MITRE ATT&CK', 'CVE'],
+    traitBank: ['vigilant', 'precise', 'risk-aware', 'thorough', 'principled', 'calm', 'skeptical', 'methodical', 'adversarial', 'proactive', 'decisive'],
     roles: [
       role('Security Architect', 'defense-in-depth security architecture'),
       role('Application Security Engineer', 'secure SDLC and code-level defenses'),
@@ -488,7 +1080,7 @@ const categoryDefinitions = [
     id: 'mobile-embedded-iot',
     label: 'Mobile, Embedded & IoT',
     iconId: 'devices',
-    skillBank: ['iOS Development', 'Android Development', 'React Native', 'Flutter', 'Firmware', 'RTOS', 'Bluetooth', 'Sensor Integration', 'Edge Computing', 'Power Optimization', 'Mobile Security', 'Device Lifecycle'],
+    skillBank: ['iOS Development', 'Android Development', 'React Native', 'Flutter', 'Firmware', 'RTOS', 'Bluetooth', 'Sensor Integration', 'Edge Computing', 'Power Optimization', 'Mobile Security', 'Device Lifecycle', 'Swift', 'SwiftUI', 'Objective-C', 'Kotlin', 'Jetpack Compose', 'Xcode', 'Android Studio', 'Dart', 'Expo', 'C', 'C++', 'Embedded C', 'ARM', 'ESP32', 'Arduino', 'Raspberry Pi', 'Zephyr', 'FreeRTOS', 'MQTT', 'CoAP', 'LoRaWAN', 'Zigbee', 'Matter', 'Thread', 'AWS IoT', 'Azure IoT Hub', 'OTA', 'BLE', 'JTAG'],
     traitBank: sharedTechTraits,
     roles: [
       role('iOS Engineer', 'native iOS apps and platform conventions'),
@@ -517,7 +1109,7 @@ const categoryDefinitions = [
     id: 'data-engineering-analytics',
     label: 'Data Engineering & Analytics',
     iconId: 'analytics',
-    skillBank: ['ETL/ELT', 'Data Warehousing', 'Spark', 'Streaming Data', 'Data Modeling', 'Analytics Engineering', 'Data Quality', 'Airflow', 'dbt', 'BI Tooling', 'SQL Optimization', 'Data Governance'],
+    skillBank: ['ETL/ELT', 'Data Warehousing', 'Spark', 'Streaming Data', 'Data Modeling', 'Analytics Engineering', 'Data Quality', 'Airflow', 'dbt', 'BI Tooling', 'SQL Optimization', 'Data Governance', 'Python', 'Pandas', 'PySpark', 'Snowflake', 'BigQuery', 'Redshift', 'Databricks', 'DuckDB', 'Polars', 'Kafka', 'Flink', 'Beam', 'Tableau', 'Power BI', 'Looker', 'Prefect', 'Dagster', 'Trino', 'Presto', 'Great Expectations', 'DataHub', 'OpenLineage', 'Airbyte', 'Fivetran', 'Iceberg', 'Delta Lake', 'Hudi'],
     traitBank: sharedTechTraits,
     roles: [
       role('Data Engineer', 'reliable pipelines and warehouse modeling'),
@@ -546,8 +1138,8 @@ const categoryDefinitions = [
     id: 'machine-learning-ai',
     label: 'Machine Learning & AI',
     iconId: 'autoawesome',
-    skillBank: ['Machine Learning', 'Model Training', 'MLOps', 'Prompt Engineering', 'RAG Systems', 'NLP', 'Computer Vision', 'Model Evaluation', 'Responsible AI', 'Feature Engineering', 'Inference Optimization', 'Experiment Tracking'],
-    traitBank: ['analytical', 'experimental', 'evidence-driven', 'curious', 'practical', 'rigorous', 'iterative', 'responsible'],
+    skillBank: ['Machine Learning', 'Model Training', 'MLOps', 'Prompt Engineering', 'RAG Systems', 'NLP', 'Computer Vision', 'Model Evaluation', 'Responsible AI', 'Feature Engineering', 'Inference Optimization', 'Experiment Tracking', 'Python', 'PyTorch', 'TensorFlow', 'JAX', 'scikit-learn', 'XGBoost', 'LightGBM', 'Hugging Face', 'Transformers', 'LangChain', 'LlamaIndex', 'Vector Database', 'Pinecone', 'Weaviate', 'Milvus', 'Chroma', 'pgvector', 'OpenAI', 'Anthropic', 'Llama', 'MLflow', 'Weights & Biases', 'Ray', 'SageMaker', 'Vertex AI', 'Azure ML', 'Kubeflow', 'vLLM', 'TensorRT', 'ONNX', 'CUDA', 'GPU', 'Embeddings', 'Fine-tuning', 'LoRA', 'RLHF'],
+    traitBank: ['analytical', 'experimental', 'evidence-driven', 'curious', 'practical', 'rigorous', 'iterative', 'responsible', 'safety-minded'],
     roles: [
       role('Machine Learning Engineer', 'production ML lifecycle and model serving'),
       role('Data Scientist', 'insight discovery and statistical experimentation'),
@@ -575,8 +1167,8 @@ const categoryDefinitions = [
     id: 'quality-testing',
     label: 'Quality & Testing',
     iconId: 'bug_report',
-    skillBank: ['Test Strategy', 'Unit Testing', 'Integration Testing', 'E2E Testing', 'Performance Testing', 'Security Testing', 'Accessibility Testing', 'Mutation Testing', 'Test Automation', 'Release Validation', 'Reliability Testing', 'Bug Triage'],
-    traitBank: ['meticulous', 'systematic', 'persistent', 'objective', 'user-advocate', 'methodical', 'curious', 'clear'],
+    skillBank: ['Test Strategy', 'Unit Testing', 'Integration Testing', 'E2E Testing', 'Performance Testing', 'Security Testing', 'Accessibility Testing', 'Mutation Testing', 'Test Automation', 'Release Validation', 'Reliability Testing', 'Bug Triage', 'Jest', 'Vitest', 'Mocha', 'Playwright', 'Cypress', 'Selenium', 'Puppeteer', 'JUnit', 'pytest', 'TestNG', 'k6', 'Gatling', 'JMeter', 'Locust', 'Appium', 'Detox', 'Cucumber', 'Postman', 'Newman', 'RestAssured', 'Pact', 'Stryker', 'Axe', 'Lighthouse', 'TestRail', 'Zephyr'],
+    traitBank: ['meticulous', 'systematic', 'persistent', 'objective', 'user-advocate', 'methodical', 'curious', 'clear', 'adversarial', 'thorough', 'rigorous'],
     roles: [
       role('QA Engineer', 'holistic product quality and regression prevention'),
       role('Test Automation Engineer', 'automation architecture and stable CI tests'),
@@ -604,7 +1196,7 @@ const categoryDefinitions = [
     id: 'database-infrastructure',
     label: 'Database Infrastructure',
     iconId: 'database',
-    skillBank: ['PostgreSQL', 'MySQL', 'NoSQL', 'Replication', 'Sharding', 'Backup and Recovery', 'Query Optimization', 'Schema Design', 'Data Security', 'High Availability', 'Capacity Planning', 'Migration Strategy'],
+    skillBank: ['PostgreSQL', 'MySQL', 'NoSQL', 'Replication', 'Sharding', 'Backup and Recovery', 'Query Optimization', 'Schema Design', 'Data Security', 'High Availability', 'Capacity Planning', 'Migration Strategy', 'MongoDB', 'Redis', 'Cassandra', 'DynamoDB', 'CockroachDB', 'Spanner', 'Aurora', 'SQLite', 'MariaDB', 'Oracle', 'SQL Server', 'Elasticsearch', 'Neo4j', 'InfluxDB', 'TimescaleDB', 'ClickHouse', 'Snowflake', 'BigQuery', 'Redshift', 'DuckDB', 'Vitess', 'PgBouncer', 'Patroni', 'pgvector', 'Memcached', 'HBase'],
     traitBank: sharedTechTraits,
     roles: [
       role('Database Architect', 'durable data architecture and relational modeling'),
@@ -633,8 +1225,8 @@ const categoryDefinitions = [
     id: 'game-graphics-realtime',
     label: 'Game, Graphics & Realtime',
     iconId: 'videogame',
-    skillBank: ['Unity', 'Unreal Engine', 'Rendering Pipelines', 'Shaders', 'Physics Systems', 'Gameplay Systems', 'Realtime Networking', 'Optimization', 'Asset Pipelines', 'Procedural Generation', 'Audio Systems', 'Engine Tooling'],
-    traitBank: ['creative', 'performance-minded', 'iterative', 'detail-oriented', 'visual-thinker', 'player-focused', 'experimental', 'systematic'],
+    skillBank: ['Unity', 'Unreal Engine', 'Rendering Pipelines', 'Shaders', 'Physics Systems', 'Gameplay Systems', 'Realtime Networking', 'Optimization', 'Asset Pipelines', 'Procedural Generation', 'Audio Systems', 'Engine Tooling', 'C#', 'C++', 'Godot', 'OpenGL', 'Vulkan', 'DirectX', 'Metal', 'WebGL', 'WebGPU', 'HLSL', 'GLSL', 'Shader Graph', 'VFX Graph', 'Blender', 'Maya', 'Substance', 'Houdini', 'PhysX', 'Havok', 'Photon', 'Steamworks', 'PlayFab', 'GameLift', 'ECS', 'VR', 'AR', 'XR', 'OpenXR', 'WebXR'],
+    traitBank: ['creative', 'performance-minded', 'iterative', 'detail-oriented', 'visual-thinker', 'player-focused', 'experimental', 'systematic', 'collaborative'],
     roles: [
       role('Game Developer', 'core gameplay mechanics and player systems'),
       role('Gameplay Engineer', 'moment-to-moment interaction loops'),
@@ -662,7 +1254,7 @@ const categoryDefinitions = [
     id: 'networking-systems',
     label: 'Networking & Systems',
     iconId: 'lan',
-    skillBank: ['TCP/IP', 'DNS', 'Load Balancing', 'Network Security', 'Routing', 'Linux Systems', 'Distributed Systems', 'Protocol Design', 'Observability', 'Edge Networking', 'Capacity Planning', 'Troubleshooting'],
+    skillBank: ['TCP/IP', 'DNS', 'Load Balancing', 'Network Security', 'Routing', 'Linux Systems', 'Distributed Systems', 'Protocol Design', 'Observability', 'Edge Networking', 'Capacity Planning', 'Troubleshooting', 'BGP', 'OSPF', 'EIGRP', 'MPLS', 'VXLAN', 'SD-WAN', 'Cisco IOS', 'Juniper Junos', 'Arista EOS', 'FRR', 'iptables', 'nftables', 'pfSense', 'WireGuard', 'IPsec', 'OpenVPN', 'Tailscale', 'Envoy', 'HAProxy', 'NGINX', 'Keepalived', 'VRRP', 'Anycast', 'CoreDNS', 'PowerDNS', 'eBPF', 'XDP', 'Cilium', 'tcpdump', 'Wireshark', 'nmap', 'mtr'],
     traitBank: sharedOpsTraits,
     roles: [
       role('Network Engineer', 'network architecture and traffic reliability'),
@@ -691,7 +1283,7 @@ const categoryDefinitions = [
     id: 'creative-product-design',
     label: 'Creative Product Design',
     iconId: 'palette',
-    skillBank: ['UX Research', 'Interaction Design', 'Information Architecture', 'Design Systems', 'Product Discovery', 'Prototyping', 'Accessibility', 'Visual Design', 'Service Design', 'Journey Mapping', 'Usability Testing', 'Cross-Functional Collaboration'],
+    skillBank: ['UX Research', 'Interaction Design', 'Information Architecture', 'Design Systems', 'Product Discovery', 'Prototyping', 'Accessibility', 'Visual Design', 'Service Design', 'Journey Mapping', 'Usability Testing', 'Cross-Functional Collaboration', 'Figma', 'Sketch', 'Adobe XD', 'Framer', 'Miro', 'Mural', 'Notion', 'Confluence', 'Jira', 'Design Tokens', 'Storybook', 'WCAG', 'ARIA', 'Persona', 'Card Sorting', 'Tree Testing', 'Hotjar', 'Mixpanel', 'Amplitude'],
     traitBank: sharedCreativeTraits,
     roles: [
       role('UX Designer', 'user-centered product interaction design'),
@@ -720,7 +1312,7 @@ const categoryDefinitions = [
     id: 'regulatory-compliance-audit',
     label: 'Regulatory Compliance & Audit',
     iconId: 'verified',
-    skillBank: ['PCI-DSS', 'HIPAA', 'GDPR', 'SOC 2', 'ISO 27001', 'FedRAMP', 'SOX', 'NIST', 'CCPA', 'CIS Controls', 'Cloud Compliance', 'IaC Scanning'],
+    skillBank: ['PCI-DSS', 'HIPAA', 'GDPR', 'SOC 2', 'ISO 27001', 'FedRAMP', 'SOX', 'NIST', 'CCPA', 'CIS Controls', 'Cloud Compliance', 'IaC Scanning', 'PCI-DSS v4.0', 'CPRA', 'ISO 27017', 'ISO 27018', 'NIST 800-53', 'NIST CSF', 'GLBA', 'FERPA', 'COPPA', 'Audit Evidence', 'Drata', 'Vanta', 'Secureframe', 'OneTrust', 'AuditBoard', 'ServiceNow GRC', 'AWS Artifact'],
     traitBank: ['meticulous', 'risk-aware', 'evidence-driven', 'impartial', 'thorough', 'principled', 'technical', 'audit-ready'],
     roles: [
       complianceRole('PCI-DSS Compliance Auditor', 'PCI-DSS v4.0', 'cardholder data environment and payment security controls', ['Network segmentation', 'Encryption of CHD', 'Access control', 'Logging and monitoring', 'Secure SDLC', 'Vulnerability management']),
@@ -1788,6 +2380,7 @@ export type PrebuiltCrewData = {
   expertise: string[];
   traits: string[];
   tools?: string[];
+  tags?: string[];
   honorsDoctorate?: boolean;
 };
 
@@ -1860,6 +2453,7 @@ for (const category of categories) {
       expertise: crew.expertise,
       traits: crew.traits,
       tools: crew.tools,
+      tags: crew.tags,
       searchText,
       requiresMedicalDisclaimer: !!category.medicalCategory,
       honorsDoctorate: !!crew.honorsDoctorate,

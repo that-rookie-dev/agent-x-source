@@ -22,6 +22,7 @@ import { filterDividerNodes, sanitizeIngestText } from './sanitizeIngestText.js'
 import { segmentText } from './SemanticSegmenter.js';
 import type { TextUnit } from './TextUnit.js';
 import { getLogger } from '@agentx/shared';
+import { countInputTokens, estimateOutputTokens } from '../session/tokenCount.js';
 
 export interface ExtractedMemory {
   nodes: MemoryNodeInput[];
@@ -29,6 +30,27 @@ export interface ExtractedMemory {
   /** Number of LLM calls made during extraction (0 for heuristic/fast path). */
   llmCallCount?: number;
 }
+
+/** Sub-stage progress event fired from within the extractor. */
+export interface ExtractProgressEvent {
+  /** Sub-stage: batching | llm_call | retry | parse | normalize | fallback | done */
+  stage: string;
+  /** Human-readable detail. */
+  detail: string;
+  /** 1-based batch index within this extraction. */
+  batchIndex?: number;
+  /** Total batch count. */
+  batchCount?: number;
+  /** 1-based retry attempt within a batch (when stage === 'retry'). */
+  attempt?: number;
+  /** Number of entities parsed from the LLM response (when stage === 'parse'). */
+  entityCount?: number;
+  /** Estimated input tokens for this LLM call (when stage === 'llm_call' or 'parse'). */
+  inputTokens?: number;
+  /** Estimated output tokens for this LLM call (when stage === 'llm_call' or 'parse'). */
+  outputTokens?: number;
+}
+export type ExtractProgressFn = (event: ExtractProgressEvent) => void;
 
 export interface ExtractionOptions {
   /** Session or conversation identifier to scope extracted episodic nodes. */
@@ -49,6 +71,8 @@ export interface ExtractionOptions {
   chunkSize?: number;
   /** Chunk overlap in characters. */
   chunkOverlap?: number;
+  /** Optional sub-stage progress callback for live UI telemetry. */
+  onProgress?: ExtractProgressFn;
 }
 
 export interface GenerateFnOptions {
@@ -67,11 +91,18 @@ export type GenerateFn = (prompt: string, options?: GenerateFnOptions) => Promis
  * per call); long units get individual calls. This keeps the LLM call count
  * comparable to the old chunk-based approach while improving granularity.
  */
+/**
+ * Maximum number of LLM batches per extraction call. Beyond this, extraction
+ * is skipped (the chunk is still stored with its embedding) to prevent runaway
+ * processing on very large documents.
+ */
+const MAX_BATCHES_PER_EXTRACTION = 50;
+
 function planLLMCalls(units: TextUnit[]): TextUnit[][] {
   const batches: TextUnit[][] = [];
   let current: TextUnit[] = [];
   let currentTokens = 0;
-  const MAX_TOKENS_PER_CALL = 1500;
+  const MAX_TOKENS_PER_CALL = 4000;
 
   for (const unit of units) {
     if (unit.tokenCount > MAX_TOKENS_PER_CALL) {
@@ -173,29 +204,48 @@ export class MemoryExtractor {
     const maxNodesPerChunk = options.maxNodesPerChunk ?? 50;
     const category = options.category ?? 'semantic';
     const maxTokens = options.maxTokens ?? 4096;
+    const onProgress = options.onProgress;
 
     const batches = planLLMCalls(units);
+    onProgress?.({ stage: 'batching', detail: `Planned ${batches.length} LLM batch(es) from ${units.length} text unit(s)`, batchCount: batches.length });
+
+    // Safety cap: if the document is so large that extraction would require
+    // too many LLM calls, skip extraction entirely. The chunk is still stored
+    // with its embedding — the user can run community_summarize later for
+    // deeper analysis. This prevents runaway processing (e.g. 833 batches
+    // on an 8MB file = ~3.5 hours of LLM calls).
+    if (batches.length > MAX_BATCHES_PER_EXTRACTION) {
+      getLogger().warn('MEMORY_EXTRACT', `Skipping extraction: ${batches.length} batches exceeds cap of ${MAX_BATCHES_PER_EXTRACTION}. Chunk will be stored without entity extraction.`);
+      onProgress?.({ stage: 'fallback', detail: `Extraction skipped — ${batches.length} batches exceeds cap of ${MAX_BATCHES_PER_EXTRACTION}. Chunk stored with embedding only.`, batchCount: batches.length });
+      return { nodes: [], edges: [], llmCallCount: 0 };
+    }
     const allNodes: MemoryNodeInput[] = [];
     const allEdges: MemoryEdgeInput[] = [];
     const labelToNodeId = new Map<string, string>();
     const failedUnits: TextUnit[] = [];
 
-    for (const batch of batches) {
+    for (let bi = 0; bi < batches.length; bi++) {
+      const batch = batches[bi]!;
       const batchText = batch.map((u) => u.text).join('\n\n');
       if (!batchText.trim()) continue;
+      const batchNum = bi + 1;
+      onProgress?.({ stage: 'llm_call', detail: `LLM batch ${batchNum}/${batches.length} — ${batchText.length} chars`, batchIndex: batchNum, batchCount: batches.length });
 
       const batchResult = await this.extractChunk(batchText, {
         ...options,
         maxNodesPerChunk,
         category,
         maxTokens,
-      });
+      }, onProgress, batchNum, batches.length);
 
       if (batchResult.nodes.length === 0) {
         // LLM failed for this batch — collect units for raw_fallback.
+        onProgress?.({ stage: 'fallback', detail: `Batch ${batchNum}/${batches.length} failed — queued for raw fallback`, batchIndex: batchNum, batchCount: batches.length });
         failedUnits.push(...batch);
         continue;
       }
+
+      onProgress?.({ stage: 'parse', detail: `Parsed ${batchResult.nodes.length} entities from batch ${batchNum}/${batches.length}`, batchIndex: batchNum, batchCount: batches.length, entityCount: batchResult.nodes.length });
 
       // Attach provenance from the first unit in the batch.
       const firstUnit = batch[0]!;
@@ -229,6 +279,7 @@ export class MemoryExtractor {
           allEdges.push(edge);
         }
       }
+      onProgress?.({ stage: 'normalize', detail: `Normalized ${chunkNodes.length} new entities from batch ${batchNum}/${batches.length} (total: ${allNodes.length})`, batchIndex: batchNum, batchCount: batches.length });
     }
 
     // Raw fallback: if ALL batches failed, create a SINGLE consolidated episodic
@@ -237,6 +288,7 @@ export class MemoryExtractor {
     // the LLM is unavailable. If some batches succeeded, skip failed units
     // entirely — partial extraction is better than fragment pollution.
     if (failedUnits.length > 0 && allNodes.length === 0) {
+      onProgress?.({ stage: 'fallback', detail: `All ${batches.length} batch(es) failed — creating consolidated raw-fallback node`, batchCount: batches.length });
       const fullText = failedUnits.map((u) => u.text).join('\n\n');
       // Clean label: collapse whitespace, strip newlines, strip markdown.
       const cleanLabel = fullText.replace(/[#*`|]/g, '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -258,10 +310,17 @@ export class MemoryExtractor {
       });
     }
 
+    onProgress?.({ stage: 'done', detail: `Extraction complete — ${allNodes.length} entities, ${allEdges.length} edges from ${batches.length} batch(es)`, batchCount: batches.length, entityCount: allNodes.length });
     return { ...filterDividerNodes(allNodes, allEdges), llmCallCount: batches.length };
   }
 
-  private async extractChunk(text: string, options: Required<Pick<ExtractionOptions, 'maxNodesPerChunk' | 'category' | 'maxTokens'>> & ExtractionOptions): Promise<ExtractedMemory> {
+  private async extractChunk(
+    text: string,
+    options: Required<Pick<ExtractionOptions, 'maxNodesPerChunk' | 'category' | 'maxTokens'>> & ExtractionOptions,
+    onProgress?: ExtractProgressFn,
+    batchIndex?: number,
+    batchCount?: number,
+  ): Promise<ExtractedMemory> {
     const schema = this.buildJsonSchema(options.category, options.maxNodesPerChunk);
     let lastError: unknown;
 
@@ -269,6 +328,9 @@ export class MemoryExtractor {
       const prompt = attempt === 0
         ? this.buildPrompt(text, options.category, options.maxNodesPerChunk)
         : this.buildRetryPrompt(text, options.category, options.maxNodesPerChunk, lastError);
+      if (attempt > 0) {
+        onProgress?.({ stage: 'retry', detail: `Retry ${attempt + 1}/3 for batch ${batchIndex ?? '?'}/${batchCount ?? '?'} — ${lastError instanceof Error ? lastError.message : String(lastError)}`, batchIndex, batchCount, attempt: attempt + 1 });
+      }
       try {
         const raw = await this.generate(prompt, {
           schema,
@@ -279,8 +341,15 @@ export class MemoryExtractor {
           lastError = new Error('LLM returned empty response');
           continue;
         }
+        // Estimate token usage from prompt/response length (~3.5 chars/token).
+        const inTok = countInputTokens(prompt);
+        const outTok = estimateOutputTokens(raw);
+        onProgress?.({ stage: 'parse', detail: `Parsed LLM response for batch ${batchIndex ?? '?'}/${batchCount ?? '?'}`, batchIndex, batchCount, entityCount: 0, inputTokens: inTok, outputTokens: outTok });
         const result = this.parse(raw, options);
-        if (result.nodes.length > 0) return result;
+        if (result.nodes.length > 0) {
+          onProgress?.({ stage: 'parse', detail: `Parsed ${result.nodes.length} entities from batch ${batchIndex ?? '?'}/${batchCount ?? '?'}`, batchIndex, batchCount, entityCount: result.nodes.length, inputTokens: inTok, outputTokens: outTok });
+          return result;
+        }
         lastError = new Error('No nodes extracted');
       } catch (e) {
         lastError = e;
@@ -324,16 +393,127 @@ export class MemoryExtractor {
     return s;
   }
 
+  /**
+   * Clean common LLM JSON mistakes that are NOT truncation:
+   * - Markdown fences (```json ... ```)
+   * - Unquoted property names: {label: "foo"} → {"label": "foo"}
+   * - Single-quoted strings: 'foo' → "foo"
+   * - Trailing commas: [1,2,] → [1,2]  /  {"a":1,} → {"a":1}
+   * - JS-style comments
+   * Also extracts the outermost JSON object if the LLM wrapped it in prose.
+   */
+  private cleanJsonResponse(raw: string): string {
+    let s = raw.trim();
+    // Strip markdown fences.
+    s = s.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/, '');
+    // Strip JS-style comments.
+    s = s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    // Extract the outermost JSON object if there's prose around it.
+    const firstBrace = s.indexOf('{');
+    const lastBrace = s.lastIndexOf('}');
+    if (firstBrace > 0 || (lastBrace >= 0 && lastBrace < s.length - 1)) {
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        s = s.slice(firstBrace, lastBrace + 1);
+      }
+    }
+    // Fix unquoted property names: {label: → {"label":
+    // Matches word characters (and underscores) followed by a colon, but only
+    // outside of double-quoted strings.
+    s = this.quoteUnquotedKeys(s);
+    // Convert single-quoted strings to double-quoted.
+    s = this.singleToDoubleQuotes(s);
+    // Remove trailing commas before ] or }.
+    s = s.replace(/,\s*([}\]])/g, '$1');
+    return s.trim();
+  }
+
+  /** Quote unquoted JSON property names (outside of string values). */
+  private quoteUnquotedKeys(s: string): string {
+    let result = '';
+    let inString = false;
+    let escape = false;
+    let i = 0;
+    while (i < s.length) {
+      const ch = s[i]!;
+      if (escape) { result += ch; escape = false; i++; continue; }
+      if (ch === '\\' && inString) { result += ch; escape = true; i++; continue; }
+      if (ch === '"') { inString = !inString; result += ch; i++; continue; }
+      if (inString) { result += ch; i++; continue; }
+      // Outside a string: look for identifier: pattern (unquoted key).
+      if (ch !== '"' && ch !== '{' && ch !== ',' && ch !== ' ' && ch !== '\n' && ch !== '\t' && ch !== '[') {
+        // Try to match an identifier followed by a colon.
+        const rest = s.slice(i);
+        const match = rest.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*:/);
+        if (match && match[1]) {
+          result += `"${match[1]}":`;
+          i += match[0].length;
+          continue;
+        }
+      }
+      result += ch;
+      i++;
+    }
+    return result;
+  }
+
+  /** Convert single-quoted strings to double-quoted (handles escaped singles). */
+  private singleToDoubleQuotes(s: string): string {
+    let result = '';
+    let inDouble = false;
+    let inSingle = false;
+    let escape = false;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i]!;
+      if (escape) { result += ch; escape = false; continue; }
+      if (ch === '\\' && (inDouble || inSingle)) {
+        // If inside single quotes, convert \' to '
+        if (inSingle && s[i + 1] === "'") { result += "'"; i++; continue; }
+        result += ch; escape = true; continue;
+      }
+      if (ch === '"' && !inSingle) { inDouble = !inDouble; result += ch; continue; }
+      if (ch === "'" && !inDouble) {
+        if (inSingle) { inSingle = false; result += '"'; continue; }
+        // Check if this single quote starts a string (preceded by : , [ { or whitespace)
+        const prev = result.trimEnd().slice(-1);
+        if (prev === '' || prev === ':' || prev === ',' || prev === '[' || prev === '{') {
+          inSingle = true; result += '"'; continue;
+        }
+        result += ch; continue;
+      }
+      result += ch;
+    }
+    return result;
+  }
+
   private parse(raw: string, options: ExtractionOptions): ExtractedMemory {
-    const json = raw.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+    // Step 1: clean common LLM JSON mistakes (unquoted keys, single quotes,
+    // trailing commas, markdown fences, surrounding prose).
+    const cleaned = this.cleanJsonResponse(raw);
     let parsed: { nodes?: unknown[]; edges?: unknown[] };
     try {
-      parsed = JSON.parse(json);
+      parsed = JSON.parse(cleaned);
     } catch {
-      // The LLM output may be truncated (maxTokens cut off the JSON mid-string).
-      // Attempt to salvage by closing braces/brackets and re-parsing.
-      const repaired = this.repairTruncatedJson(json);
-      parsed = JSON.parse(repaired);
+      // Step 2: the cleaned JSON may still be truncated (maxTokens cut off
+      // mid-string). Close open structures and retry.
+      try {
+        const repaired = this.repairTruncatedJson(cleaned);
+        parsed = JSON.parse(repaired);
+      } catch {
+        // Step 3: last resort — try to extract just the nodes array via regex.
+        // This salvages cases where the edges array is malformed but nodes are intact.
+        const nodesMatch = cleaned.match(/"nodes"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
+        if (nodesMatch && nodesMatch[1]) {
+          try {
+            const nodesJson = this.repairTruncatedJson(nodesMatch[1]);
+            const nodesParsed = JSON.parse(nodesJson);
+            parsed = { nodes: nodesParsed, edges: [] };
+          } catch {
+            throw new Error('Failed to parse LLM JSON output after cleaning and repair');
+          }
+        } else {
+          throw new Error('Failed to parse LLM JSON output after cleaning and repair');
+        }
+      }
     }
 
     // Validate nodes strictly (bad nodes = bad extraction), but validate edges
@@ -475,7 +655,12 @@ Extraction rules (follow these strictly):
 5. If the text contains a list (e.g. "5 mass extinctions"), create one node per list item plus a parent node that links to each item with CONTAINS or EXAMPLES.
 6. Edges must connect nodes by their id values with a valid relationship_type.
 7. Return at most ${maxNodes} nodes and ${maxNodes * 2} edges.
-8. Return ONLY the JSON object, no markdown fences, no explanation.
+8. For each node, set confidence (0.0–1.0) to reflect extraction quality:
+   - 0.9–1.0: explicitly stated fact or named entity directly from the text
+   - 0.7–0.9: clearly implied but not directly stated
+   - 0.5–0.7: inferred from context, may be speculative
+   - Below 0.5: uncertain or tangential — do NOT include these
+9. Return ONLY the JSON object, no markdown fences, no explanation.
 
 Input text to analyze:
 """${text}"""`;

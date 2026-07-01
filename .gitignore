@@ -21,3 +21,4 @@ packages/desktop/.pgvector-build/
 packages/desktop/web-api/
 packages/desktop/web-ui/
 .pgvector-build/
+graphify-out/

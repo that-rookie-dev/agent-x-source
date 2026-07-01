@@ -16,6 +16,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import Alert from '@mui/material/Alert';
 import CircularProgress from '@mui/material/CircularProgress';
+import Tooltip from '@mui/material/Tooltip';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
@@ -128,20 +129,14 @@ export function ProvidersPanel() {
   };
 
   const handleDeleteProfile = async (profile: ProfileEntry) => {
-    if (!cfg) return;
-    const updated = { ...cfg, provider: { ...cfg.provider } };
-    updated.provider.providers = { ...updated.provider.providers };
-    const prov = { ...updated.provider.providers[profile.providerId] };
-    if (prov?.profiles) {
-      prov.profiles = { ...prov.profiles };
-      delete prov.profiles[profile.id];
-      updated.provider.providers[profile.providerId] = prov;
-      try {
-        await config.update(updated);
-        setCfg(updated);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Delete failed');
-      }
+    try {
+      await provApi.deleteProfile(profile.providerId, profile.id);
+      const updated = await config.get();
+      setCfg(updated);
+    } catch (e) {
+      // The backend returns a structured error for blocked deletions
+      const msg = e instanceof Error ? e.message : 'Delete failed';
+      setError(msg);
     }
   };
 
@@ -258,6 +253,17 @@ export function ProvidersPanel() {
             {profiles.map((profile) => {
               const isActive = profile.id === activeProfileId;
               const isEditing = editingLabel === profile.id;
+              // Guard: can't delete the last profile overall, or the last profile
+              // for the active provider
+              const isLastProfileOverall = profiles.length <= 1;
+              const profilesForSameProvider = profiles.filter(p => p.providerId === profile.providerId);
+              const isLastProfileForActiveProvider = isActive && profilesForSameProvider.length <= 1;
+              const canDelete = !isLastProfileOverall && !isLastProfileForActiveProvider;
+              const deleteTooltip = isLastProfileOverall
+                ? 'Cannot delete the last remaining provider profile'
+                : isLastProfileForActiveProvider
+                  ? 'Cannot delete the last profile for the active provider. Switch to another provider first.'
+                  : 'Delete this provider profile';
 
               return (
                 <Box
@@ -311,10 +317,15 @@ export function ProvidersPanel() {
                           {profile.providerName}
                         </Typography>
                       </Box>
-                      <IconButton size="small" onClick={() => handleDeleteProfile(profile)}
-                        sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.red } }}>
-                        <DeleteIcon sx={{ fontSize: 16 }} />
-                      </IconButton>
+                      <Tooltip title={deleteTooltip} placement="left" arrow>
+                        <span>
+                          <IconButton size="small" onClick={() => canDelete && handleDeleteProfile(profile)}
+                            disabled={!canDelete}
+                            sx={{ color: colors.text.dim, p: 0.5, '&:hover': canDelete ? { color: colors.accent.red } : {}, opacity: canDelete ? 1 : 0.3 }}>
+                            <DeleteIcon sx={{ fontSize: 16 }} />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
                     </Box>
 
                     <Box sx={{ mt: 1 }}>

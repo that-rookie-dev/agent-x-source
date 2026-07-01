@@ -48,6 +48,8 @@ export interface Crew {
     disabled?: string[];
   };
   tools?: string[];
+  /** Search synonyms / alternate spellings / related skill terms — indexed for FTS. */
+  tags?: string[];
   permissions?: PermissionRule[];
   model?: { provider: string; modelId: string };
   protocol?: CollaborationProtocol;
@@ -79,6 +81,7 @@ export interface CrewCreateInput {
     disabled?: string[];
   };
   tools?: string[];
+  tags?: string[];
   permissions?: PermissionRule[];
   model?: { provider: string; modelId: string };
   protocol?: CollaborationProtocol;

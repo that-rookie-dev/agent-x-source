@@ -126,6 +126,7 @@ export const providers = {
   switch: (provider: string) => request<{ ok: boolean; provider: string; model: string }>('/provider/switch', { method: 'POST', body: JSON.stringify({ provider }) }),
   createProfile: (provider: string, label: string, apiKey: string, baseUrl?: string, setActive?: boolean) => request<{ ok: boolean; provider: string; profileId: string }>('/provider/profile', { method: 'POST', body: JSON.stringify({ provider, profileId: label, label, apiKey, baseUrl, setActive }) }),
   switchProfile: (providerId: string, profileId: string) => request<{ ok: boolean }>('/provider/profile/switch', { method: 'POST', body: JSON.stringify({ providerId, profileId }) }),
+  deleteProfile: (providerId: string, profileId: string) => request<{ ok: boolean }>(`/provider/${providerId}/profile/${profileId}`, { method: 'DELETE' }),
 };
 
 // ─── Models ───
@@ -568,6 +569,220 @@ export const rag = {
   clear: () => request<{ ok: boolean }>('/rag/clear', { method: 'POST' }),
 };
 
+// ─── RAG Studio (async document ingestion + job tracking) ───
+
+/** Atomic stage detail persisted alongside job progress. */
+export interface StageDetail {
+  stage: string;
+  detail?: string;
+  chunkIndex?: number;
+  chunkCount?: number;
+  batchIndex?: number;
+  batchCount?: number;
+}
+
+export interface IngestionJob {
+  id: string;
+  kind: string;
+  payload: unknown;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+  priority: number;
+  attemptCount: number;
+  maxAttempts: number;
+  error?: string;
+  progress: number;
+  result?: unknown;
+  stageDetail?: StageDetail | null;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  lockedUntil: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Full atomic event delivered via the SSE stream. */
+export interface IngestStreamEvent {
+  jobId: string;
+  stage: string;
+  progress: number;
+  status: string;
+  detail?: string;
+  chunkIndex?: number;
+  chunkCount?: number;
+  batchIndex?: number;
+  batchCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  error?: string;
+  updatedAt?: string;
+}
+
+export interface IngestAsyncResult {
+  jobId: string;
+  status: string;
+  name: string;
+  kind: string;
+}
+
+export const ragStudio = {
+  /** Enqueue a file for async ingestion. Returns the job ID. */
+  ingestFile: async (file: File, opts?: { chunkSize?: number; chunkOverlap?: number }): Promise<IngestAsyncResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    if (opts?.chunkSize) form.append('chunkSize', String(opts.chunkSize));
+    if (opts?.chunkOverlap) form.append('chunkOverlap', String(opts.chunkOverlap));
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const res = await fetch(`${BASE}/memory/ingest-async`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: form,
+    });
+    if (!res.ok) throw new Error(`Failed to enqueue file: ${res.statusText}`);
+    return res.json();
+  },
+
+  /** Enqueue a web URL for async ingestion. */
+  ingestUrl: async (url: string, name?: string): Promise<IngestAsyncResult> => {
+    return request<IngestAsyncResult>('/memory/ingest-async', {
+      method: 'POST',
+      body: JSON.stringify({ url, name }),
+    });
+  },
+
+  /** Enqueue raw text content for async ingestion. */
+  ingestText: async (content: string, name: string, kind: 'text' | 'markdown' | 'json' = 'text'): Promise<IngestAsyncResult> => {
+    return request<IngestAsyncResult>('/memory/ingest-async', {
+      method: 'POST',
+      body: JSON.stringify({ content, name, kind }),
+    });
+  },
+
+  /** List recent ingestion jobs (filtered to document_ingest only by default). */
+  jobs: (limit = 50, kind = 'document_ingest') => request<{ jobs: IngestionJob[] }>(`/memory/jobs?limit=${limit}&kind=${kind}`),
+
+  /** Get a single job by ID. */
+  job: (id: string) => request<IngestionJob>(`/memory/jobs/${id}`),
+
+  /** Fetch the full event log for a job (for populating the log on selection). */
+  jobEvents: (id: string) => request<{ events: IngestStreamEvent[] }>(`/memory/jobs/${id}/events`),
+
+  /** Cancel a running or pending job. */
+  cancelJob: (id: string) => request<{ ok: boolean }>(`/memory/jobs/${id}/cancel`, { method: 'POST' }),
+
+  /** Delete a job and all its events. */
+  deleteJob: (id: string) => request<{ ok: boolean }>(`/memory/jobs/${id}`, { method: 'DELETE' }),
+
+  /** Open an SSE stream that polls job progress until terminal state. */
+  streamJob: (jobId: string, onEvent: (data: IngestStreamEvent) => void): (() => void) => {
+    const url = authToken
+      ? `${BASE}/memory/jobs/${jobId}/stream?token=${encodeURIComponent(authToken)}`
+      : `${BASE}/memory/jobs/${jobId}/stream`;
+    const es = new EventSource(url, { withCredentials: true });
+    es.onmessage = (e) => {
+      try { onEvent(JSON.parse(e.data)); } catch { /* ignore parse errors */ }
+    };
+    return () => es.close();
+  },
+};
+
+// ─── Knowledge Base (memory browsing) ───
+
+export interface MemorySource {
+  id: string;
+  name: string;
+  kind: string;
+  colorHex: string;
+  createdAt: string;
+  filePath?: string | null;
+  fileSize?: number | null;
+  fileMime?: string | null;
+}
+
+export type MemoryNodeCategory = 'persona' | 'tool' | 'episodic' | 'semantic' | 'source_doc' | 'system';
+
+export interface MemoryNode {
+  id: string;
+  label: string;
+  category: MemoryNodeCategory;
+  content: string;
+  status: string;
+  x: number | null;
+  y: number | null;
+  layoutEpoch: number;
+  tag?: string;
+  isBenchmark: boolean;
+  sourceId?: string;
+  sessionId?: string;
+  agentId?: string;
+  confidence?: number;
+  createdAt: string;
+  updatedAt: string;
+  accessCount: number;
+  lastAccessedAt: string | null;
+}
+
+export interface MemoryEdge {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  relationshipType: string;
+  weight: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GraphSnapshot {
+  nodes: MemoryNode[];
+  edges: MemoryEdge[];
+}
+
+export interface SourceNodesResult {
+  nodes: MemoryNode[];
+  total: number;
+}
+
+export const knowledge = {
+  /** List all knowledge sources. */
+  sources: () => request<MemorySource[]>('/memory/sources'),
+
+  /** Get all nodes for a specific source (paginated). */
+  sourceNodes: (sourceId: string, opts?: { limit?: number; offset?: number; category?: MemoryNodeCategory }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.offset) params.set('offset', String(opts.offset));
+    if (opts?.category) params.set('category', opts.category);
+    const qs = params.toString();
+    return request<SourceNodesResult>(`/memory/sources/${sourceId}/nodes${qs ? `?${qs}` : ''}`);
+  },
+
+  /** Get a graph snapshot of recent nodes (optionally filtered). */
+  graph: (opts?: { limit?: number; category?: MemoryNodeCategory; sourceId?: string; tag?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.category) params.set('category', opts.category);
+    if (opts?.sourceId) params.set('sourceId', opts.sourceId);
+    if (opts?.tag) params.set('tag', opts.tag);
+    const qs = params.toString();
+    return request<GraphSnapshot>(`/memory/graph${qs ? `?${qs}` : ''}`);
+  },
+
+  /** Get a single node by ID. */
+  node: (id: string) => request<MemoryNode>(`/memory/nodes/${id}`),
+
+  /** Download the original file for a source (returns a URL for an anchor click). */
+  sourceFileUrl: (sourceId: string) => `${BASE}/memory/sources/${sourceId}/file`,
+
+  /** Get RAG Studio storage stats (file count, total size). */
+  storageStats: () => request<{ fileCount: number; totalBytes: number; path: string }>('/memory/rag-studio/storage'),
+
+  /** Clear all persisted RAG Studio files (does NOT delete knowledge nodes). */
+  clearStorage: () => request<{ ok: boolean; deletedFiles: number; freedBytes: number }>('/memory/rag-studio/storage', { method: 'DELETE' }),
+};
+
 // ─── Bridges ───
 export const bridges = {
   telegram: {
@@ -830,6 +1045,7 @@ export interface CatalogSummary {
   traits: string[];
   tone?: string;
   tools?: string[];
+  tags?: string[];
   requiresMedicalDisclaimer?: boolean;
   honorsDoctorate?: boolean;
 }
@@ -847,6 +1063,7 @@ export interface CatalogEntry {
   expertise: string[];
   traits: string[];
   tools?: string[];
+  tags?: string[];
   searchText: string;
   hubRevision: number;
   active: boolean;
@@ -871,6 +1088,8 @@ export interface CrewMatchCandidate {
   categoryId?: string;
   categoryLabel?: string;
   tone?: string;
+  tools?: string[];
+  tags?: string[];
   requiresMedicalDisclaimer?: boolean;
   honorsDoctorate?: boolean;
 }

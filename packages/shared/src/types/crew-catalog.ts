@@ -21,6 +21,7 @@ export interface CatalogEntry {
   expertise: string[];
   traits: string[];
   tools?: string[];
+  tags?: string[];
   searchText: string;
   hubRevision: number;
   active: boolean;
@@ -41,6 +42,7 @@ export interface CatalogSummary {
   traits: string[];
   tone?: string;
   tools?: string[];
+  tags?: string[];
   requiresMedicalDisclaimer?: boolean;
   honorsDoctorate?: boolean;
 }
@@ -64,6 +66,8 @@ export interface CrewMatchCandidate {
   expertise: string[];
   traits: string[];
   tone?: string;
+  tools?: string[];
+  tags?: string[];
   /** Normalized 0–1 compatibility score for the current task. */
   matchScore: number;
   /** Human-readable match reasons. */
@@ -111,6 +115,7 @@ export interface CatalogManifest {
     expertise: string[];
     traits: string[];
     tools?: string[];
+    tags?: string[];
     searchText: string;
   }>;
 }

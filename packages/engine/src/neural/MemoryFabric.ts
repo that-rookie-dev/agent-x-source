@@ -122,6 +122,12 @@ export interface MemorySource {
   kind: string;
   colorHex: string;
   createdAt: Date;
+  /** Path to the original uploaded file (if the source was created from a file upload). */
+  filePath?: string | null;
+  /** Size of the original file in bytes. */
+  fileSize?: number | null;
+  /** MIME type of the original file. */
+  fileMime?: string | null;
 }
 
 export interface GraphWalkOptions {
@@ -160,6 +166,19 @@ function deterministicLayoutSeed(id: string): number {
     hash |= 0;
   }
   return Math.abs(hash);
+}
+
+// ── Module-level singleton for tool access ──────────────────────────
+let _fabricInstance: MemoryFabric | null = null;
+
+/** Set the global MemoryFabric singleton (called once at engine startup). */
+export function setMemoryFabricInstance(fabric: MemoryFabric | null): void {
+  _fabricInstance = fabric;
+}
+
+/** Get the global MemoryFabric singleton (used by tools like memory_fabric_search). */
+export function getMemoryFabricInstance(): MemoryFabric | null {
+  return _fabricInstance;
 }
 
 export class MemoryFabric {
@@ -872,11 +891,44 @@ export class MemoryFabric {
 
   async getSources(): Promise<MemorySource[]> {
     const { rows } = await this.pool.query<MemorySource>(
-      `SELECT id, name, kind, color_hex AS "colorHex", created_at AS "createdAt"
+      `SELECT id, name, kind, color_hex AS "colorHex", created_at AS "createdAt",
+              file_path AS "filePath", file_size AS "fileSize", file_mime AS "fileMime"
        FROM memory_sources
        ORDER BY created_at DESC`,
     );
     return rows;
+  }
+
+  /** Update the file_path / file_size / file_mime on an existing source. */
+  async setSourceFilePath(sourceId: string, filePath: string, fileSize?: number, fileMime?: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE memory_sources SET file_path = $1, file_size = $2, file_mime = $3 WHERE id = $4`,
+      [filePath, fileSize ?? null, fileMime ?? null, sourceId],
+    );
+  }
+
+  /** Get all nodes belonging to a specific source, with pagination. */
+  async getNodesBySource(sourceId: string, options: { limit?: number; offset?: number; category?: MemoryNodeCategory } = {}): Promise<{ nodes: MemoryNode[]; total: number }> {
+    const limit = options.limit ?? 100;
+    const offset = options.offset ?? 0;
+    const categoryFilter = options.category ? `AND category = '${options.category}'` : '';
+    const { rows: nodes } = await this.pool.query<MemoryNode>(
+      `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
+              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+              n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
+              COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
+       FROM memory_nodes n
+       LEFT JOIN neuron_activity a ON a.node_id = n.id
+       WHERE n.source_id = $1 AND n.status = 'active' ${categoryFilter}
+       ORDER BY n.created_at ASC
+       LIMIT $2 OFFSET $3`,
+      [sourceId, limit, offset],
+    );
+    const { rows: countRows } = await this.pool.query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM memory_nodes WHERE source_id = $1 AND status = 'active' ${categoryFilter}`,
+      [sourceId],
+    );
+    return { nodes, total: countRows[0]?.count ?? 0 };
   }
 
   async updateLayout(nodeId: string, x: number, y: number, layoutEpoch: number): Promise<void> {
@@ -1000,11 +1052,12 @@ export class MemoryFabric {
     return rows;
   }
 
-  async getGraphSnapshot(options: { limit?: number; category?: MemoryNodeCategory; tag?: string; isBenchmark?: boolean } = {}): Promise<{ nodes: MemoryNode[]; edges: MemoryEdge[] }> {
+  async getGraphSnapshot(options: { limit?: number; category?: MemoryNodeCategory; tag?: string; isBenchmark?: boolean; sourceId?: string } = {}): Promise<{ nodes: MemoryNode[]; edges: MemoryEdge[] }> {
     const filters: string[] = ["n.status = 'active'"];
     if (options.category) filters.push(`n.category = '${options.category}'`);
     if (options.tag) filters.push(`n.tag = '${options.tag}'`);
     if (options.isBenchmark != null) filters.push(`n.is_benchmark = ${options.isBenchmark}`);
+    if (options.sourceId) filters.push(`n.source_id = '${options.sourceId}'`);
     const where = filters.join(' AND ');
     const { rows: nodes } = await this.pool.query<MemoryNode>(
       `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",

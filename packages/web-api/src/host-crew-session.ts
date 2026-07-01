@@ -240,6 +240,8 @@ function ephemeralCrewFromCatalogEntry(entry: CatalogEntry): Crew {
     expertise: entry.expertise,
     traits: entry.traits,
     tools: entry.tools,
+    tags: entry.tags,
+    searchText: entry.searchText,
     source: 'hub',
     catalogId: entry.id,
     isDefault: false,
@@ -267,6 +269,8 @@ export function recruitCrewFromCatalogEntry(crewManager: CrewManagerLike, entry:
     expertise: entry.expertise,
     traits: entry.traits,
     tools: entry.tools,
+    tags: entry.tags,
+    searchText: entry.searchText,
     source: 'hub',
     catalogId: entry.id,
   });

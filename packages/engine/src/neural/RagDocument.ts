@@ -61,10 +61,48 @@ export class RagDocument {
     }
 
     if (buffer.trim()) {
-      chunks.push(this.makeChunk(index, buffer.trim()));
+      // If the final buffer is a single oversized unit (no headings/paragraphs
+      // to split on), force-split it by sentences, then by character boundaries
+      // so one chunk doesn't swallow the entire document.
+      if (buffer.length > this.options.chunkSize) {
+        for (const piece of this.forceSplit(buffer, this.options.chunkSize, this.options.chunkOverlap)) {
+          chunks.push(this.makeChunk(index++, piece.trim()));
+        }
+      } else {
+        chunks.push(this.makeChunk(index, buffer.trim()));
+      }
     }
 
     return chunks;
+  }
+
+  /**
+   * Force-split an oversized text block into chunks <= chunkSize.
+   * First tries sentence boundaries, then falls back to hard character splits.
+   */
+  private forceSplit(text: string, chunkSize: number, overlap: number): string[] {
+    const pieces: string[] = [];
+    // Try sentence-level splitting first.
+    const sentences = text.match(/[^.!?]+[.!?]+\s*|[^.!?]+$/g) ?? [text];
+    let buf = '';
+    for (const sentence of sentences) {
+      const next = buf + sentence;
+      if (buf.length > 0 && next.length > chunkSize) {
+        pieces.push(buf.trim());
+        buf = overlap > 0 ? buf.slice(-overlap).trim() : '';
+      }
+      // If a single sentence is longer than chunkSize, hard-split it.
+      if (sentence.length > chunkSize) {
+        if (buf.trim()) { pieces.push(buf.trim()); buf = ''; }
+        for (let i = 0; i < sentence.length; i += chunkSize - overlap) {
+          pieces.push(sentence.slice(i, i + chunkSize).trim());
+        }
+        continue;
+      }
+      buf = buf + sentence;
+    }
+    if (buf.trim()) pieces.push(buf.trim());
+    return pieces.length > 0 ? pieces : [text.slice(0, chunkSize)];
   }
 
   private splitIntoUnits(): string[] {

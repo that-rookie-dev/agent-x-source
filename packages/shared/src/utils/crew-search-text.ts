@@ -6,6 +6,9 @@ export interface CrewSearchTextInput {
   tone?: string;
   expertise?: string[];
   traits?: string[];
+  tools?: string[];
+  /** Search synonyms / alternate spellings / related skill terms. */
+  tags?: string[];
   /** Only first ~400 chars of prompt are indexed for privacy. */
   systemPrompt?: string;
 }
@@ -25,6 +28,8 @@ export function buildCrewSearchText(input: CrewSearchTextInput): string {
     input.tone ?? '',
     ...(input.expertise ?? []),
     ...(input.traits ?? []),
+    ...(input.tools ?? []),
+    ...(input.tags ?? []),
     promptSnippet,
   ]
     .join(' ')

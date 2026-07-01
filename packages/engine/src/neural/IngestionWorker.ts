@@ -16,7 +16,6 @@ import { LocalLLMJudge } from './LocalLLMJudge.js';
 import { CommunitySummarizer } from './CommunitySummarizer.js';
 import type { GenerateFn } from './MemoryExtractor.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { getLogger } from '@agentx/shared';
 
 export interface IngestionWorkerOptions {
   /** Kinds to process. Defaults to all. */
@@ -41,6 +40,30 @@ export class IngestionWorker {
   private embed: (text: string) => Promise<number[]>;
   private generate: GenerateFn | null;
   private embedder: EmbeddingProvider | null;
+  /** Set of job IDs that have been cancelled by the user. The worker checks
+   *  this set before processing each chunk and aborts gracefully if present. */
+  private cancelledJobIds = new Set<string>();
+
+  /** Update the LLM generator after construction (e.g. after user login). */
+  setGenerate(fn: GenerateFn | null): void {
+    this.generate = fn;
+  }
+
+  /** Check whether an LLM generator is currently available. */
+  hasGenerate(): boolean {
+    return this.generate != null;
+  }
+
+  /** Request cancellation of a running job. The worker checks this before each
+   *  chunk and aborts gracefully. Also marks the job as cancelled in the DB. */
+  async cancelJob(jobId: string): Promise<boolean> {
+    this.cancelledJobIds.add(jobId);
+    try {
+      return await this.queue.cancelJob(jobId);
+    } catch {
+      return false;
+    }
+  }
 
   constructor(
     private pool: Pool,
@@ -81,7 +104,7 @@ export class IngestionWorker {
   private async tick(): Promise<void> {
     if (!this.running) return;
     const concurrency = this.options.concurrency ?? 1;
-    const kinds = this.options.kinds ?? ['web_distill', 'document_ingest', 'memory_consolidate', 'louvain_layout', 'community_summarize'];
+    const kinds = this.options.kinds ?? ['web_distill', 'document_ingest', 're_extract', 'memory_consolidate', 'louvain_layout', 'community_summarize'];
     const limit = Math.max(1, concurrency - this.active);
 
     try {
@@ -104,15 +127,20 @@ export class IngestionWorker {
   private async runJob(claimed: ClaimedJob): Promise<void> {
     const { job } = claimed;
     try {
-      await this.handleJob(claimed);
-      await claimed.complete({ ok: true });
+      const result = await this.handleJob(claimed);
+      // If the job was cancelled, don't mark it as done — the cancelJob()
+      // method already set the status to 'cancelled' in the DB.
+      if (result && typeof result === 'object' && 'cancelled' in result && result.cancelled) {
+        return; // leave status as 'cancelled'
+      }
+      await claimed.complete(result ?? { ok: true });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       await claimed.fail(message, job.attemptCount + 1 < job.maxAttempts);
     }
   }
 
-  private async handleJob(claimed: ClaimedJob): Promise<void> {
+  private async handleJob(claimed: ClaimedJob): Promise<Record<string, unknown> | void> {
     const { job } = claimed;
     switch (job.kind) {
       case 'web_distill': {
@@ -126,18 +154,85 @@ export class IngestionWorker {
         return;
       }
       case 'document_ingest': {
-        const payload = job.payload as { name?: string; kind?: string; content?: string; chunkSize?: number; chunkOverlap?: number };
+        const payload = job.payload as { name?: string; kind?: string; content?: string; chunkSize?: number; chunkOverlap?: number; filePath?: string; fileSize?: number; fileMime?: string };
         if (!payload.content || !payload.name) throw new Error('Invalid document_ingest payload');
-        const ingester = new DocumentIngester(this.fabric);
-        await ingester.ingest({
+        const ingester = new DocumentIngester(this.fabric, this.generate ?? undefined);
+        const jobId = job.id;
+        const result = await ingester.ingest({
           name: payload.name,
           kind: (payload.kind as any) ?? 'text',
           content: payload.content,
           chunkSize: payload.chunkSize,
           chunkOverlap: payload.chunkOverlap,
           embed: this.embed,
+          shouldCancel: () => this.cancelledJobIds.has(jobId),
+          onProgress: (event) => {
+            // Forward the full atomic event (stage + detail + chunk counters +
+            // token usage) so the RAG Studio UI can render a live stage pipeline
+            // tracker, log stream, telemetry, and token spend.
+            void claimed.setProgressEvent(event.progress, {
+              stage: event.stage,
+              detail: event.detail,
+              chunkIndex: event.chunkIndex,
+              chunkCount: event.chunkCount,
+              batchIndex: event.batchIndex,
+              batchCount: event.batchCount,
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+            });
+          },
         });
-        return;
+        // Clean up the cancellation flag.
+        this.cancelledJobIds.delete(jobId);
+        // If the job was cancelled during processing, don't mark it as complete.
+        if (result.cancelled) {
+          return { ok: false, cancelled: true };
+        }
+        // Store the sourceId in the job result so the UI can trace job → source → nodes.
+        // Also persist the file_path on the source if one was provided.
+        if (payload.filePath && result.sourceId) {
+          try { await this.fabric.setSourceFilePath(result.sourceId, payload.filePath, payload.fileSize, payload.fileMime); } catch { /* best-effort */ }
+        }
+        // Auto-enqueue post-ingestion jobs: recompute layout + community summaries
+        // so the graph is immediately searchable via GraphRAG retrieval.
+        try {
+          if (!await this.queue.hasActiveJob('louvain_layout')) {
+            await this.queue.enqueue({ kind: 'louvain_layout', priority: 0 });
+          }
+          if (this.generate && !await this.queue.hasActiveJob('community_summarize')) {
+            await this.queue.enqueue({ kind: 'community_summarize', priority: 0 });
+          }
+        } catch { /* best-effort — periodic loop will also enqueue these */ }
+        // Return the result — runJob() will pass it to claimed.complete() which
+        // stores it in the ingestion_jobs.result JSONB column.
+        return { ok: true, sourceId: result.sourceId, nodeCount: result.nodes.length, edgeCount: result.edges.length };
+      }
+      case 're_extract': {
+        // Re-run entity extraction on a source that was ingested without an LLM generator.
+        const payload = job.payload as { sourceId?: string };
+        if (!payload.sourceId) throw new Error('re_extract requires a sourceId in payload');
+        if (!this.generate) throw new Error('re_extract requires an LLM generator — configure a provider first');
+        const ingester = new DocumentIngester(this.fabric, this.generate);
+        const jobId = job.id;
+        const result = await ingester.reExtractSource(payload.sourceId, {
+          generate: this.generate,
+          embed: this.embed,
+          shouldCancel: () => this.cancelledJobIds.has(jobId),
+          onProgress: (event) => {
+            void claimed.setProgressEvent(event.progress, {
+              stage: event.stage,
+              detail: event.detail,
+              chunkIndex: event.chunkIndex,
+              chunkCount: event.chunkCount,
+              batchIndex: event.batchIndex,
+              batchCount: event.batchCount,
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+            });
+          },
+        });
+        this.cancelledJobIds.delete(jobId);
+        return { ok: true, sourceId: result.sourceId, extractedNodes: result.extractedNodes, extractedEdges: result.extractedEdges, skipped: result.skipped };
       }
       case 'memory_consolidate': {
         const consolidator = new MemoryConsolidator(this.fabric);
@@ -150,8 +245,11 @@ export class IngestionWorker {
       }
       case 'community_summarize': {
         if (!this.generate || !this.embedder) {
-          getLogger().warn('INGESTION_WORKER', 'community_summarize skipped: no LLM generator or embedder configured');
-          return;
+          // Don't log a warning here — the enqueue logic in index.ts should
+          // prevent these jobs from being created when no generator is available.
+          // If we do get here, fail the job so it's visible in the queue dashboard
+          // rather than silently marking it as "done".
+          throw new Error('community_summarize requires an LLM generator and embedder — configure a provider first');
         }
         const summarizer = new CommunitySummarizer(this.fabric, this.generate, this.embedder);
         await summarizer.summarizeAll(job.payload as Record<string, unknown> | undefined);
@@ -200,7 +298,12 @@ export class IngestionWorker {
           JSON.stringify({ kind: 'rag_telemetry' }),
         ],
       );
-      await claimed.setProgress(Math.round(((i + 1) / rows.length) * 100));
+      await claimed.setProgressEvent(Math.round(((i + 1) / rows.length) * 100), {
+        stage: 'rag_telemetry',
+        detail: `Telemetry probe ${i + 1}/${rows.length}`,
+        chunkIndex: i + 1,
+        chunkCount: rows.length,
+      });
     }
   }
 

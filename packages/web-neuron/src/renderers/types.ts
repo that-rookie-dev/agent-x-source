@@ -1,12 +1,10 @@
 // Renderer-agnostic graph data model + adapter interface.
-// App.tsx talks only to `GraphRenderer`; each concrete adapter wraps a
-// specific visualization library (3d-force-graph, Cosmograph, …) and is
-// swappable at runtime via the bottom-footer switcher.
+// App.tsx talks only to `GraphRenderer`; the concrete adapter wraps
+// 3d-force-graph (via react-force-graph-3d + three.js).
 //
 // App is the single source of truth for nodes/edges + transient size/colour
 // overrides (fired neurons, flashed synapses). It bakes those overrides into
-// RenderNode/RenderEdge and hands them to setData(). Each adapter then either
-// applies the data immediately (force3d) or debounces a re-sync (Cosmograph).
+// RenderNode/RenderEdge and hands them to setData().
 
 export interface NodeEntry {
   id: string;
@@ -53,7 +51,7 @@ export interface RenderEdge {
   width: number;
 }
 
-export type RendererId = 'sigma' | 'nebula' | 'force3d';
+export type RendererId = 'force3d';
 
 /**
  * Every renderer adapter implements this. Methods are best-effort: adapters
@@ -108,7 +106,7 @@ export function resolvePosition(
       z: (Math.random() - 0.5) * RANDOM_SPREAD * 0.5,
     };
   }
-  // Spread z across a meaningful range so the nebula renderer has true 3D depth.
+  // Spread z across a meaningful range so the 3D renderer has true depth.
   // Use a hash of x+y so the same node always gets the same z (stable across refreshes).
   const hash = Math.sin(x! * 12.9898 + y! * 78.233) * 43758.5453;
   const zUnit = (hash - Math.floor(hash)) - 0.5; // -0.5 to 0.5

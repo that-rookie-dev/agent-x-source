@@ -48,6 +48,8 @@ export function buildCrewSearchText({ crew, category }) {
     category.id.replace(/-/g, ' '),
     ...(crew.expertise ?? []),
     ...(crew.traits ?? []),
+    ...(crew.tools ?? []),
+    ...(crew.tags ?? []),
     ...(category.skillBank ?? []),
     ...(category.traitBank ?? []),
     ...(CATEGORY_SEARCH_SYNONYMS[category.id] ?? []),
