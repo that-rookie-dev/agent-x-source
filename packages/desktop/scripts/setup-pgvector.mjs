@@ -90,7 +90,25 @@ function downloadWindowsPostgresBinaries(pgVersion, pgInstallDir) {
       console.log(`Extracting PostgreSQL ${pgVersion} Windows binaries...`);
       rmSync(pgInstallDir, { recursive: true, force: true });
       mkdirSync(pgInstallDir, { recursive: true });
-      exec(`tar -xf "${zipPath}" -C "${pgInstallDir}" --strip-components=1`, { cwd: zipDir });
+      // Use PowerShell Expand-Archive instead of GNU tar — Git Bash's tar interprets
+      // Windows drive letters (e.g. "D:") as remote host specifiers and fails with
+      // "Cannot connect to D: resolve failed". The EDB zip contains a single top-level
+      // directory (e.g. "pgsql") — extract to a temp dir then move its contents up.
+      const tmpDir = `${pgInstallDir}-tmp`;
+      rmSync(tmpDir, { recursive: true, force: true });
+      const psResult = spawnSync('powershell', [
+        '-NoProfile', '-Command',
+        `Expand-Archive -Path '${zipPath}' -DestinationPath '${tmpDir}' -Force`,
+      ], { stdio: 'inherit' });
+      if (psResult.status !== 0) {
+        throw new Error(`PowerShell Expand-Archive failed with exit code ${psResult.status}`);
+      }
+      // Move the single top-level directory's contents into pgInstallDir (equivalent to --strip-components=1)
+      const entries = readdirSync(tmpDir);
+      const firstEntry = entries[0];
+      const topLevelDir = entries.length === 1 && firstEntry && existsSync(join(tmpDir, firstEntry)) ? join(tmpDir, firstEntry) : tmpDir;
+      cpSync(topLevelDir, pgInstallDir, { recursive: true });
+      rmSync(tmpDir, { recursive: true, force: true });
       return;
     } catch (e) {
       lastError = e;
