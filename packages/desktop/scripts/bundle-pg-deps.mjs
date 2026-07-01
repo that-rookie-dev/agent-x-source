@@ -8,12 +8,12 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = join(scriptDir, '..', '..', '..');
 const storeDir = join(workspaceRoot, 'node_modules', '.pnpm');
 
-// Detect the release directory — electron-builder outputs to mac-<arch>
-// (e.g. mac-arm64, mac-x64). Find whichever exists.
+// Detect the release directory — electron-builder outputs to "mac" (single arch)
+// or "mac-<arch>" (e.g. mac-arm64, mac-x64). Find whichever contains Agent-X.app.
 const releaseBase = join(scriptDir, '..', 'release');
 let releaseDir = null;
 for (const name of readdirSync(releaseBase)) {
-  if (name.startsWith('mac-')) {
+  if (name === 'mac' || name.startsWith('mac-')) {
     const candidate = join(releaseBase, name);
     if (existsSync(join(candidate, 'Agent-X.app'))) {
       releaseDir = candidate;
@@ -22,7 +22,7 @@ for (const name of readdirSync(releaseBase)) {
   }
 }
 if (!releaseDir) {
-  console.error('Could not find mac-* release directory with Agent-X.app');
+  console.error('Could not find mac* release directory with Agent-X.app');
   process.exit(1);
 }
 console.log('Bundle PG deps for release:', releaseDir);
