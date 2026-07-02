@@ -52,6 +52,7 @@ import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewH
 import { memoryRouter } from './memory-api.js';
 import localModelRouter from './local-model-api.js';
 import embeddingModelRouter from './embedding-model-api.js';
+import modelBenchmarkRouter from './model-benchmark-api.js';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
@@ -344,6 +345,7 @@ app.use('/api', memoryRouter);
 // Local model management API
 app.use('/api', localModelRouter);
 app.use('/api', embeddingModelRouter);
+app.use('/api', modelBenchmarkRouter);
 
 // Security headers (content-type sniffing, XSS, clickjacking protection)
 app.use(helmet({

@@ -14,6 +14,7 @@ import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, QuestionnairePayload } from '@agentx/shared';
 import { normalizeAskClarificationArgs } from '@agentx/shared';
 import { isToolAllowedInPlanMode, buildPlanModeRestrictedToolHint, type PlanGatePromptProfile } from './plan-mode-utils.js';
+import { isCompactToolAllowed } from './context-profile.js';
 
 const DEFAULT_BASE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
@@ -130,14 +131,19 @@ export function createAiSdkTools(
   waitForModeEscalation?: (toolId: string, reason: string) => Promise<boolean>,
   onToolExecuted?: (toolId: string, success: boolean, output: string, elapsed: number, args?: Record<string, unknown>) => void,
   promptProfile: PlanGatePromptProfile = 'default',
+  compactContext = false,
 ): ToolSet {
   const allTools = toolRegistry.list();
   const tools: ToolSet = {};
 
   // ─── Plan Mode: strict allowlist — read/explore only; plans stay in chat ───
-  const filteredTools = planMode
+  let filteredTools = planMode
     ? allTools.filter((t) => isToolAllowedInPlanMode(t.id))
     : allTools;
+
+  if (compactContext) {
+    filteredTools = filteredTools.filter((t) => isCompactToolAllowed(t.id, planMode));
+  }
 
   // Wire real-time tool output streaming
   const activeOutputCalls = new Map<string, string>(); // callId -> tool name

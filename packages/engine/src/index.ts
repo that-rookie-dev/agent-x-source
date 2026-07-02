@@ -147,7 +147,8 @@ export type { RagTriadScores, LocalLLMJudgeOptions } from './neural/LocalLLMJudg
 export { SkillTransfer } from './neural/SkillTransfer.js';
 export type { SkillTransferOptions, SkillTransferResult } from './neural/SkillTransfer.js';
 export { CognitiveBenchmark } from './neural/CognitiveBenchmark.js';
-export type { BenchmarkRunOptions, BenchmarkRunResult, BenchmarkEvent, BenchmarkProgress } from './neural/CognitiveBenchmark.js';
+export type { BenchmarkRunOptions, BenchmarkRunResult as NeuralBenchmarkRunResult, BenchmarkEvent, BenchmarkProgress } from './neural/CognitiveBenchmark.js';
+export * from './benchmark/index.js';
 export { verifyOfflineMode } from './neural/OfflineModeVerifier.js';
 export type { OfflineVerificationResult } from './neural/OfflineModeVerifier.js';
 export { PiiRedactor } from './neural/PiiRedactor.js';

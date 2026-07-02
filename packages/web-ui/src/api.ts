@@ -1467,6 +1467,122 @@ export const embeddingModels = {
   },
 };
 
+export type BenchmarkGrade = 'STANDBY' | 'LIMITED' | 'CLEARED' | 'ELITE';
+
+export interface BenchmarkTestResult {
+  id: string;
+  label: string;
+  category: string;
+  score: number;
+  maxScore: number;
+  passed: boolean;
+  latencyMs: number;
+  critical: boolean;
+  details?: string;
+  error?: string;
+}
+
+export interface ModalityProbeResult {
+  id: string;
+  label: string;
+  detected: boolean;
+  source: string;
+  tested: boolean;
+  probeStatus?: 'passed' | 'failed' | 'skipped' | 'unsupported';
+  note?: string;
+  details?: string;
+}
+
+export interface BenchmarkRunResult {
+  runId: string;
+  providerId: string;
+  modelId: string;
+  profileId?: string;
+  grade: BenchmarkGrade;
+  overallScore: number;
+  maxScore: number;
+  percent: number;
+  tests: BenchmarkTestResult[];
+  modalities: ModalityProbeResult[];
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  logFile?: string;
+  fromCache?: boolean;
+}
+
+export type BenchmarkProgressEvent =
+  | { type: 'started'; runId: string; modelId: string; providerId: string; totalTests: number }
+  | { type: 'phase'; phase: string; message: string }
+  | { type: 'test_start'; testId: string; label: string; index: number; total: number }
+  | { type: 'test_complete'; result: BenchmarkTestResult; index: number; total: number }
+  | { type: 'modality'; result: ModalityProbeResult }
+  | { type: 'complete'; result: BenchmarkRunResult }
+  | { type: 'error'; error: string };
+
+export const modelBenchmark = {
+  start: (body: {
+    providerId: string;
+    modelId: string;
+    profileId?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    modelCapabilities?: string[];
+    force?: boolean;
+  }) => request<{
+    runId: string;
+    cached?: boolean;
+    logFile?: string;
+    finishedAt?: string;
+  }>('/model-benchmark/start', { method: 'POST', body: JSON.stringify(body) }),
+
+  latest: (providerId: string, modelId: string) =>
+    request<{ result: BenchmarkRunResult | null }>(`/model-benchmark/latest?providerId=${encodeURIComponent(providerId)}&modelId=${encodeURIComponent(modelId)}`),
+
+  logPath: (providerId: string, modelId: string) =>
+    request<{ logFile: string; logPath: string; exists: boolean }>(
+      `/model-benchmark/log-path?providerId=${encodeURIComponent(providerId)}&modelId=${encodeURIComponent(modelId)}`,
+    ),
+
+  downloadLog: async (providerId: string, modelId: string): Promise<Blob> => {
+    const token = getAuthToken();
+    const url = `${BASE}/model-benchmark/log?providerId=${encodeURIComponent(providerId)}&modelId=${encodeURIComponent(modelId)}`;
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error('Failed to download benchmark log');
+    return res.blob();
+  },
+
+  stream: (runId: string, onEvent: (event: BenchmarkProgressEvent) => void): (() => void) => {
+    const url = `${BASE}/model-benchmark/stream/${encodeURIComponent(runId)}`;
+    const es = new EventSource(url);
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      es.close();
+    };
+    es.onmessage = (ev) => {
+      try {
+        const event = JSON.parse(ev.data) as BenchmarkProgressEvent;
+        onEvent(event);
+        // The server ends the HTTP stream after the terminal event. Close the
+        // EventSource ourselves so it does NOT auto-reconnect and replay the
+        // full buffered event history (which would duplicate matrix rows).
+        if (event.type === 'complete' || event.type === 'error') close();
+      } catch { /* ignore malformed chunk */ }
+    };
+    es.onerror = () => {
+      // A normal end-of-stream surfaces as an error on the EventSource. Once the
+      // server has closed the connection, prevent the browser's automatic
+      // reconnect (which replays buffered events and duplicates results).
+      if (es.readyState === EventSource.CLOSED) close();
+    };
+    return close;
+  },
+};
+
 export const settings = {
   db: {
     get: () => request<DbStatus>('/settings/db'),

@@ -15,7 +15,16 @@ import { CheckCircle } from './CheckCircle';
 import { config, personaApi, type AgentXConfig, type AgentPersonaConfig } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
-import { crewTheme, crewOverlineSx } from '../styles/crew-theme';
+import {
+  settingsTheme,
+  settingsTabSx,
+  settingsGridBgSx,
+  settingsHelperSx,
+  settingsTextFieldSx,
+  settingsMonoSx,
+} from '../styles/settings-theme';
+import { SettingsCard } from './settings/SettingsCard';
+import { SettingsSectionHeader } from './settings/SettingsSectionHeader';
 import { PersistenceTab } from './settings/PersistenceTab';
 import { PersonaConfigPanel } from './settings/PersonaConfigPanel';
 import { WebSearchToolsTab, mergeWebSearchConfig } from './settings/WebSearchToolsTab';
@@ -26,36 +35,19 @@ import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 type SettingsTab = 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model';
 
 const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
-  { id: 'general', label: 'General', icon: <PersonIcon sx={{ fontSize: 16 }} /> },
-  { id: 'persona', label: 'Agent Persona', icon: <SmartToyIcon sx={{ fontSize: 16 }} /> },
-  { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 16 }} /> },
-  { id: 'local-model', label: 'Local Model', icon: <BrainIcon sx={{ fontSize: 16 }} /> },
-  { id: 'tools', label: 'Tools', icon: <BuildIcon sx={{ fontSize: 16 }} /> },
-  { id: 'persistence', label: 'Persistence', icon: <StorageIcon sx={{ fontSize: 16 }} /> },
+  { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 14 }} /> },
+  { id: 'general', label: 'Profile', icon: <PersonIcon sx={{ fontSize: 14 }} /> },
+  { id: 'persona', label: 'Persona', icon: <SmartToyIcon sx={{ fontSize: 14 }} /> },
+  { id: 'local-model', label: 'Local', icon: <BrainIcon sx={{ fontSize: 14 }} /> },
+  { id: 'tools', label: 'Tools', icon: <BuildIcon sx={{ fontSize: 14 }} /> },
+  { id: 'persistence', label: 'Storage', icon: <StorageIcon sx={{ fontSize: 14 }} /> },
 ];
-
-const cardSx = {
-  position: 'relative' as const,
-  bgcolor: crewTheme.bg.inset,
-  border: `1px solid ${crewTheme.border.default}`,
-  borderRadius: '8px',
-  p: 3,
-  mb: 2,
-  overflow: 'hidden',
-};
-
-const helperSx = {
-  fontSize: '0.65rem',
-  color: crewTheme.text.dim,
-  mt: 0.5,
-  lineHeight: 1.5,
-};
 
 export function SettingsPanel() {
   const { config: appConfig, setConfig } = useApp();
   const localModelSupported = useLocalModelSupported();
   const tabs = useMemo(() => localModelSupported ? ALL_TABS : ALL_TABS.filter((t) => t.id !== 'local-model'), [localModelSupported]);
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('models');
   const [cfg, setCfg] = useState<AgentXConfig | null>(appConfig);
   const [persona, setPersona] = useState<AgentPersonaConfig | null>(null);
   const [personaLoading, setPersonaLoading] = useState(false);
@@ -64,10 +56,9 @@ export function SettingsPanel() {
 
   useEffect(() => { config.get().then(setCfg).catch(() => {}); }, []);
 
-  // If the current tab is hidden because local model is unsupported, switch to General.
   useEffect(() => {
     if (!localModelSupported && activeTab === 'local-model') {
-      setActiveTab('general');
+      setActiveTab('models');
     }
   }, [localModelSupported, activeTab]);
 
@@ -105,60 +96,62 @@ export function SettingsPanel() {
 
   if (!cfg) {
     return (
-      <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: crewTheme.bg.void }}>
-        <Typography sx={{ fontSize: '0.8rem', color: crewTheme.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-          LOADING SETTINGS…
+      <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: settingsTheme.bg.void }}>
+        <Typography sx={{ fontSize: '0.75rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+          ◈ INITIALIZING COMMAND DECK…
         </Typography>
       </Box>
     );
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: crewTheme.bg.void }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: settingsTheme.bg.void, ...settingsGridBgSx }}>
       <PanelHeader
         title="Settings"
-        subtitle="Mission control · profile · models · tools · persistence"
-        icon={<SettingsIcon sx={{ fontSize: 20 }} />}
+        subtitle="Mission control · neural links · ops config"
+        icon={<SettingsIcon sx={{ fontSize: 18, color: settingsTheme.accent.hud }} />}
       />
 
-      <Box sx={{ flexShrink: 0, display: 'flex', borderBottom: `1px solid ${crewTheme.border.default}`, px: 4, bgcolor: crewTheme.bg.panel }}>
+      <Box sx={{
+        flexShrink: 0,
+        display: 'flex',
+        borderBottom: `1px solid ${settingsTheme.border.default}`,
+        px: 3,
+        bgcolor: settingsTheme.bg.panel,
+        overflowX: 'auto',
+      }}>
         {tabs.map((tab) => (
-          <Button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            sx={{
-              display: 'flex', alignItems: 'center', gap: 0.75, px: 2.5, py: 1.25,
-              fontSize: '0.72rem', fontWeight: 600,
-              fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.5px', textTransform: 'uppercase',
-              color: activeTab === tab.id ? crewTheme.text.primary : crewTheme.text.dim,
-              borderBottom: activeTab === tab.id ? `2px solid ${crewTheme.accent.hud}` : '2px solid transparent',
-              borderRadius: 0, minWidth: 0,
-              '&:hover': { color: crewTheme.text.primary, bgcolor: 'transparent' },
-            }}>
+          <Button key={tab.id} onClick={() => setActiveTab(tab.id)} sx={settingsTabSx(activeTab === tab.id)}>
             {tab.icon} {tab.label}
           </Button>
         ))}
       </Box>
 
-      <Box sx={{ flex: 1, overflow: 'auto', px: 4, pt: 3, pb: 10 }}>
+      <Box sx={{ flex: 1, overflow: 'auto', px: 3, pt: 2, pb: 10 }}>
         {activeTab === 'general' && (
           <Box>
-            <Box sx={cardSx}>
-              <Typography sx={{ ...crewOverlineSx, mb: 2 }}>Profile</Typography>
-              <TextField size="small" label="Callsign" value={cfg.user?.callsign ?? ''}
+            <SettingsSectionHeader
+              icon={<PersonIcon sx={{ fontSize: 16 }} />}
+              title="Profile"
+              subtitle="Your callsign for crew comms and system logs"
+            />
+            <SettingsCard title="Callsign">
+              <TextField
+                size="small"
+                label="Callsign"
+                value={cfg.user?.callsign ?? ''}
                 onChange={(e) => setCfg({ ...cfg, user: { callsign: e.target.value } })}
-                sx={{
-                  maxWidth: 320,
-                  '& .MuiOutlinedInput-root': { bgcolor: crewTheme.bg.void },
-                }}
+                sx={{ ...settingsTextFieldSx, maxWidth: 320 }}
                 placeholder="e.g. Commander"
-                slotProps={{ input: { sx: { fontSize: '0.8rem' } }, inputLabel: { sx: { fontSize: '0.75rem' } } }} />
-              <Typography sx={helperSx}>Your personal callsign. Used in crew communication and logs.</Typography>
-            </Box>
+              />
+              <Typography sx={settingsHelperSx}>Used in crew communication and log entries.</Typography>
+            </SettingsCard>
           </Box>
         )}
         {activeTab === 'persona' && (
           personaLoading ? (
-            <Typography sx={{ fontSize: '0.75rem', color: crewTheme.text.dim, p: 4, fontFamily: "'JetBrains Mono', monospace" }}>
-              LOADING PERSONA…
+            <Typography sx={{ fontSize: '0.75rem', color: settingsTheme.text.dim, p: 4, ...settingsMonoSx }}>
+              Loading persona…
             </Typography>
           ) : (
             <PersonaConfigPanel value={persona} onChange={setPersona} />
@@ -179,28 +172,28 @@ export function SettingsPanel() {
       </Box>
 
       <Box sx={{
-        flexShrink: 0, px: 4, py: 2,
-        borderTop: `1px solid ${crewTheme.border.default}`,
-        bgcolor: crewTheme.bg.panel,
+        flexShrink: 0, px: 3, py: 1.5,
+        borderTop: `1px solid ${settingsTheme.border.default}`,
+        bgcolor: settingsTheme.bg.panel,
         display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 2,
       }}>
         {message === 'saved' && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-            <CheckCircle size={16} color={crewTheme.accent.signal} />
-            <Typography sx={{ fontSize: '0.75rem', color: crewTheme.accent.signal }}>Settings saved</Typography>
+            <CheckCircle size={16} color={settingsTheme.accent.signal} />
+            <Typography sx={{ fontSize: '0.7rem', color: settingsTheme.accent.signal, ...settingsMonoSx }}>CONFIG SAVED</Typography>
           </Box>
         )}
-        {message === 'error' && <Typography sx={{ fontSize: '0.75rem', color: crewTheme.accent.alert }}>Save failed — try again</Typography>}
-        {message === 'description_required' && <Typography sx={{ fontSize: '0.75rem', color: crewTheme.accent.alert }}>Persona description is required</Typography>}
+        {message === 'error' && <Typography sx={{ fontSize: '0.7rem', color: settingsTheme.accent.alert, ...settingsMonoSx }}>SAVE FAILED</Typography>}
+        {message === 'description_required' && <Typography sx={{ fontSize: '0.7rem', color: settingsTheme.accent.alert, ...settingsMonoSx }}>PERSONA DESCRIPTION REQUIRED</Typography>}
         <Button variant="contained" onClick={handleSave} disabled={saving}
           sx={{
             bgcolor: colors.text.primary, color: colors.bg.primary,
-            fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase',
-            fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px',
-            px: 3.5, py: 1, minWidth: 120,
+            fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase',
+            fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1.5px',
+            px: 3, py: 0.75, minWidth: 110,
             '&:hover': { bgcolor: colors.text.secondary },
           }}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? 'Saving…' : 'Commit'}
         </Button>
       </Box>
     </Box>

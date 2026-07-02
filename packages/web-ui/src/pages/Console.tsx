@@ -1,4 +1,4 @@
-import { Component, type ReactNode, useState, useCallback, useRef } from 'react';
+import { Component, type ReactNode, useState, useCallback, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -16,11 +16,10 @@ import { RagStudioPanel } from '../components/RagStudioPanel';
 import { OrchestratorPanel } from '../components/OrchestratorPanel';
 import { CrewsPanel } from '../components/CrewsPanel';
 import { SoulPanel } from '../components/SoulPanel';
-import { HealthPanel } from '../components/HealthPanel';
 import { NotificationToast } from '../components/NotificationToast';
 import { colors } from '../theme';
 
-export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'health';
+export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -50,6 +49,9 @@ export function Console() {
   const { panel, sessionId } = useParams<{ panel?: string; sessionId?: string }>();
   const navigate = useNavigate();
   const activePanel = (panel || 'chat') as PanelId;
+  useEffect(() => {
+    if (panel === 'health') navigate('/console/chat', { replace: true });
+  }, [panel, navigate]);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsPosition, setLogsPosition] = useState<'bottom' | 'right'>('bottom');
   const [panelSize, setPanelSize] = useState(BOTTOM_PANEL_DEFAULT_HEIGHT);
@@ -149,7 +151,6 @@ export function Console() {
               {activePanel === 'orchestrator' && <OrchestratorPanel />}
               {activePanel === 'crews' && <CrewsPanel />}
               {activePanel === 'soul' && <SoulPanel />}
-              {activePanel === 'health' && <HealthPanel />}
             </PanelErrorBoundary>
           </Box>
           {isVertical && logsContent}

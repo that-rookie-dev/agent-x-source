@@ -51,7 +51,13 @@ import { MemoryFabric, type MemoryNode } from '../neural/MemoryFabric.js';
 import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
 import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import {
+  buildCompletionMessages,
+  COMPACT_MEMORY_MAX_CHARS,
+  FULL_MEMORY_MAX_CHARS,
+  isCompactContextProfile,
+} from './context-profile.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
@@ -1130,6 +1136,27 @@ export class Agent {
     return this._graphRagRetriever;
   }
 
+  private usesCompactContext(): boolean {
+    return isCompactContextProfile(
+      this.config.provider.activeProvider,
+      this.config.provider.activeModel,
+      this.getContextWindow(),
+    );
+  }
+
+  private rebuildPromptAssembly(): void {
+    if (!this.promptAssembly) return;
+    const baseline = this.messages.find((m) => m.role === 'system');
+    const systemOverride = typeof baseline?.content === 'string' ? baseline.content : this.options.systemPrompt;
+    this.promptAssembly = new PromptAssembly();
+    this.registerPromptSections(systemOverride);
+    const initGen = this.promptAssembly.initializeSync();
+    this.promptSnapshot = initGen.snapshot;
+    if (initGen.baseline) {
+      this.setSystemPrompt(initGen.baseline);
+    }
+  }
+
   private async buildMemoryContext(): Promise<{ episodic: string; semantic: string; graph: string; community?: string }> {
     const retriever = this.graphRagRetriever;
     if (!retriever) return { episodic: '', semantic: '', graph: '' };
@@ -1183,8 +1210,7 @@ export class Agent {
       this._memoryContextNodeIds = result.all.map((n) => n.id).filter((id): id is string => !!id);
 
       // Token budget for memory context — prioritize community > episodic > semantic > graph.
-      // Approximation: 4 chars ≈ 1 token. Budget: ~2000 tokens (≈ 8000 chars).
-      const MAX_CHARS = 8000;
+      const MAX_CHARS = this.usesCompactContext() ? COMPACT_MEMORY_MAX_CHARS : FULL_MEMORY_MAX_CHARS;
       const fmt = (nodes: Array<{ label: string; content: string; category: string }>, maxChars: number) => {
         const lines: string[] = [];
         let used = 0;
@@ -1231,8 +1257,22 @@ export class Agent {
    * Falls back to the raw message if reformulation fails.
    */
   private async reformulateQuery(rawQuery: string): Promise<string> {
-    // Fast path: if the message is long and self-contained, skip reformulation.
     const trimmed = rawQuery.trim();
+
+    // Compact local models: avoid an extra LLM call; stitch short follow-ups from recent user text.
+    if (this.usesCompactContext()) {
+      if (trimmed.length > 80) return trimmed;
+      const recentUserMsgs = this.messages
+        .filter((m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 20)
+        .slice(-3)
+        .map((m) => (m as { content: string }).content);
+      if (recentUserMsgs.length > 0 && trimmed.split(/\s+/).length <= 8) {
+        return `${recentUserMsgs[recentUserMsgs.length - 1]} ${trimmed}`.trim().slice(0, 300);
+      }
+      return trimmed;
+    }
+
+    // Fast path: if the message is long and self-contained, skip reformulation.
     if (trimmed.length > 120 && /[.!?]$/.test(trimmed)) return trimmed;
     // Fast path: single-word or very short messages always need context.
     if (trimmed.split(/\s+/).length <= 3) {
@@ -2006,7 +2046,7 @@ Rules:
 
     // Auto-query RAG for relevant documents (skip for conversational messages)
     this.lastRagResults = [];
-    if (!this.currentDecision.skipRag) {
+    if (!this.currentDecision.skipRag && !this.usesCompactContext()) {
       const rag = getRAGEngineInstance();
       if (rag && rag.isEnabled) {
         try {
@@ -2269,6 +2309,7 @@ Rules:
     if (!registry) throw new Error('Tool registry not initialized');
     if (!executor) throw new Error('Tool executor not initialized');
 
+    const compact = this.usesCompactContext();
     const tools = createAiSdkTools(
       registry,
       executor,
@@ -2307,6 +2348,7 @@ Rules:
         }
       },
       this.options.promptProfile ?? 'default',
+      compact,
     );
 
     if (this.options.promptProfile === 'crew_private') {
@@ -2318,9 +2360,15 @@ Rules:
 
     const model = createAiSdkModel(this.config, this.getApiKey());
 
-    const aiMessages = this.messages.map((m) => ({
+    let aiMessages = buildCompletionMessages(
+      this.messages.map((m) => ({
+        role: m.role,
+        content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+      })),
+      compact,
+    ).map((m) => ({
       role: m.role as 'user' | 'assistant' | 'system',
-      content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+      content: m.content,
     }));
 
     // Append instruction to last user message (instead of separate role:system)
@@ -2347,8 +2395,8 @@ Rules:
       }
     }
 
-    // Prepend RAG context to last user message
-    if (this.lastRagResults.length > 0) {
+    // Prepend RAG context to last user message (full context profile only)
+    if (!compact && this.lastRagResults.length > 0) {
       const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
       const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
@@ -2477,7 +2525,7 @@ Rules:
                 : `[SYSTEM] The user said: "${aiMessages[aiMessages.length - 1]?.content?.slice(0, 500)}"\n\nUse tools to explore, find files, read content, and respond. Do not return empty — take action.`
               },
             ],
-            tools: createAiSdkTools(this.toolRegistry!, this.toolExecutor!, this.sessionId, (e) => this.emit(e), async () => 'continue', async () => ({ success: true, output: '(fallback)', elapsed: 0 }), this.planMode),
+            tools: createAiSdkTools(this.toolRegistry!, this.toolExecutor!, this.sessionId, (e) => this.emit(e), async () => 'continue', async () => ({ success: true, output: '(fallback)', elapsed: 0 }), this.planMode, undefined, undefined, 'default', compact),
             stopWhen: stepCountIs(50),
             toolChoice: 'auto',
             maxRetries: 1,
@@ -2698,22 +2746,32 @@ Rules:
 
     if (this.options.promptProfile === 'crew_private') {
       const ctx = this.createSectionContext();
-      this.promptAssembly
-        .register(createCrewPrivateConductSection())
-        .register(createQuestionnaireGuideSection())
-        .register(createChatMarkdownSection())
-        .register(createCurrentTimeSection(ctx))
-        .register(createWorkingDirectorySection(ctx))
-        .register(createLearningsSection(ctx))
-        .register(createSkillsSection(ctx))
-        .register(createFormalSkillsSection(ctx))
-        .register(createSessionNarrativeSection(ctx))
-        .register(createTurnFeedbackSection(ctx))
-        .register(createUserSection(ctx))
-        .register(createSoulSection(ctx))
-        .register(createNeuralSection(ctx))
-        .register(createMemoryContextSection(ctx))
-        .register(createInstructionsSection(ctx.scopePath));
+      if (this.usesCompactContext()) {
+        this.promptAssembly
+          .register(createCrewPrivateConductSection())
+          .register(createLocalPersonaGuardSection())
+          .register(createWorkingDirectorySection(ctx))
+          .register(createUserSection(ctx))
+          .register(createSessionNarrativeSection(ctx))
+          .register(createMemoryContextSection(ctx));
+      } else {
+        this.promptAssembly
+          .register(createCrewPrivateConductSection())
+          .register(createQuestionnaireGuideSection())
+          .register(createChatMarkdownSection())
+          .register(createCurrentTimeSection(ctx))
+          .register(createWorkingDirectorySection(ctx))
+          .register(createLearningsSection(ctx))
+          .register(createSkillsSection(ctx))
+          .register(createFormalSkillsSection(ctx))
+          .register(createSessionNarrativeSection(ctx))
+          .register(createTurnFeedbackSection(ctx))
+          .register(createUserSection(ctx))
+          .register(createSoulSection(ctx))
+          .register(createNeuralSection(ctx))
+          .register(createMemoryContextSection(ctx))
+          .register(createInstructionsSection(ctx.scopePath));
+      }
       if (systemOverride) {
         this.promptAssembly.register(createSystemOverrideSection(systemOverride));
       }
@@ -2721,30 +2779,43 @@ Rules:
     }
 
     const ctx = this.createSectionContext();
-    this.promptAssembly
-      .register(createProviderPromptSection(ctx))
-      .register(createIdentitySection(ctx))
-      .register(createWorkingDirectorySection(ctx))
-      .register(createRulesSection())
-      .register(createQuestionnaireGuideSection())
-      .register(createChatMarkdownSection())
-      .register(createCurrentTimeSection(ctx))
-      .register(createSchedulingSection())
-      .register(createLearningsSection(ctx))
-      .register(createSkillsSection(ctx))
-      .register(createFormalSkillsSection(ctx))
-      .register(createHyperdriveSection(ctx))
-      .register(createChannelFocusSection(ctx))
-      .register(createMultiCrewSection(ctx))
-      .register(createCrewRosterGuideSection())
-      .register(createUserSection(ctx))
-      .register(createSessionNarrativeSection(ctx))
-      .register(createTurnFeedbackSection(ctx))
-      .register(createTaskPanelSection())
-      .register(createSoulSection(ctx))
-      .register(createNeuralSection(ctx))
-      .register(createMemoryContextSection(ctx))
-      .register(createInstructionsSection(ctx.scopePath));
+    if (this.usesCompactContext()) {
+      this.promptAssembly
+        .register(createProviderPromptSection(ctx))
+        .register(createIdentitySection(ctx))
+        .register(createLocalPersonaGuardSection())
+        .register(createWorkingDirectorySection(ctx))
+        .register(createCompactRulesSection())
+        .register(createUserSection(ctx))
+        .register(createSessionNarrativeSection(ctx))
+        .register(createMemoryContextSection(ctx))
+        .register(createInstructionsSection(ctx.scopePath));
+    } else {
+      this.promptAssembly
+        .register(createProviderPromptSection(ctx))
+        .register(createIdentitySection(ctx))
+        .register(createWorkingDirectorySection(ctx))
+        .register(createRulesSection())
+        .register(createQuestionnaireGuideSection())
+        .register(createChatMarkdownSection())
+        .register(createCurrentTimeSection(ctx))
+        .register(createSchedulingSection())
+        .register(createLearningsSection(ctx))
+        .register(createSkillsSection(ctx))
+        .register(createFormalSkillsSection(ctx))
+        .register(createHyperdriveSection(ctx))
+        .register(createChannelFocusSection(ctx))
+        .register(createMultiCrewSection(ctx))
+        .register(createCrewRosterGuideSection())
+        .register(createUserSection(ctx))
+        .register(createSessionNarrativeSection(ctx))
+        .register(createTurnFeedbackSection(ctx))
+        .register(createTaskPanelSection())
+        .register(createSoulSection(ctx))
+        .register(createNeuralSection(ctx))
+        .register(createMemoryContextSection(ctx))
+        .register(createInstructionsSection(ctx.scopePath));
+    }
 
     if (systemOverride) {
       this.promptAssembly.register(createSystemOverrideSection(systemOverride));
@@ -2776,11 +2847,16 @@ Rules:
   }
 
   switchProvider(providerId: ProviderId, apiKey?: string, baseUrl?: string): void {
+    const wasCompact = this.usesCompactContext();
     this.provider = ProviderFactory.create(providerId, apiKey, baseUrl);
     this.config.provider.activeProvider = providerId;
+    if (wasCompact !== this.usesCompactContext()) {
+      this.rebuildPromptAssembly();
+    }
   }
 
   switchModel(modelId: string, contextWindow?: number): void {
+    const wasCompact = this.usesCompactContext();
     this.config.provider.activeModel = modelId;
     this._capabilityWarningEmitted = false;
 
@@ -2798,6 +2874,15 @@ Rules:
     // Set pricing for cost tracking
     const pricing = getModelPricing(modelId);
     this.tokenTracker.setPricing(pricing.inputPerMillion, pricing.outputPerMillion);
+
+    const nowCompact = isCompactContextProfile(
+      this.config.provider.activeProvider,
+      modelId,
+      ctx ?? this.getContextWindow(),
+    );
+    if (wasCompact !== nowCompact) {
+      this.rebuildPromptAssembly();
+    }
 
     this.emit({ type: 'command_action', action: 'model_switched', modelId, contextWindow: ctx ?? this.tokenTracker.tokensTotal });
   }
@@ -3598,13 +3683,15 @@ Only include specialists that are actually needed for this task.`;
 
   /** Realtime context block for the current user turn. */
   prepareTurnContext(currentUserMessage: string) {
+    const compact = this.usesCompactContext();
     return this.contextTracker.getHandler().buildTurnInjection(
       this.messages.map((m) => ({
         role: m.role,
         content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
       })),
       currentUserMessage,
-      this.contextMemoryChars,
+      compact ? 1200 : this.contextMemoryChars,
+      compact,
     );
   }
 

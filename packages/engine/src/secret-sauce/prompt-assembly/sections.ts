@@ -150,6 +150,44 @@ export function createRulesSection(): PromptSection<string> {
   };
 }
 
+/** Short rules for compact/local model context profiles. */
+export function createCompactRulesSection(): PromptSection<string> {
+  const RULES = [
+    `[RULES]`,
+    `ACT IMMEDIATELY — use tools when needed; do not narrate your process.`,
+    `Use ask_clarification for questions (never plain-chat questions).`,
+    `Use glob/grep/file_read to explore; shell_exec for commands.`,
+    `Be concise. First-person. Answer the latest user message.`,
+    `Search memory_fabric_search when the question may involve uploaded documents.`,
+    `[/RULES]`,
+  ].join('\n');
+  return {
+    key: 'core/rules-compact',
+    load: () => RULES,
+    render: (text) => text,
+    diff: () => null,
+  };
+}
+
+/** Prevents third-person meta-narration on small local models. */
+export function createLocalPersonaGuardSection(): PromptSection<string> {
+  const GUARD = [
+    `[LOCAL_MODEL_PERSONA]`,
+    `You ARE Agent-X speaking directly to the user in first person.`,
+    `- Never narrate the conversation in third person ("Based on the conversation between Agent-X and...").`,
+    `- Never prefix replies with "assistant:" or role labels.`,
+    `- Answer the user's latest message directly; do not summarize prior turns unless asked.`,
+    `- Keep replies concise; use tools when they help.`,
+    `[/LOCAL_MODEL_PERSONA]`,
+  ].join('\n');
+  return {
+    key: 'core/local-persona',
+    load: () => GUARD,
+    render: (text) => text,
+    diff: () => null,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // Crew private chat — conversational specialist (not Agent-X executor)
 // ─────────────────────────────────────────────────────────────
