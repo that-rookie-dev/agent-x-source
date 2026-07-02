@@ -78,47 +78,64 @@ function execOut(cmd, opts = {}) {
 
 function downloadWindowsPostgresBinaries(pgVersion, pgInstallDir) {
   const zipDir = dirname(pgInstallDir);
+  // EDB's CDN (CloudFront/S3) intermittently returns 403 to GitHub Actions IP ranges.
+  // Mitigate with: User-Agent header, curl --retry, and per-build-number retry rounds.
+  const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+  const maxRetries = 3;
   let lastError;
   for (let build = 1; build <= 5; build++) {
     const zipUrl = `https://get.enterprisedb.com/postgresql/postgresql-${pgVersion}-${build}-windows-x64-binaries.zip`;
     const zipPath = join(zipDir, `postgresql-${pgVersion}-${build}-windows-x64-binaries.zip`);
-    rmSync(zipPath, { force: true });
-    console.log(`Downloading PostgreSQL ${pgVersion} Windows binaries from ${zipUrl}...`);
-    try {
-      exec(`curl -f -L -o "${zipPath}" "${zipUrl}"`, { cwd: zipDir });
-      if (!existsSync(zipPath)) {
-        throw new Error(`Download succeeded but ${zipPath} was not created`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      rmSync(zipPath, { force: true });
+      console.log(`Downloading PostgreSQL ${pgVersion} Windows binaries from ${zipUrl} (build ${build}, attempt ${attempt}/${maxRetries})...`);
+      try {
+        // --retry 3: curl-level retries on transient errors
+        // -A: User-Agent header (some CDNs block default curl UA)
+        // --connect-timeout 30 --max-time 600: don't hang forever
+        exec(
+          `curl -f -L --retry 3 --retry-delay 10 --connect-timeout 30 --max-time 600 -A "${userAgent}" -o "${zipPath}" "${zipUrl}"`,
+          { cwd: zipDir },
+        );
+        if (!existsSync(zipPath)) {
+          throw new Error(`Download succeeded but ${zipPath} was not created`);
+        }
+        console.log(`Extracting PostgreSQL ${pgVersion} Windows binaries...`);
+        rmSync(pgInstallDir, { recursive: true, force: true });
+        mkdirSync(pgInstallDir, { recursive: true });
+        // Use PowerShell Expand-Archive instead of GNU tar — Git Bash's tar interprets
+        // Windows drive letters (e.g. "D:") as remote host specifiers and fails with
+        // "Cannot connect to D: resolve failed". The EDB zip contains a single top-level
+        // directory (e.g. "pgsql") — extract to a temp dir then move its contents up.
+        const tmpDir = `${pgInstallDir}-tmp`;
+        rmSync(tmpDir, { recursive: true, force: true });
+        const psResult = spawnSync('powershell', [
+          '-NoProfile', '-Command',
+          `Expand-Archive -Path '${zipPath}' -DestinationPath '${tmpDir}' -Force`,
+        ], { stdio: 'inherit' });
+        if (psResult.status !== 0) {
+          throw new Error(`PowerShell Expand-Archive failed with exit code ${psResult.status}`);
+        }
+        // Move the single top-level directory's contents into pgInstallDir (equivalent to --strip-components=1)
+        const entries = readdirSync(tmpDir);
+        const firstEntry = entries[0];
+        const topLevelDir = entries.length === 1 && firstEntry && existsSync(join(tmpDir, firstEntry)) ? join(tmpDir, firstEntry) : tmpDir;
+        cpSync(topLevelDir, pgInstallDir, { recursive: true });
+        rmSync(tmpDir, { recursive: true, force: true });
+        return;
+      } catch (e) {
+        lastError = e;
+        console.warn(`Failed to download ${zipUrl} (attempt ${attempt}): ${e instanceof Error ? e.message : e}`);
+        if (attempt < maxRetries) {
+          const delay = attempt * 15;
+          console.log(`Waiting ${delay}s before retry...`);
+          execSync(`sleep ${delay}`, { stdio: 'inherit' });
+        }
       }
-      console.log(`Extracting PostgreSQL ${pgVersion} Windows binaries...`);
-      rmSync(pgInstallDir, { recursive: true, force: true });
-      mkdirSync(pgInstallDir, { recursive: true });
-      // Use PowerShell Expand-Archive instead of GNU tar — Git Bash's tar interprets
-      // Windows drive letters (e.g. "D:") as remote host specifiers and fails with
-      // "Cannot connect to D: resolve failed". The EDB zip contains a single top-level
-      // directory (e.g. "pgsql") — extract to a temp dir then move its contents up.
-      const tmpDir = `${pgInstallDir}-tmp`;
-      rmSync(tmpDir, { recursive: true, force: true });
-      const psResult = spawnSync('powershell', [
-        '-NoProfile', '-Command',
-        `Expand-Archive -Path '${zipPath}' -DestinationPath '${tmpDir}' -Force`,
-      ], { stdio: 'inherit' });
-      if (psResult.status !== 0) {
-        throw new Error(`PowerShell Expand-Archive failed with exit code ${psResult.status}`);
-      }
-      // Move the single top-level directory's contents into pgInstallDir (equivalent to --strip-components=1)
-      const entries = readdirSync(tmpDir);
-      const firstEntry = entries[0];
-      const topLevelDir = entries.length === 1 && firstEntry && existsSync(join(tmpDir, firstEntry)) ? join(tmpDir, firstEntry) : tmpDir;
-      cpSync(topLevelDir, pgInstallDir, { recursive: true });
-      rmSync(tmpDir, { recursive: true, force: true });
-      return;
-    } catch (e) {
-      lastError = e;
-      console.warn(`Failed to download ${zipUrl}: ${e instanceof Error ? e.message : e}`);
     }
   }
   throw new Error(
-    `Could not download PostgreSQL ${pgVersion} Windows binaries after trying build numbers 1-5: ${lastError instanceof Error ? lastError.message : lastError}`,
+    `Could not download PostgreSQL ${pgVersion} Windows binaries after trying build numbers 1-5 with ${maxRetries} retries each: ${lastError instanceof Error ? lastError.message : lastError}`,
   );
 }
 

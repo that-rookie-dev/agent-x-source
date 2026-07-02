@@ -278,6 +278,14 @@ jobs:
           path: packages/web-ui/dist
 
       # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
+      # Cache the downloaded PostgreSQL Windows binaries to avoid EDB CDN 403s on repeat runs.
+      - name: Cache PostgreSQL Windows binaries
+        uses: actions/cache@v4
+        with:
+          path: packages/desktop/.pgvector-build/pg-install
+          key: pg-win-binaries-${{ hashFiles('packages/desktop/package.json') }}
+        continue-on-error: true
+
       - name: Build PostgreSQL extensions
         shell: bash
         run: pnpm --filter @agentx/desktop run setup:extensions
