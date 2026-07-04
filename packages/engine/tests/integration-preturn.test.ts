@@ -74,4 +74,41 @@ describe('IntegrationHub.prepareForAgentTurn', () => {
     expect(promptHint).toContain('integration__google-drive__read_file');
     expect(promptHint).toContain('filesystem');
   });
+
+  it('returns places hint for restaurant queries when Google Maps is connected', async () => {
+    const hub = new IntegrationHub({ baseDir: '/tmp/agentx-test-maps-' + process.pid });
+    hub.setToolkitBridge(
+      { register: vi.fn(), unregisterByPrefix: vi.fn(), list: vi.fn(() => []) } as unknown as ToolRegistry,
+      { registerHandler: vi.fn() } as unknown as ToolExecutor,
+    );
+
+    const store = (hub as unknown as { store: { listConnections: () => unknown[] } }).store;
+    vi.spyOn(store, 'listConnections').mockReturnValue([
+      {
+        id: 'conn-maps',
+        providerId: 'google-maps',
+        displayName: 'Google Maps',
+        enabled: true,
+        status: 'connected',
+      },
+    ]);
+
+    vi.spyOn(hub as unknown as { resolveProvider: (id: string) => { name: string } | undefined }, 'resolveProvider')
+      .mockReturnValue({ name: 'Google Maps' });
+    vi.spyOn(hub, 'syncToToolkit').mockReturnValue(7);
+
+    (hub as unknown as { sessions: Map<string, { providerId: string; tools: unknown[] }> }).sessions = new Map([
+      ['conn-maps', { providerId: 'google-maps', tools: [{}, {}, {}, {}, {}, {}, {}] }],
+    ]);
+
+    const { promptHint } = await hub.prepareForAgentTurn(
+      { register: vi.fn(), unregisterByPrefix: vi.fn(), list: vi.fn(() => []) } as unknown as ToolRegistry,
+      { registerHandler: vi.fn() } as unknown as ToolExecutor,
+      'best stake restaurants in bengaluru',
+    );
+
+    expect(promptHint).toContain('INTEGRATION PLACES');
+    expect(promptHint).toContain('integration__google-maps__maps_search_places');
+    expect(promptHint).toContain('deep_web_search');
+  });
 });

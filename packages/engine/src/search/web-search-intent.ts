@@ -1,4 +1,5 @@
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
+import { detectPlacesSearchRequest } from '../integrations/places-intent.js';
 
 export type WebSearchIntentConfidence = 'high' | 'medium' | 'low';
 export type WebSearchIntentSource = 'globe' | 'explicit' | 'heuristic' | 'llm' | 'default';
@@ -96,6 +97,15 @@ export function analyzeWebSearchIntentHeuristic(text: string): WebSearchIntentAn
     source: 'default',
   };
   if (!trimmed) return no;
+
+  if (detectPlacesSearchRequest(trimmed)) {
+    return {
+      shouldForceSearch: false,
+      confidence: 'high',
+      reason: 'Local places query — prefer Google Maps MCP over web search',
+      source: 'heuristic',
+    };
+  }
 
   if (isScheduledTaskRequest(trimmed)) {
     return {

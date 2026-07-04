@@ -40,6 +40,8 @@ import { adaptMcpTools } from './mcp/tool-adapter.js';
 import { McpSession } from './mcp/client.js';
 import { getProviderBridgeTools, type IntegrationBridgeTool } from './mcp/provider-bridge.js';
 import { isMcpToolResultError } from './mcp/mcp-result.js';
+import { enhanceGoogleMapsToolOutput } from './mcp/google-maps-output.js';
+import { detectPlacesSearchRequest, mentionsGoogleMapsProvider } from './places-intent.js';
 import { IntegrationConnectionManager } from './mcp/connection-manager.js';
 import { OAuthPkceStore } from './oauth/pkce-flow.js';
 import { expandStdioArgs } from './stdio-args.js';
@@ -216,6 +218,18 @@ export class IntegrationHub {
           '[INTEGRATION READ] Google Drive is connected.',
           'Use integration__google-drive__read_file with fileName (e.g. "Experience_Letter.pdf") or fileId.',
           'Do NOT use file_find, grep, read_file, shell_exec, or local filesystem tools — the file is in Google Drive, not on disk.',
+        ].join(' ');
+      }
+    }
+
+    const placesIntent = detectPlacesSearchRequest(userText) || mentionsGoogleMapsProvider(userText);
+    if (placesIntent) {
+      const maps = snapshot.connected.find((entry) => entry.providerId === 'google-maps');
+      if (maps) {
+        return [
+          '[INTEGRATION PLACES] Google Maps MCP is connected.',
+          'Use integration__google-maps__maps_search_places (and maps_place_details if needed) — NOT deep_web_search or web_search.',
+          'In your reply, use the Google Maps links from the tool output. Never show raw latitude/longitude coordinates.',
         ].join(' ');
       }
     }
@@ -890,6 +904,9 @@ export class IntegrationHub {
       const result = await active.session.callTool(toolName, args);
       let output = formatMcpToolResult(result);
       output = this.clarifyPackageSignInOutput(provider, toolName, output);
+      if (connection.providerId === 'google-maps') {
+        output = enhanceGoogleMapsToolOutput(toolName, output);
+      }
       const failed = isMcpToolResultError(result, output);
       const toolId = integrationToolId(connection.providerId, toolName);
       const structured = parseIntegrationStructuredResult(toolId, output);
