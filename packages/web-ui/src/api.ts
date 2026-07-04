@@ -131,10 +131,15 @@ export const providers = {
 
 // ─── Models ───
 export const models = {
-  switch: (modelId: string, opts?: { contextWindow?: number; providerId?: string }) =>
+  switch: (modelId: string, opts?: { contextWindow?: number; providerId?: string; reasoningEffort?: string }) =>
     request<{ ok: boolean }>('/model/switch', {
       method: 'POST',
-      body: JSON.stringify({ modelId, contextWindow: opts?.contextWindow, providerId: opts?.providerId }),
+      body: JSON.stringify({
+        modelId,
+        contextWindow: opts?.contextWindow,
+        providerId: opts?.providerId,
+        reasoningEffort: opts?.reasoningEffort,
+      }),
     }),
   current: () => request<{ model: string; provider: string; providerId?: string; activeProfile?: string }>('/models'),
 };
@@ -1016,7 +1021,7 @@ export interface AgentPersonaConfig {
 }
 
 export interface AgentXConfig {
-  provider: { activeProvider: string; activeModel: string; providers: Record<string, ProviderSettings> };
+  provider: { activeProvider: string; activeModel: string; activeReasoningEffort?: string; providers: Record<string, ProviderSettings> };
   ui: { theme: string; showTokenBar: boolean; showTimers: boolean; animationSpeed: string; disabledTools?: string[] };
   organization: { name: string; contact?: string } | null;
   telemetry: boolean;
@@ -1084,7 +1089,14 @@ export interface ModelInfo {
   name: string;
   providerId?: string;
   contextWindow?: number;
+  outputTokenLimit?: number;
   capabilities?: string[];
+  reasoning?: {
+    supported: boolean;
+    effortLevels?: string[];
+    defaultEffort?: string;
+    control?: string;
+  };
   pricing?: { input: number; output: number };
 }
 
@@ -1744,6 +1756,15 @@ export interface IntegrationProvider {
       progressTool?: string;
       label?: string;
     };
+    mcpStdioAuth?: {
+      authArg: string;
+      oauthPathEnv: string;
+      credentialsPathEnv: string;
+      clientIdField: string;
+      clientSecretField: string;
+      clientIdEnv?: string;
+      clientSecretEnv?: string;
+    };
   };
   setupWizard?: {
     template: string;
@@ -1768,6 +1789,14 @@ export interface IntegrationConnection {
   accountLabel?: string;
   toolCount?: number;
   enabled: boolean;
+  stdio?: {
+    command: string;
+    args: string[];
+    cwd?: string;
+  };
+  remote?: {
+    url: string;
+  };
 }
 
 export interface IntegrationActionPreview {
@@ -1812,6 +1841,7 @@ export interface IntegrationHubSettings {
   healthPollIntervalMs?: number;
   catalogRemoteUrl?: string;
   oauthClientIds?: Record<string, string>;
+  oauthClientRedirectUris?: Record<string, string>;
   showCandidateProviders?: boolean;
 }
 
@@ -1865,10 +1895,16 @@ export const integrations = {
       `/integrations/${connectionId}/health`,
     ),
   startOAuth: (providerId: string, remoteUrl?: string) =>
-    request<{ authUrl: string; state: string }>(`/integrations/${providerId}/oauth/start`, {
+    request<{ authUrl: string; state: string; redirectUri?: string }>(`/integrations/${providerId}/oauth/start`, {
       method: 'POST',
       body: JSON.stringify(remoteUrl ? { remoteUrl } : {}),
     }),
+  oauthRedirectUri: () =>
+    request<{ redirectUri: string }>('/integrations/oauth/redirect-uri'),
+  runMcpAuth: (connectionId: string) =>
+    request<{ success: boolean; output: string }>(`/integrations/${connectionId}/mcp-auth`, { method: 'POST' }),
+  mcpAuthStatus: (connectionId: string) =>
+    request<{ signedIn: boolean; message?: string }>(`/integrations/${connectionId}/mcp-auth/status`),
   oauthResult: (state: string) =>
     request<{ result: { status: 'pending' | 'completed' | 'failed' | 'expired'; connection?: IntegrationConnection; message?: string } }>(
       `/integrations/oauth/result?state=${encodeURIComponent(state)}`,

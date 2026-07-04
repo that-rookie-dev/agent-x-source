@@ -10,6 +10,7 @@ import { buildIntegrationActionPreview } from '../src/integrations/action-previe
 import { getIntegrationProvider, listIntegrationProviders, getCatalogStats, listCatalogProviders } from '../src/integrations/catalog/index.js';
 import { parseMcpImportConfig } from '../src/integrations/mcp-config-import.js';
 import { expandStdioArgs } from '../src/integrations/stdio-args.js';
+import { createGoogleDriveBridgeTools } from '../src/integrations/mcp/google-drive-bridge.js';
 import { formatStdioSpawnError, resolveStdioCommand } from '@agentx/shared';
 import { isToolAllowedInPlanMode } from '../src/agent/plan-mode-utils.js';
 import {
@@ -158,10 +159,19 @@ describe('hub browser oauth', () => {
     expect(booking.server.type).toBe('stdio');
   });
 
-  it('enables browser sign-in for discovery-based OAuth providers', () => {
+  it('uses MCP stdio auth for google-drive instead of hub OAuth', () => {
     const gdrive = getIntegrationProvider('google-drive')!;
-    expect(canUseHubBrowserOAuth(gdrive)).toBe(true);
-    expect(requiresRemoteUrlForHubOAuth(gdrive)).toBe(false);
+    expect(gdrive.auth.mcpStdioAuth?.authArg).toBe('auth');
+    expect(canUseHubBrowserOAuth(gdrive)).toBe(false);
+  });
+
+  it('registers Google Drive bridge tools for read/list', () => {
+    const gdrive = getIntegrationProvider('google-drive')!;
+    const bridges = createGoogleDriveBridgeTools(gdrive);
+    expect(bridges.map((b) => b.definition.id)).toEqual([
+      'integration__google-drive__read_file',
+      'integration__google-drive__list_files',
+    ]);
   });
 
   it('requires MCP URL for remote_url OAuth providers', () => {

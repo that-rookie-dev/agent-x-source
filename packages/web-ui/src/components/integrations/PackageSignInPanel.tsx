@@ -2,11 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import type { IntegrationConnection, IntegrationProvider } from '../../api';
 import { integrations } from '../../api';
 import { settingsTheme, settingsMonoSx } from '../../styles/settings-theme';
 import { providerPackageSignIn } from './integration-ui';
+import {
+  checkPackageSignInStatus,
+  isNotConnectedResult,
+  outputLooksFailed,
+  outputLooksSignedIn,
+} from './package-sign-in-status';
 
 export interface PackageSignInPanelProps {
   provider: IntegrationProvider;
@@ -17,25 +24,7 @@ export interface PackageSignInPanelProps {
   onSignedIn?: () => void;
 }
 
-function outputLooksSignedIn(output: string): boolean {
-  const lower = output.toLowerCase();
-  return (
-    lower.includes('logged in')
-    || lower.includes('authenticated')
-    || lower.includes('signed in')
-    || lower.includes('"success"')
-    || lower.includes('success')
-  ) && !lower.includes('not connected') && !lower.includes('not logged');
-}
-
-function outputLooksFailed(output: string): boolean {
-  const lower = output.toLowerCase();
-  return lower.includes('failed') || (lower.includes('error') && !lower.includes('no error'));
-}
-
-function isNotConnectedResult(result: { success: boolean; error?: string; output?: string }): boolean {
-  return result.error === 'NOT_CONNECTED' || (result.output ?? '').toLowerCase().includes('not connected');
-}
+type PanelStatus = 'checking' | 'signed_out' | 'starting' | 'polling' | 'signed_in' | 'failed';
 
 export function PackageSignInPanel({
   provider,
@@ -46,7 +35,7 @@ export function PackageSignInPanel({
   onSignedIn,
 }: PackageSignInPanelProps) {
   const signIn = providerPackageSignIn(provider);
-  const [status, setStatus] = useState<'idle' | 'starting' | 'polling' | 'signed_in' | 'failed'>('idle');
+  const [status, setStatus] = useState<PanelStatus>(signIn?.statusTool ? 'checking' : 'signed_out');
   const [message, setMessage] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const signInRunRef = useRef(0);
@@ -59,6 +48,28 @@ export function PackageSignInPanel({
   }, []);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
+
+  const markSignedIn = useCallback(() => {
+    setStatus('signed_in');
+    setMessage('');
+    onSignedIn?.();
+  }, [onSignedIn]);
+
+  useEffect(() => {
+    if (!signIn?.statusTool) return;
+    let cancelled = false;
+    setStatus('checking');
+    void checkPackageSignInStatus(connection.id, signIn.statusTool)
+      .then((signedIn) => {
+        if (cancelled) return;
+        if (signedIn) markSignedIn();
+        else setStatus('signed_out');
+      })
+      .catch(() => {
+        if (!cancelled) setStatus('signed_out');
+      });
+    return () => { cancelled = true; };
+  }, [connection.id, markSignedIn, signIn?.statusTool]);
 
   const ensureMcpSession = useCallback(async (): Promise<boolean> => {
     if (connection.status === 'connected') return true;
@@ -78,23 +89,6 @@ export function PackageSignInPanel({
     }
   }, [connection.id, connection.status]);
 
-  const checkStatus = useCallback(async (): Promise<boolean> => {
-    const statusTool = signIn?.statusTool;
-    if (!statusTool) return false;
-    const { result } = await integrations.runTool(connection.id, statusTool);
-    const output = result.output ?? '';
-    if (isNotConnectedResult(result)) {
-      return false;
-    }
-    setMessage(output.slice(0, 500));
-    if (outputLooksSignedIn(output)) {
-      setStatus('signed_in');
-      onSignedIn?.();
-      return true;
-    }
-    return false;
-  }, [connection.id, signIn?.statusTool]);
-
   const pollProgress = useCallback(async () => {
     const progressTool = signIn?.progressTool;
     if (progressTool) {
@@ -106,22 +100,28 @@ export function PackageSignInPanel({
         stopPolling();
         return;
       }
-      setMessage(output.slice(0, 500));
       if (outputLooksSignedIn(output)) {
-        setStatus('signed_in');
-        onSignedIn?.();
+        markSignedIn();
         stopPolling();
         return;
       }
       if (outputLooksFailed(output) && output.toLowerCase().includes('failed')) {
         setStatus('failed');
+        setMessage('Sign-in failed. Try again.');
         stopPolling();
         return;
       }
+      setMessage('Complete sign-in in the browser window that opened…');
     }
-    const signedIn = await checkStatus();
-    if (signedIn) stopPolling();
-  }, [checkStatus, connection.id, signIn?.progressTool, stopPolling]);
+
+    if (signIn?.statusTool) {
+      const signedIn = await checkPackageSignInStatus(connection.id, signIn.statusTool);
+      if (signedIn) {
+        markSignedIn();
+        stopPolling();
+      }
+    }
+  }, [connection.id, markSignedIn, signIn?.progressTool, signIn?.statusTool, stopPolling]);
 
   const handleSignIn = useCallback(async () => {
     if (!signIn?.loginTool) return;
@@ -143,10 +143,8 @@ export function PackageSignInPanel({
         return;
       }
 
-      setMessage(result.output?.slice(0, 500) ?? '');
       if (result.success && outputLooksSignedIn(result.output ?? '')) {
-        setStatus('signed_in');
-        onSignedIn?.();
+        markSignedIn();
         return;
       }
 
@@ -166,19 +164,10 @@ export function PackageSignInPanel({
       setStatus('failed');
       setMessage(e instanceof Error ? e.message : String(e));
     }
-  }, [connection.id, ensureMcpSession, pollProgress, signIn?.loginTool, stopPolling]);
+  }, [connection.id, ensureMcpSession, markSignedIn, pollProgress, signIn?.loginTool, stopPolling]);
 
   useEffect(() => {
-    void checkStatus().then((signedIn) => {
-      if (signedIn) {
-        setStatus('signed_in');
-        onSignedIn?.();
-      }
-    }).catch(() => {});
-  }, [checkStatus, onSignedIn]);
-
-  useEffect(() => {
-    if (!autoStartSignIn || status === 'signed_in' || status === 'starting' || status === 'polling') return;
+    if (!autoStartSignIn || status === 'signed_in' || status === 'starting' || status === 'polling' || status === 'checking') return;
     onAutoStartConsumed?.();
     void handleSignIn();
   }, [autoStartSignIn, handleSignIn, onAutoStartConsumed, status]);
@@ -187,6 +176,7 @@ export function PackageSignInPanel({
 
   const label = signIn.label ?? provider.name;
   const signingIn = status === 'starting' || status === 'polling';
+  const checking = status === 'checking';
 
   return (
     <Box sx={{
@@ -196,22 +186,48 @@ export function PackageSignInPanel({
       border: `1px solid ${settingsTheme.border.default}`,
       bgcolor: settingsTheme.bg.panel,
     }}>
-      <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, color: settingsTheme.text.primary, mb: 0.5 }}>
-        {label} account
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
+        <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, color: settingsTheme.text.primary }}>
+          {label} account
+        </Typography>
+        {checking && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+            <CircularProgress size={12} />
+            <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+              Checking…
+            </Typography>
+          </Box>
+        )}
+        {status === 'signed_in' && (
+          <Chip
+            label="Signed in"
+            size="small"
+            sx={{
+              height: 22,
+              fontSize: '0.62rem',
+              fontWeight: 600,
+              bgcolor: `${settingsTheme.accent.signal}22`,
+              color: settingsTheme.accent.signal,
+              border: `1px solid ${settingsTheme.accent.signal}55`,
+              ...settingsMonoSx,
+            }}
+          />
+        )}
+      </Box>
+
       <Typography sx={{ fontSize: '0.72rem', color: settingsTheme.text.secondary, lineHeight: 1.55, mb: 1.5 }}>
         {status === 'signed_in'
-          ? 'Signed in. Hotel search and reservations are available to the agent.'
+          ? 'Hotel search and reservations are available to the agent.'
           : 'Sign in once in your browser. Sessions are saved locally by the MCP server.'}
       </Typography>
 
-      {message && (
+      {message && status !== 'signed_in' && status !== 'checking' && (
         <Typography sx={{ fontSize: '0.65rem', color: settingsTheme.text.dim, mb: 1.5, ...settingsMonoSx, whiteSpace: 'pre-wrap' }}>
           {message}
         </Typography>
       )}
 
-      {status !== 'signed_in' && (
+      {!checking && status !== 'signed_in' && (
         <Button
           size="small"
           variant="contained"
@@ -223,7 +239,7 @@ export function PackageSignInPanel({
         </Button>
       )}
 
-      {status === 'signed_in' && (
+      {status === 'signed_in' && !checking && (
         <Button
           size="small"
           variant="outlined"

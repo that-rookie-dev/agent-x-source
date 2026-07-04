@@ -326,8 +326,15 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
     for (let i = 0; i < prevParts.length; i++) {
       const pp = prevParts[i]!;
       const np = nextParts[i]!;
-      if (pp.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
-      if (pp.type === 'crew_roster_picker') {
+      if (pp.type === 'questionnaire' && np.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
+      if (pp.type === 'tool' && np.type === 'tool') {
+        if (pp.id !== np.id) return false;
+        if (pp.tool?.status !== np.tool?.status) return false;
+        if (pp.tool?.result !== np.tool?.result) return false;
+        if (pp.tool?.streamOutput !== np.tool?.streamOutput) return false;
+        if (pp.tool?.elapsed !== np.tool?.elapsed) return false;
+      }
+      if (pp.type === 'crew_roster_picker' && np.type === 'crew_roster_picker') {
         if (pp.crewRosterPicker?.status !== np.crewRosterPicker?.status) return false;
         const prevIds = pp.crewRosterPicker?.selectedCandidateIds;
         const nextIds = np.crewRosterPicker?.selectedCandidateIds;

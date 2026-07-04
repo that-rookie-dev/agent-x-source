@@ -946,13 +946,19 @@ app.post('/api/provider/switch', (req, res) => {
 // ───── Models ─────
 app.post('/api/model/switch', (req, res) => {
   try {
-    const { modelId, providerId, contextWindow } = req.body as { modelId: string; providerId?: string; contextWindow?: number };
+    const { modelId, providerId, contextWindow, reasoningEffort } = req.body as {
+      modelId: string;
+      providerId?: string;
+      contextWindow?: number;
+      reasoningEffort?: string;
+    };
     const eng = getEngine();
     const config = eng.configManager.load();
 
     if (providerId && providerId !== config.provider.activeProvider) {
       config.provider.activeProvider = providerId as ProviderId;
       config.provider.activeModel = modelId;
+      if (reasoningEffort) config.provider.activeReasoningEffort = reasoningEffort as import('@agentx/shared').ReasoningEffortLevel;
       eng.configManager.save(config);
       destroyAgent();
       const sess = eng.sessionManager.getActiveSession();
@@ -962,13 +968,23 @@ app.post('/api/model/switch', (req, res) => {
       ensureSubscribed();
     } else {
       config.provider.activeModel = modelId;
+      if (reasoningEffort !== undefined) {
+        config.provider.activeReasoningEffort = reasoningEffort
+          ? (reasoningEffort as import('@agentx/shared').ReasoningEffortLevel)
+          : undefined;
+      }
       eng.configManager.save(config);
       if (eng.agent) {
         eng.agent.switchModel(modelId, contextWindow);
       }
     }
 
-    res.json({ ok: true, model: modelId, provider: providerId ?? config.provider.activeProvider });
+    res.json({
+      ok: true,
+      model: modelId,
+      provider: providerId ?? config.provider.activeProvider,
+      reasoningEffort: config.provider.activeReasoningEffort,
+    });
   } catch (e: unknown) {
     getLogger().error('POST_API_MODEL_SWITCH', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'switch-failed' });
   }
@@ -4622,6 +4638,9 @@ setupWebSocket(server);
 export { app, server };
 
 export function startServer(port = PORT): ReturnType<typeof server.listen> {
+  const publicUrl = (process.env['AGENTX_PUBLIC_URL'] ?? `http://localhost:${port}`).replace(/\/$/, '');
+  getEngine().integrationHub.setRedirectBaseUrl(publicUrl);
+
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`Port ${port} is already in use. Is another Agent-X instance running?`);

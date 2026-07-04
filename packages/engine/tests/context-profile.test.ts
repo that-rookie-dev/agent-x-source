@@ -3,6 +3,8 @@ import {
   buildCompletionMessages,
   isCompactContextProfile,
   isCompactToolAllowed,
+  normalizeAiSdkMessages,
+  normalizeAiSdkMessagesForProvider,
 } from '../src/agent/context-profile.js';
 
 describe('isCompactContextProfile', () => {
@@ -34,14 +36,75 @@ describe('buildCompletionMessages', () => {
     { role: 'user', content: 'five' },
   ];
 
-  it('passes through all messages when not compact', () => {
+  it('passes through all messages for non-Google providers', () => {
     expect(buildCompletionMessages(sample, false)).toHaveLength(sample.length);
+    expect(buildCompletionMessages(sample, false, 3, 'openai')).toHaveLength(sample.length);
+  });
+
+  it('merges leading system messages for Google', () => {
+    const out = buildCompletionMessages(sample, false, 3, 'google');
+    expect(out[0]).toEqual({ role: 'system', content: 'BASE\n\nDIFF UPDATE' });
+    expect(out).toHaveLength(sample.length - 1);
   });
 
   it('keeps baseline system + recent turns when compact', () => {
     const out = buildCompletionMessages(sample, true, 2);
     expect(out[0]).toEqual({ role: 'system', content: 'BASE' });
     expect(out.map((m) => m.content)).toEqual(['BASE', 'two', 'three', 'four', 'five']);
+  });
+});
+
+describe('normalizeAiSdkMessagesForProvider', () => {
+  it('passes through unchanged for non-Google providers', () => {
+    const input = [
+      { role: 'system', content: 'BASE' },
+      { role: 'user', content: 'hi' },
+      { role: 'system', content: 'LEDGER' },
+    ];
+    expect(normalizeAiSdkMessagesForProvider(input, 'anthropic')).toEqual(input);
+  });
+
+  it('normalizes for Google', () => {
+    const out = normalizeAiSdkMessagesForProvider([
+      { role: 'system', content: 'BASE' },
+      { role: 'user', content: 'hi' },
+      { role: 'system', content: 'LEDGER' },
+    ], 'google');
+    expect(out[0]).toEqual({ role: 'system', content: 'BASE' });
+    expect(out[2]).toEqual({
+      role: 'user',
+      content: '[SYSTEM NOTE]\nLEDGER\n[/SYSTEM NOTE]',
+    });
+  });
+});
+
+describe('normalizeAiSdkMessages', () => {
+  it('merges consecutive leading system messages', () => {
+    const out = normalizeAiSdkMessages([
+      { role: 'system', content: 'A' },
+      { role: 'system', content: 'B' },
+      { role: 'user', content: 'hi' },
+    ]);
+    expect(out).toEqual([
+      { role: 'system', content: 'A\n\nB' },
+      { role: 'user', content: 'hi' },
+    ]);
+  });
+
+  it('converts mid-conversation system messages to user notes', () => {
+    const out = normalizeAiSdkMessages([
+      { role: 'system', content: 'BASE' },
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+      { role: 'system', content: 'LEDGER' },
+      { role: 'user', content: 'next' },
+    ]);
+    expect(out[0]).toEqual({ role: 'system', content: 'BASE' });
+    expect(out[3]).toEqual({
+      role: 'user',
+      content: '[SYSTEM NOTE]\nLEDGER\n[/SYSTEM NOTE]',
+    });
+    expect(out.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user', 'user']);
   });
 });
 

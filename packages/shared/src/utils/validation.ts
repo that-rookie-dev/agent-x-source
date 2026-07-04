@@ -144,6 +144,7 @@ export const agentXConfigSchema = z.object({
   provider: z.object({
     activeProvider: providerIdSchema,
     activeModel: z.string(),
+    activeReasoningEffort: z.string().optional(),
     providers: z.record(providerCredentialsSchema),
   }),
   localModel: localModelConfigSchema,

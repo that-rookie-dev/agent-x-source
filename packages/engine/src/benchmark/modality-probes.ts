@@ -9,6 +9,13 @@ const BLUE_PNG_B64 =
 const BLUE_WORDS = ['blue', 'azure', 'cyan', 'navy', 'indigo', 'cobalt', 'teal'];
 const TONE_WORDS = ['tone', 'beep', 'sine', 'audio', 'sound'];
 
+/** Disable Gemini thinking so short probe budgets are not consumed by internal reasoning. */
+const GEMINI_PROBE_GENERATION = {
+  maxOutputTokens: 16,
+  temperature: 0,
+  thinkingConfig: { thinkingBudget: 0 },
+} as const;
+
 /**
  * Tiny MP4 fixture for video-input probing. If a provider rejects it, the probe
  * reports the API error instead of inferring support.
@@ -228,7 +235,7 @@ async function probeVisionGeminiNative(
             ],
           },
         ],
-        generationConfig: { maxOutputTokens: 16, temperature: 0 },
+        generationConfig: { ...GEMINI_PROBE_GENERATION },
       }),
     },
   );
@@ -381,7 +388,7 @@ async function probeAudioGeminiNative(
             ],
           },
         ],
-        generationConfig: { maxOutputTokens: 24, temperature: 0 },
+        generationConfig: { ...GEMINI_PROBE_GENERATION, maxOutputTokens: 24 },
       }),
     },
   );
@@ -493,7 +500,7 @@ async function probeVideoGeminiNative(
             ],
           },
         ],
-        generationConfig: { maxOutputTokens: 24, temperature: 0 },
+        generationConfig: { ...GEMINI_PROBE_GENERATION, maxOutputTokens: 24 },
       }),
     },
   );

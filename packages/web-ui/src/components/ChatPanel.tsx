@@ -74,6 +74,7 @@ import {
   parseDeepSearchProgressLine,
   parseDeepSearchProgressFromStream,
   deepSearchBundleFromMetadata,
+  dedupeToolParts,
   type MessagePart,
 } from '@agentx/shared/browser';
 import { MedicalDisclaimerChatSessionStrip } from './crew/MedicalDisclaimerBanner';
@@ -1117,7 +1118,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           const toolName = (ev.tool as string) ?? 'unknown';
           const desc = (ev.description as string) ?? '';
           const eventArgs = (ev.args as Record<string, unknown> | string | undefined) ?? desc;
-          const callId = (ev.callId as string) ?? crypto.randomUUID();
+          const existingParts = last.parts || [];
+          let callId = (ev.callId as string) ?? '';
+          if (!callId) {
+            const running = existingParts.find(
+              (p) => p.type === 'tool' && p.tool?.name === toolName && p.tool.status === 'running',
+            );
+            callId = running?.tool?.id
+              ?? `tool-${toolName}-${existingParts.filter((p) => p.type === 'tool' && p.tool?.name === toolName).length}`;
+          }
           if (toolName === 'delegate_to_subagent') {
             if ((last.subAgents ?? []).some((a) => a.id === callId)) return prev;
             const sa: SubAgent = { id: callId, name: 'Sub-Agent', task: desc, status: 'running' };
@@ -1127,14 +1136,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               parts: [...(last.parts || []), saPart],
             });
           }
-          const existingParts = last.parts || [];
           if (existingParts.some((p) => p.type === 'tool' && p.tool?.id === callId)) return prev;
           if (!last.streaming && existingParts.some((p) => p.type === 'tool' && p.tool?.name === toolName && p.tool.status === 'done')) {
             return prev;
           }
           const tc: ToolCall = { id: callId, name: toolName, args: eventArgs, status: 'running' };
           const toolPart: PartEntry = { type: 'tool', id: callId, tool: tc };
-          return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts: [...existingParts, toolPart] });
+          const priorToolCalls = (last.toolCalls ?? []).filter((t) => t.id !== callId);
+          return updateLastMessage(prev, { toolCalls: [...priorToolCalls, tc], parts: [...existingParts, toolPart] });
         }
         case 'tool_output': {
           const outputCallId = (ev.callId as string) ?? '';
@@ -1243,6 +1252,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               let current = prev;
               for (const e of batch) {
                 current = applyToolEvent(current, e);
+              }
+              const last = current[current.length - 1];
+              if (last?.parts?.length) {
+                const dedupedParts = dedupeToolParts(last.parts as MessagePart[]);
+                if (dedupedParts !== last.parts) {
+                  current = updateLastMessage(current, { parts: dedupedParts as PartEntry[] });
+                }
               }
               return current;
             });

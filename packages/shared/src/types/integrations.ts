@@ -47,6 +47,7 @@ export type SetupWizardTemplate =
   | 'remote_url'
   | 'folder_sandbox'
   | 'package_sign_in'
+  | 'mcp_stdio_auth'
   | 'custom';
 
 export type SetupOsPermissionId = 'notifications' | 'folder_access' | 'local_network';
@@ -102,6 +103,8 @@ export interface IntegrationProvider {
       progressTool?: string;
       label?: string;
     };
+    /** Stdio MCP servers that authenticate via a package auth subcommand (e.g. gdrive auth). */
+    mcpStdioAuth?: IntegrationMcpStdioAuth;
   };
   /** Per-provider setup wizard spec (inferred from auth when omitted). */
   setupWizard?: ProviderSetupWizardSpec;
@@ -134,6 +137,18 @@ export interface IntegrationOAuthConfig {
   resource?: string;
   /** Redirect URI registered with the provider. Defaults to /api/integrations/oauth/callback on current host. */
   redirectPath?: string;
+}
+
+/** Auth flow for stdio MCP packages that ship their own OAuth helper (Google Drive, etc.). */
+export interface IntegrationMcpStdioAuth {
+  /** Extra CLI argument passed to the MCP package, e.g. "auth". */
+  authArg: string;
+  oauthPathEnv: string;
+  credentialsPathEnv: string;
+  clientIdField: string;
+  clientSecretField: string;
+  clientIdEnv?: string;
+  clientSecretEnv?: string;
 }
 
 export interface IntegrationAuthField {
@@ -217,6 +232,8 @@ export interface ConnectIntegrationRequest {
 export interface OAuthStartResponse {
   authUrl: string;
   state: string;
+  /** Exact redirect URI sent to the provider — must be registered verbatim (e.g. in Google Cloud Console). */
+  redirectUri?: string;
 }
 
 export type OAuthFlowStatus = 'pending' | 'completed' | 'failed' | 'expired';
@@ -271,6 +288,8 @@ export interface IntegrationHubSettings {
   catalogRemoteUrl?: string;
   /** Per-provider OAuth client ids (e.g. google-drive) when env vars are not used. */
   oauthClientIds?: Record<string, string>;
+  /** Redirect URI used when each dynamic OAuth client was registered (must match current callback). */
+  oauthClientRedirectUris?: Record<string, string>;
   /** Show candidate providers in the Integrations Hub UI (for manual evaluation). */
   showCandidateProviders?: boolean;
 }

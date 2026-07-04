@@ -25,6 +25,7 @@ export const providerCredentialsSchema = z.object({
 export const providerSettingsSchema = z.object({
   activeProvider: providerIdSchema,
   activeModel: z.string(),
+  activeReasoningEffort: z.string().optional(),
   providers: z.record(z.string(), providerCredentialsSchema),
 });
 

@@ -15,6 +15,10 @@ import StepLabel from '@mui/material/StepLabel';
 import CircularProgress from '@mui/material/CircularProgress';
 import Alert from '@mui/material/Alert';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import FormControl from '@mui/material/FormControl';
+import InputLabel from '@mui/material/InputLabel';
+import Select from '@mui/material/Select';
+import MenuItem from '@mui/material/MenuItem';
 import Checkbox from '@mui/material/Checkbox';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
@@ -114,6 +118,7 @@ export function SetupWizard() {
   const [baseUrl, setBaseUrl] = useState('');
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
+  const [selectedReasoningEffort, setSelectedReasoningEffort] = useState('');
   const [callsign, setCallsign] = useState('');
   const [profileName, setProfileName] = useState('');
   const [showCustomConfig, setShowCustomConfig] = useState(false);
@@ -172,7 +177,15 @@ export function SetupWizard() {
       if (saved.skipLocalModel) setSkipLocalModel(saved.skipLocalModel);
       if (saved.selectedProvider) {
         setModelsLoading(true);
-        provApi.models(saved.selectedProvider).then(m => { setAvailableModels(m); setModelsLoading(false); }).catch(() => setModelsLoading(false));
+        provApi.models(saved.selectedProvider).then(m => {
+          setAvailableModels(m);
+          if (saved.selectedModel) {
+            const model = m.find((entry) => entry.id === saved.selectedModel);
+            const levels = model?.reasoning?.effortLevels ?? [];
+            setSelectedReasoningEffort(model?.reasoning?.defaultEffort ?? levels[0] ?? '');
+          }
+          setModelsLoading(false);
+        }).catch(() => setModelsLoading(false));
       }
     }
     provApi.available().then(p => setAvailableProviders(p.filter(Boolean))).catch(() => showError('Failed to load providers.'));
@@ -258,8 +271,20 @@ export function SetupWizard() {
     if (!selectedModel) { showError('Select a model'); return; }
     setBenchmarkResult(null);
     setLimitedOverride(false);
-    try { await modelsApi.switch(selectedModel); } catch {}
+    try {
+      await modelsApi.switch(selectedModel, {
+        reasoningEffort: selectedReasoningEffort || undefined,
+      });
+    } catch {}
     next();
+  };
+
+  const handleWizardModelSelect = (model: ModelInfo) => {
+    setSelectedModel(model.id);
+    setBenchmarkResult(null);
+    setLimitedOverride(false);
+    const levels = model.reasoning?.effortLevels ?? [];
+    setSelectedReasoningEffort(model.reasoning?.defaultEffort ?? levels[0] ?? '');
   };
 
   const handleBenchmarkBack = () => {
@@ -631,15 +656,56 @@ export function SetupWizard() {
                   ) : (
                     <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 1.5 }}>
                       {availableModels.filter(Boolean).map(m => (
-                        <Box key={m.id} onClick={() => { setSelectedModel(m.id); setBenchmarkResult(null); setLimitedOverride(false); }}
+                        <Box key={m.id} onClick={() => handleWizardModelSelect(m)}
                           sx={{ p: 1.5, border: `1px solid ${selectedModel === m.id ? colors.accent.blue : colors.border.default}`, borderRadius: 1, cursor: 'pointer', transition: 'all 0.2s', bgcolor: selectedModel === m.id ? colors.accent.blue : 'transparent', boxShadow: selectedModel === m.id ? `0 0 12px ${colors.accent.blue}40` : 'none', '&:hover': selectedModel === m.id ? {} : { borderColor: colors.border.strong, bgcolor: colors.bg.tertiary } }}>
                           <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: selectedModel === m.id ? '#000' : colors.text.primary, mb: 0.5, wordBreak: 'break-word' }}>{m.name}</Typography>
                           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                             {m.contextWindow && <Typography variant="caption" sx={{ fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace", color: selectedModel === m.id ? '#000000aa' : colors.text.dim }}>{m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(1)}M` : `${Math.round(m.contextWindow / 1000)}K`} ctx</Typography>}
-                            {m.capabilities?.filter(c => c !== 'text' && c !== 'streaming').map(cap => <Typography key={cap} variant="caption" sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: selectedModel === m.id ? '#000000aa' : colors.accent.cyan, textTransform: 'uppercase' }}>{cap}</Typography>)}
+                            {m.capabilities?.filter(c => c !== 'text' && c !== 'streaming' && c !== 'reasoning').map(cap => <Typography key={cap} variant="caption" sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: selectedModel === m.id ? '#000000aa' : colors.accent.cyan, textTransform: 'uppercase' }}>{cap}</Typography>)}
+                            {m.reasoning?.supported && m.reasoning.defaultEffort && (
+                              <Typography variant="caption" sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: selectedModel === m.id ? '#000000aa' : colors.accent.blue, textTransform: 'uppercase' }}>
+                                think:{m.reasoning.defaultEffort}
+                              </Typography>
+                            )}
                           </Box>
                         </Box>
                       ))}
+                    </Box>
+                  )}
+                  {selectedModel && !modelsLoading && (
+                    <Box sx={{
+                      mt: 2, p: 1.5, borderRadius: 1,
+                      border: `1px solid ${colors.border.strong}`,
+                      bgcolor: colors.bg.tertiary,
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap',
+                    }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography variant="caption" sx={{ display: 'block', fontSize: '0.55rem', color: colors.text.dim, textTransform: 'uppercase', letterSpacing: '0.08em', mb: 0.25 }}>
+                            Selected model
+                          </Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 700, fontSize: '0.8rem', color: colors.text.primary }}>
+                            {selectedModelInfo?.name || selectedModel}
+                          </Typography>
+                        </Box>
+                        {(selectedModelInfo?.reasoning?.effortLevels?.length ?? 0) > 0 && (
+                          <FormControl size="small" sx={{ minWidth: 140, maxWidth: 200, flexShrink: 0 }}>
+                            <InputLabel sx={{ fontSize: '0.7rem' }}>Reasoning effort</InputLabel>
+                            <Select
+                              value={selectedReasoningEffort}
+                              label="Reasoning effort"
+                              onChange={(e) => setSelectedReasoningEffort(e.target.value)}
+                              sx={{ fontSize: '0.75rem', height: 36 }}
+                            >
+                              {(selectedModelInfo?.reasoning?.effortLevels ?? []).map((level) => (
+                                <MenuItem key={level} value={level} sx={{ fontSize: '0.75rem' }}>
+                                  {level}{level === selectedModelInfo?.reasoning?.defaultEffort ? ' (default)' : ''}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        )}
+                      </Box>
                     </Box>
                   )}
                 </Box>

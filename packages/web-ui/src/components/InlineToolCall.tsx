@@ -68,9 +68,13 @@ export function InlineToolCall({ tool, compactTop }: { tool: InlineToolData; com
   const isDeepSearchTool = tool.name === 'deep_web_search';
   const hasDiff = !!(tool.metadata?.diff || (tool.result && tool.result.includes('---') && tool.result.includes('+++')));
   const [expanded, setExpanded] = useState(isEditTool && hasDiff);
+  const autoExpandedRef = useRef(false);
   useEffect(() => {
-    if (isEditTool && hasDiff) setExpanded(true);
-  }, [isEditTool, hasDiff, tool.metadata?.diff, tool.result]);
+    if (isEditTool && hasDiff && !autoExpandedRef.current) {
+      setExpanded(true);
+      autoExpandedRef.current = true;
+    }
+  }, [isEditTool, hasDiff]);
   const cc = getColor(tool.status);
   const display = getToolDisplay(tool.name, tool.args);
   const headerRef = useRef<HTMLDivElement>(null);

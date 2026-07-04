@@ -210,6 +210,7 @@ export function ProvidersPanel() {
   const [pickingProfile, setPickingProfile] = useState<ProfileEntry | null>(null);
   const [pickerModels, setPickerModels] = useState<ModelInfo[]>([]);
   const [pickerSelectedModel, setPickerSelectedModel] = useState('');
+  const [pickerReasoningEffort, setPickerReasoningEffort] = useState('');
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerError, setPickerError] = useState('');
   const [pickerStep, setPickerStep] = useState<'select' | 'benchmark'>('select');
@@ -346,6 +347,12 @@ export function ProvidersPanel() {
 
   const handleModelSelect = (modelId: string) => {
     setPickerSelectedModel(modelId);
+    const model = pickerModels.find((m) => m.id === modelId);
+    const levels = model?.reasoning?.effortLevels ?? [];
+    const defaultEffort = model?.reasoning?.defaultEffort ?? levels[0] ?? '';
+    setPickerReasoningEffort(levels.includes(cfg?.provider.activeReasoningEffort ?? '')
+      ? (cfg?.provider.activeReasoningEffort ?? defaultEffort)
+      : defaultEffort);
     setBenchmarkResult(null);
     setLimitedOverride(false);
     setScanRequested(false);
@@ -384,7 +391,10 @@ export function ProvidersPanel() {
       if (pickingProfile.id !== activeProfileId) {
         await provApi.switchProfile(pickingProfile.providerId, pickingProfile.id);
       }
-      await modelsApi.switch(pickerSelectedModel);
+      await modelsApi.switch(pickerSelectedModel, {
+        providerId: pickingProfile.providerId,
+        reasoningEffort: pickerReasoningEffort || undefined,
+      });
       setSelectedModels(prev => ({ ...prev, [pickingProfile.id]: pickerSelectedModel }));
       const updated = await config.get();
       setCfg(updated);
@@ -633,11 +643,16 @@ export function ProvidersPanel() {
                           {m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(1)}M` : `${Math.round(m.contextWindow / 1000)}K`}
                         </Typography>
                       )}
-                      {m.capabilities && m.capabilities.filter(c => c !== 'text' && c !== 'streaming').map((cap) => (
+                      {m.capabilities && m.capabilities.filter(c => c !== 'text' && c !== 'streaming' && c !== 'reasoning').map((cap) => (
                         <Typography key={cap} sx={{ ...settingsMonoSx, fontSize: '0.48rem', color: settingsTheme.accent.cyan, textTransform: 'uppercase' }}>
                           {cap}
                         </Typography>
                       ))}
+                      {m.reasoning?.supported && m.reasoning.defaultEffort && (
+                        <Typography sx={{ ...settingsMonoSx, fontSize: '0.48rem', color: settingsTheme.accent.hud, textTransform: 'uppercase' }}>
+                          think:{m.reasoning.defaultEffort}
+                        </Typography>
+                      )}
                     </Box>
                   </Box>
                 );
@@ -652,11 +667,30 @@ export function ProvidersPanel() {
               border: `1px solid ${settingsTheme.border.hud}`,
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5, flexWrap: 'wrap',
             }}>
-              <Box>
-                <Typography sx={{ ...settingsOverlineSx, fontSize: '0.45rem', mb: 0.3 }}>Selected model</Typography>
-                <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.accent.hud, fontWeight: 700 }}>
-                  {selectedPickerModel?.name || pickerSelectedModel}
-                </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography sx={{ ...settingsOverlineSx, fontSize: '0.45rem', mb: 0.3 }}>Selected model</Typography>
+                  <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.accent.hud, fontWeight: 700 }}>
+                    {selectedPickerModel?.name || pickerSelectedModel}
+                  </Typography>
+                </Box>
+                {(selectedPickerModel?.reasoning?.effortLevels?.length ?? 0) > 0 && (
+                  <FormControl size="small" sx={{ minWidth: 140, maxWidth: 200, flexShrink: 0 }}>
+                    <InputLabel sx={{ ...settingsMonoSx, fontSize: '0.55rem' }}>Reasoning effort</InputLabel>
+                    <Select
+                      value={pickerReasoningEffort}
+                      label="Reasoning effort"
+                      onChange={(e) => setPickerReasoningEffort(e.target.value)}
+                      sx={{ ...settingsMonoSx, fontSize: '0.62rem', height: 32 }}
+                    >
+                      {(selectedPickerModel?.reasoning?.effortLevels ?? []).map((level) => (
+                        <MenuItem key={level} value={level} sx={{ ...settingsMonoSx, fontSize: '0.62rem' }}>
+                          {level}{level === selectedPickerModel?.reasoning?.defaultEffort ? ' (default)' : ''}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
               </Box>
               <Button
                 size="small"

@@ -38,11 +38,14 @@ import {
 } from './action-classifier.js';
 import { adaptMcpTools } from './mcp/tool-adapter.js';
 import { McpSession } from './mcp/client.js';
+import { getProviderBridgeTools, type IntegrationBridgeTool } from './mcp/provider-bridge.js';
+import { isMcpToolResultError } from './mcp/mcp-result.js';
 import { IntegrationConnectionManager } from './mcp/connection-manager.js';
 import { OAuthPkceStore } from './oauth/pkce-flow.js';
 import { expandStdioArgs } from './stdio-args.js';
 import { formatStdioSpawnError, resolveStdioCommand } from '@agentx/shared';
 import { parseIntegrationStructuredResult } from './integration-result.js';
+import { resolveIntegrationDek } from './oauth/integration-dek.js';
 import {
   buildAuthorizationUrl,
   exchangeAuthorizationCode,
@@ -52,6 +55,15 @@ import {
   tryResolveClientId,
 } from './oauth/oauth-client.js';
 import { resolveOAuthMetadata } from './oauth/discovery.js';
+import {
+  buildMcpStdioAuthEnv,
+  formatMcpStdioAuthError,
+  hasMcpStdioAuthCredentials,
+  isMcpStdioAuthPending,
+  MCP_STDIO_AUTH_PENDING_MESSAGE,
+  resolveMcpStdioAuthCredentials,
+  runMcpStdioAuthCommand,
+} from './mcp-stdio-auth.js';
 import { runPreflightChecks, type PreflightContext } from './preflight.js';
 
 interface ActiveSession {
@@ -59,6 +71,12 @@ interface ActiveSession {
   providerId: string;
   session: McpSession;
   tools: Array<{ mcpName: string; toolId: string; definition: ReturnType<typeof adaptMcpTools>[number] }>;
+}
+
+export interface IntegrationTurnSnapshot {
+  registeredCount: number;
+  connected: Array<{ providerId: string; name: string; toolCount: number }>;
+  unavailable: Array<{ providerId: string; name: string; error?: string }>;
 }
 
 interface StoredOAuthResult {
@@ -74,10 +92,13 @@ export class IntegrationHub {
   private readonly audit: IntegrationAuditLog;
   private readonly oauth = new OAuthPkceStore();
   private readonly oauthResults = new Map<string, StoredOAuthResult>();
+  /** States consumed by completeOAuth but not yet written to oauthResults (token exchange + sync). */
+  private readonly oauthInFlight = new Set<string>();
   private readonly oauthResultTtlMs = 30 * 60 * 1000;
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly customProviders = new Map<string, IntegrationProvider>();
   private readonly connectionManager: IntegrationConnectionManager;
+  private toolkitBridge: { registry: ToolRegistry; executor: ToolExecutor } | null = null;
   private dek: Buffer | null = null;
   private getDek?: () => Buffer | null;
   private redirectBaseUrl: string;
@@ -87,7 +108,9 @@ export class IntegrationHub {
     this.store = new IntegrationConnectionStore(options?.baseDir);
     this.audit = new IntegrationAuditLog(options?.baseDir);
     this.getDek = options?.getDek;
-    this.redirectBaseUrl = options?.redirectBaseUrl ?? process.env['AGENTX_PUBLIC_URL'] ?? `http://127.0.0.1:${process.env['AGENTX_PORT'] ?? process.env['PORT'] ?? '3333'}`;
+    // Use "localhost" (not 127.0.0.1) — OAuth providers like Google enforce EXACT
+    // redirect_uri string matching, and users register http://localhost:PORT/... per our docs.
+    this.redirectBaseUrl = options?.redirectBaseUrl ?? process.env['AGENTX_PUBLIC_URL'] ?? `http://localhost:${process.env['AGENTX_PORT'] ?? process.env['PORT'] ?? '3333'}`;
     loadRemoteCatalog(options?.baseDir);
     this.settings = loadIntegrationHubSettings(options?.baseDir);
     this.connectionManager = new IntegrationConnectionManager(this, this.settings.healthPollIntervalMs ?? 5 * 60 * 1000);
@@ -104,15 +127,126 @@ export class IntegrationHub {
   }
 
   private async onDekAvailable(): Promise<void> {
-    await this.store.migrateLegacySecrets(this.currentDek());
+    const dek = this.currentDek();
+    await this.store.migrateLegacySecrets(dek);
+    await this.store.migrateKeychainSecrets(dek);
   }
 
   setRedirectBaseUrl(url: string): void {
     this.redirectBaseUrl = url.replace(/\/$/, '');
   }
 
+  /** Keep MCP tool registrations in sync when health polling restores sessions. */
+  setToolkitBridge(registry: ToolRegistry, executor: ToolExecutor): void {
+    this.toolkitBridge = { registry, executor };
+  }
+
+  private syncToolkitIfBridged(): number {
+    if (!this.toolkitBridge) return 0;
+    return this.syncToToolkit(this.toolkitBridge.registry, this.toolkitBridge.executor);
+  }
+
+  /**
+   * Refresh MCP sessions and register integration tools before an agent turn.
+   * Returns an optional prompt hint when the user message targets a connected provider.
+   */
+  async prepareForAgentTurn(
+    registry: ToolRegistry,
+    executor: ToolExecutor,
+    userText = '',
+  ): Promise<{ snapshot: IntegrationTurnSnapshot; promptHint?: string }> {
+    this.setToolkitBridge(registry, executor);
+
+    for (const connection of this.store.listConnections()) {
+      if (!connection.enabled) continue;
+      if (this.sessions.has(connection.id) && connection.status === 'connected') continue;
+      try {
+        await this.syncConnection(connection.id);
+      } catch (error) {
+        getLogger().warn(
+          'INTEGRATION_PRETURN_SYNC',
+          `${connection.providerId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    const registeredCount = this.syncToToolkit(registry, executor);
+    const connected: IntegrationTurnSnapshot['connected'] = [];
+    const unavailable: IntegrationTurnSnapshot['unavailable'] = [];
+
+    for (const connection of this.store.listConnections()) {
+      if (!connection.enabled) continue;
+      const provider = this.resolveProvider(connection.providerId);
+      const name = provider?.name ?? connection.displayName ?? connection.providerId;
+      const active = this.sessions.get(connection.id);
+      if (active) {
+        connected.push({ providerId: connection.providerId, name, toolCount: active.tools.length });
+        continue;
+      }
+      unavailable.push({
+        providerId: connection.providerId,
+        name,
+        error: connection.error ?? (connection.status !== 'connected' ? connection.status : undefined),
+      });
+    }
+
+    const snapshot: IntegrationTurnSnapshot = { registeredCount, connected, unavailable };
+    const promptHint = this.buildIntegrationPromptHint(userText, snapshot);
+    return promptHint ? { snapshot, promptHint } : { snapshot };
+  }
+
+  private buildIntegrationPromptHint(userText: string, snapshot: IntegrationTurnSnapshot): string | undefined {
+    const lower = userText.toLowerCase();
+    if (!lower.trim()) return undefined;
+
+    const mentionsProvider = (providerId: string, name: string): boolean => {
+      const id = providerId.toLowerCase();
+      const label = name.toLowerCase();
+      return lower.includes(id) || (label.length >= 3 && lower.includes(label));
+    };
+
+    const readIntent =
+      /\b(analys|analyz|read|open|summari|extract|review|inspect|tell me what|what you found|content of)\b/i.test(userText)
+      || /\b(pdf|document|letter|spreadsheet|\.pdf)\b/i.test(lower);
+
+    if (readIntent) {
+      const drive = snapshot.connected.find((entry) => entry.providerId === 'google-drive');
+      if (drive) {
+        return [
+          '[INTEGRATION READ] Google Drive is connected.',
+          'Use integration__google-drive__read_file with fileName (e.g. "Experience_Letter.pdf") or fileId.',
+          'Do NOT use file_find, grep, read_file, shell_exec, or local filesystem tools — the file is in Google Drive, not on disk.',
+        ].join(' ');
+      }
+    }
+
+    for (const entry of snapshot.unavailable) {
+      if (!mentionsProvider(entry.providerId, entry.name)) continue;
+      return [
+        `[INTEGRATION UNAVAILABLE] ${entry.name} MCP is not connected`,
+        entry.error ? `(${entry.error})` : '',
+        'Re-authenticate in MCP Store → Installed →',
+        entry.name + '.',
+        'Do NOT scan the local filesystem as a substitute for this request.',
+      ].filter(Boolean).join(' ');
+    }
+
+    for (const entry of snapshot.connected) {
+      if (!mentionsProvider(entry.providerId, entry.name)) continue;
+      const active = [...this.sessions.values()].find((s) => s.providerId === entry.providerId);
+      const examples = active?.tools.slice(0, 6).map((t) => t.toolId).join(', ') ?? '';
+      return [
+        `[INTEGRATION AVAILABLE] ${entry.name} MCP is connected (${entry.toolCount} tools).`,
+        examples ? `Prefer integration tools such as: ${examples}.` : '',
+        `Use integration__${entry.providerId}__* tools instead of filesystem search for ${entry.name} data.`,
+      ].filter(Boolean).join(' ');
+    }
+
+    return undefined;
+  }
+
   private currentDek(): Buffer | null {
-    return this.getDek?.() ?? this.dek ?? null;
+    return resolveIntegrationDek(this.getDek?.() ?? this.dek ?? null);
   }
 
   private assertProviderAllowed(providerId: string): void {
@@ -123,6 +257,11 @@ export class IntegrationHub {
 
   private oauthRedirectUri(): string {
     return `${this.redirectBaseUrl}/api/integrations/oauth/callback`;
+  }
+
+  /** Exact redirect URI users must register with their OAuth provider (e.g. Google Cloud Console). */
+  getOAuthRedirectUri(): string {
+    return this.oauthRedirectUri();
   }
 
   listCatalog(options?: { includeCandidates?: boolean }): IntegrationProvider[] {
@@ -157,9 +296,16 @@ export class IntegrationHub {
 
   updateSettings(patch: IntegrationHubSettings): IntegrationHubSettings {
     // Merge per-provider OAuth client ids so saving one provider's id never wipes others.
-    const merged = patch.oauthClientIds
-      ? { ...patch, oauthClientIds: { ...(getIntegrationHubSettings().oauthClientIds ?? {}), ...patch.oauthClientIds } }
+    const current = getIntegrationHubSettings();
+    const merged: IntegrationHubSettings = patch.oauthClientIds
+      ? { ...patch, oauthClientIds: { ...(current.oauthClientIds ?? {}), ...patch.oauthClientIds } }
       : patch;
+    if (patch.oauthClientRedirectUris) {
+      merged.oauthClientRedirectUris = {
+        ...(current.oauthClientRedirectUris ?? {}),
+        ...patch.oauthClientRedirectUris,
+      };
+    }
     const next = saveIntegrationHubSettings(merged);
     this.settings = next;
     if (typeof patch.healthPollIntervalMs === 'number') {
@@ -179,12 +325,29 @@ export class IntegrationHub {
     redirectUri: string,
   ): Promise<IntegrationOAuthConfig> {
     const resolved = this.resolveOAuthConfig(providerId, oauth);
-    if (tryResolveClientId(resolved)) return resolved;
 
-    if (resolved.clientIdEnv) {
-      throw new Error(
-        `OAuth Client ID for "${providerId}" is not configured. Paste it in the setup wizard's System checks step, `
-        + `or set ${resolved.clientIdEnv} in the environment.`,
+    // Static client id from catalog or env — not registered via dynamic client registration.
+    if (oauth.clientId?.trim() || oauth.clientIdEnv) {
+      if (tryResolveClientId(resolved)) return resolved;
+      if (resolved.clientIdEnv) {
+        throw new Error(
+          `OAuth Client ID for "${providerId}" is not configured. Paste it in the setup wizard's System checks step, `
+          + `or set ${resolved.clientIdEnv} in the environment.`,
+        );
+      }
+    }
+
+    const settings = getIntegrationHubSettings();
+    const storedClientId = settings.oauthClientIds?.[providerId]?.trim();
+    const storedRedirectUri = settings.oauthClientRedirectUris?.[providerId]?.trim();
+    if (storedClientId && storedRedirectUri === redirectUri) {
+      return { ...resolved, clientId: storedClientId };
+    }
+
+    if (storedClientId && storedRedirectUri && storedRedirectUri !== redirectUri) {
+      getLogger().info(
+        'INTEGRATION_OAUTH_REREGISTER',
+        `${providerId}: redirect URI changed (${storedRedirectUri} → ${redirectUri}) — registering a new OAuth client`,
       );
     }
 
@@ -202,10 +365,10 @@ export class IntegrationHub {
     }
 
     const clientId = await registerOAuthClient(metadata.registration_endpoint, redirectUri);
-    const settings = getIntegrationHubSettings();
     saveIntegrationHubSettings({
       ...settings,
       oauthClientIds: { ...(settings.oauthClientIds ?? {}), [providerId]: clientId },
+      oauthClientRedirectUris: { ...(settings.oauthClientRedirectUris ?? {}), [providerId]: redirectUri },
     });
     return { ...resolved, clientId };
   }
@@ -246,6 +409,14 @@ export class IntegrationHub {
       Object.keys(secrets).length > 0 ? secrets : undefined,
       this.currentDek(),
     );
+
+    if (isMcpStdioAuthPending(provider.auth.mcpStdioAuth, connection.id)) {
+      resolveMcpStdioAuthCredentials(provider.auth.mcpStdioAuth!, secrets, connection.id);
+      return this.store.updateConnection(connection.id, {
+        status: 'disconnected',
+        error: undefined,
+      }) ?? connection;
+    }
 
     return this.syncConnection(connection.id);
   }
@@ -289,7 +460,7 @@ export class IntegrationHub {
       redirectUri,
       remoteResourceUrl: remoteUrl || remoteResourceUrl || provider.server.url,
     });
-    return { authUrl, state: challenge.state };
+    return { authUrl, state: challenge.state, redirectUri };
   }
 
   recordOAuthFailure(state: string, message: string): void {
@@ -328,6 +499,10 @@ export class IntegrationHub {
       return { status: 'pending' };
     }
 
+    if (this.oauthInFlight.has(trimmed)) {
+      return { status: 'pending' };
+    }
+
     return {
       status: 'expired',
       message: 'This sign-in link expired or was already used. Click "Sign in again" to restart.',
@@ -359,48 +534,57 @@ export class IntegrationHub {
       throw new Error('This sign-in link expired or was already used. Return to Agent-X and click "Sign in again" to restart.');
     }
 
-    const provider = this.resolveProvider(challenge.providerId);
-    if (!provider) {
-      throw new Error(`OAuth is not configured for provider "${challenge.providerId}"`);
-    }
+    this.oauthInFlight.add(state);
+    try {
+      const provider = this.resolveProvider(challenge.providerId);
+      if (!provider) {
+        throw new Error(`OAuth is not configured for provider "${challenge.providerId}"`);
+      }
 
-    const remoteUrl = challenge.remoteResourceUrl ?? provider.server.url;
-    const oauthBase = resolveProviderOAuthConfig(provider, remoteUrl);
-    const oauth = this.resolveOAuthConfig(challenge.providerId, oauthBase);
-    if (!tryResolveClientId(oauth)) {
-      throw new Error('OAuth client id missing — restart the sign-in flow.');
-    }
+      const remoteUrl = challenge.remoteResourceUrl ?? provider.server.url;
+      const oauthBase = resolveProviderOAuthConfig(provider, remoteUrl);
+      const oauth = this.resolveOAuthConfig(challenge.providerId, oauthBase);
+      if (!tryResolveClientId(oauth)) {
+        throw new Error('OAuth client id missing — restart the sign-in flow.');
+      }
 
-    const tokenResponse = await exchangeAuthorizationCode({
-      oauth,
-      challenge,
-      code,
-      redirectUri: challenge.redirectUri,
-      remoteResourceUrl: remoteUrl,
-    });
+      const tokenResponse = await exchangeAuthorizationCode({
+        oauth,
+        challenge,
+        code,
+        redirectUri: challenge.redirectUri,
+        remoteResourceUrl: remoteUrl,
+      });
 
-    const connection = await this.store.upsertConnection(
-      {
-        providerId: challenge.providerId,
-        displayName: provider.name,
-        authMode: 'oauth',
-        enabled: true,
-        accountLabel: 'OAuth connected',
-        remote: challenge.remoteResourceUrl ? { url: challenge.remoteResourceUrl } : provider.server.url ? { url: provider.server.url } : undefined,
-      },
-      {
-        oauth: {
-          accessToken: tokenResponse.access_token,
-          refreshToken: tokenResponse.refresh_token,
-          expiresAt: tokenExpiresAt(tokenResponse.expires_in),
-          scope: tokenResponse.scope,
+      const connection = await this.store.upsertConnection(
+        {
+          providerId: challenge.providerId,
+          displayName: provider.name,
+          authMode: 'oauth',
+          enabled: true,
+          accountLabel: 'OAuth connected',
+          remote: challenge.remoteResourceUrl ? { url: challenge.remoteResourceUrl } : provider.server.url ? { url: provider.server.url } : undefined,
         },
-      },
-      this.currentDek(),
-    );
-    const synced = await this.syncConnection(connection.id);
-    this.recordOAuthSuccess(state, challenge.providerId, synced.id);
-    return synced;
+        {
+          oauth: {
+            accessToken: tokenResponse.access_token,
+            refreshToken: tokenResponse.refresh_token,
+            expiresAt: tokenExpiresAt(tokenResponse.expires_in),
+            scope: tokenResponse.scope,
+          },
+        },
+        this.currentDek(),
+      );
+      const synced = await this.syncConnection(connection.id);
+      this.recordOAuthSuccess(state, challenge.providerId, synced.id);
+      return synced;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.recordOAuthFailure(state, message);
+      throw error;
+    } finally {
+      this.oauthInFlight.delete(state);
+    }
   }
 
   async preflightProvider(
@@ -486,6 +670,13 @@ export class IntegrationHub {
     const provider = this.resolveProvider(connection.providerId);
     if (!provider) throw new Error(`Provider "${connection.providerId}" not found`);
 
+    if (isMcpStdioAuthPending(provider.auth.mcpStdioAuth, connectionId)) {
+      return this.store.updateConnection(connectionId, {
+        status: 'disconnected',
+        error: MCP_STDIO_AUTH_PENDING_MESSAGE,
+      }) ?? connection;
+    }
+
     this.store.updateConnection(connectionId, { status: 'syncing', error: undefined });
 
     try {
@@ -499,6 +690,13 @@ export class IntegrationHub {
         toolId: adapted[index]!.id,
         definition: adapted[index]!,
       }));
+      for (const bridge of getProviderBridgeTools(provider)) {
+        tools.push({
+          mcpName: bridge.mcpName,
+          toolId: bridge.definition.id,
+          definition: bridge.definition,
+        });
+      }
       this.sessions.set(connectionId, {
         connectionId,
         providerId: connection.providerId,
@@ -509,7 +707,7 @@ export class IntegrationHub {
       const updated = this.store.updateConnection(connectionId, {
         status: 'connected',
         lastSyncAt: new Date().toISOString(),
-        toolCount: adapted.length,
+        toolCount: tools.length,
         error: undefined,
       });
       return updated ?? connection;
@@ -527,8 +725,11 @@ export class IntegrationHub {
 
   async restoreAll(): Promise<void> {
     await this.store.migrateLegacySecrets(this.currentDek());
+    await this.store.migrateKeychainSecrets(this.currentDek());
     for (const connection of this.store.listConnections()) {
       if (!connection.enabled) continue;
+      const provider = this.resolveProvider(connection.providerId);
+      if (provider && isMcpStdioAuthPending(provider.auth.mcpStdioAuth, connection.id)) continue;
       try {
         await this.syncConnection(connection.id);
       } catch (error) {
@@ -540,6 +741,16 @@ export class IntegrationHub {
   async maintainConnections(): Promise<void> {
     for (const connection of this.store.listConnections()) {
       if (!connection.enabled) continue;
+      const provider = this.resolveProvider(connection.providerId);
+      if (provider && isMcpStdioAuthPending(provider.auth.mcpStdioAuth, connection.id)) {
+        if (connection.status === 'error') {
+          this.store.updateConnection(connection.id, {
+            status: 'disconnected',
+            error: MCP_STDIO_AUTH_PENDING_MESSAGE,
+          });
+        }
+        continue;
+      }
       try {
         if (connection.status === 'error') {
           await this.syncConnection(connection.id);
@@ -559,6 +770,7 @@ export class IntegrationHub {
         await this.closeSession(connection.id);
       }
     }
+    this.syncToolkitIfBridged();
   }
 
   syncToToolkit(registry: ToolRegistry, executor: ToolExecutor): number {
@@ -579,15 +791,81 @@ export class IntegrationHub {
     for (const prefix of integrationToolUnregisterPrefixes(active.providerId)) {
       registry.unregisterByPrefix(prefix);
     }
+    const provider = this.resolveProvider(active.providerId);
+    const bridgeNames = new Set(
+      provider ? getProviderBridgeTools(provider).map((bridge) => bridge.mcpName) : [],
+    );
     let count = 0;
     for (const mapped of active.tools) {
       registry.register(mapped.definition);
+      if (bridgeNames.has(mapped.mcpName)) {
+        const bridge = getProviderBridgeTools(provider!).find((entry) => entry.mcpName === mapped.mcpName);
+        if (bridge) {
+          executor.registerHandler(mapped.definition.id, async (args, context) =>
+            this.executeBridgeTool(connectionId, bridge, args, context),
+          );
+          count += 1;
+          continue;
+        }
+      }
       executor.registerHandler(mapped.definition.id, async (args, context) =>
         this.executeTool(connectionId, mapped.mcpName, args, context),
       );
       count += 1;
     }
     return count;
+  }
+
+  private async executeBridgeTool(
+    connectionId: string,
+    bridge: IntegrationBridgeTool,
+    args: Record<string, unknown>,
+    _context: ToolExecutionContext,
+  ): Promise<ToolResult> {
+    const sessionReady = await this.ensureActiveSession(connectionId);
+    if (!sessionReady.ok) return sessionReady.result;
+
+    const connection = sessionReady.connection;
+    const active = this.sessions.get(connectionId)!;
+    const provider = this.resolveProvider(connection.providerId);
+    const readonly = isReadOnlyIntegrationTool(bridge.mcpName, provider);
+
+    try {
+      await this.ensureFreshOAuthToken(connectionId);
+      const result = await bridge.execute(active.session, args);
+      this.audit.append({
+        connectionId,
+        providerId: connection.providerId,
+        toolName: bridge.mcpName,
+        toolId: bridge.mcpName,
+        readonly,
+        success: result.success,
+        argsSummary: summarizeArgs(args),
+        error: result.success ? undefined : result.error ?? result.output,
+      });
+      return {
+        ...result,
+        metadata: {
+          ...(result.metadata ?? {}),
+          providerId: connection.providerId,
+          toolName: bridge.mcpName,
+          readonly,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.audit.append({
+        connectionId,
+        providerId: connection.providerId,
+        toolName: bridge.mcpName,
+        toolId: bridge.mcpName,
+        readonly,
+        success: false,
+        argsSummary: summarizeArgs(args),
+        error: message,
+      });
+      return { success: false, output: message, error: 'INTEGRATION_TOOL_FAILED' };
+    }
   }
 
   async executeTool(
@@ -612,6 +890,7 @@ export class IntegrationHub {
       const result = await active.session.callTool(toolName, args);
       let output = formatMcpToolResult(result);
       output = this.clarifyPackageSignInOutput(provider, toolName, output);
+      const failed = isMcpToolResultError(result, output);
       const toolId = integrationToolId(connection.providerId, toolName);
       const structured = parseIntegrationStructuredResult(toolId, output);
       this.audit.append({
@@ -620,12 +899,14 @@ export class IntegrationHub {
         toolName,
         toolId: parseIntegrationToolId(toolId)?.toolName ?? toolName,
         readonly,
-        success: true,
+        success: !failed,
         argsSummary: summarizeArgs(args),
+        error: failed ? output.slice(0, 500) : undefined,
       });
       return {
-        success: true,
+        success: !failed,
         output,
+        error: failed ? 'INTEGRATION_TOOL_FAILED' : undefined,
         metadata: {
           providerId: connection.providerId,
           toolName,
@@ -666,6 +947,51 @@ export class IntegrationHub {
       `Sign in via MCP Store → Installed → ${provider.name} → Sign in to ${label}.`,
       `Raw response: ${output}`,
     ].join('\n');
+  }
+
+  /** Run the MCP package's native OAuth auth subcommand (e.g. Google Drive `auth`). */
+  async runMcpStdioAuth(connectionId: string): Promise<{ success: boolean; output: string }> {
+    const connection = this.store.getConnection(connectionId);
+    if (!connection) {
+      return { success: false, output: 'Integration is not connected' };
+    }
+    const provider = this.resolveProvider(connection.providerId);
+    const config = provider?.auth.mcpStdioAuth;
+    if (!provider || !config) {
+      return { success: false, output: 'This integration does not support MCP stdio auth' };
+    }
+
+    const secrets = await this.store.getSecrets(connectionId, this.currentDek());
+    const resolved = resolveMcpStdioAuthCredentials(config, secrets, connectionId);
+    if (!resolved) {
+      return {
+        success: false,
+        output: 'OAuth Client ID and Client Secret are required. Re-open the setup wizard and enter both credentials.',
+      };
+    }
+
+    const env = buildMcpStdioAuthEnv(config, connectionId);
+    const result = await runMcpStdioAuthCommand(provider, config, env);
+    if (result.success) {
+      await this.syncConnection(connectionId);
+      return result;
+    }
+    return {
+      success: false,
+      output: formatMcpStdioAuthError(result.output),
+    };
+  }
+
+  getMcpStdioAuthStatus(connectionId: string): { signedIn: boolean; message?: string } {
+    const connection = this.store.getConnection(connectionId);
+    if (!connection) return { signedIn: false, message: 'Not connected' };
+    const provider = this.resolveProvider(connection.providerId);
+    const config = provider?.auth.mcpStdioAuth;
+    if (!config) return { signedIn: false, message: 'Not applicable' };
+    const signedIn = hasMcpStdioAuthCredentials(config, connectionId);
+    return signedIn
+      ? { signedIn: true }
+      : { signedIn: false, message: MCP_STDIO_AUTH_PENDING_MESSAGE };
   }
 
   /** Run an MCP tool from the MCP Store (ensures session is open; no chat permission gate). */
@@ -840,10 +1166,15 @@ export class IntegrationHub {
 
   private async openSession(connection: IntegrationConnection, provider: IntegrationProvider): Promise<McpSession> {
     const secrets = (await this.store.getSecrets(connection.id, this.currentDek())) ?? {};
-    const env = {
-      ...(secrets.env ?? {}),
-      ...(secrets.oauth?.accessToken ? { MCP_ACCESS_TOKEN: secrets.oauth.accessToken } : {}),
-    };
+    const env: Record<string, string> = { ...(secrets.env ?? {}) };
+
+    const mcpAuth = provider.auth.mcpStdioAuth;
+    if (mcpAuth) {
+      resolveMcpStdioAuthCredentials(mcpAuth, secrets, connection.id);
+      Object.assign(env, buildMcpStdioAuthEnv(mcpAuth, connection.id));
+    } else if (secrets.oauth?.accessToken) {
+      env.MCP_ACCESS_TOKEN = secrets.oauth.accessToken;
+    }
 
     if (connection.remote?.url) {
       const headers: Record<string, string> = {};

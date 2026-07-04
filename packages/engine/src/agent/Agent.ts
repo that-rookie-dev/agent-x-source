@@ -126,6 +126,7 @@ import {
   shouldUseInteractivePlanGates,
 } from './plan-mode-utils.js';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
+import { buildGoogleAiSdkProviderOptions, buildProviderConnectivityProbeUrl } from '../providers/google/gemini-metadata.js';
 import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
 import type { PartPersistFn } from './AiSdkStreamHandler.js';
 import { streamText, stepCountIs } from 'ai';
@@ -176,6 +177,8 @@ export interface AgentOptions {
   channelSession?: boolean;
   /** Parent session ID — for crew workers to access the host conversation's neural brain memory. */
   parentSessionId?: string;
+  /** Refresh MCP integration tools and return an optional turn hint before completion. */
+  prepareIntegrationTools?: (userText: string) => Promise<string | undefined>;
 }
 
 export class Agent {
@@ -1680,13 +1683,22 @@ Rules:
 
   private async checkConnectivity(baseUrl?: string): Promise<boolean> {
     if (this.connectivityChecked) return true;
+    const providerId = this.config.provider.activeProvider;
     const url = baseUrl ?? this.getBaseUrl();
-    if (!url) return true;
+    const apiKey = this.getApiKey();
+    const probeUrl = buildProviderConnectivityProbeUrl(providerId, url, apiKey);
+    if (!probeUrl) return true;
+
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(url.replace('/v1', '').replace(/\/+$/, '') + '/models', {
-        method: 'HEAD',
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const headers: Record<string, string> = {};
+      if (apiKey && providerId === 'google' && probeUrl.includes('/openai/')) {
+        headers.Authorization = `Bearer ${apiKey}`;
+      }
+      const res = await fetch(probeUrl, {
+        method: 'GET',
+        headers,
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -1696,7 +1708,7 @@ Rules:
       this.emit({
         type: 'error',
         code: 'NETWORK_ERROR',
-        message: `Cannot reach provider at ${url}. Check your internet connection and provider URL.`,
+        message: `Cannot reach provider at ${url ?? probeUrl}. Check your internet connection and provider URL.`,
         recoverable: true,
         actions: [
           { type: 'dismiss', label: 'Dismiss' },
@@ -2378,6 +2390,19 @@ Rules:
     if (!registry) throw new Error('Tool registry not initialized');
     if (!executor) throw new Error('Tool executor not initialized');
 
+    const lastUserMsg = [...this.messages].reverse().find((m) => m.role === 'user');
+    const lastUserText = typeof lastUserMsg?.content === 'string'
+      ? lastUserMsg.content.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim()
+      : '';
+    let integrationHint: string | undefined;
+    if (this.options.prepareIntegrationTools && lastUserText) {
+      try {
+        integrationHint = await this.options.prepareIntegrationTools(lastUserText);
+      } catch (error) {
+        getLogger().warn('AGENT', `Integration pre-turn sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     const compact = this.usesCompactContext();
     const tools = createAiSdkTools(
       registry,
@@ -2435,6 +2460,8 @@ Rules:
         content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
       })),
       compact,
+      3,
+      this.config.provider.activeProvider,
     ).map((m) => ({
       role: m.role as 'user' | 'assistant' | 'system',
       content: m.content,
@@ -2451,16 +2478,20 @@ Rules:
     }
 
     // Prepend turn context so short follow-ups retain session intent
-    const lastUserMsg = [...this.messages].reverse().find((m) => m.role === 'user');
-    const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
-    if (lastUserText) {
-      const turnCtx = this.prepareTurnContext(lastUserText.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim());
-      if (turnCtx.block) {
-        const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
-        const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
-        if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
-          aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
-        }
+    const turnCtx = this.prepareTurnContext(lastUserText);
+    if (turnCtx.block) {
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
+        aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
+      }
+    }
+
+    if (integrationHint) {
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[INTEGRATION')) {
+        aiMessages[userIdx] = { role: 'user', content: `${integrationHint}\n\n${userMsg.content}` };
       }
     }
 
@@ -2503,6 +2534,12 @@ Rules:
       let stepCapContinuations = 0;
       const stepBudget = this.completionStepBudget();
       const stepLimit = () => stepBudget;
+      const googleProviderOptions = this.config.provider.activeProvider === 'google'
+        ? buildGoogleAiSdkProviderOptions(
+          this.config.provider.activeModel,
+          this.config.provider.activeReasoningEffort,
+        )
+        : undefined;
       const result = streamText({
         model,
         messages: aiMessages,
@@ -2511,6 +2548,7 @@ Rules:
         maxRetries: 2,
         stopWhen: ({ steps }) => steps.length >= stepLimit(),
         toolChoice: 'auto',
+        ...(googleProviderOptions ? { providerOptions: googleProviderOptions } : {}),
         prepareStep: async ({ stepNumber, messages }) => {
           this.turnState.setStage('execution', stepNumber);
           const stepBudgetBase = this.options.promptProfile === 'crew_private'
@@ -2591,7 +2629,7 @@ Rules:
               ...(worked ? [{ role: 'assistant' as const, content: text || '(executed tools)' }] : []),
               { role: 'user' as const, content: worked
                 ? `[SYSTEM] You just ran these tools:\n${toolSummary}\n\nNow respond to the user based on these results. Read files if needed. Analyze what you found. Be thorough.`
-                : `[SYSTEM] The user said: "${aiMessages[aiMessages.length - 1]?.content?.slice(0, 500)}"\n\nUse tools to explore, find files, read content, and respond. Do not return empty — take action.`
+                : `[SYSTEM] The user said: "${aiMessages[aiMessages.length - 1]?.content?.slice(0, 500)}"\n\nUse the appropriate tools to answer. Prefer connected MCP integration tools when the request targets an external service — do not scan the local filesystem as a substitute. Do not return empty.`
               },
             ],
             tools: createAiSdkTools(this.toolRegistry!, this.toolExecutor!, this.sessionId, (e) => this.emit(e), async () => 'continue', async () => ({ success: true, output: '(fallback)', elapsed: 0 }), this.planMode, undefined, undefined, 'default', compact),
@@ -3746,13 +3784,24 @@ Only include specialists that are actually needed for this task.`;
   }
 
   private getApiKey(): string | undefined {
-    const providerSettings = this.config.provider.providers?.[this.config.provider.activeProvider];
-    return providerSettings?.apiKey;
+    const creds = this.getProviderCredentials();
+    return creds.apiKey;
   }
 
   private getBaseUrl(): string | undefined {
+    const creds = this.getProviderCredentials();
+    return creds.baseUrl;
+  }
+
+  private getProviderCredentials(): { apiKey?: string; baseUrl?: string } {
     const providerSettings = this.config.provider.providers?.[this.config.provider.activeProvider];
-    return providerSettings?.baseUrl;
+    if (!providerSettings) return {};
+    const activeProfileId = providerSettings.activeProfile;
+    const profile = activeProfileId ? providerSettings.profiles?.[activeProfileId] : undefined;
+    return {
+      apiKey: profile?.apiKey ?? providerSettings.apiKey,
+      baseUrl: profile?.baseUrl ?? providerSettings.baseUrl,
+    };
   }
 
   /**
@@ -4513,11 +4562,19 @@ Provide the corrected response now:`;
 
     try {
       const model = createAiSdkModel(this.config, this.getApiKey());
-      const aiMessages = this.messages.slice(0, -1).map(m => ({
+      const aiMessages = buildCompletionMessages(
+        this.messages.slice(0, -1).map(m => ({
+          role: m.role,
+          content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+        })),
+        false,
+        3,
+        this.config.provider.activeProvider,
+      ).map((m) => ({
         role: m.role as 'user' | 'assistant' | 'system',
-        content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+        content: m.content,
       }));
-      aiMessages.push({ role: 'user' as const, content: refactorPrompt });
+      aiMessages.push({ role: 'user', content: refactorPrompt });
 
       let refactoredContent = '';
       this.emit({ type: 'loading_start', stage: 'refactoring' });

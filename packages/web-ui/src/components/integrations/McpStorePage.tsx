@@ -4,10 +4,8 @@ import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import InputAdornment from '@mui/material/InputAdornment';
-import HubIcon from '@mui/icons-material/Hub';
 import SearchIcon from '@mui/icons-material/Search';
 import { settingsTheme, settingsGridBgSx, settingsMonoSx, settingsTextFieldSx } from '../../styles/settings-theme';
-import { SettingsSectionHeader } from '../settings/SettingsSectionHeader';
 import { StoreProviderCard } from './StoreProviderCard';
 import { ProviderDetailModal } from './ProviderDetailModal';
 import { IntegrationAuditPanel } from './IntegrationAuditPanel';
@@ -18,10 +16,6 @@ import type { IntegrationProvider } from '../../api';
 
 type StoreTab = 'browse' | 'installed' | 'activity';
 type CategoryFilter = 'all' | 'connected' | (typeof CATEGORY_ORDER)[number];
-
-export interface McpStorePageProps {
-  embedded?: boolean;
-}
 
 function renderProviderGrid(
   providers: IntegrationProvider[],
@@ -46,7 +40,7 @@ function renderProviderGrid(
   );
 }
 
-export function McpStorePage({ embedded = false }: McpStorePageProps) {
+export function McpStorePage() {
   const hub = useIntegrationsHub();
   const [tab, setTab] = useState<StoreTab>('browse');
   const [category, setCategory] = useState<CategoryFilter>('all');
@@ -109,42 +103,32 @@ export function McpStorePage({ embedded = false }: McpStorePageProps) {
 
   return (
     <Box sx={{
-      height: embedded ? 'auto' : '100%',
+      height: '100%',
       display: 'flex',
       flexDirection: 'column',
       overflow: 'hidden',
       bgcolor: settingsTheme.bg.void,
-      ...(!embedded ? settingsGridBgSx : {}),
+      ...settingsGridBgSx,
     }}>
-      {!embedded && (
-        <Box sx={{ px: 3, pt: 3, pb: 1, flexShrink: 0 }}>
-          <Typography sx={{
-            fontSize: { xs: '2.5rem', md: '3.25rem' },
-            fontWeight: 800,
-            color: settingsTheme.text.primary,
-            letterSpacing: '-0.04em',
-            lineHeight: 1,
-          }}>
-            MCP Store
-          </Typography>
-          <Typography sx={{ fontSize: '0.75rem', color: settingsTheme.text.dim, mt: 1, ...settingsMonoSx }}>
-            Connect services to your agent
-          </Typography>
-        </Box>
-      )}
-
-      {embedded && (
-        <SettingsSectionHeader
-          icon={<HubIcon sx={{ fontSize: 16 }} />}
-          title="MCP Store"
-          subtitle="Browse and connect MCP services"
-        />
-      )}
+      <Box sx={{ px: 3, pt: 3, pb: 1, flexShrink: 0 }}>
+        <Typography sx={{
+          fontSize: { xs: '2.5rem', md: '3.25rem' },
+          fontWeight: 800,
+          color: settingsTheme.text.primary,
+          letterSpacing: '-0.04em',
+          lineHeight: 1,
+        }}>
+          MCP Store
+        </Typography>
+        <Typography sx={{ fontSize: '0.75rem', color: settingsTheme.text.dim, mt: 1, ...settingsMonoSx }}>
+          Connect services to your agent
+        </Typography>
+      </Box>
 
       <Box sx={{
         display: 'flex',
         gap: 0.5,
-        px: embedded ? 0 : 3,
+        px: 3,
         py: 1,
         borderBottom: `1px solid ${settingsTheme.border.default}`,
         flexShrink: 0,
@@ -176,13 +160,13 @@ export function McpStorePage({ embedded = false }: McpStorePageProps) {
 
       <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {hub.message && (
-          <Typography sx={{ fontSize: '0.68rem', color: settingsTheme.text.secondary, px: embedded ? 0 : 3, pt: 2, flexShrink: 0, ...settingsMonoSx }}>
+          <Typography sx={{ fontSize: '0.68rem', color: settingsTheme.text.secondary, px: 3, pt: 2, flexShrink: 0, ...settingsMonoSx }}>
             {hub.message}
           </Typography>
         )}
 
         {tab === 'activity' && (
-          <Box sx={{ flex: 1, overflow: 'auto', px: embedded ? 0 : 3, py: 2 }}>
+          <Box sx={{ flex: 1, overflow: 'auto', px: 3, py: 2 }}>
             <IntegrationAuditPanel />
           </Box>
         )}
@@ -194,7 +178,7 @@ export function McpStorePage({ embedded = false }: McpStorePageProps) {
             display: 'flex',
             gap: 3,
             minHeight: 0,
-            px: embedded ? 0 : 3,
+            px: 3,
           }}>
             {tab === 'browse' && (
               <Box sx={{
@@ -239,7 +223,7 @@ export function McpStorePage({ embedded = false }: McpStorePageProps) {
               </Box>
             )}
 
-            <Box sx={{ flex: 1, minWidth: 0, overflowY: 'auto', py: 2, pb: embedded ? 2 : 6 }}>
+            <Box sx={{ flex: 1, minWidth: 0, overflowY: 'auto', py: 2, pb: 6 }}>
               <Box sx={{ display: 'flex', gap: 1, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
                 <TextField
                   size="small"

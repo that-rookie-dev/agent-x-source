@@ -60,28 +60,77 @@ export interface CompletionMessageLike {
   content: string;
 }
 
+/**
+ * Gemini rejects system messages after the first user/assistant turn.
+ * Merge leading system messages into one, and fold mid-conversation system notes into user messages.
+ */
+export function normalizeAiSdkMessages(
+  messages: CompletionMessageLike[],
+): CompletionMessageLike[] {
+  const result: CompletionMessageLike[] = [];
+  const leadingSystem: string[] = [];
+  let seenNonSystem = false;
+
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      if (!seenNonSystem) {
+        if (msg.content.trim()) leadingSystem.push(msg.content);
+        continue;
+      }
+      result.push({
+        role: 'user',
+        content: `[SYSTEM NOTE]\n${msg.content}\n[/SYSTEM NOTE]`,
+      });
+      continue;
+    }
+
+    seenNonSystem = true;
+    result.push({ role: msg.role, content: msg.content });
+  }
+
+  if (leadingSystem.length > 0) {
+    result.unshift({ role: 'system', content: leadingSystem.join('\n\n') });
+  }
+
+  return result;
+}
+
+/** Apply Gemini-specific message normalization only when the active provider requires it. */
+export function normalizeAiSdkMessagesForProvider(
+  messages: CompletionMessageLike[],
+  providerId?: string,
+): CompletionMessageLike[] {
+  if (providerId !== 'google') {
+    return messages.map((m) => ({ role: m.role, content: m.content }));
+  }
+  return normalizeAiSdkMessages(messages);
+}
+
 /** Compact path: one system baseline + recent turns only (drops system diffs / old history). */
 export function buildCompletionMessages(
   messages: CompletionMessageLike[],
   compact: boolean,
   maxRecentTurns = 3,
+  providerId?: string,
 ): CompletionMessageLike[] {
+  let built: CompletionMessageLike[];
   if (!compact) {
-    return messages.map((m) => ({ role: m.role, content: m.content }));
+    built = messages.map((m) => ({ role: m.role, content: m.content }));
+  } else {
+    const systemBaseline = messages.find((m) => m.role === 'system')?.content ?? '';
+    const nonSystem = messages.filter((m) => m.role !== 'system');
+    const recent = nonSystem.slice(-maxRecentTurns * 2);
+
+    built = [];
+    if (systemBaseline.trim()) {
+      built.push({ role: 'system', content: systemBaseline });
+    }
+    for (const m of recent) {
+      built.push({ role: m.role, content: m.content });
+    }
   }
 
-  const systemBaseline = messages.find((m) => m.role === 'system')?.content ?? '';
-  const nonSystem = messages.filter((m) => m.role !== 'system');
-  const recent = nonSystem.slice(-maxRecentTurns * 2);
-
-  const result: CompletionMessageLike[] = [];
-  if (systemBaseline.trim()) {
-    result.push({ role: 'system', content: systemBaseline });
-  }
-  for (const m of recent) {
-    result.push({ role: m.role, content: m.content });
-  }
-  return result;
+  return normalizeAiSdkMessagesForProvider(built, providerId);
 }
 
 export const COMPACT_MEMORY_MAX_CHARS = 2_000;

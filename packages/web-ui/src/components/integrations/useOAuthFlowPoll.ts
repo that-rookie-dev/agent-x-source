@@ -14,13 +14,17 @@ export function useOAuthFlowPoll(options: {
     if (!enabled || !state) return;
 
     let cancelled = false;
+    let settled = false;
     const poll = async () => {
+      if (settled) return;
       try {
         const { result } = await integrations.oauthResult(state);
-        if (cancelled) return;
+        if (cancelled || settled) return;
         if (result.status === 'completed') {
+          settled = true;
           onComplete();
         } else if (result.status === 'failed' || result.status === 'expired') {
+          settled = true;
           onFailed(result.message ?? 'Sign-in did not complete. Click "Sign in again" to retry.');
         }
       } catch {

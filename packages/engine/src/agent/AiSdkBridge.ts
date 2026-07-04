@@ -1,4 +1,5 @@
 import { tool, jsonSchema, streamText, stepCountIs, type ToolSet, type LanguageModel } from 'ai';
+import { normalizeAiSdkMessagesForProvider } from './context-profile.js';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -15,6 +16,7 @@ import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, Completion
 import { normalizeAskClarificationArgs } from '@agentx/shared';
 import { isToolAllowedInPlanMode, buildPlanModeRestrictedToolHint, type PlanGatePromptProfile } from './plan-mode-utils.js';
 import { isCompactToolAllowed } from './context-profile.js';
+import { resolveGoogleNativeBaseUrl } from '../providers/google/gemini-metadata.js';
 
 const DEFAULT_BASE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
@@ -58,7 +60,10 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       return anthropic(modelId);
     }
     case 'google': {
-      const google = createGoogleGenerativeAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+      const google = createGoogleGenerativeAI({
+        apiKey,
+        baseURL: resolveGoogleNativeBaseUrl(baseURL),
+      });
       return google(modelId);
     }
     case 'azure': {
@@ -107,17 +112,91 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
   }
 }
 
-function convertToJsonSchema(schema: unknown): Record<string, unknown> {
+type SchemaRecord = Record<string, unknown>;
+
+const ARRAY_OBJECT_ITEM_PROPERTIES: Record<string, SchemaRecord> = {
+  slides: { title: { type: 'string' }, content: { type: 'string' } },
+  sections: { heading: { type: 'string' }, content: { type: 'string' }, code: { type: 'string' } },
+  datasets: {
+    label: { type: 'string' },
+    data: { type: 'array', items: { type: 'number' } },
+    color: { type: 'string' },
+  },
+  todos: { id: { type: 'number' }, content: { type: 'string' }, status: { type: 'string' } },
+  edits: { search: { type: 'string' }, replace: { type: 'string' } },
+};
+
+function inferArrayItems(schema: SchemaRecord, propName?: string): SchemaRecord {
+  const desc = String(schema.description ?? '').toLowerCase();
+  const name = (propName ?? '').toLowerCase();
+
+  if (name === 'rows' || desc.includes('row array')) {
+    return { type: 'array', items: { type: 'string' } };
+  }
+
+  if (name in ARRAY_OBJECT_ITEM_PROPERTIES) {
+    return { type: 'object', properties: ARRAY_OBJECT_ITEM_PROPERTIES[name] };
+  }
+
+  if (desc.includes('{') || desc.includes('object')) {
+    return { type: 'object', properties: {} };
+  }
+
+  return { type: 'string' };
+}
+
+/** Recursively ensure array schemas include items — required by Gemini function declarations. */
+export function normalizeJsonSchemaNode(node: unknown, propName?: string): SchemaRecord {
+  if (typeof node !== 'object' || node === null || Array.isArray(node)) {
+    return { type: 'string' };
+  }
+
+  const source = node as SchemaRecord;
+  const out: SchemaRecord = { ...source };
+
+  if (Array.isArray(out.type)) {
+    const primary = out.type.find((t) => t !== 'null');
+    out.type = primary ?? 'string';
+  }
+
+  if (out.properties && typeof out.properties === 'object' && !Array.isArray(out.properties)) {
+    const normalized: SchemaRecord = {};
+    for (const [key, value] of Object.entries(out.properties as SchemaRecord)) {
+      normalized[key] = normalizeJsonSchemaNode(value, key);
+    }
+    out.properties = normalized;
+  }
+
+  if (out.type === 'array' && !out.items) {
+    out.items = inferArrayItems(out, propName);
+  }
+
+  if (out.items) {
+    out.items = normalizeJsonSchemaNode(out.items, propName);
+  }
+
+  for (const combiner of ['oneOf', 'anyOf', 'allOf'] as const) {
+    if (Array.isArray(out[combiner])) {
+      out[combiner] = (out[combiner] as unknown[]).map((entry, index) =>
+        normalizeJsonSchemaNode(entry, propName ? `${propName}_${combiner}_${index}` : undefined),
+      );
+    }
+  }
+
+  return out;
+}
+
+export function convertToJsonSchema(schema: unknown): Record<string, unknown> {
   if (typeof schema === 'object' && schema !== null) {
-    const s = schema as Record<string, unknown>;
+    const normalized = normalizeJsonSchemaNode(schema);
     return {
-      type: s.type || 'object',
-      properties: s.properties || {},
-      required: Array.isArray(s.required) ? s.required : [],
+      type: normalized.type || 'object',
+      properties: normalized.properties || {},
+      required: Array.isArray(normalized.required) ? normalized.required : [],
       additionalProperties: false,
     };
   }
-  return { type: 'object', properties: {}, required: [] };
+  return { type: 'object', properties: {}, required: [], additionalProperties: false };
 }
 
 export function createAiSdkTools(
@@ -343,7 +422,7 @@ export async function* aiSdkStream(
   try {
     const result = streamText({
       model,
-      messages: messages.map(m => ({
+      messages: normalizeAiSdkMessagesForProvider(messages, config.provider.activeProvider).map(m => ({
         role: m.role as 'system' | 'user' | 'assistant',
         content: m.content,
       })),

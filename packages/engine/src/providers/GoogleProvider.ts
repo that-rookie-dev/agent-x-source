@@ -1,5 +1,22 @@
 import type { CompletionRequest, CompletionChunk, CompletionToolCall, ModelInfo, ProviderId } from '@agentx/shared';
 import type { ProviderInterface } from './ProviderInterface.js';
+import {
+  GEMINI_OPENAI_BASE,
+  listGeminiModels,
+  normalizeGoogleModelId,
+} from './google/gemini-metadata.js';
+
+export { normalizeGoogleModelId, listGeminiModels, fetchNativeGeminiModel } from './google/gemini-metadata.js';
+
+function extractReasoningContent(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.text === 'string') return obj.text;
+    if (typeof obj.content === 'string') return obj.content;
+  }
+  return undefined;
+}
 
 export class GoogleProvider implements ProviderInterface {
   readonly id: ProviderId = 'google';
@@ -9,7 +26,7 @@ export class GoogleProvider implements ProviderInterface {
 
   constructor(apiKey: string, baseUrl?: string) {
     this.apiKey = apiKey;
-    this.baseUrl = baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta/openai';
+    this.baseUrl = baseUrl ?? GEMINI_OPENAI_BASE;
   }
 
   async validate(): Promise<boolean> {
@@ -25,66 +42,15 @@ export class GoogleProvider implements ProviderInterface {
   }
 
   async listModels(): Promise<ModelInfo[]> {
-    // Use Google's native API which returns inputTokenLimit per model
-    const nativeBase = 'https://generativelanguage.googleapis.com/v1beta';
-    try {
-      const response = await fetch(`${nativeBase}/models?key=${this.apiKey}`, {
-        signal: AbortSignal.timeout(10000),
-      });
-      if (response.ok) {
-        const data = (await response.json()) as {
-          models?: Array<{
-            name: string;
-            displayName?: string;
-            inputTokenLimit?: number;
-            supportedGenerationMethods?: string[];
-          }>;
-        };
-        const models = (data.models ?? [])
-          .filter((m) => m.name.includes('gemini') && m.supportedGenerationMethods?.includes('generateContent'))
-          .map((m): ModelInfo => ({
-            id: m.name,
-            name: m.displayName ?? m.name.replace('models/', ''),
-            providerId: 'google',
-            contextWindow: m.inputTokenLimit ?? 1000000,
-            capabilities: ['text', 'function_calling', 'streaming'],
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-        if (models.length > 0) return models;
-      }
-    } catch { /* fall through to OpenAI-compat endpoint */ }
-
-    // Fallback: OpenAI-compatible endpoint (no token limits)
-    const response = await fetch(`${this.baseUrl}/models`, {
-      headers: { Authorization: `Bearer ${this.apiKey}` },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch models: ${response.status} ${response.statusText}`);
-    }
-
-    const data = (await response.json()) as { data?: Array<{ id: string }> };
-    return (data.data ?? [])
-      .filter((m) => m.id.includes('gemini'))
-      .map((m): ModelInfo => ({
-        id: m.id,
-        name: m.id,
-        providerId: 'google',
-        contextWindow: 1000000,
-        capabilities: ['text', 'function_calling', 'streaming'],
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    return listGeminiModels(this.apiKey, this.baseUrl);
   }
 
   async *complete(request: CompletionRequest): AsyncIterable<CompletionChunk> {
-    // Google's OpenAI-compatible endpoint supports tool calling
-    // but requires thought_signature on assistant tool calls in follow-up turns.
+    const modelId = normalizeGoogleModelId(request.model);
     const body: Record<string, unknown> = {
-      model: request.model,
+      model: modelId,
       messages: request.messages.map((m) => {
         if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-          // Add empty thought_signature to each tool call for Gemini compatibility
           const toolCalls = m.toolCalls.map((tc) => ({
             ...tc,
             thought_signature: tc.thought_signature ?? '',
@@ -110,6 +76,10 @@ export class GoogleProvider implements ProviderInterface {
       body['temperature'] = request.temperature;
     }
 
+    if (request.reasoningEffort) {
+      body['reasoning_effort'] = request.reasoningEffort;
+    }
+
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -132,66 +102,79 @@ export class GoogleProvider implements ProviderInterface {
     let buffer = '';
     let usage: { inputTokens: number; outputTokens: number } | undefined;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6);
-        if (data === '[DONE]') {
-          yield { type: 'done', usage };
-          return;
-        }
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+          const data = trimmed.slice(6);
+          if (data === '[DONE]') {
+            yield { type: 'done', usage };
+            return;
+          }
 
-        try {
-          const parsed = JSON.parse(data) as {
-            choices?: Array<{
-              delta?: {
-                content?: string;
-                tool_calls?: Array<{
-                  id?: string;
-                  type?: string;
-                  function?: { name?: string; arguments?: string };
-                }>;
+          try {
+            const parsed = JSON.parse(data) as {
+              choices?: Array<{
+                delta?: {
+                  content?: string;
+                  reasoning_content?: unknown;
+                  tool_calls?: Array<{
+                    id?: string;
+                    type?: string;
+                    index?: number;
+                    function?: { name?: string; arguments?: string };
+                  }>;
+                };
+              }>;
+              usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+            };
+            if (parsed.usage) {
+              usage = {
+                inputTokens: parsed.usage.prompt_tokens ?? 0,
+                outputTokens: parsed.usage.completion_tokens ?? 0,
               };
-            }>;
-            usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
-          };
-          if (parsed.usage) {
-            usage = {
-              inputTokens: parsed.usage.prompt_tokens ?? 0,
-              outputTokens: parsed.usage.completion_tokens ?? 0,
-            };
+            }
+            const delta = parsed.choices?.[0]?.delta;
+            if (!delta) continue;
+
+            if (delta.content) {
+              yield { type: 'text_delta', content: delta.content };
+            }
+            const reasoning = extractReasoningContent(delta.reasoning_content);
+            if (reasoning) {
+              yield { type: 'reasoning_delta', content: reasoning };
+            }
+            if (delta.tool_calls && delta.tool_calls.length > 0) {
+              const tc = delta.tool_calls[0];
+              const toolCall = tc ? {
+                index: tc.index,
+                id: tc.id ?? undefined,
+                type: tc.type === 'function' ? 'function' : undefined,
+                function: tc.function ? {
+                  name: tc.function.name ?? '',
+                  arguments: tc.function.arguments ?? '',
+                } : undefined,
+              } as Partial<CompletionToolCall> & { index?: number } : undefined;
+              yield {
+                type: 'tool_call_delta',
+                toolCall,
+              };
+            }
+          } catch {
+            // Skip malformed chunks
           }
-          const delta = parsed.choices?.[0]?.delta;
-          if (delta?.content) {
-            yield { type: 'text_delta', content: delta.content };
-          }
-          if (delta?.tool_calls && delta.tool_calls.length > 0) {
-            const tc = delta.tool_calls[0];
-            const toolCall = tc ? {
-              index: (tc as { index?: number }).index,
-              id: tc.id ?? undefined,
-              type: tc.type === 'function' ? 'function' : undefined,
-              function: tc.function ? {
-                name: tc.function.name ?? '',
-                arguments: tc.function.arguments ?? '',
-              } : undefined,
-            } as Partial<CompletionToolCall> & { index?: number } : undefined;
-            yield {
-              type: 'tool_call_delta',
-              toolCall,
-            };
-          }
-        } catch {
-          // Skip malformed chunks
         }
       }
+    } finally {
+      reader.releaseLock();
     }
 
     yield { type: 'done', usage };

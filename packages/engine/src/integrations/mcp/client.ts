@@ -70,6 +70,21 @@ export class McpSession {
     return result;
   }
 
+  async listResources(cursor?: string): Promise<{
+    resources: Array<{ uri: string; name?: string; mimeType?: string }>;
+    nextCursor?: string;
+  }> {
+    const result = await this.client.listResources(cursor ? { cursor } : undefined);
+    return {
+      resources: result.resources.map((resource) => ({
+        uri: resource.uri,
+        name: resource.name,
+        mimeType: resource.mimeType,
+      })),
+      nextCursor: result.nextCursor,
+    };
+  }
+
   async readResource(uri: string): Promise<unknown> {
     return this.client.readResource({ uri });
   }

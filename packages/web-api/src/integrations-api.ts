@@ -117,6 +117,10 @@ router.post('/integrations/:providerId/oauth/start', async (req: Request, res: R
   }
 });
 
+router.get('/integrations/oauth/redirect-uri', (_req: Request, res: Response) => {
+  res.json({ redirectUri: getEngine().integrationHub.getOAuthRedirectUri() });
+});
+
 router.get('/integrations/oauth/result', (req: Request, res: Response) => {
   const state = String(req.query.state ?? '');
   const eng = getEngine();
@@ -130,7 +134,11 @@ router.get('/integrations/oauth/callback', async (req: Request, res: Response) =
   const acceptsHtml = (req.headers.accept ?? '').includes('text/html');
 
   if (errorParam) {
-    const message = `OAuth denied: ${errorParam}`;
+    const message = errorParam === 'access_denied'
+      ? 'OAuth denied: access was not granted.'
+      : /redirect_uri/i.test(errorParam)
+        ? `OAuth redirect URI mismatch (${errorParam}). Click Sign in again — Agent-X will register a fresh OAuth client.`
+        : `OAuth denied: ${errorParam}`;
     if (state) getEngine().integrationHub.recordOAuthFailure(state, message);
     if (acceptsHtml) {
       return res.status(400).send(oauthResultPage(false, message));
@@ -159,6 +167,24 @@ router.get('/integrations/oauth/callback', async (req: Request, res: Response) =
     if (acceptsHtml) return res.status(400).send(oauthResultPage(false, message));
     res.status(400).json({ error: message });
   }
+});
+
+router.post('/integrations/:connectionId/mcp-auth', async (req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    const connectionId = req.params.connectionId!;
+    const result = await eng.integrationHub.runMcpStdioAuth(connectionId);
+    if (result.success) syncIntegrationTools();
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.get('/integrations/:connectionId/mcp-auth/status', (req: Request, res: Response) => {
+  const eng = getEngine();
+  const connectionId = req.params.connectionId!;
+  res.json(eng.integrationHub.getMcpStdioAuthStatus(connectionId));
 });
 
 router.get('/integrations/:connectionId/resources', async (req: Request, res: Response) => {

@@ -551,6 +551,11 @@ export async function pdfRead(args: Record<string, unknown>, context: ToolExecut
   }
 }
 
+/** Extract plain text from a PDF buffer (shared with integration bridges). */
+export function extractPdfTextFromBuffer(buffer: Buffer): string {
+  return extractPdfText(buffer);
+}
+
 function extractPdfText(buffer: Buffer): string {
   const bytes = buffer;
   const textParts: string[] = [];

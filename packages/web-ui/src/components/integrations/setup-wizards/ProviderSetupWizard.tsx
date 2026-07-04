@@ -13,6 +13,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import LinearProgress from '@mui/material/LinearProgress';
 import { canUseHubBrowserOAuth } from '../integration-ui';
 import { PackageSignInPanel } from '../PackageSignInPanel';
+import { McpStdioAuthPanel } from '../McpStdioAuthPanel';
 import { PreflightPanel } from './PreflightPanel';
 import { useOAuthFlowPoll } from '../useOAuthFlowPoll';
 import type { ConnectIntegrationRequest, IntegrationConnection, IntegrationProvider } from '../../../api';
@@ -82,16 +83,18 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
   const isFolderSandbox = template === 'folder_sandbox';
   const isRemoteUrl = template === 'remote_url' || provider.auth.primary === 'remote_url';
   const isPackageSignIn = template === 'package_sign_in';
+  const isMcpStdioAuth = template === 'mcp_stdio_auth';
   const isSqlite = provider.id === 'sqlite';
   const hasFields = (provider.auth.fields?.length ?? 0) > 0;
   const desktop = typeof window !== 'undefined' ? window.agentx : undefined;
 
   const stepOrder = useMemo<WizardStep[]>(() => {
+    if (isMcpStdioAuth) return ['welcome', 'preflight', 'credentials', 'signin', 'test', 'done'];
     const steps: WizardStep[] = ['welcome', 'preflight', 'credentials', 'test'];
     if (isPackageSignIn) steps.push('signin');
     steps.push('done');
     return steps;
-  }, [isPackageSignIn]);
+  }, [isMcpStdioAuth, isPackageSignIn]);
 
   const [step, setStep] = useState<WizardStep>('welcome');
   const [preflightReady, setPreflightReady] = useState(false);
@@ -108,6 +111,15 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
   const [testResult, setTestResult] = useState<{ ok: boolean; toolCount: number; toolNames: string[]; error?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [oauthRedirectUri, setOauthRedirectUri] = useState('');
+  const [redirectUriCopied, setRedirectUriCopied] = useState(false);
+
+  useEffect(() => {
+    if (!useOAuth) return;
+    integrations.oauthRedirectUri()
+      .then((r) => setOauthRedirectUri(r.redirectUri))
+      .catch(() => { /* hint is optional */ });
+  }, [useOAuth]);
 
   const stepIndex = (s: WizardStep) => stepOrder.indexOf(s);
   const progress = ((stepIndex(step) + 1) / stepOrder.length) * 100;
@@ -145,6 +157,21 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
       return;
     }
 
+    if (isMcpStdioAuth) {
+      setBusy(true);
+      try {
+        const request = buildConnectRequest(provider, displayName, envValues, remoteUrl, folderPath);
+        const connection = await onConnect(request);
+        setSavedConnection(connection);
+        setStep('signin');
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const checks = credentialPreflightChecks(provider.id);
     if (checks.length === 0) {
       goNext();
@@ -176,6 +203,18 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
     setError('');
     setTestResult(null);
     try {
+      if (isMcpStdioAuth && savedConnection) {
+        const { connection } = await integrations.sync(savedConnection.id);
+        const ok = connection.status === 'connected';
+        setTestResult({
+          ok,
+          toolCount: connection.toolCount ?? 0,
+          toolNames: [],
+          error: connection.error,
+        });
+        if (!ok) setError(connection.error ?? 'Connection test failed');
+        return;
+      }
       const request = buildConnectRequest(provider, displayName, envValues, remoteUrl, folderPath);
       const result = await integrations.connectTest(provider.id, request);
       setTestResult(result);
@@ -188,6 +227,10 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
   };
 
   const finishConnect = async () => {
+    if (isMcpStdioAuth && savedConnection) {
+      setStep('done');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -326,6 +369,34 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
                   </Typography>
                 </Box>
               ))}
+              {oauthRedirectUri && (
+                <Box sx={{ mb: 1.5, p: 1, borderRadius: 1, border: `1px solid ${settingsTheme.accent.hud}33`, bgcolor: `${settingsTheme.accent.hud}0a` }}>
+                  <Typography sx={{ fontSize: '0.68rem', fontWeight: 600, color: settingsTheme.text.primary, mb: 0.5 }}>
+                    Authorized redirect URI
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.64rem', color: settingsTheme.text.secondary, lineHeight: 1.5, mb: 0.75 }}>
+                    Register this exact URL in your OAuth provider (e.g. Google Cloud Console →
+                    Credentials → your OAuth client → Authorized redirect URIs). A mismatch causes
+                    “Error 400: redirect_uri_mismatch”.
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography sx={{ ...settingsMonoSx, fontSize: '0.62rem', color: settingsTheme.accent.hud, wordBreak: 'break-all', flex: 1 }}>
+                      {oauthRedirectUri}
+                    </Typography>
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(oauthRedirectUri);
+                        setRedirectUriCopied(true);
+                        setTimeout(() => setRedirectUriCopied(false), 2000);
+                      }}
+                      sx={{ fontSize: '0.6rem', textTransform: 'none', minWidth: 0, px: 1, color: settingsTheme.accent.hud }}
+                    >
+                      {redirectUriCopied ? 'Copied' : 'Copy'}
+                    </Button>
+                  </Box>
+                </Box>
+              )}
               <Button
                 fullWidth
                 variant="outlined"
@@ -415,6 +486,11 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
                   After saving the connection, you&apos;ll sign in to {provider.name} in the next step.
                 </Typography>
               )}
+              {isMcpStdioAuth && (
+                <Typography sx={{ fontSize: '0.68rem', color: settingsTheme.text.secondary, mt: 1, lineHeight: 1.5 }}>
+                  Use a Google Cloud Desktop OAuth client (not Web). After saving credentials, Google sign-in runs in the next step.
+                </Typography>
+              )}
             </>
           )}
         </Box>
@@ -456,13 +532,23 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
           <Typography sx={{ fontSize: '0.68rem', color: settingsTheme.text.secondary, mb: 1.5, lineHeight: 1.5 }}>
             Complete browser sign-in to finish setup.
           </Typography>
-          <PackageSignInPanel
-            provider={provider}
-            connection={savedConnection}
-            busy={busy}
-            autoStartSignIn
-            onSignedIn={() => setSignInComplete(true)}
-          />
+          {isMcpStdioAuth ? (
+            <McpStdioAuthPanel
+              provider={provider}
+              connection={savedConnection}
+              busy={busy}
+              autoStart
+              onSignedIn={() => setSignInComplete(true)}
+            />
+          ) : (
+            <PackageSignInPanel
+              provider={provider}
+              connection={savedConnection}
+              busy={busy}
+              autoStartSignIn
+              onSignedIn={() => setSignInComplete(true)}
+            />
+          )}
         </Box>
       )}
 
@@ -523,7 +609,7 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
               onClick={() => { void finishConnect(); }}
               sx={{ fontSize: '0.62rem', bgcolor: settingsTheme.accent.hud, ...settingsMonoSx }}
             >
-              {busy ? <CircularProgress size={14} color="inherit" /> : 'Save connection'}
+              {busy ? <CircularProgress size={14} color="inherit" /> : (isMcpStdioAuth ? 'Finish' : 'Save connection')}
             </Button>
           )}
           {step === 'signin' && (
@@ -531,7 +617,7 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
               size="small"
               variant="contained"
               disabled={!signInComplete}
-              onClick={() => setStep('done')}
+              onClick={() => setStep(isMcpStdioAuth ? 'test' : 'done')}
               sx={{ fontSize: '0.62rem', bgcolor: settingsTheme.accent.hud, ...settingsMonoSx }}
             >
               Continue

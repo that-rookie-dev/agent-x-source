@@ -19,6 +19,7 @@ export { runPreflightChecks, type PreflightContext } from './preflight.js';
 export { enrichProviderSetupWizard, enrichCatalogProviders } from './catalog/setup-wizard.js';
 export { ensureLoginShellPath, resolveStdioCommand, formatStdioSpawnError } from '@agentx/shared';
 export { IntegrationTokenVault } from './oauth/token-vault.js';
+export { resolveIntegrationDek } from './oauth/integration-dek.js';
 export { discoverAuthorizationServerMetadata, discoverMcpResourceAuthorizationServer } from './oauth/discovery.js';
 export {
   listIntegrationProviders,

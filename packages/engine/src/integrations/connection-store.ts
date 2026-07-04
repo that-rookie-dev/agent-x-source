@@ -5,6 +5,7 @@ import type { IntegrationConnection, IntegrationConnectionSecrets, IntegrationSe
 import { getDataDir, getLogger } from '@agentx/shared';
 import { getProviderById } from './catalog/loader.js';
 import { IntegrationTokenVault } from './oauth/token-vault.js';
+import { resolveIntegrationDek } from './oauth/integration-dek.js';
 
 const logger = getLogger();
 
@@ -133,6 +134,19 @@ export class IntegrationConnectionStore {
     if (migrated > 0 || entries.length > 0) {
       this.save();
       logger.info('INTEGRATION_LEGACY_MIGRATED', `Migrated ${migrated} legacy secret(s) to secure vault.`);
+    }
+    return migrated;
+  }
+
+  /** Move per-connection Keychain items into DEK-encrypted files (desktop: uses AGENTX_VAULT_KEY). */
+  async migrateKeychainSecrets(dek: Buffer | null): Promise<number> {
+    const resolved = resolveIntegrationDek(dek);
+    if (!resolved) return 0;
+
+    const { refs, migrated } = await this.vault.migrateKeychainToDek(this.data.secretRefs, resolved);
+    if (migrated > 0) {
+      this.data.secretRefs = refs;
+      this.save();
     }
     return migrated;
   }

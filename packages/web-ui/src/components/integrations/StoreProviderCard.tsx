@@ -1,9 +1,13 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
+import CircularProgress from '@mui/material/CircularProgress';
 import type { IntegrationConnection, IntegrationProvider } from '../../api';
 import { settingsTheme, settingsMonoSx } from '../../styles/settings-theme';
 import { CATEGORY_LABELS, isInstalledConnection, providerPackageSignIn } from './integration-ui';
+import { usePackageSignInStatus } from './usePackageSignInStatus';
+import { useMcpStdioAuthStatus } from './useMcpStdioAuthStatus';
 
 export interface StoreProviderCardProps {
   provider: IntegrationProvider;
@@ -16,7 +20,12 @@ export interface StoreProviderCardProps {
 export function StoreProviderCard({ provider, connection, onOpen, onConnect, onSignIn }: StoreProviderCardProps) {
   const installed = isInstalledConnection(connection);
   const packageSignIn = providerPackageSignIn(provider);
-  const needsSignIn = installed && Boolean(packageSignIn);
+  const { isChecking, isSignedIn, needsSignIn } = usePackageSignInStatus(provider, connection);
+  const {
+    isChecking: isMcpAuthChecking,
+    isSignedIn: isMcpAuthSignedIn,
+    needsSignIn: needsMcpAuthSignIn,
+  } = useMcpStdioAuthStatus(provider, connection);
 
   return (
     <Box
@@ -83,7 +92,61 @@ export function StoreProviderCard({ provider, connection, onOpen, onConnect, onS
         </Button>
       )}
 
-      {needsSignIn && (
+      {installed && packageSignIn && isChecking && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, alignSelf: 'flex-start' }}>
+          <CircularProgress size={12} />
+          <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+            Checking account…
+          </Typography>
+        </Box>
+      )}
+
+      {installed && packageSignIn && isSignedIn && (
+        <Chip
+          label="Signed in"
+          size="small"
+          onClick={(e) => e.stopPropagation()}
+          sx={{
+            alignSelf: 'flex-start',
+            height: 22,
+            fontSize: '0.62rem',
+            fontWeight: 600,
+            bgcolor: `${settingsTheme.accent.signal}22`,
+            color: settingsTheme.accent.signal,
+            border: `1px solid ${settingsTheme.accent.signal}55`,
+            ...settingsMonoSx,
+          }}
+        />
+      )}
+
+      {installed && provider.auth.mcpStdioAuth && isMcpAuthChecking && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, alignSelf: 'flex-start' }}>
+          <CircularProgress size={12} />
+          <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+            Checking Google sign-in…
+          </Typography>
+        </Box>
+      )}
+
+      {installed && provider.auth.mcpStdioAuth && isMcpAuthSignedIn && (
+        <Chip
+          label="Signed in"
+          size="small"
+          onClick={(e) => e.stopPropagation()}
+          sx={{
+            alignSelf: 'flex-start',
+            height: 22,
+            fontSize: '0.62rem',
+            fontWeight: 600,
+            bgcolor: `${settingsTheme.accent.signal}22`,
+            color: settingsTheme.accent.signal,
+            border: `1px solid ${settingsTheme.accent.signal}55`,
+            ...settingsMonoSx,
+          }}
+        />
+      )}
+
+      {(needsSignIn || needsMcpAuthSignIn) && (
         <Button
           size="small"
           variant="outlined"
@@ -101,7 +164,9 @@ export function StoreProviderCard({ provider, connection, onOpen, onConnect, onS
             ...settingsMonoSx,
           }}
         >
-          Sign in to {packageSignIn?.label ?? provider.name}
+          {needsMcpAuthSignIn
+            ? `Sign in with Google (${provider.name})`
+            : `Sign in to ${packageSignIn?.label ?? provider.name}`}
         </Button>
       )}
     </Box>

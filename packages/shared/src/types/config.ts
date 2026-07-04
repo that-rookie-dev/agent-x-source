@@ -1,4 +1,4 @@
-import type { ProviderId } from './provider.js';
+import type { ProviderId, ReasoningEffortLevel } from './provider.js';
 import type { RAGConfig } from './rag.js';
 import type { PermissionRule } from './permission.js';
 import type { NotificationChannelsConfig } from './channels.js';
@@ -112,6 +112,8 @@ export interface FeatureRoutingConfig {
 export interface ProviderSettings {
   activeProvider: ProviderId;
   activeModel: string;
+  /** Selected reasoning/thinking depth for the active model (when supported). */
+  activeReasoningEffort?: ReasoningEffortLevel;
   providers: Record<string, ProviderCredentials>;
 }
 

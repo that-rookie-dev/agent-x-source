@@ -22,6 +22,7 @@ const LIFESTYLE_CATEGORIES = new Set<IntegrationCategory>([
 
 function inferTemplate(provider: IntegrationProvider): SetupWizardTemplate {
   if (provider.id === 'custom') return 'custom';
+  if (provider.auth.mcpStdioAuth) return 'mcp_stdio_auth';
   if (provider.auth.packageSignIn) return 'package_sign_in';
   if (provider.auth.primary === 'oauth' || provider.auth.primary === 'sign_in_browser') {
     return provider.server.type === 'remote' ? 'oauth_remote' : 'oauth_remote';
@@ -97,7 +98,7 @@ const PROVIDER_SETUP_COPY: Record<string, ProviderSetupCopy> = {
       'Turn meeting notes and tasks into actions from chat',
     ],
     connectGuide: [
-      { title: 'Sign in with Notion', body: 'A browser window opens for you to authorise Agent-X. Approve access to continue.' },
+      { title: 'Sign in with Notion', body: 'A browser window opens for you to authorise Agent-X. Approve access to continue. If you see “Invalid redirect_uri”, click Sign in again — Agent-X registers a fresh OAuth client automatically.' },
       { title: 'Share your pages', body: 'After signing in, open Notion and share the pages or databases you want Agent-X to use (••• → Connections → Agent-X).', link: 'https://www.notion.so' },
     ],
   },
@@ -205,8 +206,9 @@ const PROVIDER_SETUP_COPY: Record<string, ProviderSetupCopy> = {
   'google-drive': {
     highlights: ['Search and read your Google Drive files', 'Pull docs and sheets into your workflow'],
     connectGuide: [
-      { title: 'Create an OAuth client', body: 'In Google Cloud Console create an OAuth client (Web application) and paste the Client ID into this wizard when asked.', link: 'https://console.cloud.google.com/apis/credentials' },
-      { title: 'Sign in with Google', body: 'Authorise Agent-X in the browser window to grant read access to your Drive.' },
+      { title: 'Enable Google Drive API', body: 'Enable the Drive API in your Google Cloud project before connecting.', link: 'https://console.cloud.google.com/apis/library/drive.googleapis.com' },
+      { title: 'Desktop OAuth client', body: 'Create a Desktop app OAuth client (not Web). Paste the Client ID and Secret in the wizard.' },
+      { title: 'Test users (Testing mode)', body: 'If your consent screen is in Testing, add your Google email under Test users or Google returns access_denied.' },
     ],
   },
   stripe: {

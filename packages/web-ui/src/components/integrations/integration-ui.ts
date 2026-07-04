@@ -2,14 +2,22 @@ import type { IntegrationConnection, IntegrationProvider } from '../../api';
 
 export function isInstalledConnection(connection?: IntegrationConnection): boolean {
   if (!connection) return false;
-  return connection.status === 'connected' || connection.status === 'syncing' || connection.status === 'error';
+  return connection.status === 'connected'
+    || connection.status === 'syncing'
+    || connection.status === 'error'
+    || connection.status === 'disconnected';
 }
 
 export function connectionStatusRank(status: IntegrationConnection['status']): number {
-  if (status === 'connected') return 3;
-  if (status === 'syncing') return 2;
-  if (status === 'error') return 1;
+  if (status === 'connected') return 4;
+  if (status === 'syncing') return 3;
+  if (status === 'error') return 2;
+  if (status === 'disconnected') return 1;
   return 0;
+}
+
+export function providerMcpStdioAuth(provider: IntegrationProvider) {
+  return provider.auth.mcpStdioAuth;
 }
 
 export function providerPackageSignIn(provider: IntegrationProvider) {

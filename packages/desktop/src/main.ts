@@ -392,6 +392,7 @@ async function startServer(): Promise<void> {
   process.env['AGENTX_UI_DIR'] = uiDir;
   process.env['AGENTX_NEURON_DIR'] = neuronDir;
   process.env['PORT'] = String(PORT);
+  process.env['AGENTX_PUBLIC_URL'] = `http://localhost:${PORT}`;
   process.env['NODE_ENV'] = 'production';
 
   const mod = await import(pathToFileURL(apiPath).href);

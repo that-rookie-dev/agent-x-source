@@ -5,8 +5,8 @@ import Divider from '@mui/material/Divider';
 import ChatIcon from '@mui/icons-material/Chat';
 // Hidden until wired — see source/MILESTONE.md
 // import ExtensionIcon from '@mui/icons-material/Extension';
-import HubIcon from '@mui/icons-material/Hub';
-import RadarIcon from '@mui/icons-material/Radar';
+import ExtensionIcon from '@mui/icons-material/Extension';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 // import CellTowerIcon from '@mui/icons-material/CellTower';
 import SettingsIcon from '@mui/icons-material/Settings';
 import StorageIcon from '@mui/icons-material/Storage';
@@ -32,10 +32,10 @@ interface Props {
 const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
   { id: 'chat', icon: ChatIcon, label: 'Chat' },
   { id: 'notifications', icon: NotificationsNoneIcon, label: 'Notifications' },
-  { id: 'automation', icon: RadarIcon, label: 'Automation' },
+  { id: 'automation', icon: ScheduleIcon, label: 'Automation' },
   { id: 'crews', icon: GroupsIcon, label: 'Crews' },
   { id: 'rag-studio', icon: StorageIcon, label: 'RAG Studio' },
-  { id: 'mcp-store', icon: HubIcon, label: 'MCP Store' },
+  { id: 'mcp-store', icon: ExtensionIcon, label: 'MCP Store' },
   { id: 'settings', icon: SettingsIcon, label: 'Settings' },
   // Hidden until wired — see source/MILESTONE.md
   // { id: 'soul', icon: AutoAwesomeIcon, label: 'Soul' },

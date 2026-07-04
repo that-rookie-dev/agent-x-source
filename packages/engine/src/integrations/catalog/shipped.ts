@@ -256,16 +256,26 @@ export const SHIPPED_PROVIDERS: IntegrationProvider[] = [
       package: '@modelcontextprotocol/server-gdrive',
     },
     auth: {
-      primary: 'oauth',
+      primary: 'env',
       developer: ['stdio', 'env'],
-      oauth: {
-        discoveryUrl: 'https://accounts.google.com/.well-known/openid-configuration',
+      fields: [
+        { key: 'GOOGLE_OAUTH_CLIENT_ID', label: 'OAuth Client ID', placeholder: 'xxx.apps.googleusercontent.com', required: true },
+        { key: 'GOOGLE_OAUTH_CLIENT_SECRET', label: 'OAuth Client Secret', secret: true, required: true },
+      ],
+      mcpStdioAuth: {
+        authArg: 'auth',
+        oauthPathEnv: 'GDRIVE_OAUTH_PATH',
+        credentialsPathEnv: 'GDRIVE_CREDENTIALS_PATH',
+        clientIdField: 'GOOGLE_OAUTH_CLIENT_ID',
+        clientSecretField: 'GOOGLE_OAUTH_CLIENT_SECRET',
         clientIdEnv: 'AGENTX_GOOGLE_OAUTH_CLIENT_ID',
-        scopes: ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/drive.file'],
+        clientSecretEnv: 'AGENTX_GOOGLE_OAUTH_CLIENT_SECRET',
       },
       connectGuide: [
-        { title: 'Google Cloud project', body: 'Create an OAuth client (Web application) in Google Cloud Console, then paste the Client ID into the setup wizard.', link: 'https://console.cloud.google.com/apis/credentials' },
-        { title: 'Sign in', body: 'Click Connect with Google to authorize Agent-X on this device.' },
+        { title: 'Enable Google Drive API', body: 'In Google Cloud Console enable the Google Drive API for your project.', link: 'https://console.cloud.google.com/apis/library/drive.googleapis.com' },
+        { title: 'OAuth consent screen', body: 'Configure the OAuth consent screen. If the app is in Testing mode, add your Google account under Test users — otherwise Google returns Error 403: access_denied.', link: 'https://console.cloud.google.com/apis/credentials/consent' },
+        { title: 'Create a Desktop OAuth client', body: 'Create an OAuth client ID with application type Desktop app (not Web). Download is optional — paste the Client ID and Client Secret below.', link: 'https://console.cloud.google.com/apis/credentials/oauthclient' },
+        { title: 'Sign in', body: 'After saving credentials, Agent-X runs the Google Drive MCP auth flow in your browser. No redirect URI registration is needed for Desktop clients.' },
       ],
     },
     capabilities: { search: true, read: true, write: true, transact: false },

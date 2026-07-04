@@ -5,6 +5,7 @@ import type { AgentEventBus } from '../EventBus.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
 import { createAiSdkModel, createAiSdkTools } from '../agent/AiSdkBridge.js';
+import { normalizeAiSdkMessagesForProvider } from '../agent/context-profile.js';
 import { createAiSdkStreamHandler, type GitDiffProvider } from '../agent/AiSdkStreamHandler.js';
 import { SessionRunCoordinator, type RunState } from './SessionRunCoordinator.js';
 
@@ -87,7 +88,7 @@ export class SessionRunner {
       try {
         const result = streamText({
           model,
-          messages: aiMessages.map(m => ({
+          messages: normalizeAiSdkMessagesForProvider(aiMessages, config.provider.activeProvider).map(m => ({
             role: m.role,
             content: m.content,
             ...(m.toolCallId ? { toolCallId: m.toolCallId } : {}),

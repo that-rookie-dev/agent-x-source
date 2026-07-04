@@ -231,6 +231,7 @@ export function getEngine(): EngineState {
       startPeriodicDatabaseHeal(store);
       if (state) {
         state.integrationHub.setDek(state.dek);
+        state.integrationHub.setToolkitBridge(state.toolkit.registry, state.toolkit.executor);
         await state.integrationHub.restoreAll();
         state.integrationHub.syncToToolkit(state.toolkit.registry, state.toolkit.executor);
       }
@@ -272,6 +273,7 @@ export function setEngineDEK(dek: Buffer | null): void {
             if (!state.configured) return;
             channelsBootstrappedAfterAuth = true;
             await state.integrationHub.restoreAll();
+            state.integrationHub.setToolkitBridge(state.toolkit.registry, state.toolkit.executor);
             state.integrationHub.syncToToolkit(state.toolkit.registry, state.toolkit.executor);
             const { applyChannelsConfig } = await import('./channels-sync.js');
             await applyChannelsConfig();
@@ -367,6 +369,14 @@ export function createAgent(
     scopePath: effectiveScopePath,
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
+    prepareIntegrationTools: async (userText) => {
+      const { promptHint } = await eng.integrationHub.prepareForAgentTurn(
+        eng.toolkit.registry,
+        eng.toolkit.executor,
+        userText,
+      );
+      return promptHint;
+    },
     onPart,
     persona: crewPrivateHost ? null : persona,
     pgPool: state?.pgPool ?? null,

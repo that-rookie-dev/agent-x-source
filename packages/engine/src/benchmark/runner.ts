@@ -11,13 +11,14 @@ import type {
   BenchmarkTestId,
   BenchmarkTestResult,
 } from './types.js';
+import type { CompletionRequest } from '@agentx/shared';
 
 type TestDef = {
   id: BenchmarkTestId;
   label: string;
   critical: boolean;
   maxScore: number;
-  run: (provider: ProviderInterface, modelId: string) => Promise<Omit<BenchmarkTestResult, 'id' | 'label' | 'category' | 'critical' | 'maxScore'>>;
+  run: (provider: ProviderInterface, config: BenchmarkRunConfig) => Promise<Omit<BenchmarkTestResult, 'id' | 'label' | 'category' | 'critical' | 'maxScore'>>;
 };
 
 const BENCHMARK_TOOLS = [
@@ -38,15 +39,28 @@ const BENCHMARK_TOOLS = [
   },
 ];
 
+function benchmarkRequest(config: BenchmarkRunConfig, request: CompletionRequest): CompletionRequest {
+  if (config.providerId !== 'google') return request;
+  return { ...request, reasoningEffort: request.reasoningEffort ?? 'none' };
+}
+
+async function benchComplete(
+  provider: ProviderInterface,
+  config: BenchmarkRunConfig,
+  request: CompletionRequest,
+) {
+  return collectCompletion(provider, benchmarkRequest(config, request));
+}
+
 const TESTS: TestDef[] = [
   {
     id: 'reasoning',
     label: 'Logical reasoning',
     critical: true,
     maxScore: 10,
-    run: async (provider, modelId) => {
-      const { text, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'user',
@@ -78,9 +92,9 @@ const TESTS: TestDef[] = [
     label: 'Code generation',
     critical: true,
     maxScore: 10,
-    run: async (provider, modelId) => {
-      const { text, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'user',
@@ -124,9 +138,9 @@ const TESTS: TestDef[] = [
     label: 'Debug & fix',
     critical: true,
     maxScore: 10,
-    run: async (provider, modelId) => {
-      const { text, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'user',
@@ -165,9 +179,9 @@ const TESTS: TestDef[] = [
     label: 'Document creation',
     critical: false,
     maxScore: 8,
-    run: async (provider, modelId) => {
-      const { text, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'user',
@@ -211,9 +225,9 @@ const TESTS: TestDef[] = [
     label: 'Clarification instinct',
     critical: false,
     maxScore: 8,
-    run: async (provider, modelId) => {
-      const { text, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'user',
@@ -259,9 +273,9 @@ const TESTS: TestDef[] = [
     label: 'Decision making',
     critical: false,
     maxScore: 8,
-    run: async (provider, modelId) => {
-      const { text, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'user',
@@ -309,9 +323,9 @@ const TESTS: TestDef[] = [
     label: 'Tool / function calling',
     critical: true,
     maxScore: 12,
-    run: async (provider, modelId) => {
-      const { text, toolCalls, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, toolCalls, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'user',
@@ -367,9 +381,9 @@ const TESTS: TestDef[] = [
     label: 'Structured JSON output',
     critical: true,
     maxScore: 10,
-    run: async (provider, modelId) => {
-      const { text, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'user',
@@ -426,9 +440,9 @@ const TESTS: TestDef[] = [
     label: 'Instruction adherence',
     critical: false,
     maxScore: 8,
-    run: async (provider, modelId) => {
-      const { text, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'user',
@@ -473,9 +487,9 @@ const TESTS: TestDef[] = [
     label: 'Agent role awareness',
     critical: false,
     maxScore: 8,
-    run: async (provider, modelId) => {
-      const { text, latencyMs } = await collectCompletion(provider, {
-        model: modelId,
+    run: async (provider, config) => {
+      const { text, latencyMs } = await benchComplete(provider, config, {
+        model: config.modelId,
         messages: [
           {
             role: 'system',
@@ -554,7 +568,7 @@ export async function runModelBenchmark(
     });
 
     try {
-      const partial = await def.run(provider, config.modelId);
+      const partial = await def.run(provider, config);
       const result: BenchmarkTestResult = {
         id: def.id,
         label: def.label,

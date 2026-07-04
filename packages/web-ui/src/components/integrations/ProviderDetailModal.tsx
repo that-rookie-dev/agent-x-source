@@ -13,6 +13,7 @@ import {
   AUTH_MODE_LABELS,
   CATEGORY_LABELS,
   TRUST_LABELS,
+  canUseHubBrowserOAuth,
   getProviderPackageLabel,
   isInstalledConnection,
   providerPackageSignIn,
@@ -20,6 +21,8 @@ import {
 import { ConnectWizard } from './ConnectWizard';
 import { ProviderSetupWizard } from './setup-wizards/ProviderSetupWizard';
 import { PackageSignInPanel } from './PackageSignInPanel';
+import { McpStdioAuthPanel } from './McpStdioAuthPanel';
+import { HubOAuthPanel } from './HubOAuthPanel';
 import type { ConnectIntegrationRequest } from '../../api';
 
 export interface ProviderDetailModalProps {
@@ -69,6 +72,7 @@ export function ProviderDetailModal({
   const connected = connection?.status === 'connected';
   const errored = connection?.status === 'error';
   const packageSignIn = providerPackageSignIn(provider);
+  const hubOAuth = canUseHubBrowserOAuth(provider);
   const packageLabel = getProviderPackageLabel(provider);
   const highlights = provider.highlights ?? [];
 
@@ -190,6 +194,31 @@ export function ProviderDetailModal({
                 autoStartSignIn={autoStartSignIn}
                 onAutoStartConsumed={onAutoStartSignInConsumed}
               />
+            )}
+
+            {connection && provider.auth.mcpStdioAuth && (
+              <Section title="Google sign-in">
+                <McpStdioAuthPanel
+                  provider={provider}
+                  connection={connection}
+                  busy={busy}
+                  autoStart={autoStartSignIn}
+                  onAutoStartConsumed={onAutoStartSignInConsumed}
+                />
+              </Section>
+            )}
+
+            {connection && hubOAuth && !provider.auth.mcpStdioAuth && (
+              <Section title="Account sign-in">
+                <HubOAuthPanel
+                  provider={provider}
+                  connection={connection}
+                  busy={busy}
+                  autoStart={autoStartSignIn}
+                  onAutoStartConsumed={onAutoStartSignInConsumed}
+                  onSignedIn={onOAuthComplete}
+                />
+              </Section>
             )}
 
             {provider.auth.connectGuide && provider.auth.connectGuide.length > 0 && (
