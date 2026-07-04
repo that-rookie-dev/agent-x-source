@@ -2,8 +2,6 @@ import { execSync } from 'node:child_process';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import { IS_WINDOWS, IS_MACOS, IS_LINUX } from '../platform.js';
 import {
-  resolveDiscordWebhookUrl,
-  resolveEmailSmtpConfig,
   resolveSlackWebhookUrl,
   resolveTelegramNotifyCredentials,
 } from './notify-config.js';

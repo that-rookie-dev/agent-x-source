@@ -533,6 +533,7 @@ export function createChannelSuperSessionSection(): PromptSection<null> {
       'File and shell tools use the active web UI workspace when one is open.',
       '[/SUPER_SESSION — MESSAGING CHANNEL]',
     ].join('\n'),
+    diff: () => null,
   };
 }
 
@@ -551,6 +552,7 @@ export function createChannelMessagingSection(): PromptSection<null> {
       'You may also tell them about /permissions, /permissions revoke <tool>, and /permissions revoke-all.',
       '[/CHANNEL_MESSAGING]',
     ].join('\n'),
+    diff: () => null,
   };
 }
 

@@ -120,6 +120,8 @@ describe('isCompactToolAllowed', () => {
 
   it('respects plan mode allowlist', () => {
     expect(isCompactToolAllowed('file_read', true)).toBe(true);
-    expect(isCompactToolAllowed('shell_exec', true)).toBe(false);
+    // Plan mode blocks edit/delete tools; shell and reads remain available.
+    expect(isCompactToolAllowed('file_patch', true)).toBe(false);
+    expect(isCompactToolAllowed('shell_exec', true)).toBe(true);
   });
 });

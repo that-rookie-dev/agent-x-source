@@ -2454,7 +2454,7 @@ Rules:
 
     const model = createAiSdkModel(this.config, this.getApiKey());
 
-    let aiMessages = buildCompletionMessages(
+    const aiMessages = buildCompletionMessages(
       this.messages.map((m) => ({
         role: m.role,
         content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',

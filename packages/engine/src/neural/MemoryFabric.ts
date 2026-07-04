@@ -158,6 +158,12 @@ function int4rangeLiteral(start: number, end: number): string {
   return `[${Math.floor(start)},${Math.floor(end)}]`;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 function deterministicLayoutSeed(id: string): number {
   let hash = 0;
   for (let i = 0; i < id.length; i++) {
@@ -406,12 +412,19 @@ export class MemoryFabric {
     const charSpan = input.charSpan ? int4rangeLiteral(input.charSpan[0], input.charSpan[1]) : null;
     const unitType = input.unitType ?? null;
     const provenance = input.provenance ? JSON.stringify(input.provenance) : null;
+    // source_id is a UUID FK to memory_sources — external provenance strings
+    // (e.g. document names) are not valid values for that column.
+    const sourceId = input.sourceId && isUuid(input.sourceId) ? input.sourceId : null;
     const { rows } = await this.pool.query<MemoryNode>(
       `INSERT INTO memory_nodes
         (id, label, category, content, embedding, embedding_halfvec, status, source_id, session_id, agent_id, confidence, x, y, layout_epoch, tag, is_benchmark,
          heading_path, char_span, unit_type, provenance)
        VALUES ($1, $2, $3, $4, $5::vector, $6::halfvec, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
                $17, $18::int4range, $19, $20::jsonb)
+       ON CONFLICT (id) DO UPDATE
+         SET content = EXCLUDED.content,
+             confidence = GREATEST(memory_nodes.confidence, EXCLUDED.confidence),
+             updated_at = NOW()
        RETURNING id, label, category, content, status, x, y, layout_epoch AS "layoutEpoch", tag, is_benchmark AS "isBenchmark", source_id AS "sourceId", session_id AS "sessionId",
          agent_id AS "agentId", confidence, created_at AS "createdAt", updated_at AS "updatedAt",
          heading_path AS "headingPath", char_span AS "charSpan", unit_type AS "unitType", provenance AS "provenance"`,
@@ -423,7 +436,7 @@ export class MemoryFabric {
         embedding,
         halfvec,
         input.status ?? 'active',
-        input.sourceId ?? null,
+        sourceId,
         input.sessionId ?? null,
         input.agentId ?? null,
         input.confidence ?? 0.8,

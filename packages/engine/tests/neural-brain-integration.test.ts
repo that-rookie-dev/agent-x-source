@@ -47,33 +47,30 @@ describe.runIf(await isPgAvailable() && await hasPgVector())('Neural Brain Integ
   let pipeline: NeuralBrainIngestionPipeline;
   let streamer: BrainEventStreamer;
 
-  // Mock LLM generator
+  // Mock LLM generator — must match the MemoryExtractor JSON schema
+  // (nodes require label/category/content; edges use SEMANTIC_EDGE_TYPES).
   const mockGenerate = async (prompt: string): Promise<string> => {
-    // Return a mock extraction result
     return JSON.stringify({
       nodes: [
         {
           id: 'node-1',
           label: 'Test Concept',
-          type: 'Concept',
+          category: 'semantic',
           content: 'A test concept node',
-          depthLevel: 0,
           confidence: 0.9,
         },
         {
           id: 'node-2',
           label: 'Test Attribute',
-          type: 'Attribute',
+          category: 'semantic',
           content: 'A test attribute node',
-          depthLevel: 1,
           confidence: 0.85,
         },
         {
           id: 'node-3',
           label: 'Test Operation',
-          type: 'Operation',
+          category: 'semantic',
           content: 'A test operation node',
-          depthLevel: 2,
           confidence: 0.8,
         },
       ],
@@ -81,14 +78,16 @@ describe.runIf(await isPgAvailable() && await hasPgVector())('Neural Brain Integ
         {
           sourceNodeId: 'node-1',
           targetNodeId: 'node-2',
-          relationshipType: 'PARENT_OF',
+          relationshipType: 'HAS_PROPERTY',
           weight: 0.9,
+          extractionMethod: 'EXTRACTED',
         },
         {
           sourceNodeId: 'node-2',
           targetNodeId: 'node-3',
-          relationshipType: 'DEPENDS_ON',
+          relationshipType: 'REQUIRES',
           weight: 0.85,
+          extractionMethod: 'EXTRACTED',
         },
       ],
     });

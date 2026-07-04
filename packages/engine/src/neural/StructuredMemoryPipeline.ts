@@ -123,9 +123,20 @@ export class StructuredMemoryPipeline {
     const { nodes: validNodes, edges: validEdges } = validateAndFilter(assembled.nodes, assembled.edges);
 
     // Assign deterministic IDs so re-ingestion produces the same node IDs.
+    // Extractor-provided ids (e.g. "node-1") are logical only; replace them with
+    // content-addressed UUIDs valid for the memory_nodes UUID primary key, and
+    // remap edge endpoints that reference the original logical ids.
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const reassignedIds = new Map<string, string>();
     for (const node of validNodes) {
-      if (!node.id || node.id.startsWith('mn_')) continue;
-      node.id = deterministicNodeId(node.label, node.content, input.sourceId ?? input.sessionId);
+      if (node.id && uuidRe.test(node.id)) continue;
+      const newId = deterministicNodeId(node.label, node.content, input.sourceId ?? input.sessionId);
+      if (node.id) reassignedIds.set(node.id, newId);
+      node.id = newId;
+    }
+    for (const edge of validEdges) {
+      edge.sourceNodeId = reassignedIds.get(edge.sourceNodeId) ?? edge.sourceNodeId;
+      edge.targetNodeId = reassignedIds.get(edge.targetNodeId) ?? edge.targetNodeId;
     }
 
     // Community summarization is now handled asynchronously by the

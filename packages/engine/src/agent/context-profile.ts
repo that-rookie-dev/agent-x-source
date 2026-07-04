@@ -58,6 +58,8 @@ export function isCompactToolAllowed(toolId: string, planMode: boolean): boolean
 export interface CompletionMessageLike {
   role: string;
   content: string;
+  /** Present on tool-result messages that must round-trip through provider normalization. */
+  toolCallId?: string;
 }
 
 /**
@@ -85,7 +87,7 @@ export function normalizeAiSdkMessages(
     }
 
     seenNonSystem = true;
-    result.push({ role: msg.role, content: msg.content });
+    result.push({ role: msg.role, content: msg.content, ...(msg.toolCallId ? { toolCallId: msg.toolCallId } : {}) });
   }
 
   if (leadingSystem.length > 0) {
@@ -101,7 +103,7 @@ export function normalizeAiSdkMessagesForProvider(
   providerId?: string,
 ): CompletionMessageLike[] {
   if (providerId !== 'google') {
-    return messages.map((m) => ({ role: m.role, content: m.content }));
+    return messages.map((m) => ({ role: m.role, content: m.content, ...(m.toolCallId ? { toolCallId: m.toolCallId } : {}) }));
   }
   return normalizeAiSdkMessages(messages);
 }

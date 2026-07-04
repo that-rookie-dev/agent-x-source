@@ -74,7 +74,7 @@ export function buildMcpStdioAuthEnv(
 }
 
 export function hasMcpStdioAuthCredentials(
-  config: IntegrationMcpStdioAuth,
+  _config: IntegrationMcpStdioAuth,
   connectionId: string,
   baseDir?: string,
 ): boolean {
