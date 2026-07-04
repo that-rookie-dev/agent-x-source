@@ -5,6 +5,9 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { getLogger } from '@agentx/shared';
 import { buildStdioEnv } from '@agentx/shared';
 
+/** Cold `npx -y` installs on Windows CI can exceed the MCP SDK default (60s). */
+const STDIO_INITIALIZE_TIMEOUT_MS = 180_000;
+
 export interface McpConnectStdioOptions {
   command: string;
   args?: string[];
@@ -41,7 +44,7 @@ export class McpSession {
       stderr: 'pipe',
     });
     const client = new Client({ name: 'agent-x', version: '0.8.6' });
-    await client.connect(transport);
+    await client.connect(transport, { timeout: STDIO_INITIALIZE_TIMEOUT_MS });
     return new McpSession(client, transport, `${options.command} ${(options.args ?? []).join(' ')}`.trim());
   }
 

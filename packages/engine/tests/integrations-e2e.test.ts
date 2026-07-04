@@ -14,7 +14,7 @@ describe.skipIf(!e2eEnabled)('integrations MCP E2E', () => {
     const hub = new IntegrationHub({ baseDir, redirectBaseUrl: 'http://127.0.0.1:3333' });
     try {
       const connection = await hub.connect('fetch', { authMode: 'none' });
-      expect(connection.status).toBe('connected');
+      expect(connection.status, connection.error ?? 'no error detail').toBe('connected');
       expect(connection.toolCount).toBeGreaterThan(0);
 
       const health = hub.getHealth(connection.id);
@@ -22,7 +22,7 @@ describe.skipIf(!e2eEnabled)('integrations MCP E2E', () => {
     } finally {
       await hub.dispose();
     }
-  }, 120_000);
+  }, 240_000);
 });
 
 describe('integration hub session recovery', () => {

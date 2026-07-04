@@ -654,7 +654,7 @@ export class IntegrationHub {
           command: resolveStdioCommand(stdio.command),
           args: stdio.args,
           cwd: stdio.cwd,
-          env: Object.keys(env).length > 0 ? env : undefined,
+          env,
         });
       } else {
         throw new Error('No stdio command or remote URL configured');
@@ -1214,7 +1214,7 @@ export class IntegrationHub {
       command: resolveStdioCommand(stdio.command),
       args: stdio.args,
       cwd: stdio.cwd,
-      env: Object.keys(env).length > 0 ? env : undefined,
+      env,
     });
   }
 
