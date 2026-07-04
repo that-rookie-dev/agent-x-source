@@ -55,6 +55,8 @@ export { ScriptRPCExecutor, getScriptRPC, detectProjectStack } from './tools/Scr
 export type { ScriptLanguage, ScriptResult } from './tools/ScriptRPCExecutor.js';
 export { createDefaultToolkit } from './tools/index.js';
 export type { PermissionRequestHandler } from './tools/index.js';
+export { IntegrationHub, createCustomProvider, importMcpConfig, parseMcpImportConfig, buildIntegrationActionPreview, ensureLoginShellPath } from './integrations/index.js';
+export type { McpSession } from './integrations/index.js';
 export { fileRead, fileWrite, fileDelete, folderCreate, folderDelete, folderList, folderMove } from './tools/index.js';
 export { shellExec, shellBackground, processKill, processList, setShellSandbox } from './tools/index.js';
 export { gitStatus, gitDiff, gitLog, gitCommit, gitAdd, gitBranch, gitCheckout, gitStash, gitBlame, gitShow } from './tools/index.js';
@@ -68,8 +70,6 @@ export { dbQuery, dbSchema, dbExport, envRead } from './tools/index.js';
 export { ghIssueList, ghIssueCreate, ghPrList, ghPrCreate, ghPrView, ghRepoView, ghWorkflowList, ghRelease } from './tools/index.js';
 export { systemInfo, systemDiskSpace, systemEnv, systemWhich, systemPorts, systemTreeSize, securityAudit, securitySecrets, fileChecksum } from './tools/index.js';
 export { browserOpen, browserScreenshot, browserClick, browserEval } from './tools/index.js';
-export { mcpCall, mcpListTools } from './tools/index.js';
-export { reminderSet, reminderList, reminderCancel } from './tools/index.js';
 export { agentXConfigSchema } from './config/ConfigSchema.js';
 export * from './config/paths.js';
 export { SecretSauceManager, CrewManager, SoulManager, MemoryManager, DiaryManager, IdentityManager } from './secret-sauce/index.js';
@@ -211,6 +211,18 @@ export type { SlackConfig, SlackBridgeStatus } from './slack/index.js';
 export { EmailBridge } from './email/index.js';
 export type { EmailBridgeConfig, EmailBridgeStatus } from './email/index.js';
 export { Scheduler } from './scheduler/index.js';
+export { setAutomationBridge, getAutomationBridge } from './automation/automation-bridge.js';
+export type { AutomationBridge } from './automation/automation-bridge.js';
+export {
+  buildAutomationNotifyQuestionnaire,
+  getNotificationChannelStatus,
+  resolveTelegramOutboundChatId,
+  notifyToolsForChannels,
+  parseAutomationNotifyAnswer,
+  AUTOMATION_NOTIFY_NONE,
+} from './automation/automation-notify.js';
+export type { NotificationChannelRuntimeHints } from './automation/automation-notify.js';
+export { NOTIFY_TOOL_IDS } from './automation/infer-automation-tools.js';
 export type { ScheduledJob } from './scheduler/index.js';
 export { TaskManager } from './agent/TaskManager.js';
 export type { TaskContext } from './agent/TaskManager.js';
@@ -225,7 +237,7 @@ export type { PostgresConfig } from './storage/PostgresStorageAdapter.js';
 export type { StorageAdapter, StorableSession, StorableMessage, StorableTokenLog, StorablePermission } from '@agentx/shared';
 
 // Phase 2: Plugin system
-export { DefaultPluginLoader, MCPBridge, ACPBridge, PluginRegistry, getBuiltinCatalog, getBuiltinPlugin, getMarketplaceExtensions, getMarketplaceExtension } from './plugin/index.js';
+export { DefaultPluginLoader, ACPBridge, PluginRegistry, getBuiltinCatalog, getBuiltinPlugin, getMarketplaceExtensions, getMarketplaceExtension } from './plugin/index.js';
 export { PluginSystem } from './plugin/PluginSystem.js';
 export type { PluginLifecycle, PluginHooks, PluginHealth, PluginSystemConfig } from './plugin/PluginSystem.js';
 export type { MarketplaceExtension } from './plugin/index.js';
@@ -236,7 +248,7 @@ export { WebhookNotifierRuntime } from './plugin/runtime/WebhookNotifierRuntime.
 export type { RedisCacheConfig } from './plugin/runtime/RedisRuntime.js';
 export type { WebhookNotifierConfig } from './plugin/runtime/WebhookNotifierRuntime.js';
 export type { AcpServerConfig } from './plugin/index.js';
-export type { PluginManifest, PluginInstance, PluginLoader, MCPBridgeConfig, PluginHubEntry, PluginCategory, InstalledPlugin } from '@agentx/shared';
+export type { PluginManifest, PluginInstance, PluginLoader, PluginHubEntry, PluginCategory, InstalledPlugin } from '@agentx/shared';
 
 // Phase 3: RAG / Vector search
 export { MemoryVectorStore, LLMEmbeddingProvider, RAGEngine } from './rag/index.js';

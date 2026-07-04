@@ -20,7 +20,6 @@ const {
   mockMemoryExtractor,
   mockSubAgentMgr,
   mockTaskMgr,
-  mockScheduler,
 } = vi.hoisted(() => {
   const createBus = () => ({
     emit: vi.fn(),
@@ -111,12 +110,6 @@ const {
     createTask: vi.fn(),
   });
 
-  const createScheduler = () => ({
-    setTriggerHandler: vi.fn(),
-    start: vi.fn(),
-    stop: vi.fn(),
-  });
-
   return {
     mockProvider: {
       id: 'openai' as const,
@@ -134,7 +127,6 @@ const {
     mockMemoryExtractor: createMemExtractor(),
     mockSubAgentMgr: createSubAgentMgr(),
     mockTaskMgr: createTaskMgr(),
-    mockScheduler: createScheduler(),
   };
 });
 
@@ -157,10 +149,6 @@ vi.mock('../src/agent/SubAgentManager.js', () => ({
 
 vi.mock('../src/agent/TaskManager.js', () => ({
   TaskManager: class { constructor() { return mockTaskMgr; } },
-}));
-
-vi.mock('../src/scheduler/Scheduler.js', () => ({
-  Scheduler: class { constructor() { return mockScheduler; } },
 }));
 
 vi.mock('../src/agent/ErrorShield.js', () => ({
@@ -187,10 +175,6 @@ vi.mock('../src/commands/builtin/tasks.js', () => ({
   setTaskManagerInstance: vi.fn(),
   setBackgroundQueueInstance: vi.fn(),
   getBackgroundQueueInstance: vi.fn(() => null),
-}));
-
-vi.mock('../src/commands/builtin/schedule.js', () => ({
-  setSchedulerInstance: vi.fn(),
 }));
 
 vi.mock('ai', async (importOriginal) => {
@@ -339,22 +323,6 @@ describe('Agent', () => {
 
       expect(agent).toBeInstanceOf(Agent);
       expect(executor.setPermissionRequestHandler).toHaveBeenCalled();
-    });
-
-    it('emits reminder_fired and message_received when scheduler triggers', () => {
-      createTestAgent();
-      const handler = mockScheduler.setTriggerHandler.mock.calls[0]?.[0];
-      expect(handler).toBeDefined();
-      expect(typeof handler).toBe('function');
-
-      handler!({ instruction: 'Stretch!', id: 'job-1', name: 'Stretch reminder' });
-
-      expect(mockEventBus.emit).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'reminder_fired', taskId: 'job-1' }),
-      );
-      expect(mockEventBus.emit).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'message_received' }),
-      );
     });
 
     it('builds system prompt via PromptAssembly on construction', () => {

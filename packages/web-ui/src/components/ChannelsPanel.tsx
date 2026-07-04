@@ -209,7 +209,7 @@ export function ChannelsPanel() {
   useEffect(() => {
     loadAll();
     loadFocus();
-    pollingRef.current = setInterval(() => { loadAll(); loadFocus(); }, 5000);
+    pollingRef.current = setInterval(() => { loadAll(); loadFocus(); }, 15000);
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, [loadAll, loadFocus]);
 

@@ -2,6 +2,7 @@ import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
+import { markdownSourceLink, prefixWebExtractOutput } from '../../search/url-utils.js';
 
 export async function httpGet(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
   const url = args['url'] as string;
@@ -21,8 +22,8 @@ export async function httpGet(args: Record<string, unknown>, _context: ToolExecu
 
     return {
       success: response.ok,
-      output: body,
-      metadata: { status: response.status, contentType },
+      output: prefixWebExtractOutput(url, body),
+      metadata: { status: response.status, contentType, url },
     };
   } catch (error) {
     return { success: false, output: `Request failed: ${(error as Error).message}`, error: 'HTTP_ERROR' };
@@ -111,7 +112,7 @@ export async function webScrape(args: Record<string, unknown>, _context: ToolExe
 
     if (text.length > 30000) text = text.slice(0, 30000) + '\n...(truncated)';
 
-    return { success: true, output: text, metadata: { url, length: text.length } };
+    return { success: true, output: prefixWebExtractOutput(url, text), metadata: { url, length: text.length } };
   } catch (error) {
     return { success: false, output: (error as Error).message, error: 'SCRAPE_ERROR' };
   }
@@ -144,14 +145,20 @@ export async function webSearch(args: Record<string, unknown>, _context: ToolExe
       };
     }
 
-    const lines = hits.map((h, i) => (
-      `${i + 1}. ${h.title}\n   ${h.snippet || '(no snippet)'}\n   ${h.url} [${h.provider}]`
-    ));
+    const lines = hits.map((h, i) => {
+      const source = markdownSourceLink(h.url);
+      return `${i + 1}. ${h.title}\n   ${h.snippet || '(no snippet)'}\n   Source: ${source} [${h.provider}]`;
+    });
 
     return {
       success: true,
       output: lines.join('\n\n'),
-      metadata: { query, resultCount: hits.length, providers: [...new Set(hits.map((h) => h.provider))] },
+      metadata: {
+        query,
+        resultCount: hits.length,
+        providers: [...new Set(hits.map((h) => h.provider))],
+        sources: hits.map((h) => h.url),
+      },
     };
   } catch (error) {
     return { success: false, output: (error as Error).message, error: 'SEARCH_ERROR' };

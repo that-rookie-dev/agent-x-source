@@ -18,11 +18,11 @@ describe('ProgressiveDisclosure', () => {
   });
 
   it('identifies core tools by pattern', () => {
-    const tools = [makeTool('file_read'), makeTool('shell_exec'), makeTool('mcp_call')];
+    const tools = [makeTool('file_read'), makeTool('shell_exec'), makeTool('deploy_k8s')];
     const core = getCoreTools(tools);
     expect(core.map((t) => t.id)).toContain('file_read');
     expect(core.map((t) => t.id)).toContain('shell_exec');
-    expect(core.map((t) => t.id)).not.toContain('mcp_call');
+    expect(core.map((t) => t.id)).not.toContain('deploy_k8s');
   });
 
   it('creates three bridge tools', () => {

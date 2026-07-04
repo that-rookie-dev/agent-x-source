@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
+import { isIntegrationToolId } from '@agentx/shared/browser';
 import { colors } from '../theme';
 import { getToolDisplay } from './tool-display';
 import { ShellRender, ReadRender, EditRender, GlobRender, GrepRender, TaskRender } from './tool-renders';
+import { IntegrationResultRender, type IntegrationStructuredResult } from './integrations/IntegrationResultRender';
 
 export interface InlineToolData {
   id: string;
@@ -24,7 +26,27 @@ function getColor(status: string): string {
 
 const EDIT_TOOLS = new Set(['file_write', 'file_patch', 'code_replace', 'code_insert']);
 
+function IntegrationToolRender({ tool }: { tool: InlineToolData }) {
+  const structured = tool.metadata?.integrationStructured as IntegrationStructuredResult | undefined;
+  if (structured) {
+    return <IntegrationResultRender result={structured} />;
+  }
+  const result = tool.result;
+  return (
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.blue}15` }}>
+      {result ? (
+        <Typography sx={{ fontSize: '0.55rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {result.slice(0, 4000)}
+        </Typography>
+      ) : (
+        <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim }}>No output</Typography>
+      )}
+    </Box>
+  );
+}
+
 function getToolRenderer(tool: InlineToolData): ((props: { tool: InlineToolData }) => JSX.Element) | null {
+  if (isIntegrationToolId(tool.name)) return IntegrationToolRender;
   const SHELL_TOOLS = new Set(['shell_exec', 'shell_exec_streaming', 'shell_background']);
   const READ_TOOLS = new Set(['file_read']);
   const EDIT_TOOLS = new Set(['file_write', 'file_patch', 'code_replace', 'code_insert']);

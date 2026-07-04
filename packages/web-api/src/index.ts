@@ -7,8 +7,9 @@ import os from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi } from '@agentx/shared';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady } from './engine.js';
+import { applyChannelsConfig, discoverTelegramBot, getTelegramRuntimeHints } from './channels-sync.js';
 import { buildGraphRagSummarizer } from './distillation-generator.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect, broadcastBrainActivity } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
@@ -27,9 +28,17 @@ import {
 import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
 import { setIngestionWorkerRef, refreshIngestionWorkerGenerator } from './ingestion-worker-ref.js';
+import {
+  bindIngestionWorker,
+  setIngestionAppVisible,
+  setIngestionNeuralBrainEnabled,
+  refreshIngestionRagSourceCount,
+  evaluateIngestionWorker,
+  getIngestionGovernorState,
+} from './ingestion-governor.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -53,6 +62,8 @@ import { memoryRouter } from './memory-api.js';
 import localModelRouter from './local-model-api.js';
 import embeddingModelRouter from './embedding-model-api.js';
 import modelBenchmarkRouter from './model-benchmark-api.js';
+import { integrationsRouter } from './integrations-api.js';
+import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutomation } from './automation/index.js';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
@@ -346,6 +357,8 @@ app.use('/api', memoryRouter);
 app.use('/api', localModelRouter);
 app.use('/api', embeddingModelRouter);
 app.use('/api', modelBenchmarkRouter);
+app.use('/api', integrationsRouter);
+registerAutomationRoutes(app);
 
 // Security headers (content-type sniffing, XSS, clickjacking protection)
 app.use(helmet({
@@ -431,11 +444,17 @@ app.get('/api/health', (_req, res) => {
 
 // ───── System capabilities ─────
 app.get('/api/system/capabilities', (_req, res) => {
-  const totalMemoryGB = Math.round(os.totalmem() / (1024 ** 3) * 10) / 10;
-  res.json({
-    totalMemoryGB,
-    localModelSupported: totalMemoryGB >= 32,
-  });
+  res.json(buildPublicSystemCapabilities(os.totalmem()));
+});
+
+app.post('/api/system/app-visibility', (req, res) => {
+  const visible = req.body?.visible === true;
+  setIngestionAppVisible(visible);
+  res.json({ ok: true, ...getIngestionGovernorState() });
+});
+
+app.get('/api/system/ingestion-governor', (_req, res) => {
+  res.json(getIngestionGovernorState());
 });
 
 // ───── Setup / Config ─────
@@ -485,6 +504,14 @@ app.put('/api/config', (req, res) => {
     } else if (req.body.tools) {
       merged.tools = { ...existing.tools, ...req.body.tools };
     }
+    if (req.body.channels) {
+      merged.channels = {
+        telegram: { ...existing.channels?.telegram, ...req.body.channels?.telegram },
+        slack: { ...existing.channels?.slack, ...req.body.channels?.slack },
+        email: { ...existing.channels?.email, ...req.body.channels?.email },
+        discord: { ...existing.channels?.discord, ...req.body.channels?.discord },
+      };
+    }
     // Validate provider config — reject if it would leave zero configured providers
     // or unset the active provider. This ensures the ingestion worker's LLM
     // generator can always be built after login.
@@ -495,16 +522,28 @@ app.put('/api/config', (req, res) => {
     }
     eng.configManager.save(merged);
     applyWebSearchConfigFromAgentConfig(merged);
+    void applyChannelsConfig(merged).catch((e: unknown) => {
+      getLogger().warn('CHANNELS', `Failed to apply channel config: ${e instanceof Error ? e.message : String(e)}`);
+    });
     // Rebuild the ingestion worker's LLM generator in case provider config changed
     void refreshIngestionWorkerGenerator();
     res.json({ ok: true });
-  } catch (err) {
+    } catch (err) {
     // If load failed (e.g. DEK mismatch from different auth), save raw body as new config
     try {
       const body = req.body as Record<string, unknown>;
       if (body.tools && typeof body.tools === 'object' && (body.tools as { webSearch?: unknown }).webSearch) {
         const tools = body.tools as { webSearch?: import('@agentx/shared').WebSearchToolsConfig };
         tools.webSearch = mergeWebSearchToolsConfig(undefined, tools.webSearch);
+      }
+      if (body.channels && typeof body.channels === 'object') {
+        const ch = body.channels as Record<string, unknown>;
+        body.channels = {
+          telegram: { ...(ch.telegram as object | undefined) },
+          slack: { ...(ch.slack as object | undefined) },
+          email: { ...(ch.email as object | undefined) },
+          discord: { ...(ch.discord as object | undefined) },
+        };
       }
       eng.configManager.save(req.body);
       applyWebSearchConfigFromAgentConfig(req.body);
@@ -980,6 +1019,10 @@ app.get('/api/cwd', (_req, res) => {
   const sess = eng.sessionManager.getActiveSession();
   const scopePath = sess?.scopePath ?? null;
   res.json({ cwd: scopePath });
+});
+
+app.get('/api/cwd/default', (_req, res) => {
+  res.json({ path: getDefaultWorkspaceDir() });
 });
 
 app.post('/api/cwd', (req, res) => {
@@ -2482,7 +2525,11 @@ app.get('/api/sessions', (_req, res) => {
     const eng = getEngine();
     const listFn = (eng.sessionManager as { listRootSessions?: (n: number) => unknown[] }).listRootSessions;
     const all = (listFn ? listFn.call(eng.sessionManager, 100) : eng.sessionManager.listSessions(100)) as unknown as Array<Record<string, unknown>>;
-    const sessions = all.filter(s => s['id'] !== '__channel__' && !s['parentId']);
+    const sessions = all.filter((s) => isUserFacingSession({
+      id: String(s['id'] ?? ''),
+      parentId: (s['parentId'] as string | null | undefined) ?? null,
+      contextKind: (s['contextKind'] as string | undefined) ?? 'agent_x',
+    }));
     const store = (eng.sessionManager as unknown as { store?: { getSessionListKpis?: (id: string, base?: Record<string, unknown>) => Record<string, unknown>; getMessageCount?: (id: string) => number } }).store;
     const getKpis = (eng.sessionManager as unknown as { getSessionListKpis?: (id: string, base?: Record<string, unknown>) => Record<string, unknown> }).getSessionListKpis;
     const crewManager = eng.crewManager as { get?: (id: string) => { callsign?: string; name?: string } | undefined };
@@ -2677,7 +2724,11 @@ app.get('/api/sessions/search', (req, res) => {
     const results: Array<{ sessionId: string; title?: string; createdAt?: string; snippet: string; matchCount: number }> = [];
     for (const s of sessions) {
       const sid = (s as unknown as { id?: string; sessionId?: string }).id ?? (s as unknown as { sessionId?: string }).sessionId;
-      if (!sid || sid === '__channel__') continue;
+      if (!sid || !isUserFacingSession({
+        id: sid,
+        parentId: (s as { parentId?: string | null }).parentId ?? null,
+        contextKind: (s as { contextKind?: string }).contextKind ?? 'agent_x',
+      })) continue;
 
       let messages: Array<{ role?: string; content?: string }> = [];
       try {
@@ -2851,7 +2902,10 @@ app.post('/api/sessions/:id/restore', async (req, res) => {
     const perRole = typeof perRoleRaw === 'number'
       ? Math.min(50, Math.max(1, Math.floor(perRoleRaw)))
       : undefined;
-    if (sessionId === '__channel__') { res.status(403).json({ error: 'channel-session' }); return; }
+    if (sessionId === '__channel__' || isAutomationSessionId(sessionId)) {
+      res.status(403).json({ error: 'internal-session' });
+      return;
+    }
     const eng = getEngine();
     const peek = eng.sessionManager.getSessionById(sessionId);
     if (!peek) { res.status(404).json({ error: 'not-found' }); return; }
@@ -3325,6 +3379,30 @@ app.put('/api/todos/:itemId', (req, res) => {
 });
 
 // ───── Telegram ─────
+app.post('/api/channels/telegram/discover', async (req, res) => {
+  try {
+    const { botToken } = req.body as { botToken?: string };
+    if (!botToken?.trim()) {
+      res.status(400).json({ ok: false, error: 'botToken is required' });
+      return;
+    }
+    const result = await discoverTelegramBot(botToken, {
+      knownChatIds: [
+        getEngine().configManager.load().channels?.telegram?.chatId,
+        getTelegramRuntimeHints().telegramChatId ?? undefined,
+      ].filter((id): id is string => Boolean(id?.trim())),
+    });
+    if (!result.ok) {
+      res.status(400).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (e: unknown) {
+    getLogger().error('POST_CHANNELS_TELEGRAM_DISCOVER', e instanceof Error ? e : String(e));
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'discover-failed' });
+  }
+});
+
 app.post('/api/telegram/start', async (req, res) => {
   try {
     const { token } = req.body as { token: string };
@@ -4039,115 +4117,6 @@ app.delete('/api/files/:id', (req, res) => {
   }
 });
 
-// ───── Natural Language Cron ─────
-app.post('/api/scheduler/parse-cron', async (req, res) => {
-  const { text } = req.body as { text?: string };
-  if (!text) {
-    res.status(400).json({ error: 'text is required' });
-    return;
-  }
-  try {
-    const eng = getEngine();
-    const prompt = `Convert the following natural language schedule to a standard 5-field cron expression (minute hour day-of-month month day-of-week).
-
-Examples:
-- "every morning at 9am" → 0 9 * * *
-- "every 15 minutes" → */15 * * * *
-- "every Monday at 10am" → 0 10 * * 1
-- "first day of every month at midnight" → 0 0 1 * *
-- "every weekday at 5pm" → 0 17 * * 1-5
-- "every hour" → 0 * * * *
-- "at midnight" → 0 0 * * *
-- "every Sunday at 8am" → 0 8 * * 0
-
-User input: "${text}"
-
-Return ONLY the cron expression, nothing else.`;
-    const provider = eng.agent ? (eng.agent as any).provider : ProviderFactory.create('openai', undefined, undefined);
-    const result = await provider.complete({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      stream: false,
-    });
-    let cronExpr = '';
-    for await (const chunk of result) {
-      if (chunk.type === 'text_delta' && chunk.content) {
-        cronExpr += chunk.content;
-      }
-    }
-    cronExpr = cronExpr.trim().replace(/`/g, '').replace(/^cron\s+/i, '');
-    // Basic validation: must have 5 fields
-    const parts = cronExpr.split(/\s+/);
-    if (parts.length === 5) {
-      res.json({ cron: cronExpr, original: text });
-    } else {
-      res.status(400).json({ error: 'Could not parse schedule', attempted: cronExpr });
-    }
-  } catch (e: unknown) {
-    getLogger().error('POST_API_SCHEDULER_PARSE_CRON', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'parse-failed' });
-  }
-});
-
-// ───── Scheduler / Reminders ─────
-app.get('/api/scheduler/jobs', (_req, res) => {
-  const eng = getEngine();
-  if (!eng.agent) {
-    res.json({ jobs: [] });
-    return;
-  }
-  try {
-    const jobs = eng.agent.cron.getJobs();
-    res.json({ jobs });
-  } catch (e: unknown) {
-    getLogger().error('GET_API_SCHEDULER_JOBS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'list-jobs-failed' });
-  }
-});
-
-app.post('/api/scheduler/jobs', (req, res) => {
-  const eng = getEngine();
-  if (!eng.agent) {
-    res.status(400).json({ error: 'No active agent' });
-    return;
-  }
-  const { name, cron, instruction } = req.body as { name?: string; cron?: string; instruction?: string };
-  if (!name || !cron || !instruction) {
-    res.status(400).json({ error: 'name, cron, and instruction are required' });
-    return;
-  }
-  try {
-    const job = eng.agent.cron.addJob(name, cron, instruction);
-    res.json({ job });
-  } catch (e: unknown) {
-    getLogger().error('POST_API_SCHEDULER_JOBS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'add-job-failed' });
-  }
-});
-
-app.delete('/api/scheduler/jobs/:id', (req, res) => {
-  const eng = getEngine();
-  if (!eng.agent) {
-    res.status(400).json({ error: 'No active agent' });
-    return;
-  }
-  try {
-    eng.agent.cron.removeJob(req.params['id']!);
-    res.json({ ok: true });
-  } catch (e: unknown) {
-    getLogger().error('DELETE_API_SCHEDULER_JOBS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'remove-job-failed' });
-  }
-});
-
-app.post('/api/scheduler/jobs/:id/run', (req, res) => {
-  const eng = getEngine();
-  if (!eng.agent) { res.status(400).json({ error: 'No active agent' }); return; }
-  try {
-    const ok = eng.agent.cron.runJob(req.params['id']!);
-    if (!ok) { res.status(404).json({ error: 'job-not-found' }); return; }
-    res.json({ ok: true });
-  } catch (e: unknown) {
-    getLogger().error('POST_API_SCHEDULER_JOBS_ID_RUN', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'run-job-failed' });
-  }
-});
-
 // ───── Secret Sauce (Soul / Identity / Diary / Memories / Permission / Crew docs) ─────
 const SECRET_SAUCE_FILES = ['SOUL', 'IDENTITY', 'DIARY', 'MEMORIES', 'PERMISSION', 'CREW'] as const;
 type SecretSauceFile = typeof SECRET_SAUCE_FILES[number];
@@ -4442,96 +4411,6 @@ app.get('/api/plugins/postgresql/comparison', (_req, res) => {
   });
 });
 
-// ── MCP API routes (3.4.x) ──────────────────────────────────────
-
-app.get('/api/mcp/servers', (_req, res) => {
-  try {
-    const eng = getEngine();
-    const servers = eng.mcpBridge.getServerStatus();
-    res.json({ servers });
-  } catch (e: unknown) {
-    getLogger().error('GET_API_MCP_SERVERS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-list-failed' });
-  }
-});
-
-app.post('/api/mcp/servers', (req, res) => {
-  try {
-    const { name, command, args, env, timeout, permissionLevel, maxOutputSize } = req.body as {
-      name: string; command: string; args?: string[]; env?: Record<string, string>;
-      timeout?: number; permissionLevel?: string; maxOutputSize?: number;
-    };
-    if (!name || !command) {
-      res.status(400).json({ error: 'name and command are required' });
-      return;
-    }
-    const eng = getEngine();
-    eng.mcpBridge.updateServerConfig(name, {
-      command,
-      args: args ?? [],
-      env,
-      enabled: true,
-      timeout,
-      permissionLevel: permissionLevel as 'low' | 'medium' | 'high' | 'critical' | undefined,
-      maxOutputSize,
-    });
-    res.json({ ok: true });
-  } catch (e: unknown) {
-    getLogger().error('POST_API_MCP_SERVERS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-add-failed' });
-  }
-});
-
-app.post('/api/mcp/servers/:id/restart', async (req, res) => {
-  try {
-    const eng = getEngine();
-    await eng.mcpBridge.unload(req.params.id);
-    const manifest = { id: `mcp:${req.params.id}`, name: `MCP:${req.params.id}`, version: '0.1.0', description: '', source: 'mcp' as const, tools: [] };
-    await eng.mcpBridge.load(manifest);
-    res.json({ ok: true });
-  } catch (e: unknown) {
-    getLogger().error('POST_API_MCP_SERVERS_ID_RESTART', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-restart-failed' });
-  }
-});
-
-app.get('/api/mcp/servers/:id/status', (req, res) => {
-  try {
-    const eng = getEngine();
-    const status = eng.mcpBridge.getServerStatus();
-    const server = status.find((s) => s.name === req.params.id);
-    if (!server) {
-      res.status(404).json({ error: 'MCP server not found' });
-      return;
-    }
-    res.json({ server });
-  } catch (e: unknown) {
-    getLogger().error('GET_API_MCP_SERVERS_ID_STATUS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-status-failed' });
-  }
-});
-
-app.get('/api/mcp/servers/:id/tools', (req, res) => {
-  try {
-    const eng = getEngine();
-    const status = eng.mcpBridge.getServerStatus();
-    const server = status.find((s) => s.name === req.params.id);
-    if (!server) {
-      res.status(404).json({ error: 'MCP server not found' });
-      return;
-    }
-    res.json({ tools: server.toolCount });
-  } catch (e: unknown) {
-    getLogger().error('GET_API_MCP_SERVERS_ID_TOOLS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-tools-failed' });
-  }
-});
-
-app.delete('/api/mcp/servers/:id', (req, res) => {
-  try {
-    const eng = getEngine();
-    eng.mcpBridge.unload(req.params.id).catch(() => {});
-    res.json({ ok: true });
-  } catch (e: unknown) {
-    getLogger().error('DELETE_API_MCP_SERVERS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'mcp-delete-failed' });
-  }
-});
-
 // ───── Danger zone ─────
 app.delete('/api/sessions', (_req, res) => {
   try {
@@ -4728,6 +4607,10 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
         eng.sessionManager.close();
         log.info('SHUTDOWN', 'Session manager closed.');
       }
+      if (eng?.integrationHub) {
+        void eng.integrationHub.dispose().catch(() => {});
+        log.info('SHUTDOWN', 'Integration hub disposed.');
+      }
       // Stop bridge connections
       if (eng?.telegramBridge) { try { eng.telegramBridge.stop(); } catch {} }
       if (eng?.discordBridge) { try { eng.discordBridge.stop(); } catch {} }
@@ -4739,6 +4622,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
     // 4. Stop background ingestion worker and periodic handlers
     for (const handler of shutdownHandlers) { try { handler(); } catch {} }
     ingestionWorker?.stop();
+    void shutdownAutomation().catch(() => {});
     // 5. Flush log buffer and exit
     stopGlobalRateLimitCleanup();
     closeLogger();
@@ -4752,38 +4636,40 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
   // Start background ingestion job worker (Group 3 + 4 + C3): uses ingestion_jobs queue with FOR UPDATE SKIP LOCKED
   let ingestionWorker: IngestionWorker | null = null;
   setIngestionWorkerRef(null);
+  bindIngestionWorker(null);
   try {
     const eng = getEngine();
     const pgPool = (eng as any).pgPool ?? (eng as any).pool;
-    // Check if neural brain is disabled (embedding models failed to download).
-    let neuralBrainDisabled = false;
+    const ramGb = os.totalmem() / (1024 ** 3);
+    const hardwareSupportsNeural = isNeuralBrainSupported(ramGb);
+    let neuralBrainDisabled = !hardwareSupportsNeural;
     try {
       const cfg = eng.configManager.load();
-      neuralBrainDisabled = cfg.neuralBrain === false;
+      if (cfg.neuralBrain === false) neuralBrainDisabled = true;
     } catch { /* config not ready — proceed as normal */ }
+    setIngestionNeuralBrainEnabled(!neuralBrainDisabled);
     if (pgPool && !neuralBrainDisabled) {
-      getLogger().info('INGESTION_WORKER', 'Neural brain enabled — starting ingestion worker.');
+      getLogger().info('INGESTION_WORKER', 'Neural brain enabled — ingestion worker registered (governor controls run/pause).');
       const fabric = new MemoryFabric(pgPool as any);
       const embedder = new OnnxEmbeddingProvider();
       ingestionWorker = new IngestionWorker(pgPool as any, fabric, {
-        concurrency: 2,
-        pollIntervalMs: 5000,
+        concurrency: 1,
+        pollIntervalMs: 10000,
         embed: (text) => embedder.embed(text),
-        generate: null, // populated inside the async IIFE below or after login
+        generate: null,
         embedder,
       });
       setIngestionWorkerRef(ingestionWorker);
+      bindIngestionWorker(ingestionWorker);
+      ingestionWorker.start();
+      ingestionWorker.pause();
 
-      // Seed periodic jobs once after storage is ready; the worker will claim them.
       const queue = new IngestionQueue(pgPool as any);
       let graphRagAvailable = false;
       void (async () => {
         try {
           await eng.storageReady;
         } catch { /* storage may have failed — proceed best-effort */ }
-        // Build the GraphRAG summarizer generator now that config is available.
-        // This will fail at startup if the config is encrypted (no DEK yet) —
-        // the generator is rebuilt after user login via refreshIngestionWorkerGenerator().
         try {
           const graphRagGenerate = await buildGraphRagSummarizer();
           if (graphRagGenerate && ingestionWorker) {
@@ -4791,13 +4677,16 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
             graphRagAvailable = true;
           }
         } catch { /* best-effort — will retry after user login */ }
-        ingestionWorker.start();
+        await refreshIngestionRagSourceCount(pgPool as any);
+        evaluateIngestionWorker();
+        if (!getIngestionGovernorState().shouldRun) {
+          getLogger().info('INGESTION_WORKER', 'Worker idle — waiting for app visibility and RAG sources');
+          return;
+        }
         try {
           await queue.enqueue({ kind: 'web_distill', priority: 1 });
           await queue.enqueue({ kind: 'memory_consolidate', priority: 1 });
           await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
-          // Only enqueue community_summarize if a generator is available —
-          // otherwise the worker will just skip it and log a warning every cycle.
           if (graphRagAvailable) {
             await queue.enqueue({ kind: 'community_summarize', priority: 0 });
           }
@@ -4807,12 +4696,11 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
         }
       })();
 
-      // Re-enqueue periodic jobs every 60 seconds so the worker has a continuous backlog.
-      // Skip enqueuing a job kind if it already has a pending/running instance to
-      // avoid flooding the queue with no-op jobs that just log warnings and exit.
       const periodicInterval = setInterval(async () => {
+        if (!getIngestionGovernorState().shouldRun) return;
         try {
-          // Only enqueue each kind if no active instance exists
+          await refreshIngestionRagSourceCount(pgPool as any);
+          if (!getIngestionGovernorState().shouldRun) return;
           if (!await queue.hasActiveJob('web_distill')) {
             await queue.enqueue({ kind: 'web_distill', priority: 1 });
           }
@@ -4822,7 +4710,6 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
           if (!await queue.hasActiveJob('louvain_layout')) {
             await queue.enqueue({ kind: 'louvain_layout', priority: 0 });
           }
-          // Only enqueue community_summarize if a generator was built successfully
           if (graphRagAvailable && !await queue.hasActiveJob('community_summarize')) {
             await queue.enqueue({ kind: 'community_summarize', priority: 0 });
           }
@@ -4830,7 +4717,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
         } catch (e: unknown) {
           getLogger().warn('INGESTION_SEED', e instanceof Error ? e.message : String(e));
         }
-      }, 60000);
+      }, 120_000);
       shutdownHandlers.push(() => clearInterval(periodicInterval));
 
       // Wire web search results into the two-tier web staging table (Group 3)
@@ -4860,10 +4747,17 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
 
   return server.listen(port, () => {
     console.log(`Agent-X web API listening on http://localhost:${port}`);
+    void bootstrapAutomationFromEngine().catch((e: unknown) => {
+      getLogger().warn('AUTOMATION', e instanceof Error ? e.message : String(e));
+    });
+    void applyChannelsConfig().catch((e: unknown) => {
+      getLogger().warn('CHANNELS', e instanceof Error ? e.message : String(e));
+    });
   });
 }
 
 // Auto-start if this is the main module
 if (process.env['AGENTX_TEST'] !== 'true') {
+  ensureLoginShellPath();
   startServer();
 }

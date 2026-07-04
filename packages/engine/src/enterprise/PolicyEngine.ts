@@ -14,7 +14,7 @@ export interface PolicyRule {
   id: string;
   effect: PolicyEffect;
   description: string;
-  /** Tool ID glob pattern (e.g., "shell:*", "mcp:*", "file_write") */
+  /** Tool ID glob pattern (e.g., "shell:*", "integration__*", "file_write") */
   toolPattern: string;
   /** Optional path glob pattern (e.g., "/etc/**", "~/.ssh/*") */
   pathPattern?: string;

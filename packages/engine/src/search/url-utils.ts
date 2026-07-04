@@ -38,6 +38,16 @@ export function extractDomain(url: string): string {
   }
 }
 
+export function markdownSourceLink(url: string): string {
+  const domain = extractDomain(url);
+  return domain ? `[${domain}](${url})` : url;
+}
+
+export function prefixWebExtractOutput(url: string, body: string): string {
+  const source = markdownSourceLink(url);
+  return `Source: ${source}\n\n${body}`;
+}
+
 export function faviconUrlForDomain(domain: string): string {
   if (!domain) return '';
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32`;

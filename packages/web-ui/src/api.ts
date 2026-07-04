@@ -169,7 +169,7 @@ export interface CrewChatCrewInfo {
 export interface CrewChatSessionInfo {
   id: string;
   title?: string;
-  contextKind?: 'agent_x' | 'crew_private';
+  contextKind?: 'agent_x' | 'crew_private' | 'automation';
   hostCrewId?: string;
   crewId?: string;
   crewName?: string;
@@ -513,12 +513,16 @@ export const sessions = {
 
 // ─── Permissions ───
 export const permissions = {
-  respond: (choice: 'allow_once' | 'allow_always' | 'deny') => request<{ ok: boolean }>('/permission/respond', { method: 'POST', body: JSON.stringify({ choice }) }),
+  respond: (requestId: string, choice: 'allow_once' | 'allow_always' | 'deny') =>
+    request<{ ok: boolean }>('/permission/respond', { method: 'POST', body: JSON.stringify({ requestId, choice }) }),
+  respondBatch: (choice: 'allow_once' | 'allow_always' | 'deny') =>
+    request<{ ok: boolean }>('/permission/respond-batch', { method: 'POST', body: JSON.stringify({ choice }) }),
 };
 
 // ─── System ───
 export const system = {
-  cwd: () => request<{ cwd: string }>('/cwd'),
+  cwd: () => request<{ cwd: string | null }>('/cwd'),
+  defaultWorkspace: () => request<{ path: string }>('/cwd/default'),
   setCwd: (path: string) => request<{ cwd: string }>('/cwd', { method: 'POST', body: JSON.stringify({ path }) }),
   dirs: (path?: string) => request<{ current: string; parent: string | null; dirs: Array<{ name: string; path: string }> }>(`/filesystem/dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 };
@@ -550,15 +554,6 @@ export const plugins = {
   toggle: (id: string) => request<{ ok: boolean }>(`/plugins/${id}/toggle`, { method: 'POST' }),
   getConfig: (id: string) => request<PluginInfo>(`/plugins/${id}`),
   updateConfig: (id: string, cfg: Record<string, unknown>) => request<{ ok: boolean }>(`/plugins/${id}/config`, { method: 'PUT', body: JSON.stringify(cfg) }),
-};
-
-// ─── MCP ───
-export const mcp = {
-  servers: () => request<{ servers: MCPServer[] }>('/mcp/servers').then(r => r.servers ?? []),
-  add: (data: MCPServerInput) => request<{ ok: boolean }>('/mcp/servers', { method: 'POST', body: JSON.stringify(data) }),
-  restart: (id: string) => request<{ ok: boolean }>(`/mcp/servers/${id}/restart`, { method: 'POST' }),
-  status: (id: string) => request<MCPServerStatus>(`/mcp/servers/${id}/status`),
-  remove: (id: string) => request<{ ok: boolean }>(`/mcp/servers/${id}`, { method: 'DELETE' }),
 };
 
 // ─── RAG ───
@@ -807,13 +802,101 @@ export const bridges = {
   },
 };
 
-// ─── Scheduler ───
-export const scheduler = {
-  jobs: () => request<{ jobs: SchedulerJob[] }>('/scheduler/jobs').then(r => r.jobs ?? []),
-  create: (name: string, cron: string, instruction: string) => request<{ ok: boolean }>('/scheduler/jobs', { method: 'POST', body: JSON.stringify({ name, cron, instruction }) }),
-  delete: (id: string) => request<{ ok: boolean }>(`/scheduler/jobs/${id}`, { method: 'DELETE' }),
-  run: (id: string) => request<{ ok: boolean }>(`/scheduler/jobs/${id}/run`, { method: 'POST' }),
-  parseCron: (text: string) => request<{ cron: string; original: string }>('/scheduler/parse-cron', { method: 'POST', body: JSON.stringify({ text }) }),
+export interface TelegramDiscoverResponse {
+  ok: boolean;
+  error?: string;
+  botUsername?: string;
+  botName?: string;
+  chats?: Array<{ id: string; title: string; type: string }>;
+}
+
+export const channels = {
+  discoverTelegram: (botToken: string) =>
+    request<TelegramDiscoverResponse>('/channels/telegram/discover', {
+      method: 'POST',
+      body: JSON.stringify({ botToken }),
+    }),
+};
+
+// ─── Automation & Notifications ───
+export type AutomationNotifyChannel = 'in_app' | 'desktop' | 'telegram' | 'slack' | 'email' | 'discord';
+export type AutomationTaskStatus = 'active' | 'paused' | 'cancelled' | 'completed';
+export type NotificationKind = 'automation_success' | 'automation_failure' | 'automation_scheduled';
+
+export interface AutomationTaskRecord {
+  id: string;
+  displayId: string;
+  taskKey: string | null;
+  title: string;
+  instruction: string;
+  scheduleType: 'once' | 'recurring';
+  cronExpression: string | null;
+  runAt: string | null;
+  timezone: string;
+  status: AutomationTaskStatus;
+  sourceChannel: string;
+  sourceSessionId: string | null;
+  notifyChannels: AutomationNotifyChannel[];
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  nextRunAt: string | null;
+  runCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NotificationRecord {
+  id: string;
+  taskId: string | null;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  payload: Record<string, unknown> | null;
+  channels: AutomationNotifyChannel[];
+  deliveryStatus: Record<string, unknown>;
+  readAt: string | null;
+  dismissedAt?: string | null;
+  createdAt: string;
+}
+
+export interface AutomationRunLogEntry {
+  id: string;
+  taskId: string;
+  runId: string;
+  ts: string;
+  level: 'info' | 'tool' | 'think' | 'ok' | 'err' | 'sys';
+  label: string;
+  detail?: string | null;
+  eventType?: string | null;
+}
+
+export const automation = {
+  tasks: () => request<{ tasks: AutomationTaskRecord[] }>('/automation/tasks').then(r => r.tasks ?? []),
+  getTask: (id: string) => request<{ task: AutomationTaskRecord }>(`/automation/tasks/${id}`).then(r => r.task),
+  getLogs: (id: string, opts?: { limit?: number }) => {
+    const q = opts?.limit ? `?limit=${opts.limit}` : '';
+    return request<{ logs: AutomationRunLogEntry[] }>(`/automation/tasks/${id}/logs${q}`).then(r => r.logs ?? []);
+  },
+  cancelTask: (id: string) => request<{ ok: boolean }>(`/automation/tasks/${id}`, { method: 'DELETE' }),
+  deleteTask: (id: string) => request<{ ok: boolean }>(`/automation/tasks/${id}`, { method: 'DELETE' }),
+  pauseTask: (id: string) => request<{ ok: boolean }>(`/automation/tasks/${id}/pause`, { method: 'POST' }),
+  resumeTask: (id: string) => request<{ ok: boolean }>(`/automation/tasks/${id}/resume`, { method: 'POST' }),
+  runNow: (id: string) => request<{ ok: boolean }>(`/automation/tasks/${id}/run`, { method: 'POST' }),
+};
+
+export const notifications = {
+  list: (opts?: { unread?: boolean; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.unread) params.set('unread', '1');
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return request<{ notifications: NotificationRecord[]; unreadCount: number }>(
+      `/notifications${qs ? `?${qs}` : ''}`,
+    );
+  },
+  markRead: (id: string) => request<{ ok: boolean }>(`/notifications/${id}/read`, { method: 'POST' }),
+  dismiss: (id: string) => request<{ ok: boolean }>(`/notifications/${id}/dismiss`, { method: 'POST' }),
+  dismissAll: () => request<{ ok: boolean; count: number }>('/notifications/dismiss-all', { method: 'POST' }),
 };
 
 // ─── Secret Sauce (Soul / Identity / Diary / Memories / Permission / Crew) ───
@@ -939,6 +1022,23 @@ export interface AgentXConfig {
   };
   /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
   neuralBrain?: boolean;
+  channels?: {
+    telegram?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; botToken?: string; chatId?: string };
+    slack?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; webhookUrl?: string; botToken?: string; appToken?: string };
+    email?: {
+      enabled?: boolean;
+      inbound?: boolean;
+      outbound?: boolean;
+      smtpHost?: string;
+      smtpPort?: number;
+      smtpUser?: string;
+      smtpPassword?: string;
+      fromAddress?: string;
+      toAddress?: string;
+      useTls?: boolean;
+    };
+    discord?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; webhookUrl?: string; botToken?: string; channelId?: string };
+  };
 }
 
 export interface ProviderSettings {
@@ -1125,7 +1225,7 @@ export interface SessionInfo {
   provider: string;
   model: string;
   crewId?: string;
-  contextKind?: 'agent_x' | 'crew_private';
+  contextKind?: 'agent_x' | 'crew_private' | 'automation';
   hostCrewId?: string;
   hostCrewName?: string;
   hostCrewCallsign?: string;
@@ -1205,30 +1305,6 @@ export interface PluginConfigField {
   placeholder?: string;
 }
 
-export interface MCPServer {
-  id: string;
-  name: string;
-  command?: string;
-  host?: string;
-  port?: number;
-  status: 'running' | 'stopped' | 'error';
-  toolCount?: number;
-}
-
-export interface MCPServerInput {
-  name: string;
-  command?: string;
-  args?: string[];
-  host?: string;
-  port?: number;
-}
-
-export interface MCPServerStatus {
-  running: boolean;
-  toolCount: number;
-  error?: string;
-}
-
 export interface RAGResult {
   content: string;
   score: number;
@@ -1252,17 +1328,6 @@ export interface EmailConfig {
   fromAddress?: string;
   imapHost?: string;
   imapPort?: string;
-}
-
-export interface SchedulerJob {
-  id: string;
-  name: string;
-  cron: string;
-  instruction: string;
-  lastRun?: string | number;
-  nextRun?: string | number;
-  runCount?: number;
-  enabled?: boolean;
 }
 
 export interface TodoItem {
@@ -1625,6 +1690,156 @@ export const settings = {
         { method: 'POST', body: JSON.stringify({ provider, apiKey }) },
       ),
   },
+};
+
+// ─── Integrations Hub ───
+export interface IntegrationProvider {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  icon: string;
+  website?: string;
+  trust: 'official' | 'verified' | 'community';
+  catalogStatus?: 'active' | 'candidate' | 'testing' | 'deprecated';
+  npmPackage?: string;
+  evaluationNotes?: string;
+  server: {
+    type: 'stdio' | 'remote';
+    package?: string;
+    command?: string;
+    args?: string[];
+    url?: string;
+  };
+  auth: {
+    primary: string;
+    developer?: string[];
+    connectGuide?: Array<{ title: string; body: string; link?: string }>;
+    fields?: Array<{ key: string; label: string; placeholder?: string; secret?: boolean; required?: boolean }>;
+    oauth?: {
+      discoveryUrl?: string;
+      authorizationUrl?: string;
+      tokenUrl?: string;
+      clientId?: string;
+      clientIdEnv?: string;
+      scopes?: string[];
+      resource?: string;
+    };
+    packageSignIn?: {
+      loginTool: string;
+      statusTool?: string;
+      progressTool?: string;
+      label?: string;
+    };
+  };
+  capabilities: { search: boolean; read: boolean; write: boolean; transact: boolean };
+  highlights?: string[];
+  tools?: { autoExecute?: string[]; alwaysConfirm?: string[] };
+}
+
+export interface IntegrationConnection {
+  id: string;
+  providerId: string;
+  displayName: string;
+  status: 'connected' | 'disconnected' | 'error' | 'syncing';
+  authMode: string;
+  connectedAt: string;
+  lastSyncAt?: string;
+  error?: string;
+  accountLabel?: string;
+  toolCount?: number;
+  enabled: boolean;
+}
+
+export interface IntegrationActionPreview {
+  providerId: string;
+  providerName: string;
+  toolId: string;
+  toolName: string;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  summary: string;
+  impact: string;
+  parameters: Array<{ key: string; value: string; sensitive?: boolean }>;
+  resultType?: 'generic' | 'issue' | 'calendar' | 'hotel' | 'message';
+}
+
+export interface IntegrationAnalytics {
+  totalCalls: number;
+  successRate: number;
+  readonlyCalls: number;
+  writeCalls: number;
+  byProvider: Record<string, { calls: number; success: number; failures: number }>;
+  recentErrors: Array<{ timestamp: string; providerId: string; toolName: string; error: string }>;
+}
+
+export interface ConnectIntegrationRequest {
+  authMode?: string;
+  env?: Record<string, string>;
+  displayName?: string;
+  stdio?: { command: string; args?: string[]; cwd?: string };
+  remote?: { url: string };
+}
+
+export interface IntegrationHubSettings {
+  allowedProviderIds?: string[];
+  healthPollingEnabled?: boolean;
+  healthPollIntervalMs?: number;
+  catalogRemoteUrl?: string;
+  oauthClientIds?: Record<string, string>;
+  showCandidateProviders?: boolean;
+}
+
+export const integrations = {
+  catalog: (includeCandidates?: boolean) =>
+    request<{
+      providers: IntegrationProvider[];
+      settings?: IntegrationHubSettings;
+      stats?: Record<'active' | 'candidate' | 'testing' | 'deprecated', number>;
+    }>(`/integrations/catalog${includeCandidates ? '?includeCandidates=true' : ''}`),
+  connections: () => request<{ connections: IntegrationConnection[] }>('/integrations/connections'),
+  analytics: () => request<{ analytics: IntegrationAnalytics }>('/integrations/analytics'),
+  settings: () => request<{ settings: IntegrationHubSettings }>('/integrations/settings'),
+  updateSettings: (body: IntegrationHubSettings) =>
+    request<{ settings: IntegrationHubSettings }>('/integrations/settings', { method: 'POST', body: JSON.stringify(body) }),
+  importMcp: (body: { mcpServers: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; url?: string }> }) =>
+    request<{ imported: IntegrationConnection[]; errors: Array<{ name: string; error: string }> }>('/integrations/import', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  connect: (providerId: string, body: ConnectIntegrationRequest) =>
+    request<{ connection: IntegrationConnection }>(`/integrations/${providerId}/connect`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  disconnect: (connectionId: string) =>
+    request<{ ok: boolean }>(`/integrations/${connectionId}`, { method: 'DELETE' }),
+  sync: (connectionId: string) =>
+    request<{ connection: IntegrationConnection }>(`/integrations/${connectionId}/sync`, { method: 'POST' }),
+  runTool: (connectionId: string, toolName: string, args?: Record<string, unknown>) =>
+    request<{ result: { success: boolean; output: string; error?: string } }>(`/integrations/${connectionId}/run-tool`, {
+      method: 'POST',
+      body: JSON.stringify({ toolName, args }),
+    }),
+  health: (connectionId: string) =>
+    request<{ health: { status: string; toolCount: number; error?: string; lastSyncAt?: string } }>(
+      `/integrations/${connectionId}/health`,
+    ),
+  startOAuth: (providerId: string, remoteUrl?: string) =>
+    request<{ authUrl: string; state: string }>(`/integrations/${providerId}/oauth/start`, {
+      method: 'POST',
+      body: JSON.stringify(remoteUrl ? { remoteUrl } : {}),
+    }),
+  audit: (limit = 100) =>
+    request<{ entries: Array<{
+      id: string;
+      timestamp: string;
+      providerId: string;
+      toolName: string;
+      readonly: boolean;
+      success: boolean;
+      error?: string;
+      argsSummary?: string;
+    }> }>(`/integrations/audit?limit=${limit}`),
 };
 
 // ─── Agent Vitals ───

@@ -1,5 +1,5 @@
 /** How this session's memory is scoped and presented to the LLM. */
-export type SessionContextKind = 'agent_x' | 'crew_private';
+export type SessionContextKind = 'agent_x' | 'crew_private' | 'automation';
 
 export interface SessionCrewRosterEntry {
   crewId: string;

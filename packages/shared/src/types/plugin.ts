@@ -7,7 +7,7 @@ export interface PluginManifest {
   description: string;
   author?: string;
   license?: string;
-  source: 'plugin' | 'mcp';
+  source: 'plugin';
   tools: PluginToolDescriptor[];
   config?: Record<string, PluginConfigField>;
   minAgentVersion?: string;
@@ -47,22 +47,6 @@ export interface PluginLoader {
   load(manifest: PluginManifest): Promise<PluginInstance>;
   unload(pluginId: string): Promise<void>;
   getLoaded(): PluginInstance[];
-}
-
-export type MCPTransport = 'stdio' | 'sse' | 'http';
-
-export interface MCPBridgeConfig {
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-  enabled?: boolean;
-  allowed?: boolean;
-  timeout?: number;
-  maxOutputSize?: number;
-  permissionLevel?: 'low' | 'medium' | 'high' | 'critical';
-  transport?: MCPTransport;
-  url?: string;
-  poolSize?: number;
 }
 
 export type PluginCategory =

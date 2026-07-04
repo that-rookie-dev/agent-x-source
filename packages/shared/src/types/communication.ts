@@ -294,7 +294,7 @@ export enum ParallelMode {
   NEVER = 'never',
   SAFE = 'safe',
   PATH_SCOPED = 'path_scoped',
-  MCP_CHECK = 'mcp_check',
+  INTEGRATION_CHECK = 'integration_check',
   SEQUENTIAL = 'sequential',
 }
 

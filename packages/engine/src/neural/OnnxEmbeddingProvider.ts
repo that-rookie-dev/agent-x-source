@@ -18,6 +18,7 @@
 import { totalmem } from 'os';
 import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import type { EmbeddingProvider } from '@agentx/shared';
+import { NEURAL_BRAIN_MIN_RAM_GB } from '@agentx/shared';
 import { LocalEmbeddingProvider } from './LocalEmbeddingProvider.js';
 
 /** Target dimension — always 1024 to match BGE-M3 and the DB schema. */
@@ -159,6 +160,10 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
 
   private async loadModel(): Promise<LoadedModel> {
     const ramGb = this.getRamGb();
+    if (ramGb < NEURAL_BRAIN_MIN_RAM_GB) {
+      return { tier: 'ngram', pipeline: null, nativeDim: MINILM_DIMENSION };
+    }
+
     const preferBgeM3 = ramGb >= BGE_M3_RAM_THRESHOLD_GB;
 
     // Try BGE-M3 first on capable machines.

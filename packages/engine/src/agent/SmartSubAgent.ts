@@ -253,8 +253,8 @@ export class SmartSubAgent {
 
   private buildSubAgentPrompt(): string {
     const planModeNote = this.planMode
-      ? `\nPLAN MODE (read-only): Use read/search/research tools freely. Do NOT write files or run mutating shell commands.
-If a write would help, include the plan, analysis, or draft content in your markdown response instead.
+      ? `\nPLAN MODE: Reads, search, new file creation, scripts, and notifications are allowed. Do NOT edit or delete existing files (blocked).
+If an edit would help, describe the change in your markdown response instead.
 Always finish with a complete markdown answer — never wait for user approval.`
       : '';
 
@@ -267,7 +267,7 @@ Focus ONLY on completing the assigned task.
 
 Rules:
 1. Do NOT greet the user or ask unnecessary questions.
-2. Use tools aggressively to complete the task (read-only tools when in plan mode).
+2. Use tools aggressively to complete the task (avoid edit/delete of existing files in plan mode).
 3. If you encounter errors, try alternative approaches.
 4. Return a CONCISE markdown summary of what you did and the final result.
 ${restrictedNote}${planModeNote}

@@ -15,6 +15,7 @@ export interface PermissionRequest {
   targetPath: string;
   riskLevel: 'low' | 'medium' | 'high' | 'critical';
   description: string;
+  integrationPreview?: import('./integrations.js').IntegrationActionPreview;
 }
 
 export interface PermissionRule {

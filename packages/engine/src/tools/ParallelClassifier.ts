@@ -39,7 +39,7 @@ export class ParallelClassifier {
           break;
         }
 
-        case ParallelMode.MCP_CHECK:
+        case ParallelMode.INTEGRATION_CHECK:
           sequential.push(tool);
           break;
 
@@ -118,8 +118,8 @@ export class ParallelClassifier {
       return ParallelMode.PATH_SCOPED;
     }
 
-    if (tool.tool.name.startsWith('mcp__')) {
-      return ParallelMode.MCP_CHECK;
+    if (tool.tool.id.startsWith('integration__') || tool.tool.id.startsWith('integration:')) {
+      return ParallelMode.INTEGRATION_CHECK;
     }
 
     return ParallelMode.SEQUENTIAL;

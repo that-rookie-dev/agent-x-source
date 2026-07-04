@@ -48,26 +48,28 @@ export function buildFullText(text: string, attachments?: { name: string; conten
 }
 
 export function buildPlanInstruction(): string {
-  return `🔒 CRITICAL CONSTRAINT: PLAN MODE (READ-ONLY)
+  return `🔒 PLAN MODE
 
-You are operating in PLAN MODE. This means:
+Plan mode allows reads, web search, new file creation, shell/scripts, notifications, and automation scheduling.
 
-UNAVAILABLE: file writes, shell commands, doc_markdown, python_rpc, notifications, and any mutating tools
-AVAILABLE: file_read, glob, grep, web_search, code_search, and other read/analysis tools
+REQUIRES AGENT MODE OR HYPERDRIVE (edits/deletes only):
+- Editing existing files (file_edit, code_replace, apply_patch, json_set, …)
+- Deleting files, folders, or todos
+- Destructive git operations (reset, rebase, merge, stash)
 
-YOU CANNOT and MUST NOT:
-- Create, write, or modify files (including .md plan documents on disk)
-- Delete or rename files
-- Execute shell commands
-- Claim you did any of the above
+AVAILABLE IN PLAN MODE:
+- file_read, glob, grep, web_search, deep_web_search, automation_register, bash, file_write (new files), doc_markdown, notify_desktop, memory_store, and most create/execute tools
 
-IF USER ASKS YOU TO CREATE/WRITE/MODIFY FILES:
+SCHEDULING:
+- For reminders or "at <time>" / "in X minutes" tasks: call automation_register FIRST — do NOT research now.
+- automation_register works in Plan mode without switching modes.
+
+IF USER ASKS TO EDIT OR DELETE EXISTING FILES:
 1. Acknowledge the request
-2. Deliver a detailed PLAN as markdown IN THIS CHAT MESSAGE ONLY
-3. Tell them: "To execute this, switch to Agent mode or engage Hyperdrive"
-4. Do NOT pretend the action succeeded
+2. Explain that edit/delete requires Agent mode or Hyperdrive
+3. Offer to plan the steps in chat, or ask them to switch modes for the edit
 
-You can only ANALYZE, READ, SEARCH, and PLAN in chat. You cannot EXECUTE modifications.`;
+Do NOT ask to switch modes for: web search, scheduling, new file creation, scripts, or read-only analysis.`;
 }
 
 export function buildCrewPrivatePlanInstruction(): string {
@@ -154,8 +156,21 @@ export function runAgentTurnAsync(
   },
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let timeoutPaused = false;
+
+  const pauseTimeout = () => {
+    timeoutPaused = true;
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = undefined;
+    }
+  };
+
   const onTimeout = () => {
     try {
+      if (agent.isAwaitingClarification?.()) {
+        agent.abortClarificationWait?.();
+      }
       agent.cancel();
       const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, 'The operation was aborted due to timeout', partial);
@@ -166,11 +181,25 @@ export function runAgentTurnAsync(
     } catch { /* best-effort */ }
   };
   const scheduleTimeout = () => {
+    if (timeoutPaused) return;
     if (timeoutId) clearTimeout(timeoutId);
     timeoutId = setTimeout(onTimeout, TURN_TIMEOUT_MS);
   };
   const unsubActivity = agent.events.on((event) => {
-    if (TURN_ACTIVITY_EVENTS.has(event.type as string)) {
+    const type = event.type as string;
+    if (type === 'clarification_required') {
+      pauseTimeout();
+      return;
+    }
+    if (type === 'loading_start') {
+      const stage = (event as { stage?: string }).stage;
+      if (timeoutPaused && (stage === 'thinking' || stage === 'crew_private')) {
+        timeoutPaused = false;
+        scheduleTimeout();
+      }
+      return;
+    }
+    if (TURN_ACTIVITY_EVENTS.has(type)) {
       scheduleTimeout();
     }
   });

@@ -1,6 +1,9 @@
 import type { ProviderId } from './provider.js';
 import type { RAGConfig } from './rag.js';
 import type { PermissionRule } from './permission.js';
+import type { NotificationChannelsConfig } from './channels.js';
+
+export type { NotificationChannelsConfig, NotificationChannelId, NotificationChannelStatus } from './channels.js';
 
 export interface UserConfig {
   callsign: string;
@@ -48,6 +51,8 @@ export interface AgentXConfig {
   setupComplete?: boolean; // true after Mission Control wizard finishes
   rag?: RAGConfig;
   tools?: ToolsConfig;
+  /** Outbound notification channels (Telegram, Slack, Email, Discord). */
+  channels?: NotificationChannelsConfig;
   localModel?: LocalModelConfig;
   featureRouting?: FeatureRoutingConfig;
   maxSubAgents?: number; // Maximum number of concurrent sub-agents (default: 5, max: 20)

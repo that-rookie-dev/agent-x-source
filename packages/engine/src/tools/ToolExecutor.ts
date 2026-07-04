@@ -8,12 +8,18 @@ import type { SafetyAuditor } from '../safety/SafetyAuditor.js';
 import type { PolicyEngine } from '../enterprise/PolicyEngine.js';
 import type { AgentInfo } from '../agent/AgentInfo.js';
 import { isPlanDeniedTool } from '../agent/plan-mode-utils.js';
+import { buildIntegrationActionPreview } from '../integrations/action-preview.js';
+import { isIntegrationToolId } from '../integrations/action-classifier.js';
 
 
 export type PermissionRequestHandler = (
   toolId: string,
   path: string,
   riskLevel: string,
+  context?: {
+    args?: Record<string, unknown>;
+    integrationPreview?: import('@agentx/shared').IntegrationActionPreview;
+  },
 ) => Promise<'allow_once' | 'allow_always' | 'deny'>;
 
 export interface ToolExecutionEntry {
@@ -42,6 +48,7 @@ export class ToolExecutor {
   private executionHistory: ToolExecutionEntry[] = [];
   private mode: 'agent' | 'plan' = 'agent';
   private currentAgent: AgentInfo | null = null;
+  private alwaysPromptPermissions = false;
   private sessionRules: PermissionRule[] = [];
   private agentPermissions: PermissionRule[] = [];
   private userConfigRules: PermissionRule[] = [];
@@ -59,6 +66,10 @@ export class ToolExecutor {
   setAgent(agent: AgentInfo): void {
     this.currentAgent = agent;
     this.setAgentPermissions(agent.permissions ?? []);
+  }
+
+  setAlwaysPromptPermissions(enabled: boolean): void {
+    this.alwaysPromptPermissions = enabled;
   }
 
   setSessionRules(rules: PermissionRule[]): void {
@@ -201,12 +212,12 @@ export class ToolExecutor {
       }
     }
 
-    // Plan mode: strict allowlist — block any tool not explicitly read-only
+    // Plan mode: block edit/delete tools only
     if (this.mode === 'plan' && isPlanDeniedTool(toolId)) {
       const modeLabel = this.currentAgent?.name ?? 'Plan';
       return {
         success: false,
-        output: `The "${toolId}" tool cannot be executed in ${modeLabel} mode (read-only). This tool requires Agent Mode or Hyperdrive with full write/execute permissions. Please ask the user to switch modes using the control panel.`,
+        output: `The "${toolId}" tool cannot be executed in ${modeLabel} mode. Editing or deleting existing resources requires Agent Mode or Hyperdrive. Reads, new file creation, scripts, web search, and scheduling work in Plan mode.`,
         error: 'MODE_RESTRICTED',
       };
     }
@@ -225,17 +236,26 @@ export class ToolExecutor {
     }
 
     const permissionExempt = isPermissionExemptTool(toolId);
+    const shouldPrompt = this.alwaysPromptPermissions || tool.riskLevel !== 'low';
     if (
       !permissionExempt
       && ruleResult === 'ask'
       && this.permissionRequestHandler
-      && tool.riskLevel !== 'low'
+      && shouldPrompt
     ) {
       const existingGrant = this.permissionManager.check(toolId, scopePathForHook ?? undefined);
       if (existingGrant === 'allow_always') {
         // Previously granted — skip prompt
       } else {
-        const response = await this.permissionRequestHandler(toolId, scopePathForHook ?? '*', tool.riskLevel);
+        const integrationPreview = isIntegrationToolId(toolId)
+          ? buildIntegrationActionPreview(toolId, args, tool) ?? undefined
+          : undefined;
+        const response = await this.permissionRequestHandler(
+          toolId,
+          scopePathForHook ?? '*',
+          tool.riskLevel,
+          { args, integrationPreview },
+        );
         if (response === 'deny') {
           return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
         }

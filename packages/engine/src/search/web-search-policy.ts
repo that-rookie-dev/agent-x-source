@@ -77,7 +77,8 @@ export function buildWebSearchTurnInstruction(policy: WebSearchTurnPolicy): stri
 You MUST call a web search tool before answering.
 - Prefer deep_web_search for the user's question (full research pipeline with ranked sources).
 - Use web_search only if deep_web_search is unavailable.
-- Do NOT answer from memory alone for factual/current claims — search first, then synthesize with citations/links.
+- Do NOT answer from memory alone for factual/current claims — search first, then synthesize.
+- MANDATORY: Every web-sourced fact, news item, or bullet MUST end with a source chip link: [domain.com](full-url). Never omit the source.
 [/WEB SEARCH]`;
   }
   return `[WEB SEARCH — AUTO]
@@ -86,5 +87,6 @@ Use web search tools when ANY of these apply:
 2. You are uncertain, guessing, or your knowledge may be outdated — verify via deep_web_search (preferred) or web_search.
 3. You need to confirm conflicting facts before advising.
 If none apply and you are confident from context/files, answer without searching.
+When you use web data: MANDATORY source chip on every cited item — [domain.com](full-url). No exceptions.
 [/WEB SEARCH]`;
 }

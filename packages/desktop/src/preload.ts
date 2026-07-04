@@ -6,11 +6,21 @@ contextBridge.exposeInMainWorld('agentx', {
   isDesktop: true,
   totalMemoryGB: ipcRenderer.sendSync('system:totalMemoryGB'),
   localModelSupported: ipcRenderer.sendSync('system:localModelSupported'),
+  neuralBrainSupported: ipcRenderer.sendSync('system:neuralBrainSupported'),
   minimize: () => ipcRenderer.send('window:minimize'),
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),
   isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  defaultWorkspace: () => ipcRenderer.invoke('path:defaultWorkspace') as Promise<string>,
+  requestNotifications: () => ipcRenderer.invoke('permissions:requestNotifications'),
+  showNotification: (payload: { title?: string; body: string; subtitle?: string }) =>
+    ipcRenderer.invoke('notifications:show', payload) as Promise<{ ok: boolean; reason?: string }>,
+  onNotificationClick: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('notifications:navigate', handler);
+    return () => ipcRenderer.removeListener('notifications:navigate', handler);
+  },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   openInternalWindow: (url: string) => ipcRenderer.invoke('window:openInternal', url),
 });

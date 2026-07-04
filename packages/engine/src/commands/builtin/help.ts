@@ -23,7 +23,6 @@ export const helpCommand: CommandInterface = {
       '  /config        View/edit configuration',
       '  /bg            Move current task to background',
       '  /tasks         List active/completed tasks',
-      '  /schedule      Manage scheduled/cron tasks',
       '',
       'Type / to see suggestions. Tab to autocomplete.',
     ].join('\n');

@@ -8,7 +8,12 @@ describe('requiresExecutionIntent', () => {
     expect(requiresExecutionIntent(msg)).toBe(false);
   });
 
-  it('returns true for explicit build requests', () => {
-    expect(requiresExecutionIntent('build a REST API for user authentication')).toBe(true);
+  it('returns true for explicit edit/delete requests', () => {
+    expect(requiresExecutionIntent('delete the config file')).toBe(true);
+    expect(requiresExecutionIntent('edit main.ts line 42')).toBe(true);
+  });
+
+  it('returns false for create/build requests (allowed in plan mode)', () => {
+    expect(requiresExecutionIntent('build a REST API for user authentication')).toBe(false);
   });
 });

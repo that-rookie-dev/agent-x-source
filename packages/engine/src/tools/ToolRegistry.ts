@@ -66,4 +66,24 @@ export class ToolRegistry {
   listFavorites(): ToolDefinition[] {
     return [...this.favoriteTools].map((id) => this.tools.get(id)).filter((t): t is ToolDefinition => t !== undefined);
   }
+
+  unregister(id: string): boolean {
+    this.favoriteTools.delete(id);
+    return this.tools.delete(id);
+  }
+
+  unregisterByPrefix(prefix: string): string[] {
+    const removed: string[] = [];
+    for (const id of [...this.tools.keys()]) {
+      if (id.startsWith(prefix)) {
+        this.unregister(id);
+        removed.push(id);
+      }
+    }
+    return removed;
+  }
+
+  listBySource(source: ToolDefinition['source']): ToolDefinition[] {
+    return this.list().filter((tool) => tool.source === source);
+  }
 }

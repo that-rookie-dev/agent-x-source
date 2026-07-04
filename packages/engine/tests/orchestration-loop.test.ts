@@ -22,13 +22,15 @@ describe('plan-mode-utils', () => {
     expect(requiresPlanIntent('hello there')).toBe(false);
   });
 
-  it('detects execution intent keywords', () => {
-    expect(requiresExecutionIntent('implement the login flow')).toBe(true);
+  it('detects execution intent keywords for edit/delete', () => {
+    expect(requiresExecutionIntent('delete the old config file')).toBe(true);
+    expect(requiresExecutionIntent('edit line 42 in main.ts')).toBe(true);
     expect(requiresExecutionIntent('what is plan mode?')).toBe(false);
+    expect(requiresExecutionIntent('create a new API endpoint')).toBe(false);
   });
 
-  it('escalates execution without plan intent', () => {
-    expect(shouldEscalateForExecution('build the API endpoint', 'task')).toBe(true);
+  it('does not escalate for execution in plan mode', () => {
+    expect(shouldEscalateForExecution('build the API endpoint', 'task')).toBe(false);
     expect(shouldEscalateForExecution('create a plan to build the API', 'task')).toBe(false);
     expect(shouldEscalateForExecution('hello', 'greeting')).toBe(false);
   });
@@ -45,28 +47,28 @@ describe('plan-mode-utils', () => {
     expect(shouldGeneratePlan('create a plan for the auth microservice migration')).toBe(true);
   });
 
-  it('isWriteTool covers denied tools', () => {
-    expect(isWriteTool('file_write')).toBe(true);
-    expect(isWriteTool('doc_markdown')).toBe(true);
-    expect(isWriteTool('python_rpc')).toBe(true);
-    expect(isWriteTool('notify_desktop')).toBe(true);
+  it('isWriteTool covers edit/delete tools only', () => {
+    expect(isWriteTool('file_write')).toBe(false);
+    expect(isWriteTool('doc_markdown')).toBe(false);
+    expect(isWriteTool('bash')).toBe(false);
+    expect(isWriteTool('file_edit')).toBe(true);
+    expect(isWriteTool('file_delete')).toBe(true);
     expect(isWriteTool('glob')).toBe(false);
     expect(ALL_PLAN_DENIED_TOOLS.has('delegate_to_subagent')).toBe(true);
   });
 
-  it('isReadOnlyTool covers research tools', () => {
+  it('isReadOnlyTool reflects plan-allowed non-edit tools', () => {
     expect(isReadOnlyTool('file_read')).toBe(true);
     expect(isReadOnlyTool('http_get')).toBe(true);
-    expect(isReadOnlyTool('file_write')).toBe(false);
-    expect(isReadOnlyTool('doc_markdown')).toBe(false);
+    expect(isReadOnlyTool('file_write')).toBe(true);
+    expect(isReadOnlyTool('doc_markdown')).toBe(true);
+    expect(isReadOnlyTool('file_edit')).toBe(false);
   });
 
-  it('shouldUseInteractivePlanGates enables mode-escalation UI for Agent-X plan mode only', () => {
-    expect(shouldUseInteractivePlanGates(true, false)).toBe(true);
+  it('interactive plan gates are disabled', () => {
+    expect(shouldUseInteractivePlanGates(true, false)).toBe(false);
     expect(shouldUseInteractivePlanGates(true, true)).toBe(false);
     expect(shouldUseInteractivePlanGates(false, false)).toBe(false);
-    expect(shouldUseInteractivePlanGates(true, false, 'crew_private')).toBe(false);
-    expect(shouldUseInteractivePlanGates(true, false, 'crew_worker')).toBe(false);
   });
 });
 
@@ -96,11 +98,18 @@ describe('plan mode tool executor blocking', () => {
     return executor;
   }
 
-  it('blocks doc_markdown in plan mode', async () => {
-    const executor = makeExecutor(['glob', 'doc_markdown']);
-    const result = await executor.execute('doc_markdown', { file: 'plan.md', sections: [] }, 'sid');
+  it('blocks file_edit in plan mode', async () => {
+    const executor = makeExecutor(['glob', 'file_edit']);
+    const result = await executor.execute('file_edit', { path: 'x.ts', old_string: 'a', new_string: 'b' }, 'sid');
     expect(result.success).toBe(false);
     expect(result.error).toBe('MODE_RESTRICTED');
+  });
+
+  it('allows doc_markdown in plan mode', async () => {
+    const executor = makeExecutor(['glob', 'doc_markdown']);
+    executor.registerHandler('doc_markdown', async () => ({ success: true, output: 'written' }));
+    const result = await executor.execute('doc_markdown', { file: 'plan.md', sections: [] }, 'sid');
+    expect(result.success).toBe(true);
   });
 
   it('allows glob in plan mode', async () => {
@@ -110,7 +119,8 @@ describe('plan mode tool executor blocking', () => {
   });
 
   it('isPlanDeniedTool matches executor gate', () => {
-    expect(isPlanDeniedTool('doc_markdown')).toBe(true);
+    expect(isPlanDeniedTool('file_edit')).toBe(true);
+    expect(isPlanDeniedTool('doc_markdown')).toBe(false);
     expect(isPlanDeniedTool('glob')).toBe(false);
   });
 });

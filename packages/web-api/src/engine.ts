@@ -20,7 +20,6 @@ import {
   EmailBridge,
   RedisCacheRuntime,
   WebhookNotifierRuntime,
-  MCPBridge,
   SessionLogger,
   initLogCollector,
   getLogCollector,
@@ -34,13 +33,15 @@ import {
   applyWebSearchConfigFromAgentConfig,
   MemoryFabric,
   setLocalModelConfig,
+  IntegrationHub,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
-import { getDataDir, getLogger } from '@agentx/shared';
+import { getDataDir, getLogger, hydrateMessageHistoryEntries, isNeuralBrainSupported, isChannelSessionId } from '@agentx/shared';
+import os from 'node:os';
 import { resolveCrewPrivateHostForAgent } from './host-crew-session.js';
 import { persistClarificationResumeFromAgent } from './clarification-resume.js';
 
@@ -66,8 +67,8 @@ export interface EngineState {
   emailBridge: EmailBridge | null;
   redisRuntime: RedisCacheRuntime | null;
   webhookRuntime: WebhookNotifierRuntime | null;
-  mcpBridge: MCPBridge;
   dek: Buffer | null;
+  integrationHub: IntegrationHub;
 }
 
 let state: EngineState | null = null;
@@ -78,6 +79,18 @@ function safeLoadConfig(configManager: ConfigManager): AgentXConfig | null {
   } catch {
     return null;
   }
+}
+
+/** Disable neural brain on machines below the RAM threshold (saves memory and background work). */
+function applyLowRamFeatureDefaults(configManager: ConfigManager): void {
+  const ramGb = os.totalmem() / (1024 ** 3);
+  if (isNeuralBrainSupported(ramGb)) return;
+  try {
+    const cfg = configManager.load();
+    if (cfg.neuralBrain === false) return;
+    configManager.save({ ...cfg, neuralBrain: false });
+    getLogger().info('SYSTEM', `Neural brain auto-disabled — ${ramGb.toFixed(1)} GB RAM (requires 16 GB+)`);
+  } catch { /* config not ready yet */ }
 }
 
 export function syncLocalModelConfig(configManager: ConfigManager): void {
@@ -114,10 +127,13 @@ export function getEngine(): EngineState {
 
   syncLocalModelConfig(configManager);
 
+  applyLowRamFeatureDefaults(configManager);
+
   const toolkit = createDefaultToolkit(process.cwd());
   const pluginRegistry = new PluginRegistry();
-
-  const mcpBridge = new MCPBridge();
+  const integrationHub = new IntegrationHub({
+    getDek: () => state?.dek ?? null,
+  });
 
   // Initialize log collector — hooks into the shared logger to capture all logs
   initLogCollector();
@@ -201,8 +217,8 @@ export function getEngine(): EngineState {
     emailBridge: null,
     redisRuntime: null,
     webhookRuntime: null,
-    mcpBridge,
     dek: null,
+    integrationHub,
   };
 
   const tgPlugin = state!.pluginRegistry.getPlugin('telegram');
@@ -235,6 +251,11 @@ export function getEngine(): EngineState {
       if (state) state.crewManager.refresh();
       await healDatabaseStore(store);
       startPeriodicDatabaseHeal(store);
+      if (state) {
+        state.integrationHub.setDek(state.dek);
+        await state.integrationHub.restoreAll();
+        state.integrationHub.syncToToolkit(state.toolkit.registry, state.toolkit.executor);
+      }
     })
     .catch((e) => {
       console.error('Storage connect/migrate failed; crew catalog tables may be unavailable', e);
@@ -253,16 +274,33 @@ export function setEngineDEK(dek: Buffer | null): void {
   if (state) {
     state.dek = dek;
     state.configManager.setDEK(dek);
+    state.integrationHub.setDek(dek);
     // Update the configured flag now that the DEK is available —
     // encrypted configs become readable after auth.
     state.configured = state.configManager.isConfigured();
     try {
       applyWebSearchConfigFromAgentConfig(state.configManager.load());
     } catch { /* not configured yet */ }
+
+    if (dek) {
+      void state.storageReady
+        .then(async () => {
+          if (!state) return;
+          await state.integrationHub.restoreAll();
+          state.integrationHub.syncToToolkit(state.toolkit.registry, state.toolkit.executor);
+        })
+        .catch((error) => {
+          console.error('Integration restore after sign-in failed:', error instanceof Error ? error.message : error);
+        });
+    }
   }
 }
 
-export function createAgent(config: AgentXConfig | undefined, session: Session): Agent {
+export function createAgent(
+  config: AgentXConfig | undefined,
+  session: Session,
+  options?: { attachToEngine?: boolean },
+): Agent {
   const eng = getEngine();
   let cfg: AgentXConfig;
   if (config) {
@@ -319,6 +357,8 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
 
   const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
   const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
+  const isAutomationRun = (session.contextKind ?? 'agent_x') === 'automation'
+    || session.id.startsWith('automation:');
   const hostCrewId = session.hostCrewId;
   const store = (eng.sessionManager as unknown as { store?: unknown }).store;
   const crewPrivateHost = isCrewPrivate && hostCrewId
@@ -338,12 +378,22 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     onPart,
     persona: crewPrivateHost ? null : persona,
     pgPool: state?.pgPool ?? null,
-    promptProfile: crewPrivateHost ? 'crew_private' : 'default',
+    promptProfile: crewPrivateHost ? 'crew_private' : (isAutomationRun ? 'crew_worker' : 'default'),
     crewPrivateHost,
+    channelSession: isChannelSessionId(session.id),
+    automationRun: isAutomationRun,
+    delegatedWorker: isAutomationRun,
   });
 
   // Apply session mode immediately so the agent starts in the correct mode
-  if (session.mode === 'plan') {
+  if (isChannelSessionId(session.id)) {
+    agent.setPlanMode(false);
+    if (session.mode !== 'agent' || session.hyperdrive) {
+      try {
+        eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false } as never);
+      } catch { /* best-effort */ }
+    }
+  } else if (session.mode === 'plan') {
     agent.setPlanMode(true);
   } else {
     agent.setPlanMode(false);
@@ -374,7 +424,7 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   }
 
   // Watchdog: auto-resume interrupted task on startup (Agent-X sessions only)
-  if (!isCrewPrivate) {
+  if (!isCrewPrivate && !isAutomationRun) {
   try {
     const store = (eng.sessionManager as any).store;
     if (store && typeof store.getTaskSnapshot === 'function') {
@@ -426,7 +476,9 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     crewOrch.setSessionManager(eng.sessionManager);
   }
 
-  eng.agent = agent;
+  if (options?.attachToEngine !== false) {
+    eng.agent = agent;
+  }
 
   const sessionLogger = new SessionLogger(session.id);
   sessionLogger.init();
@@ -473,16 +525,15 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   try {
     const store = (eng.sessionManager as any).store;
     if (store?.getMessages) {
-      const msgs = store.getMessages(session.id) as Array<{ role: string; content: string }>;
+      const msgs = store.getMessages(session.id) as Array<{ role: string; content: string; parts?: unknown }>;
       const restorable = msgs.filter((m) =>
         m.role === 'user' || m.role === 'assistant' ||
         (m.role === 'system' && m.content?.includes('[TURN TOOL LEDGER]')),
       );
       const recent = restorable.slice(-24);
-      for (const msg of recent) {
-        if (msg.content) {
-          agent.addToHistory({ role: msg.role as 'user' | 'assistant' | 'system', content: msg.content });
-        }
+      const historyEntries = hydrateMessageHistoryEntries(recent);
+      for (const entry of historyEntries) {
+        agent.addToHistory(entry);
       }
       try {
         agent.rebuildContext();
@@ -504,7 +555,14 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   };
 
   agent.events.on((event) => {
-    eng.telemetry.emit(event as any);
+    const automationTaskId = isAutomationRun
+      ? session.id.slice('automation:'.length)
+      : undefined;
+    eng.telemetry.emit({
+      ...(event as Record<string, unknown>),
+      sessionId: session.id,
+      ...(automationTaskId ? { automationTaskId, taskId: automationTaskId } : {}),
+    } as any);
     const ev = event as Record<string, unknown>;
     if (ev['type'] === 'clarification_required') {
       try {
@@ -530,8 +588,13 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     const gateway = new Gateway();
     eng.gateway = gateway;
   }
-  eng.gateway!.attachAgent(agent);
+  if (options?.attachToEngine !== false) {
+    eng.gateway!.attachAgent(agent);
+  }
 
+  // Channel-bridge wiring runs only for the primary UI agent — not the dedicated __channel__ agent
+  // (ensureChannelAgent uses attachToEngine: false to avoid recursive ensureChannelAgent ↔ createAgent).
+  if (options?.attachToEngine !== false) {
   const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
   const tgConfig = tgPlugin?.config ?? {};
   if (tgPlugin?.enabled && tgConfig['botToken'] && !eng.telegramBridge && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
@@ -656,6 +719,7 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
       console.error('Failed to start Email bridge', e);
     }
   }
+  }
 
   if (!eng.redisRuntime) {
     const redisPlugin = eng.pluginRegistry.getPlugin('redis-cache');
@@ -686,14 +750,6 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     }
   }
 
-  eng.mcpBridge.discover().then((manifests) => {
-    for (const manifest of manifests) {
-      eng.mcpBridge.load(manifest).catch((e) => {
-        console.error(`Failed to start MCP server "${manifest.id}"`, e);
-      });
-    }
-  }).catch(() => {});
-
   return agent;
 }
 
@@ -723,9 +779,17 @@ export function ensureChannelAgent(): Agent {
       process.cwd(),
       CHANNEL_SESSION_ID,
     );
+  } else if (session.mode !== 'agent' || session.hyperdrive) {
+    try {
+      eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false } as never);
+      session.mode = 'agent';
+      session.hyperdrive = false;
+    } catch { /* best-effort */ }
   }
 
-  return createAgent(cfg, session);
+  const agent = createAgent(cfg, session, { attachToEngine: false });
+  eng.channelAgent = agent;
+  return agent;
 }
 
 export function destroyAgent(): void {

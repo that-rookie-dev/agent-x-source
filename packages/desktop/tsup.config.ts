@@ -10,4 +10,5 @@ export default defineConfig({
   outExtension: () => ({ js: '.js' }),
   external: ['electron', 'electron-updater'],
   platform: 'node',
+  bundle: true,
 });

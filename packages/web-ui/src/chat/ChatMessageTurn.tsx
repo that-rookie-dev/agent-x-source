@@ -8,6 +8,7 @@ import { normalizeMessageForUi, orderPartsForChatRender } from '@agentx/shared/b
 import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
+import { collectWebSourceUrls } from './web-source-urls';
 import { DeepSearchMessageBlock } from './DeepSearchMessageBlock';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
 import { QuestionnaireMessage } from '../components/questionnaire/QuestionnaireMessage';
@@ -58,11 +59,14 @@ function renderParts(
   });
 
   const ordered = orderPartsForChatRender(filtered);
+  const webSources = collectWebSourceUrls(ordered);
 
   const renderMainPart = (part: PartEntry, compactTop = false) => {
     switch (part.type) {
       case 'text':
-        return part.content ? <CrewAwareMarkdown key={part.id} content={part.content} /> : null;
+        return part.content
+          ? <CrewAwareMarkdown key={part.id} content={part.content} webSources={webSources} />
+          : null;
       case 'questionnaire':
         if (!part.questionnaire) return null;
         return (
@@ -190,6 +194,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   };
   const cleanContent = displayContent(displayMessage);
   const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
+  const webSources = collectWebSourceUrls(displayMessage.parts);
   const hasQuestionnaire = !!(displayMessage.parts?.some((p) => p.type === 'questionnaire'));
   const contentBlock = hasParts ? renderParts(
     displayMessage.parts!,
@@ -201,7 +206,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     onViewCrewDossier,
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {cleanContent && <CrewAwareMarkdown content={cleanContent} />}
+      {cleanContent && <CrewAwareMarkdown content={cleanContent} webSources={webSources} />}
       {displayMessage.toolCalls?.map((t, i) => (
         <InlineToolCall key={t.id} tool={t} compactTop={i > 0} />
       ))}

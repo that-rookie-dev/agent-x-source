@@ -169,7 +169,7 @@ export class DefaultPluginLoader implements PluginLoader {
 
   private descriptorsToTools(
     descriptors: PluginToolDescriptor[],
-    source: 'plugin' | 'mcp',
+    source: 'plugin',
   ): ToolDefinition[] {
     return descriptors.map((d) => ({
       id: d.id,

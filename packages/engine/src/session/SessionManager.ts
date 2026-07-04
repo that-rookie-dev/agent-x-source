@@ -77,6 +77,43 @@ export class SessionManager {
     return session;
   }
 
+  /**
+   * Internal run container for scheduled automation — not a user chat session.
+   * Does not change the active session or hijack the global agent slot.
+   */
+  ensureAutomationRunSession(
+    taskId: string,
+    providerId: string,
+    modelId: string,
+    scopePath: string,
+    title: string,
+  ): Session {
+    const sessionId = `automation:${taskId}`;
+    const prevActive = this.activeSession;
+    const prevTracker = this.tokenTracker;
+    const wasAutoSave = !!this.autoSaveInterval;
+
+    try {
+      let session = this.getSessionRecord(sessionId);
+      if (!session) {
+        session = {
+          ...this.buildSessionRecord(providerId, modelId, scopePath, sessionId, undefined, title),
+          contextKind: 'automation',
+          mode: 'agent',
+        };
+        this.createSessionRecord(session);
+      }
+      return session;
+    } finally {
+      this.activeSession = prevActive;
+      this.tokenTracker = prevTracker;
+      if (!wasAutoSave && this.autoSaveInterval) {
+        clearInterval(this.autoSaveInterval);
+        this.autoSaveInterval = null;
+      }
+    }
+  }
+
   /** One lifelong private chat session per crew — returns existing or null. */
   findCrewPrivateSession(crewId: string): Session | null {
     return this.listSessions(500).find((s) =>
@@ -217,10 +254,17 @@ export class SessionManager {
   }
 
   listRootSessions(limit = 20): Session[] {
+    const filterAutomation = (sessions: Session[]) =>
+      sessions.filter((s) => {
+        if (s.parentId) return false;
+        if ((s.contextKind ?? 'agent_x') === 'automation') return false;
+        if (s.id.startsWith('automation:')) return false;
+        return true;
+      });
     if (this.store.listRootSessions) {
-      return this.store.listRootSessions(limit) as unknown as Session[];
+      return filterAutomation(this.store.listRootSessions(limit) as unknown as Session[]);
     }
-    return this.store.listSessions(limit).filter((s) => !s.parentId) as unknown as Session[];
+    return filterAutomation(this.store.listSessions(limit) as unknown as Session[]);
   }
 
   getSessionTree(): Session[] {

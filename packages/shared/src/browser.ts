@@ -1,4 +1,3 @@
-/** Browser-safe exports (no Node.js fs/os/crypto). */
 export {
   normalizeMessageForUi,
   rebuildPartsFromCanonical,
@@ -62,6 +61,16 @@ export type {
 
 export type { ClarificationField, ClarificationSource } from './types/events.js';
 
+export type {
+  NotificationChannelsConfig,
+  NotificationChannelId,
+  TelegramChannelConfig,
+  SlackChannelConfig,
+  EmailChannelConfig,
+  DiscordChannelConfig,
+  TelegramDiscoveredChat,
+} from './types/channels.js';
+
 export {
   MAX_QUESTIONNAIRE_CHOICES,
   QUESTIONNAIRE_CUSTOM_SUFFIX,
@@ -71,6 +80,8 @@ export {
   formatQuestionnaireAnswers,
   canSubmitQuestionnaire,
   buildTextQuestionnaire,
+  collectAnsweredQuestionnaireTexts,
+  hydrateMessageHistoryEntries,
 } from './utils/questionnaire.js';
 
 export type {
@@ -86,11 +97,46 @@ export {
 } from './utils/turn-feedback.js';
 
 export { summarizeMessageForTurnFeedback, displayTextForTurnFeedback } from './utils/turn-display.js';
+export { sanitizeAutomationNotificationBody } from './utils/notification-body.js';
 
 export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNeed } from './utils/crew-roster-intent.js';
 
+export {
+  NEURAL_BRAIN_MIN_RAM_GB,
+  LOCAL_MODEL_MIN_RAM_GB,
+  getSystemMemoryGB,
+  isNeuralBrainSupported,
+  isLocalModelSupported,
+  buildPublicSystemCapabilities,
+} from './utils/system-capabilities.js';
+export type { PublicSystemCapabilities } from './utils/system-capabilities.js';
+
+export {
+  INTEGRATION_TOOL_PREFIX,
+  isIntegrationToolId,
+  parseIntegrationToolId,
+} from './utils/integration-tool-id.js';
+
 export type { CrewRosterPickerRecord, CrewRosterPickerStatus } from './types/crew-roster-picker.js';
 export type { SessionResumeState, SessionResumeKind } from './types/session-resume.js';
+export {
+  automationRunSessionId,
+  isAutomationSessionId,
+  automationTaskIdFromSessionId,
+  isUserFacingSession,
+} from './utils/automation-session.js';
+export {
+  CHANNEL_SESSION_ID,
+  isChannelSessionId,
+} from './utils/channel-session.js';
+
+export {
+  generateAxId,
+  isAxId,
+  parseAxId,
+} from './utils/ax-id.js';
+export type { AxEntity } from './utils/ax-id.js';
+
 export type {
   DeepSearchContentType,
   DeepSearchDepth,

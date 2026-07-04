@@ -7,6 +7,7 @@
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { isLocalModelSupported, isNeuralBrainSupported } from '@agentx/shared';
 
 const execAsync = promisify(exec);
 
@@ -33,7 +34,11 @@ export interface SystemCapabilities {
 
 export class SystemCapabilityDetector {
   static isLocalModelSupported(): boolean {
-    return os.totalmem() / (1024 ** 3) >= 32;
+    return isLocalModelSupported(os.totalmem() / (1024 ** 3));
+  }
+
+  static isNeuralBrainSupported(): boolean {
+    return isNeuralBrainSupported(os.totalmem() / (1024 ** 3));
   }
 
   static async detect(): Promise<SystemCapabilities> {

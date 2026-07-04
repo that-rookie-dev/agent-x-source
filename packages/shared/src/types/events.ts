@@ -1,3 +1,4 @@
+import type { IntegrationActionPreview } from './integrations.js';
 import type { Message } from './message.js';
 import type { ModelInfo } from './provider.js';
 import type { ToolResult } from './tool.js';
@@ -60,7 +61,7 @@ export type EngineEvent =
   | { type: 'processing_start'; taskDescription: string }
   | { type: 'processing_progress'; stage: string; progress: number }
   | { type: 'processing_complete'; result: FormattedResponse }
-  | { type: 'permission_required'; requestId: string; tool: string; path: string; riskLevel: string }
+  | { type: 'permission_required'; requestId: string; tool: string; path: string; riskLevel: string; integrationPreview?: IntegrationActionPreview; forAutomation?: boolean }
   | { type: 'token_update'; used: number; available: number }
   | { type: 'error'; code: string; message: string; recoverable: boolean; actions?: RemediationAction[] }
   | { type: 'provider_error'; provider: string; model: string; statusCode?: number; message: string; recoverable: boolean; actions?: RemediationAction[] }

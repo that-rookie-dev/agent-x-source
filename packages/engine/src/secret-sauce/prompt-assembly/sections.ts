@@ -368,6 +368,9 @@ export function createCurrentTimeSection(ctx: SectionContext): PromptSection<{
   local: string;
   offset: string;
 }> {
+  const renderTime = (t: { iso: string; timezone: string; local: string; offset: string }, updated = false) =>
+    `[CURRENT_TIME${updated ? ' — UPDATED' : ''}]\nNow: ${t.iso}\nUser timezone: ${t.timezone}\nLocal time (user): ${t.local}\nUTC offset: ${t.offset}\n[/CURRENT_TIME]`;
+
   return {
     key: 'core/current-time',
     load: () => ({
@@ -376,27 +379,42 @@ export function createCurrentTimeSection(ctx: SectionContext): PromptSection<{
       local: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: ctx.getUserTimezone() }),
       offset: ctx.getUtcOffset(),
     }),
-    render: (t) =>
-      `[CURRENT_TIME]\nNow: ${t.iso}\nUser timezone: ${t.timezone}\nLocal time (user): ${t.local}\nUTC offset: ${t.offset}\n[/CURRENT_TIME]`,
-    diff: () => null, // Time is always correct at render time — no diff needed
+    render: (t) => renderTime(t),
+    diff: (prev, current) => {
+      if (!current) return null;
+      if (prev && JSON.stringify(prev) === JSON.stringify(current)) return null;
+      return renderTime(current as { iso: string; timezone: string; local: string; offset: string }, true);
+    },
   };
 }
 
 // ─────────────────────────────────────────────────────────────
-// Scheduling — static reminder_set instructions
+// Scheduling — automation only (LLM turn on fire)
 // ─────────────────────────────────────────────────────────────
 
 export function createSchedulingSection(): PromptSection<string> {
   const SCHEDULING = [
     `[SCHEDULING]`,
-    `For reminders and recurring tasks, use the reminder_set tool:`,
-    `- "remind me in X" / "ping me in X" / "alert me after X" → one-time (delay_seconds)`,
-    `- "remind me at <time>" / "at 5pm" / "at 3:30 PM" → one-time (at_time in ISO 8601)`,
-    `- "remind me every X" / "check every X" / "repeat every X" → recurring (interval_minutes)`,
-    `- For absolute times: use [CURRENT_TIME] to compute the ISO 8601 target. Include timezone offset.`,
-    `- Convert relative: "half an hour" = 1800s, "2 hours" = 7200s, "every day" = 1440 min`,
-    `- IMPORTANT: If user says a specific clock time, ALWAYS use at_time (not delay_seconds).`,
-    `- Confirm in plain language after setting: "Done! I'll ping you at 5:04 PM."`,
+    `All scheduling — reminders, pings, recurring checks, research, reports — uses automation tools (available in Plan and Agent mode):`,
+    ``,
+    `CRITICAL — future / reminder / "at <time>" / "in X minutes" requests:`,
+    `- Do NOT run web_search, deep_web_search, or other research NOW.`,
+    `- Call automation_register immediately with schedule + instruction for what to do at fire time.`,
+    `- The automation worker runs a full agent turn then — that is when research happens.`,
+    ``,
+    `Steps:`,
+    `1. Parse intent → title, instruction, schedule (once or recurring cron), required tools.`,
+    `2. Briefly confirm in chat what will run and when.`,
+    `3. Call automation_register — a notification channel questionnaire appears automatically; do not pass notify_channels yourself.`,
+    ``,
+    `Schedule mapping:`,
+    `- "remind me in X" / "ping me in X" → schedule_type=once, prefer delay_seconds (relative) OR run_at = [CURRENT_TIME] + delay (ISO 8601 with timezone)`,
+    `- "remind me at <time>" / "at 5pm" / "around 12:56 PM" → schedule_type=once, run_at = that clock time today/tomorrow (ISO 8601)`,
+    `- "every morning at 9am" / "check every hour" → schedule_type=recurring, cron (5-field)`,
+    `- For news/research at a future time: instruction = the research task; do NOT search before registering.`,
+    `- For simple reminders: instruction = the reminder message.`,
+    `- Use automation_list / automation_cancel to inspect or remove registered tasks.`,
+    `- After registering: "Done! I'll … at <time>." — do NOT ask to switch modes.`,
     `[/SCHEDULING]`,
   ].join('\n');
   return {
@@ -493,6 +511,24 @@ export function createHyperdriveSection(ctx: SectionContext): PromptSection<bool
 interface ChannelFocusState {
   connected: boolean;
   chatId: number | null;
+}
+
+export function createChannelMessagingSection(): PromptSection<null> {
+  return {
+    key: 'core/channel-messaging',
+    load: () => null,
+    render: () => [
+      '[CHANNEL_MESSAGING]',
+      'You are responding on a messaging channel (Telegram, Slack, etc.).',
+      'Plan Mode and Hyperdrive are NOT available — always operate in normal Agent execution mode.',
+      'Every tool use requires explicit user approval via inline buttons: Allow Once, Always Allow, or Deny.',
+      'Remembered permissions persist for this channel session until revoked.',
+      'When the user asks to see permissions, call channel_permissions with action "list".',
+      'When they ask to revoke one, several, or all permissions, call channel_permissions with action "revoke" and tools[] or revoke_all:true.',
+      'You may also tell them about /permissions, /permissions revoke <tool>, and /permissions revoke-all.',
+      '[/CHANNEL_MESSAGING]',
+    ].join('\n'),
+  };
 }
 
 export function createChannelFocusSection(ctx: SectionContext): PromptSection<ChannelFocusState> {

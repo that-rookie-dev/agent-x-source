@@ -10,7 +10,7 @@ export interface ToolDefinition {
   schema: ToolParameterSchema;
   examples?: string[];
   composable: boolean;
-  source: 'builtin' | 'plugin' | 'mcp';
+  source: 'builtin' | 'plugin' | 'integration';
   parallelMode?: ParallelMode;
   isInteractive?: boolean;
   isDestructive?: boolean;
@@ -37,11 +37,11 @@ export type ToolCategory =
   | 'data_processing'
   | 'project_management'
   | 'media_image'
-  | 'mcp_integration'
   | 'workspace_ide'
   | 'scheduler'
   | 'agent_orchestration'
-  | 'agent_meta';
+  | 'agent_meta'
+  | 'integrations';
 
 export type ToolRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 

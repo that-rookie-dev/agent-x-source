@@ -22,6 +22,7 @@ import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import { settings, factoryReset, setAuthToken, knowledge, type DbStatus } from '../../api';
 import { useApp } from '../../store/AppContext';
+import { useNeuralBrainSupported } from '../../hooks/useSystemCapabilities';
 import {
   settingsTheme,
   settingsMonoSx,
@@ -39,6 +40,7 @@ import { SettingsSectionHeader } from './SettingsSectionHeader';
 
 export function PersistenceTab() {
   const { initialize } = useApp();
+  const neuralBrainSupported = useNeuralBrainSupported();
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [migrating, setMigrating] = useState(false);
@@ -231,7 +233,7 @@ export function PersistenceTab() {
       <SettingsCard title="File Storage">
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, mb: 1.5 }}>
           <FilePathRow label="Config" path={fs?.config.path ?? '~/.config/agentx'} size={fs?.config.sizeFormatted ?? '—'}
-            desc="Provider configs, plugin registry, MCP/ACP settings, crew registry" />
+            desc="Provider configs, plugin registry, ACP settings, crew registry" />
           <FilePathRow label="Data" path={fs?.data.path ?? '~/.local/share/agentx'} size={fs?.data.sizeFormatted ?? '—'}
             desc="Session files, secret sauce (soul, memories, diary, identity)" />
           <FilePathRow label="Cache" path={fs?.cache.path ?? '~/.cache/agentx'} size={fs?.cache.sizeFormatted ?? '—'}
@@ -255,7 +257,7 @@ export function PersistenceTab() {
         </Box>
       </SettingsCard>
 
-      <RagStudioStorageCard />
+      {neuralBrainSupported && <RagStudioStorageCard />}
 
       <SettingsCard title="Soft Reset" accent={settingsTheme.accent.amber}>
         <Typography sx={{ ...settingsHelperSx, mb: 1.5 }}>

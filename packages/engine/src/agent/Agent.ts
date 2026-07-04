@@ -28,8 +28,6 @@ import { TokenTracker } from '../session/TokenTracker.js';
 import { estimateOutputTokens } from '../session/tokenCount.js';
 import { SubAgentManager } from './SubAgentManager.js';
 import { TaskManager } from './TaskManager.js';
-import { Scheduler } from '../scheduler/Scheduler.js';
-import { setSchedulerInstance } from '../commands/builtin/schedule.js';
 import { setTaskManagerInstance } from '../commands/builtin/tasks.js';
 import { registerSessionTodoManager } from '../tools/TodoAccess.js';
 import { setSubAgentManagerInstance } from '../tools/builtin/subagent.js';
@@ -51,7 +49,8 @@ import { MemoryFabric, type MemoryNode } from '../neural/MemoryFabric.js';
 import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
 import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
 import {
   buildCompletionMessages,
   COMPACT_MEMORY_MAX_CHARS,
@@ -170,6 +169,10 @@ export interface AgentOptions {
   crewPrivateHost?: import('@agentx/shared').Crew;
   /** Background worker (sub-agent / crew) — skip interactive plan approval & mode escalation UI gates. */
   delegatedWorker?: boolean;
+  /** Ephemeral scheduled automation run — must not clobber shared executor permissions or UI handlers. */
+  automationRun?: boolean;
+  /** Messaging channel session (Telegram/Slack/etc.) — agent mode only, per-tool approvals via channel UI. */
+  channelSession?: boolean;
   /** Parent session ID — for crew workers to access the host conversation's neural brain memory. */
   parentSessionId?: string;
 }
@@ -196,7 +199,6 @@ export class Agent {
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
   private todoManager: TodoManager;
-  private scheduler: Scheduler;
   private _secretSauce: SecretSauceManager | null = null;
   private get secretSauce(): SecretSauceManager { if (!this._secretSauce) { this._secretSauce = new SecretSauceManager(); } return this._secretSauce; }
   private memoryExtractor: MemoryExtractor | null = null;
@@ -284,6 +286,9 @@ export class Agent {
 
   // ─── Clarification & Approval
   private clarificationResolve: ((response: string) => void) | null = null;
+  private clarificationReject: ((error: Error) => void) | null = null;
+  /** Set when clarification wait was aborted (e.g. turn timeout) — forces resume path on next answer. */
+  private clarificationStale = false;
   private activeClarificationResume: {
     kind: 'questionnaire' | 'crew_intake';
     questionnaireMessageId: string;
@@ -335,6 +340,7 @@ export class Agent {
   }
 
   toggleHyperdriveMode(): boolean {
+    if (this.options.channelSession) return false;
     const wasPlan = this.planMode;
     this._hyperdriveMode = !this._hyperdriveMode;
     this.autoApproveTools = this._hyperdriveMode;
@@ -440,8 +446,12 @@ export class Agent {
    * @returns true when a waiter was active and the response was delivered.
    */
   respondToClarification(response: string): boolean {
+    if (this.clarificationStale) return false;
     if (this.clarificationResolve) {
-      this.clarificationResolve(response);
+      const resolve = this.clarificationResolve;
+      this.clarificationResolve = null;
+      this.clarificationReject = null;
+      resolve(response);
       return true;
     }
     return false;
@@ -449,6 +459,16 @@ export class Agent {
 
   isAwaitingClarification(): boolean {
     return this.clarificationResolve != null;
+  }
+
+  /** Abort a pending questionnaire wait (e.g. turn timeout). Next answer uses the resume path. */
+  abortClarificationWait(): void {
+    if (!this.clarificationReject) return;
+    const reject = this.clarificationReject;
+    this.clarificationResolve = null;
+    this.clarificationReject = null;
+    this.clarificationStale = true;
+    reject(new Error('CLARIFICATION_ABORTED'));
   }
 
   getClarificationResumeState(): {
@@ -524,8 +544,16 @@ export class Agent {
     this.emit({ type: 'clarification_required', questionnaire: payload });
     this.emit({ type: 'message_received', message: questionnaireMsg, elapsed: 0 });
 
-    const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
-    this.clarificationResolve = null;
+    let response: string;
+    try {
+      response = await new Promise<string>((resolve, reject) => {
+        this.clarificationResolve = resolve;
+        this.clarificationReject = reject;
+      });
+    } finally {
+      this.clarificationResolve = null;
+      this.clarificationReject = null;
+    }
     this.activeClarificationResume = null;
 
     const answered: QuestionnaireRecord = {
@@ -759,8 +787,6 @@ export class Agent {
     setTaskManagerInstance(this.taskManager);
     this.todoManager = new TodoManager(this.eventBus);
     registerSessionTodoManager(this.sessionId, this.todoManager);
-    this.scheduler = new Scheduler(this.eventBus, this.sessionId);
-    setSchedulerInstance(this.sessionId, this.scheduler);
     setIndexerEventBus(this.eventBus);
     // secretSauce is lazy — created on first access via getter
     this.errorShield = new ErrorShield();
@@ -861,9 +887,14 @@ export class Agent {
       planMode: () => this.planMode,
     });
 
-    // Reset permissions for each new session — no persistent deny across sessions
-    if (this.toolExecutor) {
+    // Reset permissions for each new session — automation runs reuse the shared executor snapshot.
+    if (this.toolExecutor && !this.options.automationRun) {
       this.toolExecutor.getPermissionManager().resetForNewSession(this.sessionId);
+      if (this.options.channelSession) {
+        this.toolExecutor.setAlwaysPromptPermissions(true);
+      }
+    } else if (this.toolExecutor && this.options.channelSession) {
+      this.toolExecutor.setAlwaysPromptPermissions(true);
     }
 
     // Load user-configured permission overrides from config
@@ -878,17 +909,9 @@ export class Agent {
       this.toolExecutor.setUserConfigRules(userRules);
     }
 
-    // Wire permission requests to event bus
-    if (this.toolExecutor) {
-      this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel) => {
-        if (isPermissionExemptTool(toolId)) return 'allow_once';
-        if (this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
-        const requestId = randomUUID();
-        return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-          this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
-          this.emit({ type: 'permission_required', requestId, tool: toolId, path, riskLevel });
-        });
-      });
+    // Wire permission requests to event bus (skipped for ephemeral automation workers).
+    if (this.toolExecutor && !this.options.automationRun) {
+      this.bindPermissionHandler();
 
       // Wire diff preview for file edit tools
       this.toolExecutor.setBeforeToolHook((toolId, args, path) => {
@@ -1004,23 +1027,6 @@ export class Agent {
     // Configure sub-agents with provider so they can make real LLM calls
     this.subAgents.configure(this.provider, this.config, initGen.baseline);
 
-    // When a scheduled job fires, emit it as a notification message (non-blocking).
-    // Simple reminders don't need an LLM round-trip — just display the message.
-    this.scheduler.setTriggerHandler((job) => {
-      const reminderMessage: Message = {
-        id: generateMessageId(),
-        sessionId: this.sessionId,
-        role: 'assistant',
-        content: `⏰ **Reminder**: ${job.instruction}`,
-        toolCalls: null,
-        createdAt: new Date().toISOString(),
-        tokenCount: 0,
-      };
-      this.emit({ type: 'reminder_fired', taskId: job.id, name: job.name, message: job.instruction });
-      this.emit({ type: 'message_received', message: reminderMessage, elapsed: 0 });
-    });
-    this.scheduler.start();
-
     // Trigger periodic summarization in the background if stale
     if (this.secretSauce.summarizer.needsSummarization()) {
       void this.runSummarization();
@@ -1063,10 +1069,6 @@ export class Agent {
 
   get watcherCount(): number {
     return this.fileWatcher?.watcherCount ?? 0;
-  }
-
-  get schedulerCount(): number {
-    return this.scheduler?.taskCount ?? 0;
   }
 
   get toolCount(): number {
@@ -1413,6 +1415,7 @@ Rules:
    * Cancel an in-progress completion. Aborts the active stream and tool executions.
    */
   cancel(): void {
+    this.abortClarificationWait();
     this.runStateMgr.cancel(this.sessionId);
     this.commandQueue.cancelSession(this.sessionId);
     this.stopTurnHeartbeat();
@@ -1435,10 +1438,6 @@ Rules:
 
   get tasks(): TaskManager {
     return this.taskManager;
-  }
-
-  get cron(): Scheduler {
-    return this.scheduler;
   }
 
   get sauce(): SecretSauceManager {
@@ -1490,6 +1489,7 @@ Rules:
   }
 
   setPlanMode(enabled: boolean): void {
+    if (this.options.channelSession && enabled) return;
     if (enabled === this.planMode) return;
     if (this._hyperdriveMode && enabled) return;
     if (enabled) {
@@ -1705,6 +1705,7 @@ Rules:
 
     this.lifecycle.transition('receiving');
     this.scope = new Scope();
+    this.clarificationStale = false;
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
     try {
@@ -1818,6 +1819,10 @@ Rules:
       while (this.messages.length > 0 && this.messages[this.messages.length - 1]?.role === 'assistant') {
         this.messages.pop();
       }
+      const retryHint = 'RETRY TURN: Use the latest [CURRENT_TIME] block for scheduling. For relative delays ("in X minutes"), use automation_register with delay_seconds — do not reuse run_at times from earlier turns or assistant messages.';
+      this.pendingInstruction = this.pendingInstruction
+        ? `${this.pendingInstruction}\n\n${retryHint}`
+        : retryHint;
     }
 
     // Add user message (clean, without instruction)
@@ -2614,6 +2619,17 @@ Rules:
         emit({ type: 'message_received', message: cancelledMessage, elapsed: Date.now() - startTime });
         return cancelledMessage;
       }
+      if (error instanceof Error && error.message === 'CLARIFICATION_ABORTED') {
+        return {
+          id: '__clarify__',
+          sessionId: this.sessionId,
+          role: 'assistant',
+          content: '',
+          toolCalls: null,
+          createdAt: new Date().toISOString(),
+          tokenCount: 0,
+        };
+      }
 
       const errorMsg = error instanceof Error ? error.message : String(error);
       getLogger().error('COMPLETION', `AI SDK streamText failed: ${errorMsg}`);
@@ -2772,6 +2788,24 @@ Rules:
           .register(createMemoryContextSection(ctx))
           .register(createInstructionsSection(ctx.scopePath));
       }
+      if (systemOverride) {
+        this.promptAssembly.register(createSystemOverrideSection(systemOverride));
+      }
+      return;
+    }
+
+    if (this.options.channelSession) {
+      const ctx = this.createSectionContext();
+      this.promptAssembly
+        .register(createProviderPromptSection(ctx))
+        .register(createIdentitySection(ctx))
+        .register(createWorkingDirectorySection(ctx))
+        .register(createCompactRulesSection())
+        .register(createChannelMessagingSection())
+        .register(createCurrentTimeSection(ctx))
+        .register(createUserSection(ctx))
+        .register(createMemoryContextSection(ctx))
+        .register(createInstructionsSection(ctx.scopePath));
       if (systemOverride) {
         this.promptAssembly.register(createSystemOverrideSection(systemOverride));
       }
@@ -3024,6 +3058,96 @@ Rules:
     }
   }
 
+  /** Re-attach interactive permission prompts after an ephemeral automation run. */
+  bindPermissionHandler(): void {
+    if (!this.toolExecutor || this.options.automationRun) return;
+    this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel, context) => {
+      if (isPermissionExemptTool(toolId)) return 'allow_once';
+      if (this.isDelegatedWorker || this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
+      const requestId = randomUUID();
+      return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
+        this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
+        this.emit({
+          type: 'permission_required',
+          requestId,
+          tool: toolId,
+          path,
+          riskLevel,
+          integrationPreview: context?.integrationPreview,
+        });
+      });
+    });
+  }
+
+  /**
+   * Prompt for tools a scheduled automation will need before registration.
+   * Requires allow_always grants so the worker can run without interactive prompts.
+   */
+  async ensureAutomationToolsApproved(
+    toolIds: string[],
+  ): Promise<{ ok: boolean; denied?: string[]; error?: string }> {
+    const executor = this.toolExecutor;
+    if (!executor || toolIds.length === 0) return { ok: true };
+
+    const denied: string[] = [];
+    const unique = [...new Set(toolIds)];
+
+    for (const toolId of unique) {
+      const existing = executor.getPermissionManager().check(toolId, '*')
+        ?? executor.getPermissionManager().check(toolId);
+      if (existing === 'allow_always') continue;
+
+      const tool = this.toolRegistry?.get(toolId);
+      const riskLevel = tool?.riskLevel ?? 'medium';
+
+      const choice = await new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
+        const requestId = randomUUID();
+        this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path: '*', riskLevel });
+        this.emit({
+          type: 'permission_required',
+          requestId,
+          tool: toolId,
+          path: '*',
+          riskLevel,
+          forAutomation: true,
+        });
+      });
+
+      if (choice === 'deny') {
+        denied.push(toolId);
+        continue;
+      }
+      if (choice === 'allow_once') {
+        executor.getPermissionManager().grant(toolId, 'allow_always');
+        this.persistPermissionGrant(toolId, 'allow_always');
+      }
+    }
+
+    if (denied.length > 0) {
+      return {
+        ok: false,
+        denied,
+        error: `User denied tools required for this automation: ${denied.join(', ')}`,
+      };
+    }
+    return { ok: true };
+  }
+
+  /** Show automation notification channel questionnaire in chat. */
+  async promptAutomationNotifyChannels(questionnaire: QuestionnairePayload): Promise<string> {
+    return this.waitForQuestionnaireResponse(questionnaire);
+  }
+
+  /** Grant notify tool permissions without prompting (automation channel selection). */
+  grantAutomationNotifyTools(toolIds: string[]): void {
+    const executor = this.toolExecutor;
+    if (!executor || toolIds.length === 0) return;
+    for (const toolId of toolIds) {
+      executor.getPermissionManager().grant(toolId, 'allow_always');
+      this.persistPermissionGrant(toolId, 'allow_always');
+    }
+  }
+
   /**
    * Respond to a pending permission request from the tool executor.
    */
@@ -3056,6 +3180,56 @@ Rules:
       entry.resolve(choice);
       this.pendingPermissions.delete(id);
     }
+  }
+
+  /** Persist Telegram (or other channel) permission decisions from inline buttons. */
+  recordToolPermissionDecision(toolName: string, decision: PermissionDecision): void {
+    if (!this.toolExecutor) return;
+    if (decision === 'allow_always') {
+      this.toolExecutor.getPermissionManager().grant(toolName, 'allow_always');
+      this.persistPermissionGrant(toolName, 'allow_always');
+    } else if (decision === 'deny') {
+      this.toolExecutor.getPermissionManager().deny(toolName);
+      this.persistPermissionGrant(toolName, 'deny');
+    }
+  }
+
+  formatChannelToolPermissions(): string {
+    const pm = this.toolExecutor?.getPermissionManager();
+    if (!pm) return '🔐 No permission state available.';
+    if (pm.isAllAllowed()) {
+      return '🔐 *Permissions*\n✅ All tools are always allowed for this channel session.';
+    }
+    const perms = pm.list().filter((p) => p.id !== '__all__');
+    const allowed = perms.filter((p) => p.decision === 'allow_always').map((p) => p.toolName);
+    const denied = perms.filter((p) => p.decision === 'deny').map((p) => p.toolName);
+    const lines = ['🔐 *Permissions*'];
+    lines.push('', '*Always allowed:*', allowed.length ? allowed.map((t) => `  ✅ ${t}`).join('\n') : '  (none)');
+    lines.push('', '*Denied:*', denied.length ? denied.map((t) => `  ❌ ${t}`).join('\n') : '  (none)');
+    lines.push('', 'Revoke with `/permissions revoke <tool>` or `/permissions revoke-all`.');
+    return lines.join('\n');
+  }
+
+  revokeChannelToolPermissions(tools?: string[], revokeAll = false): string {
+    const pm = this.toolExecutor?.getPermissionManager();
+    if (!pm) return '🔐 No permission state available.';
+    const store = (this.sessionManager as unknown as {
+      store?: { removePermissions?: (sessionId: string, toolName?: string) => void };
+    })?.store;
+
+    if (revokeAll) {
+      pm.revokeAll();
+      store?.removePermissions?.(this.sessionId);
+      return '🗑 All remembered tool permissions revoked for this channel session.';
+    }
+
+    const names = (tools ?? []).map((t) => t.trim()).filter(Boolean);
+    if (!names.length) return '❌ Specify at least one tool name to revoke.';
+    for (const name of names) {
+      pm.revoke(name);
+      store?.removePermissions?.(this.sessionId, name);
+    }
+    return `🗑 Revoked permissions for: ${names.join(', ')}`;
   }
 
   getMessageHistory(): CompletionMessage[] {
@@ -4023,6 +4197,12 @@ Only include specialists that are actually needed for this task.`;
   setSessionManager(sm: { createSession: (providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string) => { id: string } }): void {
     this.sessionManager = sm;
     this.restoreSessionPermissions();
+    if (this.options.channelSession) {
+      registerChannelPermissionBridge(this.sessionId, {
+        list: () => this.formatChannelToolPermissions(),
+        revoke: (tools, revokeAll) => this.revokeChannelToolPermissions(tools, revokeAll),
+      });
+    }
   }
 
   private persistPermissionGrant(toolName: string, decision: PermissionDecision): void {
@@ -4063,12 +4243,14 @@ Only include specialists that are actually needed for this task.`;
       for (const row of rows) {
         const toolName = (row['tool_name'] ?? row['toolName']) as string;
         const decision = row['decision'] as PermissionDecision;
-        if (!toolName || seen.has(toolName) || decision !== 'allow_always') continue;
+        if (!toolName || seen.has(toolName)) continue;
         seen.add(toolName);
         if (toolName === '*') {
           pm.allowAll();
-        } else {
+        } else if (decision === 'allow_always') {
           pm.grant(toolName, 'allow_always');
+        } else if (decision === 'deny') {
+          pm.deny(toolName);
         }
       }
     } catch { /* best-effort */ }
@@ -4178,21 +4360,20 @@ Only include specialists that are actually needed for this task.`;
       /i have created/gi,
     ];
     
-    let claimsSomethingCreated = false;
+    let claimsRestrictedMutation = false;
     for (const pattern of writePatterns) {
       if (pattern.test(responseContent)) {
-        claimsSomethingCreated = true;
-        issues.push('Response claims to have created/edited/deleted files');
+        claimsRestrictedMutation = true;
         break;
       }
     }
     
-    // Check if any write operations actually failed (use real tool IDs)
-    const writeToolsAttempted = toolExecutions.filter(t => isWriteTool(t.name));
-    const failedWrites = writeToolsAttempted.filter(t => !t.success);
+    // Check if any edit/delete operations failed
+    const restrictedToolsAttempted = toolExecutions.filter(t => isWriteTool(t.name));
+    const failedRestricted = restrictedToolsAttempted.filter(t => !t.success);
 
     // Filesystem ground-truth: if a claimed path exists but tool reported failure, note the mismatch
-    for (const entry of failedWrites) {
+    for (const entry of failedRestricted) {
       const pathMatch = entry.output.match(/path[=:\s]+(["']?)([\w./-]+)\1/i)
         || entry.output.match(/([\w./-]+\.\w{1,8})/);
       const relPath = pathMatch?.[2] || pathMatch?.[1];
@@ -4204,14 +4385,13 @@ Only include specialists that are actually needed for this task.`;
       }
     }
     
-    if (claimsSomethingCreated && failedWrites.length > 0) {
-      issues.push(`Agent claimed success but ${failedWrites.length} write operation(s) failed`);
+    if (claimsRestrictedMutation && failedRestricted.length > 0) {
+      issues.push(`Agent claimed success but ${failedRestricted.length} edit/delete operation(s) failed`);
     }
     
-    // Check if agent mentions "Done!" or "Completed!" without explaining restrictions
     if ((responseContent.includes('Done!') || responseContent.includes('Completed!')) && 
-        claimsSomethingCreated && 
-        failedWrites.length > 0 &&
+        claimsRestrictedMutation && 
+        failedRestricted.length > 0 &&
         !responseContent.toLowerCase().includes('plan mode') &&
         !responseContent.toLowerCase().includes('mode restriction') &&
         !responseContent.toLowerCase().includes('switch to agent')) {
@@ -4242,19 +4422,18 @@ Only include specialists that are actually needed for this task.`;
     
     const refactorPrompt = `[SYSTEM] Your previous response contained an issue:
 
-PROBLEM: You claimed to have created/edited/deleted files, but you are in Plan Mode (read-only). 
+PROBLEM: You claimed to have edited/deleted files, but those edit/delete tools failed in Plan Mode.
 The following operations actually FAILED:
 ${failedOps}
 
 YOUR PREVIOUS RESPONSE:
 ${originalMessage.content}
 
-FIX: Rewrite your response to be honest about the mode restriction. You must:
-1. Explain EXACTLY what action you tried to perform
-2. Explain WHY it failed (Plan Mode blocks write operations)
-3. Tell the user to switch to Agent Mode if they want you to execute it
-4. Suggest what you WOULD do once they switch modes
-5. Do NOT claim any file was created/edited/deleted
+FIX: Rewrite your response to be honest. You must:
+1. Explain EXACTLY what edit/delete action you tried
+2. Explain that edit/delete requires Agent Mode or Hyperdrive
+3. Note that reads, new files, scripts, search, and scheduling work in Plan mode
+4. Do NOT claim an edit or delete succeeded
 
 Provide the corrected response now:`;
 

@@ -21,6 +21,25 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   private configManager: ConfigManager | null = null;
   private focusManager: FocusManager | null = null;
   private activeChatId: number | null = null;
+  private persistOutboundChatId(chatId: number): void {
+    if (!this.configManager) this.configManager = new ConfigManager();
+    const cfg = this.configManager.load();
+    const id = String(chatId);
+    if (cfg.channels?.telegram?.chatId === id) return;
+    cfg.channels = {
+      ...cfg.channels,
+      telegram: {
+        ...cfg.channels?.telegram,
+        chatId: id,
+      },
+    };
+    this.configManager.save(cfg);
+  }
+
+  private trackActiveChat(chatId: number): void {
+    this.activeChatId = chatId;
+    this.persistOutboundChatId(chatId);
+  }
   private pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
   private pendingResponses = new Map<string, (text: string) => void>();
   private messageQueue: Array<{ text: string; chatId: number }> = [];
@@ -123,15 +142,24 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     if (!toolExecutor?.setPermissionRequestHandler) return;
 
     toolExecutor.setPermissionRequestHandler(
-      async (toolId: string, path: string, riskLevel: string) => {
+      async (toolId: string, path: string, riskLevel: string, context?: { args?: Record<string, unknown>; integrationPreview?: import('@agentx/shared').IntegrationActionPreview }) => {
         if (!this.activeChatId) return 'deny' as const;
 
         const permId = randomUUID();
         const riskEmoji = riskLevel === 'high' ? '🔴' : riskLevel === 'medium' ? '🟡' : '🟢';
+        const preview = context?.integrationPreview;
+        const previewLines = preview
+          ? [
+            '',
+            `*${preview.summary}*`,
+            preview.impact,
+            ...preview.parameters.filter((p) => !p.sensitive).slice(0, 4).map((p) => `• ${p.key}: ${p.value.slice(0, 80)}`),
+          ].join('\n')
+          : '';
 
         await this.bridge.sendWithButtons(
           this.activeChatId,
-          `${riskEmoji} *Permission Request*\n\nTool: \`${toolId}\`\nPath: \`${path}\`\nRisk: ${riskLevel}\n\nAllow this action?`,
+          `${riskEmoji} *Permission Request*\n\nTool: \`${toolId}\`\nPath: \`${path}\`\nRisk: ${riskLevel}${previewLines}\n\nAllow this action?`,
           [
             { text: '✅ Allow Once', callbackData: `perm:${permId}:allow_once` },
             { text: '✅ Always Allow', callbackData: `perm:${permId}:allow_always` },
@@ -151,6 +179,9 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           this.pendingPermissions.set(permId, (choice: 'allow_once' | 'allow_always' | 'deny') => {
             clearTimeout(timeout);
             this.pendingPermissions.delete(permId);
+            if (this.agent && choice !== 'allow_once') {
+              this.agent.recordToolPermissionDecision(toolId, choice);
+            }
             resolve(choice);
           });
         });
@@ -179,7 +210,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         void this.bridge.sendToChat(chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
         return;
       }
-      this.activeChatId = chatId;
+      this.trackActiveChat(chatId);
 
       void (async () => {
         try {
@@ -208,7 +239,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
   private setupCommandHandling(): void {
     this.bridge.setCommandHandler(async (cmd: string, args: string[], chatId: number) => {
-      this.activeChatId = chatId;
+      this.trackActiveChat(chatId);
       this.focusManager?.onActivity('telegram');
       return this.handleCommand(cmd, args, chatId);
     });
@@ -216,7 +247,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
   private setupMessageHandling(): void {
     this.bridge.setMessageHandler((text: string, chatId: number) => {
-      this.activeChatId = chatId;
+      this.trackActiveChat(chatId);
       this.focusManager?.onActivity('telegram');
       this.enqueueMessage(text, chatId);
     });
@@ -271,6 +302,11 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         return [
           '🤖 *Agent-X Channel Commands:*',
           '',
+          '🔐 *Permissions:*',
+          '  /permissions — List allowed/denied tools',
+          '  /permissions revoke <tool> — Revoke one tool',
+          '  /permissions revoke-all — Revoke all remembered permissions',
+          '',
           '🔌 *Profile:*',
           '  /profiles — List configured provider profiles',
           '  /profile <id> — Switch channel to a profile',
@@ -291,6 +327,27 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           '',
           'Or just type a message to chat!',
         ].join('\n');
+
+      case 'permissions': {
+        if (!this.agent) return '❌ Agent not initialized.';
+        const sub = args[0]?.toLowerCase() ?? 'list';
+        if (sub === 'list' || sub === 'show') {
+          return this.agent.formatChannelToolPermissions();
+        }
+        if (sub === 'revoke-all' || sub === 'revokeall') {
+          return this.agent.revokeChannelToolPermissions(undefined, true);
+        }
+        if (sub === 'revoke') {
+          const tool = args.slice(1).join(' ').trim();
+          if (!tool) return '❌ Usage: /permissions revoke <tool-name>';
+          return this.agent.revokeChannelToolPermissions([tool]);
+        }
+        return 'Usage: /permissions [list|revoke <tool>|revoke-all]';
+      }
+
+      case 'plan':
+      case 'hyperdrive':
+        return 'ℹ️ Plan Mode and Hyperdrive are not available on messaging channels. Every tool is approved individually via Allow Once, Always Allow, or Deny.';
 
       case 'profiles': {
         const cfg = (this.agent as any).config as AgentXConfig;

@@ -1,9 +1,10 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, chmodSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, totalmem } from 'node:os';
 import { platform, arch } from 'node:os';
 import { Pool } from 'pg';
+import { isNeuralBrainSupported } from '../../shared/src/utils/system-capabilities.js';
 
 const logger = {
   info: (code: string, message: string) => console.log(`[${code}] ${message}`),
@@ -168,14 +169,16 @@ export class PostgresLifecycleManager {
       '-c', 'unix_socket_directories=',
     ];
 
-    // Apache AGE requires preloading. Only add it if the library is present in the
-    // bundled native tree so a build without AGE still starts cleanly.
+    // Apache AGE requires preloading — only on machines with enough RAM for neural brain.
     const binaryDir = dirname(bin.postgres);
     const libDir = join(binaryDir, '..', 'lib', 'postgresql');
     const ext = platform() === 'win32' ? '.dll' : platform() === 'darwin' ? '.dylib' : '.so';
-    if (existsSync(join(libDir, `age${ext}`))) {
+    const ramGb = totalmem() / (1024 ** 3);
+    if (isNeuralBrainSupported(ramGb) && existsSync(join(libDir, `age${ext}`))) {
       args.push('-c', 'shared_preload_libraries=age');
       this.options.onLog('Apache AGE preloading enabled');
+    } else if (!isNeuralBrainSupported(ramGb)) {
+      this.options.onLog('Apache AGE skipped — neural brain requires 16 GB+ RAM');
     }
 
     const child = spawn(bin.postgres, args, {

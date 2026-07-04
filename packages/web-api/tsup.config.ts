@@ -34,8 +34,9 @@ export default defineConfig({
   // NOTE: pdfjs-dist must stay external because it dynamically imports
   // pdf.worker.mjs via a relative path at runtime. Bundling it breaks that
   // import because the worker file is not emitted alongside the bundle.
-  noExternal: [/^(?!onnxruntime-|pdfjs-dist).*$/],
-  external: ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common', 'pdfjs-dist'],
+  // NOTE: @napi-rs/keyring must stay external — native .node binaries per platform.
+  noExternal: [/^(?!onnxruntime-|pdfjs-dist|@napi-rs\/keyring).*$/],
+  external: ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common', 'pdfjs-dist', '@napi-rs/keyring'],
   banner: {
     js: "import { createRequire as __bannerCr } from 'module'; const require = __bannerCr(import.meta.url); import { fileURLToPath as __futp } from 'node:url'; import { dirname as __dn } from 'node:path'; const __filename = __futp(import.meta.url); const __dirname = __dn(__filename);",
   },

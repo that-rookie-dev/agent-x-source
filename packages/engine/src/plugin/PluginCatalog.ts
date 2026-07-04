@@ -18,7 +18,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'read_file, write_file, list_dir, file_info, delete_file, create_dir, glob, search_files',
     permissionLevel: 'medium',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'database',
@@ -27,7 +27,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'query_sqlite, list_tables, describe_table',
     permissionLevel: 'medium',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'browser',
@@ -36,7 +36,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'fetch_page, fetch_json, screenshot',
     permissionLevel: 'medium',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'search',
@@ -45,7 +45,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'web_search, search_news, search_docs',
     permissionLevel: 'low',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'shell',
@@ -54,7 +54,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'run_command, which, env_var',
     permissionLevel: 'critical',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'git',
@@ -63,7 +63,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'git_status, git_log, git_diff, git_branches, git_commit',
     permissionLevel: 'medium',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'json',
@@ -72,7 +72,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'json_parse, json_stringify, json_query, json_validate',
     permissionLevel: 'low',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'math',
@@ -81,7 +81,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'calculate, convert_units, random',
     permissionLevel: 'low',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'uuid',
@@ -90,7 +90,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'generate_uuid, generate_nanoid, validate_uuid',
     permissionLevel: 'low',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'crypto',
@@ -99,7 +99,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'hash, hmac, generate_token',
     permissionLevel: 'low',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'datetime',
@@ -108,7 +108,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'current_time, parse_date, format_date, date_diff',
     permissionLevel: 'low',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'encoding',
@@ -117,7 +117,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'base64_encode, base64_decode, hex_encode, hex_decode, url_encode, url_decode',
     permissionLevel: 'low',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'http',
@@ -126,7 +126,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'http_get, http_post, http_put',
     permissionLevel: 'medium',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'fs-diff',
@@ -135,7 +135,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'diff_files, apply_patch, create_patch',
     permissionLevel: 'medium',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
   {
     id: 'template',
@@ -144,7 +144,7 @@ const MARKETPLACE_EXTENSIONS: MarketplaceExtension[] = [
     author: 'Agent-X',
     tools: 'render_template, render_file',
     permissionLevel: 'low',
-    installsTo: 'mcp.json',
+    installsTo: 'integrations',
   },
 ];
 

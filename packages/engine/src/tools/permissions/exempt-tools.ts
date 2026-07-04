@@ -1,3 +1,5 @@
+import { isToolAllowedInPlanMode } from '../../agent/plan-mode-utils.js';
+
 /** Read-only web research tools — never prompt for interactive permission. */
 export const PERMISSION_EXEMPT_WEB_TOOLS = new Set([
   'web_search',
@@ -8,6 +10,8 @@ export const PERMISSION_EXEMPT_WEB_TOOLS = new Set([
   'web_browse',
 ]);
 
+/** True when a tool may run without an interactive permission prompt (read/analyze/fetch only). */
 export function isPermissionExemptTool(toolId: string): boolean {
-  return PERMISSION_EXEMPT_WEB_TOOLS.has(toolId);
+  if (PERMISSION_EXEMPT_WEB_TOOLS.has(toolId)) return true;
+  return isToolAllowedInPlanMode(toolId);
 }

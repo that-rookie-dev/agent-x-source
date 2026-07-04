@@ -2,10 +2,11 @@ import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, 
 import { join, basename } from 'path';
 import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import type { Server } from 'http';
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import { tmpdir, totalmem } from 'os';
 import { pathToFileURL } from 'url';
 import { randomBytes } from 'node:crypto';
+import { ensureLoginShellPath } from './host-path.js';
 import { PostgresLifecycleManager } from './PostgresLifecycleManager.js';
 
 const REPO = 'SlashpanOrg/agent-x';
@@ -304,16 +305,8 @@ function getWebNeuronDir(): string {
   return join(process.resourcesPath, 'web-neuron');
 }
 
-function loadShellPath(): void {
-  if (process.platform !== 'darwin') return;
-  try {
-    const shellPath = execSync('/bin/bash -l -c "echo $PATH"', { encoding: 'utf-8', timeout: 5000 }).trim();
-    if (shellPath && shellPath !== process.env['PATH']) {
-      process.env['PATH'] = shellPath;
-    }
-  } catch {
-    /* ignore — binaries are bundled */
-  }
+function hydrateHostPath(): void {
+  ensureLoginShellPath();
 }
 
 async function startEmbeddedPostgres(): Promise<string | null> {
@@ -389,7 +382,7 @@ async function startServer(): Promise<void> {
     throw new Error(`Web-API not found at ${apiPath}`);
   }
 
-  loadShellPath();
+  hydrateHostPath();
 
   // Start the bundled native PostgreSQL before the web-api so it has a connection string ready.
   await startEmbeddedPostgres();
@@ -446,6 +439,16 @@ function attachExternalLinkHandlers(win: BrowserWindow): void {
 
 // ==================== Window ====================
 
+async function notifyAppVisibility(visible: boolean): Promise<void> {
+  try {
+    await fetch(`http://localhost:${PORT}/api/system/app-visibility`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visible }),
+    });
+  } catch { /* server may not be ready yet */ }
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 500,
@@ -468,8 +471,12 @@ function createWindow(): void {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+    void notifyAppVisibility(true);
     if (isDev) mainWindow?.webContents.openDevTools({ mode: 'bottom' });
   });
+
+  mainWindow.on('hide', () => { void notifyAppVisibility(false); });
+  mainWindow.on('show', () => { void notifyAppVisibility(true); });
 
   mainWindow.on('close', (e) => {
     if (!isQuitting) { e.preventDefault(); mainWindow?.hide(); }
@@ -477,6 +484,14 @@ function createWindow(): void {
 }
 
 // ==================== Tray ====================
+
+function resolveAppIconPath(): string | null {
+  const iconPath = join(process.resourcesPath, 'build', 'icon.png');
+  const iconDev = join(__dirname, '..', 'build', 'icon.png');
+  if (existsSync(iconPath)) return iconPath;
+  if (existsSync(iconDev)) return iconDev;
+  return null;
+}
 
 function createTray(): void {
   let icon: Electron.NativeImage;
@@ -535,6 +550,9 @@ ipcMain.on('system:totalMemoryGB', (event) => {
 ipcMain.on('system:localModelSupported', (event) => {
   event.returnValue = totalmem() / (1024 ** 3) >= 32;
 });
+ipcMain.on('system:neuralBrainSupported', (event) => {
+  event.returnValue = totalmem() / (1024 ** 3) >= 16;
+});
 ipcMain.on('window:minimize', () => mainWindow?.minimize());
 ipcMain.on('window:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
@@ -542,6 +560,54 @@ ipcMain.on('window:maximize', () => {
 });
 ipcMain.on('window:close', () => mainWindow?.close());
 ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
+ipcMain.handle('permissions:requestNotifications', async () => {
+  if (!Notification.isSupported()) {
+    return { ok: false, reason: 'unsupported' };
+  }
+  try {
+    const icon = resolveAppIconPath();
+    // macOS shows the system permission prompt on first notification.
+    const n = new Notification({
+      title: 'Agent-X',
+      body: 'Notifications enabled for automation alerts.',
+      icon: icon ?? undefined,
+      silent: true,
+    });
+    n.show();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+});
+ipcMain.handle('notifications:show', async (_event, payload: { title?: string; body: string; subtitle?: string }) => {
+  if (!Notification.isSupported()) {
+    return { ok: false, reason: 'unsupported' };
+  }
+  if (!payload?.body) {
+    return { ok: false, reason: 'missing_body' };
+  }
+  try {
+    const icon = resolveAppIconPath();
+    const n = new Notification({
+      title: payload.title ?? 'Agent-X',
+      body: payload.body.slice(0, 2000),
+      subtitle: payload.subtitle,
+      icon: icon ?? undefined,
+    });
+    n.on('click', () => {
+      if (!mainWindow) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.webContents.send('notifications:navigate');
+    });
+    n.show();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+});
+ipcMain.handle('path:defaultWorkspace', () => app.getPath('desktop'));
 ipcMain.handle('dialog:openFolder', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -577,6 +643,11 @@ app.whenReady().then(async () => {
     tray?.setToolTip(`Agent-X — Running on port ${PORT}`);
     createWindow();
     registerHotkey();
+    if (Notification.isSupported()) {
+      try {
+        new Notification({ title: 'Agent-X', body: 'Desktop notifications are ready.', silent: true }).show();
+      } catch { /* permission may be denied */ }
+    }
     // Auto-check for updates (non-blocking, manual=false)
     if (!isDev) checkForUpdates(false);
     setTimeout(() => {

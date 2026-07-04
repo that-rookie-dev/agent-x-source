@@ -1,9 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { PluginHubEntry, PluginCategory, InstalledPlugin } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
-import { getPluginRegistryPath, getAcpConfigPath, getConfigDir } from '../config/paths.js';
+import { getPluginRegistryPath, getAcpConfigPath } from '../config/paths.js';
 import { getBuiltinCatalog } from './PluginCatalog.js';
 
 const logger = getLogger();
@@ -19,34 +19,17 @@ export interface AcpServerConfig {
   createdAt: string;
 }
 
-export interface McpServerRegistryEntry {
-  id: string;
-  name: string;
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-  enabled: boolean;
-  timeout?: number;
-  maxOutputSize?: number;
-  permissionLevel?: 'low' | 'medium' | 'high' | 'critical';
-  createdAt: string;
-}
-
 export class PluginRegistry {
   private installed: Map<string, InstalledPlugin> = new Map();
   private registryPath: string;
   private acpConfigPath: string;
-  private mcpConfigPath: string;
   private acpServers: Map<string, AcpServerConfig> = new Map();
-  private mcpServers: Map<string, McpServerRegistryEntry> = new Map();
 
   constructor(registryPath?: string) {
     this.registryPath = registryPath ?? getPluginRegistryPath();
     this.acpConfigPath = getAcpConfigPath();
-    this.mcpConfigPath = join(getConfigDir(), 'mcp.json');
     this.load();
     this.loadAcpServers();
-    this.loadMcpServers();
   }
 
   getInstalled(): InstalledPlugin[] {
@@ -259,91 +242,6 @@ export class PluginRegistry {
       writeFileSync(this.acpConfigPath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (error) {
       logger.error('ACP_CONFIG_SAVE_FAILED', error);
-    }
-  }
-
-  // ── MCP server config ──
-
-  listMcpServers(): McpServerRegistryEntry[] {
-    return [...this.mcpServers.values()];
-  }
-
-  getMcpServer(id: string): McpServerRegistryEntry | undefined {
-    return this.mcpServers.get(id);
-  }
-
-  addMcpServer(config: Omit<McpServerRegistryEntry, 'id' | 'createdAt'>): McpServerRegistryEntry {
-    const server: McpServerRegistryEntry = {
-      id: randomUUID(),
-      ...config,
-      createdAt: new Date().toISOString(),
-    };
-    this.mcpServers.set(server.id, server);
-    this.saveMcpServers();
-    return server;
-  }
-
-  removeMcpServer(id: string): boolean {
-    const existed = this.mcpServers.delete(id);
-    if (existed) this.saveMcpServers();
-    return existed;
-  }
-
-  toggleMcpServer(id: string): McpServerRegistryEntry | undefined {
-    const server = this.mcpServers.get(id);
-    if (!server) return undefined;
-    server.enabled = !server.enabled;
-    this.saveMcpServers();
-    return server;
-  }
-
-  private loadMcpServers(): void {
-    try {
-      if (!existsSync(this.mcpConfigPath)) return;
-      const raw = readFileSync(this.mcpConfigPath, 'utf-8');
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      for (const [key, val] of Object.entries(parsed)) {
-        if (key.startsWith('_')) continue;
-        const cfg = val as Omit<McpServerRegistryEntry, 'id' | 'createdAt'> & { id?: string; createdAt?: string };
-        this.mcpServers.set(cfg.id ?? key, {
-          id: cfg.id ?? key,
-          name: key,
-          command: cfg.command ?? '',
-          args: cfg.args ?? [],
-          env: cfg.env,
-          enabled: cfg.enabled ?? true,
-          timeout: cfg.timeout,
-          maxOutputSize: cfg.maxOutputSize,
-          permissionLevel: cfg.permissionLevel,
-          createdAt: cfg.createdAt ?? new Date().toISOString(),
-        });
-      }
-    } catch (error) {
-      logger.error('MCP_CONFIG_LOAD_FAILED', error);
-    }
-  }
-
-  private saveMcpServers(): void {
-    try {
-      const dir = dirname(this.mcpConfigPath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-      const configs: Record<string, unknown> = {};
-      for (const server of this.mcpServers.values()) {
-        configs[server.name] = {
-          command: server.command,
-          args: server.args,
-          env: server.env,
-          enabled: server.enabled,
-          timeout: server.timeout,
-          maxOutputSize: server.maxOutputSize,
-          permissionLevel: server.permissionLevel,
-        };
-      }
-      writeFileSync(this.mcpConfigPath, JSON.stringify(configs, null, 2), 'utf-8');
-    } catch (error) {
-      logger.error('MCP_CONFIG_SAVE_FAILED', error);
     }
   }
 

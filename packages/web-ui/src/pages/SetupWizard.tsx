@@ -8,6 +8,9 @@ import Stepper from '@mui/material/Stepper';
 import Step from '@mui/material/Step';
 import StepLabel from '@mui/material/StepLabel';
 import CircularProgress from '@mui/material/CircularProgress';
+import Alert from '@mui/material/Alert';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Checkbox from '@mui/material/Checkbox';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
@@ -31,10 +34,11 @@ import { colors } from '../theme';
 import { LocalModelStep } from '../components/LocalModelStep';
 import { EmbeddingModelDownload } from '../components/EmbeddingModelDownload';
 import type { ActiveDownload } from '../components/DownloadIndicator';
-import type { ProviderInfo, ModelInfo, AgentXConfig } from '../api';
-import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
+import type { ProviderInfo, ModelInfo, AgentXConfig, BenchmarkRunResult } from '../api';
+import { useLocalModelSupported, useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
+import { ModelBenchmarkRunner, gradeAllowsAgentX } from '../components/settings/ModelBenchmarkRunner';
 
-const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Neural Core', 'Callsign', 'Complete'];
+const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Benchmark', 'Neural Core', 'Callsign', 'Complete'];
 const STORAGE_KEY = 'agentx_wizard_progress';
 
 interface WizardProgress {
@@ -66,15 +70,35 @@ export function SetupWizard() {
   const { setConfig, setAuthState, setView } = useApp();
   const navigate = useNavigate();
   const localModelSupported = useLocalModelSupported();
-  const steps = useMemo(() => localModelSupported ? ALL_STEPS : ALL_STEPS.filter((s) => s !== 'Local Model'), [localModelSupported]);
+  const neuralBrainSupported = useNeuralBrainSupported();
+  const steps = useMemo(() => ALL_STEPS.filter((s) => {
+    if (s === 'Local Model' && !localModelSupported) return false;
+    if (s === 'Neural Core' && !neuralBrainSupported) return false;
+    return true;
+  }), [localModelSupported, neuralBrainSupported]);
   const [step, setStep] = useState(0);
 
-  // If the local-model step becomes unsupported while the user is on it, skip past it.
-  useEffect(() => {
-    if (!localModelSupported && step === 3) {
-      setStep(4);
+  const isStepSupported = useCallback((stepIndex: number) => {
+    const label = ALL_STEPS[stepIndex];
+    if (label === 'Local Model' && !localModelSupported) return false;
+    if (label === 'Neural Core' && !neuralBrainSupported) return false;
+    return stepIndex >= 0 && stepIndex < ALL_STEPS.length;
+  }, [localModelSupported, neuralBrainSupported]);
+
+  const moveStep = useCallback((from: number, delta: 1 | -1) => {
+    let next = from + delta;
+    while (next >= 0 && next < ALL_STEPS.length && !isStepSupported(next)) {
+      next += delta;
     }
-  }, [localModelSupported, step]);
+    return next;
+  }, [isStepSupported]);
+
+  // Skip unsupported steps if capability detection changes mid-wizard.
+  useEffect(() => {
+    if (!isStepSupported(step)) {
+      setStep((s) => moveStep(s, 1));
+    }
+  }, [step, isStepSupported, moveStep]);
   const { showError, clearError } = useGlobalError();
   const [loading, setLoading] = useState(false);
   const [showBackWarning, setShowBackWarning] = useState(false);
@@ -89,6 +113,9 @@ export function SetupWizard() {
   const [profileName, setProfileName] = useState('');
   const [showCustomConfig, setShowCustomConfig] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkRunResult | null>(null);
+  const [benchmarkRunning, setBenchmarkRunning] = useState(false);
+  const [limitedOverride, setLimitedOverride] = useState(false);
 
   // DB
   const [selectedBackend, setSelectedBackend] = useState<'embedded-postgres' | 'postgres'>('embedded-postgres');
@@ -160,17 +187,11 @@ export function SetupWizard() {
 
   const next = () => {
     clearError();
-    setStep((s) => {
-      if (!localModelSupported && s === 2) return 4; // skip Local Model step
-      return s + 1;
-    });
+    setStep((s) => moveStep(s, 1));
   };
   const back = () => {
     clearError();
-    setStep((s) => {
-      if (!localModelSupported && s === 4) return 2; // skip Local Model step
-      return s - 1;
-    });
+    setStep((s) => moveStep(s, -1));
   };
 
   const handleStorageNext = async () => {
@@ -230,10 +251,25 @@ export function SetupWizard() {
   };
   const handleModelNext = async () => {
     if (!selectedModel) { showError('Select a model'); return; }
-    // Global model switch — works with or without an active session
+    setBenchmarkResult(null);
+    setLimitedOverride(false);
     try { await modelsApi.switch(selectedModel); } catch {}
     next();
   };
+
+  const handleBenchmarkBack = () => {
+    setBenchmarkResult(null);
+    setLimitedOverride(false);
+    back();
+  };
+
+  const selectedModelInfo = availableModels.find((m) => m.id === selectedModel);
+  const canProceedBenchmark = Boolean(
+    benchmarkResult &&
+    !benchmarkRunning &&
+    (gradeAllowsAgentX(benchmarkResult.grade) ||
+      (benchmarkResult.grade === 'LIMITED' && limitedOverride)),
+  );
   const handleCallsignNext = () => { next(); };
 
   const startDownload = (download: ActiveDownload) => {
@@ -267,6 +303,9 @@ export function SetupWizard() {
       const setupPatch: Partial<AgentXConfig> = { setupComplete: true, user: { callsign } };
       if (!localModelSupported) {
         setupPatch.localModel = { enabled: false };
+      }
+      if (!neuralBrainSupported) {
+        setupPatch.neuralBrain = false;
       }
       const r = await config.update(setupPatch);
       if (!r.ok) { showError('Failed to save setup.'); setLoading(false); return; }
@@ -587,7 +626,7 @@ export function SetupWizard() {
                   ) : (
                     <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 1.5 }}>
                       {availableModels.filter(Boolean).map(m => (
-                        <Box key={m.id} onClick={() => setSelectedModel(m.id)}
+                        <Box key={m.id} onClick={() => { setSelectedModel(m.id); setBenchmarkResult(null); setLimitedOverride(false); }}
                           sx={{ p: 1.5, border: `1px solid ${selectedModel === m.id ? colors.accent.blue : colors.border.default}`, borderRadius: 1, cursor: 'pointer', transition: 'all 0.2s', bgcolor: selectedModel === m.id ? colors.accent.blue : 'transparent', boxShadow: selectedModel === m.id ? `0 0 12px ${colors.accent.blue}40` : 'none', '&:hover': selectedModel === m.id ? {} : { borderColor: colors.border.strong, bgcolor: colors.bg.tertiary } }}>
                           <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: selectedModel === m.id ? '#000' : colors.text.primary, mb: 0.5, wordBreak: 'break-word' }}>{m.name}</Typography>
                           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -603,6 +642,50 @@ export function SetupWizard() {
 
               {step === 5 && (
                 <Box>
+                  <Typography variant="h6" sx={{ mb: 0.5 }}>Agentic Clearance Scan</Typography>
+                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>
+                    Mandatory clearance scan for <strong>{selectedModelInfo?.name || selectedModel}</strong> — verifies this model can handle Agent-X workloads.
+                  </Typography>
+                  <ModelBenchmarkRunner
+                    key={`${selectedProvider}-${selectedModel}`}
+                    embedded
+                    autoStart
+                    providerId={selectedProvider}
+                    modelId={selectedModel}
+                    modelName={selectedModelInfo?.name}
+                    profileId={profileName.trim()}
+                    modelCapabilities={selectedModelInfo?.capabilities}
+                    onComplete={setBenchmarkResult}
+                    onRunningChange={setBenchmarkRunning}
+                  />
+                  {benchmarkResult?.grade === 'LIMITED' && !benchmarkRunning && (
+                    <FormControlLabel
+                      sx={{ mt: 1.5, ml: 0 }}
+                      control={
+                        <Checkbox
+                          size="small"
+                          checked={limitedOverride}
+                          onChange={(e) => setLimitedOverride(e.target.checked)}
+                          sx={{ color: colors.accent.orange, '&.Mui-checked': { color: colors.accent.orange } }}
+                        />
+                      }
+                      label={
+                        <Typography sx={{ fontSize: '0.72rem', color: colors.text.secondary }}>
+                          Acknowledge LIMITED clearance — proceed with constraints
+                        </Typography>
+                      }
+                    />
+                  )}
+                  {benchmarkResult?.grade === 'STANDBY' && !benchmarkRunning && (
+                    <Alert severity="error" sx={{ mt: 1.5, fontSize: '0.75rem' }}>
+                      Model not cleared for agentic workloads. Go back and select a different model.
+                    </Alert>
+                  )}
+                </Box>
+              )}
+
+              {step === 6 && (
+                <Box>
                   <Typography variant="h6" sx={{ mb: 0.5 }}>Neural Core Initialization</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>
                     Downloading local embedding models for the neural brain. This enables offline semantic search and GraphRAG.
@@ -611,7 +694,7 @@ export function SetupWizard() {
                 </Box>
               )}
 
-              {step === 6 && (
+              {step === 7 && (
                 <Box>
                   <Typography variant="h6" sx={{ mb: 1 }}>Your Callsign</Typography>
                   <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>How should Agent-X address you?</Typography>
@@ -628,7 +711,7 @@ export function SetupWizard() {
                 </Box>
               )}
 
-              {step === 7 && (
+              {step === 8 && (
                 <Box sx={{ textAlign: 'center' }}>
                   <CheckCircle size={64} color={colors.accent.green} sx={{ mb: 2 }} />
                   <Typography variant="h5" sx={{ mb: 1 }}>Setup Complete!</Typography>
@@ -640,7 +723,11 @@ export function SetupWizard() {
                     {localModelSupported && (
                       <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
                     )}
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Neural Core: Embedding models downloaded</Typography>
+                    {neuralBrainSupported ? (
+                      <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Neural Core: Embedding models downloaded</Typography>
+                    ) : (
+                      <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Neural Core: Disabled (requires 16GB+ RAM)</Typography>
+                    )}
                     <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Callsign: {callsign || '(not set)'}</Typography>
                   </Box>
                 </Box>
@@ -653,13 +740,14 @@ export function SetupWizard() {
 
       {/* Bottom Nav */}
       <Box sx={{ flexShrink: 0, borderTop: `1px solid ${colors.border.default}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
-        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 7 ? 'center' : 'space-between', alignItems: 'center' }}>
+        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 8 ? 'center' : 'space-between', alignItems: 'center' }}>
           {step === 1 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 2 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 3 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 4 && <Button onClick={localModelSupported ? handleBackToCredentials : back} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 5 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 5 && <Button onClick={handleBenchmarkBack} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 6 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+          {step === 7 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
           {step === 0 && !showRelayConfig && (
             <Button variant="contained" onClick={handleStorageNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>
               {loading ? 'Starting...' : selectedBackend === 'embedded-postgres' ? 'Start Embedded PostgreSQL →' : 'Configure Relay →'}
@@ -688,10 +776,20 @@ export function SetupWizard() {
             </Button>
           )}
           {step === 4 && <Button variant="contained" onClick={handleModelNext} disabled={!selectedModel} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
-          {/* Neural Core step (5) — no Back/Next buttons; the EmbeddingModelDownload
+          {step === 5 && (
+            <Button
+              variant="contained"
+              onClick={next}
+              disabled={!canProceedBenchmark}
+              sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}
+            >
+              {benchmarkRunning ? 'Scanning…' : 'Next'}
+            </Button>
+          )}
+          {/* Neural Core step (6) — no Back/Next buttons; the EmbeddingModelDownload
               component handles its own navigation via onComplete/onBack callbacks. */}
-          {step === 6 && <Button variant="contained" onClick={handleCallsignNext} disabled={!callsign.trim()} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
-          {step === 7 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
+          {step === 7 && <Button variant="contained" onClick={handleCallsignNext} disabled={!callsign.trim()} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
+          {step === 8 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
         </Box>
       </Box>
 

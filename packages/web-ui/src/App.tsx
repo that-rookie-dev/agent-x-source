@@ -9,6 +9,7 @@ import { SetupAuth } from './pages/SetupAuth';
 import { SetupWizard } from './pages/SetupWizard';
 import { Login } from './pages/Login';
 import { Console } from './pages/Console';
+import { DesktopStartupPermissions } from './components/DesktopStartupPermissions';
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { authState } = useApp();
@@ -57,6 +58,22 @@ export function App() {
 
   useEffect(() => { initialize(); }, [initialize]);
 
+  // Browser mode: pause ingestion when the tab is hidden (desktop reports via Electron).
+  useEffect(() => {
+    if (window.agentx?.isDesktop) return;
+    const report = () => {
+      void fetch('/api/system/app-visibility', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ visible: document.visibilityState === 'visible' }),
+      }).catch(() => {});
+    };
+    report();
+    document.addEventListener('visibilitychange', report);
+    return () => document.removeEventListener('visibilitychange', report);
+  }, []);
+
   if (authState === 'loading') {
     return (
       <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -67,6 +84,7 @@ export function App() {
 
   return (
     <ErrorBandProvider>
+      <DesktopStartupPermissions />
       <Routes>
         <Route path="/login" element={<GuestGuard><Login /></GuestGuard>} />
         <Route path="/setup" element={<GuestGuard><SetupAuth /></GuestGuard>} />
