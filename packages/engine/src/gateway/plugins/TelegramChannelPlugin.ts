@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { ChannelPlugin } from '../types.js';
 import type { FocusState, FocusManager } from '../FocusManager.js';
-import { getDataDir, type VisualUpdate, type AgentXConfig } from '@agentx/shared';
+import { getDataDir, type Message, type VisualUpdate, type AgentXConfig, getLogger } from '@agentx/shared';
 import { TelegramBridge } from '../../telegram/TelegramBridge.js';
 import type { TelegramConfig } from '../../telegram/TelegramBridge.js';
 import type { Agent } from '../../agent/Agent.js';
-import { ConfigManager } from '../../config/ConfigManager.js';
+import { syncChannelSuperSessionContext } from '../../channels/channel-super-session-sync.js';
 import { ProviderFactory } from '../../providers/index.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -18,9 +18,28 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
   private bridge: TelegramBridge;
   private agent: Agent | null = null;
-  private configManager: ConfigManager | null = null;
   private focusManager: FocusManager | null = null;
   private activeChatId: number | null = null;
+  /** Registered by web-api — uses the authenticated ConfigManager (with DEK). */
+  private chatIdPersister: ((chatId: string) => void) | null = null;
+  private lastPersistedChatId: string | null = null;
+
+  setChatIdPersister(fn: ((chatId: string) => void) | null): void {
+    this.chatIdPersister = fn;
+  }
+
+  private trackActiveChat(chatId: number): void {
+    this.activeChatId = chatId;
+    const id = String(chatId);
+    if (this.lastPersistedChatId === id) return;
+    this.lastPersistedChatId = id;
+    if (!this.chatIdPersister) return;
+    try {
+      this.chatIdPersister(id);
+    } catch (e) {
+      getLogger().warn('TELEGRAM', `Chat id persist skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   private pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
   private pendingResponses = new Map<string, (text: string) => void>();
   private messageQueue: Array<{ text: string; chatId: number }> = [];
@@ -59,6 +78,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     this.pendingPermissions.clear();
     this.pendingResponses.clear();
     this.messageQueue = [];
+    this.processingQueue = false;
   }
 
   private setupHandlers(): void {
@@ -117,21 +137,37 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     });
   }
 
+  rewirePermissionHandling(): void {
+    this.setupPermissionHandling();
+  }
+
   private setupPermissionHandling(): void {
     if (!this.agent) return;
-    const toolExecutor = (this.agent as any).toolExecutor;
-    if (!toolExecutor?.setPermissionRequestHandler) return;
+    const toolExecutor = this.agent.getToolExecutor();
+    if (!toolExecutor?.setChannelPermissionRequestHandler) {
+      getLogger().warn('TELEGRAM', 'Channel permission handler not wired — toolExecutor missing setChannelPermissionRequestHandler');
+      return;
+    }
 
-    toolExecutor.setPermissionRequestHandler(
-      async (toolId: string, path: string, riskLevel: string) => {
+    toolExecutor.setChannelPermissionRequestHandler(
+      async (toolId: string, path: string, riskLevel: string, context?: { args?: Record<string, unknown>; integrationPreview?: import('@agentx/shared').IntegrationActionPreview }) => {
         if (!this.activeChatId) return 'deny' as const;
 
         const permId = randomUUID();
         const riskEmoji = riskLevel === 'high' ? '🔴' : riskLevel === 'medium' ? '🟡' : '🟢';
+        const preview = context?.integrationPreview;
+        const previewLines = preview
+          ? [
+            '',
+            `*${preview.summary}*`,
+            preview.impact,
+            ...preview.parameters.filter((p) => !p.sensitive).slice(0, 4).map((p) => `• ${p.key}: ${p.value.slice(0, 80)}`),
+          ].join('\n')
+          : '';
 
         await this.bridge.sendWithButtons(
           this.activeChatId,
-          `${riskEmoji} *Permission Request*\n\nTool: \`${toolId}\`\nPath: \`${path}\`\nRisk: ${riskLevel}\n\nAllow this action?`,
+          `${riskEmoji} *Permission Request*\n\nTool: \`${toolId}\`\nPath: \`${path}\`\nRisk: ${riskLevel}${previewLines}\n\nAllow this action?`,
           [
             { text: '✅ Allow Once', callbackData: `perm:${permId}:allow_once` },
             { text: '✅ Always Allow', callbackData: `perm:${permId}:allow_always` },
@@ -151,6 +187,9 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           this.pendingPermissions.set(permId, (choice: 'allow_once' | 'allow_always' | 'deny') => {
             clearTimeout(timeout);
             this.pendingPermissions.delete(permId);
+            if (this.agent && choice !== 'allow_once') {
+              this.agent.recordToolPermissionDecision(toolId, choice);
+            }
             resolve(choice);
           });
         });
@@ -179,7 +218,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         void this.bridge.sendToChat(chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
         return;
       }
-      this.activeChatId = chatId;
+      this.trackActiveChat(chatId);
 
       void (async () => {
         try {
@@ -208,7 +247,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
   private setupCommandHandling(): void {
     this.bridge.setCommandHandler(async (cmd: string, args: string[], chatId: number) => {
-      this.activeChatId = chatId;
+      this.trackActiveChat(chatId);
       this.focusManager?.onActivity('telegram');
       return this.handleCommand(cmd, args, chatId);
     });
@@ -216,20 +255,52 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
   private setupMessageHandling(): void {
     this.bridge.setMessageHandler((text: string, chatId: number) => {
-      this.activeChatId = chatId;
-      this.focusManager?.onActivity('telegram');
+      getLogger().info('TELEGRAM', `Inbound message chat=${chatId} len=${text.length}: ${text.slice(0, 120)}`);
+      try {
+        this.trackActiveChat(chatId);
+        this.focusManager?.onActivity('telegram');
+      } catch (e) {
+        getLogger().warn('TELEGRAM', `Inbound setup skipped: ${e instanceof Error ? e.message : String(e)}`);
+      }
       this.enqueueMessage(text, chatId);
     });
   }
 
   private enqueueMessage(text: string, chatId: number): void {
     this.messageQueue.push({ text, chatId });
-    void this.processQueue();
+    void this.processQueue().catch((e) => {
+      getLogger().error('TELEGRAM', `Inbound queue failed: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  }
+
+  private async dispatchInbound(item: { text: string; chatId: number }, attempt = 0): Promise<Message> {
+    if (!this.agent) throw new Error('Channel agent not attached');
+    try {
+      return await Promise.race([
+        this.agent.sendMessage(item.text, { sourceChannel: 'telegram', channelId: String(item.chatId) }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Response timed out after 2 minutes')), 120_000);
+        }),
+      ]);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const stuckRun = /already has an active run|already processing/i.test(errMsg);
+      if (stuckRun && attempt < 1) {
+        getLogger().warn('TELEGRAM', `Channel agent busy — cancelling stale run and retrying chat=${item.chatId}`);
+        this.agent.cancel();
+        return this.dispatchInbound(item, attempt + 1);
+      }
+      throw err;
+    }
   }
 
   private async processQueue(): Promise<void> {
-    if (this.processingQueue) return;
+    if (this.processingQueue) {
+      getLogger().info('TELEGRAM', `Queue busy — message queued (depth=${this.messageQueue.length})`);
+      return;
+    }
     if (!this.agent) {
+      getLogger().warn('TELEGRAM', 'Inbound queue drained — channel agent not attached');
       // Drain queue with error responses — agent not initialized yet
       while (this.messageQueue.length > 0) {
         const item = this.messageQueue.shift()!;
@@ -239,25 +310,49 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     }
     this.processingQueue = true;
 
-    while (this.messageQueue.length > 0) {
-      const item = this.messageQueue.shift()!;
-      try {
-        const response = await this.agent.sendMessage(item.text, { sourceChannel: 'telegram', channelId: String(item.chatId) });
-        if (response.content) {
-          await this.bridge.sendToChat(item.chatId, response.content);
+    try {
+      // Workspace/crew sync must never block Telegram replies.
+      void Promise.resolve()
+        .then(() => syncChannelSuperSessionContext())
+        .catch((e) => {
+          getLogger().warn('TELEGRAM', `Context sync skipped: ${e instanceof Error ? e.message : String(e)}`);
+        });
+      this.rewirePermissionHandling();
+      getLogger().info(
+        'TELEGRAM',
+        `Dequeuing ${this.messageQueue.length} message(s) agent=${this.agent.currentSessionId ?? 'unknown'} processing=${this.agent.processing}`,
+      );
+      while (this.messageQueue.length > 0) {
+        const item = this.messageQueue.shift()!;
+        getLogger().info('TELEGRAM', `Processing inbound chat=${item.chatId} agent=${this.agent?.currentSessionId ?? 'unknown'}`);
+        try {
+          const response = await this.dispatchInbound(item);
+          const text = typeof response.content === 'string' ? response.content.trim() : '';
+          getLogger().info('TELEGRAM', `Reply ready chat=${item.chatId} len=${text.length}`);
+          if (text) {
+            await this.bridge.sendToChat(item.chatId, text);
+          } else {
+            await this.bridge.sendToChat(item.chatId, '_(No response generated)_');
+          }
+        } catch (err) {
+          let errMsg = err instanceof Error ? err.message : String(err);
+          getLogger().warn('TELEGRAM', `Reply failed chat=${item.chatId}: ${errMsg}`);
+          const jsonMatch = errMsg.match(/"message"\s*:\s*"([^"]+)"/);
+          if (jsonMatch?.[1]) errMsg = jsonMatch[1];
+          if (errMsg.length > 400) errMsg = errMsg.slice(0, 400) + '...';
+          await this.bridge.sendToChat(item.chatId, `⚠️ ${errMsg}`);
         }
-      } catch (err) {
-        let errMsg = err instanceof Error ? err.message : String(err);
-        // Strip verbose JSON from provider errors
-        const jsonMatch = errMsg.match(/"message"\s*:\s*"([^"]+)"/);
-        if (jsonMatch?.[1]) errMsg = jsonMatch[1];
-        // Trim to reasonable length for Telegram
-        if (errMsg.length > 400) errMsg = errMsg.slice(0, 400) + '...';
-        await this.bridge.sendToChat(item.chatId, `⚠️ ${errMsg}`);
       }
+    } catch (err) {
+      let errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.length > 400) errMsg = errMsg.slice(0, 400) + '...';
+      while (this.messageQueue.length > 0) {
+        const item = this.messageQueue.shift()!;
+        await this.bridge.sendToChat(item.chatId, `⚠️ ${errMsg}`).catch(() => {});
+      }
+    } finally {
+      this.processingQueue = false;
     }
-
-    this.processingQueue = false;
   }
 
   private async handleCommand(cmd: string, args: string[], _chatId: number): Promise<string | null> {
@@ -270,6 +365,11 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       case 'help':
         return [
           '🤖 *Agent-X Channel Commands:*',
+          '',
+          '🔐 *Permissions:*',
+          '  /permissions — List allowed/denied tools',
+          '  /permissions revoke <tool> — Revoke one tool',
+          '  /permissions revoke-all — Revoke all remembered permissions',
           '',
           '🔌 *Profile:*',
           '  /profiles — List configured provider profiles',
@@ -291,6 +391,27 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           '',
           'Or just type a message to chat!',
         ].join('\n');
+
+      case 'permissions': {
+        if (!this.agent) return '❌ Agent not initialized.';
+        const sub = args[0]?.toLowerCase() ?? 'list';
+        if (sub === 'list' || sub === 'show') {
+          return this.agent.formatChannelToolPermissions();
+        }
+        if (sub === 'revoke-all' || sub === 'revokeall') {
+          return this.agent.revokeChannelToolPermissions(undefined, true);
+        }
+        if (sub === 'revoke') {
+          const tool = args.slice(1).join(' ').trim();
+          if (!tool) return '❌ Usage: /permissions revoke <tool-name>';
+          return this.agent.revokeChannelToolPermissions([tool]);
+        }
+        return 'Usage: /permissions [list|revoke <tool>|revoke-all]';
+      }
+
+      case 'plan':
+      case 'hyperdrive':
+        return 'ℹ️ Plan Mode and Hyperdrive are not available on messaging channels. Every tool is approved individually via Allow Once, Always Allow, or Deny.';
 
       case 'profiles': {
         const cfg = (this.agent as any).config as AgentXConfig;
@@ -435,8 +556,8 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       case 'timezone':
       case 'tz': {
         const newTz = args.join(' ').trim();
-        const configMgr = this.configManager ?? new ConfigManager();
-        const cfg = configMgr.load();
+        const cfg = (this.agent as any).config as AgentXConfig | undefined;
+        if (!cfg) return '❌ Agent config not available.';
         if (!newTz) {
           const currentTz = cfg.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
           const now = new Date().toLocaleString('en-US', { timeZone: currentTz, dateStyle: 'full', timeStyle: 'long' });
@@ -447,9 +568,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         } catch {
           return `❌ Invalid timezone: "${newTz}"`;
         }
-        const cur = configMgr.load();
-        cur.timezone = newTz;
-        configMgr.save(cur);
+        cfg.timezone = newTz;
         this.agent.rebuildSystemPrompt();
         const now = new Date().toLocaleString('en-US', { timeZone: newTz, dateStyle: 'full', timeStyle: 'long' });
         return `✅ Timezone set to: ${newTz}\n📅 Current time: ${now}`;

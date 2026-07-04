@@ -31,7 +31,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   data_processing: 'Data Processing',
   database: 'Database',
   communication: 'Communication',
-  mcp_integration: 'MCP Integration',
   packages: 'Packages',
   system: 'System',
   testing: 'Testing',
@@ -42,6 +41,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   notifications: 'Notifications',
   security: 'Security',
   media: 'Media',
+  integrations: 'Integrations',
   other: 'Other',
 };
 

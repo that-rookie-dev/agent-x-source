@@ -28,8 +28,6 @@ import { TokenTracker } from '../session/TokenTracker.js';
 import { estimateOutputTokens } from '../session/tokenCount.js';
 import { SubAgentManager } from './SubAgentManager.js';
 import { TaskManager } from './TaskManager.js';
-import { Scheduler } from '../scheduler/Scheduler.js';
-import { setSchedulerInstance } from '../commands/builtin/schedule.js';
 import { setTaskManagerInstance } from '../commands/builtin/tasks.js';
 import { registerSessionTodoManager } from '../tools/TodoAccess.js';
 import { setSubAgentManagerInstance } from '../tools/builtin/subagent.js';
@@ -51,7 +49,14 @@ import { MemoryFabric, type MemoryNode } from '../neural/MemoryFabric.js';
 import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
 import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
+import {
+  buildCompletionMessages,
+  COMPACT_MEMORY_MAX_CHARS,
+  FULL_MEMORY_MAX_CHARS,
+  isCompactContextProfile,
+} from './context-profile.js';
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
@@ -121,12 +126,14 @@ import {
   shouldUseInteractivePlanGates,
 } from './plan-mode-utils.js';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
+import { buildGoogleAiSdkProviderOptions, buildProviderConnectivityProbeUrl } from '../providers/google/gemini-metadata.js';
 import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
 import type { PartPersistFn } from './AiSdkStreamHandler.js';
 import { streamText, stepCountIs } from 'ai';
 import {
   buildWebSearchTurnInstruction,
   isWebSearchAvailableForChat,
+  resolveWebSearchTurnPolicy,
   resolveWebSearchTurnPolicyAsync,
   createWebSearchIntentClassifier,
   type WebSearchTurnPolicy,
@@ -164,8 +171,14 @@ export interface AgentOptions {
   crewPrivateHost?: import('@agentx/shared').Crew;
   /** Background worker (sub-agent / crew) — skip interactive plan approval & mode escalation UI gates. */
   delegatedWorker?: boolean;
+  /** Ephemeral scheduled automation run — must not clobber shared executor permissions or UI handlers. */
+  automationRun?: boolean;
+  /** Messaging channel session (Telegram/Slack/etc.) — agent mode only, per-tool approvals via channel UI. */
+  channelSession?: boolean;
   /** Parent session ID — for crew workers to access the host conversation's neural brain memory. */
   parentSessionId?: string;
+  /** Refresh MCP integration tools and return an optional turn hint before completion. */
+  prepareIntegrationTools?: (userText: string) => Promise<string | undefined>;
 }
 
 export class Agent {
@@ -190,7 +203,6 @@ export class Agent {
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
   private todoManager: TodoManager;
-  private scheduler: Scheduler;
   private _secretSauce: SecretSauceManager | null = null;
   private get secretSauce(): SecretSauceManager { if (!this._secretSauce) { this._secretSauce = new SecretSauceManager(); } return this._secretSauce; }
   private memoryExtractor: MemoryExtractor | null = null;
@@ -278,6 +290,9 @@ export class Agent {
 
   // ─── Clarification & Approval
   private clarificationResolve: ((response: string) => void) | null = null;
+  private clarificationReject: ((error: Error) => void) | null = null;
+  /** Set when clarification wait was aborted (e.g. turn timeout) — forces resume path on next answer. */
+  private clarificationStale = false;
   private activeClarificationResume: {
     kind: 'questionnaire' | 'crew_intake';
     questionnaireMessageId: string;
@@ -329,6 +344,7 @@ export class Agent {
   }
 
   toggleHyperdriveMode(): boolean {
+    if (this.options.channelSession) return false;
     const wasPlan = this.planMode;
     this._hyperdriveMode = !this._hyperdriveMode;
     this.autoApproveTools = this._hyperdriveMode;
@@ -434,8 +450,12 @@ export class Agent {
    * @returns true when a waiter was active and the response was delivered.
    */
   respondToClarification(response: string): boolean {
+    if (this.clarificationStale) return false;
     if (this.clarificationResolve) {
-      this.clarificationResolve(response);
+      const resolve = this.clarificationResolve;
+      this.clarificationResolve = null;
+      this.clarificationReject = null;
+      resolve(response);
       return true;
     }
     return false;
@@ -443,6 +463,16 @@ export class Agent {
 
   isAwaitingClarification(): boolean {
     return this.clarificationResolve != null;
+  }
+
+  /** Abort a pending questionnaire wait (e.g. turn timeout). Next answer uses the resume path. */
+  abortClarificationWait(): void {
+    if (!this.clarificationReject) return;
+    const reject = this.clarificationReject;
+    this.clarificationResolve = null;
+    this.clarificationReject = null;
+    this.clarificationStale = true;
+    reject(new Error('CLARIFICATION_ABORTED'));
   }
 
   getClarificationResumeState(): {
@@ -495,6 +525,11 @@ export class Agent {
   }
 
   private async waitForQuestionnaireResponse(questionnaire: QuestionnairePayload): Promise<string> {
+    // Messaging channels have no UI questionnaire modal — waiting would hang forever.
+    if (this.options.channelSession) {
+      getLogger().info('CHANNEL', 'Auto-proceeding past questionnaire on messaging channel');
+      return 'Proceed with your best judgment using available tools and context.';
+    }
     const payload: QuestionnairePayload = questionnaire.source
       ? questionnaire
       : { ...questionnaire, source: this.clarificationSource() };
@@ -518,8 +553,16 @@ export class Agent {
     this.emit({ type: 'clarification_required', questionnaire: payload });
     this.emit({ type: 'message_received', message: questionnaireMsg, elapsed: 0 });
 
-    const response = await new Promise<string>((resolve) => { this.clarificationResolve = resolve; });
-    this.clarificationResolve = null;
+    let response: string;
+    try {
+      response = await new Promise<string>((resolve, reject) => {
+        this.clarificationResolve = resolve;
+        this.clarificationReject = reject;
+      });
+    } finally {
+      this.clarificationResolve = null;
+      this.clarificationReject = null;
+    }
     this.activeClarificationResume = null;
 
     const answered: QuestionnaireRecord = {
@@ -753,8 +796,6 @@ export class Agent {
     setTaskManagerInstance(this.taskManager);
     this.todoManager = new TodoManager(this.eventBus);
     registerSessionTodoManager(this.sessionId, this.todoManager);
-    this.scheduler = new Scheduler(this.eventBus, this.sessionId);
-    setSchedulerInstance(this.sessionId, this.scheduler);
     setIndexerEventBus(this.eventBus);
     // secretSauce is lazy — created on first access via getter
     this.errorShield = new ErrorShield();
@@ -776,10 +817,15 @@ export class Agent {
             this.toolExecutor.registerHandler(name, handler);
           }
         }
-        // Copy permission handler
-        const permHandler = (options.toolExecutor as unknown as Record<string, unknown>)['permissionRequestHandler'];
+        // Copy permission handlers from shared toolkit executor
+        const providedExecutor = options.toolExecutor as unknown as Record<string, unknown>;
+        const permHandler = providedExecutor['permissionRequestHandler'];
         if (typeof permHandler === 'function') {
           this.toolExecutor.setPermissionRequestHandler(permHandler as (toolId: string, path: string, riskLevel: string) => Promise<'allow_once' | 'allow_always' | 'deny'>);
+        }
+        const channelPermHandler = providedExecutor['channelPermissionRequestHandler'];
+        if (typeof channelPermHandler === 'function') {
+          this.toolExecutor.setChannelPermissionRequestHandler(channelPermHandler as (toolId: string, path: string, riskLevel: string) => Promise<'allow_once' | 'allow_always' | 'deny'>);
         }
       } else {
         // Plain mock object from tests — wrap it
@@ -855,9 +901,14 @@ export class Agent {
       planMode: () => this.planMode,
     });
 
-    // Reset permissions for each new session — no persistent deny across sessions
-    if (this.toolExecutor) {
+    // Reset permissions for each new session — automation runs reuse the shared executor snapshot.
+    if (this.toolExecutor && !this.options.automationRun) {
       this.toolExecutor.getPermissionManager().resetForNewSession(this.sessionId);
+      if (this.options.channelSession) {
+        this.toolExecutor.setAlwaysPromptPermissions(true);
+      }
+    } else if (this.toolExecutor && this.options.channelSession) {
+      this.toolExecutor.setAlwaysPromptPermissions(true);
     }
 
     // Load user-configured permission overrides from config
@@ -872,17 +923,9 @@ export class Agent {
       this.toolExecutor.setUserConfigRules(userRules);
     }
 
-    // Wire permission requests to event bus
-    if (this.toolExecutor) {
-      this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel) => {
-        if (isPermissionExemptTool(toolId)) return 'allow_once';
-        if (this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
-        const requestId = randomUUID();
-        return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-          this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
-          this.emit({ type: 'permission_required', requestId, tool: toolId, path, riskLevel });
-        });
-      });
+    // Wire permission requests to event bus (skipped for ephemeral automation workers and channel sessions).
+    if (this.toolExecutor && !this.options.automationRun && !this.options.channelSession) {
+      this.bindPermissionHandler();
 
       // Wire diff preview for file edit tools
       this.toolExecutor.setBeforeToolHook((toolId, args, path) => {
@@ -998,23 +1041,6 @@ export class Agent {
     // Configure sub-agents with provider so they can make real LLM calls
     this.subAgents.configure(this.provider, this.config, initGen.baseline);
 
-    // When a scheduled job fires, emit it as a notification message (non-blocking).
-    // Simple reminders don't need an LLM round-trip — just display the message.
-    this.scheduler.setTriggerHandler((job) => {
-      const reminderMessage: Message = {
-        id: generateMessageId(),
-        sessionId: this.sessionId,
-        role: 'assistant',
-        content: `⏰ **Reminder**: ${job.instruction}`,
-        toolCalls: null,
-        createdAt: new Date().toISOString(),
-        tokenCount: 0,
-      };
-      this.emit({ type: 'reminder_fired', taskId: job.id, name: job.name, message: job.instruction });
-      this.emit({ type: 'message_received', message: reminderMessage, elapsed: 0 });
-    });
-    this.scheduler.start();
-
     // Trigger periodic summarization in the background if stale
     if (this.secretSauce.summarizer.needsSummarization()) {
       void this.runSummarization();
@@ -1057,10 +1083,6 @@ export class Agent {
 
   get watcherCount(): number {
     return this.fileWatcher?.watcherCount ?? 0;
-  }
-
-  get schedulerCount(): number {
-    return this.scheduler?.taskCount ?? 0;
   }
 
   get toolCount(): number {
@@ -1130,6 +1152,27 @@ export class Agent {
     return this._graphRagRetriever;
   }
 
+  private usesCompactContext(): boolean {
+    return isCompactContextProfile(
+      this.config.provider.activeProvider,
+      this.config.provider.activeModel,
+      this.getContextWindow(),
+    );
+  }
+
+  private rebuildPromptAssembly(): void {
+    if (!this.promptAssembly) return;
+    const baseline = this.messages.find((m) => m.role === 'system');
+    const systemOverride = typeof baseline?.content === 'string' ? baseline.content : this.options.systemPrompt;
+    this.promptAssembly = new PromptAssembly();
+    this.registerPromptSections(systemOverride);
+    const initGen = this.promptAssembly.initializeSync();
+    this.promptSnapshot = initGen.snapshot;
+    if (initGen.baseline) {
+      this.setSystemPrompt(initGen.baseline);
+    }
+  }
+
   private async buildMemoryContext(): Promise<{ episodic: string; semantic: string; graph: string; community?: string }> {
     const retriever = this.graphRagRetriever;
     if (!retriever) return { episodic: '', semantic: '', graph: '' };
@@ -1183,8 +1226,7 @@ export class Agent {
       this._memoryContextNodeIds = result.all.map((n) => n.id).filter((id): id is string => !!id);
 
       // Token budget for memory context — prioritize community > episodic > semantic > graph.
-      // Approximation: 4 chars ≈ 1 token. Budget: ~2000 tokens (≈ 8000 chars).
-      const MAX_CHARS = 8000;
+      const MAX_CHARS = this.usesCompactContext() ? COMPACT_MEMORY_MAX_CHARS : FULL_MEMORY_MAX_CHARS;
       const fmt = (nodes: Array<{ label: string; content: string; category: string }>, maxChars: number) => {
         const lines: string[] = [];
         let used = 0;
@@ -1231,8 +1273,22 @@ export class Agent {
    * Falls back to the raw message if reformulation fails.
    */
   private async reformulateQuery(rawQuery: string): Promise<string> {
-    // Fast path: if the message is long and self-contained, skip reformulation.
     const trimmed = rawQuery.trim();
+
+    // Compact local models: avoid an extra LLM call; stitch short follow-ups from recent user text.
+    if (this.usesCompactContext()) {
+      if (trimmed.length > 80) return trimmed;
+      const recentUserMsgs = this.messages
+        .filter((m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 20)
+        .slice(-3)
+        .map((m) => (m as { content: string }).content);
+      if (recentUserMsgs.length > 0 && trimmed.split(/\s+/).length <= 8) {
+        return `${recentUserMsgs[recentUserMsgs.length - 1]} ${trimmed}`.trim().slice(0, 300);
+      }
+      return trimmed;
+    }
+
+    // Fast path: if the message is long and self-contained, skip reformulation.
     if (trimmed.length > 120 && /[.!?]$/.test(trimmed)) return trimmed;
     // Fast path: single-word or very short messages always need context.
     if (trimmed.split(/\s+/).length <= 3) {
@@ -1296,6 +1352,7 @@ Rules:
    */
   private async ingestWebSearchResult(toolId: string, args: Record<string, unknown> | undefined, output: string): Promise<void> {
     try {
+      if (this.config.neuralBrain === false) return;
       if (!this._pgPool) return;
       const query = typeof args?.['query'] === 'string' ? args['query'] : '';
       const url = typeof args?.['url'] === 'string' ? args['url'] : '';
@@ -1335,7 +1392,6 @@ Rules:
         extract: true,
         embed: true,
         sessionId: this.options.parentSessionId ?? this.sessionId,
-        sourceId: `web:${toolId}`,
       });
       getLogger().info('WEB_INGEST', `Ingested ${toolId} result (${output.length} chars) into neural brain`);
     } catch (e) {
@@ -1373,6 +1429,7 @@ Rules:
    * Cancel an in-progress completion. Aborts the active stream and tool executions.
    */
   cancel(): void {
+    this.abortClarificationWait();
     this.runStateMgr.cancel(this.sessionId);
     this.commandQueue.cancelSession(this.sessionId);
     this.stopTurnHeartbeat();
@@ -1395,10 +1452,6 @@ Rules:
 
   get tasks(): TaskManager {
     return this.taskManager;
-  }
-
-  get cron(): Scheduler {
-    return this.scheduler;
   }
 
   get sauce(): SecretSauceManager {
@@ -1450,6 +1503,7 @@ Rules:
   }
 
   setPlanMode(enabled: boolean): void {
+    if (this.options.channelSession && enabled) return;
     if (enabled === this.planMode) return;
     if (this._hyperdriveMode && enabled) return;
     if (enabled) {
@@ -1605,6 +1659,10 @@ Rules:
   }
 
   private waitForStepCap(currentSteps: number): Promise<boolean> {
+    if (this.options.channelSession) {
+      this.stepCapExtra++;
+      return Promise.resolve(true);
+    }
     this.turnState.setPhase('awaiting_step_cap', `steps:${currentSteps}`);
     this.emit({ type: 'step_cap_reached', currentSteps, maxSteps: this.completionStepBudget() });
     return new Promise((resolve) => {
@@ -1625,13 +1683,22 @@ Rules:
 
   private async checkConnectivity(baseUrl?: string): Promise<boolean> {
     if (this.connectivityChecked) return true;
+    const providerId = this.config.provider.activeProvider;
     const url = baseUrl ?? this.getBaseUrl();
-    if (!url) return true;
+    const apiKey = this.getApiKey();
+    const probeUrl = buildProviderConnectivityProbeUrl(providerId, url, apiKey);
+    if (!probeUrl) return true;
+
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(url.replace('/v1', '').replace(/\/+$/, '') + '/models', {
-        method: 'HEAD',
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const headers: Record<string, string> = {};
+      if (apiKey && providerId === 'google' && probeUrl.includes('/openai/')) {
+        headers.Authorization = `Bearer ${apiKey}`;
+      }
+      const res = await fetch(probeUrl, {
+        method: 'GET',
+        headers,
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -1641,7 +1708,7 @@ Rules:
       this.emit({
         type: 'error',
         code: 'NETWORK_ERROR',
-        message: `Cannot reach provider at ${url}. Check your internet connection and provider URL.`,
+        message: `Cannot reach provider at ${url ?? probeUrl}. Check your internet connection and provider URL.`,
         recoverable: true,
         actions: [
           { type: 'dismiss', label: 'Dismiss' },
@@ -1650,6 +1717,36 @@ Rules:
       });
       return false;
     }
+  }
+
+  /**
+   * One-shot LLM text for outbound channel pushes (e.g. Settings greeting test).
+   * Does not append to conversation history or invoke tools.
+   */
+  async generateOutboundText(
+    userPrompt: string,
+    options?: { systemHint?: string; maxTokens?: number },
+  ): Promise<string> {
+    const model = createAiSdkModel(this.config, this.getApiKey());
+    const callsign = this.config.user?.callsign;
+    const defaultSystem = [
+      'You are Agent-X composing a short outbound Telegram message.',
+      callsign ? `The user's name/callsign is "${callsign}".` : '',
+      'Reply with ONLY the message body — warm, concise, no markdown headers, no tool names, no meta commentary.',
+    ].filter(Boolean).join(' ');
+    const r = await streamText({
+      model,
+      messages: [
+        { role: 'system', content: options?.systemHint ?? defaultSystem },
+        { role: 'user', content: userPrompt },
+      ],
+      maxOutputTokens: options?.maxTokens ?? 280,
+    });
+    let text = '';
+    for await (const chunk of r.textStream) text += chunk;
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('Model returned an empty message');
+    return trimmed;
   }
 
   async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
@@ -1665,6 +1762,7 @@ Rules:
 
     this.lifecycle.transition('receiving');
     this.scope = new Scope();
+    this.clarificationStale = false;
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
     try {
@@ -1725,15 +1823,24 @@ Rules:
     this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
 
     const searchStatus = isWebSearchAvailableForChat(this.config);
-    this.turnWebSearchPolicy = await resolveWebSearchTurnPolicyAsync({
-      forceWebSearch: options?.forceWebSearch,
-      userText: cleanContent,
-      searchAvailable: searchStatus.available,
-      classifyIntent: createWebSearchIntentClassifier({
-        provider: this.provider,
-        model: this.config.provider.activeModel,
-      }),
-    });
+    if (this.options.channelSession) {
+      // Messaging channels need fast replies — skip optional LLM intent classifier.
+      this.turnWebSearchPolicy = resolveWebSearchTurnPolicy({
+        forceWebSearch: options?.forceWebSearch,
+        userText: cleanContent,
+        searchAvailable: searchStatus.available,
+      });
+    } else {
+      this.turnWebSearchPolicy = await resolveWebSearchTurnPolicyAsync({
+        forceWebSearch: options?.forceWebSearch,
+        userText: cleanContent,
+        searchAvailable: searchStatus.available,
+        classifyIntent: createWebSearchIntentClassifier({
+          provider: this.provider,
+          model: this.config.provider.activeModel,
+        }),
+      });
+    }
     this.forcedWebSearchToolName = searchStatus.forcedTool;
     if (options?.forceWebSearch && !searchStatus.available) {
       throw new Error('Web search is not available. Enable a provider in Settings → Tools.');
@@ -1745,7 +1852,7 @@ Rules:
         : searchInstr;
     }
 
-    if (!options?.retry && this.options.promptProfile !== 'crew_private' && !options?.delegateCrewIds?.length) {
+    if (!options?.retry && !this.options.channelSession && this.options.promptProfile !== 'crew_private' && !options?.delegateCrewIds?.length) {
       try {
         const priorUserMessages = this.messages
           .filter((m) => m.role === 'user')
@@ -1778,6 +1885,10 @@ Rules:
       while (this.messages.length > 0 && this.messages[this.messages.length - 1]?.role === 'assistant') {
         this.messages.pop();
       }
+      const retryHint = 'RETRY TURN: Use the latest [CURRENT_TIME] block for scheduling. For relative delays ("in X minutes"), use automation_register with delay_seconds — do not reuse run_at times from earlier turns or assistant messages.';
+      this.pendingInstruction = this.pendingInstruction
+        ? `${this.pendingInstruction}\n\n${retryHint}`
+        : retryHint;
     }
 
     // Add user message (clean, without instruction)
@@ -1957,9 +2068,19 @@ Rules:
         ];
         try {
           const model = createAiSdkModel(this.config, this.getApiKey());
-          const r = await streamText({ model, messages: fastMessages as any, maxOutputTokens: 256 });
-          let text = '';
-          for await (const chunk of r.textStream) { text += chunk; }
+          const streamPromise = (async () => {
+            const r = await streamText({ model, messages: fastMessages as any, maxOutputTokens: 256 });
+            let text = '';
+            for await (const chunk of r.textStream) { text += chunk; }
+            return text;
+          })();
+          const timeoutMs = this.options.channelSession ? 45_000 : 120_000;
+          const text = await Promise.race([
+            streamPromise,
+            new Promise<string>((_, reject) => {
+              setTimeout(() => reject(new Error('Fast reply timed out')), timeoutMs);
+            }),
+          ]);
           const fallback = crewHost ? `Hey — ${crewHost.name} here.` : 'Hey! How can I help?';
           const msg: Message = { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant', content: text || fallback, toolCalls: null, createdAt: new Date().toISOString(), tokenCount: Math.ceil((text || '').length / 4) };
           this.messages.push({ role: 'assistant', content: msg.content });
@@ -2006,7 +2127,7 @@ Rules:
 
     // Auto-query RAG for relevant documents (skip for conversational messages)
     this.lastRagResults = [];
-    if (!this.currentDecision.skipRag) {
+    if (!this.currentDecision.skipRag && !this.usesCompactContext()) {
       const rag = getRAGEngineInstance();
       if (rag && rag.isEnabled) {
         try {
@@ -2096,7 +2217,7 @@ Rules:
       }
 
        // Normal mode: run completion loop directly
-       if (!(await this.checkConnectivity())) {
+       if (!this.options.channelSession && !(await this.checkConnectivity())) {
          throw new Error('Cannot reach LLM provider. Check your internet connection.');
        }
        let assistantMessage = await this.runCompletionLoop(startTime);
@@ -2269,6 +2390,20 @@ Rules:
     if (!registry) throw new Error('Tool registry not initialized');
     if (!executor) throw new Error('Tool executor not initialized');
 
+    const lastUserMsg = [...this.messages].reverse().find((m) => m.role === 'user');
+    const lastUserText = typeof lastUserMsg?.content === 'string'
+      ? lastUserMsg.content.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim()
+      : '';
+    let integrationHint: string | undefined;
+    if (this.options.prepareIntegrationTools && lastUserText) {
+      try {
+        integrationHint = await this.options.prepareIntegrationTools(lastUserText);
+      } catch (error) {
+        getLogger().warn('AGENT', `Integration pre-turn sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    const compact = this.usesCompactContext();
     const tools = createAiSdkTools(
       registry,
       executor,
@@ -2291,7 +2426,7 @@ Rules:
         return subAgent.execute();
       },
       this.planMode,
-      this.options.promptProfile === 'crew_private'
+      this.options.promptProfile === 'crew_private' || this.options.channelSession
         ? undefined
         : (toolId, reason) => this.waitForModeEscalation(toolId, reason),
       (toolId, success, output, elapsed, args) => {
@@ -2307,6 +2442,7 @@ Rules:
         }
       },
       this.options.promptProfile ?? 'default',
+      compact,
     );
 
     if (this.options.promptProfile === 'crew_private') {
@@ -2318,9 +2454,17 @@ Rules:
 
     const model = createAiSdkModel(this.config, this.getApiKey());
 
-    const aiMessages = this.messages.map((m) => ({
+    const aiMessages = buildCompletionMessages(
+      this.messages.map((m) => ({
+        role: m.role,
+        content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+      })),
+      compact,
+      3,
+      this.config.provider.activeProvider,
+    ).map((m) => ({
       role: m.role as 'user' | 'assistant' | 'system',
-      content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+      content: m.content,
     }));
 
     // Append instruction to last user message (instead of separate role:system)
@@ -2334,21 +2478,25 @@ Rules:
     }
 
     // Prepend turn context so short follow-ups retain session intent
-    const lastUserMsg = [...this.messages].reverse().find((m) => m.role === 'user');
-    const lastUserText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
-    if (lastUserText) {
-      const turnCtx = this.prepareTurnContext(lastUserText.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim());
-      if (turnCtx.block) {
-        const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
-        const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
-        if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
-          aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
-        }
+    const turnCtx = this.prepareTurnContext(lastUserText);
+    if (turnCtx.block) {
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
+        aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
       }
     }
 
-    // Prepend RAG context to last user message
-    if (this.lastRagResults.length > 0) {
+    if (integrationHint) {
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[INTEGRATION')) {
+        aiMessages[userIdx] = { role: 'user', content: `${integrationHint}\n\n${userMsg.content}` };
+      }
+    }
+
+    // Prepend RAG context to last user message (full context profile only)
+    if (!compact && this.lastRagResults.length > 0) {
       const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
       const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
@@ -2386,6 +2534,12 @@ Rules:
       let stepCapContinuations = 0;
       const stepBudget = this.completionStepBudget();
       const stepLimit = () => stepBudget;
+      const googleProviderOptions = this.config.provider.activeProvider === 'google'
+        ? buildGoogleAiSdkProviderOptions(
+          this.config.provider.activeModel,
+          this.config.provider.activeReasoningEffort,
+        )
+        : undefined;
       const result = streamText({
         model,
         messages: aiMessages,
@@ -2394,6 +2548,7 @@ Rules:
         maxRetries: 2,
         stopWhen: ({ steps }) => steps.length >= stepLimit(),
         toolChoice: 'auto',
+        ...(googleProviderOptions ? { providerOptions: googleProviderOptions } : {}),
         prepareStep: async ({ stepNumber, messages }) => {
           this.turnState.setStage('execution', stepNumber);
           const stepBudgetBase = this.options.promptProfile === 'crew_private'
@@ -2474,10 +2629,10 @@ Rules:
               ...(worked ? [{ role: 'assistant' as const, content: text || '(executed tools)' }] : []),
               { role: 'user' as const, content: worked
                 ? `[SYSTEM] You just ran these tools:\n${toolSummary}\n\nNow respond to the user based on these results. Read files if needed. Analyze what you found. Be thorough.`
-                : `[SYSTEM] The user said: "${aiMessages[aiMessages.length - 1]?.content?.slice(0, 500)}"\n\nUse tools to explore, find files, read content, and respond. Do not return empty — take action.`
+                : `[SYSTEM] The user said: "${aiMessages[aiMessages.length - 1]?.content?.slice(0, 500)}"\n\nUse the appropriate tools to answer. Prefer connected MCP integration tools when the request targets an external service — do not scan the local filesystem as a substitute. Do not return empty.`
               },
             ],
-            tools: createAiSdkTools(this.toolRegistry!, this.toolExecutor!, this.sessionId, (e) => this.emit(e), async () => 'continue', async () => ({ success: true, output: '(fallback)', elapsed: 0 }), this.planMode),
+            tools: createAiSdkTools(this.toolRegistry!, this.toolExecutor!, this.sessionId, (e) => this.emit(e), async () => 'continue', async () => ({ success: true, output: '(fallback)', elapsed: 0 }), this.planMode, undefined, undefined, 'default', compact),
             stopWhen: stepCountIs(50),
             toolChoice: 'auto',
             maxRetries: 1,
@@ -2565,6 +2720,17 @@ Rules:
         };
         emit({ type: 'message_received', message: cancelledMessage, elapsed: Date.now() - startTime });
         return cancelledMessage;
+      }
+      if (error instanceof Error && error.message === 'CLARIFICATION_ABORTED') {
+        return {
+          id: '__clarify__',
+          sessionId: this.sessionId,
+          role: 'assistant',
+          content: '',
+          toolCalls: null,
+          createdAt: new Date().toISOString(),
+          tokenCount: 0,
+        };
       }
 
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -2698,17 +2864,55 @@ Rules:
 
     if (this.options.promptProfile === 'crew_private') {
       const ctx = this.createSectionContext();
+      if (this.usesCompactContext()) {
+        this.promptAssembly
+          .register(createCrewPrivateConductSection())
+          .register(createLocalPersonaGuardSection())
+          .register(createWorkingDirectorySection(ctx))
+          .register(createUserSection(ctx))
+          .register(createSessionNarrativeSection(ctx))
+          .register(createMemoryContextSection(ctx));
+      } else {
+        this.promptAssembly
+          .register(createCrewPrivateConductSection())
+          .register(createQuestionnaireGuideSection())
+          .register(createChatMarkdownSection())
+          .register(createCurrentTimeSection(ctx))
+          .register(createWorkingDirectorySection(ctx))
+          .register(createLearningsSection(ctx))
+          .register(createSkillsSection(ctx))
+          .register(createFormalSkillsSection(ctx))
+          .register(createSessionNarrativeSection(ctx))
+          .register(createTurnFeedbackSection(ctx))
+          .register(createUserSection(ctx))
+          .register(createSoulSection(ctx))
+          .register(createNeuralSection(ctx))
+          .register(createMemoryContextSection(ctx))
+          .register(createInstructionsSection(ctx.scopePath));
+      }
+      if (systemOverride) {
+        this.promptAssembly.register(createSystemOverrideSection(systemOverride));
+      }
+      return;
+    }
+
+    if (this.options.channelSession) {
+      const ctx = this.createSectionContext();
       this.promptAssembly
-        .register(createCrewPrivateConductSection())
-        .register(createQuestionnaireGuideSection())
+        .register(createProviderPromptSection(ctx))
+        .register(createIdentitySection(ctx))
+        .register(createWorkingDirectorySection(ctx))
+        .register(createCompactRulesSection())
+        .register(createChannelSuperSessionSection())
+        .register(createChannelMessagingSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx))
-        .register(createWorkingDirectorySection(ctx))
+        .register(createSchedulingSection())
         .register(createLearningsSection(ctx))
         .register(createSkillsSection(ctx))
         .register(createFormalSkillsSection(ctx))
-        .register(createSessionNarrativeSection(ctx))
-        .register(createTurnFeedbackSection(ctx))
+        .register(createMultiCrewSection(ctx))
+        .register(createCrewRosterGuideSection())
         .register(createUserSection(ctx))
         .register(createSoulSection(ctx))
         .register(createNeuralSection(ctx))
@@ -2721,30 +2925,43 @@ Rules:
     }
 
     const ctx = this.createSectionContext();
-    this.promptAssembly
-      .register(createProviderPromptSection(ctx))
-      .register(createIdentitySection(ctx))
-      .register(createWorkingDirectorySection(ctx))
-      .register(createRulesSection())
-      .register(createQuestionnaireGuideSection())
-      .register(createChatMarkdownSection())
-      .register(createCurrentTimeSection(ctx))
-      .register(createSchedulingSection())
-      .register(createLearningsSection(ctx))
-      .register(createSkillsSection(ctx))
-      .register(createFormalSkillsSection(ctx))
-      .register(createHyperdriveSection(ctx))
-      .register(createChannelFocusSection(ctx))
-      .register(createMultiCrewSection(ctx))
-      .register(createCrewRosterGuideSection())
-      .register(createUserSection(ctx))
-      .register(createSessionNarrativeSection(ctx))
-      .register(createTurnFeedbackSection(ctx))
-      .register(createTaskPanelSection())
-      .register(createSoulSection(ctx))
-      .register(createNeuralSection(ctx))
-      .register(createMemoryContextSection(ctx))
-      .register(createInstructionsSection(ctx.scopePath));
+    if (this.usesCompactContext()) {
+      this.promptAssembly
+        .register(createProviderPromptSection(ctx))
+        .register(createIdentitySection(ctx))
+        .register(createLocalPersonaGuardSection())
+        .register(createWorkingDirectorySection(ctx))
+        .register(createCompactRulesSection())
+        .register(createUserSection(ctx))
+        .register(createSessionNarrativeSection(ctx))
+        .register(createMemoryContextSection(ctx))
+        .register(createInstructionsSection(ctx.scopePath));
+    } else {
+      this.promptAssembly
+        .register(createProviderPromptSection(ctx))
+        .register(createIdentitySection(ctx))
+        .register(createWorkingDirectorySection(ctx))
+        .register(createRulesSection())
+        .register(createQuestionnaireGuideSection())
+        .register(createChatMarkdownSection())
+        .register(createCurrentTimeSection(ctx))
+        .register(createSchedulingSection())
+        .register(createLearningsSection(ctx))
+        .register(createSkillsSection(ctx))
+        .register(createFormalSkillsSection(ctx))
+        .register(createHyperdriveSection(ctx))
+        .register(createChannelFocusSection(ctx))
+        .register(createMultiCrewSection(ctx))
+        .register(createCrewRosterGuideSection())
+        .register(createUserSection(ctx))
+        .register(createSessionNarrativeSection(ctx))
+        .register(createTurnFeedbackSection(ctx))
+        .register(createTaskPanelSection())
+        .register(createSoulSection(ctx))
+        .register(createNeuralSection(ctx))
+        .register(createMemoryContextSection(ctx))
+        .register(createInstructionsSection(ctx.scopePath));
+    }
 
     if (systemOverride) {
       this.promptAssembly.register(createSystemOverrideSection(systemOverride));
@@ -2776,11 +2993,16 @@ Rules:
   }
 
   switchProvider(providerId: ProviderId, apiKey?: string, baseUrl?: string): void {
+    const wasCompact = this.usesCompactContext();
     this.provider = ProviderFactory.create(providerId, apiKey, baseUrl);
     this.config.provider.activeProvider = providerId;
+    if (wasCompact !== this.usesCompactContext()) {
+      this.rebuildPromptAssembly();
+    }
   }
 
   switchModel(modelId: string, contextWindow?: number): void {
+    const wasCompact = this.usesCompactContext();
     this.config.provider.activeModel = modelId;
     this._capabilityWarningEmitted = false;
 
@@ -2798,6 +3020,15 @@ Rules:
     // Set pricing for cost tracking
     const pricing = getModelPricing(modelId);
     this.tokenTracker.setPricing(pricing.inputPerMillion, pricing.outputPerMillion);
+
+    const nowCompact = isCompactContextProfile(
+      this.config.provider.activeProvider,
+      modelId,
+      ctx ?? this.getContextWindow(),
+    );
+    if (wasCompact !== nowCompact) {
+      this.rebuildPromptAssembly();
+    }
 
     this.emit({ type: 'command_action', action: 'model_switched', modelId, contextWindow: ctx ?? this.tokenTracker.tokensTotal });
   }
@@ -2939,6 +3170,96 @@ Rules:
     }
   }
 
+  /** Re-attach interactive permission prompts after an ephemeral automation run. */
+  bindPermissionHandler(): void {
+    if (!this.toolExecutor || this.options.automationRun) return;
+    this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel, context) => {
+      if (isPermissionExemptTool(toolId)) return 'allow_once';
+      if (this.isDelegatedWorker || this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
+      const requestId = randomUUID();
+      return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
+        this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
+        this.emit({
+          type: 'permission_required',
+          requestId,
+          tool: toolId,
+          path,
+          riskLevel,
+          integrationPreview: context?.integrationPreview,
+        });
+      });
+    });
+  }
+
+  /**
+   * Prompt for tools a scheduled automation will need before registration.
+   * Requires allow_always grants so the worker can run without interactive prompts.
+   */
+  async ensureAutomationToolsApproved(
+    toolIds: string[],
+  ): Promise<{ ok: boolean; denied?: string[]; error?: string }> {
+    const executor = this.toolExecutor;
+    if (!executor || toolIds.length === 0) return { ok: true };
+
+    const denied: string[] = [];
+    const unique = [...new Set(toolIds)];
+
+    for (const toolId of unique) {
+      const existing = executor.getPermissionManager().check(toolId, '*')
+        ?? executor.getPermissionManager().check(toolId);
+      if (existing === 'allow_always') continue;
+
+      const tool = this.toolRegistry?.get(toolId);
+      const riskLevel = tool?.riskLevel ?? 'medium';
+
+      const choice = await new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
+        const requestId = randomUUID();
+        this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path: '*', riskLevel });
+        this.emit({
+          type: 'permission_required',
+          requestId,
+          tool: toolId,
+          path: '*',
+          riskLevel,
+          forAutomation: true,
+        });
+      });
+
+      if (choice === 'deny') {
+        denied.push(toolId);
+        continue;
+      }
+      if (choice === 'allow_once') {
+        executor.getPermissionManager().grant(toolId, 'allow_always');
+        this.persistPermissionGrant(toolId, 'allow_always');
+      }
+    }
+
+    if (denied.length > 0) {
+      return {
+        ok: false,
+        denied,
+        error: `User denied tools required for this automation: ${denied.join(', ')}`,
+      };
+    }
+    return { ok: true };
+  }
+
+  /** Show automation notification channel questionnaire in chat. */
+  async promptAutomationNotifyChannels(questionnaire: QuestionnairePayload): Promise<string> {
+    return this.waitForQuestionnaireResponse(questionnaire);
+  }
+
+  /** Grant notify tool permissions without prompting (automation channel selection). */
+  grantAutomationNotifyTools(toolIds: string[]): void {
+    const executor = this.toolExecutor;
+    if (!executor || toolIds.length === 0) return;
+    for (const toolId of toolIds) {
+      executor.getPermissionManager().grant(toolId, 'allow_always');
+      this.persistPermissionGrant(toolId, 'allow_always');
+    }
+  }
+
   /**
    * Respond to a pending permission request from the tool executor.
    */
@@ -2971,6 +3292,56 @@ Rules:
       entry.resolve(choice);
       this.pendingPermissions.delete(id);
     }
+  }
+
+  /** Persist Telegram (or other channel) permission decisions from inline buttons. */
+  recordToolPermissionDecision(toolName: string, decision: PermissionDecision): void {
+    if (!this.toolExecutor) return;
+    if (decision === 'allow_always') {
+      this.toolExecutor.getPermissionManager().grant(toolName, 'allow_always');
+      this.persistPermissionGrant(toolName, 'allow_always');
+    } else if (decision === 'deny') {
+      this.toolExecutor.getPermissionManager().deny(toolName);
+      this.persistPermissionGrant(toolName, 'deny');
+    }
+  }
+
+  formatChannelToolPermissions(): string {
+    const pm = this.toolExecutor?.getPermissionManager();
+    if (!pm) return '🔐 No permission state available.';
+    if (pm.isAllAllowed()) {
+      return '🔐 *Permissions*\n✅ All tools are always allowed for this channel session.';
+    }
+    const perms = pm.list().filter((p) => p.id !== '__all__');
+    const allowed = perms.filter((p) => p.decision === 'allow_always').map((p) => p.toolName);
+    const denied = perms.filter((p) => p.decision === 'deny').map((p) => p.toolName);
+    const lines = ['🔐 *Permissions*'];
+    lines.push('', '*Always allowed:*', allowed.length ? allowed.map((t) => `  ✅ ${t}`).join('\n') : '  (none)');
+    lines.push('', '*Denied:*', denied.length ? denied.map((t) => `  ❌ ${t}`).join('\n') : '  (none)');
+    lines.push('', 'Revoke with `/permissions revoke <tool>` or `/permissions revoke-all`.');
+    return lines.join('\n');
+  }
+
+  revokeChannelToolPermissions(tools?: string[], revokeAll = false): string {
+    const pm = this.toolExecutor?.getPermissionManager();
+    if (!pm) return '🔐 No permission state available.';
+    const store = (this.sessionManager as unknown as {
+      store?: { removePermissions?: (sessionId: string, toolName?: string) => void };
+    })?.store;
+
+    if (revokeAll) {
+      pm.revokeAll();
+      store?.removePermissions?.(this.sessionId);
+      return '🗑 All remembered tool permissions revoked for this channel session.';
+    }
+
+    const names = (tools ?? []).map((t) => t.trim()).filter(Boolean);
+    if (!names.length) return '❌ Specify at least one tool name to revoke.';
+    for (const name of names) {
+      pm.revoke(name);
+      store?.removePermissions?.(this.sessionId, name);
+    }
+    return `🗑 Revoked permissions for: ${names.join(', ')}`;
   }
 
   getMessageHistory(): CompletionMessage[] {
@@ -3413,13 +3784,24 @@ Only include specialists that are actually needed for this task.`;
   }
 
   private getApiKey(): string | undefined {
-    const providerSettings = this.config.provider.providers?.[this.config.provider.activeProvider];
-    return providerSettings?.apiKey;
+    const creds = this.getProviderCredentials();
+    return creds.apiKey;
   }
 
   private getBaseUrl(): string | undefined {
+    const creds = this.getProviderCredentials();
+    return creds.baseUrl;
+  }
+
+  private getProviderCredentials(): { apiKey?: string; baseUrl?: string } {
     const providerSettings = this.config.provider.providers?.[this.config.provider.activeProvider];
-    return providerSettings?.baseUrl;
+    if (!providerSettings) return {};
+    const activeProfileId = providerSettings.activeProfile;
+    const profile = activeProfileId ? providerSettings.profiles?.[activeProfileId] : undefined;
+    return {
+      apiKey: profile?.apiKey ?? providerSettings.apiKey,
+      baseUrl: profile?.baseUrl ?? providerSettings.baseUrl,
+    };
   }
 
   /**
@@ -3598,13 +3980,15 @@ Only include specialists that are actually needed for this task.`;
 
   /** Realtime context block for the current user turn. */
   prepareTurnContext(currentUserMessage: string) {
+    const compact = this.usesCompactContext();
     return this.contextTracker.getHandler().buildTurnInjection(
       this.messages.map((m) => ({
         role: m.role,
         content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
       })),
       currentUserMessage,
-      this.contextMemoryChars,
+      compact ? 1200 : this.contextMemoryChars,
+      compact,
     );
   }
 
@@ -3936,6 +4320,12 @@ Only include specialists that are actually needed for this task.`;
   setSessionManager(sm: { createSession: (providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string) => { id: string } }): void {
     this.sessionManager = sm;
     this.restoreSessionPermissions();
+    if (this.options.channelSession) {
+      registerChannelPermissionBridge(this.sessionId, {
+        list: () => this.formatChannelToolPermissions(),
+        revoke: (tools, revokeAll) => this.revokeChannelToolPermissions(tools, revokeAll),
+      });
+    }
   }
 
   private persistPermissionGrant(toolName: string, decision: PermissionDecision): void {
@@ -3976,12 +4366,14 @@ Only include specialists that are actually needed for this task.`;
       for (const row of rows) {
         const toolName = (row['tool_name'] ?? row['toolName']) as string;
         const decision = row['decision'] as PermissionDecision;
-        if (!toolName || seen.has(toolName) || decision !== 'allow_always') continue;
+        if (!toolName || seen.has(toolName)) continue;
         seen.add(toolName);
         if (toolName === '*') {
           pm.allowAll();
-        } else {
+        } else if (decision === 'allow_always') {
           pm.grant(toolName, 'allow_always');
+        } else if (decision === 'deny') {
+          pm.deny(toolName);
         }
       }
     } catch { /* best-effort */ }
@@ -4091,21 +4483,20 @@ Only include specialists that are actually needed for this task.`;
       /i have created/gi,
     ];
     
-    let claimsSomethingCreated = false;
+    let claimsRestrictedMutation = false;
     for (const pattern of writePatterns) {
       if (pattern.test(responseContent)) {
-        claimsSomethingCreated = true;
-        issues.push('Response claims to have created/edited/deleted files');
+        claimsRestrictedMutation = true;
         break;
       }
     }
     
-    // Check if any write operations actually failed (use real tool IDs)
-    const writeToolsAttempted = toolExecutions.filter(t => isWriteTool(t.name));
-    const failedWrites = writeToolsAttempted.filter(t => !t.success);
+    // Check if any edit/delete operations failed
+    const restrictedToolsAttempted = toolExecutions.filter(t => isWriteTool(t.name));
+    const failedRestricted = restrictedToolsAttempted.filter(t => !t.success);
 
     // Filesystem ground-truth: if a claimed path exists but tool reported failure, note the mismatch
-    for (const entry of failedWrites) {
+    for (const entry of failedRestricted) {
       const pathMatch = entry.output.match(/path[=:\s]+(["']?)([\w./-]+)\1/i)
         || entry.output.match(/([\w./-]+\.\w{1,8})/);
       const relPath = pathMatch?.[2] || pathMatch?.[1];
@@ -4117,14 +4508,13 @@ Only include specialists that are actually needed for this task.`;
       }
     }
     
-    if (claimsSomethingCreated && failedWrites.length > 0) {
-      issues.push(`Agent claimed success but ${failedWrites.length} write operation(s) failed`);
+    if (claimsRestrictedMutation && failedRestricted.length > 0) {
+      issues.push(`Agent claimed success but ${failedRestricted.length} edit/delete operation(s) failed`);
     }
     
-    // Check if agent mentions "Done!" or "Completed!" without explaining restrictions
     if ((responseContent.includes('Done!') || responseContent.includes('Completed!')) && 
-        claimsSomethingCreated && 
-        failedWrites.length > 0 &&
+        claimsRestrictedMutation && 
+        failedRestricted.length > 0 &&
         !responseContent.toLowerCase().includes('plan mode') &&
         !responseContent.toLowerCase().includes('mode restriction') &&
         !responseContent.toLowerCase().includes('switch to agent')) {
@@ -4155,29 +4545,36 @@ Only include specialists that are actually needed for this task.`;
     
     const refactorPrompt = `[SYSTEM] Your previous response contained an issue:
 
-PROBLEM: You claimed to have created/edited/deleted files, but you are in Plan Mode (read-only). 
+PROBLEM: You claimed to have edited/deleted files, but those edit/delete tools failed in Plan Mode.
 The following operations actually FAILED:
 ${failedOps}
 
 YOUR PREVIOUS RESPONSE:
 ${originalMessage.content}
 
-FIX: Rewrite your response to be honest about the mode restriction. You must:
-1. Explain EXACTLY what action you tried to perform
-2. Explain WHY it failed (Plan Mode blocks write operations)
-3. Tell the user to switch to Agent Mode if they want you to execute it
-4. Suggest what you WOULD do once they switch modes
-5. Do NOT claim any file was created/edited/deleted
+FIX: Rewrite your response to be honest. You must:
+1. Explain EXACTLY what edit/delete action you tried
+2. Explain that edit/delete requires Agent Mode or Hyperdrive
+3. Note that reads, new files, scripts, search, and scheduling work in Plan mode
+4. Do NOT claim an edit or delete succeeded
 
 Provide the corrected response now:`;
 
     try {
       const model = createAiSdkModel(this.config, this.getApiKey());
-      const aiMessages = this.messages.slice(0, -1).map(m => ({
+      const aiMessages = buildCompletionMessages(
+        this.messages.slice(0, -1).map(m => ({
+          role: m.role,
+          content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+        })),
+        false,
+        3,
+        this.config.provider.activeProvider,
+      ).map((m) => ({
         role: m.role as 'user' | 'assistant' | 'system',
-        content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+        content: m.content,
       }));
-      aiMessages.push({ role: 'user' as const, content: refactorPrompt });
+      aiMessages.push({ role: 'user', content: refactorPrompt });
 
       let refactoredContent = '';
       this.emit({ type: 'loading_start', stage: 'refactoring' });

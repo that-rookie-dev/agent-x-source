@@ -11,7 +11,7 @@ import { runWebSearch, type SerpHit } from './providers/index.js';
 import { hasActiveWebSearchProviders, webSearchProvidersUnavailableMessage } from './search-config.js';
 import { fetchAndExtractPage, inferTypeFromPage, pageExtractToDeepSearchExtracted } from './extract.js';
 import { preScoreSerpHit, scoreSearchResult } from './score.js';
-import { extractDomain, faviconUrlForDomain, isUrlSafeForFetch } from './url-utils.js';
+import { extractDomain, faviconUrlForDomain, isUrlSafeForFetch, markdownSourceLink } from './url-utils.js';
 
 export type ProgressCallback = (progress: DeepSearchProgress) => void;
 
@@ -160,7 +160,7 @@ function buildSummary(query: string, results: DeepSearchResult[]): string {
     return `No high-quality web results found for "${query}".`;
   }
   const lines = results.slice(0, 5).map((r, i) => (
-    `${i + 1}. [${r.contentType}] ${r.title} — ${r.domain} (score ${r.scores.final}) — ${r.url}`
+    `${i + 1}. [${r.contentType}] ${r.title} — ${markdownSourceLink(r.url)} (score ${r.scores.final})`
   ));
   return `Deep web search for "${query}" found ${results.length} ranked result(s):\n${lines.join('\n')}`;
 }

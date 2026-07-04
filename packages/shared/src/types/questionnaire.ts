@@ -8,6 +8,8 @@ export interface QuestionnaireOption {
   value: string;
   label?: string;
   recommended?: boolean;
+  /** When true, option is visible but not selectable (e.g. channel not configured). */
+  disabled?: boolean;
 }
 
 export interface QuestionnaireQuestion {

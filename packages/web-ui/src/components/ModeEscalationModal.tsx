@@ -27,7 +27,7 @@ export default function ModeEscalationModal({ open, tool, reason, onSwitch, onSk
       </DialogTitle>
       <DialogContent sx={{ pb: 1 }}>
         <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, lineHeight: 1.6 }}>
-          The agent tried to use <strong>{tool}</strong> but Plan mode blocks write/execute operations.
+          The agent tried to use <strong>{tool}</strong> but Plan mode blocks edits and deletes to existing resources.
         </Typography>
         <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, mt: 1, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap' }}>
           {reason.slice(0, 300)}

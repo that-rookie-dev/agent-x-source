@@ -278,15 +278,16 @@ export class NeuralBrainIngestionPipeline {
   ): Promise<void> {
     const eventStreamer = streamer ?? this.eventStreamer;
 
-    // Update access counts in database
+    // Update access counts (tracked in neuron_activity, keyed by node UUID).
+    // Compare as text so non-UUID ids are ignored instead of erroring.
     if (nodeIds.length > 0) {
-      const placeholders = nodeIds.map((_, i) => `$${i + 1}`).join(',');
       await this.pool.query(
-        `UPDATE memory_nodes 
-         SET access_count = access_count + 1, 
-             last_accessed_at = NOW() 
-         WHERE id IN (${placeholders})`,
-        nodeIds
+        `INSERT INTO neuron_activity (node_id, access_count, last_accessed_at)
+         SELECT id, 1, NOW() FROM memory_nodes WHERE id::text = ANY($1::text[])
+         ON CONFLICT (node_id) DO UPDATE
+           SET access_count = neuron_activity.access_count + 1,
+               last_accessed_at = NOW()`,
+        [nodeIds]
       );
     }
 

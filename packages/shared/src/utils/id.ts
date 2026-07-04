@@ -14,6 +14,7 @@ export const PSEUDO_ID_PREFIXES = [
   'file_',      // upload file ids
   'crew-worker-', // crew worker telemetry (not session PK)
   '__channel__',  // channel bridge session
+  'automation:',  // internal automation run log (one per task)
 ] as const;
 
 /** True when id is a standard UUID (no prefix). */

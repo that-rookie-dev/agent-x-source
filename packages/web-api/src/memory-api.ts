@@ -9,6 +9,7 @@ import { validate, memoryNodeCreateSchema, memoryEdgeCreateSchema, memorySearchS
 import { getLogger, getDataDir } from '@agentx/shared';
 import { broadcastBrainActivity, broadcast } from './ws.js';
 import { getIngestionWorker } from './ingestion-worker-ref.js';
+import { refreshIngestionRagSourceCount, evaluateIngestionWorker } from './ingestion-governor.js';
 import { buildDistillationGenerator } from './distillation-generator.js';
 
 const logger = getLogger();
@@ -730,6 +731,10 @@ router.post('/memory/ingest-async', upload.single('file'), async (req: Request, 
       payload: { name, kind, content, chunkSize, chunkOverlap, filePath, fileSize, fileMime },
       priority: 5,
     });
+    const pool = getEngine().pgPool;
+    if (pool) {
+      void refreshIngestionRagSourceCount(pool as any).then(() => evaluateIngestionWorker());
+    }
     res.json({ jobId: job.id, status: job.status, name, kind });
   } catch (e) {
     logger.error('MEMORY_API', e instanceof Error ? e.message : e);

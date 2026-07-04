@@ -1,5 +1,5 @@
 const { execSync } = require('child_process');
-const { existsSync, writeFileSync, readdirSync, cpSync, mkdirSync } = require('fs');
+const { existsSync, writeFileSync, readdirSync, cpSync, mkdirSync, rmSync } = require('fs');
 const { join, dirname } = require('path');
 
 function getWebApiDir(context) {
@@ -24,11 +24,19 @@ function resolvePnpmStore(context) {
   return null;
 }
 
+function packageDirLooksComplete(dir) {
+  return existsSync(join(dir, 'package.json'));
+}
+
 function bundlePackageFromPnpmStore(webApiDir, pnpmStore, dep) {
   const destDir = join(webApiDir, 'node_modules', dep);
-  if (existsSync(destDir)) {
+  if (existsSync(destDir) && packageDirLooksComplete(destDir)) {
     console.log(`afterPack: ${dep} already present, skipping`);
     return;
+  }
+  if (existsSync(destDir)) {
+    console.warn(`afterPack: replacing incomplete ${dep} at ${destDir}`);
+    rmSync(destDir, { recursive: true, force: true });
   }
 
   // Find the matching directory in pnpm store

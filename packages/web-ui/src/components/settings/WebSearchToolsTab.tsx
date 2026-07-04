@@ -3,7 +3,6 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Switch from '@mui/material/Switch';
-import Chip from '@mui/material/Chip';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import InputAdornment from '@mui/material/InputAdornment';
@@ -13,7 +12,16 @@ import KeyIcon from '@mui/icons-material/Key';
 import PublicIcon from '@mui/icons-material/Public';
 import type { WebSearchToolsConfig } from '@agentx/shared';
 import { settings } from '../../api';
-import { crewTheme, crewHubScanlineSx, crewOverlineSx } from '../../styles/crew-theme';
+import {
+  settingsTheme,
+  settingsScanlineSx,
+  settingsMonoSx,
+  settingsTextFieldSx,
+  settingsBtnGhostSx,
+  settingsStatusBadgeSx,
+} from '../../styles/settings-theme';
+import { SettingsSectionHeader } from './SettingsSectionHeader';
+import { SettingsCard } from './SettingsCard';
 
 export interface WebSearchToolsTabProps {
   value: WebSearchToolsConfig;
@@ -37,14 +45,14 @@ const PROVIDERS: ProviderMeta[] = [
     id: 'duckduckgo',
     name: 'DuckDuckGo',
     tagline: 'Open-source HTML search — no API key required',
-    accent: crewTheme.accent.signal,
+    accent: settingsTheme.accent.signal,
     free: true,
   },
   {
     id: 'brave',
     name: 'Brave Search',
     tagline: 'High-quality SERP via Brave Search API',
-    accent: crewTheme.accent.amber,
+    accent: settingsTheme.accent.amber,
     free: false,
     keyUrl: 'https://brave.com/search/api/',
     keyPlaceholder: 'BSA…',
@@ -53,7 +61,7 @@ const PROVIDERS: ProviderMeta[] = [
     id: 'exa',
     name: 'Exa',
     tagline: 'Neural search optimized for research agents',
-    accent: crewTheme.accent.hud,
+    accent: settingsTheme.accent.hud,
     free: false,
     keyUrl: 'https://dashboard.exa.ai/api-keys',
     keyPlaceholder: 'exa-…',
@@ -62,7 +70,7 @@ const PROVIDERS: ProviderMeta[] = [
     id: 'tavily',
     name: 'Tavily',
     tagline: 'Agent-focused search with rich snippets',
-    accent: crewTheme.accent.purple,
+    accent: settingsTheme.accent.purple,
     free: false,
     keyUrl: 'https://app.tavily.com/home',
     keyPlaceholder: 'tvly-…',
@@ -82,15 +90,16 @@ function activeProviderLabels(cfg: WebSearchToolsConfig): string[] {
 function providerCardSx(accent: string, active: boolean) {
   return {
     position: 'relative' as const,
-    borderRadius: '8px',
-    bgcolor: crewTheme.bg.inset,
-    border: `1px solid ${active ? `${accent}55` : crewTheme.border.default}`,
-    p: 2.5,
-    mb: 2,
+    borderRadius: '6px',
+    bgcolor: settingsTheme.bg.inset,
+    border: `1px solid ${active ? `${accent}55` : settingsTheme.border.default}`,
+    p: 2,
+    mb: 1.5,
+    overflow: 'hidden',
     transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
-    boxShadow: active ? `0 0 0 1px ${accent}22, 0 8px 32px rgba(0,0,0,0.35)` : 'none',
+    boxShadow: active ? `0 0 0 1px ${accent}18` : 'none',
     '&:hover': {
-      borderColor: active ? `${accent}88` : crewTheme.border.strong,
+      borderColor: active ? `${accent}88` : settingsTheme.border.hud,
     },
   };
 }
@@ -139,60 +148,20 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
 
   return (
     <Box>
-      <Box sx={{
-        position: 'relative',
-        borderRadius: '8px',
-        border: `1px solid ${crewTheme.border.default}`,
-        bgcolor: crewTheme.bg.panel,
-        backgroundImage: `linear-gradient(135deg, ${crewTheme.bg.elevated} 0%, ${crewTheme.bg.panel} 60%)`,
-        p: 3,
-        mb: 3,
-        overflow: 'hidden',
-      }}>
-        <Box sx={crewHubScanlineSx} />
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, position: 'relative' }}>
-          <Box sx={{
-            width: 44, height: 44, borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            bgcolor: `${crewTheme.accent.hud}18`, border: `1px solid ${crewTheme.accent.hud}44`,
-          }}>
-            <TravelExploreIcon sx={{ fontSize: 22, color: crewTheme.accent.hud }} />
-          </Box>
-          <Box sx={{ flex: 1 }}>
-            <Typography sx={{ ...crewOverlineSx, mb: 0.75 }}>Tools · Web Search</Typography>
-            <Typography sx={{ fontSize: '0.95rem', fontWeight: 600, color: crewTheme.text.primary, mb: 0.5 }}>
-              Search Provider Configuration
-            </Typography>
-            <Typography sx={{ fontSize: '0.72rem', color: crewTheme.text.secondary, lineHeight: 1.6, maxWidth: 560 }}>
-              DuckDuckGo is enabled by default — free and open. Optionally bring your own API keys for Brave, Exa, or Tavily.
-              Enable one, several, or none of the paid providers. Results merge and dedupe automatically.
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1.5 }}>
-              {activeLabels.length > 0 ? activeLabels.map((label) => (
-                <Chip key={label} size="small" label={label} sx={{
-                  height: 22, fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace",
-                  bgcolor: `${crewTheme.accent.signal}18`, color: crewTheme.accent.signal,
-                  border: `1px solid ${crewTheme.accent.signal}44`,
-                }} />
-              )) : (
-                <Chip size="small" label="NO PROVIDERS ACTIVE" sx={{
-                  height: 22, fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace",
-                  bgcolor: `${crewTheme.accent.alert}18`, color: crewTheme.accent.alert,
-                  border: `1px solid ${crewTheme.accent.alert}44`,
-                }} />
-              )}
-            </Box>
-          </Box>
-        </Box>
-      </Box>
+      <SettingsSectionHeader
+        icon={<TravelExploreIcon sx={{ fontSize: 16 }} />}
+        title="Web Search"
+        subtitle={activeLabels.length > 0 ? `Active: ${activeLabels.join(', ')}` : 'No providers active'}
+      />
 
       {!hasSearchProvider && (
         <Box sx={{
-          mb: 2, p: 2, borderRadius: '8px',
-          border: `1px dashed ${crewTheme.accent.alert}55`,
-          bgcolor: `${crewTheme.accent.alert}08`,
+          mb: 1.5, p: 1.5, borderRadius: '6px',
+          border: `1px dashed ${settingsTheme.accent.alert}55`,
+          bgcolor: `${settingsTheme.accent.alert}08`,
         }}>
-          <Typography sx={{ fontSize: '0.7rem', color: crewTheme.accent.alert, fontFamily: "'JetBrains Mono', monospace" }}>
-            WARNING — All search providers disabled. Enable DuckDuckGo or configure a BYOK provider.
+          <Typography sx={{ fontSize: '0.65rem', color: settingsTheme.accent.alert, ...settingsMonoSx }}>
+            All search providers disabled. Enable DuckDuckGo or configure a paid provider.
           </Typography>
         </Box>
       )}
@@ -208,42 +177,22 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
 
         return (
           <Box key={provider.id} sx={providerCardSx(provider.accent, ready)}>
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2 }}>
+            <Box sx={settingsScanlineSx} />
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2, position: 'relative', zIndex: 1 }}>
               <Box sx={{ flex: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                  <Typography sx={{
-                    fontSize: '0.82rem', fontWeight: 600, color: crewTheme.text.primary,
-                    fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.5px',
-                  }}>
-                    {provider.name.toUpperCase()}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5, flexWrap: 'wrap' }}>
+                  <Typography sx={{ ...settingsMonoSx, fontSize: '0.72rem', fontWeight: 700, color: settingsTheme.text.primary }}>
+                    {provider.name}
                   </Typography>
                   {provider.free ? (
-                    <Chip label="FREE / OSS" size="small" sx={{
-                      height: 18, fontSize: '0.5rem', fontWeight: 700, letterSpacing: '1px',
-                      bgcolor: `${crewTheme.accent.signal}15`, color: crewTheme.accent.signal,
-                      border: `1px solid ${crewTheme.accent.signal}33`,
-                    }} />
+                    <Box sx={settingsStatusBadgeSx('active')}>FREE</Box>
                   ) : (
-                    <Chip label="BYOK" size="small" sx={{
-                      height: 18, fontSize: '0.5rem', fontWeight: 700, letterSpacing: '1px',
-                      bgcolor: `${provider.accent}15`, color: provider.accent,
-                      border: `1px solid ${provider.accent}33`,
-                    }} />
+                    <Box sx={{ ...settingsStatusBadgeSx('idle'), color: provider.accent, borderColor: `${provider.accent}44` }}>BYOK</Box>
                   )}
-                  {ready && (
-                    <Chip label="ACTIVE" size="small" sx={{
-                      height: 18, fontSize: '0.5rem', fontWeight: 700,
-                      bgcolor: `${crewTheme.accent.signal}22`, color: crewTheme.accent.signal,
-                    }} />
-                  )}
-                  {needsKey && (
-                    <Chip label="KEY REQUIRED" size="small" sx={{
-                      height: 18, fontSize: '0.5rem', fontWeight: 700,
-                      bgcolor: `${crewTheme.accent.amber}22`, color: crewTheme.accent.amber,
-                    }} />
-                  )}
+                  {ready && <Box sx={settingsStatusBadgeSx('active')}>ACTIVE</Box>}
+                  {needsKey && <Box sx={settingsStatusBadgeSx('warn')}>KEY REQUIRED</Box>}
                 </Box>
-                <Typography sx={{ fontSize: '0.68rem', color: crewTheme.text.dim, mb: isDdg ? 0 : 1.5 }}>
+                <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.dim, mb: isDdg ? 0 : 1.25, ...settingsMonoSx }}>
                   {provider.tagline}
                 </Typography>
                 {!isDdg && (
@@ -261,30 +210,19 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
                           sx: { fontSize: '0.75rem', fontFamily: "'JetBrains Mono', monospace" },
                           startAdornment: (
                             <InputAdornment position="start">
-                              <KeyIcon sx={{ fontSize: 14, color: crewTheme.text.dim }} />
+                              <KeyIcon sx={{ fontSize: 14, color: settingsTheme.text.dim }} />
                             </InputAdornment>
                           ),
                         },
                       }}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          bgcolor: crewTheme.bg.void,
-                          '& fieldset': { borderColor: crewTheme.border.subtle },
-                          '&:hover fieldset': { borderColor: crewTheme.border.default },
-                          '&.Mui-focused fieldset': { borderColor: `${provider.accent}88` },
-                        },
-                      }}
+                      sx={settingsTextFieldSx}
                     />
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                       <Button
                         size="small"
                         disabled={!enabled || !apiKey.trim() || testing === provider.id}
                         onClick={() => runProviderTest(provider.id as PaidProviderId)}
-                        sx={{
-                          fontSize: '0.62rem', fontFamily: "'JetBrains Mono', monospace",
-                          textTransform: 'uppercase', letterSpacing: '0.5px',
-                          color: provider.accent, borderColor: `${provider.accent}55`,
-                        }}
+                        sx={{ ...settingsBtnGhostSx, borderColor: `${provider.accent}55`, color: provider.accent }}
                         variant="outlined"
                       >
                         {testing === provider.id ? <CircularProgress size={14} /> : 'Test key'}
@@ -293,8 +231,8 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
                         <Typography sx={{
                           fontSize: '0.62rem',
                           color: testResults[provider.id as PaidProviderId]!.ok
-                            ? crewTheme.accent.signal
-                            : crewTheme.accent.alert,
+                            ? settingsTheme.accent.signal
+                            : settingsTheme.accent.alert,
                           fontFamily: "'JetBrains Mono', monospace",
                         }}>
                           {testResults[provider.id as PaidProviderId]!.message}
@@ -327,19 +265,14 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
         );
       })}
 
-      <Box sx={{
-        mt: 1, p: 2, borderRadius: '8px',
-        border: `1px solid ${crewTheme.border.subtle}`,
-        bgcolor: crewTheme.bg.inset,
-      }}>
-        <Typography sx={{ ...crewOverlineSx, mb: 1 }}>Agent routing</Typography>
-        <Typography sx={{ fontSize: '0.68rem', color: crewTheme.text.secondary, lineHeight: 1.7 }}>
-          <strong style={{ color: crewTheme.text.primary }}>deep_web_search</strong> — primary research tool (multi-query, fetch, score, rich cards).{' '}
-          <strong style={{ color: crewTheme.text.primary }}>web_search</strong> — quick snippets.{' '}
-          <strong style={{ color: crewTheme.text.primary }}>web_fetch / web_scrape</strong> — read a known URL.{' '}
-          <strong style={{ color: crewTheme.text.primary }}>web_browse</strong> — Playwright for JS-heavy pages.
+      <SettingsCard title="Agent Routing">
+        <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.secondary, lineHeight: 1.7, ...settingsMonoSx }}>
+          <Box component="span" sx={{ color: settingsTheme.text.primary, fontWeight: 600 }}>deep_web_search</Box> — primary research tool.{' '}
+          <Box component="span" sx={{ color: settingsTheme.text.primary, fontWeight: 600 }}>web_search</Box> — quick snippets.{' '}
+          <Box component="span" sx={{ color: settingsTheme.text.primary, fontWeight: 600 }}>web_fetch / web_scrape</Box> — read a URL.{' '}
+          <Box component="span" sx={{ color: settingsTheme.text.primary, fontWeight: 600 }}>web_browse</Box> — Playwright for JS-heavy pages.
         </Typography>
-      </Box>
+      </SettingsCard>
     </Box>
   );
 }

@@ -42,6 +42,14 @@ describe('web-search-policy', () => {
     expect(resolveWebSearchTurnPolicy({ forceWebSearch: true, userText: 'hello', searchAvailable: false })).toBe('off');
   });
 
+  it('does not force web search for local places queries', () => {
+    expect(resolveWebSearchTurnPolicy({
+      userText: 'best stake restaurants in bengaluru',
+      searchAvailable: true,
+    })).toBe('auto');
+    expect(analyzeWebSearchIntentHeuristic('best stake restaurants in bengaluru').shouldForceSearch).toBe(false);
+  });
+
   it('picks deep_web_search before web_search for forced tool', () => {
     expect(pickForcedWebSearchTool([])).toBe('deep_web_search');
     expect(pickForcedWebSearchTool(['deep_web_search'])).toBe('web_search');

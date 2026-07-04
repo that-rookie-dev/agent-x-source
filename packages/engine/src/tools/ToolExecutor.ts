@@ -1,4 +1,5 @@
 import type { ToolResult, ToolExecutionContext, PermissionRule } from '@agentx/shared';
+import { isChannelSessionId } from '@agentx/shared';
 import { evaluateRules } from './permissions/RuleEngine.js';
 import { isPermissionExemptTool } from './permissions/exempt-tools.js';
 import { PermissionManager } from './permissions/PermissionManager.js';
@@ -8,12 +9,18 @@ import type { SafetyAuditor } from '../safety/SafetyAuditor.js';
 import type { PolicyEngine } from '../enterprise/PolicyEngine.js';
 import type { AgentInfo } from '../agent/AgentInfo.js';
 import { isPlanDeniedTool } from '../agent/plan-mode-utils.js';
+import { buildIntegrationActionPreview } from '../integrations/action-preview.js';
+import { isIntegrationToolId } from '../integrations/action-classifier.js';
 
 
 export type PermissionRequestHandler = (
   toolId: string,
   path: string,
   riskLevel: string,
+  context?: {
+    args?: Record<string, unknown>;
+    integrationPreview?: import('@agentx/shared').IntegrationActionPreview;
+  },
 ) => Promise<'allow_once' | 'allow_always' | 'deny'>;
 
 export interface ToolExecutionEntry {
@@ -33,6 +40,8 @@ export class ToolExecutor {
   private scopeGuard: ScopeGuard;
   private handlers: Map<string, (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<ToolResult>> = new Map();
   private permissionRequestHandler?: PermissionRequestHandler;
+  /** Dedicated handler for messaging channel super-sessions — not overwritten by UI agent wiring. */
+  private channelPermissionRequestHandler?: PermissionRequestHandler;
   private onToolOutput?: (output: string) => void;
   private toolCache: Map<string, ReturnType<ToolRegistry['get']>> = new Map();
   private beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null = null;
@@ -42,6 +51,7 @@ export class ToolExecutor {
   private executionHistory: ToolExecutionEntry[] = [];
   private mode: 'agent' | 'plan' = 'agent';
   private currentAgent: AgentInfo | null = null;
+  private alwaysPromptPermissions = false;
   private sessionRules: PermissionRule[] = [];
   private agentPermissions: PermissionRule[] = [];
   private userConfigRules: PermissionRule[] = [];
@@ -59,6 +69,10 @@ export class ToolExecutor {
   setAgent(agent: AgentInfo): void {
     this.currentAgent = agent;
     this.setAgentPermissions(agent.permissions ?? []);
+  }
+
+  setAlwaysPromptPermissions(enabled: boolean): void {
+    this.alwaysPromptPermissions = enabled;
   }
 
   setSessionRules(rules: PermissionRule[]): void {
@@ -97,10 +111,22 @@ export class ToolExecutor {
     this.permissionRequestHandler = handler;
   }
 
+  setChannelPermissionRequestHandler(handler: PermissionRequestHandler | null | undefined): void {
+    this.channelPermissionRequestHandler = handler ?? undefined;
+  }
+
+  private resolvePermissionRequestHandler(sessionId: string): PermissionRequestHandler | undefined {
+    if (isChannelSessionId(sessionId) && this.channelPermissionRequestHandler) {
+      return this.channelPermissionRequestHandler;
+    }
+    return this.permissionRequestHandler;
+  }
+
   /** Copy permission policy, mode, and hooks from another executor (e.g. parent → crew worker). */
   copyExecutionPolicyFrom(source: ToolExecutor): void {
     const src = source as unknown as {
       permissionRequestHandler?: PermissionRequestHandler;
+      channelPermissionRequestHandler?: PermissionRequestHandler;
       mode: 'agent' | 'plan';
       sessionRules: PermissionRule[];
       agentPermissions: PermissionRule[];
@@ -112,6 +138,9 @@ export class ToolExecutor {
     };
     if (src.permissionRequestHandler) {
       this.setPermissionRequestHandler(src.permissionRequestHandler);
+    }
+    if (src.channelPermissionRequestHandler) {
+      this.setChannelPermissionRequestHandler(src.channelPermissionRequestHandler);
     }
     this.setMode(src.mode);
     this.setSessionRules([...src.sessionRules]);
@@ -201,12 +230,12 @@ export class ToolExecutor {
       }
     }
 
-    // Plan mode: strict allowlist — block any tool not explicitly read-only
+    // Plan mode: block edit/delete tools only
     if (this.mode === 'plan' && isPlanDeniedTool(toolId)) {
       const modeLabel = this.currentAgent?.name ?? 'Plan';
       return {
         success: false,
-        output: `The "${toolId}" tool cannot be executed in ${modeLabel} mode (read-only). This tool requires Agent Mode or Hyperdrive with full write/execute permissions. Please ask the user to switch modes using the control panel.`,
+        output: `The "${toolId}" tool cannot be executed in ${modeLabel} mode. Editing or deleting existing resources requires Agent Mode or Hyperdrive. Reads, new file creation, scripts, web search, and scheduling work in Plan mode.`,
         error: 'MODE_RESTRICTED',
       };
     }
@@ -225,17 +254,27 @@ export class ToolExecutor {
     }
 
     const permissionExempt = isPermissionExemptTool(toolId);
+    const shouldPrompt = this.alwaysPromptPermissions || tool.riskLevel !== 'low';
+    const permissionHandler = this.resolvePermissionRequestHandler(sessionId);
     if (
       !permissionExempt
       && ruleResult === 'ask'
-      && this.permissionRequestHandler
-      && tool.riskLevel !== 'low'
+      && permissionHandler
+      && shouldPrompt
     ) {
       const existingGrant = this.permissionManager.check(toolId, scopePathForHook ?? undefined);
       if (existingGrant === 'allow_always') {
         // Previously granted — skip prompt
       } else {
-        const response = await this.permissionRequestHandler(toolId, scopePathForHook ?? '*', tool.riskLevel);
+        const integrationPreview = isIntegrationToolId(toolId)
+          ? buildIntegrationActionPreview(toolId, args, tool) ?? undefined
+          : undefined;
+        const response = await permissionHandler(
+          toolId,
+          scopePathForHook ?? '*',
+          tool.riskLevel,
+          { args, integrationPreview },
+        );
         if (response === 'deny') {
           return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
         }

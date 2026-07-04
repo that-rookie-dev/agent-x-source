@@ -45,7 +45,9 @@ import {
   CheckpointDrawer,
   type PaletteAction,
 } from './ChatEnhancements';
-import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary } from '../api';
+import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
+import { eventBelongsToViewSession } from '../chat/session-stream-filter';
+import { ActionPreviewCard } from './integrations/ActionPreviewCard';
 import { colors } from '../theme';
 import ModeEscalationModal from './ModeEscalationModal';
 import StepCapModal from './StepCapModal';
@@ -72,6 +74,7 @@ import {
   parseDeepSearchProgressLine,
   parseDeepSearchProgressFromStream,
   deepSearchBundleFromMetadata,
+  dedupeToolParts,
   type MessagePart,
 } from '@agentx/shared/browser';
 import { MedicalDisclaimerChatSessionStrip } from './crew/MedicalDisclaimerBanner';
@@ -79,6 +82,7 @@ import { CrewMissionCard, type CrewInterMessage } from './CrewMissionCard';
 import type { CrewWorkerState } from './CrewWorkerPanel';
 import { SessionGridCard } from './SessionGridCard';
 import { FolderPickerModal } from './FolderPickerModal';
+import { resolveDefaultWorkspace } from '../utils/default-workspace';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -230,6 +234,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [parentSessionId, setParentSessionId] = useState<string | null>(null);
   const [childSessionDrawer, setChildSessionDrawer] = useState<ChildSessionDrawerState | null>(null);
   const currentSessionIdRef = useRef<string | null>(sessionId ?? null);
+  /** URL session id — only set while viewing /console/chat/:sessionId (not the sessions list). */
+  const viewSessionIdRef = useRef<string | null>(sessionId ?? null);
 
   useEffect(() => { isCrewPrivateRef.current = isCrewPrivateSession; }, [isCrewPrivateSession]);
   useEffect(() => { crewPrivateHostRef.current = crewPrivateHost; }, [crewPrivateHost]);
@@ -265,8 +271,25 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [crewInterMessages, setCrewInterMessages] = useState<CrewInterMessage[]>([]);
   const crewMissionSessionIdRef = useRef<string | null>(null);
   const [streaming, setStreaming] = useState(false);
-  const [permissionPrompt, setPermissionPrompt] = useState<{ requestId: string; tool: string; path: string; riskLevel: string } | null>(null);
+  const [permissionPrompt, setPermissionPrompt] = useState<{ requestId: string; tool: string; path: string; riskLevel: string; integrationPreview?: IntegrationActionPreview; forAutomation?: boolean } | null>(null);
   const [pendingPermissionCount, setPendingPermissionCount] = useState(0);
+
+  const handlePermissionRespond = useCallback(async (choice: 'allow_once' | 'allow_always' | 'deny') => {
+    if (!permissionPrompt) return;
+    try {
+      await permissions.respond(permissionPrompt.requestId, choice);
+    } catch { /* ignore */ }
+    setPermissionPrompt(null);
+    setPendingPermissionCount((prev) => Math.max(0, prev - 1));
+  }, [permissionPrompt]);
+
+  const handlePermissionRespondBatch = useCallback(async (choice: 'allow_once' | 'allow_always' | 'deny') => {
+    try {
+      await permissions.respondBatch(choice);
+    } catch { /* ignore */ }
+    setPermissionPrompt(null);
+    setPendingPermissionCount(0);
+  }, []);
   const [toolEnablePrompt, setToolEnablePrompt] = useState<{ toolId: string; toolName: string } | null>(null);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [webSearchAvailable, setWebSearchAvailable] = useState(false);
@@ -911,12 +934,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const filteredSessionList = useMemo(() => {
     return sessionList.filter((s) => {
       const kind = s.contextKind ?? 'agent_x';
+      if (kind === 'automation' || s.id.startsWith('automation:')) return false;
       return sessionListTab === 'crew_private' ? kind === 'crew_private' : kind !== 'crew_private';
     });
   }, [sessionList, sessionListTab]);
 
   const agentSessionCount = useMemo(
-    () => sessionList.filter((s) => (s.contextKind ?? 'agent_x') !== 'crew_private').length,
+    () => sessionList.filter((s) => {
+      const kind = s.contextKind ?? 'agent_x';
+      return kind !== 'crew_private' && kind !== 'automation' && !s.id.startsWith('automation:');
+    }).length,
     [sessionList],
   );
   const crewPrivateSessionCount = useMemo(
@@ -975,7 +1002,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       })
       .finally(() => { setConfigLoaded(true); });
     crews.list().then((list) => { setCrewList(list); }).catch(() => {});
-    system.cwd().then((r) => { if (r.cwd) setCwd(r.cwd); }).catch(() => {});
+    system.cwd().then(async (r) => {
+      if (r.cwd) {
+        setCwd(r.cwd);
+        cwdRef.current = r.cwd;
+        return;
+      }
+      const folder = await resolveDefaultWorkspace();
+      setCwd(folder);
+      cwdRef.current = folder;
+      await system.setCwd(folder).catch(() => {});
+    }).catch(() => {});
     sessionSettings.get().then((s) => { if (!sessionId && (s.mode === 'agent' || s.mode === 'plan')) setAgentMode(s.mode); }).catch(() => {});
     // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
@@ -1081,7 +1118,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           const toolName = (ev.tool as string) ?? 'unknown';
           const desc = (ev.description as string) ?? '';
           const eventArgs = (ev.args as Record<string, unknown> | string | undefined) ?? desc;
-          const callId = (ev.callId as string) ?? crypto.randomUUID();
+          const existingParts = last.parts || [];
+          let callId = (ev.callId as string) ?? '';
+          if (!callId) {
+            const running = existingParts.find(
+              (p) => p.type === 'tool' && p.tool?.name === toolName && p.tool.status === 'running',
+            );
+            callId = running?.tool?.id
+              ?? `tool-${toolName}-${existingParts.filter((p) => p.type === 'tool' && p.tool?.name === toolName).length}`;
+          }
           if (toolName === 'delegate_to_subagent') {
             if ((last.subAgents ?? []).some((a) => a.id === callId)) return prev;
             const sa: SubAgent = { id: callId, name: 'Sub-Agent', task: desc, status: 'running' };
@@ -1091,14 +1136,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               parts: [...(last.parts || []), saPart],
             });
           }
-          const existingParts = last.parts || [];
           if (existingParts.some((p) => p.type === 'tool' && p.tool?.id === callId)) return prev;
           if (!last.streaming && existingParts.some((p) => p.type === 'tool' && p.tool?.name === toolName && p.tool.status === 'done')) {
             return prev;
           }
           const tc: ToolCall = { id: callId, name: toolName, args: eventArgs, status: 'running' };
           const toolPart: PartEntry = { type: 'tool', id: callId, tool: tc };
-          return updateLastMessage(prev, { toolCalls: [...(last.toolCalls ?? []), tc], parts: [...existingParts, toolPart] });
+          const priorToolCalls = (last.toolCalls ?? []).filter((t) => t.id !== callId);
+          return updateLastMessage(prev, { toolCalls: [...priorToolCalls, tc], parts: [...existingParts, toolPart] });
         }
         case 'tool_output': {
           const outputCallId = (ev.callId as string) ?? '';
@@ -1186,6 +1231,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     };
 
     const handleEvent = (ev: TelemetryEvent) => {
+      if (!eventBelongsToViewSession(ev, viewSessionIdRef.current)) return;
+
       // Reset activity timer on every event from the agent
       lastActivityRef.current = Date.now();
       setLastEventAt(Date.now());
@@ -1205,6 +1252,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               let current = prev;
               for (const e of batch) {
                 current = applyToolEvent(current, e);
+              }
+              const last = current[current.length - 1];
+              if (last?.parts?.length) {
+                const dedupedParts = dedupeToolParts(last.parts as MessagePart[]);
+                if (dedupedParts !== last.parts) {
+                  current = updateLastMessage(current, { parts: dedupedParts as PartEntry[] });
+                }
               }
               return current;
             });
@@ -1493,6 +1547,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               tool: (ev.tool as string) ?? 'unknown',
               path: (ev.path as string) ?? '',
               riskLevel: (ev.riskLevel as string) ?? 'medium',
+              integrationPreview: ev.integrationPreview as IntegrationActionPreview | undefined,
+              forAutomation: ev.forAutomation === true,
             });
             return prev;
 
@@ -1920,6 +1976,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           fetch('/api/agent/state', { credentials: 'include' })
             .then(r => r.json())
             .then(data => {
+              const viewSessionId = viewSessionIdRef.current;
+              if (!viewSessionId || data.session?.id !== viewSessionId) {
+                stopTurnIndicator();
+                return;
+              }
               if (data.processing) {
                 turnActiveRef.current = true;
                 setStreaming(true);
@@ -1992,7 +2053,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           })
           .catch(() => {});
       }
-    }, 15000);
+    }, 30000);
     return () => clearInterval(timer);
   }, [streaming]);
 
@@ -2021,7 +2082,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           endTurnUi();
         }
       }).catch(() => {});
-    }, 5000);
+    }, 10000);
     return () => clearInterval(poll);
   }, [streaming, endTurnUi]);
 
@@ -2053,16 +2114,23 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // Keep refs in sync so send handlers never capture stale session/cwd from closures.
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
+  useEffect(() => { viewSessionIdRef.current = sessionId ?? null; }, [sessionId]);
   useEffect(() => { cwdRef.current = cwd; }, [cwd]);
+
+  const ensureDefaultCwd = useCallback(async (): Promise<string> => {
+    if (cwdRef.current) return cwdRef.current;
+    const folder = await resolveDefaultWorkspace();
+    setCwd(folder);
+    cwdRef.current = folder;
+    try {
+      await system.setCwd(folder);
+    } catch { /* best-effort */ }
+    return folder;
+  }, []);
 
   const ensureSession = useCallback(async (): Promise<string | null> => {
     if (currentSessionIdRef.current) return currentSessionIdRef.current;
-    const scopePath = cwdRef.current;
-    if (!scopePath) {
-      pendingFolderActionRef.current = 'newSession';
-      setFolderConsentOpen(true);
-      return null;
-    }
+    const scopePath = await ensureDefaultCwd();
     try {
       const result = await sessions.create(scopePath);
       const newId = result?.sessionId;
@@ -2078,7 +2146,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       setWarnings([`Failed to create session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
     }
     return null;
-  }, [navigate]);
+  }, [navigate, ensureDefaultCwd]);
 
   const maybeOfferCrewSuggestion = useCallback(async (text: string): Promise<boolean> => {
     if (isCrewPrivateSession) return false;
@@ -2773,7 +2841,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   useEffect(() => {
     if (!currentSessionId) return;
     refreshContext();
-    const interval = setInterval(refreshContext, 15000);
+    const interval = setInterval(refreshContext, 30000);
     return () => clearInterval(interval);
   }, [currentSessionId, refreshContext]);
 
@@ -3048,8 +3116,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   };
 
   const handleNewSession = async () => {
-    pendingFolderActionRef.current = 'newSession';
-    setFolderConsentOpen(true);
+    const folder = await resolveDefaultWorkspace();
+    void startNewSession(folder);
   };
 
   const startNewSession = async (folder: string) => {
@@ -3090,17 +3158,19 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     setFolderConsentOpen(false);
     if (!action) return;
 
+    if (action === 'newSession') {
+      const folder = await resolveDefaultWorkspace();
+      void startNewSession(folder);
+      return;
+    }
+
     setFolderPickerLoading(true);
     await new Promise(r => setTimeout(r, 400));
     setFolderPickerLoading(false);
 
-    if (action === 'newSession') {
-      setFolderPickerCallback(() => (path: string) => startNewSession(path));
-    } else {
-      setFolderPickerCallback(() => (path: string) => {
-        system.setCwd(path).then(r => setCwd(r.cwd)).catch(() => {});
-      });
-    }
+    setFolderPickerCallback(() => (path: string) => {
+      system.setCwd(path).then(r => setCwd(r.cwd)).catch(() => {});
+    });
     setFolderPickerOpen(true);
   };
 
@@ -3557,12 +3627,23 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             {/* Permission banner above input */}
             {permissionPrompt && (
               <Box sx={{ px: 1.25, pt: 1.25, pb: 0.5 }}>
-                <PermissionBanner
-                  prompt={permissionPrompt}
-                  pendingCount={pendingPermissionCount}
-                  onRespond={() => { setPermissionPrompt(null); setPendingPermissionCount((prev) => Math.max(0, prev - 1)); }}
-                  onApproveAll={() => { setPermissionPrompt(null); setPendingPermissionCount(0); }}
-                />
+                {permissionPrompt.integrationPreview ? (
+                  <ActionPreviewCard
+                    preview={permissionPrompt.integrationPreview}
+                    pendingCount={pendingPermissionCount}
+                    onAllowOnce={() => { void handlePermissionRespond('allow_once'); }}
+                    onAllowAlways={() => { void handlePermissionRespond('allow_always'); }}
+                    onDeny={() => { void handlePermissionRespond('deny'); }}
+                    onApproveAll={() => { void handlePermissionRespondBatch('allow_once'); }}
+                  />
+                ) : (
+                  <PermissionBanner
+                    prompt={permissionPrompt}
+                    pendingCount={pendingPermissionCount}
+                    onRespond={() => { setPermissionPrompt(null); setPendingPermissionCount((prev) => Math.max(0, prev - 1)); }}
+                    onApproveAll={() => { setPermissionPrompt(null); setPendingPermissionCount(0); }}
+                  />
+                )}
               </Box>
             )}
             <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
@@ -4422,7 +4503,7 @@ function ThinkingIndicator({ label }: { label?: string }) {
 // ─── Permission Banner ───
 
 interface PermissionBannerProps {
-  prompt: { requestId: string; tool: string; path: string; riskLevel: string };
+  prompt: { requestId: string; tool: string; path: string; riskLevel: string; forAutomation?: boolean };
   pendingCount: number;
   onRespond: () => void;
   onApproveAll: () => void;
@@ -4451,7 +4532,7 @@ function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: Per
     <Box sx={{ p: 1.5, borderRadius: 1.5, border: `1px solid ${borderColor}`, bgcolor: colors.bg.secondary, animation: 'agentx-fadeIn 0.3s ease-out' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
         <Typography sx={{ fontSize: '0.65rem', fontWeight: 600, color: isCritical ? colors.accent.red : isHigh ? colors.accent.orange : colors.accent.blue }}>
-          {isCritical ? '⚠ Critical' : isHigh ? '⚡ High Risk' : 'Permission Required'}
+          {prompt.forAutomation ? 'Scheduled automation' : isCritical ? '⚠ Critical' : isHigh ? '⚡ High Risk' : 'Permission Required'}
         </Typography>
         <Chip size="small" label={prompt.riskLevel.toUpperCase()} sx={{
           fontSize: '0.45rem', height: 15, fontWeight: 600,
@@ -4470,6 +4551,11 @@ function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: Per
       <Typography sx={{ fontSize: '0.6rem', mb: 0.5, color: colors.text.primary, fontFamily: "'JetBrains Mono', monospace" }}>
         {prompt.tool}
       </Typography>
+      {prompt.forAutomation && (
+        <Typography sx={{ fontSize: '0.55rem', mb: 0.75, color: colors.text.dim }}>
+          Allow this tool for scheduled automations in this session.
+        </Typography>
+      )}
       {prompt.path && (
         <Typography sx={{ fontSize: '0.55rem', mb: 0.75, color: colors.text.dim, wordBreak: 'break-all' }}>
           {prompt.path}
@@ -4486,8 +4572,10 @@ function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: Per
         </Typography>
       )}
       <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
-        <Chip size="small" label="Allow Once" onClick={() => handleRespond('allow_once')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.green + '15', color: colors.accent.green, '&:hover': { bgcolor: colors.accent.green + '30' } }} />
-        <Chip size="small" label="Always" onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.blue + '15', color: colors.accent.blue, '&:hover': { bgcolor: colors.accent.blue + '30' } }} />
+        {!prompt.forAutomation && (
+          <Chip size="small" label="Allow Once" onClick={() => handleRespond('allow_once')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.green + '15', color: colors.accent.green, '&:hover': { bgcolor: colors.accent.green + '30' } }} />
+        )}
+        <Chip size="small" label={prompt.forAutomation ? 'Allow for automations' : 'Always'} onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.blue + '15', color: colors.accent.blue, '&:hover': { bgcolor: colors.accent.blue + '30' } }} />
         <Chip size="small" label="Deny" onClick={() => handleRespond('deny')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.red + '15', color: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + '30' } }} />
       </Box>
     </Box>

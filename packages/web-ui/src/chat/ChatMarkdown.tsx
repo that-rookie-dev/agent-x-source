@@ -13,7 +13,8 @@ import { isHorizontalPipelineContent, isPipelineDiagramContent } from './pipelin
 import { FlowDiagramBlock } from './FlowDiagramBlock';
 import { PipelineDiagramBlock } from './PipelineDiagramBlock';
 import { CodeBlockChrome, CodeBlockBody, CODE_BLOCK_TOKENS, formatBlockTitle } from './code-block-chrome';
-import { CitationChip, isCitationStyleLink } from './CitationChip';
+import { CitationChip } from './CitationChip';
+import { prepareWebSourcedMarkdown } from './source-chip-utils';
 
 const MARKDOWN_BASE_SX = {
   '& p': { m: 0, mb: 0.75, fontSize: '0.8125rem', lineHeight: 1.65, color: colors.text.secondary, fontFamily: "'Inter', sans-serif" },
@@ -253,9 +254,24 @@ function createMarkdownComponents(isFirstSection: boolean) {
     td({ children }: { children?: React.ReactNode }) { return <td>{children}</td>; },
     ul({ children }: { children?: React.ReactNode }) { return <StyledUl>{children}</StyledUl>; },
     ol({ children }: { children?: React.ReactNode }) { return <StyledOl>{children}</StyledOl>; },
-    li({ children }: { children?: React.ReactNode }) { return <StyledLi>{children}</StyledLi>; },
+    li({ children }: { children?: React.ReactNode }) {
+      return (
+        <StyledLi>
+          <Box sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'baseline',
+            gap: 0.35,
+            rowGap: 0.25,
+            '& > p': { display: 'inline', m: 0, mb: 0 },
+          }}>
+            {children}
+          </Box>
+        </StyledLi>
+      );
+    },
     a({ href, children }: { href?: string; children?: React.ReactNode }) {
-      if (href && isCitationStyleLink(href, children)) {
+      if (href?.startsWith('http')) {
         return <CitationChip href={href} label={String(children ?? '')} />;
       }
       return (
@@ -288,7 +304,11 @@ function createMarkdownComponents(isFirstSection: boolean) {
   };
 }
 
-function MarkdownSection({ content, index, compact }: { content: string; index: number; compact?: boolean }) {
+function MarkdownSection({ content, index, compact, webSources }: { content: string; index: number; compact?: boolean; webSources?: string[] }) {
+  const prepared = useMemo(
+    () => prepareWebSourcedMarkdown(content, webSources ?? []),
+    [content, webSources],
+  );
   const components = useMemo(() => createMarkdownComponents(index === 0), [index]);
   return (
     <Box sx={{
@@ -306,7 +326,7 @@ function MarkdownSection({ content, index, compact }: { content: string; index: 
       } : {}),
       ...MARKDOWN_BASE_SX,
     }}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{prepared}</ReactMarkdown>
     </Box>
   );
 }
@@ -327,7 +347,13 @@ export function UserMentionText({ content }: { content: string }) {
   );
 }
 
-export const CrewAwareMarkdown = memo(function CrewAwareMarkdown({ content }: { content: string }) {
+export const CrewAwareMarkdown = memo(function CrewAwareMarkdown({
+  content,
+  webSources,
+}: {
+  content: string;
+  webSources?: string[];
+}) {
   const sections = useMemo(() => splitMarkdownSections(content), [content]);
   const compact = useMemo(() => isPlainTextMarkdown(content), [content]);
 
@@ -335,7 +361,7 @@ export const CrewAwareMarkdown = memo(function CrewAwareMarkdown({ content }: { 
 
   if (sections.length === 1) {
     return (
-      <MarkdownSection content={sections[0]!} index={0} compact={compact} />
+      <MarkdownSection content={sections[0]!} index={0} compact={compact} webSources={webSources} />
     );
   }
 
@@ -346,6 +372,7 @@ export const CrewAwareMarkdown = memo(function CrewAwareMarkdown({ content }: { 
           key={i}
           content={section}
           index={i}
+          webSources={webSources}
         />
       ))}
     </Box>

@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { ToolRegistry } from '../src/tools/ToolRegistry.js';
 import { ToolExecutor } from '../src/tools/ToolExecutor.js';
 import { isPermissionExemptTool } from '../src/tools/permissions/exempt-tools.js';
+import { getIntegrationProvider } from '../src/integrations/catalog/index.js';
+import { adaptMcpTool } from '../src/integrations/mcp/tool-adapter.js';
+import { integrationToolId } from '../src/integrations/action-classifier.js';
 
 describe('permission-exempt web tools', () => {
   it('includes search and related read-only web tools', () => {
@@ -10,6 +13,14 @@ describe('permission-exempt web tools', () => {
     expect(isPermissionExemptTool('web_fetch')).toBe(true);
     expect(isPermissionExemptTool('web_scrape')).toBe(true);
     expect(isPermissionExemptTool('shell_exec')).toBe(false);
+  });
+
+  it('includes readonly integration MCP tools', () => {
+    const provider = getIntegrationProvider('booking-com')!;
+    const tool = adaptMcpTool(provider, { name: 'booking_search', description: 'Search hotels' });
+    expect(tool.id).toBe(integrationToolId('booking-com', 'booking_search'));
+    expect(isPermissionExemptTool(tool.id)).toBe(true);
+    expect(isPermissionExemptTool(integrationToolId('booking-com', 'booking_login'))).toBe(false);
   });
 
   it('does not prompt permission for exempt tools', async () => {

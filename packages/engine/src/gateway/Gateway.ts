@@ -41,6 +41,11 @@ export class Gateway {
 
   /** Register a Telegram channel with the given bot token */
   registerTelegram(botToken: string, allowedUserIds?: number[]): TelegramChannelPlugin {
+    const existing = this.registry.getPlugin<TelegramChannelPlugin>('telegram');
+    if (existing) {
+      // Caller must setAgent(channelAgent) — gateway.agentRef may be the UI session agent.
+      return existing;
+    }
     const plugin = new TelegramChannelPlugin({ botToken, allowedUserIds });
     plugin.setFocusManager(this.focus);
     this.registry.register(plugin);

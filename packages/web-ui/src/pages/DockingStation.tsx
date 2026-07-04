@@ -60,7 +60,7 @@ function buildTerminalLines(
     { type: 'success', text: `  \u2713 Crew         ${crewLine}` },
     { type: 'blank', text: '' },
     { type: 'heading', text: '  CAPABILITIES' },
-    { type: 'dim', text: '  183 tools \u00B7 16 providers \u00B7 22 MCP servers' },
+    { type: 'dim', text: '  183 tools \u00B7 16 providers' },
     { type: 'dim', text: '  6 channels \u00B7 Multi-agent mesh \u00B7 Persistent memory' },
     { type: 'dim', text: '  AES-256-GCM encrypted storage \u00B7 Self-destruct tamper protection' },
     { type: 'blank', text: '' },
@@ -90,7 +90,7 @@ export function DockingStation() {
     };
 
     register();
-    intervalId = setInterval(register, 20000);
+    intervalId = setInterval(register, 60000);
 
     return () => {
       clearInterval(intervalId);
@@ -141,7 +141,7 @@ export function DockingStation() {
 
   useEffect(() => {
     agent.vitals().then(setVitals).catch(() => {});
-    const interval = setInterval(() => { agent.vitals().then(setVitals).catch(() => {}); }, 30000);
+    const interval = setInterval(() => { agent.vitals().then(setVitals).catch(() => {}); }, 60000);
     return () => clearInterval(interval);
   }, []);
 

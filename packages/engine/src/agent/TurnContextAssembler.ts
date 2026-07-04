@@ -12,6 +12,8 @@ export interface TurnContextOptions {
   structuredSummary?: string;
   /** Max chars for the injected context block (token-efficient default ~2k). */
   maxBlockChars?: number;
+  /** When true, omit recent exchange (history already in completion messages). */
+  skipRecentExchange?: boolean;
 }
 
 export interface TurnContextResult {
@@ -106,7 +108,7 @@ export function buildTurnContext(opts: TurnContextOptions): TurnContextResult {
     lines.push('', 'Session summary:', abbreviate(opts.structuredSummary.trim(), 800));
   }
 
-  const exchange = recentExchange(opts.messages);
+  const exchange = opts.skipRecentExchange ? '' : recentExchange(opts.messages);
   if (exchange) {
     lines.push('', 'Recent exchange:', exchange);
   }

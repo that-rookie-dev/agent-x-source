@@ -30,3 +30,8 @@ export function getCacheDir(): string {
 export function getHomeDir(): string {
   return HOME;
 }
+
+/** Default Agent-X workspace — user's Desktop folder. */
+export function getDefaultWorkspaceDir(): string {
+  return join(HOME, 'Desktop');
+}

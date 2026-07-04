@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { deterministicNodeId, deterministicEdgeId, normalizeForHash } from '../../src/neural/DeterministicId.js';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 describe('normalizeForHash', () => {
   it('lowercases and strips punctuation', () => {
     expect(normalizeForHash('Hello, World!')).toBe('hello world');
@@ -43,11 +45,11 @@ describe('deterministicNodeId', () => {
     const id1 = deterministicNodeId('Test', 'Content', undefined);
     const id2 = deterministicNodeId('Test', 'Content', undefined);
     expect(id1).toBe(id2);
-    expect(id1).toMatch(/^mn_[0-9a-f]{8}$/);
+    expect(id1).toMatch(UUID_RE);
   });
-  it('produces mn_ prefixed hex IDs', () => {
+  it('produces valid deterministic UUIDs (memory_nodes.id is a UUID column)', () => {
     const id = deterministicNodeId('Test', 'Content', 'src1');
-    expect(id).toMatch(/^mn_[0-9a-f]{8}$/);
+    expect(id).toMatch(UUID_RE);
   });
 });
 

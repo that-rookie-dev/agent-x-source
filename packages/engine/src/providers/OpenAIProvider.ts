@@ -1,6 +1,7 @@
 import type {
   CompletionRequest,
   CompletionChunk,
+  CompletionToolCall,
   ModelInfo,
   ProviderId,
 } from '@agentx/shared';
@@ -185,16 +186,18 @@ export class OpenAIProvider implements ProviderInterface {
             }
             if (delta.tool_calls && delta.tool_calls.length > 0) {
               const tc = delta.tool_calls[0];
+              const toolCall = tc ? {
+                index: (tc as { index?: number }).index,
+                id: tc.id ?? undefined,
+                type: tc.type === 'function' ? 'function' : undefined,
+                function: tc.function ? {
+                  name: tc.function.name ?? '',
+                  arguments: tc.function.arguments ?? '',
+                } : undefined,
+              } as Partial<CompletionToolCall> & { index?: number } : undefined;
               yield {
                 type: 'tool_call_delta',
-                toolCall: tc ? {
-                  id: tc.id ?? undefined,
-                  type: tc.type === 'function' ? 'function' : undefined,
-                  function: tc.function ? {
-                    name: tc.function.name ?? '',
-                    arguments: tc.function.arguments ?? '',
-                  } : undefined,
-                } : undefined,
+                toolCall,
               };
             }
           } catch {

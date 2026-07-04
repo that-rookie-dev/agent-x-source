@@ -1,18 +1,10 @@
 import Box from '@mui/material/Box';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { colors } from '../theme';
-
-function domainFromUrl(href: string): string {
-  try {
-    return new URL(href).hostname.replace(/^www\./, '');
-  } catch {
-    return href.slice(0, 24);
-  }
-}
+import { openSearchResultUrl } from '../components/deep-search/card-utils';
+import { chipLabelForSource } from './source-chip-utils';
 
 export function CitationChip({ href, label }: { href: string; label: string }) {
-  const domain = domainFromUrl(href);
-  const display = label.trim() || domain;
+  const display = chipLabelForSource(href, label);
 
   return (
     <Box
@@ -20,45 +12,51 @@ export function CitationChip({ href, label }: { href: string; label: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
+      title={href}
+      onClick={(e: React.MouseEvent) => {
+        e.preventDefault();
+        openSearchResultUrl(href);
+      }}
       sx={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 0.35,
-        mx: 0.25,
-        px: 0.65,
-        py: 0.1,
-        borderRadius: '999px',
-        fontSize: '0.62rem',
+        flexShrink: 0,
+        maxWidth: 156,
+        px: 0.75,
+        py: 0.22,
+        ml: 0.5,
+        borderRadius: '6px',
+        fontSize: '0.58rem',
         fontFamily: "'JetBrains Mono', monospace",
         fontWeight: 600,
+        letterSpacing: '0.04em',
+        lineHeight: 1.3,
         color: colors.accent.cyan,
-        bgcolor: `${colors.accent.cyan}12`,
-        border: `1px solid ${colors.accent.cyan}33`,
+        background: `linear-gradient(145deg, ${colors.accent.cyan}16 0%, ${colors.bg.tertiary} 55%, ${colors.accent.blue}0c 100%)`,
+        border: `1px solid ${colors.accent.cyan}35`,
         textDecoration: 'none',
         verticalAlign: 'middle',
-        lineHeight: 1.6,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        transition: 'color 0.14s ease, border-color 0.14s ease, background 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease',
+        boxShadow: `inset 0 1px 0 ${colors.accent.cyan}18`,
         '&:hover': {
-          bgcolor: `${colors.accent.cyan}22`,
-          borderColor: `${colors.accent.cyan}55`,
+          color: colors.text.primary,
+          borderColor: `${colors.accent.cyan}65`,
+          background: `linear-gradient(145deg, ${colors.accent.cyan}28 0%, ${colors.bg.secondary} 50%, ${colors.accent.blue}16 100%)`,
+          transform: 'translateY(-1px)',
+          boxShadow: `0 4px 14px ${colors.accent.cyan}22, inset 0 1px 0 ${colors.accent.cyan}28`,
+        },
+        '&:active': {
+          transform: 'translateY(0)',
+          boxShadow: `inset 0 1px 0 ${colors.accent.cyan}18`,
         },
       }}
     >
-      <OpenInNewIcon sx={{ fontSize: 10 }} />
-      {display.length > 36 ? `${display.slice(0, 34)}…` : display}
+      {display}
     </Box>
   );
 }
 
-export function isCitationStyleLink(href: string | undefined, children: React.ReactNode): boolean {
-  if (!href?.startsWith('http')) return false;
-  const text = String(children ?? '').trim();
-  if (!text) return true;
-  if (/^\[?\d+\]?$/.test(text)) return true;
-  if (/^source\s*\d+$/i.test(text)) return true;
-  if (text === href) return true;
-  try {
-    const host = new URL(href).hostname.replace(/^www\./, '');
-    if (text === host || text.startsWith(host)) return true;
-  } catch { /* ignore */ }
-  return text.length <= 40;
-}
+export { shouldRenderAsSourceChip as isCitationStyleLink } from './source-chip-utils';

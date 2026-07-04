@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { auth, config, health, connectSSE, setOnUnauthorized, setAuthToken, type AgentXConfig, type TelemetryEvent, type HealthStatus } from '../api';
+import { auth, config, health, connectSSE, setOnUnauthorized, setAuthToken, notifications, type AgentXConfig, type TelemetryEvent, type HealthStatus, type NotificationRecord } from '../api';
+import { showAgentXNotification, requestBrowserNotificationPermission } from '../utils/native-notifications';
 
 type AppView = 'loading' | 'docking' | 'setup-auth' | 'setup-wizard' | 'login' | 'console';
 export type AuthState = 'loading' | 'no-root-user' | 'unauthenticated' | 'needs-setup' | 'authenticated';
@@ -13,6 +14,8 @@ interface AppState {
   serverOnline: boolean;
   events: TelemetryEvent[];
   healthData: HealthStatus | null;
+  unreadNotificationCount: number;
+  refreshUnreadNotificationCount: () => Promise<void>;
   // Actions
   setView: (v: AppView) => void;
   setAuthenticated: (v: boolean, username?: string) => void;
@@ -34,8 +37,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [serverOnline, setServerOnline] = useState(false);
   const [events, setEvents] = useState<TelemetryEvent[]>([]);
   const [healthData, setHealthData] = useState<HealthStatus | null>(null);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+
+  const refreshUnreadNotificationCount = useCallback(async () => {
+    try {
+      const { unreadCount } = await notifications.list({ limit: 1 });
+      setUnreadNotificationCount(unreadCount);
+    } catch {
+      /* best-effort */
+    }
+  }, []);
 
   const pushEvent = useCallback((e: TelemetryEvent) => {
+    if (e.type === 'notification_created') {
+      const notification = e.notification as NotificationRecord | undefined;
+      if (notification && notification.kind !== 'automation_scheduled') {
+        void showAgentXNotification(notification);
+        setUnreadNotificationCount((prev) => prev + 1);
+      }
+    }
     setEvents((prev) => [...prev.slice(-200), e]); // Keep last 200 events
   }, []);
 
@@ -145,8 +165,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (authState !== 'authenticated') return;
     const disconnect = connectSSE(pushEvent);
+    void refreshUnreadNotificationCount();
+    if (!window.agentx?.isDesktop) {
+      void requestBrowserNotificationPermission();
+    }
     return disconnect;
-  }, [authState, pushEvent]);
+  }, [authState, pushEvent, refreshUnreadNotificationCount]);
 
   // Load config when authenticated (e.g. after login, when initialize() isn't called)
   useEffect(() => {
@@ -156,6 +180,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const state: AppState = {
     view, authState, authenticated, username, config: appConfig, serverOnline, events, healthData,
+    unreadNotificationCount, refreshUnreadNotificationCount,
     setView, setAuthenticated, setAuthState: setAuthStateDirect, setConfig, pushEvent, refreshHealth, initialize,
   };
 

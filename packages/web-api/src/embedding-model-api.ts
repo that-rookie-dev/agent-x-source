@@ -9,10 +9,15 @@ import { Router, type Request, type Response } from 'express';
 import { pipeline } from '@huggingface/transformers';
 import { existsSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { getDataDir, getLogger } from '@agentx/shared';
+import { getDataDir, getLogger, isNeuralBrainSupported } from '@agentx/shared';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
+import os from 'node:os';
 
 const router: import('express').Router = Router();
+
+function neuralBrainHardwareSupported(): boolean {
+  return isNeuralBrainSupported(os.totalmem() / (1024 ** 3));
+}
 
 const EMBEDDING_MODELS_DIR = join(getDataDir(), 'models');
 
@@ -231,7 +236,7 @@ router.get('/embedding-models/status', (_req: Request, res: Response) => {
       percentage: state?.percentage ?? (downloaded ? 100 : 0),
     };
   });
-  res.json({ models, allDownloaded: models.every((m) => m.downloaded) });
+  res.json({ models, allDownloaded: models.every((m) => m.downloaded), neuralBrainSupported: neuralBrainHardwareSupported() });
 });
 
 /**
@@ -240,6 +245,13 @@ router.get('/embedding-models/status', (_req: Request, res: Response) => {
  * Returns immediately with the initial state.
  */
 router.post('/embedding-models/download', async (_req: Request, res: Response) => {
+  if (!neuralBrainHardwareSupported()) {
+    return res.status(403).json({
+      ok: false,
+      error: 'neural-brain-unsupported',
+      message: 'Neural brain requires 16 GB+ system RAM. Embedding models are not available on this machine.',
+    });
+  }
   // Check which models still need downloading.
   const needed = MODELS.filter((m) => !isModelDownloaded(m));
   if (needed.length === 0) {

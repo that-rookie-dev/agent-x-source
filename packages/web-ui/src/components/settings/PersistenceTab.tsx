@@ -12,7 +12,6 @@ import CircularProgress from '@mui/material/CircularProgress';
 import StorageIcon from '@mui/icons-material/Storage';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import FolderIcon from '@mui/icons-material/Folder';
 import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
@@ -23,31 +22,27 @@ import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import { settings, factoryReset, setAuthToken, knowledge, type DbStatus } from '../../api';
 import { useApp } from '../../store/AppContext';
-import { crewTheme } from '../../styles/crew-theme';
-import { colors } from '../../theme';
-
-const cardSx = {
-  position: 'relative' as const,
-  bgcolor: crewTheme.bg.inset,
-  border: `1px solid ${crewTheme.border.default}`,
-  borderRadius: '8px',
-  p: 3,
-};
-
-const dangerCardSx = {
-  ...cardSx,
-  border: `1px solid ${crewTheme.accent.alert}33`,
-  bgcolor: `${crewTheme.accent.alert}08`,
-};
+import { useNeuralBrainSupported } from '../../hooks/useSystemCapabilities';
+import {
+  settingsTheme,
+  settingsMonoSx,
+  settingsHelperSx,
+  settingsTextFieldSx,
+  settingsBtnGhostSx,
+  settingsBtnDangerSx,
+  settingsDialogPaperSx,
+  settingsDialogTitleSx,
+  settingsToggleGroupSx,
+  settingsStatusBadgeSx,
+} from '../../styles/settings-theme';
+import { SettingsCard } from './SettingsCard';
+import { SettingsSectionHeader } from './SettingsSectionHeader';
 
 export function PersistenceTab() {
   const { initialize } = useApp();
+  const neuralBrainSupported = useNeuralBrainSupported();
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pgConnStr, setPgConnStr] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string } | null>(null);
-  const [switching, setSwitching] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [migrateResult, setMigrateResult] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
@@ -93,29 +88,11 @@ export function PersistenceTab() {
     try {
       const s = await settings.db.get();
       setDbStatus(s);
-      setPgConnStr(s.postgres?.connectionString || '');
     } catch { /* silently fail */ }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); loadProvisionStatus(); }, [load, loadProvisionStatus]);
-
-  const handleTest = async () => {
-    if (!pgConnStr) return;
-    setTesting(true);
-    setTestResult(null);
-    try { setTestResult(await settings.db.test(pgConnStr)); }
-    catch (e) { setTestResult({ ok: false, error: e instanceof Error ? e.message : 'Test failed' }); }
-    finally { setTesting(false); }
-  };
-
-  const handleSwitch = async () => {
-    if (!pgConnStr) return;
-    setSwitching(true);
-    try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: pgConnStr } }); await load(); }
-    catch (e) { setTestResult({ ok: false, error: e instanceof Error ? e.message : 'Switch failed' }); }
-    finally { setSwitching(false); }
-  };
 
   const handleMigrate = async () => {
     setMigrating(true); setMigrateResult(null);
@@ -167,7 +144,7 @@ export function PersistenceTab() {
   if (loading) {
     return (
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: 8 }}>
-        <CircularProgress size={24} sx={{ color: colors.text.secondary }} />
+        <CircularProgress size={20} sx={{ color: settingsTheme.text.dim }} />
       </Box>
     );
   }
@@ -176,52 +153,41 @@ export function PersistenceTab() {
 
   return (
     <Box>
-      {/* ── Active Backend ── */}
-      <Box sx={{ ...cardSx, mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2.5 }}>
-          <StorageIcon sx={{ fontSize: 18, color: colors.text.secondary }} />
-          <Typography sx={{ fontSize: '0.8rem', fontWeight: 600, color: colors.text.primary }}>
-            Active Backend
-          </Typography>
-        </Box>
+      <SettingsSectionHeader
+        icon={<StorageIcon sx={{ fontSize: 16 }} />}
+        title="Storage"
+        subtitle={dbStatus?.connected ? `PostgreSQL · ${dbStatus.stats.dbSizeFormatted || '—'}` : 'Disconnected'}
+      />
 
-        <Box sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
-          <Button variant="contained" disabled
-            sx={{ flex: 1, py: 1.5, fontSize: '0.78rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, textTransform: 'none',
-              bgcolor: colors.text.primary, color: colors.bg.primary, borderColor: colors.border.default }}>
-            PostgreSQL ✓
-          </Button>
-        </Box>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: dbStatus?.connected ? colors.accent.green : colors.accent.red }} />
-          <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>
+      <SettingsCard title="Active Backend">
+        <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
+          <Box sx={settingsStatusBadgeSx('active')}>PostgreSQL</Box>
+          <Box sx={settingsStatusBadgeSx(dbStatus?.connected ? 'active' : 'warn')}>
             {dbStatus?.connected ? 'Connected' : 'Disconnected'}
-            {' · '}
-            PostgreSQL · {dbStatus?.stats.dbSizeFormatted || '—'}
-          </Typography>
+          </Box>
         </Box>
-      </Box>
+        <Typography sx={settingsHelperSx}>
+          Sessions, messages, memories, and domain data live in PostgreSQL. Credentials stay in local encrypted config.
+        </Typography>
+      </SettingsCard>
 
-      {/* ── Provisioning Telemetry ── */}
-      <Box sx={{ ...cardSx, mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.text.primary }}>
-            Provisioning Telemetry
-          </Typography>
-          <Button onClick={loadProvisionStatus} disabled={provisionStatus.loading} size="small"
-            sx={{ fontSize: '0.65rem', color: colors.text.secondary, textTransform: 'none', borderColor: colors.border.default }}>
-            {provisionStatus.loading ? <CircularProgress size={12} sx={{ color: colors.text.secondary }} /> : <RefreshIcon sx={{ fontSize: 14 }} />}
+      <SettingsCard
+        title="Provisioning"
+        subtitle="Database extensions and schema health"
+      >
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1, mt: -0.5 }}>
+          <Button onClick={loadProvisionStatus} disabled={provisionStatus.loading} size="small" sx={settingsBtnGhostSx}>
+            {provisionStatus.loading ? <CircularProgress size={12} /> : <RefreshIcon sx={{ fontSize: 14 }} />}
           </Button>
         </Box>
 
         <ToggleButtonGroup value={provisionMode} exclusive size="small" fullWidth
-          onChange={(_, v) => v && setProvisionMode(v)} sx={{ mb: 2, '& .MuiToggleButton-root': { fontSize: '0.7rem', textTransform: 'none', color: colors.text.secondary } }}>
+          onChange={(_, v) => v && setProvisionMode(v)} sx={{ mb: 1.5, ...settingsToggleGroupSx }}>
           <ToggleButton value="embedded">Embedded Local</ToggleButton>
           <ToggleButton value="cloud">External / Cloud</ToggleButton>
         </ToggleButtonGroup>
 
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
           <TelemetryRow label="PostgreSQL connection" status={dbStatus?.connected ? 'ok' : 'fail'} />
           <TelemetryRow label="pgvector extension" status={provisionStatus.loading ? 'pending' : (provisionStatus.postgres ? 'ok' : 'fail')} />
           <TelemetryRow label="Schema migrations" status={provisionStatus.loading ? 'pending' : ((provisionStatus.migrationsApplied ?? 0) > 0 ? 'ok' : (provisionStatus.schemaVersion && provisionStatus.schemaVersion > 0 ? 'ok' : 'fail'))} />
@@ -229,190 +195,129 @@ export function PersistenceTab() {
         </Box>
 
         {provisionMode === 'cloud' && !provisionStatus.ageAvailable && !provisionStatus.loading && (
-          <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mt: 2, fontSize: '0.7rem', bgcolor: `${crewTheme.accent.alert}15`, border: `1px solid ${crewTheme.accent.alert}40`, color: colors.text.primary }}>
-            This cloud PostgreSQL does not have Apache AGE. Graph walks will use the recursive-CTE fallback; some features may be slower.
+          <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mt: 1.5, fontSize: '0.65rem', bgcolor: `${settingsTheme.accent.amber}12`, border: `1px solid ${settingsTheme.accent.amber}33`, ...settingsMonoSx }}>
+            Cloud PostgreSQL lacks Apache AGE. Graph walks use recursive-CTE fallback.
           </Alert>
         )}
-      </Box>
+      </SettingsCard>
 
-      {/* ── PostgreSQL Connection ── */}
-      <Box sx={{ ...cardSx, mb: 2 }}>
-        <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.text.primary, mb: 1.5 }}>
-          PostgreSQL Connection
-        </Typography>
-        <TextField size="small" fullWidth placeholder="postgresql://user:password@host:5432/agentx"
-          value={pgConnStr} onChange={(e) => { setPgConnStr(e.target.value); setTestResult(null); }} sx={{ mb: 1.5 }}
-          slotProps={{ input: { sx: { fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace" } } }} />
-        <Box sx={{ display: 'flex', gap: 1, mb: testResult ? 1.5 : 0 }}>
-          <Button variant="outlined" onClick={handleTest} disabled={testing || !pgConnStr}
-            sx={{ fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', borderColor: colors.border.default, color: colors.text.secondary, '&:hover': { borderColor: colors.border.strong } }}>
-            {testing ? <CircularProgress size={14} sx={{ color: colors.text.secondary }} /> : 'Test Connection'}
-          </Button>
-          <Button variant="contained" onClick={handleSwitch} disabled={switching || !pgConnStr || !!(testResult && !testResult.ok)}
-            sx={{ fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, textTransform: 'none', bgcolor: colors.text.primary, color: colors.bg.primary, '&:hover': { bgcolor: '#ddd' } }}>
-            {switching ? <CircularProgress size={14} sx={{ color: colors.bg.primary }} /> : 'Update Connection'}
+      <SettingsCard title="Database Stats">
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1, mt: -0.5 }}>
+          <Button size="small" startIcon={<RefreshIcon sx={{ fontSize: 14 }} />} onClick={load} sx={settingsBtnGhostSx}>
+            Refresh
           </Button>
         </Box>
-        {testResult && (
-          <Alert severity={testResult.ok ? 'success' : 'error'} sx={{ fontSize: '0.7rem', py: 0 }}>
-            {testResult.ok ? `Connected · ${testResult.version || 'PostgreSQL'} · ${testResult.latencyMs}ms ${testResult.tablesCreated ? `· Created ${testResult.tablesCreated} tables` : '· Schema ready'}` : testResult.error}
-          </Alert>
-        )}
-        <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, mt: 1, lineHeight: 1.5 }}>
-          Your credentials & API keys stay in local encrypted config files. Sessions, messages, memories, and domain data live in PostgreSQL.
-        </Typography>
-      </Box>
-
-      {/* ── DB Stats ── */}
-      <Box sx={{ ...cardSx, mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.text.primary }}>Database Stats</Typography>
-          <Button size="small" startIcon={<RefreshIcon sx={{ fontSize: 14 }} />} onClick={load}
-            sx={{ fontSize: '0.65rem', color: colors.text.secondary, textTransform: 'none', fontFamily: "'JetBrains Mono', monospace" }}>Refresh</Button>
-        </Box>
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
           <StatItem label="Size" value={dbStatus?.stats.dbSizeFormatted || '—'} />
           <StatItem label="Tables" value={String(dbStatus?.stats.tableCount || 0)} />
           {dbStatus?.health && (
-            <StatItem label="Health" value={dbStatus.health.status === 'healthy' ? '✓ Good' : '⚠ Issues'}
-              color={dbStatus.health.status === 'healthy' ? colors.accent.green : colors.accent.orange} />
+            <StatItem label="Health" value={dbStatus.health.status === 'healthy' ? 'Good' : 'Issues'}
+              color={dbStatus.health.status === 'healthy' ? settingsTheme.accent.signal : settingsTheme.accent.amber} />
           )}
           <StatItem label="Sessions" value={String(dbStatus?.stats.tables?.['sessions'] ?? 0)} />
           <StatItem label="Messages" value={String(dbStatus?.stats.tables?.['messages'] ?? 0)} />
           <StatItem label="Memories" value={String(dbStatus?.stats.tables?.['crew_memories'] ?? 0)} />
         </Box>
-        <Box sx={{ mt: 2 }}>
-          <Button variant="outlined" onClick={handleMigrate} disabled={migrating}
-            sx={{ fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', borderColor: colors.border.default, color: colors.text.secondary, '&:hover': { borderColor: colors.border.strong } }}>
-            {migrating ? <CircularProgress size={14} sx={{ color: colors.text.secondary }} /> : 'Run Schema Migration'}
+        <Box sx={{ mt: 1.5 }}>
+          <Button variant="outlined" onClick={handleMigrate} disabled={migrating} sx={settingsBtnGhostSx}>
+            {migrating ? <CircularProgress size={14} /> : 'Run Schema Migration'}
           </Button>
           {migrateResult && (
-            <Typography sx={{ fontSize: '0.65rem', color: migrateResult.includes('failed') ? colors.accent.red : colors.accent.green, mt: 1, fontFamily: "'JetBrains Mono', monospace" }}>
+            <Typography sx={{ fontSize: '0.6rem', color: migrateResult.includes('failed') ? settingsTheme.accent.alert : settingsTheme.accent.signal, mt: 1, ...settingsMonoSx }}>
               {migrateResult}
             </Typography>
           )}
         </Box>
-      </Box>
+      </SettingsCard>
 
-      {/* ── File Storage ── */}
-      <Box sx={{ ...cardSx, mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-          <FolderIcon sx={{ fontSize: 18, color: colors.text.secondary }} />
-          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.text.primary }}>
-            File Storage
-          </Typography>
-        </Box>
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mb: 2 }}>
+      <SettingsCard title="File Storage">
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, mb: 1.5 }}>
           <FilePathRow label="Config" path={fs?.config.path ?? '~/.config/agentx'} size={fs?.config.sizeFormatted ?? '—'}
-            desc="Provider configs, plugin registry, MCP/ACP settings, crew registry" />
+            desc="Provider configs, plugin registry, ACP settings, crew registry" />
           <FilePathRow label="Data" path={fs?.data.path ?? '~/.local/share/agentx'} size={fs?.data.sizeFormatted ?? '—'}
             desc="Session files, secret sauce (soul, memories, diary, identity)" />
           <FilePathRow label="Cache" path={fs?.cache.path ?? '~/.cache/agentx'} size={fs?.cache.sizeFormatted ?? '—'}
             desc="Temporary files, content cache, compaction buffers" />
         </Box>
 
-        <Box sx={{ p: 2, borderRadius: 1, bgcolor: `${colors.text.dim}05`, border: `1px solid ${colors.border.default}`, mb: 2 }}>
-          <Typography sx={{ fontSize: '0.58rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, lineHeight: 1.7, letterSpacing: '0.3px' }}>
-            <span style={{ color: colors.accent.orange, fontWeight: 600 }}>⚠ TAMPER WARNING</span><br />
-            Manually editing, deleting, or corrupting files in these directories can cause data loss, session breakage, or agent instability. Agent-X encrypts sensitive fields with your master key — altering ciphertext will permanently destroy those records. Always back up before touching anything here.
+        <Box sx={{ p: 1.5, borderRadius: '4px', bgcolor: settingsTheme.bg.hud, border: `1px solid ${settingsTheme.border.subtle}`, mb: 1.5 }}>
+          <Typography sx={{ ...settingsMonoSx, fontSize: '0.55rem', color: settingsTheme.text.dim, lineHeight: 1.7 }}>
+            <Box component="span" sx={{ color: settingsTheme.accent.amber, fontWeight: 700 }}>Warning:</Box>{' '}
+            Manually editing files in these directories can cause data loss or agent instability.
           </Typography>
         </Box>
 
-        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-          <Button variant="outlined" startIcon={<CleaningServicesIcon />} onClick={handleClearCache} disabled={clearingCache}
-            sx={{ fontSize: '0.68rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', borderColor: colors.border.default, color: colors.text.secondary, '&:hover': { borderColor: colors.border.strong } }}>
-            {clearingCache ? <CircularProgress size={14} sx={{ color: colors.text.secondary }} /> : 'Clear Logs & Cache'}
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Button variant="outlined" startIcon={<CleaningServicesIcon />} onClick={handleClearCache} disabled={clearingCache} sx={settingsBtnGhostSx}>
+            {clearingCache ? <CircularProgress size={14} /> : 'Clear Logs & Cache'}
           </Button>
           {cacheResult && (
-            <Typography sx={{ fontSize: '0.65rem', color: colors.accent.green, alignSelf: 'center', fontFamily: "'JetBrains Mono', monospace" }}>
-              {cacheResult}
-            </Typography>
+            <Typography sx={{ fontSize: '0.6rem', color: settingsTheme.accent.signal, ...settingsMonoSx }}>{cacheResult}</Typography>
           )}
         </Box>
-      </Box>
+      </SettingsCard>
 
-      {/* ── RAG Studio Storage ── */}
-      <RagStudioStorageCard />
+      {neuralBrainSupported && <RagStudioStorageCard />}
 
-      {/* ── Soft Reset ── */}
-      <Box sx={{ ...cardSx, mb: 2, border: `1px solid ${colors.accent.orange}20`, bgcolor: `${colors.accent.orange}05` }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <RestartAltIcon sx={{ fontSize: 18, color: colors.accent.orange }} />
-          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.accent.orange }}>
-            Soft Reset
-          </Typography>
-        </Box>
-        <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, mb: 2, lineHeight: 1.6 }}>
-          Clears all domain data — sessions, messages, memories, crews, plugins, token logs, permissions, and tool executions. Your credentials, API keys, auth tokens, and provider configuration remain intact. You stay logged in.
+      <SettingsCard title="Soft Reset" accent={settingsTheme.accent.amber}>
+        <Typography sx={{ ...settingsHelperSx, mb: 1.5 }}>
+          Clears domain data — sessions, messages, memories, crews, plugins. Credentials and provider config remain intact.
         </Typography>
         <Button variant="outlined" startIcon={<RestartAltIcon />} onClick={handleSoftReset} disabled={clearing}
-          sx={{ borderColor: colors.accent.orange, color: colors.accent.orange, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none',
-            '&:hover': { borderColor: colors.accent.orange, bgcolor: `${colors.accent.orange}10` } }}>
-          {clearing ? 'Clearing...' : 'Soft Reset'}
+          sx={{ ...settingsBtnGhostSx, borderColor: `${settingsTheme.accent.amber}55`, color: settingsTheme.accent.amber }}>
+          {clearing ? 'Clearing…' : 'Soft Reset'}
         </Button>
-      </Box>
+      </SettingsCard>
 
-      {/* ── Clear Domain Data ── */}
-      <Box sx={{ ...dangerCardSx, mb: 2 }}>
-        <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.accent.red, mb: 1 }}>Clear Domain Data</Typography>
-        <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, mb: 2, lineHeight: 1.6 }}>
-          Same as Soft Reset but with explicit confirmation. Erases all domain data while keeping credentials and auth.
+      <SettingsCard title="Clear Domain Data" accent={settingsTheme.accent.alert}>
+        <Typography sx={{ ...settingsHelperSx, mb: 1.5 }}>
+          Same as soft reset with explicit confirmation. Erases domain data while keeping credentials.
         </Typography>
-        <Button variant="outlined" startIcon={<DeleteOutlineIcon />} onClick={() => setClearOpen(true)} disabled={clearing}
-          sx={{ borderColor: colors.accent.red, color: colors.accent.red, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none',
-            '&:hover': { borderColor: colors.accent.red, bgcolor: `${colors.accent.red}10` } }}>
-          {clearing ? 'Clearing...' : 'Clear Domain Data'}
+        <Button variant="outlined" startIcon={<DeleteOutlineIcon />} onClick={() => setClearOpen(true)} disabled={clearing} sx={settingsBtnDangerSx}>
+          {clearing ? 'Clearing…' : 'Clear Domain Data'}
         </Button>
-      </Box>
+      </SettingsCard>
 
-      {/* ── Factory Reset ── */}
-      <Box sx={{ ...dangerCardSx, mb: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <WarningAmberIcon sx={{ fontSize: 18, color: colors.accent.red }} />
-          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.accent.red }}>Factory Reset</Typography>
-        </Box>
-        <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, mb: 2, lineHeight: 1.6 }}>
-          Irreversibly deletes all local files, domain data, and credentials. This logs you out and wipes the agent. Use only when you want a completely fresh install.
+      <SettingsCard title="Factory Reset" accent={settingsTheme.accent.alert}>
+        <Typography sx={{ ...settingsHelperSx, mb: 1.5 }}>
+          Irreversibly deletes all local files, domain data, and credentials. Logs you out completely.
         </Typography>
-        <Button variant="outlined" onClick={() => setResetOpen(true)} disabled={resetting}
-          sx={{ borderColor: colors.accent.red, color: colors.accent.red, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none',
-            '&:hover': { borderColor: colors.accent.red, bgcolor: `${colors.accent.red}10` } }}>
-          {resetting ? <CircularProgress size={14} sx={{ color: colors.accent.red }} /> : 'Factory Reset'}
+        <Button variant="outlined" onClick={() => setResetOpen(true)} disabled={resetting} sx={settingsBtnDangerSx}>
+          {resetting ? <CircularProgress size={14} /> : 'Factory Reset'}
         </Button>
-      </Box>
+      </SettingsCard>
 
-      <Dialog open={clearOpen} onClose={() => setClearOpen(false)} PaperProps={{ sx: { bgcolor: colors.bg.primary, border: `1px solid ${colors.border.default}` } }}>
-        <DialogTitle sx={{ fontSize: '0.85rem', color: colors.text.primary }}>Confirm Clear Domain Data</DialogTitle>
+      <Dialog open={clearOpen} onClose={() => setClearOpen(false)} PaperProps={{ sx: { ...settingsDialogPaperSx, maxWidth: 420 } }}>
+        <DialogTitle sx={settingsDialogTitleSx}>Clear Domain Data</DialogTitle>
         <DialogContent>
-          <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, mb: 2 }}>
-            Type <strong>DELETE</strong> to confirm. This removes sessions, messages, memories, crews, and plugins from PostgreSQL. Credentials and auth are preserved.
+          <Typography sx={{ ...settingsHelperSx, mb: 2 }}>
+            Type <strong>DELETE</strong> to confirm. Credentials and auth are preserved.
           </Typography>
           <TextField size="small" fullWidth value={clearConfirm} onChange={(e) => setClearConfirm(e.target.value)}
-            placeholder="DELETE" sx={{ fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace" }} />
+            placeholder="DELETE" sx={settingsTextFieldSx} />
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setClearOpen(false)} sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>Cancel</Button>
-          <Button onClick={handleClear} disabled={clearConfirm !== 'DELETE' || clearing} sx={{ fontSize: '0.7rem', color: colors.accent.red }}>
-            {clearing ? 'Clearing...' : 'Clear'}
+        <DialogActions sx={{ px: 2.5, pb: 2 }}>
+          <Button onClick={() => setClearOpen(false)} sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.text.dim }}>Cancel</Button>
+          <Button onClick={handleClear} disabled={clearConfirm !== 'DELETE' || clearing} sx={settingsBtnDangerSx}>
+            {clearing ? 'Clearing…' : 'Clear'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog open={resetOpen} onClose={() => setResetOpen(false)} PaperProps={{ sx: { bgcolor: colors.bg.primary, border: `1px solid ${colors.border.default}` } }}>
-        <DialogTitle sx={{ fontSize: '0.85rem', color: colors.text.primary }}>Confirm Factory Reset</DialogTitle>
+      <Dialog open={resetOpen} onClose={() => setResetOpen(false)} PaperProps={{ sx: { ...settingsDialogPaperSx, maxWidth: 420 } }}>
+        <DialogTitle sx={settingsDialogTitleSx}>Factory Reset</DialogTitle>
         <DialogContent>
-          <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, mb: 2 }}>
-            This will delete all local files, domain data, credentials, and API keys. You will be logged out. Type <strong>RESET</strong> to confirm.
+          <Typography sx={{ ...settingsHelperSx, mb: 2 }}>
+            Deletes all local files, domain data, and credentials. Type <strong>RESET</strong> to confirm.
           </Typography>
-          {resetError && <Alert severity="error" sx={{ fontSize: '0.7rem', mb: 1 }}>{resetError}</Alert>}
+          {resetError && <Alert severity="error" sx={{ fontSize: '0.65rem', mb: 1, ...settingsMonoSx }}>{resetError}</Alert>}
           <TextField size="small" fullWidth value={resetConfirm} onChange={(e) => setResetConfirm(e.target.value)}
-            placeholder="RESET" sx={{ fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace" }} />
+            placeholder="RESET" sx={settingsTextFieldSx} />
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setResetOpen(false)} sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>Cancel</Button>
-          <Button onClick={handleFactoryReset} disabled={resetConfirm !== 'RESET' || resetting} sx={{ fontSize: '0.7rem', color: colors.accent.red }}>
-            {resetting ? 'Resetting...' : 'Reset Everything'}
+        <DialogActions sx={{ px: 2.5, pb: 2 }}>
+          <Button onClick={() => setResetOpen(false)} sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.text.dim }}>Cancel</Button>
+          <Button onClick={handleFactoryReset} disabled={resetConfirm !== 'RESET' || resetting} sx={settingsBtnDangerSx}>
+            {resetting ? 'Resetting…' : 'Reset Everything'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -421,18 +326,18 @@ export function PersistenceTab() {
 }
 
 function TelemetryRow({ label, status }: { label: string; status: 'ok' | 'warn' | 'fail' | 'pending' }) {
-  const icon = status === 'ok' ? <CheckCircleIcon sx={{ fontSize: 16, color: colors.accent.green }} />
-    : status === 'warn' ? <WarningAmberIcon sx={{ fontSize: 16, color: colors.accent.orange }} />
-    : status === 'fail' ? <ErrorIcon sx={{ fontSize: 16, color: colors.accent.red }} />
-    : <HelpIcon sx={{ fontSize: 16, color: colors.text.secondary }} />;
+  const icon = status === 'ok' ? <CheckCircleIcon sx={{ fontSize: 14, color: settingsTheme.accent.signal }} />
+    : status === 'warn' ? <WarningAmberIcon sx={{ fontSize: 14, color: settingsTheme.accent.amber }} />
+    : status === 'fail' ? <ErrorIcon sx={{ fontSize: 14, color: settingsTheme.accent.alert }} />
+    : <HelpIcon sx={{ fontSize: 14, color: settingsTheme.text.dim }} />;
   const text = status === 'ok' ? 'OK' : status === 'warn' ? 'Warning' : status === 'fail' ? 'Failed' : 'Checking';
-  const color = status === 'ok' ? colors.accent.green : status === 'warn' ? colors.accent.orange : status === 'fail' ? colors.accent.red : colors.text.secondary;
+  const color = status === 'ok' ? settingsTheme.accent.signal : status === 'warn' ? settingsTheme.accent.amber : status === 'fail' ? settingsTheme.accent.alert : settingsTheme.text.dim;
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5, borderBottom: `1px solid ${colors.border.default}` }}>
-      <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>{label}</Typography>
+    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5, borderBottom: `1px solid ${settingsTheme.border.subtle}` }}>
+      <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.secondary, ...settingsMonoSx }}>{label}</Typography>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
         {icon}
-        <Typography sx={{ fontSize: '0.65rem', color, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>{text}</Typography>
+        <Typography sx={{ fontSize: '0.58rem', color, fontWeight: 600, ...settingsMonoSx }}>{text}</Typography>
       </Box>
     </Box>
   );
@@ -440,9 +345,9 @@ function TelemetryRow({ label, status }: { label: string; status: 'ok' | 'warn' 
 
 function StatItem({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: `${colors.text.dim}05`, border: `1px solid ${colors.border.default}` }}>
-      <Typography sx={{ fontSize: '0.58rem', color: colors.text.dim, mb: 0.5, fontFamily: "'JetBrains Mono', monospace" }}>{label}</Typography>
-      <Typography sx={{ fontSize: '0.75rem', color: color || colors.text.primary, fontWeight: 600 }}>{value}</Typography>
+    <Box sx={{ p: 1.25, borderRadius: '4px', bgcolor: settingsTheme.bg.hud, border: `1px solid ${settingsTheme.border.subtle}` }}>
+      <Typography sx={{ fontSize: '0.52rem', color: settingsTheme.text.dim, mb: 0.4, ...settingsMonoSx, textTransform: 'uppercase', letterSpacing: '1px' }}>{label}</Typography>
+      <Typography sx={{ fontSize: '0.72rem', color: color || settingsTheme.text.primary, fontWeight: 700, ...settingsMonoSx }}>{value}</Typography>
     </Box>
   );
 }
@@ -451,11 +356,11 @@ function FilePathRow({ label, path, size, desc }: { label: string; path: string;
   return (
     <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2 }}>
       <Box>
-        <Typography sx={{ fontSize: '0.65rem', color: colors.text.primary, fontWeight: 600 }}>{label}</Typography>
-        <Typography sx={{ fontSize: '0.58rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>{path}</Typography>
-        <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, mt: 0.3 }}>{desc}</Typography>
+        <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.primary, fontWeight: 700, ...settingsMonoSx }}>{label}</Typography>
+        <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>{path}</Typography>
+        <Typography sx={{ fontSize: '0.52rem', color: settingsTheme.text.dim, mt: 0.25 }}>{desc}</Typography>
       </Box>
-      <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'nowrap' }}>{size}</Typography>
+      <Typography sx={{ fontSize: '0.6rem', color: settingsTheme.text.secondary, ...settingsMonoSx, whiteSpace: 'nowrap' }}>{size}</Typography>
     </Box>
   );
 }
@@ -495,69 +400,43 @@ function RagStudioStorageCard() {
   };
 
   return (
-    <Box sx={{ ...cardSx, mb: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-        <StorageIcon sx={{ fontSize: 18, color: colors.text.secondary }} />
-        <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: colors.text.primary }}>
-          RAG Studio Storage
-        </Typography>
-      </Box>
-
-      <Typography sx={{ fontSize: '0.65rem', color: colors.text.secondary, mb: 2, lineHeight: 1.5 }}>
-        Original copies of documents uploaded via RAG Studio are kept here so you can re-download or re-ingest them. Clearing this folder does NOT delete the knowledge entries already in the neural brain.
-      </Typography>
-
+    <SettingsCard title="RAG Studio Storage" subtitle="Original copies of uploaded documents. Clearing does not delete knowledge entries in the brain.">
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-          <CircularProgress size={18} sx={{ color: colors.text.secondary }} />
+          <CircularProgress size={18} sx={{ color: settingsTheme.text.dim }} />
         </Box>
       ) : (
-        <Box sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
+        <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
           <StatItem label="Files" value={stats ? String(stats.fileCount) : '—'} />
           <StatItem label="Total Size" value={stats ? formatBytes(stats.totalBytes) : '—'} />
         </Box>
       )}
 
       {stats && stats.fileCount > 0 && (
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
-          <Button
-            variant="outlined"
-            startIcon={<DeleteOutlineIcon />}
-            onClick={() => setConfirmOpen(true)}
-            disabled={clearing}
-            sx={{
-              fontSize: '0.68rem',
-              fontFamily: "'JetBrains Mono', monospace",
-              textTransform: 'none',
-              borderColor: colors.accent.red + '40',
-              color: colors.accent.red,
-              '&:hover': { borderColor: colors.accent.red },
-            }}
-          >
-            {clearing ? <CircularProgress size={14} sx={{ color: colors.accent.red }} /> : 'Clear RAG Studio Files'}
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Button variant="outlined" startIcon={<DeleteOutlineIcon />}
+            onClick={() => setConfirmOpen(true)} disabled={clearing} sx={settingsBtnDangerSx}>
+            {clearing ? <CircularProgress size={14} /> : 'Clear RAG Studio Files'}
           </Button>
           {result && (
-            <Typography sx={{ fontSize: '0.65rem', color: colors.accent.green, fontFamily: "'JetBrains Mono', monospace" }}>
-              {result}
-            </Typography>
+            <Typography sx={{ fontSize: '0.6rem', color: settingsTheme.accent.signal, ...settingsMonoSx }}>{result}</Typography>
           )}
         </Box>
       )}
 
       {confirmOpen && (
-        <Box sx={{ mt: 2, p: 2, borderRadius: 1, bgcolor: `${colors.accent.red}08`, border: `1px solid ${colors.accent.red}30` }}>
-          <Typography sx={{ fontSize: '0.68rem', color: colors.text.secondary, mb: 1.5 }}>
-            Are you sure? This will delete all original file copies. Knowledge entries in the neural brain will remain.
+        <Box sx={{ mt: 1.5, p: 1.5, borderRadius: '4px', bgcolor: `${settingsTheme.accent.alert}08`, border: `1px solid ${settingsTheme.accent.alert}33` }}>
+          <Typography sx={{ ...settingsHelperSx, mb: 1.25 }}>
+            Delete all original file copies? Knowledge entries remain in the brain.
           </Typography>
           <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button size="small" onClick={() => setConfirmOpen(false)} sx={{ fontSize: '0.65rem', color: colors.text.secondary }}>Cancel</Button>
-            <Button size="small" variant="contained" onClick={handleClear} disabled={clearing}
-              sx={{ fontSize: '0.65rem', bgcolor: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + 'cc' } }}>
-              {clearing ? 'Clearing…' : 'Yes, Delete Files'}
+            <Button size="small" onClick={() => setConfirmOpen(false)} sx={{ ...settingsMonoSx, fontSize: '0.6rem', color: settingsTheme.text.dim }}>Cancel</Button>
+            <Button size="small" variant="contained" onClick={handleClear} disabled={clearing} sx={{ ...settingsBtnDangerSx, bgcolor: settingsTheme.accent.alert, color: '#fff', border: 'none' }}>
+              {clearing ? 'Clearing…' : 'Delete Files'}
             </Button>
           </Box>
         </Box>
       )}
-    </Box>
+    </SettingsCard>
   );
 }

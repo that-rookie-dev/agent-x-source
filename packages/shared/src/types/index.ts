@@ -21,3 +21,6 @@ export * from './turn-feedback.js';
 export * from './crew-roster-picker.js';
 export * from './session-resume.js';
 export * from './deep-search.js';
+export * from './integrations.js';
+export * from './automation.js';
+export * from './channels.js';

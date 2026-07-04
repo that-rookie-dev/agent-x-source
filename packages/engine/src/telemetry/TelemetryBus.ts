@@ -24,6 +24,9 @@ export class DefaultTelemetryBus implements TelemetryBus {
   /** Ephemeral UI events — live subscribers only; must not replay on SSE reconnect. */
   private static readonly NON_REPLAYABLE_TYPES = new Set([
     'crew_suggestion',
+    'notification_created',
+    'automation_run_started',
+    'automation_run_ended',
   ]);
 
   constructor(config?: Partial<TelemetryConfig>) {

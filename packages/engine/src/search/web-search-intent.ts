@@ -1,4 +1,5 @@
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
+import { detectPlacesSearchRequest } from '../integrations/places-intent.js';
 
 export type WebSearchIntentConfidence = 'high' | 'medium' | 'low';
 export type WebSearchIntentSource = 'globe' | 'explicit' | 'heuristic' | 'llm' | 'default';
@@ -8,6 +9,20 @@ export interface WebSearchIntentAnalysis {
   confidence: WebSearchIntentConfidence;
   reason: string;
   source: WebSearchIntentSource;
+}
+
+/** Scheduled/reminder requests — research runs at fire time, not now. */
+const SCHEDULED_TASK_INTENT_RE = [
+  /\b(?:remind(?:er)?|ping|notify)\s+(?:me\s+)?(?:at|in|on|every|around)\b/i,
+  /\b(?:schedule|set\s+(?:a\s+)?(?:reminder|automation|job|task))\b/i,
+  /\b(?:in\s+\d+\s+(?:min(?:ute)?s?|hours?|secs?|days?))\b/i,
+  /\b(?:every\s+(?:morning|evening|day|hour|week|month))\b/i,
+  /\b(?:at|by|around)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i,
+  /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\s+today\b/i,
+] as const;
+
+export function isScheduledTaskRequest(text: string): boolean {
+  return SCHEDULED_TASK_INTENT_RE.some((re) => re.test(text.trim()));
 }
 
 /** User explicitly asked to search the web. */
@@ -48,6 +63,7 @@ Answer NO when:
 - Timeless concepts, math, coding help, file/repo/session state, or opinions
 - "Latest" clearly means chat history, git, local project, or already-provided context
 - The user is asking Agent-X to edit, debug, or explain their own project
+- The user wants a reminder, ping, or scheduled task at a future time (defer web research to automation)
 
 Reply with exactly two lines:
 Line 1: yes or no (lowercase)
@@ -81,6 +97,24 @@ export function analyzeWebSearchIntentHeuristic(text: string): WebSearchIntentAn
     source: 'default',
   };
   if (!trimmed) return no;
+
+  if (detectPlacesSearchRequest(trimmed)) {
+    return {
+      shouldForceSearch: false,
+      confidence: 'high',
+      reason: 'Local places query — prefer Google Maps MCP over web search',
+      source: 'heuristic',
+    };
+  }
+
+  if (isScheduledTaskRequest(trimmed)) {
+    return {
+      shouldForceSearch: false,
+      confidence: 'high',
+      reason: 'Scheduled/reminder task — defer web research to automation fire time',
+      source: 'heuristic',
+    };
+  }
 
   if (detectExplicitWebSearchRequest(trimmed)) {
     return {

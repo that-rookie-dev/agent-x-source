@@ -58,4 +58,13 @@ describe('TurnContextAssembler', () => {
     expect(ctx.needsContextMerge).toBe(false);
     expect(ctx.mergedTask).toContain('auth module');
   });
+
+  it('omits recent exchange when skipRecentExchange is set', () => {
+    const ctx = buildTurnContext({
+      messages: VACATION_SESSION,
+      currentUserMessage: 'plan it yourself',
+      skipRecentExchange: true,
+    });
+    expect(ctx.block).not.toContain('Recent exchange');
+  });
 });

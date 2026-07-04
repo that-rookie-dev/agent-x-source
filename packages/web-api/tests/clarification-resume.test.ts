@@ -11,6 +11,16 @@ describe('buildQuestionnaireResumeInstruction', () => {
     expect(out).toContain('QUESTIONNAIRE_ALREADY_ANSWERED');
     expect(out).toContain('Early-stage trial');
   });
+
+  it('embeds multiple answers in a resume block', () => {
+    const out = buildQuestionnaireResumeInstruction('base', [
+      'Dates: Oct 15–25',
+      'Cities: Bangkok, Phuket',
+    ]);
+    expect(out).toContain('Dates: Oct 15–25');
+    expect(out).toContain('Cities: Bangkok, Phuket');
+    expect(out).toContain('ALL answers below');
+  });
 });
 
 describe('findUserMessageBeforeQuestionnaire', () => {

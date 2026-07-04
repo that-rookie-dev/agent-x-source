@@ -27,12 +27,26 @@ export type ProviderId =
   | 'opencode'
   | 'opencode-zen';
 
+export type ReasoningEffortLevel = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/** Provider-normalized reasoning / thinking controls for a model. */
+export interface ModelReasoningInfo {
+  supported: boolean;
+  effortLevels: ReasoningEffortLevel[];
+  defaultEffort?: ReasoningEffortLevel;
+  /** Request parameter used by this provider (OpenAI-compat Gemini uses reasoning_effort). */
+  control?: 'reasoning_effort' | 'thinking_level' | 'thinking_budget' | 'output_config.effort';
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
   providerId: ProviderId;
   contextWindow: number;
+  /** Max output tokens when reported by the provider API. */
+  outputTokenLimit?: number;
   capabilities: ModelCapability[];
+  reasoning?: ModelReasoningInfo;
   pricing?: ModelPricing;
 }
 
@@ -56,6 +70,8 @@ export interface CompletionRequest {
   stream?: boolean;
   temperature?: number;
   maxTokens?: number;
+  /** Reasoning/thinking depth — mapped per provider (Gemini: reasoning_effort / thinking_level). */
+  reasoningEffort?: ReasoningEffortLevel;
   signal?: AbortSignal;
 }
 

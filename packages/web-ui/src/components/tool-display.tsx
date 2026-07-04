@@ -12,8 +12,10 @@ import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import AlarmIcon from '@mui/icons-material/Alarm';
 import StorageIcon from '@mui/icons-material/Storage';
 import Inventory2Icon from '@mui/icons-material/Inventory2';
+import HubIcon from '@mui/icons-material/Hub';
 import BuildIcon from '@mui/icons-material/Build';
 import type { ReactNode } from 'react';
+import { isIntegrationToolId, parseIntegrationToolId } from '@agentx/shared/browser';
 
 export interface ToolDisplayInfo {
   icon: ReactNode;
@@ -98,8 +100,11 @@ export function getToolDisplay(toolName: string, args: Record<string, unknown> |
     case 'git_push':
     case 'git_pull':
       return { icon: <AccountTreeIcon sx={iconSx} />, title: 'Git', subtitle: label };
-    case 'reminder_set':
-      return { icon: <AlarmIcon sx={iconSx} />, title: 'Remind', subtitle: label };
+    case 'automation_confirm':
+    case 'automation_register':
+    case 'automation_list':
+    case 'automation_cancel':
+      return { icon: <AlarmIcon sx={iconSx} />, title: 'Auto', subtitle: label };
     case 'db_query':
     case 'db_migrate':
       return { icon: <StorageIcon sx={iconSx} />, title: 'DB', subtitle: label };
@@ -110,9 +115,18 @@ export function getToolDisplay(toolName: string, args: Record<string, unknown> |
     case 'package_remove':
     case 'pkg_update':
       return { icon: <Inventory2Icon sx={iconSx} />, title: 'Pkg', subtitle: label };
-    default:
+    default: {
+      if (isIntegrationToolId(toolName)) {
+        const parsed = parseIntegrationToolId(toolName);
+        const provider = parsed?.providerId ?? 'integration';
+        const tool = parsed?.toolName ?? '';
+        return {
+          icon: <HubIcon sx={iconSx} />,
+          title: provider.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+          subtitle: tool.replace(/_/g, ' ') || label,
+        };
+      }
       return { icon: <BuildIcon sx={iconSx} />, title: toolName.split('_').map(w => w[0]?.toUpperCase() + w.slice(1)).join(' '), subtitle: label };
+    }
   }
 }
-
-

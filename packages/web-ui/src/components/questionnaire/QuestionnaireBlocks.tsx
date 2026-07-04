@@ -97,7 +97,7 @@ function CustomAnswerField({
 
 interface ChoiceListProps {
   mode: 'single' | 'multi';
-  options: Array<{ value: string; label?: string; recommended?: boolean }>;
+  options: Array<{ value: string; label?: string; recommended?: boolean; disabled?: boolean }>;
   selected: string | null | Set<string>;
   focusIdx: number;
   onFocusIdx: (idx: number) => void;
@@ -127,6 +127,7 @@ function ChoiceList({
     >
       {options.map((opt, idx) => {
         const label = opt.label ?? opt.value;
+        const isDisabled = opt.disabled === true;
         const checked = mode === 'single'
           ? selected === opt.value
           : (selected as Set<string>).has(opt.value);
@@ -137,7 +138,9 @@ function ChoiceList({
             key={opt.value}
             role={mode === 'single' ? 'radio' : 'checkbox'}
             aria-checked={checked}
+            aria-disabled={isDisabled}
             onClick={() => {
+              if (isDisabled) return;
               onFocusIdx(idx);
               if (mode === 'single') onSelectSingle(opt.value);
               else onToggleMulti(opt.value);
@@ -150,9 +153,10 @@ function ChoiceList({
               px: 0.75,
               py: 0.5,
               borderRadius: '8px',
-              cursor: 'pointer',
+              cursor: isDisabled ? 'not-allowed' : 'pointer',
+              opacity: isDisabled ? 0.45 : 1,
               bgcolor: focused || checked ? `${colors.accent.blue}10` : 'transparent',
-              border: `1px solid ${focused ? colors.accent.blue + '50' : 'transparent'}`,
+              border: `1px solid ${focused && !isDisabled ? colors.accent.blue + '50' : 'transparent'}`,
             }}
           >
             {mode === 'single' ? <RadioMark checked={checked} /> : <CheckMark checked={checked} />}
@@ -274,6 +278,13 @@ export function QuestionBlockRenderer({
           onSelectSingle={() => {}}
           onToggleMulti={(value) => {
             const current = new Set((state[question.id] as Set<string>) ?? []);
+            if (value === 'none') {
+              onStateChange(question.id, new Set(['none']));
+              return;
+            }
+            current.delete('none');
+            const opt = question.options?.find((o) => o.value === value);
+            if (opt?.disabled) return;
             if (current.has(value)) current.delete(value);
             else current.add(value);
             onStateChange(question.id, current);

@@ -8,7 +8,6 @@ import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import ViewStreamIcon from '@mui/icons-material/ViewStream';
-import ArticleIcon from '@mui/icons-material/Article';
 import { PanelHeader } from './PanelHeader';
 import { colors } from '../theme';
 import { getAuthToken } from '../api';
@@ -189,7 +188,7 @@ export function LogsPanel({ onClose, onTogglePosition, position }: LogsPanelProp
       <PanelHeader
         title="System Logs"
         subtitle={`Live system event stream · ${connected ? '● LIVE' : '○ disconnected'} · ${counts.total} total`}
-        icon={<ArticleIcon sx={{ fontSize: 20 }} />}
+        inline
         action={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <Tooltip title="Copy logs">

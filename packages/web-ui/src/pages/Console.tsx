@@ -1,4 +1,4 @@
-import { Component, type ReactNode, useState, useCallback, useRef } from 'react';
+import { Component, type ReactNode, useState, useCallback, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -8,19 +8,21 @@ import { LogsPanel } from '../components/LogsPanel';
 import { ChatPanel } from '../components/ChatPanel';
 import { ToolsPanel } from '../components/ToolsPanel';
 import { PluginsPanel } from '../components/PluginsPanel';
-import { MCPPanel } from '../components/MCPPanel';
 import { ChannelsPanel } from '../components/ChannelsPanel';
 import { SettingsPanel } from '../components/SettingsPanel';
-import { SchedulerPanel } from '../components/SchedulerPanel';
+import { AutomationPanel } from '../components/AutomationPanel';
 import { RagStudioPanel } from '../components/RagStudioPanel';
 import { OrchestratorPanel } from '../components/OrchestratorPanel';
 import { CrewsPanel } from '../components/CrewsPanel';
 import { SoulPanel } from '../components/SoulPanel';
-import { HealthPanel } from '../components/HealthPanel';
+import { McpStorePage } from '../components/integrations/McpStorePage';
+import { NotificationsPanel } from '../components/NotificationsPanel';
 import { NotificationToast } from '../components/NotificationToast';
 import { colors } from '../theme';
+import { useApp } from '../store/AppContext';
+import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 
-export type PanelId = 'chat' | 'tools' | 'plugins' | 'mcp' | 'channels' | 'settings' | 'scheduler' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'health';
+export type PanelId = 'chat' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -49,7 +51,13 @@ const RIGHT_PANEL_DEFAULT_WIDTH = 350;
 export function Console() {
   const { panel, sessionId } = useParams<{ panel?: string; sessionId?: string }>();
   const navigate = useNavigate();
+  const { unreadNotificationCount } = useApp();
+  const neuralBrainSupported = useNeuralBrainSupported();
   const activePanel = (panel || 'chat') as PanelId;
+  useEffect(() => {
+    if (panel === 'health') navigate('/console/chat', { replace: true });
+    if (panel === 'rag-studio' && !neuralBrainSupported) navigate('/console/chat', { replace: true });
+  }, [panel, navigate, neuralBrainSupported]);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsPosition, setLogsPosition] = useState<'bottom' | 'right'>('bottom');
   const [panelSize, setPanelSize] = useState(BOTTOM_PANEL_DEFAULT_HEIGHT);
@@ -59,6 +67,11 @@ export function Console() {
   const handleNavigate = (p: PanelId) => {
     navigate(`/console/${p}`);
   };
+
+  useEffect(() => {
+    if (!window.agentx?.onNotificationClick) return;
+    return window.agentx.onNotificationClick(() => navigate('/console/notifications'));
+  }, [navigate]);
 
   const toggleLogs = useCallback(() => {
     setLogsOpen((prev) => !prev);
@@ -134,22 +147,22 @@ export function Console() {
     <Box ref={containerRef} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Main content + right-side logs */}
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0, minWidth: 0 }}>
-        <Sidebar active={activePanel} onNavigate={handleNavigate} highlightCrews={false} />
+        <Sidebar active={activePanel} onNavigate={handleNavigate} highlightCrews={false} unreadNotificationCount={unreadNotificationCount} />
         <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', flexDirection: isVertical ? 'row' : 'column' }}>
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
             <PanelErrorBoundary key={activePanel}>
               {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
               {activePanel === 'tools' && <ToolsPanel />}
               {activePanel === 'plugins' && <PluginsPanel />}
-              {activePanel === 'mcp' && <MCPPanel />}
               {activePanel === 'channels' && <ChannelsPanel />}
               {activePanel === 'settings' && <SettingsPanel />}
-              {activePanel === 'scheduler' && <SchedulerPanel />}
+              {activePanel === 'automation' && <AutomationPanel />}
               {activePanel === 'rag-studio' && <RagStudioPanel />}
               {activePanel === 'orchestrator' && <OrchestratorPanel />}
               {activePanel === 'crews' && <CrewsPanel />}
               {activePanel === 'soul' && <SoulPanel />}
-              {activePanel === 'health' && <HealthPanel />}
+              {activePanel === 'mcp-store' && <McpStorePage />}
+              {activePanel === 'notifications' && <NotificationsPanel />}
             </PanelErrorBoundary>
           </Box>
           {isVertical && logsContent}

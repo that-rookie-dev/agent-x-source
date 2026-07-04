@@ -9,9 +9,11 @@ interface PanelHeaderProps {
   subtitle?: string;
   icon?: React.ReactNode;
   action?: React.ReactNode;
+  /** Combine title and subtitle on one line: "Title - subtitle" */
+  inline?: boolean;
 }
 
-export function PanelHeader({ title, subtitle, icon, action }: PanelHeaderProps) {
+export function PanelHeader({ title, subtitle, icon, action, inline }: PanelHeaderProps) {
   return (
     <Box sx={{
       flexShrink: 0,
@@ -24,22 +26,38 @@ export function PanelHeader({ title, subtitle, icon, action }: PanelHeaderProps)
       justifyContent: 'space-between',
       bgcolor: colors.bg.secondary,
     }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0 }}>
         {icon && (
-          <Box sx={{ display: 'flex', alignItems: 'center', color: colors.accent.blue }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', color: colors.accent.blue, flexShrink: 0 }}>
             {icon}
           </Box>
         )}
-        <Box>
-          <Typography sx={{ fontSize: '0.95rem', fontWeight: 600, color: colors.text.primary, lineHeight: 1.2 }}>
-            {title}
+        {inline && subtitle ? (
+          <Typography sx={{
+            fontSize: '0.8rem',
+            fontWeight: 500,
+            color: colors.text.primary,
+            lineHeight: 1.2,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            fontFamily: "'JetBrains Mono', monospace",
+          }}>
+            <Box component="span" sx={{ fontWeight: 600 }}>{title}</Box>
+            <Box component="span" sx={{ color: colors.text.dim, fontWeight: 400 }}> — {subtitle}</Box>
           </Typography>
-          {subtitle && (
-            <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, lineHeight: 1.3 }}>
-              {subtitle}
+        ) : (
+          <Box sx={{ minWidth: 0 }}>
+            <Typography sx={{ fontSize: '0.95rem', fontWeight: 600, color: colors.text.primary, lineHeight: 1.2 }}>
+              {title}
             </Typography>
-          )}
-        </Box>
+            {subtitle && (
+              <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, lineHeight: 1.3 }}>
+                {subtitle}
+              </Typography>
+            )}
+          </Box>
+        )}
       </Box>
       {action && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

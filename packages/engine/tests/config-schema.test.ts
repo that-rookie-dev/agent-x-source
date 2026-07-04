@@ -106,6 +106,47 @@ describe('ConfigSchema', () => {
     expect(parsed.agents).toEqual(config.agents);
   });
 
+  it('preserves notification channels on parse', () => {
+    const config = {
+      provider: {
+        activeProvider: 'openai',
+        activeModel: 'gpt-4o',
+        providers: {
+          openai: {
+            apiKey: 'sk-test',
+            configured: true,
+          },
+        },
+      },
+      ui: {
+        theme: 'dark',
+        showTokenBar: true,
+        showTimers: true,
+        animationSpeed: 'normal',
+      },
+      user: {
+        callsign: 'tester',
+      },
+      channels: {
+        telegram: {
+          enabled: true,
+          inbound: true,
+          outbound: true,
+          botToken: '123:ABC',
+          chatId: '999',
+        },
+        slack: { enabled: false, inbound: true, outbound: true },
+      },
+    };
+
+    const parsed = agentXConfigSchema.parse(config);
+
+    expect(parsed.channels?.telegram?.enabled).toBe(true);
+    expect(parsed.channels?.telegram?.botToken).toBe('123:ABC');
+    expect(parsed.channels?.telegram?.chatId).toBe('999');
+    expect(parsed.channels?.slack?.enabled).toBe(false);
+  });
+
   it('allows localModel and featureRouting to be omitted', () => {
     const config = {
       provider: {

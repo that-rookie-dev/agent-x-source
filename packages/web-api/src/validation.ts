@@ -210,14 +210,41 @@ export const changePasswordSchema = z.object({
   newPassword: z.string().min(8, 'New password must be at least 8 characters'),
 });
 
-export const mcpServerSchema = z.object({
-  name: z.string().min(1),
-  command: z.string().min(1),
-  args: z.array(z.string()).optional(),
+export const connectIntegrationSchema = z.object({
+  authMode: z.enum(['oauth', 'sign_in_browser', 'api_key_form', 'none', 'stdio', 'env', 'remote_url', 'import_config']).optional(),
   env: z.record(z.string()).optional(),
-  timeout: z.number().positive().optional(),
-  permissionLevel: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-  maxOutputSize: z.number().positive().optional(),
+  displayName: z.string().optional(),
+  stdio: z.object({
+    command: z.string().min(1),
+    args: z.array(z.string()).optional(),
+    cwd: z.string().optional(),
+  }).optional(),
+  remote: z.object({
+    url: z.string().url(),
+  }).optional(),
+});
+
+export const mcpImportSchema = z.object({
+  mcpServers: z.record(z.object({
+    command: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string()).optional(),
+    url: z.string().url().optional(),
+  })),
+});
+
+export const integrationRunToolSchema = z.object({
+  toolName: z.string().min(1),
+  args: z.record(z.unknown()).optional(),
+});
+
+export const integrationSettingsSchema = z.object({
+  allowedProviderIds: z.array(z.string()).optional(),
+  healthPollingEnabled: z.boolean().optional(),
+  healthPollIntervalMs: z.number().int().min(30_000).optional(),
+  catalogRemoteUrl: z.string().url().optional().or(z.literal('')),
+  oauthClientIds: z.record(z.string()).optional(),
+  showCandidateProviders: z.boolean().optional(),
 });
 
 // ─── Memory fabric schemas ──────────────────────────────────────

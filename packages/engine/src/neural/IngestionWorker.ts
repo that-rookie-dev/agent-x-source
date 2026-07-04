@@ -35,6 +35,7 @@ export interface IngestionWorkerOptions {
 export class IngestionWorker {
   private queue: IngestionQueue;
   private running = false;
+  private paused = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private active = 0;
   private embed: (text: string) => Promise<number[]>;
@@ -82,11 +83,36 @@ export class IngestionWorker {
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.paused = false;
     this.scheduleNext();
+  }
+
+  /** Pause polling — in-flight jobs may finish; no new ticks until resume(). */
+  pause(): void {
+    this.paused = true;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  resume(): void {
+    if (!this.running) {
+      this.start();
+      return;
+    }
+    if (!this.paused) return;
+    this.paused = false;
+    this.scheduleNext();
+  }
+
+  isPaused(): boolean {
+    return this.paused;
   }
 
   stop(): void {
     this.running = false;
+    this.paused = false;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -94,7 +120,7 @@ export class IngestionWorker {
   }
 
   private scheduleNext(): void {
-    if (!this.running) return;
+    if (!this.running || this.paused) return;
     const pollIntervalMs = this.options.pollIntervalMs ?? 5000;
     this.timer = setTimeout(() => {
       void this.tick();
@@ -102,7 +128,7 @@ export class IngestionWorker {
   }
 
   private async tick(): Promise<void> {
-    if (!this.running) return;
+    if (!this.running || this.paused) return;
     const concurrency = this.options.concurrency ?? 1;
     const kinds = this.options.kinds ?? ['web_distill', 'document_ingest', 're_extract', 'memory_consolidate', 'louvain_layout', 'community_summarize'];
     const limit = Math.max(1, concurrency - this.active);

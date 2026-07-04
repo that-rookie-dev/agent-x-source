@@ -92,10 +92,59 @@ export const featureRoutingConfigSchema = z.object({
   graphRagSummarization: z.enum(['cloud', 'local']).optional(),
 }).optional();
 
+export const webSearchPaidProviderSchema = z.object({
+  enabled: z.boolean().default(false),
+  apiKey: z.string().optional(),
+});
+
+export const webSearchToolsConfigSchema = z.object({
+  duckduckgo: z.object({ enabled: z.boolean().default(true) }).optional(),
+  brave: webSearchPaidProviderSchema.optional(),
+  exa: webSearchPaidProviderSchema.optional(),
+  tavily: webSearchPaidProviderSchema.optional(),
+}).optional();
+
+export const toolsConfigSchema = z.object({
+  webSearch: webSearchToolsConfigSchema,
+}).optional();
+
+const channelDirectionSchema = z.object({
+  enabled: z.boolean().optional(),
+  inbound: z.boolean().optional(),
+  outbound: z.boolean().optional(),
+});
+
+export const notificationChannelsConfigSchema = z.object({
+  telegram: channelDirectionSchema.extend({
+    botToken: z.string().optional(),
+    chatId: z.string().optional(),
+  }).optional(),
+  slack: channelDirectionSchema.extend({
+    webhookUrl: z.string().optional(),
+    botToken: z.string().optional(),
+    appToken: z.string().optional(),
+  }).optional(),
+  email: channelDirectionSchema.extend({
+    smtpHost: z.string().optional(),
+    smtpPort: z.number().optional(),
+    smtpUser: z.string().optional(),
+    smtpPassword: z.string().optional(),
+    fromAddress: z.string().optional(),
+    toAddress: z.string().optional(),
+    useTls: z.boolean().optional(),
+  }).optional(),
+  discord: channelDirectionSchema.extend({
+    webhookUrl: z.string().optional(),
+    botToken: z.string().optional(),
+    channelId: z.string().optional(),
+  }).optional(),
+}).optional();
+
 export const agentXConfigSchema = z.object({
   provider: z.object({
     activeProvider: providerIdSchema,
     activeModel: z.string(),
+    activeReasoningEffort: z.string().optional(),
     providers: z.record(providerCredentialsSchema),
   }),
   localModel: localModelConfigSchema,
@@ -118,6 +167,8 @@ export const agentXConfigSchema = z.object({
   }).optional(),
   setupComplete: z.boolean().optional(),
   rag: ragConfigSchema,
+  tools: toolsConfigSchema,
+  channels: notificationChannelsConfigSchema,
   maxSubAgents: z.number().min(1).max(20).optional(),
   maxSteps: z.number().int().min(1).max(100).optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),

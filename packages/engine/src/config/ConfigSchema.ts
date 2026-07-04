@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { providerIdSchema, localModelConfigSchema, featureRoutingConfigSchema } from '@agentx/shared';
+import {
+  providerIdSchema,
+  localModelConfigSchema,
+  featureRoutingConfigSchema,
+  notificationChannelsConfigSchema,
+  toolsConfigSchema,
+} from '@agentx/shared';
 
 export const providerProfileSchema = z.object({
   label: z.string().min(1),
@@ -19,6 +25,7 @@ export const providerCredentialsSchema = z.object({
 export const providerSettingsSchema = z.object({
   activeProvider: providerIdSchema,
   activeModel: z.string(),
+  activeReasoningEffort: z.string().optional(),
   providers: z.record(z.string(), providerCredentialsSchema),
 });
 
@@ -57,21 +64,7 @@ export const ragConfigSchema = z.object({
   minScore: z.number().default(0.0),
 }).optional();
 
-export const webSearchPaidProviderSchema = z.object({
-  enabled: z.boolean().default(false),
-  apiKey: z.string().optional(),
-});
-
-export const webSearchToolsConfigSchema = z.object({
-  duckduckgo: z.object({ enabled: z.boolean().default(true) }).optional(),
-  brave: webSearchPaidProviderSchema.optional(),
-  exa: webSearchPaidProviderSchema.optional(),
-  tavily: webSearchPaidProviderSchema.optional(),
-}).optional();
-
-export const toolsConfigSchema = z.object({
-  webSearch: webSearchToolsConfigSchema,
-}).optional();
+export { notificationChannelsConfigSchema, toolsConfigSchema } from '@agentx/shared';
 
 export const agentXConfigSchema = z.object({
   provider: providerSettingsSchema,
@@ -83,6 +76,7 @@ export const agentXConfigSchema = z.object({
   setupComplete: z.boolean().optional(),
   rag: ragConfigSchema,
   tools: toolsConfigSchema,
+  channels: notificationChannelsConfigSchema,
   localModel: localModelConfigSchema,
   featureRouting: featureRoutingConfigSchema,
   maxSubAgents: z.number().int().min(1).max(20).optional(),

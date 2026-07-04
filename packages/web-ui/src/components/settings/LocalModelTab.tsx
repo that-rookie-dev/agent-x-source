@@ -10,7 +10,17 @@ import SaveIcon from '@mui/icons-material/Save';
 import CloudIcon from '@mui/icons-material/Cloud';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { localModel } from '../../api';
-import { colors } from '../../theme';
+import {
+  settingsTheme,
+  settingsMonoSx,
+  settingsHelperSx,
+  settingsBtnPrimarySx,
+  settingsBtnGhostSx,
+  settingsBtnSignalSx,
+  settingsBtnDangerSx,
+  settingsStatusBadgeSx,
+} from '../../styles/settings-theme';
+import { SettingsCard } from './SettingsCard';
 import { DownloadIndicator, type ActiveDownload } from '../DownloadIndicator';
 
 interface ModelOption {
@@ -78,21 +88,6 @@ interface InstalledModel {
   dtype?: string;
   isActive: boolean;
 }
-
-const cardSx = {
-  bgcolor: colors.bg.secondary,
-  border: `1px solid ${colors.border.default}`,
-  borderRadius: '8px',
-  p: 3,
-  mb: 2,
-};
-
-const helperSx = {
-  fontSize: '0.65rem',
-  color: colors.text.dim,
-  mt: 0.5,
-  lineHeight: 1.5,
-};
 
 export function LocalModelTab() {
   const [status, setStatus] = useState<LocalModelStatus | null>(null);
@@ -230,9 +225,9 @@ export function LocalModelTab() {
   if (loading) {
     return (
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1.5, p: 6 }}>
-        <CircularProgress size={16} sx={{ color: colors.text.dim }} />
-        <Typography sx={{ fontSize: '0.75rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-          Loading local model info…
+        <CircularProgress size={16} sx={{ color: settingsTheme.text.dim }} />
+        <Typography sx={{ fontSize: '0.75rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+          ◈ LOADING LOCAL MATRIX…
         </Typography>
       </Box>
     );
@@ -240,11 +235,11 @@ export function LocalModelTab() {
 
   if (error) {
     return (
-      <Box sx={cardSx}>
-        <Alert severity="error" sx={{ bgcolor: 'rgba(255,77,77,0.1)', fontSize: '0.75rem' }}>
+      <SettingsCard title="Error">
+        <Alert severity="error" sx={{ bgcolor: `${settingsTheme.accent.alert}12`, fontSize: '0.75rem', ...settingsMonoSx }}>
           {error}
         </Alert>
-      </Box>
+      </SettingsCard>
     );
   }
 
@@ -253,21 +248,21 @@ export function LocalModelTab() {
 
   if (!localModelSupported) {
     return (
-      <Box sx={cardSx}>
+      <SettingsCard>
         <Alert
           severity="info"
           sx={{
-            bgcolor: colors.accent.blue + '12',
-            border: `1px solid ${colors.accent.blue}30`,
-            color: colors.text.secondary,
+            bgcolor: `${settingsTheme.accent.hud}12`,
+            border: `1px solid ${settingsTheme.accent.hud}30`,
+            color: settingsTheme.text.secondary,
             fontSize: '0.7rem',
-            '& .MuiAlert-icon': { color: colors.accent.blue },
+            ...settingsMonoSx,
+            '& .MuiAlert-icon': { color: settingsTheme.accent.hud },
           }}
         >
-          Local model is unavailable because this machine has less than 32 GB of RAM.
-          Agent-X will use the Primary Model for generation and memory features.
+          Local model unavailable — machine has less than 32 GB RAM. Primary cloud model will be used.
         </Alert>
-      </Box>
+      </SettingsCard>
     );
   }
 
@@ -278,244 +273,160 @@ export function LocalModelTab() {
           severity="warning"
           sx={{
             mb: 2,
-            bgcolor: colors.accent.orange + '12',
-            border: `1px solid ${colors.accent.orange}30`,
-            color: colors.text.secondary,
+            bgcolor: `${settingsTheme.accent.amber}12`,
+            border: `1px solid ${settingsTheme.accent.amber}30`,
+            color: settingsTheme.text.secondary,
             fontSize: '0.7rem',
-            '& .MuiAlert-icon': { color: colors.accent.orange },
+            ...settingsMonoSx,
+            '& .MuiAlert-icon': { color: settingsTheme.accent.amber },
           }}
         >
-          No local model is enabled. Memory extraction, consolidation, and distillation will run against your primary cloud provider, which can add latency and cost. Download or activate a local model below to keep these background tasks offline.
+          No local model enabled. Background memory tasks will use your primary cloud provider.
         </Alert>
       )}
 
-      <Box sx={cardSx}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, color: colors.text.primary }}>
-            Active Local Model
-          </Typography>
+      <SettingsCard title="Active Unit" subtitle="Currently deployed local inference engine">
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', mb: 1, mt: -1 }}>
           <DownloadIndicator downloads={activeDownloads} onClear={clearDownload} />
         </Box>
 
         {activeModelId && status?.model ? (
           <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-              <Typography sx={{ fontSize: '0.75rem', color: colors.accent.green, fontWeight: 600 }}>● Active</Typography>
-              <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary }}>
+              <Box sx={settingsStatusBadgeSx('active')}>ONLINE</Box>
+              <Typography sx={{ fontSize: '0.7rem', color: settingsTheme.text.secondary, ...settingsMonoSx }}>
                 {status.model.displayName} · {status.model.sizeGB} GB
               </Typography>
             </Box>
-            <Typography sx={helperSx}>ID: {status.model.huggingFaceId}</Typography>
+            <Typography sx={settingsHelperSx}>ID: {status.model.huggingFaceId}</Typography>
             {status.model.downloadedAt && (
-              <Typography sx={helperSx}>Activated: {new Date(status.model.downloadedAt).toLocaleString()}</Typography>
+              <Typography sx={settingsHelperSx}>Deployed: {new Date(status.model.downloadedAt).toLocaleString()}</Typography>
             )}
-            <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<CloudIcon />}
-                onClick={handleSwitchToPrimary}
-                disabled={switching}
-                sx={{
-                  fontSize: '0.7rem',
-                  textTransform: 'none',
-                  borderColor: colors.accent.blue + '50',
-                  color: colors.accent.blue,
-                  '&:hover': { borderColor: colors.accent.blue, bgcolor: colors.accent.blue + '10' },
-                }}
-              >
-                {switching ? 'Switching…' : 'Use Primary Provider'}
+            <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
+              <Button variant="outlined" size="small" startIcon={<CloudIcon />}
+                onClick={handleSwitchToPrimary} disabled={switching} sx={settingsBtnGhostSx}>
+                {switching ? 'Switching…' : 'Use Primary'}
               </Button>
             </Box>
           </Box>
         ) : (
-          <Typography sx={{ fontSize: '0.75rem', color: colors.text.dim }}>
-            No local model is currently active. Select a downloaded model below and click Save to activate it, or download a new one.
+          <Typography sx={{ fontSize: '0.72rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+            No local unit active. Select and deploy from the arsenal below.
           </Typography>
         )}
-      </Box>
+      </SettingsCard>
 
-      <Box sx={cardSx}>
-        <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, color: colors.text.primary, mb: 2 }}>
-          Manage Local Models
-        </Typography>
-
+      <SettingsCard title="Model Arsenal" subtitle="Available local inference units">
         {catalog?.catalog && (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {catalog.catalog
-              .slice()
-              .sort((a, b) => a.rank - b.rank)
-              .map((model) => {
-                const canRun = canRunModel(model);
-                const installed = installedModels.find((m) => m.modelId === model.id);
-                const isInstalled = Boolean(installed);
-                const isActive = activeModelId === model.id;
-                const isSelected = selectedModelId === model.id;
-                const activeDownload = activeDownloads.find((d) => d.modelId === model.id);
-                const isRecommended = model.id === catalog.recommended;
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+            {catalog.catalog.slice().sort((a, b) => a.rank - b.rank).map((model) => {
+              const canRun = canRunModel(model);
+              const installed = installedModels.find((m) => m.modelId === model.id);
+              const isInstalled = Boolean(installed);
+              const isActive = activeModelId === model.id;
+              const isSelected = selectedModelId === model.id;
+              const activeDownload = activeDownloads.find((d) => d.modelId === model.id);
+              const isRecommended = model.id === catalog.recommended;
 
-                return (
-                  <Box
-                    key={model.id}
-                    sx={{
-                      p: 2,
-                      borderRadius: '8px',
-                      border: isSelected ? `1.5px solid ${colors.accent.blue}` : `1px solid ${colors.border.default}`,
-                      bgcolor: isSelected ? colors.accent.blue + '08' : colors.bg.secondary,
-                      opacity: canRun ? 1 : 0.55,
-                      cursor: canRun ? 'pointer' : 'not-allowed',
-                      transition: 'all 0.15s ease',
-                      '&:hover': canRun ? { borderColor: colors.accent.blue } : {},
-                    }}
-                    onClick={() => canRun && setSelectedModelId(model.id)}
-                  >
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography sx={{ fontSize: '0.75rem', fontWeight: 700, color: colors.text.primary, minWidth: 24 }}>
-                          #{model.rank}
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, color: colors.text.primary }}>
-                          {model.displayName}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center' }}>
-                        {isActive && (
-                          <Typography sx={{ fontSize: '0.55rem', color: colors.accent.green, fontWeight: 600 }}>ACTIVE</Typography>
-                        )}
-                        {isInstalled && !isActive && (
-                          <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontWeight: 600 }}>INSTALLED</Typography>
-                        )}
-                        {isRecommended && !isInstalled && (
-                          <Typography sx={{ fontSize: '0.55rem', fontWeight: 700, px: 0.6, py: 0.2, bgcolor: colors.accent.blue, color: '#000', borderRadius: '3px' }}>
-                            RECOMMENDED
-                          </Typography>
-                        )}
-                        <Typography sx={{ fontSize: '0.55rem', fontWeight: 600, px: 0.6, py: 0.2, bgcolor: colors.bg.tertiary, color: colors.text.secondary, borderRadius: '3px' }}>
-                          {model.bestFor}
-                        </Typography>
-                      </Box>
-                    </Box>
-
-                    <Typography sx={{ fontSize: '0.62rem', color: colors.text.secondary, lineHeight: 1.35, mb: 1 }}>
-                      {model.description}
-                    </Typography>
-
-                    <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, lineHeight: 1.4, mb: 1, fontStyle: 'italic' }}>
-                      {model.recommendation}
-                    </Typography>
-
-                    <Box sx={{ display: 'flex', gap: 1, fontSize: '0.58rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", mb: 1 }}>
-                      <span>{model.sizeGB} GB</span>
-                      <span>·</span>
-                      <span>{model.ramRequirementGB} GB RAM</span>
-                      <span>·</span>
-                      <span>{model.minCpuCores} cores</span>
-                      <span>·</span>
-                      <span>{model.capabilities.speed}</span>
-                      {model.capabilities.multilingual && <span>· multilingual</span>}
-                    </Box>
-
-                    {!canRun && (
-                      <Typography sx={{ fontSize: '0.55rem', color: colors.accent.red, fontFamily: "'JetBrains Mono', monospace" }}>
-                        Needs {model.ramRequirementGB} GB RAM / {model.minCpuCores} cores
+              return (
+                <Box
+                  key={model.id}
+                  sx={{
+                    p: 1.75,
+                    borderRadius: '4px',
+                    border: isSelected ? `1px solid ${settingsTheme.accent.hud}` : `1px solid ${settingsTheme.border.default}`,
+                    bgcolor: isSelected ? settingsTheme.bg.hud : settingsTheme.bg.inset,
+                    opacity: canRun ? 1 : 0.5,
+                    cursor: canRun ? 'pointer' : 'not-allowed',
+                    transition: 'all 0.15s ease',
+                    '&:hover': canRun ? { borderColor: settingsTheme.border.hud } : {},
+                  }}
+                  onClick={() => canRun && setSelectedModelId(model.id)}
+                >
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.75 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Typography sx={{ ...settingsMonoSx, fontSize: '0.65rem', fontWeight: 700, color: settingsTheme.text.dim }}>
+                        #{model.rank}
                       </Typography>
-                    )}
-
-                    {isSelected && canRun && (
-                      <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap' }}>
-                        {activeDownload ? (
-                          <Box sx={{ flex: 1 }}>
-                            <Box sx={{ height: 3, bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 1, mb: 0.5, overflow: 'hidden' }}>
-                              <Box sx={{ height: '100%', bgcolor: colors.accent.blue, width: `${activeDownload.progress}%`, transition: 'width 0.3s' }} />
-                            </Box>
-                            <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, textAlign: 'center', fontFamily: "'JetBrains Mono', monospace" }}>
-                              {activeDownload.status === 'complete' ? 'Complete' : `${activeDownload.progress}%`}
-                            </Typography>
-                          </Box>
-                        ) : (
-                          <>
-                            {isInstalled ? (
-                              <>
-                                <Button
-                                  variant="outlined"
-                                  size="small"
-                                  startIcon={<DeleteIcon />}
-                                  onClick={() => handleDelete(model.id)}
-                                  disabled={deleting === model.id}
-                                  sx={{
-                                    fontSize: '0.65rem',
-                                    textTransform: 'none',
-                                    borderColor: colors.accent.red + '50',
-                                    color: colors.accent.red,
-                                    '&:hover': { borderColor: colors.accent.red, bgcolor: colors.accent.red + '10' },
-                                  }}
-                                >
-                                  {deleting === model.id ? 'Deleting…' : 'Delete'}
-                                </Button>
-                                {!isActive && (
-                                  <Button
-                                    variant="contained"
-                                    size="small"
-                                    startIcon={saving ? <CircularProgress size={12} sx={{ color: '#000' }} /> : <SaveIcon />}
-                                    onClick={() => handleActivate(model.id)}
-                                    disabled={saving}
-                                    sx={{
-                                      fontSize: '0.65rem',
-                                      textTransform: 'none',
-                                      bgcolor: colors.accent.green,
-                                      color: '#000',
-                                      py: 0.5,
-                                      minHeight: 28,
-                                    }}
-                                  >
-                                    {saving ? 'Saving…' : 'Save as Active'}
-                                  </Button>
-                                )}
-                                {isActive && (
-                                  <Button
-                                    variant="outlined"
-                                    size="small"
-                                    startIcon={<CheckCircleIcon />}
-                                    disabled
-                                    sx={{
-                                      fontSize: '0.65rem',
-                                      textTransform: 'none',
-                                      borderColor: colors.accent.green + '50',
-                                      color: colors.accent.green,
-                                    }}
-                                  >
-                                    Active
-                                  </Button>
-                                )}
-                              </>
-                            ) : (
-                              <Button
-                                variant="contained"
-                                size="small"
-                                startIcon={<DownloadIcon />}
-                                onClick={() => startDownload(model)}
-                                sx={{
-                                  fontSize: '0.65rem',
-                                  textTransform: 'none',
-                                  bgcolor: colors.accent.blue,
-                                  color: '#000',
-                                  py: 0.5,
-                                  minHeight: 28,
-                                }}
-                              >
-                                Download
-                              </Button>
-                            )}
-                          </>
-                        )}
-                      </Box>
-                    )}
+                      <Typography sx={{ ...settingsMonoSx, fontSize: '0.72rem', fontWeight: 700, color: settingsTheme.text.primary }}>
+                        {model.displayName}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                      {isActive && <Box sx={settingsStatusBadgeSx('active')}>ACTIVE</Box>}
+                      {isInstalled && !isActive && <Box sx={settingsStatusBadgeSx('idle')}>READY</Box>}
+                      {isRecommended && !isInstalled && (
+                        <Box sx={{ ...settingsStatusBadgeSx('active'), bgcolor: `${settingsTheme.accent.hud}22`, color: settingsTheme.accent.hud, borderColor: `${settingsTheme.accent.hud}44` }}>
+                          PICK
+                        </Box>
+                      )}
+                    </Box>
                   </Box>
-                );
-              })}
+
+                  <Typography sx={{ fontSize: '0.6rem', color: settingsTheme.text.secondary, lineHeight: 1.35, mb: 0.75 }}>
+                    {model.description}
+                  </Typography>
+
+                  <Box sx={{ display: 'flex', gap: 1, ...settingsMonoSx, fontSize: '0.55rem', color: settingsTheme.text.dim, mb: 0.75 }}>
+                    <span>{model.sizeGB} GB</span><span>·</span>
+                    <span>{model.ramRequirementGB} GB RAM</span><span>·</span>
+                    <span>{model.minCpuCores} cores</span><span>·</span>
+                    <span>{model.capabilities.speed}</span>
+                  </Box>
+
+                  {!canRun && (
+                    <Typography sx={{ fontSize: '0.52rem', color: settingsTheme.accent.alert, ...settingsMonoSx }}>
+                      REQUIRES {model.ramRequirementGB} GB RAM / {model.minCpuCores} cores
+                    </Typography>
+                  )}
+
+                  {isSelected && canRun && (
+                    <Box sx={{ display: 'flex', gap: 1, mt: 1.25, flexWrap: 'wrap' }}>
+                      {activeDownload ? (
+                        <Box sx={{ flex: 1 }}>
+                          <Box sx={{ height: 3, bgcolor: 'rgba(255,255,255,0.08)', borderRadius: 1, mb: 0.5, overflow: 'hidden' }}>
+                            <Box sx={{ height: '100%', bgcolor: settingsTheme.accent.hud, width: `${activeDownload.progress}%`, transition: 'width 0.3s' }} />
+                          </Box>
+                          <Typography sx={{ ...settingsMonoSx, fontSize: '0.52rem', color: settingsTheme.text.dim, textAlign: 'center' }}>
+                            {activeDownload.status === 'complete' ? 'Complete' : `${activeDownload.progress}%`}
+                          </Typography>
+                        </Box>
+                      ) : isInstalled ? (
+                        <>
+                          <Button variant="outlined" size="small" startIcon={<DeleteIcon />}
+                            onClick={() => handleDelete(model.id)} disabled={deleting === model.id}
+                            sx={settingsBtnDangerSx}>
+                            {deleting === model.id ? 'Purging…' : 'Purge'}
+                          </Button>
+                          {!isActive && (
+                            <Button variant="contained" size="small"
+                              startIcon={saving ? <CircularProgress size={12} sx={{ color: '#000' }} /> : <SaveIcon />}
+                              onClick={() => handleActivate(model.id)} disabled={saving}
+                              sx={settingsBtnSignalSx}>
+                              {saving ? 'Deploying…' : 'Deploy'}
+                            </Button>
+                          )}
+                          {isActive && (
+                            <Button variant="outlined" size="small" startIcon={<CheckCircleIcon />} disabled
+                              sx={{ ...settingsBtnGhostSx, borderColor: `${settingsTheme.accent.signal}55`, color: settingsTheme.accent.signal }}>
+                              Active
+                            </Button>
+                          )}
+                        </>
+                      ) : (
+                        <Button variant="contained" size="small" startIcon={<DownloadIcon />}
+                          onClick={() => startDownload(model)} sx={settingsBtnPrimarySx}>
+                          Download
+                        </Button>
+                      )}
+                    </Box>
+                  )}
+                </Box>
+              );
+            })}
           </Box>
         )}
-      </Box>
+      </SettingsCard>
     </Box>
   );
 }

@@ -322,3 +322,60 @@ export function buildTextQuestionnaire(opts: {
     }],
   };
 }
+
+type QuestionnairePart = {
+  type?: string;
+  questionnaire?: { status?: string; answer?: string };
+};
+
+type HistoryMessageLike = {
+  role?: string;
+  content?: string;
+  parts?: unknown;
+};
+
+/** Collect answered questionnaire text from assistant message parts (chronological). */
+export function collectAnsweredQuestionnaireTexts(messages: HistoryMessageLike[]): string[] {
+  const answers: string[] = [];
+  for (const msg of messages) {
+    if (msg.role !== 'assistant' || !Array.isArray(msg.parts)) continue;
+    for (const part of msg.parts as QuestionnairePart[]) {
+      if (part.type !== 'questionnaire') continue;
+      const answer = part.questionnaire?.answer?.trim();
+      if (part.questionnaire?.status === 'answered' && answer) {
+        answers.push(answer);
+      }
+    }
+  }
+  return answers;
+}
+
+/**
+ * Build LLM history entries from stored messages, injecting questionnaire answers
+ * as user-role context (answers live in assistant message parts, not content).
+ */
+export function hydrateMessageHistoryEntries(
+  messages: HistoryMessageLike[],
+): Array<{ role: 'user' | 'assistant' | 'system'; content: string }> {
+  const entries: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
+  for (const msg of messages) {
+    const role = msg.role;
+    if (role !== 'user' && role !== 'assistant' && role !== 'system') continue;
+    if (role === 'system' && !msg.content?.includes('[TURN TOOL LEDGER]')) continue;
+
+    if (msg.content?.trim()) {
+      entries.push({ role: role as 'user' | 'assistant' | 'system', content: msg.content });
+    }
+
+    if (role === 'assistant' && Array.isArray(msg.parts)) {
+      for (const part of msg.parts as QuestionnairePart[]) {
+        if (part.type !== 'questionnaire') continue;
+        const answer = part.questionnaire?.answer?.trim();
+        if (part.questionnaire?.status === 'answered' && answer) {
+          entries.push({ role: 'user', content: answer });
+        }
+      }
+    }
+  }
+  return entries;
+}

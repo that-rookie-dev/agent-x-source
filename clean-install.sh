@@ -58,14 +58,11 @@ cd "$DESKTOP_DIR"
 pnpm run build
 pnpm exec electron-builder --mac --dir
 
-# 9. Copy to /Applications (use ditto to preserve symlinks / extended attributes correctly).
+# 9. Install to /Applications + strip Gatekeeper quarantine in a SINGLE privileged call.
+#    Combining copy + chown + xattr avoids a second password prompt.
 echo ">>> Installing to /Applications (password prompt may appear)..."
 CURRENT_USER=$(whoami)
-osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && ditto '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/Agent-X.app && chown -R '$CURRENT_USER:staff' /Applications/Agent-X.app\" with administrator privileges"
-
-# 10. Remove Gatekeeper quarantine so the ad-hoc signed app can launch without right-click > Open
-echo ">>> Removing Gatekeeper quarantine from Agent-X.app..."
-osascript -e "do shell script \"xattr -rd com.apple.quarantine /Applications/Agent-X.app 2>/dev/null || true\" with administrator privileges"
+osascript -e "do shell script \"rm -rf /Applications/Agent-X.app && ditto '$DESKTOP_DIR/release/mac-arm64/Agent-X.app' /Applications/Agent-X.app && chown -R '$CURRENT_USER:staff' /Applications/Agent-X.app && xattr -rd com.apple.quarantine /Applications/Agent-X.app 2>/dev/null || true\" with administrator privileges"
 
 # 11. Launch
 echo ">>> Launching Agent-X..."

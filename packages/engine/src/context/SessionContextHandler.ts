@@ -175,6 +175,7 @@ export class SessionContextHandler {
     messages: Array<{ role: string; content: string }>,
     currentUserMessage: string,
     maxBlockChars?: number,
+    skipRecentExchange?: boolean,
   ): TurnInjectionResult {
     const priorUsers = messages
       .filter((m) => m.role === 'user')
@@ -189,6 +190,7 @@ export class SessionContextHandler {
       scopePath: this.scopePath,
       structuredSummary: '',
       maxBlockChars: 800,
+      skipRecentExchange,
     });
 
     const narrativeBlock = this.getNarrativeBlock();

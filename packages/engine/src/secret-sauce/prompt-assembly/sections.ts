@@ -150,6 +150,44 @@ export function createRulesSection(): PromptSection<string> {
   };
 }
 
+/** Short rules for compact/local model context profiles. */
+export function createCompactRulesSection(): PromptSection<string> {
+  const RULES = [
+    `[RULES]`,
+    `ACT IMMEDIATELY — use tools when needed; do not narrate your process.`,
+    `Use ask_clarification for questions (never plain-chat questions).`,
+    `Use glob/grep/file_read to explore; shell_exec for commands.`,
+    `Be concise. First-person. Answer the latest user message.`,
+    `Search memory_fabric_search when the question may involve uploaded documents.`,
+    `[/RULES]`,
+  ].join('\n');
+  return {
+    key: 'core/rules-compact',
+    load: () => RULES,
+    render: (text) => text,
+    diff: () => null,
+  };
+}
+
+/** Prevents third-person meta-narration on small local models. */
+export function createLocalPersonaGuardSection(): PromptSection<string> {
+  const GUARD = [
+    `[LOCAL_MODEL_PERSONA]`,
+    `You ARE Agent-X speaking directly to the user in first person.`,
+    `- Never narrate the conversation in third person ("Based on the conversation between Agent-X and...").`,
+    `- Never prefix replies with "assistant:" or role labels.`,
+    `- Answer the user's latest message directly; do not summarize prior turns unless asked.`,
+    `- Keep replies concise; use tools when they help.`,
+    `[/LOCAL_MODEL_PERSONA]`,
+  ].join('\n');
+  return {
+    key: 'core/local-persona',
+    load: () => GUARD,
+    render: (text) => text,
+    diff: () => null,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // Crew private chat — conversational specialist (not Agent-X executor)
 // ─────────────────────────────────────────────────────────────
@@ -330,6 +368,9 @@ export function createCurrentTimeSection(ctx: SectionContext): PromptSection<{
   local: string;
   offset: string;
 }> {
+  const renderTime = (t: { iso: string; timezone: string; local: string; offset: string }, updated = false) =>
+    `[CURRENT_TIME${updated ? ' — UPDATED' : ''}]\nNow: ${t.iso}\nUser timezone: ${t.timezone}\nLocal time (user): ${t.local}\nUTC offset: ${t.offset}\n[/CURRENT_TIME]`;
+
   return {
     key: 'core/current-time',
     load: () => ({
@@ -338,27 +379,42 @@ export function createCurrentTimeSection(ctx: SectionContext): PromptSection<{
       local: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: ctx.getUserTimezone() }),
       offset: ctx.getUtcOffset(),
     }),
-    render: (t) =>
-      `[CURRENT_TIME]\nNow: ${t.iso}\nUser timezone: ${t.timezone}\nLocal time (user): ${t.local}\nUTC offset: ${t.offset}\n[/CURRENT_TIME]`,
-    diff: () => null, // Time is always correct at render time — no diff needed
+    render: (t) => renderTime(t),
+    diff: (prev, current) => {
+      if (!current) return null;
+      if (prev && JSON.stringify(prev) === JSON.stringify(current)) return null;
+      return renderTime(current as { iso: string; timezone: string; local: string; offset: string }, true);
+    },
   };
 }
 
 // ─────────────────────────────────────────────────────────────
-// Scheduling — static reminder_set instructions
+// Scheduling — automation only (LLM turn on fire)
 // ─────────────────────────────────────────────────────────────
 
 export function createSchedulingSection(): PromptSection<string> {
   const SCHEDULING = [
     `[SCHEDULING]`,
-    `For reminders and recurring tasks, use the reminder_set tool:`,
-    `- "remind me in X" / "ping me in X" / "alert me after X" → one-time (delay_seconds)`,
-    `- "remind me at <time>" / "at 5pm" / "at 3:30 PM" → one-time (at_time in ISO 8601)`,
-    `- "remind me every X" / "check every X" / "repeat every X" → recurring (interval_minutes)`,
-    `- For absolute times: use [CURRENT_TIME] to compute the ISO 8601 target. Include timezone offset.`,
-    `- Convert relative: "half an hour" = 1800s, "2 hours" = 7200s, "every day" = 1440 min`,
-    `- IMPORTANT: If user says a specific clock time, ALWAYS use at_time (not delay_seconds).`,
-    `- Confirm in plain language after setting: "Done! I'll ping you at 5:04 PM."`,
+    `All scheduling — reminders, pings, recurring checks, research, reports — uses automation tools (available in Plan and Agent mode):`,
+    ``,
+    `CRITICAL — future / reminder / "at <time>" / "in X minutes" requests:`,
+    `- Do NOT run web_search, deep_web_search, or other research NOW.`,
+    `- Call automation_register immediately with schedule + instruction for what to do at fire time.`,
+    `- The automation worker runs a full agent turn then — that is when research happens.`,
+    ``,
+    `Steps:`,
+    `1. Parse intent → title, instruction, schedule (once or recurring cron), required tools.`,
+    `2. Briefly confirm in chat what will run and when.`,
+    `3. Call automation_register — a notification channel questionnaire appears automatically; do not pass notify_channels yourself.`,
+    ``,
+    `Schedule mapping:`,
+    `- "remind me in X" / "ping me in X" → schedule_type=once, prefer delay_seconds (relative) OR run_at = [CURRENT_TIME] + delay (ISO 8601 with timezone)`,
+    `- "remind me at <time>" / "at 5pm" / "around 12:56 PM" → schedule_type=once, run_at = that clock time today/tomorrow (ISO 8601)`,
+    `- "every morning at 9am" / "check every hour" → schedule_type=recurring, cron (5-field)`,
+    `- For news/research at a future time: instruction = the research task; do NOT search before registering.`,
+    `- For simple reminders: instruction = the reminder message.`,
+    `- Use automation_list / automation_cancel to inspect or remove registered tasks.`,
+    `- After registering: "Done! I'll … at <time>." — do NOT ask to switch modes.`,
     `[/SCHEDULING]`,
   ].join('\n');
   return {
@@ -455,6 +511,49 @@ export function createHyperdriveSection(ctx: SectionContext): PromptSection<bool
 interface ChannelFocusState {
   connected: boolean;
   chatId: number | null;
+}
+
+export function createChannelSuperSessionSection(): PromptSection<null> {
+  return {
+    key: 'core/channel-super-session',
+    load: () => null,
+    render: () => [
+      '[SUPER_SESSION — MESSAGING CHANNEL]',
+      'You are Agent-X\'s global operator console on a messaging channel (Telegram, Slack, Discord, etc.).',
+      'You are NOT limited to this channel\'s chat history or session id.',
+      'You have fleet-wide visibility and control across the entire Agent-X installation:',
+      '- All chat sessions (Agent-X and crew-private)',
+      '- All automations — including those created in the web UI or other channels',
+      '- Notifications, settings, channel plugins, and the active workspace',
+      '- Crew roster, private specialist chats, and running automation runs',
+      '',
+      'Before answering questions about system state, other sessions, or background activity, call agent_x_overview (view: summary, sessions, automations, notifications, or settings).',
+      'For a specific session\'s recent context, use agent_x_overview with view=session_detail and session_id.',
+      'automation_list and automation_cancel operate on the full fleet from this channel.',
+      'File and shell tools use the active web UI workspace when one is open.',
+      '[/SUPER_SESSION — MESSAGING CHANNEL]',
+    ].join('\n'),
+    diff: () => null,
+  };
+}
+
+export function createChannelMessagingSection(): PromptSection<null> {
+  return {
+    key: 'core/channel-messaging',
+    load: () => null,
+    render: () => [
+      '[CHANNEL_MESSAGING]',
+      'You are responding on a messaging channel. Keep replies concise and mobile-friendly (markdown ok).',
+      'Plan Mode and Hyperdrive are NOT available — always operate in normal Agent execution mode.',
+      'Every tool use requires explicit user approval via inline buttons: Allow Once, Always Allow, or Deny.',
+      'Remembered permissions persist for this channel session until revoked.',
+      'When the user asks to see permissions, call channel_permissions with action "list".',
+      'When they ask to revoke one, several, or all permissions, call channel_permissions with action "revoke" and tools[] or revoke_all:true.',
+      'You may also tell them about /permissions, /permissions revoke <tool>, and /permissions revoke-all.',
+      '[/CHANNEL_MESSAGING]',
+    ].join('\n'),
+    diff: () => null,
+  };
 }
 
 export function createChannelFocusSection(ctx: SectionContext): PromptSection<ChannelFocusState> {

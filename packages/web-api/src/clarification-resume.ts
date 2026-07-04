@@ -1,5 +1,5 @@
 import type { Agent } from '@agentx/engine';
-import { getLogger } from '@agentx/shared';
+import { collectAnsweredQuestionnaireTexts, getLogger } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent } from './engine.js';
 import {
   runAgentTurnAsync,
@@ -85,14 +85,25 @@ function markQuestionnaireAnswered(
   });
 }
 
-export function buildQuestionnaireResumeInstruction(baseInstruction: string, answer: string): string {
+export function buildQuestionnaireResumeInstruction(baseInstruction: string, answers: string | string[]): string {
+  const answerBlock = (Array.isArray(answers) ? answers : [answers]).filter((a) => a.trim()).join('\n');
   return `${baseInstruction}
 
 [QUESTIONNAIRE_ALREADY_ANSWERED]
-The user submitted questionnaire answers (session may have reconnected). Continue the in-progress turn using these answers. Do not re-ask the same questionnaire.
+The user submitted questionnaire answers (session may have reconnected or the prior turn timed out). Continue the original request using ALL answers below. Do not re-ask these questions — deliver the complete response or plan now.
 
-${answer}
+${answerBlock}
 [/QUESTIONNAIRE_ALREADY_ANSWERED]`;
+}
+
+export function collectSessionQuestionnaireAnswers(sessionId: string, includeAnswer?: string): string[] {
+  const msgs = getMessageStore()?.getMessages?.(sessionId) ?? [];
+  const answers = collectAnsweredQuestionnaireTexts(msgs);
+  const extra = includeAnswer?.trim();
+  if (extra && !answers.includes(extra)) {
+    answers.push(extra);
+  }
+  return answers;
 }
 
 function agentSessionId(agent: Agent): string {
@@ -202,9 +213,10 @@ export async function handleClarificationRespond(
     const activeSess = getEngine().sessionManager.getActiveSession?.()
       ?? getEngine().sessionManager.getSessionById(sessionId);
     const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
+    const allAnswers = collectSessionQuestionnaireAnswers(sessionId, trimmed);
     const instruction = buildQuestionnaireResumeInstruction(
       buildInstructionForMode(mode, { crewPrivate: crewPrivateChat }) ?? '',
-      trimmed,
+      allAnswers.length > 0 ? allAnswers : trimmed,
     );
     const turn = turnRegistry.create(sessionId);
     runAgentTurnAsync(

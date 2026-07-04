@@ -13,6 +13,7 @@ import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import { embeddingModels, config as configApi } from '../api';
 import { colors } from '../theme';
+import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 
 // ── Sci-fi status messages (rotate every 3% progress, non-repeating) ────────
 const STATUS_MESSAGES = [
@@ -65,6 +66,7 @@ interface EmbeddingModelDownloadProps {
 }
 
 export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadProps) {
+  const neuralBrainSupported = useNeuralBrainSupported();
   const [models, setModels] = useState<ModelProgressState[]>([
     { id: 'bge-m3', displayName: 'BGE-M3 Neural Embedding Engine', status: 'not_started', downloadedMB: 0, totalMB: 600, percentage: 0 },
     { id: 'minilm', displayName: 'MiniLM Lightweight Embedder', status: 'not_started', downloadedMB: 0, totalMB: 55, percentage: 0 },
@@ -75,8 +77,18 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
   const usedMessageIndices = useRef<Set<number>>(new Set([0]));
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Low-RAM machines skip embedding downloads entirely.
+  useEffect(() => {
+    if (neuralBrainSupported) return;
+    void (async () => {
+      try { await configApi.update({ neuralBrain: false }); } catch { /* best effort */ }
+      onComplete();
+    })();
+  }, [neuralBrainSupported, onComplete]);
+
   // ── Starfield animation ──────────────────────────────────────────────────
   useEffect(() => {
+    if (!neuralBrainSupported) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -128,10 +140,11 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', resize);
     };
-  }, []);
+  }, [neuralBrainSupported]);
 
   // ── Start download + SSE progress stream ─────────────────────────────────
   const startDownload = useCallback(async () => {
+    if (!neuralBrainSupported) return;
     // Check if already downloaded.
     try {
       const status = await embeddingModels.status();
@@ -174,7 +187,7 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
     });
 
     return cleanup;
-  }, []);
+  }, [neuralBrainSupported]);
 
   /** Disable the neural brain module via config API, then proceed to callsign. */
   const disableNeuralBrainAndProceed = useCallback(async () => {
@@ -187,10 +200,11 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
 
   // Auto-start on mount.
   useEffect(() => {
+    if (!neuralBrainSupported) return;
     let cleanup: (() => void) | undefined;
     void (async () => { cleanup = await startDownload(); })();
     return () => { cleanup?.(); };
-  }, [startDownload]);
+  }, [startDownload, neuralBrainSupported]);
 
   // ── Overall percentage = total downloaded MB / total downloadable MB ──────
   const totalDownloadedMB = models.reduce((sum, m) => sum + m.downloadedMB, 0);
@@ -216,6 +230,19 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
       }
     }
   }, [overallPercentage]);
+
+  if (!neuralBrainSupported) {
+    return (
+      <Box sx={{ p: 3, border: `1px solid ${colors.border.default}`, borderRadius: 1, bgcolor: colors.bg.secondary }}>
+        <Typography variant="body2" sx={{ color: colors.text.secondary, mb: 1 }}>
+          Neural Core requires at least 16GB of system RAM. Skipping embedding model download on this machine.
+        </Typography>
+        <Typography variant="caption" sx={{ color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
+          RAG Studio and the neural brain stay disabled. Cloud models and chat remain available.
+        </Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ position: 'relative', width: '100%', minHeight: 420, overflow: 'hidden', borderRadius: 1, bgcolor: '#000', border: `1px solid ${colors.border.default}` }}>

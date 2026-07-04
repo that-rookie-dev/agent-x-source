@@ -8,7 +8,7 @@
  * their production dependencies from the pnpm workspace and copies them into
  * dist/node_modules.
  */
-import { readFileSync, cpSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, cpSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -23,9 +23,14 @@ const externalPackages = [
   'onnxruntime-web',
   'onnxruntime-common',
   'pdfjs-dist',
+  '@napi-rs/keyring',
 ];
 
 const copied = new Set();
+
+function packageDirLooksComplete(dir) {
+  return existsSync(join(dir, 'package.json'));
+}
 
 function resolvePackageDir(name, lookupPaths) {
   try {
@@ -66,7 +71,11 @@ function copyPackage(name, lookupPaths) {
   }
 
   const targetDir = join(targetModulesDir, name);
-  if (existsSync(targetDir)) return;
+  if (existsSync(targetDir)) {
+    if (packageDirLooksComplete(targetDir)) return;
+    console.warn(`Replacing incomplete copy of ${name} at ${targetDir}`);
+    rmSync(targetDir, { recursive: true, force: true });
+  }
 
   console.log(`Copying ${name}: ${sourceDir} -> ${targetDir}`);
   cpSync(sourceDir, targetDir, { recursive: true, dereference: true });

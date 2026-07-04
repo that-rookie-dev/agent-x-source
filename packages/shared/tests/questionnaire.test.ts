@@ -6,6 +6,8 @@ import {
   initialQuestionnaireState,
   canSubmitQuestionnaire,
   MAX_QUESTIONNAIRE_CHOICES,
+  collectAnsweredQuestionnaireTexts,
+  hydrateMessageHistoryEntries,
 } from '../src/utils/questionnaire.js';
 
 describe('normalizeAskClarificationArgs', () => {
@@ -65,5 +67,41 @@ describe('formatQuestionnaireAnswers', () => {
     state.choices = 'A';
     state['choices__custom'] = 'Something else';
     expect(formatQuestionnaireAnswers(payload, state)).toBe('Pick: Something else');
+  });
+});
+
+describe('collectAnsweredQuestionnaireTexts', () => {
+  it('collects answered questionnaire parts in order', () => {
+    const messages = [
+      { role: 'user', content: 'Plan a trip' },
+      {
+        role: 'assistant',
+        content: '',
+        parts: [{ type: 'questionnaire', questionnaire: { status: 'answered', answer: 'Dates: Oct 15–25' } }],
+      },
+      {
+        role: 'assistant',
+        content: '',
+        parts: [{ type: 'questionnaire', questionnaire: { status: 'answered', answer: 'Style: Beach' } }],
+      },
+    ];
+    expect(collectAnsweredQuestionnaireTexts(messages)).toEqual(['Dates: Oct 15–25', 'Style: Beach']);
+  });
+});
+
+describe('hydrateMessageHistoryEntries', () => {
+  it('injects questionnaire answers as user history entries', () => {
+    const entries = hydrateMessageHistoryEntries([
+      { role: 'user', content: 'Plan a trip' },
+      {
+        role: 'assistant',
+        content: '',
+        parts: [{ type: 'questionnaire', questionnaire: { status: 'answered', answer: 'Dates: Oct 15–25' } }],
+      },
+    ]);
+    expect(entries).toEqual([
+      { role: 'user', content: 'Plan a trip' },
+      { role: 'user', content: 'Dates: Oct 15–25' },
+    ]);
   });
 });

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
 import { colors } from '../theme';
 import { health, config as configApi } from '../api';
+import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 
 const NEURON_URL = (import.meta.env.VITE_NEURON_URL as string) || '/neuron';
 
@@ -20,12 +21,17 @@ export interface FooterProps {
 export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const [version, setVersion] = useState('');
   const [zoomHint] = useState(getZoomShortcutHint);
+  const neuralBrainSupported = useNeuralBrainSupported();
   const [neuralBrainDisabled, setNeuralBrainDisabled] = useState(false);
 
   useEffect(() => {
     health.check().then((h) => setVersion(h.version)).catch(() => {});
+    if (!neuralBrainSupported) {
+      setNeuralBrainDisabled(true);
+      return;
+    }
     configApi.get().then((cfg) => setNeuralBrainDisabled(cfg.neuralBrain === false)).catch(() => {});
-  }, []);
+  }, [neuralBrainSupported]);
 
   const handleBrainClick = () => {
     const agentx = (window as unknown as { agentx?: { openInternalWindow?: (url: string) => Promise<boolean> } }).agentx;

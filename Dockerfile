@@ -8,7 +8,6 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/engine/package.json packages/engine/
-COPY packages/mcp-servers/package.json packages/mcp-servers/
 COPY packages/web-api/package.json packages/web-api/
 COPY packages/web-ui/package.json packages/web-ui/
 RUN pnpm install --frozen-lockfile
@@ -27,17 +26,14 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY --from=deps /app/packages/engine/node_modules ./packages/engine/node_modules
-COPY --from=deps /app/packages/mcp-servers/node_modules ./packages/mcp-servers/node_modules
 COPY --from=deps /app/packages/web-api/node_modules ./packages/web-api/node_modules
 COPY --from=deps /app/packages/web-ui/node_modules ./packages/web-ui/node_modules
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/packages/engine/dist ./packages/engine/dist
-COPY --from=build /app/packages/mcp-servers/dist ./packages/mcp-servers/dist
 COPY --from=build /app/packages/web-api/dist ./packages/web-api/dist
 COPY --from=build /app/packages/web-ui/dist ./packages/web-ui/dist
 COPY --from=build /app/packages/shared/package.json ./packages/shared/
 COPY --from=build /app/packages/engine/package.json ./packages/engine/
-COPY --from=build /app/packages/mcp-servers/package.json ./packages/mcp-servers/
 COPY --from=build /app/packages/web-api/package.json ./packages/web-api/
 COPY --from=build /app/packages/web-ui/package.json ./packages/web-ui/
 COPY package.json pnpm-workspace.yaml ./
@@ -48,4 +44,5 @@ ENV AGENTX_DATA_DIR=/data
 
 VOLUME ["/data"]
 
-ENTRYPOINT ["node", "packages/web-api/dist/index.js"]
+EXPOSE 3000
+CMD ["node", "packages/web-api/dist/index.js"]

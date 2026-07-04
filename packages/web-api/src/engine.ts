@@ -15,12 +15,12 @@ import {
   PostgresStorageAdapter,
   Gateway,
   TelegramBridge,
+  TelegramChannelPlugin,
   DiscordBridge,
   SlackBridge,
   EmailBridge,
   RedisCacheRuntime,
   WebhookNotifierRuntime,
-  MCPBridge,
   SessionLogger,
   initLogCollector,
   getLogCollector,
@@ -34,13 +34,15 @@ import {
   applyWebSearchConfigFromAgentConfig,
   MemoryFabric,
   setLocalModelConfig,
+  IntegrationHub,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
-import { getDataDir, getLogger } from '@agentx/shared';
+import { getDataDir, getLogger, hydrateMessageHistoryEntries, isNeuralBrainSupported, isChannelSessionId } from '@agentx/shared';
+import os from 'node:os';
 import { resolveCrewPrivateHostForAgent } from './host-crew-session.js';
 import { persistClarificationResumeFromAgent } from './clarification-resume.js';
 
@@ -66,11 +68,13 @@ export interface EngineState {
   emailBridge: EmailBridge | null;
   redisRuntime: RedisCacheRuntime | null;
   webhookRuntime: WebhookNotifierRuntime | null;
-  mcpBridge: MCPBridge;
   dek: Buffer | null;
+  integrationHub: IntegrationHub;
 }
 
 let state: EngineState | null = null;
+/** Ensures channel bridges start once after auth unlocks encrypted config (not on every request). */
+let channelsBootstrappedAfterAuth = false;
 
 function safeLoadConfig(configManager: ConfigManager): AgentXConfig | null {
   try {
@@ -78,6 +82,18 @@ function safeLoadConfig(configManager: ConfigManager): AgentXConfig | null {
   } catch {
     return null;
   }
+}
+
+/** Disable neural brain on machines below the RAM threshold (saves memory and background work). */
+function applyLowRamFeatureDefaults(configManager: ConfigManager): void {
+  const ramGb = os.totalmem() / (1024 ** 3);
+  if (isNeuralBrainSupported(ramGb)) return;
+  try {
+    const cfg = configManager.load();
+    if (cfg.neuralBrain === false) return;
+    configManager.save({ ...cfg, neuralBrain: false });
+    getLogger().info('SYSTEM', `Neural brain auto-disabled — ${ramGb.toFixed(1)} GB RAM (requires 16 GB+)`);
+  } catch { /* config not ready yet */ }
 }
 
 export function syncLocalModelConfig(configManager: ConfigManager): void {
@@ -114,10 +130,13 @@ export function getEngine(): EngineState {
 
   syncLocalModelConfig(configManager);
 
+  applyLowRamFeatureDefaults(configManager);
+
   const toolkit = createDefaultToolkit(process.cwd());
   const pluginRegistry = new PluginRegistry();
-
-  const mcpBridge = new MCPBridge();
+  const integrationHub = new IntegrationHub({
+    getDek: () => state?.dek ?? null,
+  });
 
   // Initialize log collector — hooks into the shared logger to capture all logs
   initLogCollector();
@@ -201,40 +220,21 @@ export function getEngine(): EngineState {
     emailBridge: null,
     redisRuntime: null,
     webhookRuntime: null,
-    mcpBridge,
     dek: null,
+    integrationHub,
   };
-
-  const tgPlugin = state!.pluginRegistry.getPlugin('telegram');
-  const tgConfig = tgPlugin?.config ?? {};
-  if (tgPlugin?.enabled && tgConfig['botToken'] && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
-    try {
-      const gw = new Gateway();
-      state!.gateway = gw;
-      gw.registerTelegram(tgConfig['botToken'] as string);
-      gw.startChannel('telegram').then(() => {
-        const bridge = gw.getTelegramBridge();
-        if (bridge) state!.telegramBridge = bridge;
-        try {
-          const entry = (gw as any).registry.getChannel('telegram');
-          if (entry?.plugin) entry.plugin.setAgent(ensureChannelAgent());
-        } catch { /* agent can attach later */ }
-      }).catch((e: unknown) => {
-        console.error('Failed to start Telegram channel on boot:', (e as Error).message);
-        state!.gateway = null;
-        state!.telegramBridge = null;
-      });
-    } catch (e) {
-      console.error('Failed to register Telegram on boot:', (e as Error).message);
-      state!.gateway = null;
-    }
-  }
 
   void storageReady
     .then(async () => {
       if (state) state.crewManager.refresh();
       await healDatabaseStore(store);
       startPeriodicDatabaseHeal(store);
+      if (state) {
+        state.integrationHub.setDek(state.dek);
+        state.integrationHub.setToolkitBridge(state.toolkit.registry, state.toolkit.executor);
+        await state.integrationHub.restoreAll();
+        state.integrationHub.syncToToolkit(state.toolkit.registry, state.toolkit.executor);
+      }
     })
     .catch((e) => {
       console.error('Storage connect/migrate failed; crew catalog tables may be unavailable', e);
@@ -253,16 +253,48 @@ export function setEngineDEK(dek: Buffer | null): void {
   if (state) {
     state.dek = dek;
     state.configManager.setDEK(dek);
+    state.integrationHub.setDek(dek);
+    if (!dek) {
+      channelsBootstrappedAfterAuth = false;
+    }
     // Update the configured flag now that the DEK is available —
     // encrypted configs become readable after auth.
     state.configured = state.configManager.isConfigured();
     try {
       applyWebSearchConfigFromAgentConfig(state.configManager.load());
     } catch { /* not configured yet */ }
+
+    if (dek && !channelsBootstrappedAfterAuth) {
+      void state.storageReady
+        .then(async () => {
+          if (!state?.dek) return;
+          try {
+            state.configured = state.configManager.isConfigured();
+            if (!state.configured) return;
+            channelsBootstrappedAfterAuth = true;
+            await state.integrationHub.restoreAll();
+            state.integrationHub.setToolkitBridge(state.toolkit.registry, state.toolkit.executor);
+            state.integrationHub.syncToToolkit(state.toolkit.registry, state.toolkit.executor);
+            const { applyChannelsConfig } = await import('./channels-sync.js');
+            await applyChannelsConfig();
+          } catch (error) {
+            channelsBootstrappedAfterAuth = false;
+            getLogger().warn('CHANNELS', error instanceof Error ? error.message : String(error));
+          }
+        })
+        .catch((error) => {
+          channelsBootstrappedAfterAuth = false;
+          console.error('Integration restore after sign-in failed:', error instanceof Error ? error.message : error);
+        });
+    }
   }
 }
 
-export function createAgent(config: AgentXConfig | undefined, session: Session): Agent {
+export function createAgent(
+  config: AgentXConfig | undefined,
+  session: Session,
+  options?: { attachToEngine?: boolean; automationRun?: boolean; delegatedWorker?: boolean },
+): Agent {
   const eng = getEngine();
   let cfg: AgentXConfig;
   if (config) {
@@ -319,6 +351,8 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
 
   const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
   const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
+  const isAutomationRun = (session.contextKind ?? 'agent_x') === 'automation'
+    || session.id.startsWith('automation:');
   const hostCrewId = session.hostCrewId;
   const store = (eng.sessionManager as unknown as { store?: unknown }).store;
   const crewPrivateHost = isCrewPrivate && hostCrewId
@@ -335,15 +369,33 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     scopePath: effectiveScopePath,
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
+    prepareIntegrationTools: async (userText) => {
+      const { promptHint } = await eng.integrationHub.prepareForAgentTurn(
+        eng.toolkit.registry,
+        eng.toolkit.executor,
+        userText,
+      );
+      return promptHint;
+    },
     onPart,
     persona: crewPrivateHost ? null : persona,
     pgPool: state?.pgPool ?? null,
-    promptProfile: crewPrivateHost ? 'crew_private' : 'default',
+    promptProfile: crewPrivateHost ? 'crew_private' : (isAutomationRun ? 'crew_worker' : 'default'),
     crewPrivateHost,
+    channelSession: isChannelSessionId(session.id),
+    automationRun: isAutomationRun,
+    delegatedWorker: isAutomationRun,
   });
 
   // Apply session mode immediately so the agent starts in the correct mode
-  if (session.mode === 'plan') {
+  if (isChannelSessionId(session.id)) {
+    agent.setPlanMode(false);
+    if (session.mode !== 'agent' || session.hyperdrive) {
+      try {
+        eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false } as never);
+      } catch { /* best-effort */ }
+    }
+  } else if (session.mode === 'plan') {
     agent.setPlanMode(true);
   } else {
     agent.setPlanMode(false);
@@ -373,8 +425,9 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     setShellSandbox(null);
   }
 
-  // Watchdog: auto-resume interrupted task on startup (Agent-X sessions only)
-  if (!isCrewPrivate) {
+  // Watchdog: auto-resume interrupted task on startup (Agent-X sessions only).
+  // Skip channel super-session — it must stay idle for inbound Telegram/Slack messages.
+  if (!isCrewPrivate && !isAutomationRun && !isChannelSessionId(session.id)) {
   try {
     const store = (eng.sessionManager as any).store;
     if (store && typeof store.getTaskSnapshot === 'function') {
@@ -426,7 +479,9 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     crewOrch.setSessionManager(eng.sessionManager);
   }
 
-  eng.agent = agent;
+  if (options?.attachToEngine !== false) {
+    eng.agent = agent;
+  }
 
   const sessionLogger = new SessionLogger(session.id);
   sessionLogger.init();
@@ -473,16 +528,15 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   try {
     const store = (eng.sessionManager as any).store;
     if (store?.getMessages) {
-      const msgs = store.getMessages(session.id) as Array<{ role: string; content: string }>;
+      const msgs = store.getMessages(session.id) as Array<{ role: string; content: string; parts?: unknown }>;
       const restorable = msgs.filter((m) =>
         m.role === 'user' || m.role === 'assistant' ||
         (m.role === 'system' && m.content?.includes('[TURN TOOL LEDGER]')),
       );
       const recent = restorable.slice(-24);
-      for (const msg of recent) {
-        if (msg.content) {
-          agent.addToHistory({ role: msg.role as 'user' | 'assistant' | 'system', content: msg.content });
-        }
+      const historyEntries = hydrateMessageHistoryEntries(recent);
+      for (const entry of historyEntries) {
+        agent.addToHistory(entry);
       }
       try {
         agent.rebuildContext();
@@ -504,7 +558,14 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
   };
 
   agent.events.on((event) => {
-    eng.telemetry.emit(event as any);
+    const automationTaskId = isAutomationRun
+      ? session.id.slice('automation:'.length)
+      : undefined;
+    eng.telemetry.emit({
+      ...(event as Record<string, unknown>),
+      sessionId: session.id,
+      ...(automationTaskId ? { automationTaskId, taskId: automationTaskId } : {}),
+    } as any);
     const ev = event as Record<string, unknown>;
     if (ev['type'] === 'clarification_required') {
       try {
@@ -530,34 +591,33 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     const gateway = new Gateway();
     eng.gateway = gateway;
   }
-  eng.gateway!.attachAgent(agent);
+  if (options?.attachToEngine !== false) {
+    eng.gateway!.attachAgent(agent);
+  }
 
+  // Channel-bridge wiring runs only for the primary UI agent — not the dedicated __channel__ agent
+  // (ensureChannelAgent uses attachToEngine: false to avoid recursive ensureChannelAgent ↔ createAgent).
+  if (options?.attachToEngine !== false) {
+  // Telegram inbound is started by applyChannelsConfig() after auth — not from createAgent.
   const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
   const tgConfig = tgPlugin?.config ?? {};
-  if (tgPlugin?.enabled && tgConfig['botToken'] && !eng.telegramBridge && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
+  if (eng.gateway && tgPlugin?.enabled && tgConfig['botToken']) {
     try {
       const channelAgent = ensureChannelAgent();
-      const tgChannelPlugin = eng.gateway!.registerTelegram(tgConfig['botToken'] as string);
-      tgChannelPlugin.setAgent(channelAgent);
-      eng.gateway!.startChannel('telegram').catch((e: unknown) => {
-        console.error('Failed to start Telegram channel', e);
-      }).then(() => {
-        if (eng.gateway) {
-          const bridge = eng.gateway.getTelegramBridge();
-          if (bridge) {
-            eng.telegramBridge = bridge;
-          }
-        }
-      });
-    } catch (e) {
-      console.error('Failed to start Telegram bridge', e);
-    }
-  } else if (eng.gateway && tgPlugin?.enabled && tgConfig['botToken']) {
-    try {
-      const channelAgent = ensureChannelAgent();
-      const entry = (eng.gateway as any).registry.getChannel('telegram');
-      if (entry?.plugin && 'setAgent' in entry.plugin) {
-        entry.plugin.setAgent(channelAgent);
+      const entry = (eng.gateway as unknown as { registry?: { getChannel?: (id: string) => { plugin?: TelegramChannelPlugin } | null } }).registry?.getChannel?.('telegram');
+      const plugin = entry?.plugin;
+      if (plugin && 'setAgent' in plugin) {
+        plugin.setAgent(channelAgent);
+        plugin.setChatIdPersister?.((id: string) => {
+          try {
+            const c = eng.configManager.load();
+            if (c.channels?.telegram?.chatId === id) return;
+            eng.configManager.save({
+              ...c,
+              channels: { ...c.channels, telegram: { ...c.channels?.telegram, chatId: id } },
+            });
+          } catch { /* best-effort */ }
+        });
       }
     } catch { /* best-effort */ }
   }
@@ -656,6 +716,7 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
       console.error('Failed to start Email bridge', e);
     }
   }
+  }
 
   if (!eng.redisRuntime) {
     const redisPlugin = eng.pluginRegistry.getPlugin('redis-cache');
@@ -686,15 +747,25 @@ export function createAgent(config: AgentXConfig | undefined, session: Session):
     }
   }
 
-  eng.mcpBridge.discover().then((manifests) => {
-    for (const manifest of manifests) {
-      eng.mcpBridge.load(manifest).catch((e) => {
-        console.error(`Failed to start MCP server "${manifest.id}"`, e);
-      });
-    }
-  }).catch(() => {});
+  rewireTelegramChannelPermissions(eng);
 
   return agent;
+}
+
+/** Restore Telegram inline permission prompts after the shared executor handler was replaced. */
+export function rewireTelegramChannelPermissions(eng?: ReturnType<typeof getEngine>): void {
+  try {
+    const e = eng ?? getEngine();
+    const entry = (e.gateway as { registry?: { getChannel?: (id: string) => { plugin?: unknown } | null } } | null)
+      ?.registry?.getChannel?.('telegram');
+    const plugin = entry?.plugin as { rewirePermissionHandling?: () => void } | undefined;
+    plugin?.rewirePermissionHandling?.();
+
+    const channelExec = e.channelAgent?.getToolExecutor?.();
+    if (channelExec && e.toolkit.executor?.copyExecutionPolicyFrom) {
+      e.toolkit.executor.copyExecutionPolicyFrom(channelExec);
+    }
+  } catch { /* best-effort */ }
 }
 
 export function getOrCreateAgent(config?: AgentXConfig, session?: Session): Agent {
@@ -706,6 +777,40 @@ export function getOrCreateAgent(config?: AgentXConfig, session?: Session): Agen
     return createAgent(config, sess);
   }
   return createAgent(config, session);
+}
+
+/** Align the channel super-session agent with the active UI workspace and crew roster. */
+export function syncChannelSuperSessionContext(eng?: ReturnType<typeof getEngine>): void {
+  const e = eng ?? getEngine();
+  const channelAgent = e.channelAgent as Agent | null | undefined;
+  if (!channelAgent) return;
+
+  const active = e.sessionManager.getActiveSession()
+    ?? (e.agent?.currentSessionId && e.agent.currentSessionId !== '__channel__'
+      ? e.sessionManager.getSessionById(e.agent.currentSessionId)
+      : null);
+
+  if (active?.scopePath) {
+    channelAgent.setScopePath(active.scopePath);
+  }
+
+  if (active?.id) {
+    const crewStates = e.sessionManager.loadCrewStates(active.id);
+    if (crewStates.length > 0) {
+      const signature = crewStates.map((s) => `${s.crewId}:${s.enabled ? 1 : 0}`).sort().join(',');
+      const prev = (channelAgent as unknown as { __crewSyncSig?: string }).__crewSyncSig;
+      if (signature !== prev) {
+        (channelAgent as unknown as { __crewSyncSig?: string }).__crewSyncSig = signature;
+        channelAgent.restoreCrewStates(crewStates);
+      }
+    } else if (e.agent && e.agent !== channelAgent) {
+      const enabled = e.agent.getActiveCrewMembers().map((m) => ({
+        crewId: m.crew.id,
+        enabled: true,
+      }));
+      if (enabled.length > 0) channelAgent.restoreCrewStates(enabled);
+    }
+  }
 }
 
 export function ensureChannelAgent(): Agent {
@@ -723,9 +828,17 @@ export function ensureChannelAgent(): Agent {
       process.cwd(),
       CHANNEL_SESSION_ID,
     );
+  } else if (session.mode !== 'agent' || session.hyperdrive) {
+    try {
+      eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false } as never);
+      session.mode = 'agent';
+      session.hyperdrive = false;
+    } catch { /* best-effort */ }
   }
 
-  return createAgent(cfg, session);
+  const agent = createAgent(cfg, session, { attachToEngine: false });
+  eng.channelAgent = agent;
+  return agent;
 }
 
 export function destroyAgent(): void {
