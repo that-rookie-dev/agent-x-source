@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('agentx', {
   close: () => ipcRenderer.send('window:close'),
   isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  openFile: (filters?: Array<{ name: string; extensions: string[] }>) =>
+    ipcRenderer.invoke('dialog:openFile', filters) as Promise<string | null>,
+  checkNodeRuntime: () =>
+    ipcRenderer.invoke('permissions:checkNodeRuntime') as Promise<{ node?: string; npx?: string; ok: boolean }>,
   defaultWorkspace: () => ipcRenderer.invoke('path:defaultWorkspace') as Promise<string>,
   requestNotifications: () => ipcRenderer.invoke('permissions:requestNotifications'),
   showNotification: (payload: { title?: string; body: string; subtitle?: string }) =>

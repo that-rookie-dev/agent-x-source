@@ -49,7 +49,7 @@ import { MemoryFabric, type MemoryNode } from '../neural/MemoryFabric.js';
 import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
 import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
 import {
   buildCompletionMessages,
@@ -132,6 +132,7 @@ import { streamText, stepCountIs } from 'ai';
 import {
   buildWebSearchTurnInstruction,
   isWebSearchAvailableForChat,
+  resolveWebSearchTurnPolicy,
   resolveWebSearchTurnPolicyAsync,
   createWebSearchIntentClassifier,
   type WebSearchTurnPolicy,
@@ -521,6 +522,11 @@ export class Agent {
   }
 
   private async waitForQuestionnaireResponse(questionnaire: QuestionnairePayload): Promise<string> {
+    // Messaging channels have no UI questionnaire modal — waiting would hang forever.
+    if (this.options.channelSession) {
+      getLogger().info('CHANNEL', 'Auto-proceeding past questionnaire on messaging channel');
+      return 'Proceed with your best judgment using available tools and context.';
+    }
     const payload: QuestionnairePayload = questionnaire.source
       ? questionnaire
       : { ...questionnaire, source: this.clarificationSource() };
@@ -808,10 +814,15 @@ export class Agent {
             this.toolExecutor.registerHandler(name, handler);
           }
         }
-        // Copy permission handler
-        const permHandler = (options.toolExecutor as unknown as Record<string, unknown>)['permissionRequestHandler'];
+        // Copy permission handlers from shared toolkit executor
+        const providedExecutor = options.toolExecutor as unknown as Record<string, unknown>;
+        const permHandler = providedExecutor['permissionRequestHandler'];
         if (typeof permHandler === 'function') {
           this.toolExecutor.setPermissionRequestHandler(permHandler as (toolId: string, path: string, riskLevel: string) => Promise<'allow_once' | 'allow_always' | 'deny'>);
+        }
+        const channelPermHandler = providedExecutor['channelPermissionRequestHandler'];
+        if (typeof channelPermHandler === 'function') {
+          this.toolExecutor.setChannelPermissionRequestHandler(channelPermHandler as (toolId: string, path: string, riskLevel: string) => Promise<'allow_once' | 'allow_always' | 'deny'>);
         }
       } else {
         // Plain mock object from tests — wrap it
@@ -909,8 +920,8 @@ export class Agent {
       this.toolExecutor.setUserConfigRules(userRules);
     }
 
-    // Wire permission requests to event bus (skipped for ephemeral automation workers).
-    if (this.toolExecutor && !this.options.automationRun) {
+    // Wire permission requests to event bus (skipped for ephemeral automation workers and channel sessions).
+    if (this.toolExecutor && !this.options.automationRun && !this.options.channelSession) {
       this.bindPermissionHandler();
 
       // Wire diff preview for file edit tools
@@ -1338,6 +1349,7 @@ Rules:
    */
   private async ingestWebSearchResult(toolId: string, args: Record<string, unknown> | undefined, output: string): Promise<void> {
     try {
+      if (this.config.neuralBrain === false) return;
       if (!this._pgPool) return;
       const query = typeof args?.['query'] === 'string' ? args['query'] : '';
       const url = typeof args?.['url'] === 'string' ? args['url'] : '';
@@ -1377,7 +1389,6 @@ Rules:
         extract: true,
         embed: true,
         sessionId: this.options.parentSessionId ?? this.sessionId,
-        sourceId: `web:${toolId}`,
       });
       getLogger().info('WEB_INGEST', `Ingested ${toolId} result (${output.length} chars) into neural brain`);
     } catch (e) {
@@ -1645,6 +1656,10 @@ Rules:
   }
 
   private waitForStepCap(currentSteps: number): Promise<boolean> {
+    if (this.options.channelSession) {
+      this.stepCapExtra++;
+      return Promise.resolve(true);
+    }
     this.turnState.setPhase('awaiting_step_cap', `steps:${currentSteps}`);
     this.emit({ type: 'step_cap_reached', currentSteps, maxSteps: this.completionStepBudget() });
     return new Promise((resolve) => {
@@ -1690,6 +1705,36 @@ Rules:
       });
       return false;
     }
+  }
+
+  /**
+   * One-shot LLM text for outbound channel pushes (e.g. Settings greeting test).
+   * Does not append to conversation history or invoke tools.
+   */
+  async generateOutboundText(
+    userPrompt: string,
+    options?: { systemHint?: string; maxTokens?: number },
+  ): Promise<string> {
+    const model = createAiSdkModel(this.config, this.getApiKey());
+    const callsign = this.config.user?.callsign;
+    const defaultSystem = [
+      'You are Agent-X composing a short outbound Telegram message.',
+      callsign ? `The user's name/callsign is "${callsign}".` : '',
+      'Reply with ONLY the message body — warm, concise, no markdown headers, no tool names, no meta commentary.',
+    ].filter(Boolean).join(' ');
+    const r = await streamText({
+      model,
+      messages: [
+        { role: 'system', content: options?.systemHint ?? defaultSystem },
+        { role: 'user', content: userPrompt },
+      ],
+      maxOutputTokens: options?.maxTokens ?? 280,
+    });
+    let text = '';
+    for await (const chunk of r.textStream) text += chunk;
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('Model returned an empty message');
+    return trimmed;
   }
 
   async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
@@ -1766,15 +1811,24 @@ Rules:
     this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
 
     const searchStatus = isWebSearchAvailableForChat(this.config);
-    this.turnWebSearchPolicy = await resolveWebSearchTurnPolicyAsync({
-      forceWebSearch: options?.forceWebSearch,
-      userText: cleanContent,
-      searchAvailable: searchStatus.available,
-      classifyIntent: createWebSearchIntentClassifier({
-        provider: this.provider,
-        model: this.config.provider.activeModel,
-      }),
-    });
+    if (this.options.channelSession) {
+      // Messaging channels need fast replies — skip optional LLM intent classifier.
+      this.turnWebSearchPolicy = resolveWebSearchTurnPolicy({
+        forceWebSearch: options?.forceWebSearch,
+        userText: cleanContent,
+        searchAvailable: searchStatus.available,
+      });
+    } else {
+      this.turnWebSearchPolicy = await resolveWebSearchTurnPolicyAsync({
+        forceWebSearch: options?.forceWebSearch,
+        userText: cleanContent,
+        searchAvailable: searchStatus.available,
+        classifyIntent: createWebSearchIntentClassifier({
+          provider: this.provider,
+          model: this.config.provider.activeModel,
+        }),
+      });
+    }
     this.forcedWebSearchToolName = searchStatus.forcedTool;
     if (options?.forceWebSearch && !searchStatus.available) {
       throw new Error('Web search is not available. Enable a provider in Settings → Tools.');
@@ -1786,7 +1840,7 @@ Rules:
         : searchInstr;
     }
 
-    if (!options?.retry && this.options.promptProfile !== 'crew_private' && !options?.delegateCrewIds?.length) {
+    if (!options?.retry && !this.options.channelSession && this.options.promptProfile !== 'crew_private' && !options?.delegateCrewIds?.length) {
       try {
         const priorUserMessages = this.messages
           .filter((m) => m.role === 'user')
@@ -2002,9 +2056,19 @@ Rules:
         ];
         try {
           const model = createAiSdkModel(this.config, this.getApiKey());
-          const r = await streamText({ model, messages: fastMessages as any, maxOutputTokens: 256 });
-          let text = '';
-          for await (const chunk of r.textStream) { text += chunk; }
+          const streamPromise = (async () => {
+            const r = await streamText({ model, messages: fastMessages as any, maxOutputTokens: 256 });
+            let text = '';
+            for await (const chunk of r.textStream) { text += chunk; }
+            return text;
+          })();
+          const timeoutMs = this.options.channelSession ? 45_000 : 120_000;
+          const text = await Promise.race([
+            streamPromise,
+            new Promise<string>((_, reject) => {
+              setTimeout(() => reject(new Error('Fast reply timed out')), timeoutMs);
+            }),
+          ]);
           const fallback = crewHost ? `Hey — ${crewHost.name} here.` : 'Hey! How can I help?';
           const msg: Message = { id: generateMessageId(), sessionId: this.sessionId, role: 'assistant', content: text || fallback, toolCalls: null, createdAt: new Date().toISOString(), tokenCount: Math.ceil((text || '').length / 4) };
           this.messages.push({ role: 'assistant', content: msg.content });
@@ -2141,7 +2205,7 @@ Rules:
       }
 
        // Normal mode: run completion loop directly
-       if (!(await this.checkConnectivity())) {
+       if (!this.options.channelSession && !(await this.checkConnectivity())) {
          throw new Error('Cannot reach LLM provider. Check your internet connection.');
        }
        let assistantMessage = await this.runCompletionLoop(startTime);
@@ -2337,7 +2401,7 @@ Rules:
         return subAgent.execute();
       },
       this.planMode,
-      this.options.promptProfile === 'crew_private'
+      this.options.promptProfile === 'crew_private' || this.options.channelSession
         ? undefined
         : (toolId, reason) => this.waitForModeEscalation(toolId, reason),
       (toolId, success, output, elapsed, args) => {
@@ -2801,9 +2865,19 @@ Rules:
         .register(createIdentitySection(ctx))
         .register(createWorkingDirectorySection(ctx))
         .register(createCompactRulesSection())
+        .register(createChannelSuperSessionSection())
         .register(createChannelMessagingSection())
+        .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx))
+        .register(createSchedulingSection())
+        .register(createLearningsSection(ctx))
+        .register(createSkillsSection(ctx))
+        .register(createFormalSkillsSection(ctx))
+        .register(createMultiCrewSection(ctx))
+        .register(createCrewRosterGuideSection())
         .register(createUserSection(ctx))
+        .register(createSoulSection(ctx))
+        .register(createNeuralSection(ctx))
         .register(createMemoryContextSection(ctx))
         .register(createInstructionsSection(ctx.scopePath));
       if (systemOverride) {

@@ -8,7 +8,10 @@ import type {
   IntegrationHubSettings,
   IntegrationOAuthConfig,
   IntegrationProvider,
+  OAuthFlowResult,
   OAuthStartResponse,
+  SetupPreflightCheckId,
+  SetupPreflightResult,
   ToolResult,
 } from '@agentx/shared';
 import { getLogger, assertHubOAuthReady, resolveProviderOAuthConfig } from '@agentx/shared';
@@ -49,6 +52,7 @@ import {
   tryResolveClientId,
 } from './oauth/oauth-client.js';
 import { resolveOAuthMetadata } from './oauth/discovery.js';
+import { runPreflightChecks, type PreflightContext } from './preflight.js';
 
 interface ActiveSession {
   connectionId: string;
@@ -57,10 +61,20 @@ interface ActiveSession {
   tools: Array<{ mcpName: string; toolId: string; definition: ReturnType<typeof adaptMcpTools>[number] }>;
 }
 
+interface StoredOAuthResult {
+  status: 'completed' | 'failed';
+  providerId: string;
+  connectionId?: string;
+  message?: string;
+  createdAt: number;
+}
+
 export class IntegrationHub {
   private readonly store: IntegrationConnectionStore;
   private readonly audit: IntegrationAuditLog;
   private readonly oauth = new OAuthPkceStore();
+  private readonly oauthResults = new Map<string, StoredOAuthResult>();
+  private readonly oauthResultTtlMs = 30 * 60 * 1000;
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly customProviders = new Map<string, IntegrationProvider>();
   private readonly connectionManager: IntegrationConnectionManager;
@@ -142,7 +156,11 @@ export class IntegrationHub {
   }
 
   updateSettings(patch: IntegrationHubSettings): IntegrationHubSettings {
-    const next = saveIntegrationHubSettings(patch);
+    // Merge per-provider OAuth client ids so saving one provider's id never wipes others.
+    const merged = patch.oauthClientIds
+      ? { ...patch, oauthClientIds: { ...(getIntegrationHubSettings().oauthClientIds ?? {}), ...patch.oauthClientIds } }
+      : patch;
+    const next = saveIntegrationHubSettings(merged);
     this.settings = next;
     if (typeof patch.healthPollIntervalMs === 'number') {
       this.connectionManager.setIntervalMs(patch.healthPollIntervalMs);
@@ -165,7 +183,8 @@ export class IntegrationHub {
 
     if (resolved.clientIdEnv) {
       throw new Error(
-        `Set ${resolved.clientIdEnv} in the environment to enable browser sign-in for "${providerId}".`,
+        `OAuth Client ID for "${providerId}" is not configured. Paste it in the setup wizard's System checks step, `
+        + `or set ${resolved.clientIdEnv} in the environment.`,
       );
     }
 
@@ -273,9 +292,72 @@ export class IntegrationHub {
     return { authUrl, state: challenge.state };
   }
 
+  recordOAuthFailure(state: string, message: string): void {
+    const trimmed = state.trim();
+    if (!trimmed) return;
+    const pending = this.oauth.peek(trimmed);
+    this.oauthResults.set(trimmed, {
+      status: 'failed',
+      providerId: pending?.providerId ?? 'unknown',
+      message,
+      createdAt: Date.now(),
+    });
+    this.pruneOAuthResults();
+  }
+
+  getOAuthResult(state: string): OAuthFlowResult {
+    const trimmed = state.trim();
+    if (!trimmed) {
+      return { status: 'expired', message: 'Missing OAuth state' };
+    }
+
+    const stored = this.oauthResults.get(trimmed);
+    if (stored) {
+      if (stored.status === 'completed' && stored.connectionId) {
+        const connection = this.store.getConnection(stored.connectionId);
+        return {
+          status: 'completed',
+          connection,
+          message: connection ? `Connected to ${connection.displayName}` : undefined,
+        };
+      }
+      return { status: 'failed', message: stored.message ?? 'OAuth sign-in failed' };
+    }
+
+    if (this.oauth.peek(trimmed)) {
+      return { status: 'pending' };
+    }
+
+    return {
+      status: 'expired',
+      message: 'This sign-in link expired or was already used. Click "Sign in again" to restart.',
+    };
+  }
+
+  private recordOAuthSuccess(state: string, providerId: string, connectionId: string): void {
+    this.oauthResults.set(state, {
+      status: 'completed',
+      providerId,
+      connectionId,
+      createdAt: Date.now(),
+    });
+    this.pruneOAuthResults();
+  }
+
+  private pruneOAuthResults(): void {
+    const now = Date.now();
+    for (const [state, result] of this.oauthResults.entries()) {
+      if (now - result.createdAt > this.oauthResultTtlMs) {
+        this.oauthResults.delete(state);
+      }
+    }
+  }
+
   async completeOAuth(state: string, code: string): Promise<IntegrationConnection> {
     const challenge = this.oauth.consume(state);
-    if (!challenge) throw new Error('OAuth state expired or invalid');
+    if (!challenge) {
+      throw new Error('This sign-in link expired or was already used. Return to Agent-X and click "Sign in again" to restart.');
+    }
 
     const provider = this.resolveProvider(challenge.providerId);
     if (!provider) {
@@ -316,7 +398,81 @@ export class IntegrationHub {
       },
       this.currentDek(),
     );
-    return this.syncConnection(connection.id);
+    const synced = await this.syncConnection(connection.id);
+    this.recordOAuthSuccess(state, challenge.providerId, synced.id);
+    return synced;
+  }
+
+  async preflightProvider(
+    providerId: string,
+    checkIds?: SetupPreflightCheckId[],
+    context?: PreflightContext,
+  ): Promise<SetupPreflightResult[]> {
+    const provider = this.resolveProvider(providerId);
+    if (!provider) throw new Error(`Unknown integration provider "${providerId}"`);
+    const checks = checkIds ?? provider.setupWizard?.preflight ?? ['network_reachable'];
+    return runPreflightChecks(provider, checks, context);
+  }
+
+  /** Dry-run MCP connect (list tools) without persisting a connection. */
+  async probeConnection(
+    providerId: string,
+    request: ConnectIntegrationRequest,
+  ): Promise<{ ok: boolean; toolCount: number; toolNames: string[]; error?: string }> {
+    const provider = this.resolveProvider(providerId);
+    if (!provider) throw new Error(`Unknown integration provider "${providerId}"`);
+
+    const stdio = request.stdio
+      ? { command: request.stdio.command, args: expandStdioArgs(request.stdio.args ?? []), cwd: request.stdio.cwd }
+      : (provider.server.type === 'stdio' && provider.server.command
+        ? { command: provider.server.command, args: expandStdioArgs([...(provider.server.args ?? [])]) }
+        : undefined);
+
+    const connection: IntegrationConnection = {
+      id: `probe-${randomUUID()}`,
+      providerId,
+      displayName: request.displayName ?? provider.name,
+      authMode: request.authMode ?? provider.auth.primary,
+      status: 'syncing',
+      connectedAt: new Date().toISOString(),
+      enabled: true,
+      stdio,
+      remote: request.remote ?? (provider.server.type === 'remote' && provider.server.url ? { url: provider.server.url } : undefined),
+    };
+
+    const env = request.env ?? {};
+    let session: McpSession | null = null;
+    try {
+      if (connection.remote?.url) {
+        session = await McpSession.connectRemote({
+          url: connection.remote.url,
+          headers: env.MCP_ACCESS_TOKEN || env.access_token
+            ? { Authorization: `Bearer ${env.MCP_ACCESS_TOKEN ?? env.access_token}` }
+            : undefined,
+          transport: 'streamable-http',
+        });
+      } else if (stdio) {
+        session = await McpSession.connectStdio({
+          command: resolveStdioCommand(stdio.command),
+          args: stdio.args,
+          cwd: stdio.cwd,
+          env: Object.keys(env).length > 0 ? env : undefined,
+        });
+      } else {
+        throw new Error('No stdio command or remote URL configured');
+      }
+      const listed = await session.listTools();
+      return {
+        ok: listed.length > 0,
+        toolCount: listed.length,
+        toolNames: listed.slice(0, 12).map((tool) => tool.name),
+      };
+    } catch (error) {
+      const message = formatStdioSpawnError(error, stdio?.command ?? provider.server.command);
+      return { ok: false, toolCount: 0, toolNames: [], error: message };
+    } finally {
+      await session?.close();
+    }
   }
 
   async disconnect(connectionId: string): Promise<void> {

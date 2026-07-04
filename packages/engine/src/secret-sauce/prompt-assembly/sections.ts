@@ -513,13 +513,36 @@ interface ChannelFocusState {
   chatId: number | null;
 }
 
+export function createChannelSuperSessionSection(): PromptSection<null> {
+  return {
+    key: 'core/channel-super-session',
+    load: () => null,
+    render: () => [
+      '[SUPER_SESSION — MESSAGING CHANNEL]',
+      'You are Agent-X\'s global operator console on a messaging channel (Telegram, Slack, Discord, etc.).',
+      'You are NOT limited to this channel\'s chat history or session id.',
+      'You have fleet-wide visibility and control across the entire Agent-X installation:',
+      '- All chat sessions (Agent-X and crew-private)',
+      '- All automations — including those created in the web UI or other channels',
+      '- Notifications, settings, channel plugins, and the active workspace',
+      '- Crew roster, private specialist chats, and running automation runs',
+      '',
+      'Before answering questions about system state, other sessions, or background activity, call agent_x_overview (view: summary, sessions, automations, notifications, or settings).',
+      'For a specific session\'s recent context, use agent_x_overview with view=session_detail and session_id.',
+      'automation_list and automation_cancel operate on the full fleet from this channel.',
+      'File and shell tools use the active web UI workspace when one is open.',
+      '[/SUPER_SESSION — MESSAGING CHANNEL]',
+    ].join('\n'),
+  };
+}
+
 export function createChannelMessagingSection(): PromptSection<null> {
   return {
     key: 'core/channel-messaging',
     load: () => null,
     render: () => [
       '[CHANNEL_MESSAGING]',
-      'You are responding on a messaging channel (Telegram, Slack, etc.).',
+      'You are responding on a messaging channel. Keep replies concise and mobile-friendly (markdown ok).',
       'Plan Mode and Hyperdrive are NOT available — always operate in normal Agent execution mode.',
       'Every tool use requires explicit user approval via inline buttons: Allow Once, Always Allow, or Deny.',
       'Remembered permissions persist for this channel session until revoked.',

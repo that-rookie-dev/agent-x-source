@@ -1,4 +1,5 @@
 import type { EngineEvent } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
 import type { Agent } from '../agent/Agent.js';
 import { AgentEventBus } from '../EventBus.js';
 import { TelegramStore } from './TelegramStore.js';
@@ -344,6 +345,8 @@ export class TelegramBridge {
     const text = msg.text as string | undefined;
     if (!text) return;
 
+    getLogger().info('TELEGRAM', `Bridge received chat=${chatId} len=${text.length}${text.startsWith('/') ? ' (command)' : ''}`);
+
     // Intercept /commands if a handler is registered
     if (this.commandHandler && text.startsWith('/')) {
       const [cmd, ...args] = text.slice(1).split(/\s+/);
@@ -525,18 +528,20 @@ export class TelegramBridge {
     }
 
     for (const chunk of chunks) {
-      // Try Markdown first, fall back to plain text if parsing fails
       const result = await this.apiCall('sendMessage', {
         chat_id: chatId,
         text: chunk,
         parse_mode: 'Markdown',
       });
-      if (!result.ok && result.description?.includes('parse')) {
-        // Markdown parsing failed — send as plain text
-        await this.apiCall('sendMessage', {
-          chat_id: chatId,
-          text: chunk,
-        });
+      if (!result.ok) {
+        if (result.description?.includes('parse')) {
+          const plain = await this.apiCall('sendMessage', { chat_id: chatId, text: chunk });
+          if (!plain.ok) {
+            throw new Error(plain.description ?? 'Failed to send Telegram message');
+          }
+        } else {
+          throw new Error(result.description ?? 'Failed to send Telegram message');
+        }
       }
     }
   }

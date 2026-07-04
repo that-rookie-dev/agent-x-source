@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { IntegrationHubSettings, IntegrationProvider } from '@agentx/shared';
 import { getDataDir, getLogger } from '@agentx/shared';
 import { listCatalogProviders } from './registry.js';
+import { enrichCatalogProviders } from './setup-wizard.js';
 
 const logger = getLogger();
 
@@ -85,7 +86,7 @@ export function listAllProviders(options?: { includeCandidates?: boolean }): Int
   for (const provider of listCatalogProviders({ includeCandidates })) {
     byId.set(provider.id, provider);
   }
-  return [...byId.values()];
+  return enrichCatalogProviders([...byId.values()]);
 }
 
 export function getProviderById(id: string): IntegrationProvider | undefined {

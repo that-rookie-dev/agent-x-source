@@ -113,6 +113,95 @@ function parseMultiChoiceLine(line: string): string[] {
 }
 
 /** Parse questionnaire answer text into automation notify channels. */
+/** Map an inbound messaging surface (telegram, slack, …) to a notify channel id. */
+export function sourceChannelToNotifyChannel(sourceChannel: string | undefined | null): AutomationNotifyChannel | null {
+  switch ((sourceChannel ?? '').trim().toLowerCase()) {
+    case 'telegram': return 'telegram';
+    case 'slack': return 'slack';
+    case 'discord': return 'discord';
+    case 'email': return 'email';
+    default: return null;
+  }
+}
+
+/** Infer origin channel when the task was created from a messaging super-session. */
+export function inferAutomationSourceChannel(
+  sourceChannel: string | undefined | null,
+  sourceSessionId: string | undefined | null,
+): string {
+  const explicit = (sourceChannel ?? '').trim();
+  if (explicit && explicit !== 'web' && explicit !== 'api') return explicit;
+  if (sourceSessionId === '__channel__') return 'telegram';
+  return explicit || 'web';
+}
+
+/**
+ * Persisted notify targets: always in-app plus the originating external channel when known.
+ * Origin is mandatory for delivery routing even if the channel is not yet fully configured.
+ */
+export function mandatoryAutomationNotifyChannels(
+  sourceChannel: string,
+  sourceSessionId: string | null | undefined,
+  existing?: AutomationNotifyChannel[] | null,
+): AutomationNotifyChannel[] {
+  const resolvedSource = inferAutomationSourceChannel(sourceChannel, sourceSessionId);
+  const origin = sourceChannelToNotifyChannel(resolvedSource);
+  const out = new Set<AutomationNotifyChannel>(['in_app']);
+  for (const ch of existing ?? []) out.add(ch);
+  if (origin) out.add(origin);
+  return [...out];
+}
+
+/** Normalize task origin fields for reads/writes (source channel + mandatory notify targets). */
+export function normalizeAutomationTaskOrigin(task: {
+  sourceChannel?: string | null;
+  sourceSessionId?: string | null;
+  notifyChannels?: AutomationNotifyChannel[] | null;
+}): { sourceChannel: string; notifyChannels: AutomationNotifyChannel[] } {
+  const sourceChannel = inferAutomationSourceChannel(task.sourceChannel, task.sourceSessionId);
+  const notifyChannels = mandatoryAutomationNotifyChannels(
+    sourceChannel,
+    task.sourceSessionId,
+    task.notifyChannels,
+  );
+  return { sourceChannel, notifyChannels };
+}
+
+/**
+ * Default notify targets: in-app tray + the originating external channel when configured.
+ * Questionnaire answers override defaults but never drop the origin channel.
+ */
+export function resolveAutomationNotifyChannels(opts: {
+  sourceChannel?: string | null;
+  sourceSessionId?: string | null;
+  status: NotificationChannelStatus;
+  questionnaireAnswer?: string;
+}): AutomationNotifyChannel[] {
+  const origin = sourceChannelToNotifyChannel(
+    inferAutomationSourceChannel(opts.sourceChannel, opts.sourceSessionId),
+  );
+  const fromQuestionnaire = opts.questionnaireAnswer
+    ? parseAutomationNotifyAnswer(opts.questionnaireAnswer)
+    : [];
+
+  const out = new Set<AutomationNotifyChannel>(['in_app']);
+  for (const ch of fromQuestionnaire) out.add(ch);
+  if (origin) out.add(origin);
+  return [...out];
+}
+
+/** Channels to use when delivering an automation result (notification + task origin). */
+export function effectiveAutomationNotifyChannels(
+  notificationChannels: AutomationNotifyChannel[],
+  task: { sourceChannel?: string | null; sourceSessionId?: string | null; notifyChannels?: AutomationNotifyChannel[] },
+  _status: NotificationChannelStatus,
+): AutomationNotifyChannel[] {
+  const normalized = normalizeAutomationTaskOrigin(task);
+  const out = new Set<AutomationNotifyChannel>(notificationChannels);
+  for (const ch of normalized.notifyChannels) out.add(ch);
+  return [...out];
+}
+
 export function parseAutomationNotifyAnswer(answer: string): AutomationNotifyChannel[] {
   const lines = answer.split('\n').map((l) => l.trim()).filter(Boolean);
   let rawValues: string[] = [];

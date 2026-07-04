@@ -12,6 +12,8 @@ interface AgentXDesktopBridge {
   close: () => void;
   isMaximized: () => Promise<boolean>;
   openFolder: () => Promise<string | null>;
+  openFile: (filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>;
+  checkNodeRuntime: () => Promise<{ node?: string; npx?: string; ok: boolean }>;
   defaultWorkspace: () => Promise<string>;
   requestNotifications: () => Promise<{ ok: boolean; reason?: string }>;
   showNotification: (payload: { title?: string; body: string; subtitle?: string }) => Promise<{ ok: boolean; reason?: string }>;

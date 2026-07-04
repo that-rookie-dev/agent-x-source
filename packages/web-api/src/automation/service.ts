@@ -8,10 +8,17 @@ import type {
   NotificationRecord,
 } from '@agentx/shared';
 import { generateAxId, generateId, getLogger } from '@agentx/shared';
+import { effectiveAutomationNotifyChannels, getNotificationChannelStatus, inferAutomationSourceChannel, normalizeAutomationTaskOrigin } from '@agentx/engine';
 import { broadcast } from '../ws.js';
 import { getEngine } from '../engine.js';
 import { getTelegramRuntimeHints } from '../channels-sync.js';
 import { getPgBoss, getAutomationQueueName } from './boss.js';
+import { AUTOMATION_RUN_LEAD_MS } from './constants.js';
+
+export interface AutomationJobPayload {
+  taskId: string;
+  targetRunAt?: string;
+}
 
 export interface AutomationDbPool {
   query<T = Record<string, unknown>>(
@@ -21,7 +28,7 @@ export interface AutomationDbPool {
 }
 
 function rowToTask(row: Record<string, unknown>): AutomationTaskRecord {
-  return {
+  const raw: AutomationTaskRecord = {
     id: row['id'] as string,
     displayId: (row['display_id'] as string) ?? '',
     taskKey: (row['task_key'] as string) ?? null,
@@ -45,6 +52,15 @@ function rowToTask(row: Record<string, unknown>): AutomationTaskRecord {
     createdAt: new Date(row['created_at'] as string).toISOString(),
     updatedAt: new Date(row['updated_at'] as string).toISOString(),
   };
+  const normalized = normalizeAutomationTaskOrigin(raw);
+  return { ...raw, ...normalized };
+}
+
+function notifyChannelsEqual(a: AutomationNotifyChannel[], b: AutomationNotifyChannel[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((v, i) => v === sortedB[i]);
 }
 
 function rowToNotification(row: Record<string, unknown>): NotificationRecord {
@@ -120,6 +136,42 @@ export class AutomationService {
     }
   }
 
+  /** Repair tasks created with wrong source_channel / empty notify_channels (e.g. from Telegram). */
+  async backfillAutomationTaskOrigins(): Promise<number> {
+    const { rows } = await this.pool.query<Record<string, unknown>>(
+      'SELECT * FROM automation_tasks',
+    );
+    let repaired = 0;
+    for (const row of rows) {
+      const task = rowToTask(row);
+      const rawSource = (row['source_channel'] as string) ?? 'web';
+      const rawNotify = (row['notify_channels'] as AutomationNotifyChannel[]) ?? [];
+      if (task.sourceChannel === rawSource && notifyChannelsEqual(task.notifyChannels, rawNotify)) continue;
+      await this.pool.query(
+        `UPDATE automation_tasks SET source_channel = $2, notify_channels = $3, updated_at = NOW() WHERE id = $1`,
+        [task.id, task.sourceChannel, JSON.stringify(task.notifyChannels)],
+      );
+      repaired++;
+      getLogger().info(
+        'AUTOMATION',
+        `Repaired task origin ${task.displayId || task.id}: source=${task.sourceChannel} notify=${task.notifyChannels.join(',')}`,
+      );
+    }
+    return repaired;
+  }
+
+  private async persistTaskOriginIfNeeded(task: AutomationTaskRecord, rawRow?: Record<string, unknown>): Promise<AutomationTaskRecord> {
+    if (!rawRow) return task;
+    const rawSource = (rawRow['source_channel'] as string) ?? 'web';
+    const rawNotify = (rawRow['notify_channels'] as AutomationNotifyChannel[]) ?? [];
+    if (task.sourceChannel === rawSource && notifyChannelsEqual(task.notifyChannels, rawNotify)) return task;
+    await this.pool.query(
+      `UPDATE automation_tasks SET source_channel = $2, notify_channels = $3, updated_at = NOW() WHERE id = $1`,
+      [task.id, task.sourceChannel, JSON.stringify(task.notifyChannels)],
+    );
+    return task;
+  }
+
   async resolveTaskId(idOrDisplayId: string): Promise<string | null> {
     const { rows } = await this.pool.query<{ id: string }>(
       `SELECT id FROM automation_tasks
@@ -128,6 +180,10 @@ export class AutomationService {
       [idOrDisplayId],
     );
     return rows[0]?.id ?? null;
+  }
+
+  async clearRunLogs(taskId: string): Promise<void> {
+    await this.pool.query('DELETE FROM automation_run_logs WHERE task_id = $1', [taskId]);
   }
 
   async appendRunLog(
@@ -150,15 +206,75 @@ export class AutomationService {
     );
   }
 
-  async listRunLogs(taskIdOrDisplayId: string, limit = 80): Promise<AutomationRunLogEntry[]> {
+  async listRunLogs(taskIdOrDisplayId: string, limit = 80, runId?: string): Promise<AutomationRunLogEntry[]> {
     const taskId = await this.resolveTaskId(taskIdOrDisplayId);
     if (!taskId) return [];
     const capped = Math.min(Math.max(limit, 1), 200);
-    const { rows } = await this.pool.query(
-      `SELECT * FROM automation_run_logs WHERE task_id = $1 ORDER BY created_at DESC LIMIT $2`,
-      [taskId, capped],
+    if (runId) {
+      const { rows } = await this.pool.query(
+        `SELECT * FROM automation_run_logs WHERE task_id = $1 AND run_id = $2 ORDER BY created_at ASC LIMIT $3`,
+        [taskId, runId, capped],
+      );
+      return rows.map((r) => rowToLogEntry(r as Record<string, unknown>));
+    }
+    const { rows: latestRun } = await this.pool.query<{ run_id: string }>(
+      `SELECT run_id FROM automation_run_logs WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [taskId],
     );
-    return rows.reverse().map((r) => rowToLogEntry(r as Record<string, unknown>));
+    const latestRunId = latestRun[0]?.run_id;
+    if (!latestRunId) return [];
+    const { rows } = await this.pool.query(
+      `SELECT * FROM automation_run_logs WHERE task_id = $1 AND run_id = $2 ORDER BY created_at ASC LIMIT $3`,
+      [taskId, latestRunId, capped],
+    );
+    return rows.map((r) => rowToLogEntry(r as Record<string, unknown>));
+  }
+
+  /** Schedule the next recurring run (fires AUTOMATION_RUN_LEAD_MS before user-facing time). */
+  async scheduleNextRecurringRun(task: AutomationTaskRecord): Promise<void> {
+    const boss = getPgBoss();
+    if (!boss || task.status !== 'active' || task.scheduleType !== 'recurring' || !task.cronExpression) return;
+
+    const timezone = task.timezone || 'UTC';
+    const nextRunAt = parseExpression(task.cronExpression, { tz: timezone }).next().toDate();
+    const triggerAt = new Date(Math.max(Date.now() + 500, nextRunAt.getTime() - AUTOMATION_RUN_LEAD_MS));
+    const singletonKey = `automation-run:${task.id}`;
+
+    const pgbossJobId = await boss.send(
+      getAutomationQueueName(),
+      { taskId: task.id, targetRunAt: nextRunAt.toISOString() } satisfies AutomationJobPayload,
+      { startAfter: triggerAt, singletonKey },
+    );
+
+    await this.pool.query(
+      `UPDATE automation_tasks SET pgboss_job_id = $2, next_run_at = $3, updated_at = NOW() WHERE id = $1`,
+      [task.id, pgbossJobId, nextRunAt],
+    );
+  }
+
+  /** Migrate legacy pg-boss cron schedules to lead-time one-shot jobs. */
+  async migrateRecurringSchedulesToLeadTime(): Promise<number> {
+    const { rows } = await this.pool.query<Record<string, unknown>>(
+      `SELECT * FROM automation_tasks
+       WHERE schedule_type = 'recurring' AND status = 'active' AND pgboss_schedule_name IS NOT NULL`,
+    );
+    let migrated = 0;
+    for (const row of rows) {
+      await this.stopBossJobs(row);
+      await this.pool.query(
+        `UPDATE automation_tasks SET pgboss_schedule_name = NULL WHERE id = $1`,
+        [row['id']],
+      );
+      const task = enrichTask(rowToTask(row));
+      await this.scheduleNextRecurringRun(task);
+      migrated++;
+      getLogger().info('AUTOMATION', `Migrated recurring task ${task.displayId || task.id} to lead-time scheduling`);
+    }
+    return migrated;
+  }
+
+  private automationSingletonKey(taskId: string): string {
+    return `automation-run:${taskId}`;
   }
 
   private async stopBossJobs(row: Record<string, unknown>): Promise<void> {
@@ -178,28 +294,28 @@ export class AutomationService {
     const queue = getAutomationQueueName();
     const id = row['id'] as string;
     const scheduleType = row['schedule_type'] as string;
-    const timezone = (row['timezone'] as string) ?? 'UTC';
     const taskKey = row['task_key'] as string | null;
+    const singletonKey = this.automationSingletonKey(id);
 
     if (scheduleType === 'once') {
       const runAt = new Date(row['run_at'] as string);
       if (Number.isNaN(runAt.getTime()) || runAt.getTime() <= Date.now()) {
         throw new Error('One-time run_at is invalid or in the past');
       }
-      const pgbossJobId = await boss.send(queue, { taskId: id }, {
-        startAfter: runAt,
-        singletonKey: taskKey ?? id,
-      });
+      const triggerAt = new Date(Math.max(Date.now() + 500, runAt.getTime() - AUTOMATION_RUN_LEAD_MS));
+      const pgbossJobId = await boss.send(
+        queue,
+        { taskId: id, targetRunAt: runAt.toISOString() } satisfies AutomationJobPayload,
+        { startAfter: triggerAt, singletonKey: taskKey ?? singletonKey },
+      );
       return { pgbossJobId, nextRunAt: runAt };
     }
 
     const cron = (row['cron_expression'] as string)?.trim();
     if (!cron || cron.split(/\s+/).length !== 5) throw new Error('Invalid cron expression');
-    const scheduleName = (row['pgboss_schedule_name'] as string) ?? (taskKey ? `automation:${taskKey}` : `automation:${id}`);
-    await boss.createQueue(scheduleName).catch(() => {});
-    await boss.schedule(scheduleName, cron, { taskId: id }, { tz: timezone });
-    const nextRunAt = parseExpression(cron, { tz: timezone }).next().toDate();
-    return { pgbossJobId: null, nextRunAt };
+    const task = enrichTask(rowToTask(row));
+    await this.scheduleNextRecurringRun(task);
+    return { pgbossJobId: null, nextRunAt: task.nextRunAt ? new Date(task.nextRunAt) : null };
   }
 
   async confirmSession(sessionId: string, note?: string): Promise<{ ok: boolean; error?: string }> {
@@ -233,7 +349,12 @@ export class AutomationService {
     const boss = getPgBoss();
     if (!boss) return { ok: false, error: 'Job queue not ready' };
 
-    const notifyChannels: AutomationNotifyChannel[] = input.notifyChannels ?? ['in_app'];
+    const notifyChannels: AutomationNotifyChannel[] = normalizeAutomationTaskOrigin({
+      sourceChannel: inferAutomationSourceChannel(input.sourceChannel, input.sourceSessionId),
+      sourceSessionId: input.sourceSessionId,
+      notifyChannels: input.notifyChannels?.length ? input.notifyChannels : undefined,
+    }).notifyChannels;
+    const sourceChannel = inferAutomationSourceChannel(input.sourceChannel, input.sourceSessionId);
     const timezone = input.timezone ?? 'UTC';
     const queue = getAutomationQueueName();
 
@@ -280,20 +401,20 @@ export class AutomationService {
           return { ok: false, error: 'run_at must be in the future' };
         }
         resolvedRunAt = runAt.toISOString();
-        pgbossJobId = await boss.send(queue, { taskId: id }, {
-          startAfter: runAt,
-          singletonKey: input.taskKey ?? id,
-        });
+        const triggerAt = new Date(Math.max(Date.now() + 500, runAt.getTime() - AUTOMATION_RUN_LEAD_MS));
+        pgbossJobId = await boss.send(
+          queue,
+          { taskId: id, targetRunAt: runAt.toISOString() } satisfies AutomationJobPayload,
+          { startAfter: triggerAt, singletonKey: input.taskKey ?? `automation-run:${id}` },
+        );
         nextRunAt = runAt;
       } else {
         const cron = input.cron!.trim();
         if (cron.split(/\s+/).length !== 5) {
           return { ok: false, error: 'cron must be a 5-field expression' };
         }
-        pgbossScheduleName = input.taskKey ? `automation:${input.taskKey}` : `automation:${id}`;
-        await boss.createQueue(pgbossScheduleName).catch(() => {});
-        await boss.schedule(pgbossScheduleName, cron, { taskId: id }, { tz: timezone });
         nextRunAt = parseExpression(cron, { tz: timezone }).next().toDate();
+        pgbossScheduleName = null;
       }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -316,7 +437,7 @@ export class AutomationService {
           input.scheduleType === 'recurring' ? input.cron : null,
           input.scheduleType === 'once' ? resolvedRunAt : null,
           timezone,
-          input.sourceChannel ?? 'web',
+          sourceChannel,
           input.sourceSessionId,
           JSON.stringify(notifyChannels),
           permissionSnapshot ? JSON.stringify(permissionSnapshot) : null,
@@ -326,6 +447,10 @@ export class AutomationService {
         ],
       );
       await this.clearSessionConfirmation(input.sourceSessionId);
+      if (input.scheduleType === 'recurring') {
+        const task = await this.getTask(id);
+        if (task) await this.scheduleNextRecurringRun(task);
+      }
       return { ok: true, taskId: id, displayId };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -348,7 +473,9 @@ export class AutomationService {
     const taskId = await this.resolveTaskId(taskIdOrDisplayId);
     if (!taskId) return null;
     const { rows } = await this.pool.query('SELECT * FROM automation_tasks WHERE id = $1', [taskId]);
-    return rows[0] ? enrichTask(rowToTask(rows[0] as Record<string, unknown>)) : null;
+    if (!rows[0]) return null;
+    const task = enrichTask(rowToTask(rows[0] as Record<string, unknown>));
+    return this.persistTaskOriginIfNeeded(task, rows[0] as Record<string, unknown>);
   }
 
   async pauseTask(idOrKey: string, sessionId?: string): Promise<{ ok: boolean; error?: string }> {
@@ -389,7 +516,7 @@ export class AutomationService {
         `UPDATE automation_tasks SET status = 'active', pgboss_job_id = $2, next_run_at = $3, updated_at = NOW() WHERE id = $1`,
         [row['id'], pgbossJobId, nextRunAt],
       );
-      return { ok: true, scheduleName: row['schedule_type'] === 'recurring' ? (row['pgboss_schedule_name'] as string | null) : null };
+      return { ok: true };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -462,25 +589,22 @@ export class AutomationService {
     body: string;
     channels: AutomationNotifyChannel[];
     payload?: Record<string, unknown>;
+    task?: Pick<AutomationTaskRecord, 'sourceChannel' | 'sourceSessionId' | 'notifyChannels' | 'id'> | null;
   }): Promise<NotificationRecord> {
-    if (input.channels.length === 0) {
-      return {
-        id: '',
-        taskId: input.taskId ?? null,
-        kind: input.kind,
-        title: input.title,
-        body: input.body,
-        payload: input.payload ?? null,
-        channels: [],
-        deliveryStatus: {},
-        readAt: null,
-        createdAt: new Date().toISOString(),
-      };
+    let channels = input.channels;
+    if (input.task) {
+      const cfg = getEngine().configManager.load();
+      const channelStatus = getNotificationChannelStatus(cfg, getTelegramRuntimeHints());
+      channels = effectiveAutomationNotifyChannels(channels, input.task, channelStatus);
+    } else if (channels.length === 0) {
+      channels = ['in_app'];
+    }
+    if (channels.length === 0) {
+      channels = ['in_app'];
     }
 
     const id = generateId();
     const deliveryStatus: Record<string, unknown> = {};
-    const channels: AutomationNotifyChannel[] = input.channels;
 
     const { rows } = await this.pool.query(
       `INSERT INTO notifications (id, task_id, kind, title, body, payload, channels, delivery_status)
@@ -562,13 +686,18 @@ export async function deliverExternalNotifications(
   },
 ): Promise<Record<string, unknown>> {
   const delivery: Record<string, unknown> = { ...(notification.deliveryStatus ?? {}) };
-  if (notification.channels.length === 0) return delivery;
-
   const cfg = eng.configManager?.load();
   const channelCfg = cfg?.channels;
+  const runtimeHints = getTelegramRuntimeHints();
+  const channelStatus = getNotificationChannelStatus(cfg, runtimeHints);
+  const channels = task
+    ? effectiveAutomationNotifyChannels(notification.channels, task, channelStatus)
+    : notification.channels;
+  if (channels.length === 0) return delivery;
+
   const text = `${notification.title}\n\n${notification.body}`;
 
-  if (notification.channels.includes('telegram')) {
+  if (channels.includes('telegram')) {
     try {
       const botToken = channelCfg?.telegram?.botToken ?? process.env['TELEGRAM_BOT_TOKEN'];
       const chatIdRaw = channelCfg?.telegram?.chatId
@@ -598,7 +727,7 @@ export async function deliverExternalNotifications(
     }
   }
 
-  if (notification.channels.includes('slack')) {
+  if (channels.includes('slack')) {
     try {
       const webhookUrl = channelCfg?.slack?.webhookUrl ?? process.env['SLACK_WEBHOOK_URL'];
       if (!webhookUrl) {
@@ -618,7 +747,7 @@ export async function deliverExternalNotifications(
     }
   }
 
-  if (notification.channels.includes('discord')) {
+  if (channels.includes('discord')) {
     try {
       const webhookUrl = channelCfg?.discord?.webhookUrl;
       if (!webhookUrl) {
@@ -638,7 +767,7 @@ export async function deliverExternalNotifications(
     }
   }
 
-  if (notification.channels.includes('email')) {
+  if (channels.includes('email')) {
     try {
       const emailCfg = channelCfg?.email;
       const to = emailCfg?.toAddress;
@@ -657,11 +786,11 @@ export async function deliverExternalNotifications(
     }
   }
 
-  if (notification.channels.includes('in_app')) {
+  if (channels.includes('in_app')) {
     delivery['in_app'] = 'deferred_to_client';
   }
 
-  if (notification.channels.includes('desktop')) {
+  if (channels.includes('desktop')) {
     delivery['desktop'] = 'deferred_to_client';
   }
 

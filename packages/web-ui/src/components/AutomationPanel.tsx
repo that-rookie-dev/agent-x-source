@@ -356,7 +356,13 @@ export function AutomationPanel() {
 
       if (ev.type === 'automation_run_triggered' || ev.type === 'automation_run_started') {
         const tid = (ev as { taskId?: string }).taskId;
-        if (tid) setRunningIds((prev) => new Set(prev).add(tid));
+        if (tid) {
+          setRunningIds((prev) => new Set(prev).add(tid));
+          if (tid === selectedId) {
+            seenEventKeys.current.clear();
+            setOpsLog([]);
+          }
+        }
       }
       if (ev.type === 'automation_run_ended') {
         const tid = (ev as { taskId?: string }).taskId;

@@ -35,26 +35,23 @@ export function useIntegrationsHub() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
-    const onOAuthMessage = (event: MessageEvent) => {
-      if (event.data?.type !== 'agentx-integration-oauth') return;
-      if (event.data.success) {
+    const onOAuthResult = (data: { type?: string; success?: boolean; message?: string }) => {
+      if (data?.type !== 'agentx-integration-oauth') return;
+      if (data.success) {
         void refresh();
         setMessage('OAuth connected — integrations refreshed.');
         setConnectingProvider(null);
+      } else {
+        // Keep the wizard open so the user can click "Sign in again".
+        setMessage(data.message ?? 'Sign-in did not complete — you can retry from the wizard.');
       }
     };
+    const onOAuthMessage = (event: MessageEvent) => onOAuthResult(event.data);
     window.addEventListener('message', onOAuthMessage);
     let channel: BroadcastChannel | null = null;
     try {
       channel = new BroadcastChannel('agentx-integrations');
-      channel.onmessage = (event) => {
-        if (event.data?.type !== 'agentx-integration-oauth') return;
-        if (event.data.success) {
-          void refresh();
-          setMessage('OAuth connected — integrations refreshed.');
-          setConnectingProvider(null);
-        }
-      };
+      channel.onmessage = (event) => onOAuthResult(event.data);
     } catch { /* BroadcastChannel unavailable */ }
     return () => {
       window.removeEventListener('message', onOAuthMessage);
@@ -73,8 +70,8 @@ export function useIntegrationsHub() {
     return map;
   }, [connections]);
 
-  const handleConnect = async (request: ConnectIntegrationRequest) => {
-    if (!connectingProvider) return;
+  const handleConnect = async (request: ConnectIntegrationRequest): Promise<IntegrationConnection> => {
+    if (!connectingProvider) throw new Error('No provider selected');
     const connectedProvider = connectingProvider;
     setBusyId(connectedProvider.id);
     setMessage('');
@@ -85,15 +82,12 @@ export function useIntegrationsHub() {
       if (connection.status === 'error') {
         setDetailProvider(connectedProvider);
         setMessage(connection.error ?? 'Connected, but the MCP server failed to start. Use Sync to retry.');
-        return;
+        return connection;
       }
-      const signIn = connectedProvider.auth.packageSignIn;
-      if (signIn) {
-        setDetailProvider(connectedProvider);
-        setMessage(`Connected. Sign in to ${connectedProvider.name} below to enable search and bookings.`);
-      } else {
+      if (!connectedProvider.auth.packageSignIn) {
         setMessage('Connected successfully');
       }
+      return connection;
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'Connect failed');
       throw e;
@@ -102,11 +96,17 @@ export function useIntegrationsHub() {
     }
   };
 
-  const handleOAuthStart = async (remoteUrl?: string) => {
-    if (!connectingProvider) return;
-    const { authUrl } = await integrations.startOAuth(connectingProvider.id, remoteUrl);
-    window.open(authUrl, '_blank', 'noopener,noreferrer');
-    setMessage('Complete sign-in in the browser — this page will refresh automatically.');
+  const handleOAuthStart = async (remoteUrl?: string): Promise<{ state: string }> => {
+    if (!connectingProvider) throw new Error('No provider selected');
+    const { authUrl, state } = await integrations.startOAuth(connectingProvider.id, remoteUrl);
+    const desktop = typeof window !== 'undefined' ? window.agentx : undefined;
+    if (desktop?.openExternal) {
+      await desktop.openExternal(authUrl);
+    } else {
+      window.open(authUrl, '_blank');
+    }
+    setMessage('Complete sign-in in the browser — this page will update automatically.');
+    return { state };
   };
 
   const handleImportFile = async (file: File) => {

@@ -1,3 +1,8 @@
+/**
+ * First-run Agent-X setup wizard (`/setup/wizard`) — storage, provider, model, neural core, callsign.
+ *
+ * NOT the MCP integration connect flow: that is `components/integrations/setup-wizards/ProviderSetupWizard`.
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';

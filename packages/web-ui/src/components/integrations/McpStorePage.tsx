@@ -326,6 +326,7 @@ export function McpStorePage({ embedded = false }: McpStorePageProps) {
           onSync={hub.handleSync}
           onConnectSubmit={hub.handleConnect}
           onOAuthStart={hub.handleOAuthStart}
+          onOAuthComplete={() => { void hub.refresh(); }}
           onCancelConnect={hub.cancelConnect}
           showConnectWizard={hub.connectingProvider?.id === hub.detailProvider.id}
           autoStartSignIn={hub.signInOnOpen}

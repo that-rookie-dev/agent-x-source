@@ -7,13 +7,13 @@ import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import CircularProgress from '@mui/material/CircularProgress';
 import { canUseHubBrowserOAuth, requiresRemoteUrlForHubOAuth } from './integration-ui';
-import type { ConnectIntegrationRequest, IntegrationProvider } from '../../api';
+import type { ConnectIntegrationRequest, IntegrationConnection, IntegrationProvider } from '../../api';
 import { settingsTheme, settingsMonoSx, settingsTextFieldSx } from '../../styles/settings-theme';
 
 export interface ConnectWizardProps {
   provider: IntegrationProvider;
-  onConnect: (request: ConnectIntegrationRequest) => Promise<void>;
-  onOAuthStart?: (remoteUrl?: string) => Promise<void>;
+  onConnect: (request: ConnectIntegrationRequest) => Promise<IntegrationConnection | void>;
+  onOAuthStart?: (remoteUrl?: string) => Promise<{ state: string } | void>;
   onCancel: () => void;
 }
 

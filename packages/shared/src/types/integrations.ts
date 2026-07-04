@@ -26,6 +26,46 @@ export interface ConnectGuideStep {
   link?: string;
 }
 
+export type SetupPreflightCheckId =
+  | 'node_available'
+  | 'npx_available'
+  | 'network_reachable'
+  | 'oauth_client_configured'
+  | 'oauth_env_configured'
+  | 'mcp_handshake'
+  | 'folder_readable'
+  | 'folder_writable'
+  | 'local_port_reachable'
+  | 'redis_reachable'
+  | 'postgres_reachable';
+
+export type SetupWizardTemplate =
+  | 'oauth_remote'
+  | 'api_key'
+  | 'stdio_none'
+  | 'connection_string'
+  | 'remote_url'
+  | 'folder_sandbox'
+  | 'package_sign_in'
+  | 'custom';
+
+export type SetupOsPermissionId = 'notifications' | 'folder_access' | 'local_network';
+
+export interface ProviderSetupWizardSpec {
+  template: SetupWizardTemplate;
+  preflight: SetupPreflightCheckId[];
+  osPermissions?: SetupOsPermissionId[];
+  /** Hide Developer stdio tab for non-technical users (default true for lifestyle categories). */
+  hideDeveloperTab?: boolean;
+}
+
+export interface SetupPreflightResult {
+  id: SetupPreflightCheckId;
+  ok: boolean;
+  message: string;
+  fixHint?: string;
+}
+
 export type IntegrationCatalogStatus = 'active' | 'candidate' | 'testing' | 'deprecated';
 
 export interface IntegrationProvider {
@@ -63,6 +103,8 @@ export interface IntegrationProvider {
       label?: string;
     };
   };
+  /** Per-provider setup wizard spec (inferred from auth when omitted). */
+  setupWizard?: ProviderSetupWizardSpec;
   capabilities: {
     search: boolean;
     read: boolean;
@@ -175,6 +217,14 @@ export interface ConnectIntegrationRequest {
 export interface OAuthStartResponse {
   authUrl: string;
   state: string;
+}
+
+export type OAuthFlowStatus = 'pending' | 'completed' | 'failed' | 'expired';
+
+export interface OAuthFlowResult {
+  status: OAuthFlowStatus;
+  connection?: IntegrationConnection;
+  message?: string;
 }
 
 /** Structured preview shown before executing a write/transact integration tool. */

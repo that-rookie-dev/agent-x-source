@@ -140,6 +140,11 @@ function TelegramFields({
 }) {
   const [verifying, setVerifying] = useState(false);
   const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
+  const [greeting, setGreeting] = useState(false);
+  const [greetingMsg, setGreetingMsg] = useState<string | null>(null);
+
+  const chatId = getField(value, 'telegram', 'chatId');
+  const hasToken = Boolean(getField(value, 'telegram', 'botToken').trim());
 
   const handleVerify = async () => {
     const token = getField(value, 'telegram', 'botToken');
@@ -150,7 +155,7 @@ function TelegramFields({
     setVerifying(true);
     setVerifyMsg(null);
     try {
-      const result = await channelsApi.discoverTelegram(token);
+      const result = await channelsApi.discoverTelegram(token, chatId || undefined);
       if (!result.ok) {
         setVerifyMsg(result.error ?? 'Verification failed');
         return;
@@ -161,12 +166,66 @@ function TelegramFields({
         return;
       }
       const chat = result.chats[0]!;
-      onChange(setField(value, 'telegram', 'chatId', chat.id));
-      setVerifyMsg(`Connected (${botLabel} → ${chat.title}).`);
+      const next = {
+        ...value,
+        telegram: {
+          ...value.telegram,
+          enabled: true,
+          inbound: true,
+          outbound: true,
+          botToken: token,
+          chatId: chat.id,
+        },
+      };
+      onChange(next);
+      setVerifyMsg(
+        result.saved
+          ? `Connected (${botLabel} → ${chat.title}). Saved — survives restart.`
+          : `Connected (${botLabel} → ${chat.title}).`,
+      );
     } catch (e) {
       setVerifyMsg(e instanceof Error ? e.message : 'Verification failed');
     } finally {
       setVerifying(false);
+    }
+  };
+
+  const handleGreeting = async () => {
+    if (!hasToken) {
+      setGreetingMsg('Enter a bot token first.');
+      return;
+    }
+    if (!chatId) {
+      setGreetingMsg('Verify token and link a chat before sending a greeting.');
+      return;
+    }
+    setGreeting(true);
+    setGreetingMsg(null);
+    try {
+      const result = await channelsApi.sendTelegramGreeting(
+        getField(value, 'telegram', 'botToken'),
+        chatId,
+      );
+      if (!result.ok) {
+        setGreetingMsg(result.error ?? 'Greeting failed');
+        return;
+      }
+      onChange({
+        ...value,
+        telegram: {
+          ...value.telegram,
+          enabled: true,
+          inbound: true,
+          outbound: true,
+          botToken: getField(value, 'telegram', 'botToken'),
+          chatId,
+        },
+      });
+      setGreetingMsg(result.message ? `Sent: ${result.message}` : 'Greeting sent. Inbound listener started.');
+    } catch (e) {
+      setGreetingMsg(e instanceof Error ? e.message : 'Greeting failed');
+    } finally {
+      setGreeting(false);
     }
   };
 
@@ -182,13 +241,24 @@ function TelegramFields({
         onChange={(e) => onChange(setField(value, 'telegram', 'botToken', e.target.value))}
         sx={settingsTextFieldSx}
       />
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button size="small" onClick={() => { void handleVerify(); }} disabled={verifying} sx={settingsBtnGhostSx}>
           {verifying ? <CircularProgress size={12} sx={{ mr: 0.75 }} /> : null}
           Verify token
         </Button>
-        {verifyMsg && (
-          <Typography sx={{ fontSize: '0.58rem', color: settingsTheme.text.dim, flex: 1 }}>{verifyMsg}</Typography>
+        <Button
+          size="small"
+          onClick={() => { void handleGreeting(); }}
+          disabled={greeting || !hasToken || !chatId}
+          sx={settingsBtnGhostSx}
+        >
+          {greeting ? <CircularProgress size={12} sx={{ mr: 0.75 }} /> : null}
+          Send greeting
+        </Button>
+        {(verifyMsg || greetingMsg) && (
+          <Typography sx={{ fontSize: '0.58rem', color: settingsTheme.text.dim, flex: 1, minWidth: 160 }}>
+            {greetingMsg ?? verifyMsg}
+          </Typography>
         )}
       </Box>
     </>
@@ -378,7 +448,7 @@ export function ChannelsTab({ value, onChange }: ChannelsTabProps) {
         </Box>
       </Box>
       <Typography sx={{ ...settingsHelperSx, mt: 1 }}>
-        Enable a channel, configure credentials, then Commit. Messages are handled by the default Agent-X agent.
+        Enable a channel and enter credentials. Verify saves Telegram settings automatically — no need to re-verify after restart. Commit other changes when ready.
       </Typography>
     </Box>
   );

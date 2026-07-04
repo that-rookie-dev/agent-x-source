@@ -13,7 +13,8 @@ export interface PkceChallenge {
 
 export class OAuthPkceStore {
   private pending = new Map<string, PkceChallenge>();
-  private readonly ttlMs = 10 * 60 * 1000;
+  /** Generous TTL: first-time users may sign up (email verification etc.) mid-flow. */
+  private readonly ttlMs = 30 * 60 * 1000;
 
   create(providerId: string, redirectUri: string, options?: { connectionId?: string; remoteResourceUrl?: string }): PkceChallenge {
     const codeVerifier = randomBytes(32).toString('base64url');
@@ -39,6 +40,17 @@ export class OAuthPkceStore {
     if (!challenge) return undefined;
     this.pending.delete(state);
     if (Date.now() - challenge.createdAt > this.ttlMs) return undefined;
+    return challenge;
+  }
+
+  /** Non-destructive lookup — used while polling for OAuth completion. */
+  peek(state: string): PkceChallenge | undefined {
+    const challenge = this.pending.get(state);
+    if (!challenge) return undefined;
+    if (Date.now() - challenge.createdAt > this.ttlMs) {
+      this.pending.delete(state);
+      return undefined;
+    }
     return challenge;
   }
 

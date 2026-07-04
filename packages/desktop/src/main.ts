@@ -2,7 +2,7 @@ import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, 
 import { join, basename } from 'path';
 import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import type { Server } from 'http';
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { tmpdir, totalmem } from 'os';
 import { pathToFileURL } from 'url';
 import { randomBytes } from 'node:crypto';
@@ -616,6 +616,29 @@ ipcMain.handle('dialog:openFolder', async () => {
     buttonLabel: 'Choose folder',
   });
   return result.canceled ? null : result.filePaths[0] ?? null;
+});
+ipcMain.handle('dialog:openFile', async (_event, filters?: Array<{ name: string; extensions: string[] }>) => {
+  if (!mainWindow) return null;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    title: 'Select a file',
+    buttonLabel: 'Choose file',
+    filters: filters?.length ? filters : undefined,
+  });
+  return result.canceled ? null : result.filePaths[0] ?? null;
+});
+ipcMain.handle('permissions:checkNodeRuntime', async () => {
+  const tryVersion = (cmd: string): string | undefined => {
+    try {
+      const out = execFileSync(cmd, ['--version'], { timeout: 5000 }).toString().trim();
+      return out || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const node = tryVersion('node');
+  const npx = tryVersion('npx');
+  return { node, npx, ok: Boolean(node && npx) };
 });
 ipcMain.handle('shell:openExternal', async (_event, url: string) => openExternalLink(url));
 ipcMain.handle('window:openInternal', async (_event, url: string) => {

@@ -14,6 +14,7 @@ export interface PackageSignInPanelProps {
   busy?: boolean;
   autoStartSignIn?: boolean;
   onAutoStartConsumed?: () => void;
+  onSignedIn?: () => void;
 }
 
 function outputLooksSignedIn(output: string): boolean {
@@ -42,6 +43,7 @@ export function PackageSignInPanel({
   busy,
   autoStartSignIn,
   onAutoStartConsumed,
+  onSignedIn,
 }: PackageSignInPanelProps) {
   const signIn = providerPackageSignIn(provider);
   const [status, setStatus] = useState<'idle' | 'starting' | 'polling' | 'signed_in' | 'failed'>('idle');
@@ -87,6 +89,7 @@ export function PackageSignInPanel({
     setMessage(output.slice(0, 500));
     if (outputLooksSignedIn(output)) {
       setStatus('signed_in');
+      onSignedIn?.();
       return true;
     }
     return false;
@@ -106,6 +109,7 @@ export function PackageSignInPanel({
       setMessage(output.slice(0, 500));
       if (outputLooksSignedIn(output)) {
         setStatus('signed_in');
+        onSignedIn?.();
         stopPolling();
         return;
       }
@@ -142,6 +146,7 @@ export function PackageSignInPanel({
       setMessage(result.output?.slice(0, 500) ?? '');
       if (result.success && outputLooksSignedIn(result.output ?? '')) {
         setStatus('signed_in');
+        onSignedIn?.();
         return;
       }
 
@@ -165,9 +170,12 @@ export function PackageSignInPanel({
 
   useEffect(() => {
     void checkStatus().then((signedIn) => {
-      if (signedIn) setStatus('signed_in');
+      if (signedIn) {
+        setStatus('signed_in');
+        onSignedIn?.();
+      }
     }).catch(() => {});
-  }, [checkStatus]);
+  }, [checkStatus, onSignedIn]);
 
   useEffect(() => {
     if (!autoStartSignIn || status === 'signed_in' || status === 'starting' || status === 'polling') return;

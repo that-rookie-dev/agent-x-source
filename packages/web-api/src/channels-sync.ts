@@ -3,11 +3,15 @@ import {
   DiscordBridge,
   Gateway,
   SlackBridge,
+  TelegramChannelPlugin,
   getBuiltinPlugin,
+  getActiveTelegramBridge,
+  resolveTelegramOutboundChatId,
 } from '@agentx/engine';
 import type { AgentXConfig, NotificationChannelsConfig, ProviderId, TelegramDiscoveredChat } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
-import { ensureChannelAgent, getEngine } from './engine.js';
+import { randomUUID } from 'node:crypto';
+import { ensureChannelAgent, getEngine, rewireTelegramChannelPermissions, syncChannelSuperSessionContext } from './engine.js';
 
 export interface TelegramDiscoverResult {
   ok: boolean;
@@ -15,6 +19,9 @@ export interface TelegramDiscoverResult {
   botUsername?: string;
   botName?: string;
   chats?: TelegramDiscoveredChat[];
+  /** True when bot token + chat were written to config (survives restart). */
+  saved?: boolean;
+  chatId?: string;
 }
 
 /** Validate bot token and list recent chats from getUpdates (user must message the bot first). */
@@ -82,12 +89,116 @@ function wantsOutbound(section: { outbound?: boolean; enabled?: boolean } | unde
   return channelEnabled(section) && section?.outbound !== false;
 }
 
+function resolveTelegramBotToken(ch?: NotificationChannelsConfig['telegram']): string | undefined {
+  const fromConfig = ch?.botToken?.trim();
+  if (fromConfig) return fromConfig;
+  const fromEnv = process.env['TELEGRAM_BOT_TOKEN']?.trim();
+  return fromEnv || undefined;
+}
+
+let lastTelegramStartError: string | null = null;
+
+export function getTelegramInboundStatus(): {
+  bridgeRunning: boolean;
+  botUsername?: string;
+  channelAgentAttached: boolean;
+  channelSessionId?: string;
+  queueDepth?: number;
+  savedEnabled: boolean;
+  savedChatId?: string;
+  hasBotToken: boolean;
+  inboundReady: boolean;
+  lastStartError?: string | null;
+} {
+  const eng = getEngine();
+  let cfg: AgentXConfig;
+  try {
+    cfg = eng.configManager.load();
+  } catch {
+    return {
+      bridgeRunning: false,
+      channelAgentAttached: false,
+      savedEnabled: false,
+      hasBotToken: false,
+      inboundReady: false,
+      lastStartError: lastTelegramStartError ?? 'Config not loaded (sign in first)',
+    };
+  }
+  const ch = cfg.channels?.telegram;
+  const bridge = eng.telegramBridge;
+  const plugin = (eng.gateway as { registry?: { getChannel?: (id: string) => { plugin?: { getActiveChatId?: () => number | null; getBridge?: () => unknown } } } } | null)
+    ?.registry?.getChannel?.('telegram')?.plugin;
+  const token = resolveTelegramBotToken(ch);
+  return {
+    bridgeRunning: Boolean(bridge?.isRunning()),
+    botUsername: bridge?.getStatus?.().botUsername,
+    channelAgentAttached: Boolean(eng.channelAgent && plugin),
+    channelSessionId: eng.channelAgent?.currentSessionId,
+    queueDepth: undefined,
+    savedEnabled: ch?.enabled === true,
+    savedChatId: ch?.chatId,
+    hasBotToken: Boolean(token),
+    inboundReady: isTelegramInboundReady(ch),
+    lastStartError: lastTelegramStartError,
+  };
+}
+
+/** Retry starting the inbound bridge (after login or config save). */
+export async function restartTelegramInbound(): Promise<{ ok: boolean; error?: string; status: ReturnType<typeof getTelegramInboundStatus> }> {
+  try {
+    await applyChannelsConfig();
+    const status = getTelegramInboundStatus();
+    if (!status.inboundReady) {
+      const reason = !status.hasBotToken
+        ? 'Bot token not saved. Re-enter your token in Settings → Channels and click Verify token.'
+        : !status.savedEnabled
+          ? 'Telegram channel is disabled in saved config.'
+          : 'Telegram inbound is not configured.';
+      return { ok: false, error: reason, status };
+    }
+    if (!status.bridgeRunning) {
+      return { ok: false, error: lastTelegramStartError ?? 'Bridge failed to start', status };
+    }
+    return { ok: true, status };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    lastTelegramStartError = msg;
+    return { ok: false, error: msg, status: getTelegramInboundStatus() };
+  }
+}
+
 export function isTelegramOutboundReady(ch?: NotificationChannelsConfig['telegram']): boolean {
-  return wantsOutbound(ch) && Boolean(ch?.botToken && ch?.chatId);
+  return wantsOutbound(ch) && Boolean(resolveTelegramBotToken(ch) && ch?.chatId);
 }
 
 export function isTelegramInboundReady(ch?: NotificationChannelsConfig['telegram']): boolean {
-  return wantsInbound(ch) && Boolean(ch?.botToken);
+  return wantsInbound(ch) && Boolean(resolveTelegramBotToken(ch));
+}
+
+/** Persist Telegram credentials so verify/greeting are one-time setup (survives restart). */
+export function persistTelegramSettings(patch: {
+  botToken?: string;
+  chatId?: string;
+  enabled?: boolean;
+}): AgentXConfig {
+  const eng = getEngine();
+  const cfg = eng.configManager.load();
+  const telegram = {
+    enabled: false,
+    inbound: true,
+    outbound: true,
+    ...cfg.channels?.telegram,
+    ...patch,
+  };
+  const next: AgentXConfig = {
+    ...cfg,
+    channels: {
+      ...cfg.channels,
+      telegram,
+    },
+  };
+  eng.configManager.save(next);
+  return next;
 }
 
 /** Persist outbound chat target once the user has messaged the bot. */
@@ -146,20 +257,44 @@ async function startTelegramInbound(token: string): Promise<void> {
   }
   eng.pluginRegistry.enable('telegram');
 
-  if (eng.telegramBridge?.isRunning() || process.env['AGENTX_DAEMON_HANDLES_TG']) return;
+  if (process.env['AGENTX_DAEMON_HANDLES_TG']) return;
+
+  const channelAgent = ensureChannelAgent();
+
+  if (eng.telegramBridge?.isRunning() && eng.gateway) {
+    const runningEntry = eng.gateway.registry.getChannel('telegram');
+    const runningPlugin = runningEntry?.plugin instanceof TelegramChannelPlugin
+      ? runningEntry.plugin
+      : null;
+    if (runningPlugin) {
+      runningPlugin.setAgent(channelAgent);
+      runningPlugin.setChatIdPersister((id) => saveTelegramChatId(id));
+      runningPlugin.rewirePermissionHandling();
+      getLogger().info('CHANNELS', 'Telegram inbound bridge already running — rewired agent');
+      return;
+    }
+  }
 
   if (eng.gateway) {
     try { eng.gateway.stopChannel('telegram'); } catch { /* ignore */ }
   } else {
     eng.gateway = new Gateway();
   }
-
-  const channelAgent = ensureChannelAgent();
   eng.gateway.attachAgent(channelAgent);
-  const tgPlugin = eng.gateway.registerTelegram(token);
+
+  const existingEntry = eng.gateway.registry.getChannel('telegram');
+  const tgPlugin = existingEntry?.plugin instanceof TelegramChannelPlugin
+    ? existingEntry.plugin
+    : eng.gateway.registerTelegram(token);
   tgPlugin.setAgent(channelAgent);
+  tgPlugin.setChatIdPersister((id) => saveTelegramChatId(id));
   await eng.gateway.startChannel('telegram');
   eng.telegramBridge = eng.gateway.getTelegramBridge();
+  try {
+    rewireTelegramChannelPermissions(eng);
+  } catch (e) {
+    getLogger().warn('CHANNELS', `Telegram permission rewire failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
   getLogger().info('CHANNELS', 'Telegram inbound bridge started');
 }
 
@@ -291,14 +426,20 @@ export async function applyChannelsConfig(cfg?: AgentXConfig): Promise<void> {
   const ch = config.channels;
 
   // Telegram
-  if (isTelegramInboundReady(ch?.telegram)) {
+  const telegramToken = resolveTelegramBotToken(ch?.telegram);
+  if (isTelegramInboundReady(ch?.telegram) && telegramToken) {
     try {
-      await startTelegramInbound(ch!.telegram!.botToken!);
+      lastTelegramStartError = null;
+      await startTelegramInbound(telegramToken);
     } catch (e) {
-      getLogger().warn('CHANNELS', `Telegram inbound start failed: ${e instanceof Error ? e.message : String(e)}`);
+      lastTelegramStartError = e instanceof Error ? e.message : String(e);
+      getLogger().warn('CHANNELS', `Telegram inbound start failed: ${lastTelegramStartError}`);
     }
-  } else {
+  } else if (!channelEnabled(ch?.telegram)) {
     await stopTelegramInbound();
+  } else if (ch?.telegram?.enabled && !telegramToken) {
+    lastTelegramStartError = 'Bot token missing from saved config — re-verify in Settings → Channels';
+    getLogger().warn('CHANNELS', lastTelegramStartError);
   }
 
   // Slack inbound (Socket Mode)
@@ -324,4 +465,101 @@ export async function applyChannelsConfig(cfg?: AgentXConfig): Promise<void> {
   } else if (!channelEnabled(discord)) {
     await stopDiscordInbound();
   }
+}
+
+/** Generate a fresh LLM greeting and push it to the configured Telegram chat. */
+export async function sendTelegramGreeting(overrides?: {
+  botToken?: string;
+  chatId?: string;
+}): Promise<{ ok: boolean; message?: string; error?: string }> {
+  const eng = getEngine();
+  const cfg = eng.configManager.load();
+  const botToken = overrides?.botToken?.trim()
+    ?? resolveTelegramBotToken(cfg.channels?.telegram)
+    ?? process.env['TELEGRAM_BOT_TOKEN']?.trim();
+  const chatId = overrides?.chatId?.trim()
+    ?? resolveTelegramOutboundChatId(cfg, getTelegramRuntimeHints());
+
+  if (!botToken) {
+    return { ok: false, error: 'Bot token required.' };
+  }
+  if (!chatId) {
+    return { ok: false, error: 'Chat not linked. Message your bot in Telegram, then verify the token.' };
+  }
+  if (!cfg.provider.activeProvider || !cfg.provider.activeModel) {
+    return { ok: false, error: 'Configure a provider and model before sending a greeting.' };
+  }
+
+  const agent = ensureChannelAgent();
+  syncChannelSuperSessionContext(eng);
+
+  const nonce = randomUUID().slice(0, 8);
+  let greeting: string;
+  try {
+    greeting = await agent.generateOutboundText(
+      `Write a fresh, friendly Telegram greeting welcoming the user to Agent-X. Unique request ${nonce} — use different wording every time (avoid stock phrases like "Hello there" every time). Mention you are connected on Telegram and ready to help. Keep it to 1–3 sentences.`,
+    );
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Failed to generate greeting' };
+  }
+
+  try {
+    const bridge = eng.telegramBridge ?? getActiveTelegramBridge();
+    if (bridge?.isRunning()) {
+      await bridge.sendToChat(Number(chatId), greeting);
+    } else {
+      const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: greeting }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const json = await response.json() as { ok?: boolean; description?: string };
+      if (!json.ok) {
+        return { ok: false, error: json.description ?? 'Telegram send failed' };
+      }
+    }
+    getLogger().info('CHANNELS', `Telegram greeting sent (${greeting.slice(0, 60)}…)`);
+    const savedCfg = persistTelegramSettings({ botToken, chatId, enabled: true });
+    try {
+      await applyChannelsConfig(savedCfg);
+    } catch (e) {
+      getLogger().warn('CHANNELS', `Telegram inbound start after greeting failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return { ok: true, message: greeting };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Telegram send failed' };
+  }
+}
+
+/** Save verified Telegram credentials and start the inbound listener. */
+export async function saveVerifiedTelegram(
+  botToken: string,
+  chatId: string,
+): Promise<TelegramDiscoverResult> {
+  const token = botToken.trim();
+  const id = chatId.trim();
+  if (!token || !id) return { ok: false, error: 'Bot token and chat id are required' };
+
+  const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`, { signal: AbortSignal.timeout(12000) });
+  const meJson = await meRes.json() as { ok?: boolean; description?: string; result?: { username?: string; first_name?: string } };
+  if (!meJson.ok) {
+    return { ok: false, error: meJson.description ?? 'Invalid bot token' };
+  }
+
+  const savedCfg = persistTelegramSettings({ botToken: token, chatId: id, enabled: true });
+  try {
+    await applyChannelsConfig(savedCfg);
+  } catch (e) {
+    getLogger().warn('CHANNELS', `Failed to apply Telegram config after verify: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  return {
+    ok: true,
+    saved: true,
+    chatId: id,
+    botUsername: meJson.result?.username,
+    botName: meJson.result?.first_name,
+    chats: [{ id, title: `Chat ${id}`, type: 'known' }],
+  };
 }

@@ -46,6 +46,7 @@ import {
   type PaletteAction,
 } from './ChatEnhancements';
 import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
+import { eventBelongsToViewSession } from '../chat/session-stream-filter';
 import { ActionPreviewCard } from './integrations/ActionPreviewCard';
 import { colors } from '../theme';
 import ModeEscalationModal from './ModeEscalationModal';
@@ -232,6 +233,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [parentSessionId, setParentSessionId] = useState<string | null>(null);
   const [childSessionDrawer, setChildSessionDrawer] = useState<ChildSessionDrawerState | null>(null);
   const currentSessionIdRef = useRef<string | null>(sessionId ?? null);
+  /** URL session id — only set while viewing /console/chat/:sessionId (not the sessions list). */
+  const viewSessionIdRef = useRef<string | null>(sessionId ?? null);
 
   useEffect(() => { isCrewPrivateRef.current = isCrewPrivateSession; }, [isCrewPrivateSession]);
   useEffect(() => { crewPrivateHostRef.current = crewPrivateHost; }, [crewPrivateHost]);
@@ -1219,6 +1222,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     };
 
     const handleEvent = (ev: TelemetryEvent) => {
+      if (!eventBelongsToViewSession(ev, viewSessionIdRef.current)) return;
+
       // Reset activity timer on every event from the agent
       lastActivityRef.current = Date.now();
       setLastEventAt(Date.now());
@@ -1955,6 +1960,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           fetch('/api/agent/state', { credentials: 'include' })
             .then(r => r.json())
             .then(data => {
+              const viewSessionId = viewSessionIdRef.current;
+              if (!viewSessionId || data.session?.id !== viewSessionId) {
+                stopTurnIndicator();
+                return;
+              }
               if (data.processing) {
                 turnActiveRef.current = true;
                 setStreaming(true);
@@ -2088,6 +2098,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   // Keep refs in sync so send handlers never capture stale session/cwd from closures.
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
+  useEffect(() => { viewSessionIdRef.current = sessionId ?? null; }, [sessionId]);
   useEffect(() => { cwdRef.current = cwd; }, [cwd]);
 
   const ensureDefaultCwd = useCallback(async (): Promise<string> => {

@@ -9,7 +9,7 @@ import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady } from './engine.js';
-import { applyChannelsConfig, discoverTelegramBot, getTelegramRuntimeHints } from './channels-sync.js';
+import { applyChannelsConfig, discoverTelegramBot, getTelegramInboundStatus, getTelegramRuntimeHints, restartTelegramInbound, saveVerifiedTelegram, sendTelegramGreeting } from './channels-sync.js';
 import { buildGraphRagSummarizer } from './distillation-generator.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect, broadcastBrainActivity } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
@@ -64,6 +64,7 @@ import embeddingModelRouter from './embedding-model-api.js';
 import modelBenchmarkRouter from './model-benchmark-api.js';
 import { integrationsRouter } from './integrations-api.js';
 import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutomation } from './automation/index.js';
+import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
@@ -3381,25 +3382,76 @@ app.put('/api/todos/:itemId', (req, res) => {
 // ───── Telegram ─────
 app.post('/api/channels/telegram/discover', async (req, res) => {
   try {
-    const { botToken } = req.body as { botToken?: string };
+    const { botToken, chatId: hintChatId } = req.body as { botToken?: string; chatId?: string };
     if (!botToken?.trim()) {
       res.status(400).json({ ok: false, error: 'botToken is required' });
       return;
     }
+    const savedChatId = getEngine().configManager.load().channels?.telegram?.chatId?.trim();
+    const runtimeChatId = getTelegramRuntimeHints().telegramChatId?.trim();
     const result = await discoverTelegramBot(botToken, {
       knownChatIds: [
-        getEngine().configManager.load().channels?.telegram?.chatId,
-        getTelegramRuntimeHints().telegramChatId ?? undefined,
+        hintChatId,
+        savedChatId,
+        runtimeChatId ?? undefined,
       ].filter((id): id is string => Boolean(id?.trim())),
     });
     if (!result.ok) {
       res.status(400).json(result);
       return;
     }
+    if (result.chats?.length) {
+      const chatId = result.chats[0]!.id;
+      const saved = await saveVerifiedTelegram(botToken, chatId);
+      res.json({ ...result, ...saved, chatId, saved: true });
+      return;
+    }
     res.json(result);
   } catch (e: unknown) {
     getLogger().error('POST_CHANNELS_TELEGRAM_DISCOVER', e instanceof Error ? e : String(e));
     res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'discover-failed' });
+  }
+});
+
+app.post('/api/channels/telegram/greeting', async (req, res) => {
+  try {
+    const { botToken, chatId } = req.body as { botToken?: string; chatId?: string };
+    const result = await sendTelegramGreeting({ botToken, chatId });
+    if (!result.ok) {
+      res.status(400).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (e: unknown) {
+    getLogger().error('POST_CHANNELS_TELEGRAM_GREETING', e instanceof Error ? e : String(e));
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'greeting-failed' });
+  }
+});
+
+app.get('/api/channels/telegram/status', async (_req, res) => {
+  try {
+    const status = getTelegramInboundStatus();
+    if (status.inboundReady && !status.bridgeRunning) {
+      const restarted = await restartTelegramInbound();
+      res.json({ ok: true, ...restarted.status, selfHealAttempted: true, selfHealOk: restarted.ok, selfHealError: restarted.error });
+      return;
+    }
+    res.json({ ok: true, ...status });
+  } catch (e: unknown) {
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'status-failed' });
+  }
+});
+
+app.post('/api/channels/telegram/restart', async (_req, res) => {
+  try {
+    const result = await restartTelegramInbound();
+    if (!result.ok) {
+      res.status(400).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (e: unknown) {
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'restart-failed' });
   }
 });
 
@@ -4623,6 +4675,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
     for (const handler of shutdownHandlers) { try { handler(); } catch {} }
     ingestionWorker?.stop();
     void shutdownAutomation().catch(() => {});
+    shutdownAgentXOverviewBridge();
     // 5. Flush log buffer and exit
     stopGlobalRateLimitCleanup();
     closeLogger();
@@ -4747,12 +4800,23 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
 
   return server.listen(port, () => {
     console.log(`Agent-X web API listening on http://localhost:${port}`);
+    initAgentXOverviewBridge();
     void bootstrapAutomationFromEngine().catch((e: unknown) => {
       getLogger().warn('AUTOMATION', e instanceof Error ? e.message : String(e));
     });
-    void applyChannelsConfig().catch((e: unknown) => {
-      getLogger().warn('CHANNELS', e instanceof Error ? e.message : String(e));
-    });
+    // Channel bridges need decrypted config (DEK) — started from setEngineDEK after sign-in.
+    // If DEK is already available (e.g. resumed session), bootstrap once storage is ready.
+    void (async () => {
+      try {
+        await awaitEngineStorageReady();
+        const eng = getEngine();
+        if (eng.dek && eng.configured) {
+          await applyChannelsConfig();
+        }
+      } catch (e: unknown) {
+        getLogger().warn('CHANNELS', e instanceof Error ? e.message : String(e));
+      }
+    })();
   });
 }
 

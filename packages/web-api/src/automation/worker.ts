@@ -1,6 +1,8 @@
 import type { Agent } from '@agentx/engine';
 import { automationRunSessionId, generateAxId, getLogger, sanitizeAutomationNotificationBody } from '@agentx/shared';
-import { createAgent, getEngine, awaitEngineStorageReady } from '../engine.js';
+import { effectiveAutomationNotifyChannels, getNotificationChannelStatus } from '@agentx/engine';
+import { createAgent, getEngine, awaitEngineStorageReady, rewireTelegramChannelPermissions } from '../engine.js';
+import { getTelegramRuntimeHints } from '../channels-sync.js';
 import { getPgBoss, getAutomationQueueName } from './boss.js';
 import { AutomationService, deliverExternalNotifications } from './service.js';
 import { automationRunSessionMatchesTask, telemetryEventToPersistedLog } from './log-utils.js';
@@ -67,12 +69,36 @@ export async function triggerAutomationRun(taskId: string, service: AutomationSe
   await runAutomationTurn(taskId, service);
 }
 
-async function runAutomationTurn(taskId: string, service: AutomationService, jobStartedAt?: string): Promise<void> {
+async function waitUntilTargetRunTime(
+  targetRunAt: string | undefined,
+  taskId: string,
+  runId: string,
+  service: AutomationService,
+): Promise<void> {
+  if (!targetRunAt) return;
+  const waitMs = new Date(targetRunAt).getTime() - Date.now();
+  if (waitMs <= 0) return;
+  void service.appendRunLog(taskId, runId, {
+    level: 'sys',
+    label: 'WAIT',
+    detail: `Spinning up — ${Math.ceil(waitMs / 1000)}s until scheduled time`,
+    eventType: 'automation_run_waiting',
+  }).catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
+}
+
+async function runAutomationTurn(
+  taskId: string,
+  service: AutomationService,
+  jobStartedAt?: string,
+  targetRunAt?: string,
+): Promise<void> {
   const triggeredAt = jobStartedAt ?? new Date().toISOString();
   const runId = generateAxId('run');
 
   emitAutomationTelemetry('automation_run_triggered', taskId, { runId, triggeredAt });
   emitAutomationTelemetry('automation_run_preparing', taskId, { runId, detail: 'Preparing worker…' });
+  void service.clearRunLogs(taskId).catch(() => {});
   void service.appendRunLog(taskId, runId, {
     level: 'sys',
     label: 'TRIGGER',
@@ -135,21 +161,30 @@ async function runAutomationTurn(taskId: string, service: AutomationService, job
 
   agent.clearHistory();
 
+  await waitUntilTargetRunTime(targetRunAt, resolvedTaskId, runId, service);
+
   const prompt = buildAutomationPrompt(task.title, task.instruction);
   try {
     const message = await agent.sendMessage(prompt, { sourceChannel: task.sourceChannel });
-    const rawBody = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
-    const body = sanitizeAutomationNotificationBody(rawBody, { title: task.title }).slice(0, 4000);
-    const notification = await service.publishNotification({
-      taskId: task.id,
-      kind: 'automation_success',
-      title: `✓ ${task.title}`,
-      body,
-      channels: task.notifyChannels,
-      payload: { taskId: task.id, displayId: task.displayId, runSessionId: sessionId, runId },
-    });
+      const rawBody = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+      const body = sanitizeAutomationNotificationBody(rawBody, { title: task.title }).slice(0, 4000);
+      const channelStatus = getNotificationChannelStatus(cfg, getTelegramRuntimeHints());
+      const deliveryChannels = effectiveAutomationNotifyChannels(task.notifyChannels, task, channelStatus);
+      const notification = await service.publishNotification({
+        taskId: task.id,
+        kind: 'automation_success',
+        title: `✓ ${task.title}`,
+        body,
+        channels: deliveryChannels,
+        task,
+        payload: { taskId: task.id, displayId: task.displayId, runSessionId: sessionId, runId },
+      });
     await deliverExternalNotifications(notification, task, eng);
     await service.recordRun(resolvedTaskId, 'success');
+    if (task.scheduleType === 'recurring') {
+      const refreshed = await service.getTask(resolvedTaskId);
+      if (refreshed) await service.scheduleNextRecurringRun(refreshed);
+    }
     getLogger().info('AUTOMATION_WORKER', `Task ${task.displayId} (${resolvedTaskId}) completed`);
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
@@ -159,12 +194,15 @@ async function runAutomationTurn(taskId: string, service: AutomationService, job
       detail: errMsg.slice(0, 500),
       eventType: 'automation_run_failed',
     }).catch(() => {});
+    const channelStatus = getNotificationChannelStatus(cfg, getTelegramRuntimeHints());
+    const deliveryChannels = effectiveAutomationNotifyChannels(task.notifyChannels, task, channelStatus);
     const notification = await service.publishNotification({
       taskId: task.id,
       kind: 'automation_failure',
       title: `✗ ${task.title}`,
       body: errMsg.slice(0, 2000),
-      channels: task.notifyChannels,
+      channels: deliveryChannels,
+      task,
       payload: { taskId: task.id, displayId: task.displayId, error: errMsg, runSessionId: sessionId, runId },
     });
     await deliverExternalNotifications(notification, task, eng);
@@ -179,6 +217,7 @@ async function runAutomationTurn(taskId: string, service: AutomationService, job
       if (eng.agent && typeof (eng.agent as Agent).bindPermissionHandler === 'function') {
         (eng.agent as Agent).bindPermissionHandler();
       }
+      rewireTelegramChannelPermissions(eng);
     } catch { /* best-effort */ }
     try {
       (agent as unknown as { sessionLogger?: { close?: () => void } }).sessionLogger?.close?.();
@@ -194,7 +233,7 @@ async function attachQueueWorker(queueName: string, service: AutomationService):
   const boss = getPgBoss();
   if (!boss) return;
 
-  await boss.work<{ taskId: string }>(
+  await boss.work<{ taskId: string; targetRunAt?: string }>(
     queueName,
     { batchSize: 1 },
     async (jobs) => {
@@ -202,7 +241,7 @@ async function attachQueueWorker(queueName: string, service: AutomationService):
         const taskId = job.data?.taskId;
         if (!taskId) continue;
         const jobStartedAt = new Date().toISOString();
-        await runAutomationTurn(taskId, service, jobStartedAt);
+        await runAutomationTurn(taskId, service, jobStartedAt, job.data?.targetRunAt);
       }
     },
   );
@@ -215,12 +254,7 @@ export async function ensureScheduleWorker(scheduleName: string, service: Automa
 }
 
 export async function bootstrapScheduleWorkers(service: AutomationService): Promise<void> {
-  const tasks = await service.listTasks();
-  for (const task of tasks) {
-    if (task.scheduleType === 'recurring' && task.status === 'active' && task.pgbossScheduleName) {
-      await ensureScheduleWorker(task.pgbossScheduleName, service);
-    }
-  }
+  await service.migrateRecurringSchedulesToLeadTime();
 }
 
 export async function startAutomationWorker(service: AutomationService): Promise<() => void> {

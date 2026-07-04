@@ -64,6 +64,34 @@ router.post('/integrations/import', validate(mcpImportSchema), async (req: Reque
   }
 });
 
+router.post('/integrations/preflight', async (req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    const providerId = String(req.body?.providerId ?? '');
+    const checks = Array.isArray(req.body?.checks) ? req.body.checks : undefined;
+    const env = req.body?.env && typeof req.body.env === 'object' ? req.body.env as Record<string, string> : undefined;
+    const folderPath = typeof req.body?.folderPath === 'string' ? req.body.folderPath : undefined;
+    const remoteUrl = typeof req.body?.remoteUrl === 'string' ? req.body.remoteUrl : undefined;
+    if (!providerId) return res.status(400).json({ error: 'providerId is required' });
+    const results = await eng.integrationHub.preflightProvider(providerId, checks, { env, folderPath, remoteUrl });
+    res.json({ results });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post('/integrations/:providerId/connect-test', validate(connectIntegrationSchema), async (req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    const providerId = req.params.providerId!;
+    const body = req.body as ConnectIntegrationRequest;
+    const result = await eng.integrationHub.probeConnection(providerId, body);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 router.post('/integrations/:providerId/connect', validate(connectIntegrationSchema), async (req: Request, res: Response) => {
   try {
     const eng = getEngine();
@@ -89,6 +117,12 @@ router.post('/integrations/:providerId/oauth/start', async (req: Request, res: R
   }
 });
 
+router.get('/integrations/oauth/result', (req: Request, res: Response) => {
+  const state = String(req.query.state ?? '');
+  const eng = getEngine();
+  res.json({ result: eng.integrationHub.getOAuthResult(state) });
+});
+
 router.get('/integrations/oauth/callback', async (req: Request, res: Response) => {
   const state = String(req.query.state ?? '');
   const code = String(req.query.code ?? '');
@@ -97,6 +131,7 @@ router.get('/integrations/oauth/callback', async (req: Request, res: Response) =
 
   if (errorParam) {
     const message = `OAuth denied: ${errorParam}`;
+    if (state) getEngine().integrationHub.recordOAuthFailure(state, message);
     if (acceptsHtml) {
       return res.status(400).send(oauthResultPage(false, message));
     }
@@ -105,6 +140,7 @@ router.get('/integrations/oauth/callback', async (req: Request, res: Response) =
 
   if (!state || !code) {
     const message = 'Missing state or authorization code';
+    if (state) getEngine().integrationHub.recordOAuthFailure(state, message);
     if (acceptsHtml) return res.status(400).send(oauthResultPage(false, message));
     return res.status(400).json({ error: message });
   }
@@ -119,6 +155,7 @@ router.get('/integrations/oauth/callback', async (req: Request, res: Response) =
     res.json({ connection });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    getEngine().integrationHub.recordOAuthFailure(state, message);
     if (acceptsHtml) return res.status(400).send(oauthResultPage(false, message));
     res.status(400).json({ error: message });
   }
@@ -192,7 +229,7 @@ function oauthResultPage(success: boolean, message: string): string {
 <div style="max-width:420px;padding:2rem;border:1px solid ${color}44;border-radius:12px;background:#111827">
 <h1 style="color:${color};font-size:1.1rem;margin:0 0 1rem">Integration ${success ? 'Connected' : 'Failed'}</h1>
 <p style="font-size:0.9rem;line-height:1.5;margin:0 0 1.5rem">${escapeHtml(message)}</p>
-<p style="font-size:0.75rem;color:#9ca3af;margin:0">${success ? 'Returning to Agent-X…' : 'You can close this window and return to Agent-X Settings → Integrations.'}</p>
+<p style="font-size:0.75rem;color:#9ca3af;margin:0">${success ? 'Returning to Agent-X…' : 'Close this window, return to the Agent-X setup wizard, and click "Sign in again" to retry.'}</p>
 </div>
 <script>
 (function () {

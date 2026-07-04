@@ -15,6 +15,8 @@ export {
 } from './action-classifier.js';
 export { buildIntegrationActionPreview } from './action-preview.js';
 export { importMcpConfig, parseMcpImportConfig } from './mcp-config-import.js';
+export { runPreflightChecks, type PreflightContext } from './preflight.js';
+export { enrichProviderSetupWizard, enrichCatalogProviders } from './catalog/setup-wizard.js';
 export { ensureLoginShellPath, resolveStdioCommand, formatStdioSpawnError } from '@agentx/shared';
 export { IntegrationTokenVault } from './oauth/token-vault.js';
 export { discoverAuthorizationServerMetadata, discoverMcpResourceAuthorizationServer } from './oauth/discovery.js';

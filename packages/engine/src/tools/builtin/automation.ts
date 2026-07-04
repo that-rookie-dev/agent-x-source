@@ -1,5 +1,8 @@
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { isChannelSessionId, resolveFleetToolSessionScope } from '@agentx/shared';
 import { getAutomationBridge } from '../../automation/automation-bridge.js';
+import { inferAutomationSourceChannel } from '../../automation/automation-notify.js';
+import { getAgentXOverviewBridge } from '../../agent/agent-x-overview-bridge.js';
 import { inferAutomationTools, toolsNeedingConsent, NOTIFY_TOOL_IDS } from '../../automation/infer-automation-tools.js';
 
 export async function automationRegister(
@@ -19,7 +22,10 @@ export async function automationRegister(
   const cron = args['cron'] as string | undefined;
   const timezone = (args['timezone'] as string) ?? 'UTC';
   const taskKey = (args['task_key'] as string) ?? undefined;
-  const sourceChannel = (args['source_channel'] as string) ?? 'web';
+  const sourceChannel = inferAutomationSourceChannel(
+    (args['source_channel'] as string) ?? (isChannelSessionId(context.sessionId) ? 'telegram' : undefined),
+    context.sessionId,
+  );
   const requiredToolsRaw = args['required_tools'];
   const explicitTools = Array.isArray(requiredToolsRaw)
     ? requiredToolsRaw.filter((t): t is string => typeof t === 'string')
@@ -66,7 +72,11 @@ export async function automationRegister(
     taskKey,
     notifyChannels,
     sourceChannel,
-    sourceSessionId: context.sessionId,
+    sourceSessionId: isChannelSessionId(context.sessionId)
+      ? context.sessionId
+      : (resolveFleetToolSessionScope(context.sessionId)
+        ? context.sessionId
+        : (getAgentXOverviewBridge()?.getActiveSessionId() ?? context.sessionId)),
   });
 
   if (!result.ok || !result.taskId) {
@@ -93,9 +103,15 @@ export async function automationList(
   if (!bridge) {
     return { success: false, output: 'Automation service not available', error: 'NO_AUTOMATION' };
   }
-  const tasks = await bridge.listTasks(context.sessionId);
+  const scope = resolveFleetToolSessionScope(context.sessionId);
+  const tasks = await bridge.listTasks(scope);
   if (tasks.length === 0) {
-    return { success: true, output: 'No automation tasks registered for this session.' };
+    return {
+      success: true,
+      output: scope
+        ? 'No automation tasks registered for this session.'
+        : 'No automation tasks registered.',
+    };
   }
   const lines = tasks.map((t) => {
     const when = t.scheduleType === 'once'
@@ -118,7 +134,8 @@ export async function automationCancel(
   if (!id) {
     return { success: false, output: 'Provide id or task_key to cancel', error: 'INVALID_ARGS' };
   }
-  const result = await bridge.cancelTask(id, context.sessionId);
+  const scope = resolveFleetToolSessionScope(context.sessionId);
+  const result = await bridge.cancelTask(id, scope);
   if (!result.ok) {
     return { success: false, output: result.error ?? 'Cancel failed', error: 'CANCEL_FAILED' };
   }

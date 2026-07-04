@@ -128,6 +128,8 @@ export {
 export {
   CHANNEL_SESSION_ID,
   isChannelSessionId,
+  isSuperSessionId,
+  resolveFleetToolSessionScope,
 } from './utils/channel-session.js';
 
 export {

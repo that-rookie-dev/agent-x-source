@@ -195,6 +195,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     '/api/auth/login',
     '/api/auth/status',
     '/api/auth/check',
+    // OAuth providers redirect the user's browser here without an Agent-X
+    // session (popup opened with noopener; cookies may be absent). Security
+    // comes from the single-use, unguessable PKCE `state` parameter.
+    '/api/integrations/oauth/callback',
   ];
 
   if (publicPaths.includes(req.path)) {

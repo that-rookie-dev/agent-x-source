@@ -165,6 +165,11 @@ export const SHIPPED_PROVIDERS: IntegrationProvider[] = [
       primary: 'none',
       developer: ['stdio'],
     },
+    setupWizard: {
+      template: 'stdio_none',
+      preflight: ['node_available', 'npx_available', 'network_reachable'],
+      hideDeveloperTab: true,
+    },
     capabilities: { search: false, read: true, write: false, transact: false },
   },
   {
@@ -259,7 +264,7 @@ export const SHIPPED_PROVIDERS: IntegrationProvider[] = [
         scopes: ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/drive.file'],
       },
       connectGuide: [
-        { title: 'Google Cloud project', body: 'Create an OAuth client in Google Cloud Console and set AGENTX_GOOGLE_OAUTH_CLIENT_ID.' },
+        { title: 'Google Cloud project', body: 'Create an OAuth client (Web application) in Google Cloud Console, then paste the Client ID into the setup wizard.', link: 'https://console.cloud.google.com/apis/credentials' },
         { title: 'Sign in', body: 'Click Connect with Google to authorize Agent-X on this device.' },
       ],
     },

@@ -18,6 +18,7 @@ import {
   providerPackageSignIn,
 } from './integration-ui';
 import { ConnectWizard } from './ConnectWizard';
+import { ProviderSetupWizard } from './setup-wizards/ProviderSetupWizard';
 import { PackageSignInPanel } from './PackageSignInPanel';
 import type { ConnectIntegrationRequest } from '../../api';
 
@@ -30,8 +31,9 @@ export interface ProviderDetailModalProps {
   onConnect: (provider: IntegrationProvider) => void;
   onDisconnect?: (connection: IntegrationConnection) => void;
   onSync?: (connection: IntegrationConnection) => void;
-  onConnectSubmit: (request: ConnectIntegrationRequest) => Promise<void>;
-  onOAuthStart?: (remoteUrl?: string) => Promise<void>;
+  onConnectSubmit: (request: ConnectIntegrationRequest) => Promise<IntegrationConnection>;
+  onOAuthStart?: (remoteUrl?: string) => Promise<{ state: string } | void>;
+  onOAuthComplete?: () => void;
   onCancelConnect: () => void;
   showConnectWizard: boolean;
   autoStartSignIn?: boolean;
@@ -49,6 +51,7 @@ export function ProviderDetailModal({
   onSync,
   onConnectSubmit,
   onOAuthStart,
+  onOAuthComplete,
   onCancelConnect,
   showConnectWizard,
   autoStartSignIn,
@@ -122,12 +125,22 @@ export function ProviderDetailModal({
             <Button size="small" onClick={() => { setView('detail'); onCancelConnect(); }} sx={{ mb: 2, fontSize: '0.65rem', textTransform: 'none', color: settingsTheme.text.dim }}>
               ← Back
             </Button>
-            <ConnectWizard
-              provider={provider}
-              onConnect={onConnectSubmit}
-              onOAuthStart={onOAuthStart}
-              onCancel={() => { setView('detail'); onCancelConnect(); }}
-            />
+            {provider.setupWizard && provider.setupWizard.template !== 'custom' ? (
+              <ProviderSetupWizard
+                provider={provider}
+                onConnect={onConnectSubmit}
+                onOAuthStart={onOAuthStart}
+                onOAuthComplete={onOAuthComplete}
+                onCancel={() => { setView('detail'); onCancelConnect(); }}
+              />
+            ) : (
+              <ConnectWizard
+                provider={provider}
+                onConnect={onConnectSubmit}
+                onOAuthStart={onOAuthStart}
+                onCancel={() => { setView('detail'); onCancelConnect(); }}
+              />
+            )}
           </Box>
         ) : (
           <>

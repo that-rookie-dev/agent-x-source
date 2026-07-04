@@ -808,13 +808,26 @@ export interface TelegramDiscoverResponse {
   botUsername?: string;
   botName?: string;
   chats?: Array<{ id: string; title: string; type: string }>;
+  saved?: boolean;
+  chatId?: string;
+}
+
+export interface TelegramGreetingResponse {
+  ok: boolean;
+  message?: string;
+  error?: string;
 }
 
 export const channels = {
-  discoverTelegram: (botToken: string) =>
+  discoverTelegram: (botToken: string, chatId?: string) =>
     request<TelegramDiscoverResponse>('/channels/telegram/discover', {
       method: 'POST',
-      body: JSON.stringify({ botToken }),
+      body: JSON.stringify({ botToken, chatId }),
+    }),
+  sendTelegramGreeting: (botToken?: string, chatId?: string) =>
+    request<TelegramGreetingResponse>('/channels/telegram/greeting', {
+      method: 'POST',
+      body: JSON.stringify({ botToken, chatId }),
     }),
 };
 
@@ -1732,6 +1745,12 @@ export interface IntegrationProvider {
       label?: string;
     };
   };
+  setupWizard?: {
+    template: string;
+    preflight: string[];
+    osPermissions?: string[];
+    hideDeveloperTab?: boolean;
+  };
   capabilities: { search: boolean; read: boolean; write: boolean; transact: boolean };
   highlights?: string[];
   tools?: { autoExecute?: string[]; alwaysConfirm?: string[] };
@@ -1770,6 +1789,13 @@ export interface IntegrationAnalytics {
   writeCalls: number;
   byProvider: Record<string, { calls: number; success: number; failures: number }>;
   recentErrors: Array<{ timestamp: string; providerId: string; toolName: string; error: string }>;
+}
+
+export interface SetupPreflightResult {
+  id: string;
+  ok: boolean;
+  message: string;
+  fixHint?: string;
 }
 
 export interface ConnectIntegrationRequest {
@@ -1811,6 +1837,20 @@ export const integrations = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  preflight: (
+    providerId: string,
+    checks?: string[],
+    context?: { env?: Record<string, string>; folderPath?: string; remoteUrl?: string },
+  ) =>
+    request<{ results: SetupPreflightResult[] }>('/integrations/preflight', {
+      method: 'POST',
+      body: JSON.stringify({ providerId, checks, ...context }),
+    }),
+  connectTest: (providerId: string, body: ConnectIntegrationRequest) =>
+    request<{ ok: boolean; toolCount: number; toolNames: string[]; error?: string }>(
+      `/integrations/${providerId}/connect-test`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
   disconnect: (connectionId: string) =>
     request<{ ok: boolean }>(`/integrations/${connectionId}`, { method: 'DELETE' }),
   sync: (connectionId: string) =>
@@ -1829,6 +1869,10 @@ export const integrations = {
       method: 'POST',
       body: JSON.stringify(remoteUrl ? { remoteUrl } : {}),
     }),
+  oauthResult: (state: string) =>
+    request<{ result: { status: 'pending' | 'completed' | 'failed' | 'expired'; connection?: IntegrationConnection; message?: string } }>(
+      `/integrations/oauth/result?state=${encodeURIComponent(state)}`,
+    ),
   audit: (limit = 100) =>
     request<{ entries: Array<{
       id: string;

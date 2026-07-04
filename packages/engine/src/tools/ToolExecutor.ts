@@ -1,4 +1,5 @@
 import type { ToolResult, ToolExecutionContext, PermissionRule } from '@agentx/shared';
+import { isChannelSessionId } from '@agentx/shared';
 import { evaluateRules } from './permissions/RuleEngine.js';
 import { isPermissionExemptTool } from './permissions/exempt-tools.js';
 import { PermissionManager } from './permissions/PermissionManager.js';
@@ -39,6 +40,8 @@ export class ToolExecutor {
   private scopeGuard: ScopeGuard;
   private handlers: Map<string, (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<ToolResult>> = new Map();
   private permissionRequestHandler?: PermissionRequestHandler;
+  /** Dedicated handler for messaging channel super-sessions — not overwritten by UI agent wiring. */
+  private channelPermissionRequestHandler?: PermissionRequestHandler;
   private onToolOutput?: (output: string) => void;
   private toolCache: Map<string, ReturnType<ToolRegistry['get']>> = new Map();
   private beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null = null;
@@ -108,10 +111,22 @@ export class ToolExecutor {
     this.permissionRequestHandler = handler;
   }
 
+  setChannelPermissionRequestHandler(handler: PermissionRequestHandler | null | undefined): void {
+    this.channelPermissionRequestHandler = handler ?? undefined;
+  }
+
+  private resolvePermissionRequestHandler(sessionId: string): PermissionRequestHandler | undefined {
+    if (isChannelSessionId(sessionId) && this.channelPermissionRequestHandler) {
+      return this.channelPermissionRequestHandler;
+    }
+    return this.permissionRequestHandler;
+  }
+
   /** Copy permission policy, mode, and hooks from another executor (e.g. parent → crew worker). */
   copyExecutionPolicyFrom(source: ToolExecutor): void {
     const src = source as unknown as {
       permissionRequestHandler?: PermissionRequestHandler;
+      channelPermissionRequestHandler?: PermissionRequestHandler;
       mode: 'agent' | 'plan';
       sessionRules: PermissionRule[];
       agentPermissions: PermissionRule[];
@@ -123,6 +138,9 @@ export class ToolExecutor {
     };
     if (src.permissionRequestHandler) {
       this.setPermissionRequestHandler(src.permissionRequestHandler);
+    }
+    if (src.channelPermissionRequestHandler) {
+      this.setChannelPermissionRequestHandler(src.channelPermissionRequestHandler);
     }
     this.setMode(src.mode);
     this.setSessionRules([...src.sessionRules]);
@@ -237,10 +255,11 @@ export class ToolExecutor {
 
     const permissionExempt = isPermissionExemptTool(toolId);
     const shouldPrompt = this.alwaysPromptPermissions || tool.riskLevel !== 'low';
+    const permissionHandler = this.resolvePermissionRequestHandler(sessionId);
     if (
       !permissionExempt
       && ruleResult === 'ask'
-      && this.permissionRequestHandler
+      && permissionHandler
       && shouldPrompt
     ) {
       const existingGrant = this.permissionManager.check(toolId, scopePathForHook ?? undefined);
@@ -250,7 +269,7 @@ export class ToolExecutor {
         const integrationPreview = isIntegrationToolId(toolId)
           ? buildIntegrationActionPreview(toolId, args, tool) ?? undefined
           : undefined;
-        const response = await this.permissionRequestHandler(
+        const response = await permissionHandler(
           toolId,
           scopePathForHook ?? '*',
           tool.riskLevel,

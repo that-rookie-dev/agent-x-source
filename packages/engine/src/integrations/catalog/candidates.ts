@@ -60,6 +60,10 @@ export const CATALOG_CANDIDATES = [
     website: 'https://trello.com',
     envKey: 'TRELLO_API_KEY',
     envLabel: 'Trello API Key',
+    fields: [
+      field('TRELLO_API_KEY', 'Trello API Key', 'From trello.com/power-ups/admin'),
+      field('TRELLO_TOKEN', 'Trello Token', 'Generate via the token link next to your API key'),
+    ],
   }),
   candidateStdio({
     id: 'obsidian',

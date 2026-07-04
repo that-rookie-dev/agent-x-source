@@ -15,6 +15,7 @@ import {
   PostgresStorageAdapter,
   Gateway,
   TelegramBridge,
+  TelegramChannelPlugin,
   DiscordBridge,
   SlackBridge,
   EmailBridge,
@@ -72,6 +73,8 @@ export interface EngineState {
 }
 
 let state: EngineState | null = null;
+/** Ensures channel bridges start once after auth unlocks encrypted config (not on every request). */
+let channelsBootstrappedAfterAuth = false;
 
 function safeLoadConfig(configManager: ConfigManager): AgentXConfig | null {
   try {
@@ -221,31 +224,6 @@ export function getEngine(): EngineState {
     integrationHub,
   };
 
-  const tgPlugin = state!.pluginRegistry.getPlugin('telegram');
-  const tgConfig = tgPlugin?.config ?? {};
-  if (tgPlugin?.enabled && tgConfig['botToken'] && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
-    try {
-      const gw = new Gateway();
-      state!.gateway = gw;
-      gw.registerTelegram(tgConfig['botToken'] as string);
-      gw.startChannel('telegram').then(() => {
-        const bridge = gw.getTelegramBridge();
-        if (bridge) state!.telegramBridge = bridge;
-        try {
-          const entry = (gw as any).registry.getChannel('telegram');
-          if (entry?.plugin) entry.plugin.setAgent(ensureChannelAgent());
-        } catch { /* agent can attach later */ }
-      }).catch((e: unknown) => {
-        console.error('Failed to start Telegram channel on boot:', (e as Error).message);
-        state!.gateway = null;
-        state!.telegramBridge = null;
-      });
-    } catch (e) {
-      console.error('Failed to register Telegram on boot:', (e as Error).message);
-      state!.gateway = null;
-    }
-  }
-
   void storageReady
     .then(async () => {
       if (state) state.crewManager.refresh();
@@ -275,6 +253,9 @@ export function setEngineDEK(dek: Buffer | null): void {
     state.dek = dek;
     state.configManager.setDEK(dek);
     state.integrationHub.setDek(dek);
+    if (!dek) {
+      channelsBootstrappedAfterAuth = false;
+    }
     // Update the configured flag now that the DEK is available —
     // encrypted configs become readable after auth.
     state.configured = state.configManager.isConfigured();
@@ -282,14 +263,25 @@ export function setEngineDEK(dek: Buffer | null): void {
       applyWebSearchConfigFromAgentConfig(state.configManager.load());
     } catch { /* not configured yet */ }
 
-    if (dek) {
+    if (dek && !channelsBootstrappedAfterAuth) {
       void state.storageReady
         .then(async () => {
-          if (!state) return;
-          await state.integrationHub.restoreAll();
-          state.integrationHub.syncToToolkit(state.toolkit.registry, state.toolkit.executor);
+          if (!state?.dek) return;
+          try {
+            state.configured = state.configManager.isConfigured();
+            if (!state.configured) return;
+            channelsBootstrappedAfterAuth = true;
+            await state.integrationHub.restoreAll();
+            state.integrationHub.syncToToolkit(state.toolkit.registry, state.toolkit.executor);
+            const { applyChannelsConfig } = await import('./channels-sync.js');
+            await applyChannelsConfig();
+          } catch (error) {
+            channelsBootstrappedAfterAuth = false;
+            getLogger().warn('CHANNELS', error instanceof Error ? error.message : String(error));
+          }
         })
         .catch((error) => {
+          channelsBootstrappedAfterAuth = false;
           console.error('Integration restore after sign-in failed:', error instanceof Error ? error.message : error);
         });
     }
@@ -299,7 +291,7 @@ export function setEngineDEK(dek: Buffer | null): void {
 export function createAgent(
   config: AgentXConfig | undefined,
   session: Session,
-  options?: { attachToEngine?: boolean },
+  options?: { attachToEngine?: boolean; automationRun?: boolean; delegatedWorker?: boolean },
 ): Agent {
   const eng = getEngine();
   let cfg: AgentXConfig;
@@ -423,8 +415,9 @@ export function createAgent(
     setShellSandbox(null);
   }
 
-  // Watchdog: auto-resume interrupted task on startup (Agent-X sessions only)
-  if (!isCrewPrivate && !isAutomationRun) {
+  // Watchdog: auto-resume interrupted task on startup (Agent-X sessions only).
+  // Skip channel super-session — it must stay idle for inbound Telegram/Slack messages.
+  if (!isCrewPrivate && !isAutomationRun && !isChannelSessionId(session.id)) {
   try {
     const store = (eng.sessionManager as any).store;
     if (store && typeof store.getTaskSnapshot === 'function') {
@@ -595,32 +588,26 @@ export function createAgent(
   // Channel-bridge wiring runs only for the primary UI agent — not the dedicated __channel__ agent
   // (ensureChannelAgent uses attachToEngine: false to avoid recursive ensureChannelAgent ↔ createAgent).
   if (options?.attachToEngine !== false) {
+  // Telegram inbound is started by applyChannelsConfig() after auth — not from createAgent.
   const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
   const tgConfig = tgPlugin?.config ?? {};
-  if (tgPlugin?.enabled && tgConfig['botToken'] && !eng.telegramBridge && !process.env['AGENTX_DAEMON_HANDLES_TG']) {
+  if (eng.gateway && tgPlugin?.enabled && tgConfig['botToken']) {
     try {
       const channelAgent = ensureChannelAgent();
-      const tgChannelPlugin = eng.gateway!.registerTelegram(tgConfig['botToken'] as string);
-      tgChannelPlugin.setAgent(channelAgent);
-      eng.gateway!.startChannel('telegram').catch((e: unknown) => {
-        console.error('Failed to start Telegram channel', e);
-      }).then(() => {
-        if (eng.gateway) {
-          const bridge = eng.gateway.getTelegramBridge();
-          if (bridge) {
-            eng.telegramBridge = bridge;
-          }
-        }
-      });
-    } catch (e) {
-      console.error('Failed to start Telegram bridge', e);
-    }
-  } else if (eng.gateway && tgPlugin?.enabled && tgConfig['botToken']) {
-    try {
-      const channelAgent = ensureChannelAgent();
-      const entry = (eng.gateway as any).registry.getChannel('telegram');
-      if (entry?.plugin && 'setAgent' in entry.plugin) {
-        entry.plugin.setAgent(channelAgent);
+      const entry = (eng.gateway as unknown as { registry?: { getChannel?: (id: string) => { plugin?: TelegramChannelPlugin } | null } }).registry?.getChannel?.('telegram');
+      const plugin = entry?.plugin;
+      if (plugin && 'setAgent' in plugin) {
+        plugin.setAgent(channelAgent);
+        plugin.setChatIdPersister?.((id: string) => {
+          try {
+            const c = eng.configManager.load();
+            if (c.channels?.telegram?.chatId === id) return;
+            eng.configManager.save({
+              ...c,
+              channels: { ...c.channels, telegram: { ...c.channels?.telegram, chatId: id } },
+            });
+          } catch { /* best-effort */ }
+        });
       }
     } catch { /* best-effort */ }
   }
@@ -750,7 +737,25 @@ export function createAgent(
     }
   }
 
+  rewireTelegramChannelPermissions(eng);
+
   return agent;
+}
+
+/** Restore Telegram inline permission prompts after the shared executor handler was replaced. */
+export function rewireTelegramChannelPermissions(eng?: ReturnType<typeof getEngine>): void {
+  try {
+    const e = eng ?? getEngine();
+    const entry = (e.gateway as { registry?: { getChannel?: (id: string) => { plugin?: unknown } | null } } | null)
+      ?.registry?.getChannel?.('telegram');
+    const plugin = entry?.plugin as { rewirePermissionHandling?: () => void } | undefined;
+    plugin?.rewirePermissionHandling?.();
+
+    const channelExec = e.channelAgent?.getToolExecutor?.();
+    if (channelExec && e.toolkit.executor?.copyExecutionPolicyFrom) {
+      e.toolkit.executor.copyExecutionPolicyFrom(channelExec);
+    }
+  } catch { /* best-effort */ }
 }
 
 export function getOrCreateAgent(config?: AgentXConfig, session?: Session): Agent {
@@ -762,6 +767,40 @@ export function getOrCreateAgent(config?: AgentXConfig, session?: Session): Agen
     return createAgent(config, sess);
   }
   return createAgent(config, session);
+}
+
+/** Align the channel super-session agent with the active UI workspace and crew roster. */
+export function syncChannelSuperSessionContext(eng?: ReturnType<typeof getEngine>): void {
+  const e = eng ?? getEngine();
+  const channelAgent = e.channelAgent as Agent | null | undefined;
+  if (!channelAgent) return;
+
+  const active = e.sessionManager.getActiveSession()
+    ?? (e.agent?.currentSessionId && e.agent.currentSessionId !== '__channel__'
+      ? e.sessionManager.getSessionById(e.agent.currentSessionId)
+      : null);
+
+  if (active?.scopePath) {
+    channelAgent.setScopePath(active.scopePath);
+  }
+
+  if (active?.id) {
+    const crewStates = e.sessionManager.loadCrewStates(active.id);
+    if (crewStates.length > 0) {
+      const signature = crewStates.map((s) => `${s.crewId}:${s.enabled ? 1 : 0}`).sort().join(',');
+      const prev = (channelAgent as unknown as { __crewSyncSig?: string }).__crewSyncSig;
+      if (signature !== prev) {
+        (channelAgent as unknown as { __crewSyncSig?: string }).__crewSyncSig = signature;
+        channelAgent.restoreCrewStates(crewStates);
+      }
+    } else if (e.agent && e.agent !== channelAgent) {
+      const enabled = e.agent.getActiveCrewMembers().map((m) => ({
+        crewId: m.crew.id,
+        enabled: true,
+      }));
+      if (enabled.length > 0) channelAgent.restoreCrewStates(enabled);
+    }
+  }
 }
 
 export function ensureChannelAgent(): Agent {

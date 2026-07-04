@@ -4,14 +4,14 @@ import {
   buildAutomationNotifyQuestionnaire,
   getNotificationChannelStatus,
   notifyToolsForChannels,
-  parseAutomationNotifyAnswer,
+  resolveAutomationNotifyChannels,
 } from '@agentx/engine';
-import { getLogger } from '@agentx/shared';
+import { getLogger, isChannelSessionId } from '@agentx/shared';
 import { getEngine, getOrCreateAgent } from '../engine.js';
 import { getTelegramRuntimeHints } from '../channels-sync.js';
 import { startPgBoss, stopPgBoss } from './boss.js';
 import { AutomationService, type AutomationDbPool } from './service.js';
-import { startAutomationWorker, ensureScheduleWorker, triggerAutomationRun } from './worker.js';
+import { startAutomationWorker, triggerAutomationRun } from './worker.js';
 
 let service: AutomationService | null = null;
 let stopWorker: (() => void) | null = null;
@@ -24,6 +24,7 @@ export async function initAutomation(connectionString: string, pool: AutomationD
   await startPgBoss(connectionString);
   service = new AutomationService(pool);
   await service.backfillMissingDisplayIds();
+  await service.backfillAutomationTaskOrigins();
   setAutomationBridge({
     ensureToolsApproved: async (sessionId, toolIds) => {
       const eng = getEngine();
@@ -39,14 +40,29 @@ export async function initAutomation(connectionString: string, pool: AutomationD
       const eng = getEngine();
       const session = eng.sessionManager.getSessionById(sessionId);
       if (!session) return ['in_app'];
+      const status = getNotificationChannelStatus(eng.configManager.load(), getTelegramRuntimeHints());
+
+      // Messaging channels have no questionnaire UI — always notify back on the same surface.
+      if (isChannelSessionId(sessionId)) {
+        return resolveAutomationNotifyChannels({
+          sourceChannel: 'telegram',
+          sourceSessionId: sessionId,
+          status,
+        });
+      }
+
       let agent = eng.agent;
       if (!agent || agent.currentSessionId !== sessionId) {
         agent = getOrCreateAgent(eng.configManager.load(), session);
       }
-      const status = getNotificationChannelStatus(eng.configManager.load(), getTelegramRuntimeHints());
       const questionnaire = buildAutomationNotifyQuestionnaire(status);
       const answer = await agent.promptAutomationNotifyChannels(questionnaire);
-      return parseAutomationNotifyAnswer(answer);
+      return resolveAutomationNotifyChannels({
+        sourceChannel: sessionId === '__channel__' ? 'telegram' : undefined,
+        sourceSessionId: sessionId,
+        status,
+        questionnaireAnswer: answer,
+      });
     },
     grantNotifyChannelTools: async (sessionId, channels) => {
       const eng = getEngine();
@@ -60,12 +76,6 @@ export async function initAutomation(connectionString: string, pool: AutomationD
     },
     registerTask: async (input) => {
       const result = await service!.registerTask(input);
-      if (result.ok && result.taskId) {
-        const task = await service!.getTask(result.taskId);
-        if (task?.scheduleType === 'recurring' && task.pgbossScheduleName) {
-          await ensureScheduleWorker(task.pgbossScheduleName, service!);
-        }
-      }
       return result;
     },
     listTasks: (sessionId) => service!.listTasks(sessionId),
@@ -158,7 +168,6 @@ export function registerAutomationRoutes(app: Express): void {
       if (!svc) { res.status(503).json({ error: 'automation-unavailable' }); return; }
       const result = await svc.resumeTask(req.params['id']!);
       if (!result.ok) { res.status(404).json({ error: result.error ?? 'resume-failed' }); return; }
-      if (result.scheduleName) await ensureScheduleWorker(result.scheduleName, svc);
       res.json({ ok: true });
     } catch (e) {
       getLogger().error('POST_API_AUTOMATION_RESUME', e instanceof Error ? e : String(e));

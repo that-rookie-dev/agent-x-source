@@ -202,7 +202,7 @@ export {
 export type { SessionContextHandlerConfig, TurnInjectionResult } from './context/index.js';
 export { OrchestrationPlanner } from './agent/OrchestrationPlanner.js';
 export type { PlannedTask, ExecutionPhase, ExecutionPlan } from './agent/OrchestrationPlanner.js';
-export { TelegramBridge, TelegramStore } from './telegram/index.js';
+export { TelegramBridge, TelegramStore, getActiveTelegramBridge } from './telegram/index.js';
 export type { TelegramConfig, TelegramBridgeStatus } from './telegram/index.js';
 export { DiscordBridge, DiscordStore } from './discord/index.js';
 export type { DiscordConfig, DiscordBridgeStatus } from './discord/index.js';
@@ -213,12 +213,21 @@ export type { EmailBridgeConfig, EmailBridgeStatus } from './email/index.js';
 export { Scheduler } from './scheduler/index.js';
 export { setAutomationBridge, getAutomationBridge } from './automation/automation-bridge.js';
 export type { AutomationBridge } from './automation/automation-bridge.js';
+export { setAgentXOverviewBridge, getAgentXOverviewBridge } from './agent/agent-x-overview-bridge.js';
+export type { AgentXOverviewBridge, AgentXOverviewView } from './agent/agent-x-overview-bridge.js';
+export { setChannelSuperSessionSync, syncChannelSuperSessionContext } from './channels/channel-super-session-sync.js';
 export {
   buildAutomationNotifyQuestionnaire,
   getNotificationChannelStatus,
   resolveTelegramOutboundChatId,
   notifyToolsForChannels,
   parseAutomationNotifyAnswer,
+  resolveAutomationNotifyChannels,
+  effectiveAutomationNotifyChannels,
+  inferAutomationSourceChannel,
+  mandatoryAutomationNotifyChannels,
+  normalizeAutomationTaskOrigin,
+  sourceChannelToNotifyChannel,
   AUTOMATION_NOTIFY_NONE,
 } from './automation/automation-notify.js';
 export type { NotificationChannelRuntimeHints } from './automation/automation-notify.js';
