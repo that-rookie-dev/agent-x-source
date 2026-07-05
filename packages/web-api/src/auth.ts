@@ -9,6 +9,7 @@
  */
 
 import type { Request, Response, NextFunction, Router } from 'express';
+import type { IncomingMessage } from 'node:http';
 import express from 'express';
 import { authManager } from '@agentx/shared';
 import type { AuthSession } from '@agentx/shared';
@@ -74,13 +75,26 @@ export function stopRateLimitCleanup(): void {
 }
 
 function getClientIp(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    const ips = forwarded.split(',');
-    return (ips[0] ?? '').trim() || req.socket.remoteAddress || 'unknown';
+  if (process.env['AGENTX_TRUST_PROXY'] === 'true') {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (typeof forwarded === 'string') {
+      const ips = forwarded.split(',');
+      return (ips[0] ?? '').trim() || req.socket.remoteAddress || 'unknown';
+    }
   }
   return req.socket.remoteAddress || 'unknown';
 }
+
+function useSecureCookies(req?: Request): boolean {
+  if (process.env['AGENTX_SECURE_COOKIES'] === 'true') return true;
+  if (process.env['AGENTX_SECURE_COOKIES'] === 'false') return false;
+  return req?.secure === true;
+}
+
+const SSE_TOKEN_PATHS = new Set([
+  '/api/chat/stream',
+  '/api/logs/stream',
+]);
 
 function isRateLimited(ip: string): boolean {
   const entry = loginAttempts.get(ip);
@@ -142,13 +156,16 @@ export function getRemainingAttempts(ip: string): number {
 /**
  * Extract session token from cookie or Authorization header.
  */
+export function extractSessionTokenFromCookie(cookieHeader?: string): string | undefined {
+  if (!cookieHeader) return undefined;
+  const match = cookieHeader.match(/agentx_session=([^;]+)/);
+  if (match?.[1]) return decodeURIComponent(match[1]);
+  return undefined;
+}
+
 function getToken(req: Request): string | undefined {
-  // Check cookie first
-  const cookie = req.headers.cookie;
-  if (cookie) {
-    const match = cookie.match(/agentx_session=([^;]+)/);
-    if (match && match[1]) return decodeURIComponent(match[1]);
-  }
+  const fromCookie = extractSessionTokenFromCookie(req.headers.cookie);
+  if (fromCookie) return fromCookie;
 
   // Check Authorization header
   const auth = req.headers.authorization;
@@ -156,9 +173,10 @@ function getToken(req: Request): string | undefined {
     return auth.slice(7);
   }
 
-  // Check query parameter (for SSE EventSource which can't set custom headers)
-  const tokenParam = req.query.token as string | undefined;
-  if (tokenParam) return tokenParam;
+  if (SSE_TOKEN_PATHS.has(req.path)) {
+    const tokenParam = req.query.token as string | undefined;
+    if (tokenParam) return tokenParam;
+  }
 
   return undefined;
 }
@@ -190,7 +208,6 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   // Public paths that don't require authentication
   const publicPaths = [
     '/api/health',
-    '/api/agent/vitals',
     '/api/auth/setup',
     '/api/auth/login',
     '/api/auth/status',
@@ -306,7 +323,7 @@ export function createAuthRouter(): Router {
       // Set secure session cookie
       res.cookie('agentx_session', token, {
         httpOnly: true,
-        secure: false, // Set to true in production with HTTPS
+        secure: useSecureCookies(req),
         sameSite: 'lax', // lax needed for same-origin page navigations
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
         path: '/',
@@ -362,7 +379,7 @@ export function createAuthRouter(): Router {
       // Set secure session cookie
       res.cookie('agentx_session', token, {
         httpOnly: true,
-        secure: false, // Set to true in production with HTTPS
+        secure: useSecureCookies(req),
         sameSite: 'lax', // lax needed for same-origin page navigations
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
         path: '/',
@@ -426,4 +443,21 @@ export function createAuthRouter(): Router {
   });
 
   return router;
+}
+
+function isLoopbackAddress(addr: string | undefined): boolean {
+  if (!addr) return false;
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+/**
+ * Validate WebSocket upgrade requests. Pre-setup allows loopback only; otherwise requires session cookie.
+ */
+export function validateWebSocketConnection(req: IncomingMessage): boolean {
+  if (!authManager.hasRootUser()) {
+    return isLoopbackAddress(req.socket.remoteAddress);
+  }
+  const token = extractSessionTokenFromCookie(req.headers.cookie);
+  if (!token) return false;
+  return authManager.isAuthenticated(token);
 }

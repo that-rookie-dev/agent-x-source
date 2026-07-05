@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   const port = runtime.getPort();
   const url = resolvePublicUrl(port, process.env['AGENTX_PUBLIC_URL']);
   console.log(`Agent-X server running at ${url}`);
-  console.log(`Listening on ${process.env['AGENTX_HOST'] ?? '0.0.0.0'}:${port}`);
+  console.log(`Listening on ${process.env['AGENTX_HOST'] ?? '127.0.0.1'}:${port}`);
 }
 
 process.on('SIGTERM', () => { void shutdown('SIGTERM'); });

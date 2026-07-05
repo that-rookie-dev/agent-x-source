@@ -2,11 +2,30 @@ import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
-import { markdownSourceLink, prefixWebExtractOutput } from '../../search/url-utils.js';
+import { markdownSourceLink, prefixWebExtractOutput, assertSafeFetchUrl } from '../../search/url-utils.js';
+
+function blockedUrlResult(url: string): ToolResult {
+  return { success: false, output: `URL blocked by SSRF policy: ${url}`, error: 'SSRF_BLOCKED' };
+}
+
+function guardFetchUrl(url: string): ToolResult | null {
+  try {
+    assertSafeFetchUrl(url);
+    return null;
+  } catch {
+    return blockedUrlResult(url);
+  }
+}
 
 export async function httpGet(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
   const url = args['url'] as string;
   const headers = (args['headers'] as Record<string, string>) ?? {};
+
+  try {
+    assertSafeFetchUrl(url);
+  } catch {
+    return blockedUrlResult(url);
+  }
 
   try {
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
@@ -40,6 +59,9 @@ export async function httpPost(args: Record<string, unknown>, _context: ToolExec
     headers['content-type'] = 'application/json';
   }
 
+  const blocked = guardFetchUrl(url);
+  if (blocked) return blocked;
+
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -65,6 +87,9 @@ export async function httpRequest(args: Record<string, unknown>, _context: ToolE
   const headers = (args['headers'] as Record<string, string>) ?? {};
   const body = args['body'] as string | undefined;
 
+  const blocked = guardFetchUrl(url);
+  if (blocked) return blocked;
+
   try {
     const response = await fetch(url, {
       method,
@@ -89,6 +114,9 @@ export async function httpRequest(args: Record<string, unknown>, _context: ToolE
 export async function webScrape(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
   const url = args['url'] as string;
   const selector = args['selector'] as string | undefined;
+
+  const blocked = guardFetchUrl(url);
+  if (blocked) return blocked;
 
   try {
     const response = await fetch(url, {
@@ -173,6 +201,9 @@ export async function httpDownload(args: Record<string, unknown>, context: ToolE
     return { success: false, output: 'url and output are required', error: 'MISSING_INPUT' };
   }
 
+  const blocked = guardFetchUrl(url);
+  if (blocked) return blocked;
+
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
     if (!response.ok) {
@@ -191,6 +222,9 @@ export async function httpDownload(args: Record<string, unknown>, context: ToolE
 export async function webBrowse(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const url = args['url'] as string;
   if (!url) return { success: false, output: 'url is required', error: 'MISSING_INPUT' };
+
+  const blocked = guardFetchUrl(url);
+  if (blocked) return blocked;
 
   // Check if Playwright is available
   try {

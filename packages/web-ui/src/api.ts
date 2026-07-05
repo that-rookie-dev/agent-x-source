@@ -37,7 +37,7 @@ async function writeDebugLog(entry: Record<string, unknown>): Promise<void> {
   } catch { /* best effort */ }
 }
 
-async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, opts: RequestInit = {}, timeoutMs = 60_000): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(opts.headers as Record<string, string> ?? {}),
@@ -49,6 +49,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     credentials: 'include',
     headers,
     ...opts,
+    signal: opts.signal ?? AbortSignal.timeout(timeoutMs),
   });
   if (res.status === 401) {
     onUnauthorized?.();
@@ -1040,6 +1041,11 @@ export interface AgentXConfig {
   };
   /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
   neuralBrain?: boolean;
+  runtime?: {
+    cpuBudgetPercent?: number;
+    lazyStorageCache?: boolean;
+    backgroundConcurrency?: number;
+  };
   channels?: {
     telegram?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; botToken?: string; chatId?: string };
     slack?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; webhookUrl?: string; botToken?: string; appToken?: string };

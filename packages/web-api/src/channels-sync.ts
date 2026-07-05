@@ -9,6 +9,7 @@ import {
   resolveTelegramOutboundChatId,
 } from '@agentx/engine';
 import type { AgentXConfig, NotificationChannelsConfig, ProviderId, TelegramDiscoveredChat } from '@agentx/shared';
+import { parseAllowedUserIds } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import { randomUUID } from 'node:crypto';
 import { ensureChannelAgent, getEngine, rewireTelegramChannelPermissions, syncChannelSuperSessionContext } from './engine.js';
@@ -245,6 +246,7 @@ export function getTelegramRuntimeHints(): { telegramChatId?: string | null } {
 
 async function startTelegramInbound(token: string): Promise<void> {
   const eng = getEngine();
+  const cfg = eng.configManager.load();
   const existing = eng.pluginRegistry.getPlugin('telegram');
   if (existing) {
     eng.pluginRegistry.updateConfig('telegram', { botToken: token });
@@ -283,9 +285,12 @@ async function startTelegramInbound(token: string): Promise<void> {
   eng.gateway.attachAgent(channelAgent);
 
   const existingEntry = eng.gateway.registry.getChannel('telegram');
+  const tgAllowed = parseAllowedUserIds(cfg.channels?.telegram?.allowedUserIds)
+    .map((id) => Number(id))
+    .filter((n) => Number.isFinite(n));
   const tgPlugin = existingEntry?.plugin instanceof TelegramChannelPlugin
     ? existingEntry.plugin
-    : eng.gateway.registerTelegram(token);
+    : eng.gateway.registerTelegram(token, tgAllowed.length > 0 ? tgAllowed : undefined);
   tgPlugin.setAgent(channelAgent);
   tgPlugin.setChatIdPersister((id) => saveTelegramChatId(id));
   await eng.gateway.startChannel('telegram');
@@ -312,7 +317,7 @@ async function stopTelegramInbound(): Promise<void> {
   }
 }
 
-async function startSlackInbound(botToken: string, appToken: string): Promise<void> {
+async function startSlackInbound(botToken: string, appToken: string, allowedUserIds?: string[]): Promise<void> {
   const eng = getEngine();
   const existing = eng.pluginRegistry.getPlugin('slack');
   if (existing) {
@@ -332,7 +337,8 @@ async function startSlackInbound(botToken: string, appToken: string): Promise<vo
   }
 
   const bridge = new SlackBridge({ botToken, appToken });
-  bridge.setAgentFactory(() => {
+  bridge.setAllowedUserIds(allowedUserIds ?? []);
+  bridge.setAgentFactory((_userId) => {
     const userCfg = eng.configManager.load();
     const userSession = eng.sessionManager.createSession(
       userCfg.provider.activeProvider,
@@ -365,7 +371,7 @@ async function stopSlackInbound(): Promise<void> {
   }
 }
 
-async function startDiscordInbound(botToken: string, channelId?: string): Promise<void> {
+async function startDiscordInbound(botToken: string, channelId?: string, allowedUserIds?: string[]): Promise<void> {
   const eng = getEngine();
   const existing = eng.pluginRegistry.getPlugin('discord');
   if (existing) {
@@ -385,7 +391,8 @@ async function startDiscordInbound(botToken: string, channelId?: string): Promis
   }
 
   const bridge = new DiscordBridge();
-  bridge.setAgentFactory(async () => {
+  bridge.setAllowedUserIds(allowedUserIds ?? []);
+  bridge.setAgentFactory(async (_userId) => {
     const userCfg = eng.configManager.load();
     const userProvider = userCfg.provider.activeProvider as ProviderId;
     const userSession = eng.sessionManager.createSession(
@@ -444,9 +451,10 @@ export async function applyChannelsConfig(cfg?: AgentXConfig): Promise<void> {
 
   // Slack inbound (Socket Mode)
   const slack = ch?.slack;
+  const slackAllowed = parseAllowedUserIds(slack?.allowedUserIds);
   if (wantsInbound(slack) && slack?.botToken && slack?.appToken) {
     try {
-      await startSlackInbound(slack.botToken, slack.appToken);
+      await startSlackInbound(slack.botToken, slack.appToken, slackAllowed);
     } catch (e) {
       getLogger().warn('CHANNELS', `Slack inbound start failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -456,9 +464,10 @@ export async function applyChannelsConfig(cfg?: AgentXConfig): Promise<void> {
 
   // Discord inbound (bot)
   const discord = ch?.discord;
+  const discordAllowed = parseAllowedUserIds(discord?.allowedUserIds);
   if (wantsInbound(discord) && discord?.botToken) {
     try {
-      await startDiscordInbound(discord.botToken, discord.channelId);
+      await startDiscordInbound(discord.botToken, discord.channelId, discordAllowed);
     } catch (e) {
       getLogger().warn('CHANNELS', `Discord inbound start failed: ${e instanceof Error ? e.message : String(e)}`);
     }

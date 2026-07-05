@@ -140,6 +140,12 @@ export const notificationChannelsConfigSchema = z.object({
   }).optional(),
 }).optional();
 
+export const runtimeSettingsSchema = z.object({
+  cpuBudgetPercent: z.number().int().min(10).max(80).optional(),
+  lazyStorageCache: z.boolean().optional(),
+  backgroundConcurrency: z.number().int().min(1).max(8).optional(),
+}).optional();
+
 export const agentXConfigSchema = z.object({
   provider: z.object({
     activeProvider: providerIdSchema,
@@ -169,6 +175,7 @@ export const agentXConfigSchema = z.object({
   rag: ragConfigSchema,
   tools: toolsConfigSchema,
   channels: notificationChannelsConfigSchema,
+  runtime: runtimeSettingsSchema,
   maxSubAgents: z.number().min(1).max(20).optional(),
   maxSteps: z.number().int().min(1).max(100).optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),

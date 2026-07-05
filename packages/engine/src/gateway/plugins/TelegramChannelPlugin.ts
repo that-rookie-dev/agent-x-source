@@ -8,7 +8,8 @@ import type { TelegramConfig } from '../../telegram/TelegramBridge.js';
 import type { Agent } from '../../agent/Agent.js';
 import { syncChannelSuperSessionContext } from '../../channels/channel-super-session-sync.js';
 import { ProviderFactory } from '../../providers/index.js';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export class TelegramChannelPlugin implements ChannelPlugin {
@@ -42,8 +43,10 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     }
   }
   private pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
+  private permRequesters = new Map<string, number>();
   private pendingResponses = new Map<string, (text: string) => void>();
   private messageQueue: Array<{ text: string; chatId: number }> = [];
+  private static readonly MAX_QUEUE_DEPTH = 25;
   private processingQueue = false;
   private filesDir: string;
 
@@ -155,6 +158,8 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         if (!this.activeChatId) return 'deny' as const;
 
         const permId = randomUUID();
+        const requesterId = this.activeChatId ? this.bridge.getLastFromId(this.activeChatId) : undefined;
+        if (requesterId) this.permRequesters.set(permId, requesterId);
         const riskEmoji = riskLevel === 'high' ? '🔴' : riskLevel === 'medium' ? '🟡' : '🟢';
         const preview = context?.integrationPreview;
         const previewLines = preview
@@ -179,6 +184,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
           const timeout = setTimeout(() => {
             this.pendingPermissions.delete(permId);
+            this.permRequesters.delete(permId);
             if (this.activeChatId) {
               this.bridge.sendToChat(this.activeChatId, '⏰ Permission request timed out — denied.');
             }
@@ -188,6 +194,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           this.pendingPermissions.set(permId, (choice: 'allow_once' | 'allow_always' | 'deny') => {
             clearTimeout(timeout);
             this.pendingPermissions.delete(permId);
+            this.permRequesters.delete(permId);
             if (this.agent && choice !== 'allow_once') {
               this.agent.recordToolPermissionDecision(toolId, choice);
             }
@@ -197,15 +204,22 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       },
     );
 
-    this.bridge.onCallback('perm', (data: string, chatId: number) => {
+    this.bridge.onCallback('perm', (data: string, chatId: number, fromUserId?: number) => {
       if (chatId !== this.activeChatId) return;
       const parts = data.split(':');
       const permId = parts[1];
       const choice = parts[2] as 'allow_once' | 'allow_always' | 'deny';
       if (!permId || !choice) return;
 
+      const expectedRequester = this.permRequesters.get(permId);
+      if (expectedRequester && fromUserId && fromUserId !== expectedRequester) {
+        void this.bridge.sendToChat(chatId, '⚠️ Only the user who triggered this action can approve it.');
+        return;
+      }
+
       const resolver = this.pendingPermissions.get(permId);
       if (resolver) {
+        this.permRequesters.delete(permId);
         resolver(choice);
         const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';
         this.bridge.sendToChat(chatId, label);
@@ -229,7 +243,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           const timestamp = Date.now();
           const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
           const savedPath = join(this.filesDir, `${timestamp}_${safeName}`);
-          writeFileSync(savedPath, fileBuffer);
+          await writeFile(savedPath, fileBuffer);
 
           const fileMsg = caption
             ? `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. Caption: "${caption}". You can read and analyze this file.`
@@ -256,7 +270,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
   private setupMessageHandling(): void {
     this.bridge.setMessageHandler((text: string, chatId: number) => {
-      getLogger().info('TELEGRAM', `Inbound message chat=${chatId} len=${text.length}: ${text.slice(0, 120)}`);
+      getLogger().info('TELEGRAM', `Inbound message chat=${chatId} len=${text.length}`);
       try {
         this.trackActiveChat(chatId);
         this.focusManager?.onActivity('telegram');
@@ -268,6 +282,10 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   }
 
   private enqueueMessage(text: string, chatId: number): void {
+    if (this.messageQueue.length >= TelegramChannelPlugin.MAX_QUEUE_DEPTH) {
+      void this.bridge.sendToChat(chatId, '⚠️ Too many pending messages. Please wait for the current request to finish.');
+      return;
+    }
     this.messageQueue.push({ text, chatId });
     void this.processQueue().catch((e) => {
       getLogger().error('TELEGRAM', `Inbound queue failed: ${e instanceof Error ? e.message : String(e)}`);

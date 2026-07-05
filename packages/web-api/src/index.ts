@@ -7,8 +7,8 @@ import os from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady } from './engine.js';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported, resolveRuntimeSettings } from '@agentx/shared';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady, applyRuntimeSettings } from './engine.js';
 import { applyChannelsConfig, discoverTelegramBot, getTelegramInboundStatus, getTelegramRuntimeHints, restartTelegramInbound, saveVerifiedTelegram, sendTelegramGreeting } from './channels-sync.js';
 import { buildGraphRagSummarizer } from './distillation-generator.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect, broadcastBrainActivity } from './ws.js';
@@ -27,6 +27,7 @@ import {
 } from './chat-helpers.js';
 import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
+import { redactConfigForClient, mergeConfigPreservingSecrets, redactProvidersForClient } from './config-redaction.js';
 import { setIngestionWorkerRef, refreshIngestionWorkerGenerator } from './ingestion-worker-ref.js';
 import {
   bindIngestionWorker,
@@ -38,7 +39,7 @@ import {
 } from './ingestion-governor.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath, getBackgroundTaskPool } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -376,9 +377,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// CORS + cache prevention
+// CORS — set AGENTX_CORS_ORIGIN for cross-origin clients; same-origin needs no header
+const corsOrigin = process.env.AGENTX_CORS_ORIGIN;
 app.use((_req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (corsOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Content-Disposition, X-Request-Id');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -486,9 +491,31 @@ app.get('/api/setup/status', (_req, res) => {
 app.get('/api/config', (_req, res) => {
   const eng = getEngine();
   try {
-    res.json(eng.configManager.load());
+    res.json(redactConfigForClient(eng.configManager.load()));
   } catch (e) {
     getLogger().error('GET_API_CONFIG', e instanceof Error ? e : String(e));    res.status(400).json({ error: 'Agent-X is not configured. Configure a provider and model first.' });
+  }
+});
+
+app.get('/api/runtime/status', (_req, res) => {
+  try {
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+    const resolved = resolveRuntimeSettings(cfg.runtime);
+    const pool = getBackgroundTaskPool();
+    res.json({
+      configured: resolved,
+      cpuCores: os.cpus().length,
+      backgroundPool: { running: pool.running, pending: pool.pending },
+      restartRequired: true,
+    });
+  } catch {
+    res.json({
+      configured: resolveRuntimeSettings(null),
+      cpuCores: os.cpus().length,
+      backgroundPool: { running: 0, pending: 0 },
+      restartRequired: true,
+    });
   }
 });
 
@@ -496,7 +523,7 @@ app.put('/api/config', (req, res) => {
   const eng = getEngine();
   try {
     const existing = eng.configManager.load();
-    const merged = { ...existing, ...req.body };
+    const merged = mergeConfigPreservingSecrets(existing, { ...existing, ...req.body });
     if (req.body.tools?.webSearch) {
       merged.tools = {
         ...existing.tools,
@@ -523,6 +550,7 @@ app.put('/api/config', (req, res) => {
       return;
     }
     eng.configManager.save(merged);
+    applyRuntimeSettings(merged);
     applyWebSearchConfigFromAgentConfig(merged);
     void applyChannelsConfig(merged).catch((e: unknown) => {
       getLogger().warn('CHANNELS', `Failed to apply channel config: ${e instanceof Error ? e.message : String(e)}`);
@@ -693,8 +721,11 @@ app.post('/api/provider/validate', async (req, res) => {
 
 app.get('/api/provider/models', async (req, res) => {
   try {
+    if (req.query['apiKey']) {
+      return res.status(400).json({ error: 'apiKey query parameter is not allowed — configure keys in Settings' });
+    }
     let providerId = (req.query['provider'] as string) || '';
-    let apiKey = (req.query['apiKey'] as string) || undefined;
+    let apiKey: string | undefined;
     let baseUrl = (req.query['baseUrl'] as string) || undefined;
     if (!apiKey && !baseUrl) {
       try {
@@ -783,19 +814,9 @@ app.get('/api/providers', (_req, res) => {
   const eng = getEngine();
   try {
     const config = eng.configManager.load();
-    const configured: Array<{ id: string; configured: boolean; apiKey?: string; baseUrl?: string; profiles?: Array<{ id: string; label: string }>; activeProfile?: string }> = [];
-    for (const [id, creds] of Object.entries(config.provider.providers)) {
-      if (creds.configured) {
-        const entry: { id: string; configured: boolean; apiKey?: string; baseUrl?: string; profiles?: Array<{ id: string; label: string }>; activeProfile?: string } = {
-          id, configured: true, apiKey: creds.apiKey, baseUrl: creds.baseUrl,
-        };
-        if (creds.profiles) {
-          entry.profiles = Object.entries(creds.profiles).map(([pid, prof]) => ({ id: pid, label: prof.label }));
-        }
-        if (creds.activeProfile) entry.activeProfile = creds.activeProfile;
-        configured.push(entry);
-      }
-    }
+    const configured = redactProvidersForClient(
+      config.provider.providers as unknown as Record<string, Record<string, unknown>>,
+    ).filter((p) => p['configured']);
     res.json({ active: config.provider.activeProvider, providers: configured });
   } catch (e) {
     res.json({ active: '', providers: [] });
@@ -1710,34 +1731,34 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
     const turn = turnRegistry.create(sid);
     let finished = false;
 
-    const poll = setInterval(() => {
-      if (finished) return;
-      const record = turnRegistry.get(turn.turnId);
-      if (!record) return;
+    const finishTurn = (record: ReturnType<typeof turnRegistry.get>) => {
+      if (finished || !record) return;
       if (record.status === 'complete') {
         finished = true;
-        clearInterval(poll);
         if ((record.message as Record<string, unknown> | undefined)?.id === '__clarify__') {
           sendEvent('clarification', { ok: true });
         } else {
           sendEvent('complete', { ok: true, message: record.message, turnId: turn.turnId });
         }
         clearInterval(heartbeat);
+        unsubTurn();
         unsub();
         res.end();
       } else if (record.status === 'error' || record.status === 'cancelled') {
         finished = true;
-        clearInterval(poll);
         sendEvent('error', { error: record.error ?? 'chat-failed', code: 'PROCESSING_FAILED', partialContent: record.partialContent });
         clearInterval(heartbeat);
+        unsubTurn();
         unsub();
         res.end();
       }
-    }, 500);
+    };
+
+    const unsubTurn = turnRegistry.subscribe(turn.turnId, finishTurn);
 
     req.on('close', () => {
       finished = true;
-      clearInterval(poll);
+      unsubTurn();
       clearInterval(heartbeat);
       unsub();
       try { agent.cancel(); } catch { /* ignore */ }
@@ -2248,7 +2269,14 @@ function formatSize(bytes: number): string {
   return `${s.toFixed(1)} ${units[i]}`;
 }
 
+let dbStatusCache: { at: number; data: Record<string, unknown> } | null = null;
+const DB_STATUS_CACHE_MS = 60_000;
+
 async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<string, unknown>> {
+  const now = Date.now();
+  if (dbStatusCache && now - dbStatusCache.at < DB_STATUS_CACHE_MS) {
+    return dbStatusCache.data;
+  }
   const store = (eng.sessionManager as any)?.store;
   const pgConnected = !!(store && typeof store.isConnected === 'function' && store.isConnected());
   let dbSizeBytes = 0;
@@ -2311,7 +2339,7 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
     return { path: dir, sizeBytes, sizeFormatted: `${s.toFixed(1)} ${units[i]}` };
   }
 
-  return {
+  const result = {
     backend: 'postgres',
     connected: pgConnected,
     stats: {
@@ -2331,6 +2359,8 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
       connectionString,
     },
   };
+  dbStatusCache = { at: Date.now(), data: result };
+  return result;
 }
 
 app.get('/api/settings/db', async (_req, res) => {

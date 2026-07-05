@@ -1,5 +1,5 @@
 import express, { type Request, type Response } from 'express';
-import { MemoryFabric, DocumentIngester, CognitiveBenchmark, SecureVault, IngestionQueue, setMemoryFabricInstance, setEmbedderInstance, OnnxEmbeddingProvider, type MemoryNode, type MemoryNodeCategory } from '@agentx/engine';
+import { MemoryFabric, DocumentIngester, CognitiveBenchmark, SecureVault, IngestionQueue, setMemoryFabricInstance, setEmbedderInstance, OnnxEmbeddingProvider, isUrlSafeForFetch, type MemoryNode, type MemoryNodeCategory } from '@agentx/engine';
 import { readFile, rename, mkdir, stat, readdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
@@ -711,9 +711,11 @@ router.post('/memory/ingest-async', upload.single('file'), async (req: Request, 
       name = body.name ?? 'untitled';
       kind = (body.kind as any) ?? 'text';
       if (body.url) {
-        // Fetch web URL content
+        if (!isUrlSafeForFetch(body.url)) {
+          return res.status(400).json({ error: 'URL blocked by SSRF policy' });
+        }
         const { extractArticle } = await import('@agentx/engine');
-        const resp = await fetch(body.url);
+        const resp = await fetch(body.url, { signal: AbortSignal.timeout(30000) });
         const html = await resp.text();
         const article = extractArticle(html);
         content = article.content || html;

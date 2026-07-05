@@ -275,6 +275,10 @@ export async function loadSessionMessagesPage(
   const store = getMessageStore();
   if (!store) return { messages: [], total: 0, hasMore: false };
 
+  if ('ensureSessionHydrated' in store && typeof (store as { ensureSessionHydrated?: (id: string) => Promise<void> }).ensureSessionHydrated === 'function') {
+    await (store as { ensureSessionHydrated: (id: string) => Promise<void> }).ensureSessionHydrated(sessionId);
+  }
+
   if (store.getMessagesPage) {
     return await store.getMessagesPage(sessionId, opts);
   }

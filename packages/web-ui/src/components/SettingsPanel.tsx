@@ -11,6 +11,7 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import BuildIcon from '@mui/icons-material/Build';
 import ModelIcon from '@mui/icons-material/Psychology';
 import BrainIcon from '@mui/icons-material/Memory';
+import SpeedIcon from '@mui/icons-material/Speed';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import { CheckCircle } from './CheckCircle';
 import { config, personaApi, type AgentXConfig, type AgentPersonaConfig } from '../api';
@@ -31,13 +32,15 @@ import { PersonaConfigPanel } from './settings/PersonaConfigPanel';
 import { WebSearchToolsTab, mergeWebSearchConfig } from './settings/WebSearchToolsTab';
 import { ChannelsTab, mergeChannelsConfig } from './settings/ChannelsTab';
 import { LocalModelTab } from './settings/LocalModelTab';
+import { RuntimeTab } from './settings/RuntimeTab';
 import { ProvidersPanel } from './ProvidersPanel';
 import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 
-type SettingsTab = 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'channels';
+type SettingsTab = 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'channels' | 'runtime';
 
 const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 14 }} /> },
+  { id: 'runtime', label: 'Runtime', icon: <SpeedIcon sx={{ fontSize: 14 }} /> },
   { id: 'general', label: 'Profile', icon: <PersonIcon sx={{ fontSize: 14 }} /> },
   { id: 'persona', label: 'Persona', icon: <SmartToyIcon sx={{ fontSize: 14 }} /> },
   { id: 'local-model', label: 'Local', icon: <BrainIcon sx={{ fontSize: 14 }} /> },
@@ -187,6 +190,9 @@ export function SettingsPanel() {
           />
         )}
         {activeTab === 'persistence' && <PersistenceTab />}
+        {activeTab === 'runtime' && (
+          <RuntimeTab cfg={cfg} onChange={setCfg} />
+        )}
       </Box>
 
       <Box sx={{

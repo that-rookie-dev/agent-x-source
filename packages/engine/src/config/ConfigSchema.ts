@@ -79,6 +79,11 @@ export const agentXConfigSchema = z.object({
   channels: notificationChannelsConfigSchema,
   localModel: localModelConfigSchema,
   featureRouting: featureRoutingConfigSchema,
+  runtime: z.object({
+    cpuBudgetPercent: z.number().int().min(10).max(80).optional(),
+    lazyStorageCache: z.boolean().optional(),
+    backgroundConcurrency: z.number().int().min(1).max(8).optional(),
+  }).optional(),
   maxSubAgents: z.number().int().min(1).max(20).optional(),
   maxSteps: z.number().int().min(1).max(100).optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),

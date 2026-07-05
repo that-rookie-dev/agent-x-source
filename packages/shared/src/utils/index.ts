@@ -18,3 +18,4 @@ export * from './integration-oauth.js';
 export * from './integration-tool-id.js';
 export * from './host-path.js';
 export * from './system-capabilities.js';
+export * from '../runtime-settings.js';

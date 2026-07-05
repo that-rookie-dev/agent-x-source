@@ -20,6 +20,7 @@ import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transform
 import type { EmbeddingProvider } from '@agentx/shared';
 import { NEURAL_BRAIN_MIN_RAM_GB } from '@agentx/shared';
 import { LocalEmbeddingProvider } from './LocalEmbeddingProvider.js';
+import { getOnnxThreadConfig } from '../runtime/onnx-thread-config.js';
 
 /** Target dimension — always 1024 to match BGE-M3 and the DB schema. */
 export const EMBEDDING_DIMENSION = 1024;
@@ -204,8 +205,8 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
         cache_dir: this.cacheDir,
         local_files_only: true,
         session_options: {
-          intraOpNumThreads: 1,
-          interOpNumThreads: 1,
+          intraOpNumThreads: getOnnxThreadConfig().intraOpNumThreads,
+          interOpNumThreads: getOnnxThreadConfig().interOpNumThreads,
           enableCpuMemArena: false,
           enableMemPattern: false,
         },

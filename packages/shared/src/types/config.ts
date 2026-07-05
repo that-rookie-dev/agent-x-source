@@ -41,11 +41,17 @@ export interface ToolsConfig {
   webSearch?: WebSearchToolsConfig;
 }
 
+import type { RuntimeSettings } from '../runtime-settings.js';
+
+export type { RuntimeSettings } from '../runtime-settings.js';
+
 export interface AgentXConfig {
   provider: ProviderSettings;
   ui: UISettings;
   organization: OrganizationConfig | null;
   telemetry: boolean;
+  /** CPU, caching, and background worker tuning. Changes require restart. */
+  runtime?: RuntimeSettings;
   timezone?: string; // IANA timezone (e.g. 'Asia/Kolkata'). Auto-detected if not set.
   user?: UserConfig;
   setupComplete?: boolean; // true after Mission Control wizard finishes

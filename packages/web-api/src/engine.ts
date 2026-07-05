@@ -35,8 +35,11 @@ import {
   MemoryFabric,
   setLocalModelConfig,
   IntegrationHub,
+  configureBackgroundTaskPool,
+  setOnnxThreadConfig,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
+import { resolveRuntimeSettings } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
 import { join } from 'node:path';
@@ -96,6 +99,12 @@ function applyLowRamFeatureDefaults(configManager: ConfigManager): void {
   } catch { /* config not ready yet */ }
 }
 
+export function applyRuntimeSettings(config: AgentXConfig | null): void {
+  const resolved = resolveRuntimeSettings(config?.runtime);
+  configureBackgroundTaskPool(resolved.backgroundConcurrency);
+  setOnnxThreadConfig(resolved.onnxIntraOpThreads, resolved.onnxInterOpThreads);
+}
+
 export function syncLocalModelConfig(configManager: ConfigManager): void {
   try {
     const cfg = configManager.load();
@@ -129,6 +138,7 @@ export function getEngine(): EngineState {
   }
 
   syncLocalModelConfig(configManager);
+  applyRuntimeSettings(loadedConfig);
 
   applyLowRamFeatureDefaults(configManager);
 
@@ -138,13 +148,8 @@ export function getEngine(): EngineState {
     getDek: () => state?.dek ?? null,
   });
 
-  // Initialize log collector — hooks into the shared logger to capture all logs
   initLogCollector();
 
-  // PostgreSQL is the only supported storage backend.
-  // When the Agent-X desktop app is used, it starts embedded PostgreSQL on port 3335
-  // and sets AGENTX_POSTGRES_CONNECTION_STRING. If nothing is configured, fall back to
-  // the same embedded PostgreSQL defaults so local development/tests can connect.
   const embeddedPgDefault = 'postgresql://agentx:agentx@127.0.0.1:3335/agentx';
   const pgConnectionString =
     process.env['AGENTX_POSTGRES_CONNECTION_STRING'] ??
@@ -158,9 +163,11 @@ export function getEngine(): EngineState {
     );
   }
 
+  const lazyHydrate = loadedConfig?.runtime?.lazyStorageCache !== false;
   const pgAdapter = new PostgresStorageAdapter({
     connectionString: pgConnectionString,
     max: ((loadedConfig as any)?.postgres?.poolSize as number) ?? 5,
+    lazyHydrate,
   } as any);
   const sessionManager = new SessionManager({ storageAdapter: pgAdapter });
 
@@ -262,6 +269,7 @@ export function setEngineDEK(dek: Buffer | null): void {
     state.configured = state.configManager.isConfigured();
     try {
       applyWebSearchConfigFromAgentConfig(state.configManager.load());
+      applyRuntimeSettings(state.configManager.load());
     } catch { /* not configured yet */ }
 
     if (dek && !channelsBootstrappedAfterAuth) {

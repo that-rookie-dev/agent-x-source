@@ -355,15 +355,20 @@ interface CacheState {
 
 export interface PostgresConfig extends PoolConfig {
   autoMigrate?: boolean;
+  /** When true (default), only load session metadata at connect; messages load on demand. */
+  lazyHydrate?: boolean;
 }
 
 export class PostgresStorageAdapter implements StorageAdapter {
   private pool: Pool;
   private connected = false;
+  private lazyHydrate: boolean;
+  private hydratedSessions = new Set<string>();
   private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
 
   constructor(config: PostgresConfig) {
     this.pool = new Pool(config);
+    this.lazyHydrate = config.lazyHydrate !== false;
   }
 
   static async testConnection(connectionString: string): Promise<{ ok: true; version: string } | { ok: false; error: string }> {
@@ -400,7 +405,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
       client.release();
       await this.migrate();
       await this.seedDefaultPersona();
-      await this.hydrateCache();
+      if (this.lazyHydrate) {
+        await this.hydrateEssentialCache();
+      } else {
+        await this.hydrateCache();
+      }
       this.connected = true;
       logger.info('PG_CONNECTED', 'PostgreSQL connection established');
     } catch (error) {
@@ -616,6 +625,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   private writeQueue: Array<{ sql: string; params: unknown[] }> = [];
   private drainPromise: Promise<void> | null = null;
+  private static readonly MAX_WRITE_QUEUE = 10_000;
 
   private scheduleWriteDrain(): void {
     if (this.drainPromise) return;
@@ -638,8 +648,77 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   private write(sql: string, params: unknown[] = []): void {
+    if (this.writeQueue.length >= PostgresStorageAdapter.MAX_WRITE_QUEUE) {
+      logger.warn('PG_WRITE_QUEUE_FULL', 'Dropping write — queue at capacity', { sql: sql.slice(0, 80) });
+      return;
+    }
     this.writeQueue.push({ sql, params });
     this.scheduleWriteDrain();
+  }
+
+  private async hydrateEssentialCache(): Promise<void> {
+    try {
+      const sessions = await this.pool.query(
+        `SELECT id,title,status,provider_id as "providerId",model_id as "modelId",
+                scope_path as "scopePath",token_used as "tokenUsed",token_available as "tokenAvailable",
+                compaction_count as "compactionCount",
+                context_kind as "contextKind",host_crew_id as "hostCrewId",
+                host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
+                host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
+                host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
+                mode,parent_id as "parentId",hyperdrive,created_at as "createdAt",updated_at as "updatedAt"
+         FROM sessions`,
+      );
+      for (const row of sessions.rows) {
+        this.cache.sessions.set((row as StorableSession).id, row as StorableSession);
+      }
+
+      const childSessions = await this.pool.query(
+        'SELECT id, parent_session_id, kind, label, status, created_at, updated_at FROM child_sessions ORDER BY created_at ASC',
+      );
+      for (const row of childSessions.rows) {
+        const r = row as Record<string, unknown>;
+        const parentId = r['parent_session_id'] as string;
+        const arr = this.cache.childSessions.get(parentId) ?? [];
+        arr.push({
+          id: r['id'],
+          parentSessionId: parentId,
+          kind: r['kind'],
+          label: r['label'],
+          status: r['status'],
+          createdAt: r['created_at'],
+          updatedAt: r['updated_at'],
+        });
+        this.cache.childSessions.set(parentId, arr);
+      }
+
+      const crews = await this.pool.query('SELECT * FROM crews ORDER BY created_at ASC');
+      this.cache.crews = crews.rows.map((row: Record<string, unknown>) => this.crewFromRow(row));
+
+      const persona = await this.pool.query('SELECT * FROM agent_persona LIMIT 1');
+      if (persona.rows[0]) {
+        const p = persona.rows[0] as Record<string, unknown>;
+        this.cache.persona = {
+          name: p['name'] as string,
+          description: p['description'] as string,
+          communicationStyle: p['communication_style'] as string,
+          decisionMaking: p['decision_making'] as string,
+          domainContext: p['domain_context'] as string,
+          traits: JSON.parse((p['traits'] as string) || '[]') as string[],
+        };
+      }
+
+      logger.info('PG_HYDRATE', `Essential cache loaded (${this.cache.sessions.size} sessions, lazy message load enabled)`);
+    } catch (error) {
+      logger.error('PG_HYDRATE_FAILED', error);
+    }
+  }
+
+  /** Load messages and per-session data on first access (lazy cache). */
+  async ensureSessionHydrated(sessionId: string): Promise<void> {
+    if (!this.lazyHydrate || this.hydratedSessions.has(sessionId)) return;
+    await this.hydrateMessageCache(sessionId);
+    this.hydratedSessions.add(sessionId);
   }
 
   private async hydrateCache(): Promise<void> {

@@ -1,14 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { resolve, join } from 'node:path';
+import { resolve } from 'node:path';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { assertReadOnlySqlQuery, isSafeSqlIdentifier, quoteSqlIdentifier } from '../sql-safety.js';
 
 export async function dbQuery(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const query = args['query'] as string;
   const dbFile = args['database'] as string | undefined;
   const cwd = resolve(context.scopePath);
 
-  // SQLite by default
   if (dbFile) {
     const dbPath = resolve(cwd, dbFile);
     if (!existsSync(dbPath)) {
@@ -16,6 +16,7 @@ export async function dbQuery(args: Record<string, unknown>, context: ToolExecut
     }
 
     try {
+      assertReadOnlySqlQuery(query);
       const output = execFileSync('sqlite3', [dbPath, query, '-header', '-separator', '|'], {
         cwd,
         encoding: 'utf-8',
@@ -41,10 +42,11 @@ export async function dbSchema(args: Record<string, unknown>, context: ToolExecu
   }
 
   try {
-    const query = table
-      ? `.schema ${table}`
-      : `.tables`;
-    const output = execFileSync('sqlite3', [dbPath, query], {
+    if (table && !isSafeSqlIdentifier(table)) {
+      return { success: false, output: `Invalid table name: ${table}`, error: 'SCHEMA_ERROR' };
+    }
+    const safeQuery = table ? `.schema ${table.replace(/[^A-Za-z0-9_]/g, '')}` : '.tables';
+    const output = execFileSync('sqlite3', [dbPath, safeQuery], {
       encoding: 'utf-8',
       timeout: 10000,
     });
@@ -64,8 +66,12 @@ export async function dbExport(args: Record<string, unknown>, context: ToolExecu
     return { success: false, output: 'Database file not found', error: 'NOT_FOUND' };
   }
 
+  if (!isSafeSqlIdentifier(table)) {
+    return { success: false, output: `Invalid table name: ${table}`, error: 'EXPORT_ERROR' };
+  }
+
   try {
-    const sql = `SELECT * FROM ${table} LIMIT 100`;
+    const sql = `SELECT * FROM ${quoteSqlIdentifier(table)} LIMIT 100`;
     let output: string;
     if (format === 'csv') {
       output = execFileSync('sqlite3', [dbPath, '-header', '-csv', sql], { encoding: 'utf-8', timeout: 10000 });
@@ -87,7 +93,6 @@ export async function envRead(args: Record<string, unknown>, context: ToolExecut
   }
 
   const content = readFileSync(envPath, 'utf-8');
-  // Mask values for security
   const masked = content
     .split('\n')
     .map((line) => {
@@ -112,7 +117,6 @@ export async function dbMigrate(args: Record<string, unknown>, context: ToolExec
   const actualMigDir = existsSync(migDir) ? migDir : resolve(context.scopePath, migrationsDir);
 
   try {
-    // Ensure _migrations table exists
     execFileSync('sqlite3', [dbPath, 'CREATE TABLE IF NOT EXISTS _migrations (id INTEGER PRIMARY KEY, name TEXT UNIQUE, applied_at TEXT DEFAULT CURRENT_TIMESTAMP);'], { encoding: 'utf-8', timeout: 5000 });
 
     const files = readdirSync(actualMigDir)
@@ -123,7 +127,6 @@ export async function dbMigrate(args: Record<string, unknown>, context: ToolExec
       return { success: true, output: 'No migration files found' };
     }
 
-    // Get already-applied migrations
     const applied = execFileSync('sqlite3', [dbPath, 'SELECT name FROM _migrations;'], { encoding: 'utf-8', timeout: 5000 });
     const appliedSet = new Set(applied.trim().split('\n').filter(Boolean));
 
@@ -133,7 +136,7 @@ export async function dbMigrate(args: Record<string, unknown>, context: ToolExec
         results.push(`SKIP ${file} (already applied)`);
         continue;
       }
-      const sql = readFileSync(join(actualMigDir, file), 'utf-8');
+      const sql = readFileSync(`${actualMigDir}/${file}`, 'utf-8');
       try {
         execFileSync('sqlite3', [dbPath, sql], { encoding: 'utf-8', timeout: 30000 });
         execFileSync('sqlite3', [dbPath, `INSERT INTO _migrations (name) VALUES ('${file.replace(/'/g, "''")}');`], { encoding: 'utf-8', timeout: 5000 });

@@ -75,6 +75,7 @@ export class TelegramProgressSession {
   private currentActivity: string | null = null;
   private lastEditAt = 0;
   private lastRenderedText = '';
+  private editInFlight = false;
   private typingTimer: ReturnType<typeof setInterval> | null = null;
   private unsubscribe: (() => void) | null = null;
   private stopped = false;
@@ -183,7 +184,7 @@ export class TelegramProgressSession {
   }
 
   private async flushUpdate(force: boolean): Promise<void> {
-    if (this.stopped || this.statusMessageId === null) return;
+    if (this.stopped || this.statusMessageId === null || this.editInFlight) return;
 
     const now = Date.now();
     if (!force && now - this.lastEditAt < MIN_EDIT_INTERVAL_MS) return;
@@ -192,10 +193,15 @@ export class TelegramProgressSession {
     const text = formatProgressStatusText(this.currentActivity, elapsedSec);
     if (text === this.lastRenderedText && !force) return;
 
-    const ok = await this.bridge.editMessageText(this.chatId, this.statusMessageId, text);
-    if (ok) {
-      this.lastEditAt = now;
-      this.lastRenderedText = text;
+    this.editInFlight = true;
+    try {
+      const ok = await this.bridge.editMessageText(this.chatId, this.statusMessageId, text);
+      if (ok) {
+        this.lastEditAt = now;
+        this.lastRenderedText = text;
+      }
+    } finally {
+      this.editInFlight = false;
     }
   }
 }

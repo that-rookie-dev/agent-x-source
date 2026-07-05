@@ -24,12 +24,16 @@ export function validate(schema: z.ZodSchema) {
 
 // ─── Chat schemas ─────────────────────────────────────────────
 
+const MAX_CHAT_TEXT_LEN = 100_000;
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_CONTENT_LEN = 512_000;
+
 export const chatMessageSchema = z.object({
-  text: z.string().min(1, 'text is required'),
+  text: z.string().min(1, 'text is required').max(MAX_CHAT_TEXT_LEN),
   attachments: z.array(z.object({
-    name: z.string(),
-    content: z.string(),
-  })).optional(),
+    name: z.string().max(256),
+    content: z.string().max(MAX_ATTACHMENT_CONTENT_LEN),
+  })).max(MAX_ATTACHMENTS).optional(),
   retry: z.boolean().optional(),
   delegateCrewIds: z.array(z.string()).optional(),
   /** Set after user skips/deploys from CrewSuggestionModal — prevents server re-prompt. */

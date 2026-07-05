@@ -74,7 +74,7 @@ export class AuthManager {
   private loadSessions(): void {
     try {
       if (existsSync(this.sessionsPath)) {
-        const raw = JSON.parse(readFileSync(this.sessionsPath, 'utf-8')) as Array<{ token: string; username: string; createdAt: string; lastActiveAt: string; dek?: string }>;
+        const raw = JSON.parse(readFileSync(this.sessionsPath, 'utf-8')) as Array<{ token: string; username: string; createdAt: string; lastActiveAt: string }>;
         for (const s of raw) {
           const createdAt = new Date(s.createdAt);
           if (Date.now() - createdAt.getTime() < AUTH_SESSION_TTL_MS) {
@@ -83,7 +83,7 @@ export class AuthManager {
               username: s.username,
               createdAt,
               lastActiveAt: new Date(s.lastActiveAt),
-              dek: s.dek ? Buffer.from(s.dek, 'base64') : Buffer.alloc(0),
+              dek: Buffer.alloc(0),
             });
           }
         }
@@ -99,7 +99,7 @@ export class AuthManager {
           username: s.username,
           createdAt: s.createdAt.toISOString(),
           lastActiveAt: s.lastActiveAt.toISOString(),
-          dek: s.dek.length > 0 ? s.dek.toString('base64') : undefined,
+          // DEK is never persisted — users re-authenticate after restart to unlock encrypted config.
         }));
       const tmpPath = this.sessionsPath + '.tmp.' + Date.now();
       writeFileSync(tmpPath, JSON.stringify(serialized, null, 2), 'utf-8');

@@ -1,5 +1,5 @@
+import { getLogger, isChannelAllowlistRequired } from '@agentx/shared';
 import type { EngineEvent } from '@agentx/shared';
-import { getLogger } from '@agentx/shared';
 import type { Agent } from '../agent/Agent.js';
 import { AgentEventBus } from '../EventBus.js';
 import { TelegramStore } from './TelegramStore.js';
@@ -35,7 +35,7 @@ export class TelegramBridge {
   private botUsername?: string;
   private connected = false;
   private commandHandler: ((cmd: string, args: string[], chatId: number) => Promise<string | null>) | null = null;
-  private callbackHandlers: Map<string, (data: string, chatId: number) => void> = new Map();
+  private callbackHandlers: Map<string, (data: string, chatId: number, fromUserId?: number) => void> = new Map();
   private messageHandler: ((text: string, chatId: number) => void) | null = null;
   private fileHandler: ((fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => void) | null = null;
   private webhookSecret: string | null = null;
@@ -46,8 +46,9 @@ export class TelegramBridge {
 
   // ─── Flood protection (3-strike breaker) ───
   private floodStrikes = 0;
-  private readonly MAX_FLOOD_STRIKES = 3;
   private lastMessageTime = 0;
+  private readonly MAX_FLOOD_STRIKES = 3;
+  private lastFromIdByChat = new Map<number, number>();
   private readonly FLOOD_WINDOW_MS = 1000; // 1 message per second max
 
   constructor(config: TelegramConfig) {
@@ -55,8 +56,11 @@ export class TelegramBridge {
     this.eventBus = new AgentEventBus();
   }
 
+  getLastFromId(chatId: number): number | undefined {
+    return this.lastFromIdByChat.get(chatId);
+  }
+
   /**
-   * Register a handler for /commands received via Telegram.
    * If the handler returns a string, it's sent as a reply.
    * If it returns null, the message is passed to the agent.
    */
@@ -300,6 +304,7 @@ export class TelegramBridge {
       this.floodStrikes = Math.max(0, this.floodStrikes - 1);
     }
     this.lastMessageTime = now;
+    if (fromId) this.lastFromIdByChat.set(chatId, fromId);
 
     // Check if user is allowed
     if (this.config.allowedUserIds?.length) {
@@ -307,6 +312,9 @@ export class TelegramBridge {
         await this.sendMessage(chatId, '⚠️ Unauthorized. This bot is restricted to specific users.');
         return;
       }
+    } else if (isChannelAllowlistRequired()) {
+      await this.sendMessage(chatId, '⚠️ Unauthorized. Configure allowed Telegram user IDs in Settings → Channels.');
+      return;
     }
 
     this.messageCount++;
@@ -447,7 +455,7 @@ export class TelegramBridge {
     if (prefix) {
       const handler = this.callbackHandlers.get(prefix);
       if (handler) {
-        handler(data, chatId);
+        handler(data, chatId, query.from?.id);
         return;
       }
     }
@@ -457,7 +465,7 @@ export class TelegramBridge {
    * Register a callback query handler for a given prefix.
    * When a button with callback_data starting with "prefix:" is pressed, handler is called.
    */
-  onCallback(prefix: string, handler: (data: string, chatId: number) => void): void {
+  onCallback(prefix: string, handler: (data: string, chatId: number, fromUserId?: number) => void): void {
     this.callbackHandlers.set(prefix, handler);
   }
 

@@ -214,7 +214,7 @@ export class AgentRuntime {
     await initializeVaultKey(this.options.getDataDir(), this.options.vaultStorage);
 
     const listenHost = this.options.listenHost
-      ?? (this.options.mode === 'server' ? '0.0.0.0' : '127.0.0.1');
+      ?? '127.0.0.1';
     const publicUrl = resolvePublicUrl(
       this.port,
       this.options.publicUrl
@@ -283,7 +283,7 @@ export function createServerRuntimeOptions(params?: {
     port: params?.port ?? DEFAULT_PORT,
     getResourcesPath: () => join(installDir, 'resources'),
     getDataDir: () => dataDir,
-    listenHost: params?.listenHost ?? process.env['AGENTX_HOST'] ?? '0.0.0.0',
+    listenHost: params?.listenHost ?? process.env['AGENTX_HOST'] ?? '127.0.0.1',
     publicUrl: params?.publicUrl ?? process.env['AGENTX_PUBLIC_URL'],
   };
 }

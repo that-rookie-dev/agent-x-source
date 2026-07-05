@@ -379,3 +379,7 @@ export type { VisualState, StreamingTextState, ToolCardMap } from './communicati
 export { ThemeEngine } from './communication/visuals/ThemeEngine.js';
 export { createChannelAdapter } from './communication/visuals/ChannelAdapter.js';
 export type { ChannelAdapter, ChannelRenderContext } from './communication/visuals/ChannelAdapter.js';
+export { configureBackgroundTaskPool, getBackgroundTaskPool } from './runtime/BackgroundTaskPool.js';
+export { setOnnxThreadConfig, getOnnxThreadConfig } from './runtime/onnx-thread-config.js';
+export { assertSafeFetchUrl, isUrlSafeForFetch } from './search/url-utils.js';
+export { TtlCache } from './storage/cache/TtlCache.js';
