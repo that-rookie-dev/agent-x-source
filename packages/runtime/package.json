@@ -1,0 +1,41 @@
+{
+  "name": "@agentx/runtime",
+  "version": "0.8.6",
+  "private": true,
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "setup:pgvector": "node scripts/setup-pgvector.mjs",
+    "setup:age": "node scripts/setup-age.mjs",
+    "setup:extensions": "node scripts/setup-pgvector.mjs && node scripts/setup-age.mjs",
+    "setup:python": "node scripts/setup-python.mjs",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@agentx/shared": "workspace:*",
+    "embedded-postgres": "17.5.0-beta.15",
+    "pg": "^8.21.0"
+  },
+  "optionalDependencies": {
+    "@embedded-postgres/darwin-arm64": "17.5.0-beta.15",
+    "@embedded-postgres/darwin-x64": "17.5.0-beta.15",
+    "@embedded-postgres/linux-arm64": "17.5.0-beta.15",
+    "@embedded-postgres/linux-x64": "17.5.0-beta.15",
+    "@embedded-postgres/windows-x64": "17.5.0-beta.15"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/pg": "^8.20.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0"
+  }
+}

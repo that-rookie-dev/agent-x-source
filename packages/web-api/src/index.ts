@@ -68,6 +68,7 @@ import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
+const HOST = process.env['AGENTX_HOST'] ?? '127.0.0.1';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Embedding models are downloaded at runtime (during the setup wizard) to the
@@ -4817,8 +4818,8 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGQUIT', () => shutdown('SIGQUIT'));
 
-  return server.listen(port, () => {
-    console.log(`Agent-X web API listening on http://localhost:${port}`);
+  return server.listen(port, HOST, () => {
+    console.log(`Agent-X web API listening on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${port}`);
     initAgentXOverviewBridge();
     void bootstrapAutomationFromEngine().catch((e: unknown) => {
       getLogger().warn('AUTOMATION', e instanceof Error ? e.message : String(e));

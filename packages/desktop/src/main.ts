@@ -1,23 +1,17 @@
 import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage, shell, safeStorage } from 'electron';
 import { join, basename } from 'path';
-import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import type { Server } from 'http';
+import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } from 'fs';
 import { spawn, execFileSync } from 'child_process';
 import { tmpdir, totalmem } from 'os';
-import { pathToFileURL } from 'url';
-import { randomBytes } from 'node:crypto';
-import { ensureLoginShellPath } from './host-path.js';
-import { PostgresLifecycleManager } from './PostgresLifecycleManager.js';
+import { AgentRuntime, createDesktopRuntimeOptions, DEFAULT_PORT } from '@agentx/runtime';
 
 const REPO = 'SlashpanOrg/agent-x';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
-let server: Server | null = null;
-let pgManager: PostgresLifecycleManager | null = null;
-const PORT = 3333;
-const EMBEDDED_PG_PORT = 3335;
+let agentRuntime: AgentRuntime | null = null;
+const PORT = DEFAULT_PORT;
 
 const isDev = process.env['NODE_ENV'] === 'development' || !app.isPackaged;
 
@@ -263,148 +257,37 @@ async function checkForUpdates(manual = false): Promise<boolean> {
 
 // ==================== Server ====================
 
-function getPythonPath(): string {
-  if (isDev) {
-    return process.env['AGENTX_PYTHON_PATH'] || 'python3';
-  }
-  if (process.platform === 'win32') {
-    return join(process.resourcesPath, 'python', 'python.exe');
-  }
-  return join(process.resourcesPath, 'python', 'bin', 'python3');
+function createAgentRuntime(): AgentRuntime {
+  return new AgentRuntime(createDesktopRuntimeOptions({
+    isDev,
+    getResourcesPath: () => process.resourcesPath,
+    getDataDir: () => app.getPath('userData'),
+    getDevMonorepoRoot: () => join(__dirname, '..', '..', '..'),
+    vaultStorage: {
+      isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+      decryptString: (buffer) => safeStorage.decryptString(buffer),
+      encryptString: (text) => safeStorage.encryptString(text),
+    },
+  }));
 }
 
-function setupPythonEnv(): void {
-  const pythonPath = getPythonPath();
-  const pythonDir = process.platform === 'win32'
-    ? join(process.resourcesPath, 'python')
-    : join(process.resourcesPath, 'python', 'bin');
-
-  if (existsSync(pythonPath)) {
-    process.env['AGENTX_PYTHON_PATH'] = pythonPath;
-    process.env['PATH'] = pythonDir + (process.platform === 'win32' ? ';' : ':') + (process.env['PATH'] || '');
-    console.log(`Bundled Python: ${pythonPath}`);
-  } else if (isDev) {
-    console.log('Development mode: using system Python');
-  } else {
-    console.warn('Bundled Python not found at', pythonPath);
-  }
+async function startServer(): Promise<void> {
+  agentRuntime = createAgentRuntime();
+  agentRuntime.setupPythonEnv();
+  await agentRuntime.start();
 }
 
-function getWebApiPath(): string {
-  if (isDev) return join(__dirname, '..', '..', 'web-api', 'dist', 'index.js');
-  return join(process.resourcesPath, 'web-api', 'index.js');
-}
-
-function getWebUiDir(): string {
-  if (isDev) return join(__dirname, '..', '..', 'web-ui', 'dist');
-  return join(process.resourcesPath, 'web-ui');
-}
-
-function getWebNeuronDir(): string {
-  if (isDev) return join(__dirname, '..', '..', 'web-neuron', 'dist');
-  return join(process.resourcesPath, 'web-neuron');
-}
-
-function hydrateHostPath(): void {
-  ensureLoginShellPath();
-}
-
-async function startEmbeddedPostgres(): Promise<string | null> {
-  // If a connection string is already provided externally, do not start embedded PG.
-  if (process.env['AGENTX_POSTGRES_CONNECTION_STRING']) {
-    return process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
-  }
-
-  const dataDir = join(app.getPath('userData'), 'brain_db');
-  pgManager = new PostgresLifecycleManager({
-    dataDir,
-    port: EMBEDDED_PG_PORT,
-    host: '127.0.0.1',
-    user: 'agentx',
-    password: 'agentx',
-    database: 'agentx',
-    onLog: (msg) => console.log(`[PG] ${msg}`),
-    onError: (msg) => console.error(`[PG] ${msg}`),
-  });
-
-  try {
-    const connectionString = await pgManager.start();
-    process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = connectionString;
-    process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '1';
-    return connectionString;
-  } catch (e) {
-    pgManager = null;
-    throw e;
+async function stopServer(): Promise<void> {
+  if (agentRuntime) {
+    await agentRuntime.stop();
+    agentRuntime = null;
   }
 }
 
 async function stopEmbeddedPostgres(): Promise<void> {
-  if (pgManager) {
-    await pgManager.stop();
-    pgManager = null;
+  if (agentRuntime) {
+    await agentRuntime.stopEmbeddedPostgres();
   }
-}
-
-async function initializeVaultKey(): Promise<void> {
-  const configDir = join(app.getPath('userData'), 'vault');
-  mkdirSync(configDir, { recursive: true });
-  const keyFile = join(configDir, 'vault-key.enc');
-
-  if (safeStorage.isEncryptionAvailable() && existsSync(keyFile)) {
-    try {
-      const encrypted = readFileSync(keyFile);
-      const key = safeStorage.decryptString(encrypted);
-      process.env['AGENTX_VAULT_KEY'] = key;
-      return;
-    } catch (e) {
-      console.error('Failed to decrypt vault key, generating new one:', e);
-    }
-  }
-
-  const key = randomBytes(32).toString('base64');
-  if (safeStorage.isEncryptionAvailable()) {
-    try {
-      const encrypted = safeStorage.encryptString(key);
-      writeFileSync(keyFile, encrypted);
-    } catch (e) {
-      console.error('Failed to encrypt vault key:', e);
-    }
-  }
-  process.env['AGENTX_VAULT_KEY'] = key;
-}
-
-async function startServer(): Promise<void> {
-  const apiPath = getWebApiPath();
-  const uiDir = getWebUiDir();
-  const neuronDir = getWebNeuronDir();
-
-  if (!existsSync(apiPath)) {
-    throw new Error(`Web-API not found at ${apiPath}`);
-  }
-
-  hydrateHostPath();
-
-  // Start the bundled native PostgreSQL before the web-api so it has a connection string ready.
-  await startEmbeddedPostgres();
-
-  await initializeVaultKey();
-
-  process.env['AGENTX_UI_DIR'] = uiDir;
-  process.env['AGENTX_NEURON_DIR'] = neuronDir;
-  process.env['PORT'] = String(PORT);
-  process.env['AGENTX_PUBLIC_URL'] = `http://localhost:${PORT}`;
-  process.env['NODE_ENV'] = 'production';
-
-  const mod = await import(pathToFileURL(apiPath).href);
-  if (mod.server) server = mod.server as Server;
-}
-
-async function stopServer(): Promise<void> {
-  if (server) {
-    await new Promise<void>((resolve) => server!.close(() => resolve()));
-    server = null;
-  }
-  await stopEmbeddedPostgres();
 }
 
 // ==================== External links ====================
@@ -662,7 +545,6 @@ ipcMain.handle('window:openInternal', async (_event, url: string) => {
 app.whenReady().then(async () => {
   try {
     createTray();
-    setupPythonEnv();
     await startServer();
     tray?.setToolTip(`Agent-X — Running on port ${PORT}`);
     createWindow();

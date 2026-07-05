@@ -3,6 +3,7 @@ import type { ChannelPlugin } from '../types.js';
 import type { FocusState, FocusManager } from '../FocusManager.js';
 import { getDataDir, type Message, type VisualUpdate, type AgentXConfig, getLogger } from '@agentx/shared';
 import { TelegramBridge } from '../../telegram/TelegramBridge.js';
+import { TelegramProgressSession } from '../../telegram/TelegramProgressSession.js';
 import type { TelegramConfig } from '../../telegram/TelegramBridge.js';
 import type { Agent } from '../../agent/Agent.js';
 import { syncChannelSuperSessionContext } from '../../channels/channel-super-session-sync.js';
@@ -325,6 +326,8 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       while (this.messageQueue.length > 0) {
         const item = this.messageQueue.shift()!;
         getLogger().info('TELEGRAM', `Processing inbound chat=${item.chatId} agent=${this.agent?.currentSessionId ?? 'unknown'}`);
+        const progress = new TelegramProgressSession(this.bridge, item.chatId, this.agent);
+        await progress.start();
         try {
           const response = await this.dispatchInbound(item);
           const text = typeof response.content === 'string' ? response.content.trim() : '';
@@ -341,6 +344,8 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           if (jsonMatch?.[1]) errMsg = jsonMatch[1];
           if (errMsg.length > 400) errMsg = errMsg.slice(0, 400) + '...';
           await this.bridge.sendToChat(item.chatId, `⚠️ ${errMsg}`);
+        } finally {
+          await progress.stop();
         }
       }
     } catch (err) {

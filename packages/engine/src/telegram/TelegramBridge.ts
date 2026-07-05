@@ -475,6 +475,39 @@ export class TelegramBridge {
     await this.sendMessage(chatId, text);
   }
 
+  /** Refresh Telegram "typing…" indicator (expires after ~5s). */
+  async sendChatAction(chatId: number, action: 'typing' | 'upload_document' = 'typing'): Promise<void> {
+    await this.apiCall('sendChatAction', { chat_id: chatId, action });
+  }
+
+  /** Send plain text without Markdown parsing; returns message_id for edits. */
+  async sendPlainMessage(chatId: number, text: string): Promise<number | null> {
+    const result = await this.apiCall('sendMessage', { chat_id: chatId, text });
+    if (!result.ok) {
+      throw new Error(result.description ?? 'Failed to send Telegram message');
+    }
+    return (result.result?.message_id as number | undefined) ?? null;
+  }
+
+  async editMessageText(chatId: number, messageId: number, text: string): Promise<boolean> {
+    const result = await this.apiCall('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+    });
+    if (result.ok) return true;
+    if (result.description?.includes('message is not modified')) return true;
+    getLogger().warn('TELEGRAM', `editMessageText failed: ${result.description ?? 'unknown error'}`);
+    return false;
+  }
+
+  async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    const result = await this.apiCall('deleteMessage', { chat_id: chatId, message_id: messageId });
+    if (!result.ok && !result.description?.includes('message to delete not found')) {
+      getLogger().warn('TELEGRAM', `deleteMessage failed: ${result.description ?? 'unknown error'}`);
+    }
+  }
+
   /**
    * Download a file from Telegram by file_id.
    * Returns the file contents as a Buffer.

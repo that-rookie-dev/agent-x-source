@@ -25,8 +25,11 @@ stop_agentx() {
   pkill -9 -f "Agent-X" 2>/dev/null || true
   pkill -9 -f "com.agentx.desktop" 2>/dev/null || true
   pkill -9 -f "@agentx/desktop" 2>/dev/null || true
+  pkill -9 -f "@agentx/server" 2>/dev/null || true
+  pkill -9 -f "packages/server/dist" 2>/dev/null || true
   pkill -9 -f "agentx/web-api" 2>/dev/null || true
   pkill -9 -f "packages/web-api/dist/index" 2>/dev/null || true
+  pkill -9 -f "$HOME/.agentx/index.js" 2>/dev/null || true
 
   # Embedded web-api listens on 3333; embedded PostgreSQL listens on 3335
   if command -v lsof >/dev/null 2>&1; then
@@ -62,6 +65,8 @@ wipe_path() {
 
 # Matches @agentx/shared platform.ts defaults + Electron desktop paths on macOS
 AGENTX_DIRS=(
+  # Server install payload (~/.agentx from curl | bash installer)
+  "$HOME/.agentx"
   # XDG-style (used by web-api / engine on macOS and Linux)
   "$HOME/.config/agentx"
   "$HOME/.local/share/agentx"
@@ -239,9 +244,13 @@ rm -rf dist release
 # ── 4b. Clean all package dist folders (so the fresh build has no stale code) ─
 echo ">>> Cleaning all package dist/ outputs..."
 cd "$ROOT_DIR"
-for pkg in shared engine web-api web-ui web-neuron desktop; do
+for pkg in shared engine web-api web-ui web-neuron runtime server desktop; do
   rm -rf "packages/$pkg/dist" 2>/dev/null || true
 done
+
+# Server pack staging / release tarballs
+rm -rf packages/server/release packages/server/.pack-staging 2>/dev/null || true
+rm -rf packages/runtime/python 2>/dev/null || true
 
 # Remove any leftover bundled web-api/web-ui directories inside the desktop package
 rm -rf "$DESKTOP_DIR/web-api" "$DESKTOP_DIR/web-ui" 2>/dev/null || true
@@ -262,15 +271,14 @@ echo ">>> Building dependencies in topological order..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
 pnpm --filter @agentx/engine run build
+pnpm --filter @agentx/runtime run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
 pnpm --filter @agentx/web-neuron run build
 
 # ── 6b. Build and install PostgreSQL extensions (pgvector + Apache AGE) ──────
 echo ">>> Building PostgreSQL extensions (pgvector + AGE)..."
-cd "$DESKTOP_DIR"
-pnpm run setup:extensions || echo "WARNING: Extension build failed — app will fall back to relational CTE graph engine."
-cd "$ROOT_DIR"
+pnpm --filter @agentx/runtime run setup:extensions || echo "WARNING: Extension build failed — app will fall back to relational CTE graph engine."
 
 # ── 7. Typecheck all packages (after declarations are available) ─────────────
 echo ">>> Typechecking all packages..."
