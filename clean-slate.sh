@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DESKTOP_DIR="$ROOT_DIR/packages/desktop"
-CREDENTIALS_FILE="$ROOT_DIR/../credentials.env"
+CREDENTIALS_FILE="$ROOT_DIR/credentials.env"
 
 # Load credentials early if available (PG targets, optional AGENTX_DATA_DIR override).
 # This file is intentionally outside the source folder and is therefore optional.
@@ -287,7 +287,9 @@ pnpm -r run typecheck
 # ── 8. Build desktop app (unpacked .app) ────────────────────────────────────
 echo ">>> Building desktop app..."
 cd "$DESKTOP_DIR"
+node scripts/materialize-pack-deps.mjs
 pnpm run build
+pnpm --filter @agentx/runtime run setup:voice-bundled
 pnpm exec electron-builder --mac --dir
 
 # ── 9. Copy to /Applications (use ditto to preserve symlinks / extended attributes correctly).

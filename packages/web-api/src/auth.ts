@@ -267,7 +267,11 @@ export function createAuthRouter(): Router {
   router.get('/auth/status', (req, res) => {
     const token = getToken(req);
     const state = authManager.getAuthState(token);
-    res.json(state);
+    // Expose session token for WebSocket auth (Electron may not attach cookies to WS upgrades).
+    res.json({
+      ...state,
+      sessionToken: state.isAuthenticated && token ? token : undefined,
+    });
   });
 
   /**
@@ -460,4 +464,23 @@ export function validateWebSocketConnection(req: IncomingMessage): boolean {
   const token = extractSessionTokenFromCookie(req.headers.cookie);
   if (!token) return false;
   return authManager.isAuthenticated(token);
+}
+
+/** Voice WS accepts cookie auth, Bearer header, or ?token= query param (Electron fallback). */
+export function validateVoiceWebSocketConnection(req: IncomingMessage): boolean {
+  if (!authManager.hasRootUser()) {
+    return isLoopbackAddress(req.socket.remoteAddress);
+  }
+  const cookieToken = extractSessionTokenFromCookie(req.headers.cookie);
+  if (cookieToken && authManager.isAuthenticated(cookieToken)) {
+    return true;
+  }
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    const bearer = authHeader.slice(7);
+    if (authManager.isAuthenticated(bearer)) return true;
+  }
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const queryToken = url.searchParams.get('token');
+  return Boolean(queryToken && authManager.isAuthenticated(queryToken));
 }

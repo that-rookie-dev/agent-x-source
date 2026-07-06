@@ -15,6 +15,7 @@ import Link from '@mui/material/Link';
 import type { IntegrationProvider, SetupPreflightResult } from '../../../api';
 import { integrations } from '../../../api';
 import { settingsTheme, settingsMonoSx, settingsTextFieldSx } from '../../../styles/settings-theme';
+import { copyToClipboard } from '../../../utils/clipboard';
 
 const CREDENTIAL_ONLY_CHECKS = new Set(['postgres_reachable', 'redis_reachable']);
 
@@ -268,7 +269,7 @@ export function PreflightPanel({
             </Typography>
             <IconButton
               size="small"
-              onClick={() => { void navigator.clipboard.writeText(oauthCallbackUrl); }}
+              onClick={() => { void copyToClipboard(oauthCallbackUrl); }}
               sx={{ p: 0.25 }}
               aria-label="Copy redirect URI"
             >

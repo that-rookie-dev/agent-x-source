@@ -2,6 +2,7 @@ import type { ProviderId, ReasoningEffortLevel } from './provider.js';
 import type { RAGConfig } from './rag.js';
 import type { PermissionRule } from './permission.js';
 import type { NotificationChannelsConfig } from './channels.js';
+import type { VoiceConfig } from './voice.js';
 
 export type { NotificationChannelsConfig, NotificationChannelId, NotificationChannelStatus } from './channels.js';
 
@@ -59,6 +60,8 @@ export interface AgentXConfig {
   tools?: ToolsConfig;
   /** Outbound notification channels (Telegram, Slack, Email, Discord). */
   channels?: NotificationChannelsConfig;
+  /** Optional strictly-local voice subsystem. Disabled unless configured. */
+  voice?: VoiceConfig;
   localModel?: LocalModelConfig;
   featureRouting?: FeatureRoutingConfig;
   maxSubAgents?: number; // Maximum number of concurrent sub-agents (default: 5, max: 20)

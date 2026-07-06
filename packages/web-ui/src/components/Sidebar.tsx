@@ -3,6 +3,7 @@ import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Divider from '@mui/material/Divider';
 import ChatIcon from '@mui/icons-material/Chat';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 // Hidden until wired — see source/MILESTONE.md
 // import ExtensionIcon from '@mui/icons-material/Extension';
 import ExtensionIcon from '@mui/icons-material/Extension';
@@ -31,6 +32,7 @@ interface Props {
 
 const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
   { id: 'chat', icon: ChatIcon, label: 'Chat' },
+  { id: 'agent-x', icon: SmartToyIcon, label: 'Agent-X' },
   { id: 'notifications', icon: NotificationsNoneIcon, label: 'Notifications' },
   { id: 'automation', icon: ScheduleIcon, label: 'Automation' },
   { id: 'crews', icon: GroupsIcon, label: 'Crews' },

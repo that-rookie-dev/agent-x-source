@@ -47,6 +47,11 @@ export interface AuthState {
 }
 
 const AUTH_SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DEK_BYTE_LENGTH = 32;
+
+function sessionHasUnlockedDek(session: AuthSession): boolean {
+  return session.dek.length === DEK_BYTE_LENGTH;
+}
 
 function getAuthDir(): string {
   return getDataDir();
@@ -227,6 +232,9 @@ export class AuthManager {
 
   /**
    * Validate a session token and return the session (with DEK).
+   * Sessions restored from disk after a server restart carry an empty DEK until
+   * the user logs in again — those are treated as invalid so crypto never runs
+   * with a zero-length key.
    */
   validateSession(token: string): AuthSession | null {
     // Check global token blacklist first (fast reject)
@@ -242,6 +250,10 @@ export class AuthManager {
     if (now - session.lastActiveAt.getTime() > AUTH_SESSION_TTL_MS) {
       // Session expired
       this.sessions.delete(token);
+      return null;
+    }
+
+    if (!sessionHasUnlockedDek(session)) {
       return null;
     }
 

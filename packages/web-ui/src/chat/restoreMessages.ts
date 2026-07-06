@@ -6,6 +6,8 @@ import { sessionHostCrewDisplay } from '../utils/crew-display';
 
 /** Initial messages loaded per role (user + assistant) on session open. */
 export const CHAT_INITIAL_MESSAGES_PER_ROLE = 5;
+/** Super-session (Agent-X core) UI window — 25 per role ≈ 50 visible messages. */
+export const CORE_SESSION_MESSAGES_PER_ROLE = 25;
 
 export interface SessionShellPatch {
   crewPrivate: boolean;
@@ -16,8 +18,18 @@ export interface SessionShellPatch {
 }
 
 export function buildSessionShellPatch(session: SessionInfo): SessionShellPatch {
-  const crewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
+  const kind = session.contextKind ?? 'agent_x';
+  const crewPrivate = kind === 'crew_private';
   const title = session.title ?? `Session ${session.id.slice(0, 8)}`;
+  if (kind === 'agent_x_core') {
+    return {
+      crewPrivate: false,
+      privateHost: null,
+      privateHostCrewId: null,
+      agentMode: 'plan',
+      title,
+    };
+  }
   if (!crewPrivate) {
     return {
       crewPrivate: false,

@@ -11,11 +11,16 @@
       "require": "./dist/index.js"
     }
   },
+  "files": [
+    "dist/**",
+    "package.json"
+  ],
   "scripts": {
     "setup:pgvector": "node scripts/setup-pgvector.mjs",
     "setup:age": "node scripts/setup-age.mjs",
     "setup:extensions": "node scripts/setup-pgvector.mjs && node scripts/setup-age.mjs",
     "setup:python": "node scripts/setup-python.mjs",
+    "setup:voice-bundled": "pnpm --filter @agentx/voice-sidecar run setup:bundled",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"

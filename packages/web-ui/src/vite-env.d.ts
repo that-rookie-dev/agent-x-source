@@ -7,6 +7,7 @@ interface AgentXDesktopBridge {
   totalMemoryGB: number;
   localModelSupported: boolean;
   neuralBrainSupported: boolean;
+  styleTtsSupported: boolean;
   minimize: () => void;
   maximize: () => void;
   close: () => void;
@@ -19,6 +20,10 @@ interface AgentXDesktopBridge {
   showNotification: (payload: { title?: string; body: string; subtitle?: string }) => Promise<{ ok: boolean; reason?: string }>;
   onNotificationClick: (callback: () => void) => () => void;
   openExternal: (url: string) => Promise<boolean>;
+  openInternalWindow: (url: string) => Promise<boolean>;
+  checkMicrophoneAccess: () => Promise<{ granted: boolean; state: string }>;
+  requestMicrophoneAccess: () => Promise<{ granted: boolean }>;
+  openMicrophoneSettings: () => Promise<void>;
 }
 
 declare global {

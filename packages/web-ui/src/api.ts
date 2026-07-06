@@ -1,5 +1,7 @@
 // Centralized API client for all web-api endpoints
 
+import { notifyVoiceConfigUpdated } from './voice/support';
+
 const BASE = '/api';
 
 // Auth token management — avoids cookie dependency since Electron's cookie
@@ -18,6 +20,24 @@ export function setAuthToken(token: string | null): void {
 
 export function getAuthToken(): string | null {
   return authToken;
+}
+
+/** Refresh in-memory token from the active session cookie (needed for WebSocket ?token= auth). */
+export async function syncAuthTokenFromSession(): Promise<string | null> {
+  try {
+    const status = await auth.status();
+    if (status.sessionToken) {
+      setAuthToken(status.sessionToken);
+      return status.sessionToken;
+    }
+    if (!status.isAuthenticated) {
+      setAuthToken(null);
+      return null;
+    }
+  } catch {
+    /* fall through */
+  }
+  return getAuthToken();
 }
 
 export function setOnUnauthorized(cb: (() => void) | null): void {
@@ -97,7 +117,7 @@ async function request<T>(path: string, opts: RequestInit = {}, timeoutMs = 60_0
 // ─── Auth ───
 export const auth = {
   check: () => request<{ hasRootUser: boolean }>('/auth/check'),
-  status: () => request<{ isAuthenticated: boolean; username?: string | null }>('/auth/status'),
+  status: () => request<{ isAuthenticated: boolean; username?: string | null; sessionToken?: string }>('/auth/status'),
   setup: (username: string, password: string) => request<{ ok: boolean; username: string; token: string }>('/auth/setup', { method: 'POST', body: JSON.stringify({ username, password }) }),
   login: (username: string, password: string) => request<{ ok: boolean; username: string; token: string }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
@@ -106,6 +126,11 @@ export const auth = {
 // ─── Setup & Config ───
 export const config = {
   getSetupStatus: () => request<{ setupComplete: boolean; configured: boolean }>('/setup/status'),
+  completeSetup: (callsign?: string) =>
+    request<{ ok: boolean; setupComplete: boolean }>('/setup/complete', {
+      method: 'POST',
+      body: JSON.stringify({ callsign }),
+    }),
   get: () => request<AgentXConfig>('/config'),
   update: (data: Partial<AgentXConfig>) => request<{ ok: boolean }>('/config', { method: 'PUT', body: JSON.stringify(data) }),
 };
@@ -175,7 +200,7 @@ export interface CrewChatCrewInfo {
 export interface CrewChatSessionInfo {
   id: string;
   title?: string;
-  contextKind?: 'agent_x' | 'crew_private' | 'automation';
+  contextKind?: 'agent_x' | 'agent_x_core' | 'crew_private' | 'automation';
   hostCrewId?: string;
   crewId?: string;
   crewName?: string;
@@ -1063,6 +1088,129 @@ export interface AgentXConfig {
     };
     discord?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; webhookUrl?: string; botToken?: string; channelId?: string };
   };
+  voice?: VoiceConfig;
+}
+
+export type TtsEngine = 'kokoro' | 'styletts2';
+
+export interface VoiceConfig {
+  enabled?: boolean;
+  mode?: {
+    web?: 'off' | 'push-to-talk' | 'duplex';
+    channels?: 'off' | 'voice-notes';
+  };
+  stt?: {
+    engine?: 'faster-whisper';
+    modelId?: string;
+    computeType?: 'auto' | 'int8' | 'int8_float16' | 'float16' | 'float32';
+    device?: 'auto' | 'cpu' | 'cuda';
+  };
+  tts?: {
+    engine?: TtsEngine;
+    voiceId?: string;
+    style?: {
+      emotion?: string;
+      expressiveness?: number;
+    };
+    fillerEngine?: 'kokoro';
+  };
+  sidecar?: { autoStart?: boolean };
+  fillers?: { enabled?: boolean; speakToolProgress?: boolean };
+  wakeWord?: {
+    enabled?: boolean;
+    phrase?: string;
+  };
+  downloadedAssets?: VoiceDownloadedAsset[];
+}
+
+export type VoiceTtsStyleConfig = NonNullable<NonNullable<VoiceConfig['tts']>['style']>;
+
+export interface VoiceDownloadedAsset {
+  assetId: string;
+  kind: string;
+  engine?: string;
+  version?: string;
+  installedAt: string;
+  sizeBytes?: number;
+  sha256?: string;
+}
+
+export interface VoiceAssetCatalogEntry {
+  id: string;
+  kind: string;
+  engine?: string;
+  displayName: string;
+  description: string;
+  sizeMB: number;
+  platform?: string;
+  architecture?: string;
+  downloadUrl?: string;
+  sha256?: string;
+  license?: string;
+  recommended?: boolean;
+}
+
+export interface VoiceCapabilityStatus {
+  os: string;
+  arch: string;
+  pythonAvailable: boolean;
+  ffmpegAvailable: boolean;
+  sidecar: { state: string; version?: string; error?: string };
+  stt: { engine: 'faster-whisper'; selectedModelId?: string; selectedModelInstalled: boolean };
+  tts: {
+    selectedEngine: TtsEngine;
+    selectedVoiceId?: string;
+    selectedVoiceInstalled: boolean;
+    kokoroInstalled: boolean;
+    styleTts2Installed: boolean;
+  };
+  vadInstalled: boolean;
+  gpuAvailable?: boolean;
+  canRunWeb: boolean;
+  canRunChannels: boolean;
+}
+
+export interface VoiceSetupStatus {
+  phase: 'idle' | 'runtime' | 'download' | 'complete' | 'error';
+  message: string;
+  progress: number;
+  step?: string;
+  stepIndex?: number;
+  totalSteps?: number;
+  detail?: string;
+  currentAsset?: string;
+  currentAssetName?: string;
+  assetIndex?: number;
+  totalAssets?: number;
+  assetProgress?: number;
+  error?: string;
+}
+
+export interface VoiceSidecarHealth {
+  ok: boolean;
+  state: 'starting' | 'ready' | 'error';
+  version?: string;
+  models?: {
+    sttLoaded?: boolean;
+    ttsEngine?: TtsEngine;
+    ttsLoaded?: boolean;
+    vadLoaded?: boolean;
+  };
+  device?: string;
+  error?: string;
+}
+
+export interface VoiceSidecarStatusResponse {
+  ok?: boolean;
+  error?: string;
+  sidecar: {
+    state: string;
+    baseUrl?: string;
+    pid?: number;
+    version?: string;
+    error?: string;
+    health?: VoiceSidecarHealth;
+  };
 }
 
 export interface ProviderSettings {
@@ -1256,7 +1404,7 @@ export interface SessionInfo {
   provider: string;
   model: string;
   crewId?: string;
-  contextKind?: 'agent_x' | 'crew_private' | 'automation';
+  contextKind?: 'agent_x' | 'agent_x_core' | 'crew_private' | 'automation';
   hostCrewId?: string;
   hostCrewName?: string;
   hostCrewCallsign?: string;
@@ -1523,6 +1671,60 @@ export const localModel = {
     ),
 };
 
+export const voice = {
+  getConfig: () =>
+    request<{ voice?: VoiceConfig }>('/config').then((cfg) => cfg.voice ?? {}),
+  capabilities: () =>
+    request<{ capabilities: VoiceCapabilityStatus }>('/voice/capabilities'),
+  catalog: () =>
+    request<{ catalog: VoiceAssetCatalogEntry[]; installed: VoiceDownloadedAsset[]; recommended: Record<string, string> }>('/voice/assets'),
+  installedAssets: () =>
+    request<{ assets: VoiceDownloadedAsset[] }>('/voice/assets/installed'),
+  downloadAsset: (assetId: string) =>
+    request<{ ok: boolean; assetId: string }>('/voice/assets/download', {
+      method: 'POST',
+      body: JSON.stringify({ assetId }),
+    }),
+  downloadStatus: (assetId: string) =>
+    request<{ status: string; progress?: number; error?: string }>(`/voice/assets/download-status/${assetId}`),
+  cancelDownload: (assetId: string) =>
+    request<{ ok: boolean }>(`/voice/assets/download/${assetId}/cancel`, { method: 'POST' }),
+  deleteAsset: (assetId: string) =>
+    request<{ ok: boolean }>(`/voice/assets/${assetId}`, { method: 'DELETE' }),
+  installSidecar: () =>
+    request<{ ok: boolean }>('/voice/install-sidecar', { method: 'POST' }),
+  installStyleTts: () =>
+    request<{ ok: boolean }>('/voice/install-styletts', { method: 'POST' }, 35 * 60_000),
+  setup: () =>
+    request<{ ok: boolean; status: VoiceSetupStatus }>('/voice/setup', { method: 'POST' }),
+  setupStatus: () =>
+    request<{ status: VoiceSetupStatus }>('/voice/setup/status'),
+  sidecarStatus: () =>
+    request<{ sidecar: VoiceSidecarStatusResponse['sidecar'] }>('/voice/sidecar/status'),
+  ensureSidecar: () =>
+    request<VoiceSidecarStatusResponse>('/voice/sidecar/ensure', { method: 'POST' }, 5 * 60_000),
+  preview: (text: string, engine: TtsEngine, voiceId?: string, style?: VoiceTtsStyleConfig) =>
+    request<{ audioBase64: string; mimeType: string; durationMs?: number }>(
+      '/voice/preview',
+      {
+        method: 'POST',
+        body: JSON.stringify({ text, engine, voiceId, style }),
+      },
+      engine === 'styletts2' ? 10 * 60_000 : 60_000,
+    ),
+  updateConfig: async (patch: VoiceConfig) => {
+    // downloadedAssets is server-managed; sending a stale copy would wipe
+    // assets registered during deployment.
+    const { downloadedAssets: _ignored, ...safePatch } = patch;
+    const result = await request<{ ok: boolean }>('/config', {
+      method: 'PUT',
+      body: JSON.stringify({ voice: safePatch }),
+    });
+    notifyVoiceConfigUpdated(patch);
+    return result;
+  },
+};
+
 export interface EmbeddingModelStatus {
   id: string;
   displayName: string;
@@ -1715,10 +1917,10 @@ export const settings = {
         tools: { deep_web_search: boolean; web_search: boolean };
         forcedTool: 'deep_web_search' | 'web_search' | null;
       }>('/settings/web-search/status'),
-    test: (provider: 'brave' | 'exa' | 'tavily', apiKey: string) =>
+    test: (provider: 'brave' | 'exa' | 'tavily', apiKey?: string) =>
       request<{ ok: boolean; provider: string; latencyMs?: number; error?: string }>(
         '/settings/web-search/test',
-        { method: 'POST', body: JSON.stringify({ provider, apiKey }) },
+        { method: 'POST', body: JSON.stringify({ provider, apiKey: apiKey ?? '' }) },
       ),
   },
 };

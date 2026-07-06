@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && node -e \"require('fs').mkdirSync('dist/data',{recursive:true});require('fs').copyFileSync('data/crew-catalog.manifest.json','dist/data/crew-catalog.manifest.json')\"",
+    "build": "tsup && node -e \"const fs=require('fs');const path=require('path');fs.mkdirSync('dist/data',{recursive:true});fs.copyFileSync('data/crew-catalog.manifest.json','dist/data/crew-catalog.manifest.json');fs.mkdirSync('dist/voice',{recursive:true});fs.copyFileSync(path.join('..','voice-sidecar','voice-models.manifest.json'),'dist/voice/voice-models.manifest.json')\"",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

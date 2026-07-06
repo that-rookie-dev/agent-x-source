@@ -36,6 +36,9 @@ export interface AgentRuntimePaths {
   webNeuronDir: string;
   pythonPath: string;
   pythonDir: string;
+  voiceSidecarDir: string;
+  voiceBundleDir: string;
+  voiceManifestPath: string;
 }
 
 export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimePaths {
@@ -48,6 +51,9 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
       webNeuronDir: join(root, 'packages', 'web-neuron', 'dist'),
       pythonPath: process.env['AGENTX_PYTHON_PATH'] || 'python3',
       pythonDir: '',
+      voiceSidecarDir: join(root, 'packages', 'voice-sidecar'),
+      voiceBundleDir: join(root, 'packages', 'voice-sidecar', 'bundled'),
+      voiceManifestPath: join(root, 'packages', 'voice-sidecar', 'voice-models.manifest.json'),
     };
   }
 
@@ -64,6 +70,9 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
     webNeuronDir: join(resourcesPath, 'web-neuron'),
     pythonPath,
     pythonDir,
+    voiceSidecarDir: join(resourcesPath, 'voice-sidecar'),
+    voiceBundleDir: join(resourcesPath, 'voice-sidecar', 'bundled'),
+    voiceManifestPath: join(resourcesPath, 'voice-sidecar', 'voice-models.manifest.json'),
   };
 }
 
@@ -223,6 +232,15 @@ export class AgentRuntime {
 
     process.env['AGENTX_UI_DIR'] = paths.webUiDir;
     process.env['AGENTX_NEURON_DIR'] = paths.webNeuronDir;
+    if (existsSync(paths.voiceSidecarDir)) {
+      process.env['AGENTX_VOICE_SIDECAR_DIR'] = paths.voiceSidecarDir;
+    }
+    if (existsSync(paths.voiceManifestPath)) {
+      process.env['AGENTX_VOICE_MANIFEST_PATH'] = paths.voiceManifestPath;
+    }
+    if (existsSync(paths.voiceBundleDir)) {
+      process.env['AGENTX_VOICE_BUNDLE_DIR'] = paths.voiceBundleDir;
+    }
     process.env['PORT'] = String(this.port);
     process.env['AGENTX_PORT'] = String(this.port);
     process.env['AGENTX_HOST'] = listenHost;

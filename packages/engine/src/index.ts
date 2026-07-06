@@ -130,6 +130,8 @@ export { CommunitySummarizer } from './neural/CommunitySummarizer.js';
 export type { CommunitySummarizerOptions, SummarizationResult } from './neural/CommunitySummarizer.js';
 export { GraphRagRetriever } from './neural/GraphRagRetriever.js';
 export type { GraphRagRetrievalOptions, GraphRagResult } from './neural/GraphRagRetriever.js';
+export { UserChatMemoryIngester, USER_PROFILE_TAG, shouldExtractUserChatMemory } from './neural/UserChatMemoryIngester.js';
+export type { UserChatMemoryFact } from './neural/UserChatMemoryIngester.js';
 export { setLocalModelConfig } from './neural/LocalModelConfig.js';
 export { LocalLLMJudge } from './neural/LocalLLMJudge.js';
 export type { NodeCreatedEvent, SynapseConnectedEvent, NeuronActivatedEvent, BrainEvent, BrainEventListener } from './neural/BrainEventStreamer.js';
@@ -383,3 +385,4 @@ export { configureBackgroundTaskPool, getBackgroundTaskPool } from './runtime/Ba
 export { setOnnxThreadConfig, getOnnxThreadConfig } from './runtime/onnx-thread-config.js';
 export { assertSafeFetchUrl, isUrlSafeForFetch } from './search/url-utils.js';
 export { TtlCache } from './storage/cache/TtlCache.js';
+export * from './voice/index.js';

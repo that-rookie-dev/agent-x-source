@@ -36,6 +36,8 @@ import HistoryIcon from '@mui/icons-material/History';
 import ForumIcon from '@mui/icons-material/Forum';
 import DownloadIcon from '@mui/icons-material/Download';
 import GroupsIcon from '@mui/icons-material/Groups';
+import MicIcon from '@mui/icons-material/Mic';
+import KeyboardIcon from '@mui/icons-material/Keyboard';
 
 import {
   ConnectionHealthDot,
@@ -56,6 +58,8 @@ import CrewSuggestionModal from './crew/CrewSuggestionModal';
 import { CrewProfileDialog } from './crew/CrewProfileDialog';
 import type { PrebuiltCrew } from './crew/CrewHubDialog';
 import { ChatInputBar, type ChatInputBarHandle } from './ChatInputBar';
+import { ChatVoicePanel } from './voice/ChatVoicePanel';
+import { useVoiceOptional } from './voice/VoiceProvider';
 import { WebSearchGlobeToggle, readWebSearchForcePreference, writeWebSearchForcePreference } from './WebSearchGlobeToggle';
 import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
@@ -64,7 +68,7 @@ import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildS
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
 import { crewTheme } from '../styles/crew-theme';
 import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard, mergeIncomingMessageParts, applyToolCompleteMetadata, reconcileStreamingMessageParts } from '../chat/utils';
-import { CHAT_INITIAL_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
+import { CHAT_INITIAL_MESSAGES_PER_ROLE, CORE_SESSION_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
 import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
 import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer, explicitCrewRequest } from '@agentx/shared/browser';
@@ -83,6 +87,7 @@ import type { CrewWorkerState } from './CrewWorkerPanel';
 import { SessionGridCard } from './SessionGridCard';
 import { FolderPickerModal } from './FolderPickerModal';
 import { resolveDefaultWorkspace } from '../utils/default-workspace';
+import { copyToClipboard } from '../utils/clipboard';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -153,6 +158,8 @@ interface UIMessage extends ChatMessage {
   attachments?: { name: string }[];
   turnTokens?: number;
   turnCostUsd?: number;
+  voiceInput?: boolean;
+  voiceTextOnly?: boolean;
 
   crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
   parts?: PartEntry[];
@@ -209,11 +216,15 @@ type SessionListTab = 'agent_x' | 'crew_private';
 
 interface ChatPanelProps {
   sessionId?: string;
+  coreSession?: boolean;
 }
 
-export function ChatPanel({ sessionId }: ChatPanelProps) {
+export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const voiceCtx = useVoiceOptional();
+  const [composerMode, setComposerMode] = useState<'text' | 'voice'>('text');
+  const [voiceAutoStart, setVoiceAutoStart] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionListTab: SessionListTab = searchParams.get('tab') === 'crew' ? 'crew_private' : 'agent_x';
   const setSessionListTab = useCallback((tab: SessionListTab) => {
@@ -399,7 +410,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }
       }).catch(() => { /* full restore follows */ });
 
-      sessions.restore(sessionId, { perRole: CHAT_INITIAL_MESSAGES_PER_ROLE }).then(async ({ messages: historyMsgs, session, scopePath, turnFeedback, messagesMeta }) => {
+      sessions.restore(sessionId, {
+        perRole: coreSession ? CORE_SESSION_MESSAGES_PER_ROLE : CHAT_INITIAL_MESSAGES_PER_ROLE,
+      }).then(async ({ messages: historyMsgs, session, scopePath, turnFeedback, messagesMeta }) => {
         if (currentSessionIdRef.current !== sessionId) return;
         if (session.parentId) {
           setSessionRestoring(false);
@@ -459,7 +472,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           generateTitle(sessionId, visible);
         }
 
-        if (!shell.crewPrivate) {
+        if (!shell.crewPrivate && !coreSession) {
           void (async () => {
             try {
               let roster = crewList;
@@ -566,15 +579,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [crewList, setCrewList] = useState<Crew[]>([]);
 
 
-  // Agent mode
-  const [agentMode, setAgentMode] = useState<AgentMode>('agent');
+  // Agent mode — plan is default (especially for Agent-X super-session)
+  const [agentMode, setAgentMode] = useState<AgentMode>('plan');
 
   // Hyperdrive — full autonomous mode
   const [hyperdriveMode, setHyperdriveMode] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   const hyperdrivePromptShownRef = useRef(false);   // show disclaimer once per session
   const lastShiftRef = useRef(0);                    // double-Shift detection
-  const prevModeBeforeHyperdrive = useRef<AgentMode>('agent'); // restore on exit
+  const prevModeBeforeHyperdrive = useRef<AgentMode>('plan'); // restore on exit
 
   // Hyperdrive shimmer — random interval flash sweep across the chip
   const [hyperdriveShimmer, setHyperdriveShimmer] = useState(false);
@@ -641,9 +654,24 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const beginTurnUi = useCallback(() => {
     turnActiveRef.current = true;
+    isInitialLoadRef.current = false;
     setStreaming(true);
     setPendingFeedbackMessageId(null);
   }, []);
+
+  useEffect(() => {
+    voiceCtx?.registerChatSession(currentSessionId);
+    return () => voiceCtx?.registerChatSession(null);
+  }, [currentSessionId, voiceCtx]);
+
+  useEffect(() => {
+    if (!voiceCtx) return;
+    voiceCtx.registerInlineVoiceHandler((autoStart) => {
+      setComposerMode('voice');
+      if (autoStart) setVoiceAutoStart(true);
+    });
+    return () => voiceCtx.registerInlineVoiceHandler(null);
+  }, [voiceCtx]);
   const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
   const [crewSuggestOpen, setCrewSuggestOpen] = useState(false);
   const [crewEvaluation, setCrewEvaluation] = useState<CrewSuggestionEvaluation | null>(null);
@@ -2307,7 +2335,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         streaming: false,
         attachments: attachments.map((a) => ({ name: a.name })),
       };
-      setMessages((prev) => [...prev, userMsg]);
+      setMessages((prev) => [
+        ...prev,
+        userMsg,
+        { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true },
+      ]);
       inputBarRef.current?.clear();
     }
 
@@ -2393,7 +2425,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       return;
     }
 
-    if (!isCrewPrivateSession && !/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) {
+    if (!isCrewPrivateSession && !coreSession && !/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) {
       try {
         const evaluation = await evaluateCrewForMessage(trimmed);
         if (evaluation) {
@@ -3647,6 +3679,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </Box>
             )}
             <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
+            {composerMode === 'text' ? (
             <ChatInputBar
               ref={inputBarRef}
               streaming={streaming}
@@ -3655,11 +3688,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               sendBlockedReason={sendBlockedReason}
               hasAttachments={attachments.length > 0}
               crewList={crewList}
-              disableMentions={isCrewPrivateSession}
+              disableMentions={isCrewPrivateSession || coreSession}
               placeholder={
-                isCrewPrivateSession && crewPrivateHost
-                  ? `Message ${crewPrivateHost.name}...`
-                  : undefined
+                coreSession
+                  ? 'Talk to Agent-X — your lifelong wingman…'
+                  : isCrewPrivateSession && crewPrivateHost
+                    ? `Message ${crewPrivateHost.name}...`
+                    : undefined
               }
               onSend={handleSend}
               onCancel={handleCancel}
@@ -3668,12 +3703,41 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               onSteer={handleSteer}
               clearSignal={inputClearSignal}
             />
+            ) : (
+              <ChatVoicePanel
+                chatSessionId={currentSessionId}
+                onAgentRunning={beginTurnUi}
+                autoStart={voiceAutoStart}
+                onAutoStartConsumed={() => setVoiceAutoStart(false)}
+              />
+            )}
 
             {/* Toolbar row */}
             <Box sx={{
               display: 'flex', alignItems: 'center', gap: 0.5, px: 1.25, py: 0.5,
               borderTop: `1px solid ${colors.border.default}20`,
             }}>
+            {/* Text / Voice composer toggle */}
+            {voiceCtx?.voiceReady && (
+              <Tooltip title={composerMode === 'text' ? 'Switch to voice' : 'Switch to text'} arrow>
+                <Chip
+                  size="small"
+                  icon={composerMode === 'text' ? <MicIcon sx={{ fontSize: '14px !important' }} /> : <KeyboardIcon sx={{ fontSize: '14px !important' }} />}
+                  label={composerMode === 'text' ? 'Voice' : 'Text'}
+                  onClick={() => setComposerMode((m) => (m === 'text' ? 'voice' : 'text'))}
+                  sx={{
+                    fontSize: '0.55rem', height: 20, cursor: 'pointer',
+                    bgcolor: composerMode === 'voice' ? colors.accent.green + '18' : colors.bg.tertiary,
+                    border: `1px solid ${composerMode === 'voice' ? colors.accent.green + '40' : colors.border.default}`,
+                    borderRadius: '10px',
+                    color: composerMode === 'voice' ? colors.accent.green : colors.text.secondary,
+                    '& .MuiChip-icon': { color: 'inherit' },
+                    '&:hover': { bgcolor: composerMode === 'voice' ? colors.accent.green + '28' : colors.bg.primary },
+                  }}
+                />
+              </Tooltip>
+              )}
+
               {/* Plus button for file attach */}
               <Tooltip title="Attach files" arrow>
                 <IconButton size="small" onClick={() => fileInputRef.current?.click()} sx={{ color: colors.text.dim, p: 0.25, '&:hover': { color: colors.text.secondary } }}>
@@ -3862,7 +3926,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               {cwd && (
                 <Tooltip title={cwd} arrow>
                   <Typography
-                    onClick={() => { navigator.clipboard.writeText(cwd).catch(() => {}); }}
+                    onClick={() => { void copyToClipboard(cwd); }}
                     sx={{
                       fontSize: '0.45rem', color: colors.text.dim,
                       fontFamily: "'JetBrains Mono', monospace",
@@ -4023,7 +4087,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 </Typography>
                 <Tooltip title="Copy session ID">
                   <Box onClick={() => {
-                    navigator.clipboard.writeText(currentSessionId).catch(() => {});
+                    void copyToClipboard(currentSessionId);
                     setCopiedSessionId(true);
                     setTimeout(() => setCopiedSessionId(false), 2000);
                   }} sx={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: copiedSessionId ? colors.accent.green : colors.text.dim, '&:hover': { color: copiedSessionId ? colors.accent.green : colors.text.primary } }}>
@@ -4041,8 +4105,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           )}
         </Box>
 
-        {/* ─── Crew Mission ─── */}
-        {!isCrewPrivateSession && currentSessionId && (
+        {/* ─── Crew Mission (not shown for Agent-X super-session) ─── */}
+        {!isCrewPrivateSession && !coreSession && currentSessionId && (
         <Box>
           <Box
             onClick={() => setMissionExpanded(!missionExpanded)}

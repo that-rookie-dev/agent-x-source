@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "silero-vad",
+      "tier": "bundled",
+      "kind": "vad-model",
+      "target": "models/vad/silero-vad",
+      "displayName": "Silero VAD",
+      "sizeMB": 3,
+      "license": "MIT",
+      "sha256": null,
+      "sources": [
+        { "type": "github", "repo": "snakers4/silero-vad", "ref": "master" }
+      ]
+    },
+    {
+      "id": "faster-whisper-base.en",
+      "tier": "download",
+      "kind": "stt-model",
+      "target": "models/stt/faster-whisper-base.en",
+      "displayName": "faster-whisper base.en",
+      "sizeMB": 145,
+      "license": "MIT",
+      "sha256": null,
+      "sources": [
+        { "type": "hf", "repo": "Systran/faster-whisper-base.en", "revision": "main" }
+      ]
+    },
+    {
+      "id": "kokoro-82m",
+      "tier": "download",
+      "kind": "tts-model",
+      "target": "models/tts/kokoro/kokoro-82m",
+      "displayName": "Kokoro 82M",
+      "sizeMB": 330,
+      "license": "Apache-2.0",
+      "sha256": null,
+      "alsoInstalls": ["kokoro-af"],
+      "sources": [
+        { "type": "hf", "repo": "hexgrad/Kokoro-82M", "revision": "main" }
+      ]
+    },
+    {
+      "id": "kokoro-af",
+      "tier": "download",
+      "kind": "tts-voice",
+      "target": "models/tts/kokoro/kokoro-82m",
+      "displayName": "Kokoro AF Voice",
+      "sizeMB": 1,
+      "license": "Apache-2.0",
+      "sha256": null,
+      "aliasOf": "kokoro-82m",
+      "sources": [
+        { "type": "hf", "repo": "hexgrad/Kokoro-82M", "revision": "main" }
+      ]
+    },
+    {
+      "id": "faster-whisper-tiny.en",
+      "tier": "optional",
+      "kind": "stt-model",
+      "target": "models/stt/faster-whisper-tiny.en",
+      "displayName": "faster-whisper tiny.en",
+      "sizeMB": 75,
+      "license": "MIT",
+      "sha256": null,
+      "sources": [
+        { "type": "hf", "repo": "Systran/faster-whisper-tiny.en", "revision": "main" }
+      ]
+    },
+    {
+      "id": "faster-whisper-small.en",
+      "tier": "optional",
+      "kind": "stt-model",
+      "target": "models/stt/faster-whisper-small.en",
+      "displayName": "faster-whisper small.en",
+      "sizeMB": 465,
+      "license": "MIT",
+      "sha256": null,
+      "sources": [
+        { "type": "hf", "repo": "Systran/faster-whisper-small.en", "revision": "main" }
+      ]
+    },
+    {
+      "id": "styletts2",
+      "tier": "optional",
+      "kind": "tts-model",
+      "target": "models/tts/styletts2/styletts2",
+      "displayName": "StyleTTS 2",
+      "sizeMB": 900,
+      "license": "Check model license before distribution",
+      "sha256": null,
+      "alsoInstalls": ["styletts2-default"],
+      "sources": [
+        { "type": "hf", "repo": "yl4579/StyleTTS2-LibriTTS", "revision": "main" }
+      ]
+    },
+    {
+      "id": "styletts2-default",
+      "tier": "optional",
+      "kind": "tts-voice",
+      "target": "models/tts/styletts2/styletts2",
+      "displayName": "StyleTTS 2 Default Reference",
+      "sizeMB": 1,
+      "license": "Check model license before distribution",
+      "sha256": null,
+      "aliasOf": "styletts2",
+      "sources": [
+        { "type": "hf", "repo": "yl4579/StyleTTS2-LibriTTS", "revision": "main" }
+      ]
+    }
+  ]
+}

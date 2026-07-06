@@ -8,8 +8,9 @@ import type { TelegramConfig } from '../../telegram/TelegramBridge.js';
 import type { Agent } from '../../agent/Agent.js';
 import { syncChannelSuperSessionContext } from '../../channels/channel-super-session-sync.js';
 import { ProviderFactory } from '../../providers/index.js';
+import { VoiceService, convertWavToOggOpus, mergeVoiceConfig } from '../../voice/index.js';
 import { mkdirSync, existsSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export class TelegramChannelPlugin implements ChannelPlugin {
@@ -45,7 +46,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   private pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
   private permRequesters = new Map<string, number>();
   private pendingResponses = new Map<string, (text: string) => void>();
-  private messageQueue: Array<{ text: string; chatId: number }> = [];
+  private messageQueue: Array<{ text: string; chatId: number; voiceReply?: boolean }> = [];
   private static readonly MAX_QUEUE_DEPTH = 25;
   private processingQueue = false;
   private filesDir: string;
@@ -237,13 +238,19 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
       void (async () => {
         try {
-          await this.bridge.sendToChat(chatId, `📥 Receiving file: ${fileName}...`);
+          const isVoiceNote = fileName === 'voice.ogg' || mimeType.startsWith('audio/ogg');
+          await this.bridge.sendToChat(chatId, isVoiceNote ? '🎙️ Transcribing voice note…' : `📥 Receiving file: ${fileName}...`);
           const fileBuffer = await this.bridge.downloadFile(fileId);
 
           const timestamp = Date.now();
           const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
           const savedPath = join(this.filesDir, `${timestamp}_${safeName}`);
           await writeFile(savedPath, fileBuffer);
+
+          if (isVoiceNote) {
+            await this.handleVoiceNote(savedPath, caption, chatId);
+            return;
+          }
 
           const fileMsg = caption
             ? `[FILE_RECEIVED] The user sent a file: "${fileName}" (${mimeType}). Saved at: ${savedPath}. Caption: "${caption}". You can read and analyze this file.`
@@ -258,6 +265,66 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         }
       })();
     });
+  }
+
+  private async handleVoiceNote(savedPath: string, caption: string | undefined, chatId: number): Promise<void> {
+    if (!this.agent) {
+      await this.bridge.sendToChat(chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+      return;
+    }
+
+    const cfg = (this.agent as unknown as { config?: AgentXConfig }).config;
+    const voiceConfig = mergeVoiceConfig(cfg?.voice);
+    if (!voiceConfig.enabled || voiceConfig.mode?.channels !== 'voice-notes') {
+      await this.bridge.sendToChat(chatId, '⚠️ Voice notes are disabled. Enable Voice → Channels → Voice notes in Settings.');
+      return;
+    }
+
+    try {
+      const service = new VoiceService({ dataDir: getDataDir(), config: voiceConfig });
+      const transcript = await service.transcribeAudioFile(savedPath);
+      const text = transcript.text?.trim();
+      if (!text) {
+        await this.bridge.sendToChat(chatId, '⚠️ I could not clearly transcribe that voice note. Please try again.');
+        return;
+      }
+      const prompt = caption?.trim()
+        ? `${caption.trim()}\n\n[VOICE_TRANSCRIPT]\n${text}`
+        : text;
+      await this.bridge.sendToChat(chatId, `📝 ${text}`);
+      this.enqueueMessage(prompt, chatId, true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.bridge.sendToChat(chatId, `⚠️ Voice transcription failed: ${msg}`);
+    }
+  }
+
+  private async sendVoiceReply(chatId: number, text: string): Promise<void> {
+    if (!this.agent) {
+      await this.bridge.sendToChat(chatId, text);
+      return;
+    }
+
+    const cfg = (this.agent as unknown as { config?: AgentXConfig }).config;
+    const voiceConfig = mergeVoiceConfig(cfg?.voice);
+    const outDir = join(getDataDir(), 'voice', 'tmp');
+    await mkdir(outDir, { recursive: true });
+    const wavPath = join(outDir, `telegram-reply-${Date.now()}.wav`);
+    const oggPath = join(outDir, `telegram-reply-${Date.now()}.ogg`);
+
+    try {
+      const service = new VoiceService({ dataDir: getDataDir(), config: voiceConfig });
+      await service.synthesizeText(text, wavPath);
+      await convertWavToOggOpus(wavPath, oggPath, { voiceTempDir: outDir, timeoutMs: 120_000 });
+      const result = await this.bridge.sendVoice(chatId, oggPath);
+      if (!result.ok) {
+        throw new Error(result.description ?? 'Telegram sendVoice failed');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      getLogger().warn('TELEGRAM', `Voice reply failed, falling back to text: ${msg}`);
+      await this.bridge.sendToChat(chatId, text);
+    }
   }
 
   private setupCommandHandling(): void {
@@ -281,18 +348,18 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     });
   }
 
-  private enqueueMessage(text: string, chatId: number): void {
+  private enqueueMessage(text: string, chatId: number, voiceReply = false): void {
     if (this.messageQueue.length >= TelegramChannelPlugin.MAX_QUEUE_DEPTH) {
       void this.bridge.sendToChat(chatId, '⚠️ Too many pending messages. Please wait for the current request to finish.');
       return;
     }
-    this.messageQueue.push({ text, chatId });
+    this.messageQueue.push({ text, chatId, voiceReply });
     void this.processQueue().catch((e) => {
       getLogger().error('TELEGRAM', `Inbound queue failed: ${e instanceof Error ? e.message : String(e)}`);
     });
   }
 
-  private async dispatchInbound(item: { text: string; chatId: number }, attempt = 0): Promise<Message> {
+  private async dispatchInbound(item: { text: string; chatId: number; voiceReply?: boolean }, attempt = 0): Promise<Message> {
     if (!this.agent) throw new Error('Channel agent not attached');
     try {
       return await Promise.race([
@@ -351,7 +418,11 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           const text = typeof response.content === 'string' ? response.content.trim() : '';
           getLogger().info('TELEGRAM', `Reply ready chat=${item.chatId} len=${text.length}`);
           if (text) {
-            await this.bridge.sendToChat(item.chatId, text);
+            if (item.voiceReply) {
+              await this.sendVoiceReply(item.chatId, text);
+            } else {
+              await this.bridge.sendToChat(item.chatId, text);
+            }
           } else {
             await this.bridge.sendToChat(item.chatId, '_(No response generated)_');
           }

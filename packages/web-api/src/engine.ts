@@ -257,22 +257,25 @@ export async function awaitEngineStorageReady(): Promise<void> {
 }
 
 export function setEngineDEK(dek: Buffer | null): void {
+  const normalized = dek && dek.length === 32 ? dek : null;
   if (state) {
-    state.dek = dek;
-    state.configManager.setDEK(dek);
-    state.integrationHub.setDek(dek);
-    if (!dek) {
+    state.dek = normalized;
+    state.configManager.setDEK(normalized);
+    state.integrationHub.setDek(normalized);
+    if (!normalized) {
       channelsBootstrappedAfterAuth = false;
     }
     // Update the configured flag now that the DEK is available —
     // encrypted configs become readable after auth.
     state.configured = state.configManager.isConfigured();
     try {
-      applyWebSearchConfigFromAgentConfig(state.configManager.load());
-      applyRuntimeSettings(state.configManager.load());
+      if (normalized) {
+        applyWebSearchConfigFromAgentConfig(state.configManager.load());
+        applyRuntimeSettings(state.configManager.load());
+      }
     } catch { /* not configured yet */ }
 
-    if (dek && !channelsBootstrappedAfterAuth) {
+    if (normalized && !channelsBootstrappedAfterAuth) {
       void state.storageReady
         .then(async () => {
           if (!state?.dek) return;
@@ -359,6 +362,7 @@ export function createAgent(
 
   const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
   const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
+  const isAgentXCore = (session.contextKind ?? 'agent_x') === 'agent_x_core';
   const isAutomationRun = (session.contextKind ?? 'agent_x') === 'automation'
     || session.id.startsWith('automation:');
   const hostCrewId = session.hostCrewId;
@@ -393,6 +397,7 @@ export function createAgent(
     channelSession: isChannelSessionId(session.id),
     automationRun: isAutomationRun,
     delegatedWorker: isAutomationRun,
+    contextKind: session.contextKind ?? 'agent_x',
   });
 
   // Apply session mode immediately so the agent starts in the correct mode
@@ -403,8 +408,13 @@ export function createAgent(
         eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false } as never);
       } catch { /* best-effort */ }
     }
-  } else if (session.mode === 'plan') {
+  } else if (isAgentXCore || session.mode === 'plan') {
     agent.setPlanMode(true);
+    if (isAgentXCore && session.mode !== 'plan') {
+      try {
+        eng.sessionManager.updateSession({ mode: 'plan', hyperdrive: false } as never);
+      } catch { /* best-effort */ }
+    }
   } else {
     agent.setPlanMode(false);
   }

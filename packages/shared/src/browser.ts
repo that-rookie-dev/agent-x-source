@@ -103,9 +103,11 @@ export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNee
 
 export {
   NEURAL_BRAIN_MIN_RAM_GB,
+  STYLETTS2_MIN_RAM_GB,
   LOCAL_MODEL_MIN_RAM_GB,
   getSystemMemoryGB,
   isNeuralBrainSupported,
+  isStyleTtsSupported,
   isLocalModelSupported,
   buildPublicSystemCapabilities,
 } from './utils/system-capabilities.js';

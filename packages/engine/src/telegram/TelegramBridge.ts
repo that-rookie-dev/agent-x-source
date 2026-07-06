@@ -622,6 +622,33 @@ export class TelegramBridge {
     return response.json() as Promise<{ ok: boolean; description?: string }>;
   }
 
+  async sendVoice(chatId: number, filePath: string, caption?: string): Promise<{ ok: boolean; description?: string }> {
+    const { statSync, readFileSync } = await import('node:fs');
+    const { basename } = await import('node:path');
+
+    const stat = statSync(filePath);
+    if (stat.size > 50 * 1024 * 1024) {
+      return { ok: false, description: 'Voice reply exceeds Telegram 50MB limit' };
+    }
+
+    const url = `https://api.telegram.org/bot${this.config.botToken}/sendVoice`;
+    const fileBuffer = readFileSync(filePath);
+    const blob = new Blob([fileBuffer], { type: 'audio/ogg' });
+    const formData = new FormData();
+    formData.append('chat_id', String(chatId));
+    formData.append('voice', blob, basename(filePath));
+    if (caption) {
+      formData.append('caption', caption.slice(0, 1024));
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+      signal: AbortSignal.timeout(60_000),
+    });
+    return response.json() as Promise<{ ok: boolean; description?: string }>;
+  }
+
   private async apiCall(method: string, params?: Record<string, unknown>): Promise<any> {
     const url = `https://api.telegram.org/bot${this.config.botToken}/${method}`;
     const response = await fetch(url, {

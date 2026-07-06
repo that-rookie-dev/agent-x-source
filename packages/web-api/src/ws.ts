@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from 'http';
 import { getEngine } from './engine.js';
 import { validateWebSocketConnection } from './auth.js';
+import { registerWebSocketRoute } from './ws-upgrade-router.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
 import type { DeepSearchProgress } from '@agentx/shared';
 import { MemoryFabric, MemoryService } from '@agentx/engine';
@@ -428,8 +429,7 @@ async function ingestConversationMemory(sessionId: string, role: 'user' | 'assis
 
 export function setupWebSocket(server: Server): void {
   wss = new WebSocketServer({
-    server,
-    path: '/ws',
+    noServer: true,
     verifyClient: (info, cb) => {
       if (validateWebSocketConnection(info.req)) {
         cb(true);
@@ -438,6 +438,7 @@ export function setupWebSocket(server: Server): void {
       }
     },
   });
+  registerWebSocketRoute('/ws', wss);
 
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') return;

@@ -10,6 +10,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import { Footer } from '../components/Footer';
+import { useVoiceOptional } from '../components/voice/VoiceProvider';
 import { webuiActive, agent, crewCatalog, crews, type AgentVitals, type CatalogSeedStatusResponse, type Crew } from '../api';
 import type { HealthStatus } from '../api';
 
@@ -70,6 +71,7 @@ function buildTerminalLines(
 
 export function DockingStation() {
   const { serverOnline, refreshHealth, healthData } = useApp();
+  const voice = useVoiceOptional();
   const navigate = useNavigate();
   const [checking, setChecking] = useState(true);
   const [visibleLines, setVisibleLines] = useState(0);
@@ -271,6 +273,19 @@ export function DockingStation() {
               <StatusRow label="Sessions" value={String(healthData.sessionCount ?? 0)} color={colors.text.primary} />
               <StatusRow label="Memory" value={`${Math.round((healthData.memory?.heapUsed ?? 0) / 1024 / 1024)} MB`} color={colors.text.primary} />
               <StatusRow label="Uptime" value={formatUptime(healthData.uptime)} color={colors.text.primary} />
+              {voice && voice.voiceReady && voice.warmupPhase !== 'disabled' && (
+                <StatusRow
+                  label="Voice engine"
+                  value={voice.warmupLabel}
+                  color={
+                    voice.warmupPhase === 'ready' ? colors.accent.green
+                      : voice.warmupPhase === 'booting' ? colors.accent.orange
+                        : voice.warmupPhase === 'failed' ? colors.accent.red
+                          : colors.text.dim
+                  }
+                  checking={voice.warmupPhase === 'booting' || voice.warmupPhase === 'idle'}
+                />
+              )}
             </>
           )}
 

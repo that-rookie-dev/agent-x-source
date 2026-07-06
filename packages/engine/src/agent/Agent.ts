@@ -48,6 +48,7 @@ import { createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
 import { MemoryFabric, type MemoryNode } from '../neural/MemoryFabric.js';
 import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
 import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
+import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
 import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
@@ -177,6 +178,8 @@ export interface AgentOptions {
   channelSession?: boolean;
   /** Parent session ID — for crew workers to access the host conversation's neural brain memory. */
   parentSessionId?: string;
+  /** Session context kind — drives super-session memory ingestion and mode defaults. */
+  contextKind?: import('@agentx/shared').SessionContextKind;
   /** Refresh MCP integration tools and return an optional turn hint before completion. */
   prepareIntegrationTools?: (userText: string) => Promise<string | undefined>;
 }
@@ -206,6 +209,7 @@ export class Agent {
   private _secretSauce: SecretSauceManager | null = null;
   private get secretSauce(): SecretSauceManager { if (!this._secretSauce) { this._secretSauce = new SecretSauceManager(); } return this._secretSauce; }
   private memoryExtractor: MemoryExtractor | null = null;
+  private userChatMemoryIngester: UserChatMemoryIngester | null = null;
   private errorShield: ErrorShield;
   private toolExecutor?: EnhancedToolExecutor;
   private toolRegistry?: ToolRegistry;
@@ -1243,18 +1247,19 @@ export class Agent {
         : undefined;
       const communityChars = communityText?.length ?? 0;
       const remainingAfterCommunity = Math.max(0, MAX_CHARS - communityChars);
-      // Split remaining budget: 40% episodic, 30% semantic (incl. chunks), 30% graph.
-      const episodicText = fmt(result.episodic, Math.floor(remainingAfterCommunity * 0.4));
-      const semanticText = fmt(result.vector, Math.floor(remainingAfterCommunity * 0.3));
-      const graphText = fmt([...result.local, ...result.graph], Math.floor(remainingAfterCommunity * 0.3));
+      // Split remaining budget: 35% user profile, 25% episodic, 25% semantic, 15% graph.
+      const userProfileText = fmt(result.userProfile, Math.floor(remainingAfterCommunity * 0.35));
+      const episodicText = fmt(result.episodic, Math.floor(remainingAfterCommunity * 0.25));
+      const semanticText = fmt(result.vector, Math.floor(remainingAfterCommunity * 0.25));
+      const graphText = fmt([...result.local, ...result.graph], Math.floor(remainingAfterCommunity * 0.15));
 
-      if (semanticText || communityText || episodicText || graphText) {
-        getLogger().info('AGENT', `buildMemoryContext: ${result.all.length} nodes (community=${result.global.length}, episodic=${result.episodic.length}, semantic=${result.vector.length}, graph=${result.local.length + result.graph.length}, chunks=${chunkNodes.length})`);
+      if (semanticText || communityText || episodicText || graphText || userProfileText) {
+        getLogger().info('AGENT', `buildMemoryContext: ${result.all.length} nodes (community=${result.global.length}, userProfile=${result.userProfile.length}, episodic=${result.episodic.length}, semantic=${result.vector.length}, graph=${result.local.length + result.graph.length}, chunks=${chunkNodes.length})`);
       }
 
       return {
         community: communityText,
-        episodic: episodicText,
+        episodic: [userProfileText, episodicText].filter(Boolean).join('\n'),
         semantic: semanticText,
         graph: graphText,
       };
@@ -2761,6 +2766,25 @@ Rules:
       }
     }).catch(() => {
       // Silent failure — memory extraction is best-effort
+    });
+
+    // Super-session: persist user-profile facts to global vector memory (shared across all sessions).
+    if ((this.options.contextKind ?? 'agent_x') !== 'agent_x_core') return;
+    const fabric = this.memoryFabric;
+    const embedder = this.memoryEmbedder;
+    if (!fabric || !embedder || this.config.neuralBrain === false) return;
+
+    if (!this.userChatMemoryIngester) {
+      this.userChatMemoryIngester = new UserChatMemoryIngester(
+        fabric,
+        embedder,
+        this.provider,
+        this.config.provider.activeModel,
+      );
+    }
+
+    void this.userChatMemoryIngester.ingestTurn(userMessage, assistantResponse, this.sessionId).catch(() => {
+      // Silent failure — vector memory ingestion is best-effort
     });
   }
 

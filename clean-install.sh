@@ -63,7 +63,9 @@ pnpm --filter @agentx/runtime run setup:extensions
 # 8. Build desktop app (unpacked .app)
 echo ">>> Building desktop app..."
 cd "$DESKTOP_DIR"
+node scripts/materialize-pack-deps.mjs
 pnpm run build
+pnpm --filter @agentx/runtime run setup:voice-bundled
 pnpm exec electron-builder --mac --dir
 
 # 9. Install to /Applications + strip Gatekeeper quarantine in a SINGLE privileged call.

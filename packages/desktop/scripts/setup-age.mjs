@@ -246,6 +246,10 @@ function main() {
   } else {
     throw new Error('AGE installation verification failed — age.control not found');
   }
+
+  // Staging tree uses absolute DESTDIR paths; remove it so electron-builder does not
+  // traverse these files via the @agentx/runtime workspace symlink during desktop pack.
+  rmSync(ageInstallDir, { recursive: true, force: true });
 }
 
 main();

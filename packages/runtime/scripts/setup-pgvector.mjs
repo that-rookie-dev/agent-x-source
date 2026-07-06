@@ -349,6 +349,10 @@ function main() {
   }
 
   console.log(`pgvector installed into ${nativeDir}`);
+
+  if (platform() !== 'win32') {
+    rmSync(join(workDir, 'pgvector-install'), { recursive: true, force: true });
+  }
 }
 
 main();

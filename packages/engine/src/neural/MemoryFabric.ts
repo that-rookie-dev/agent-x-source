@@ -533,7 +533,7 @@ export class MemoryFabric {
     return node;
   }
 
-  async vectorSearch(embedding: number[], options: { limit?: number; category?: MemoryNodeCategory; agentId?: string } = {}): Promise<MemoryNode[]> {
+  async vectorSearch(embedding: number[], options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null } = {}): Promise<MemoryNode[]> {
     const limit = options.limit ?? 10;
     const useHalfvec = await this.isHalfvecAvailable();
     const vectorLiteral = `[${embedding.join(',')}]`;
@@ -541,6 +541,13 @@ export class MemoryFabric {
     const embeddingColumn = useHalfvec ? 'embedding_halfvec' : 'embedding';
     const vectorCast = useHalfvec ? 'halfvec' : 'vector';
     const vectorValue = useHalfvec ? halfvecLiteral : vectorLiteral;
+
+    let sessionFilter = '';
+    if (options.sessionId === null) {
+      sessionFilter = 'AND n.session_id IS NULL';
+    } else if (options.sessionId) {
+      sessionFilter = `AND n.session_id = '${options.sessionId}'`;
+    }
 
     const { rows } = await this.pool.query<MemoryNode>(
       `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
@@ -553,6 +560,8 @@ export class MemoryFabric {
        WHERE n.${embeddingColumn} IS NOT NULL
          AND n.status = 'active'
          ${options.category ? `AND n.category = '${options.category}'` : ''}
+         ${options.tag ? `AND n.tag = '${options.tag}'` : ''}
+         ${sessionFilter}
          ${options.agentId ? `AND (n.agent_id = '${options.agentId}' OR n.agent_id IS NULL)` : ''}
        ORDER BY n.${embeddingColumn} <=> $1::${vectorCast}
        LIMIT $2`,

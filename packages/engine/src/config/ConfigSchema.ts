@@ -5,6 +5,7 @@ import {
   featureRoutingConfigSchema,
   notificationChannelsConfigSchema,
   toolsConfigSchema,
+  voiceConfigSchema,
 } from '@agentx/shared';
 
 export const providerProfileSchema = z.object({
@@ -77,6 +78,7 @@ export const agentXConfigSchema = z.object({
   rag: ragConfigSchema,
   tools: toolsConfigSchema,
   channels: notificationChannelsConfigSchema,
+  voice: voiceConfigSchema,
   localModel: localModelConfigSchema,
   featureRouting: featureRoutingConfigSchema,
   runtime: z.object({

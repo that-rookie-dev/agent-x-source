@@ -13,6 +13,7 @@ import ModelIcon from '@mui/icons-material/Psychology';
 import BrainIcon from '@mui/icons-material/Memory';
 import SpeedIcon from '@mui/icons-material/Speed';
 import NotificationsIcon from '@mui/icons-material/Notifications';
+import KeyboardVoiceIcon from '@mui/icons-material/KeyboardVoice';
 import { CheckCircle } from './CheckCircle';
 import { config, personaApi, type AgentXConfig, type AgentPersonaConfig } from '../api';
 import { useApp } from '../store/AppContext';
@@ -33,10 +34,12 @@ import { WebSearchToolsTab, mergeWebSearchConfig } from './settings/WebSearchToo
 import { ChannelsTab, mergeChannelsConfig } from './settings/ChannelsTab';
 import { LocalModelTab } from './settings/LocalModelTab';
 import { RuntimeTab } from './settings/RuntimeTab';
+import { VoiceTab, mergeVoiceConfig } from './settings/VoiceTab';
+import { notifyVoiceConfigUpdated } from '../voice/support';
 import { ProvidersPanel } from './ProvidersPanel';
 import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 
-type SettingsTab = 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'channels' | 'runtime';
+type SettingsTab = 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'channels' | 'runtime' | 'voice';
 
 const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 14 }} /> },
@@ -44,8 +47,9 @@ const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }>
   { id: 'general', label: 'Profile', icon: <PersonIcon sx={{ fontSize: 14 }} /> },
   { id: 'persona', label: 'Persona', icon: <SmartToyIcon sx={{ fontSize: 14 }} /> },
   { id: 'local-model', label: 'Local', icon: <BrainIcon sx={{ fontSize: 14 }} /> },
+  { id: 'voice', label: 'Voice', icon: <KeyboardVoiceIcon sx={{ fontSize: 14 }} /> },
   { id: 'channels', label: 'Channels', icon: <NotificationsIcon sx={{ fontSize: 14 }} /> },
-  { id: 'tools', label: 'Tools', icon: <BuildIcon sx={{ fontSize: 14 }} /> },
+  { id: 'tools', label: 'Search', icon: <BuildIcon sx={{ fontSize: 14 }} /> },
   { id: 'persistence', label: 'Storage', icon: <StorageIcon sx={{ fontSize: 14 }} /> },
 ];
 
@@ -92,11 +96,14 @@ export function SettingsPanel() {
         tools: cfg.tools?.webSearch
           ? { ...cfg.tools, webSearch: mergeWebSearchConfig(cfg.tools.webSearch) }
           : cfg.tools,
+        voice: mergeVoiceConfig(cfg.voice),
       };
       await config.update(payload);
       setCfg(payload);
       setConfig(payload);
+      notifyVoiceConfigUpdated(payload.voice);
       if (persona) await personaApi.save(persona);
+      window.dispatchEvent(new CustomEvent('agentx:persona-updated'));
       setMessage('saved');
       setTimeout(() => setMessage(''), 2500);
     } catch {
@@ -174,6 +181,12 @@ export function SettingsPanel() {
         )}
         {activeTab === 'models' && <ProvidersPanel />}
         {activeTab === 'local-model' && <LocalModelTab />}
+        {activeTab === 'voice' && (
+          <VoiceTab
+            value={cfg.voice}
+            onChange={(voice) => setCfg({ ...cfg, voice })}
+          />
+        )}
         {activeTab === 'channels' && (
           <ChannelsTab
             value={channelsConfig}

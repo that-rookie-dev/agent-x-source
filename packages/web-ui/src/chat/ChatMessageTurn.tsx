@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
+import TextFieldsIcon from '@mui/icons-material/TextFields';
 import { colors } from '../theme';
 import { ReasoningBlock } from '../components/ChatEnhancements';
 import { InlineToolCall } from '../components/InlineToolCall';
@@ -228,6 +230,14 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
           <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", opacity: 0.7 }}>
             @{crewInfo.callsign}
           </Typography>
+        )}
+        {message.voiceTextOnly && (
+          <Chip
+            size="small"
+            icon={<TextFieldsIcon sx={{ fontSize: '12px !important' }} />}
+            label="Text only"
+            sx={{ fontSize: '0.5rem', height: 18, bgcolor: `${colors.text.dim}12`, border: `1px solid ${colors.text.dim}30` }}
+          />
         )}
         {crewInfo && (crewInfo.confidence || crewInfo.reasons) && (
           <Typography component="span" onClick={() => setWhyOpen(!whyOpen)} sx={{ fontSize: '0.5rem', cursor: 'pointer', color: colors.text.dim, opacity: 0.5 }}>Why?</Typography>

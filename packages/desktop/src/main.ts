@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage, shell, safeStorage } from 'electron';
+import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage, shell, safeStorage, systemPreferences } from 'electron';
 import { join, basename } from 'path';
 import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } from 'fs';
 import { spawn, execFileSync } from 'child_process';
@@ -346,7 +346,31 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.loadURL(`http://localhost:${PORT}`);
+  const appOrigin = `http://localhost:${PORT}`;
+  mainWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    const reqOrigin = details.requestingUrl ? new URL(details.requestingUrl).origin : '';
+    // navigator.clipboard.writeText requires this permission in Electron.
+    if (permission === 'clipboard-sanitized-write' && reqOrigin === appOrigin) {
+      callback(true);
+      return;
+    }
+    if (permission === 'media') {
+      const mediaDetails = details as Electron.MediaAccessPermissionRequest;
+      const mediaTypes = mediaDetails.mediaTypes ?? [];
+      const wantsMic = mediaTypes.includes('audio') || mediaTypes.length === 0;
+      if (wantsMic && reqOrigin === appOrigin) {
+        console.info('[desktop] granting microphone for app origin');
+        callback(true);
+        return;
+      }
+      console.info('[desktop] denying microphone for origin', reqOrigin);
+      callback(false);
+      return;
+    }
+    callback(false);
+  });
+
+  mainWindow.loadURL(appOrigin);
 
   attachExternalLinkHandlers(mainWindow);
 
@@ -437,6 +461,9 @@ ipcMain.on('system:localModelSupported', (event) => {
 ipcMain.on('system:neuralBrainSupported', (event) => {
   event.returnValue = totalmem() / (1024 ** 3) >= 16;
 });
+ipcMain.on('system:styleTtsSupported', (event) => {
+  event.returnValue = totalmem() / (1024 ** 3) >= 16;
+});
 ipcMain.on('window:minimize', () => mainWindow?.minimize());
 ipcMain.on('window:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
@@ -523,6 +550,30 @@ ipcMain.handle('permissions:checkNodeRuntime', async () => {
   const node = tryVersion('node');
   const npx = tryVersion('npx');
   return { node, npx, ok: Boolean(node && npx) };
+});
+ipcMain.handle('permissions:checkMicrophone', async () => {
+  if (process.platform === 'darwin') {
+    const status = systemPreferences.getMediaAccessStatus('microphone');
+    return { granted: status === 'granted', state: status };
+  }
+  return { granted: true, state: 'unknown' };
+});
+ipcMain.handle('permissions:requestMicrophone', async () => {
+  // macOS requires an OS-level TCC prompt before getUserMedia can succeed.
+  if (process.platform === 'darwin') {
+    const granted = await systemPreferences.askForMediaAccess('microphone');
+    return { granted };
+  }
+  return { granted: true };
+});
+ipcMain.handle('permissions:openMicrophoneSettings', async () => {
+  if (process.platform === 'darwin') {
+    await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+    return;
+  }
+  if (process.platform === 'win32') {
+    await shell.openExternal('ms-settings:privacy-microphone');
+  }
 });
 ipcMain.handle('shell:openExternal', async (_event, url: string) => openExternalLink(url));
 ipcMain.handle('window:openInternal', async (_event, url: string) => {

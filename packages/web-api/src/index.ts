@@ -7,11 +7,13 @@ import os from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported, resolveRuntimeSettings } from '@agentx/shared';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, voiceConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported, resolveRuntimeSettings } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady, applyRuntimeSettings } from './engine.js';
 import { applyChannelsConfig, discoverTelegramBot, getTelegramInboundStatus, getTelegramRuntimeHints, restartTelegramInbound, saveVerifiedTelegram, sendTelegramGreeting } from './channels-sync.js';
 import { buildGraphRagSummarizer } from './distillation-generator.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect, broadcastBrainActivity } from './ws.js';
+import { setupVoiceWebSocket, shutdownVoiceWebSocket } from './voice-ws.js';
+import { attachWebSocketUpgradeRouter } from './ws-upgrade-router.js';
 import { turnRegistry } from './turn-registry.js';
 import {
   sessionSettings,
@@ -27,7 +29,7 @@ import {
 } from './chat-helpers.js';
 import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
-import { redactConfigForClient, mergeConfigPreservingSecrets, redactProvidersForClient } from './config-redaction.js';
+import { redactConfigForClient, mergeConfigPreservingSecrets, redactProvidersForClient, REDACTED_SECRET } from './config-redaction.js';
 import { setIngestionWorkerRef, refreshIngestionWorkerGenerator } from './ingestion-worker-ref.js';
 import {
   bindIngestionWorker,
@@ -58,11 +60,13 @@ import { persistCrewRosterPickerOffer, updateCrewRosterPickerStatus } from './cr
 import { handleClarificationRespond } from './clarification-resume.js';
 import { loadSessionResumeState } from './session-resume-state.js';
 import { postCrewChatSession } from './crew-chat.js';
+import { postAgentXCoreSession } from './agent-x-core.js';
 import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewHonorificToSession } from './host-crew-session.js';
 import { memoryRouter } from './memory-api.js';
 import localModelRouter from './local-model-api.js';
 import embeddingModelRouter from './embedding-model-api.js';
 import modelBenchmarkRouter from './model-benchmark-api.js';
+import voiceRouter from './voice-api.js';
 import { integrationsRouter } from './integrations-api.js';
 import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutomation } from './automation/index.js';
 import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
@@ -360,6 +364,7 @@ app.use('/api', memoryRouter);
 app.use('/api', localModelRouter);
 app.use('/api', embeddingModelRouter);
 app.use('/api', modelBenchmarkRouter);
+app.use('/api', voiceRouter);
 app.use('/api', integrationsRouter);
 registerAutomationRoutes(app);
 
@@ -488,6 +493,28 @@ app.get('/api/setup/status', (_req, res) => {
   }
 });
 
+app.post('/api/setup/complete', (req, res) => {
+  try {
+    const eng = getEngine();
+    const existing = eng.configManager.load();
+    const callsignRaw = typeof req.body?.callsign === 'string' ? req.body.callsign.trim() : '';
+    const callsign = callsignRaw || existing.user?.callsign?.trim() || '';
+    const merged: AgentXConfig = {
+      ...existing,
+      setupComplete: true,
+      ...(callsign ? { user: { callsign } } : {}),
+    };
+    eng.configManager.save(merged);
+    res.json({ ok: true, setupComplete: true });
+  } catch (err) {
+    getLogger().error('POST_API_SETUP_COMPLETE', err instanceof Error ? err : String(err));
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to mark setup complete',
+    });
+  }
+});
+
 app.get('/api/config', (_req, res) => {
   const eng = getEngine();
   try {
@@ -541,6 +568,31 @@ app.put('/api/config', (req, res) => {
         discord: { ...existing.channels?.discord, ...req.body.channels?.discord },
       };
     }
+    if (req.body.voice) {
+      merged.voice = {
+        ...existing.voice,
+        ...req.body.voice,
+        mode: { ...existing.voice?.mode, ...req.body.voice?.mode },
+        stt: { ...existing.voice?.stt, ...req.body.voice?.stt },
+        tts: { ...existing.voice?.tts, ...req.body.voice?.tts },
+        sidecar: { ...existing.voice?.sidecar, ...req.body.voice?.sidecar },
+        fillers: { ...existing.voice?.fillers, ...req.body.voice?.fillers },
+        wakeWord: { ...existing.voice?.wakeWord, ...req.body.voice?.wakeWord },
+        // downloadedAssets is server-managed (registered during voice setup /
+        // asset downloads). Never let the client overwrite it — stale UI state
+        // used to wipe installed assets here.
+        downloadedAssets: existing.voice?.downloadedAssets ?? [],
+      };
+      const voiceParse = voiceConfigSchema.safeParse(merged.voice);
+      if (!voiceParse.success) {
+        res.status(400).json({
+          error: 'invalid-voice-config',
+          message: voiceParse.error.issues.map((issue) => issue.message).join('; '),
+        });
+        return;
+      }
+      merged.voice = voiceParse.data ?? merged.voice;
+    }
     // Validate provider config — reject if it would leave zero configured providers
     // or unset the active provider. This ensures the ingestion worker's LLM
     // generator can always be built after login.
@@ -559,31 +611,11 @@ app.put('/api/config', (req, res) => {
     void refreshIngestionWorkerGenerator();
     res.json({ ok: true });
     } catch (err) {
-    // If load failed (e.g. DEK mismatch from different auth), save raw body as new config
-    try {
-      const body = req.body as Record<string, unknown>;
-      if (body.tools && typeof body.tools === 'object' && (body.tools as { webSearch?: unknown }).webSearch) {
-        const tools = body.tools as { webSearch?: import('@agentx/shared').WebSearchToolsConfig };
-        tools.webSearch = mergeWebSearchToolsConfig(undefined, tools.webSearch);
-      }
-      if (body.channels && typeof body.channels === 'object') {
-        const ch = body.channels as Record<string, unknown>;
-        body.channels = {
-          telegram: { ...(ch.telegram as object | undefined) },
-          slack: { ...(ch.slack as object | undefined) },
-          email: { ...(ch.email as object | undefined) },
-          discord: { ...(ch.discord as object | undefined) },
-        };
-      }
-      eng.configManager.save(req.body);
-      applyWebSearchConfigFromAgentConfig(req.body);
-      res.json({ ok: true });
-    } catch (saveErr) {
-      getLogger().error('PUT_API_CONFIG', err instanceof Error ? err : String(err));      res.status(500).json({
-        ok: false,
-        error: 'Failed to save config. Auth and config DEK may be out of sync. Re-create root user or ensure auth.json is shared between host and container.',
-      });
-    }
+    getLogger().error('PUT_API_CONFIG', err instanceof Error ? err : String(err));
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to save config. Auth and config DEK may be out of sync. Re-create root user or ensure auth.json is shared between host and container.',
+    });
   }
 });
 
@@ -706,7 +738,21 @@ app.get('/api/providers/available', (_req, res) => {
 
 app.post('/api/provider/validate', async (req, res) => {
   try {
-    const { provider, apiKey, baseUrl } = req.body as { provider: string; apiKey?: string; baseUrl?: string };
+    const { provider, baseUrl } = req.body as { provider: string; apiKey?: string; baseUrl?: string };
+    let apiKey = req.body?.apiKey as string | undefined;
+    if (!apiKey || apiKey === REDACTED_SECRET) {
+      try {
+        const eng = getEngine();
+        const cfg = eng.configManager.load();
+        const creds = cfg.provider.providers[provider as ProviderId];
+        if (creds?.activeProfile && creds.profiles?.[creds.activeProfile]) {
+          apiKey = creds.profiles[creds.activeProfile]?.apiKey;
+        }
+        if (!apiKey) apiKey = creds?.apiKey;
+      } catch {
+        apiKey = undefined;
+      }
+    }
     const prov = ProviderFactory.create(provider as ProviderId, apiKey, baseUrl);
     const valid = await prov.validate();
     if (valid) {
@@ -1475,6 +1521,7 @@ app.patch('/api/sessions/:id/crew-roster-picker', validate(crewRosterPickerUpdat
 const crewChatRateLimiter = createRateLimiter({ prefix: 'CREW_CHAT', label: 'CrewChat' });
 app.use('/api/crew-chat', crewChatRateLimiter.middleware);
 app.post('/api/crew-chat/sessions', validate(crewChatSessionSchema), postCrewChatSession);
+app.post('/api/agent-x-core/session', postAgentXCoreSession);
 
 app.get('/api/crew-catalog/categories', listCatalogCategories);
 app.get('/api/crew-catalog/seed-status', getCatalogSeedStatusHandler);
@@ -2389,9 +2436,21 @@ app.get('/api/settings/web-search/status', async (_req, res) => {
 app.post('/api/settings/web-search/test', async (req, res) => {
   try {
     const provider = req.body?.provider as string;
-    const apiKey = String(req.body?.apiKey ?? '');
     if (provider !== 'brave' && provider !== 'exa' && provider !== 'tavily') {
       res.status(400).json({ ok: false, error: 'provider must be brave, exa, or tavily' });
+      return;
+    }
+    let apiKey = String(req.body?.apiKey ?? '').trim();
+    if (!apiKey || apiKey === REDACTED_SECRET) {
+      try {
+        const cfg = getEngine().configManager.load();
+        apiKey = cfg.tools?.webSearch?.[provider]?.apiKey?.trim() ?? '';
+      } catch {
+        apiKey = '';
+      }
+    }
+    if (!apiKey) {
+      res.status(400).json({ ok: false, error: 'No API key configured for this search provider' });
       return;
     }
     const result = await validateWebSearchProvider(provider, apiKey);
@@ -2930,6 +2989,11 @@ app.delete('/api/sessions/:id', (req, res) => {
   try {
     const sessionId = req.params['id']!;
     const eng = getEngine();
+    const peek = eng.sessionManager.getSessionById(sessionId);
+    if (peek?.contextKind === 'agent_x_core') {
+      res.status(403).json({ error: 'core-session-protected' });
+      return;
+    }
     const store = (eng.sessionManager as unknown as { store: { deleteSession: (id: string) => void } }).store;
     store.deleteSession(sessionId);
     // Clean up session folder on disk
@@ -4665,6 +4729,8 @@ app.get('*', async (req, res, next) => {
 // ───── Server ─────
 const server = createServer(app);
 setupWebSocket(server);
+setupVoiceWebSocket(server);
+attachWebSocketUpgradeRouter(server);
 
 export { app, server };
 
@@ -4725,6 +4791,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
     for (const handler of shutdownHandlers) { try { handler(); } catch {} }
     ingestionWorker?.stop();
     void shutdownAutomation().catch(() => {});
+    void shutdownVoiceWebSocket().catch(() => {});
     shutdownAgentXOverviewBridge();
     // 5. Flush log buffer and exit
     stopGlobalRateLimitCleanup();

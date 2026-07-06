@@ -123,6 +123,55 @@ export class SessionManager {
     ) ?? null;
   }
 
+  /** The global Agent-X core session — never deleted, used for voice and lifelong learning. */
+  findAgentXCoreSession(): Session | null {
+    return this.listSessions(500).find((s) =>
+      !s.parentId && s.contextKind === 'agent_x_core',
+    ) ?? null;
+  }
+
+  /** Create the core session record without hijacking the active user session. */
+  ensureAgentXCoreSession(
+    providerId: string,
+    modelId: string,
+    scopePath: string,
+  ): Session {
+    const existing = this.findAgentXCoreSession();
+    if (existing) {
+      if (existing.mode !== 'plan') {
+        this.patchSession(existing.id, { mode: 'plan' } as Partial<Session>);
+        return { ...existing, mode: 'plan' };
+      }
+      return existing;
+    }
+
+    const prevActive = this.activeSession;
+    const prevTracker = this.tokenTracker;
+    const wasAutoSave = !!this.autoSaveInterval;
+
+    try {
+      const session = this.buildSessionRecord(
+        providerId,
+        modelId,
+        scopePath,
+        undefined,
+        undefined,
+        'Agent-X',
+      );
+      session.contextKind = 'agent_x_core';
+      session.mode = 'plan';
+      this.createSessionRecord(session);
+      return session;
+    } finally {
+      this.activeSession = prevActive;
+      this.tokenTracker = prevTracker;
+      if (!wasAutoSave && this.autoSaveInterval) {
+        clearInterval(this.autoSaveInterval);
+        this.autoSaveInterval = null;
+      }
+    }
+  }
+
   createCrewPrivateSession(
     providerId: string,
     modelId: string,
@@ -258,6 +307,7 @@ export class SessionManager {
       sessions.filter((s) => {
         if (s.parentId) return false;
         if ((s.contextKind ?? 'agent_x') === 'automation') return false;
+        if ((s.contextKind ?? 'agent_x') === 'agent_x_core') return false;
         if (s.id.startsWith('automation:')) return false;
         return true;
       });

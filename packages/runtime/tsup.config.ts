@@ -9,5 +9,6 @@ export default defineConfig({
   clean: true,
   platform: 'node',
   bundle: true,
+  noExternal: ['@agentx/shared'],
   external: ['pg', 'embedded-postgres', /^@embedded-postgres\//],
 });

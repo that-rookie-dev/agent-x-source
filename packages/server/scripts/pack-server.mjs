@@ -15,6 +15,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { platform, arch } from 'node:os';
+import { copyVoiceSidecarResources } from '../../voice-sidecar/scripts/copy-voice-resources.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const serverRoot = join(__dirname, '..');
@@ -105,6 +106,9 @@ if (existsSync(pythonDir)) {
 } else {
   console.warn('Python bundle not found; server will use system Python if available.');
 }
+
+copyVoiceSidecarResources(resourcesDir, { requireBundled: true });
+console.log('Bundled voice-sidecar resources into server package');
 
 if (!existsSync(daemonJs)) {
   throw new Error(`Missing server daemon at ${daemonJs}. Run pnpm --filter @agentx/server run build first.`);

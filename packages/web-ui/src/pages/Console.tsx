@@ -6,6 +6,7 @@ import { Sidebar } from '../components/Sidebar';
 import { Footer } from '../components/Footer';
 import { LogsPanel } from '../components/LogsPanel';
 import { ChatPanel } from '../components/ChatPanel';
+import { AgentXCoreChat } from './AgentXCoreChat';
 import { ToolsPanel } from '../components/ToolsPanel';
 import { PluginsPanel } from '../components/PluginsPanel';
 import { ChannelsPanel } from '../components/ChannelsPanel';
@@ -22,7 +23,7 @@ import { colors } from '../theme';
 import { useApp } from '../store/AppContext';
 import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 
-export type PanelId = 'chat' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications';
+export type PanelId = 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -152,6 +153,7 @@ export function Console() {
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
             <PanelErrorBoundary key={activePanel}>
               {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
+              {activePanel === 'agent-x' && <AgentXCoreChat />}
               {activePanel === 'tools' && <ToolsPanel />}
               {activePanel === 'plugins' && <PluginsPanel />}
               {activePanel === 'channels' && <ChannelsPanel />}

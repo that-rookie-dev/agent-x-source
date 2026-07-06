@@ -3,6 +3,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import type { SxProps, Theme } from '@mui/material/styles';
 import { colors } from '../theme';
+import { copyToClipboard } from '../utils/clipboard';
 
 const MONO = "'JetBrains Mono', monospace";
 
@@ -129,7 +130,7 @@ export function CodeBlockChrome({
         <Box
           component="button"
           onClick={() => {
-            navigator.clipboard.writeText(copyText).catch(() => {});
+            void copyToClipboard(copyText);
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
           }}

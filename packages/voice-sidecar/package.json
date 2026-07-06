@@ -1,0 +1,9 @@
+{
+  "name": "@agentx/voice-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local voice sidecar and bundled voice assets for Agent-X",
+  "scripts": {
+    "setup:bundled": "node scripts/setup-bundled-voice-assets.mjs"
+  }
+}

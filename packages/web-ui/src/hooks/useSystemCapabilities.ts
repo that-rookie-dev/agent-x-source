@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { isNeuralBrainSupported } from '@agentx/shared/browser';
+import { isNeuralBrainSupported, isStyleTtsSupported } from '@agentx/shared/browser';
 
 export interface SystemCapabilities {
   totalMemoryGB: number;
   localModelSupported: boolean;
   neuralBrainSupported: boolean;
+  styleTtsSupported: boolean;
 }
 
 export function useSystemCapabilities(): SystemCapabilities | null {
@@ -15,6 +16,7 @@ export function useSystemCapabilities(): SystemCapabilities | null {
         totalMemoryGB,
         localModelSupported: window.agentx.localModelSupported,
         neuralBrainSupported: window.agentx.neuralBrainSupported ?? isNeuralBrainSupported(totalMemoryGB),
+        styleTtsSupported: window.agentx.styleTtsSupported ?? isStyleTtsSupported(totalMemoryGB),
       };
     }
     return null;
@@ -33,10 +35,13 @@ export function useSystemCapabilities(): SystemCapabilities | null {
           neuralBrainSupported: typeof data.neuralBrainSupported === 'boolean'
             ? data.neuralBrainSupported
             : isNeuralBrainSupported(totalMemoryGB),
+          styleTtsSupported: typeof data.styleTtsSupported === 'boolean'
+            ? data.styleTtsSupported
+            : isStyleTtsSupported(totalMemoryGB),
         });
       })
       .catch(() => {
-        setCaps({ totalMemoryGB: 0, localModelSupported: true, neuralBrainSupported: true });
+        setCaps({ totalMemoryGB: 0, localModelSupported: false, neuralBrainSupported: false, styleTtsSupported: false });
       });
   }, [caps]);
 
@@ -45,10 +50,25 @@ export function useSystemCapabilities(): SystemCapabilities | null {
 
 export function useLocalModelSupported(): boolean {
   const caps = useSystemCapabilities();
-  return caps?.localModelSupported ?? true;
+  return caps?.localModelSupported ?? (window.agentx?.localModelSupported ?? false);
+}
+
+/** True once capabilities are known (desktop preload or API fetch completed). */
+export function useCapabilitiesReady(): boolean {
+  const caps = useSystemCapabilities();
+  if (typeof window !== 'undefined' && window.agentx?.localModelSupported !== undefined) return true;
+  return caps !== null;
 }
 
 export function useNeuralBrainSupported(): boolean {
   const caps = useSystemCapabilities();
-  return caps?.neuralBrainSupported ?? true;
+  if (typeof window !== 'undefined' && window.agentx?.neuralBrainSupported !== undefined) {
+    return window.agentx.neuralBrainSupported;
+  }
+  return caps?.neuralBrainSupported ?? false;
+}
+
+export function useStyleTtsSupported(): boolean {
+  const caps = useSystemCapabilities();
+  return caps?.styleTtsSupported ?? (window.agentx?.styleTtsSupported ?? false);
 }

@@ -30,7 +30,7 @@ export function buildShellEnv(scopePath: string): NodeJS.ProcessEnv {
   return env;
 }
 
-function resolveTokenPath(raw: string, scopePath: string, cwd: string): string {
+function resolveTokenPath(raw: string, cwd: string): string {
   const cleaned = raw.replace(/[;,|&()]+$/, '');
   if (cleaned.startsWith('/')) return normalize(resolve('/', cleaned));
   if (/^[A-Z]:[\\/]/i.test(cleaned)) return normalize(resolve(cleaned));
@@ -59,7 +59,7 @@ export function validateCommandScope(command: string, scopePath: string, cwd?: s
 
     if (!looksLikePath) continue;
 
-    const resolved = resolveTokenPath(raw, scopeNorm, workDir);
+    const resolved = resolveTokenPath(raw, workDir);
     if (!resolved.startsWith(scopeNorm)) {
       return `Path "${raw}" resolves outside scope (${scopeNorm})`;
     }

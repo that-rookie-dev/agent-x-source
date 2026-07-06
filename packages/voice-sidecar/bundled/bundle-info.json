@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": {
+    "silero-vad": {
+      "sha256": "04a724a3e3e3b5cdc032caff3e6ac3985f90c83aace2c2cd2e44ac139a70124e",
+      "target": "models/vad/silero-vad",
+      "kind": "vad-model"
+    }
+  }
+}

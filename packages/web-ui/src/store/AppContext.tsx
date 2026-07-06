@@ -120,12 +120,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // 3. Check if we have a valid session
+      // 3. Check if we have a valid session (must include unlocked DEK after server restart)
       const authStatus = await auth.status();
       if (!authStatus.isAuthenticated) {
+        setAuthToken(null);
         setAuthState('unauthenticated');
         setView('login');
         return;
+      }
+
+      if (authStatus.sessionToken) {
+        setAuthToken(authStatus.sessionToken);
       }
 
       setAuth(true);
