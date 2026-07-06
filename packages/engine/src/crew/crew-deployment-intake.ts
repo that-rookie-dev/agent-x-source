@@ -1,5 +1,9 @@
-import type { QuestionnairePayload } from '@agentx/shared';
+import type { QuestionnaireOption, QuestionnairePayload } from '@agentx/shared';
 import { generateId } from '@agentx/shared';
+
+function choiceOptions(labels: string[]): QuestionnaireOption[] {
+  return labels.map((value) => ({ value, label: value }));
+}
 
 const MONTH_RE = /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/i;
 const DEFER_RE = /\b(you decide|surprise me|up to you|don't care|dont care|whatever works|plan it yourself|use your judgment|use your judgement)\b/i;
@@ -52,14 +56,14 @@ export function buildCrewDeploymentIntakeQuestionnaire(
           prompt: 'Who is traveling?',
           type: 'single_choice',
           required: false,
-          options: ['Solo', 'Couple', 'Family with kids', 'Group of friends', 'Other'],
+          options: choiceOptions(['Solo', 'Couple', 'Family with kids', 'Group of friends', 'Other']),
         },
         {
           id: 'budget',
           prompt: 'What budget range are you aiming for?',
           type: 'single_choice',
           required: false,
-          options: ['Budget', 'Mid-range', 'Luxury', 'Flexible / not sure'],
+          options: choiceOptions(['Budget', 'Mid-range', 'Luxury', 'Flexible / not sure']),
         },
         {
           id: 'priorities',

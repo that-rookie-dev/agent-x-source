@@ -50,15 +50,12 @@ export class FillerCache {
     return path;
   }
 
-  async invalidateForVoice(voiceId: string): Promise<void> {
+  async invalidateForVoice(_voiceId: string): Promise<void> {
     try {
       const files = await readdir(this.cacheDir);
       for (const file of files) {
         if (!file.endsWith('.wav')) continue;
-        const phraseVoicePrefix = this.cacheKey('', voiceId).slice(0, 8);
-        if (file.startsWith(phraseVoicePrefix) || true) {
-          await rm(join(this.cacheDir, file), { force: true });
-        }
+        await rm(join(this.cacheDir, file), { force: true });
       }
     } catch {
       // cache dir may not exist
