@@ -253,13 +253,13 @@ export class VoiceSessionClient {
       }
       if (this.ws?.readyState === WebSocket.OPEN) {
         if (this.mode === 'duplex') {
-          this.queueDuplexAudio(pcm);
+          // Don't stream mic audio while agent TTS is playing — avoids false barge-in.
+          if (this.state !== 'speaking') {
+            this.queueDuplexAudio(pcm);
+          }
         } else {
           this.ws.send(pcm.buffer);
         }
-      }
-      if (this.state === 'speaking') {
-        this.interruptPlayback();
       }
     };
     source.connect(this.workletNode);

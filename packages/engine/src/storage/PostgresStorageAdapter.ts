@@ -440,6 +440,9 @@ export class PostgresStorageAdapter implements StorageAdapter {
       await client.query(SCHEMA_SQL);
       // Incremental migrations for columns added after initial schema
       await client.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS parts TEXT');
+      // Soft-archive: hidden from UI/history reads but kept in DB (memory ingestion untouched)
+      await client.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ');
+      await client.query('CREATE INDEX IF NOT EXISTS idx_messages_session_active ON messages(session_id, created_at) WHERE archived_at IS NULL');
       await client.query('ALTER TABLE message_parts ADD COLUMN IF NOT EXISTS message_id TEXT');
       await client.query('CREATE INDEX IF NOT EXISTS idx_message_parts_message_id ON message_parts(message_id)');
       await client.query('CREATE INDEX IF NOT EXISTS idx_message_parts_session_created ON message_parts(session_id, created_at)');
@@ -883,7 +886,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     try {
       const messages = await this.pool.query(
         `SELECT id,session_id as "sessionId",role,content,tool_calls as "toolCalls",token_count as "tokenCount",created_at as "createdAt"
-         FROM messages WHERE session_id = $1 ORDER BY created_at ASC`,
+         FROM messages WHERE session_id = $1 AND archived_at IS NULL ORDER BY created_at ASC`,
         [sessionId]
       );
       const msgs = messages.rows as StorableMessage[];
@@ -1164,6 +1167,16 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.messages.delete(sessionId);
     this.cache.parts.delete(sessionId);
     this.write('DELETE FROM messages WHERE session_id = $1', [sessionId]);
+  }
+
+  /**
+   * Soft-archive all messages in a session: hidden from UI/history reads but
+   * kept in the DB so memory ingestion/backfill and audits are unaffected.
+   */
+  archiveSessionMessages(sessionId: string): void {
+    this.cache.messages.set(sessionId, []);
+    this.cache.parts.set(sessionId, []);
+    this.write('UPDATE messages SET archived_at = NOW() WHERE session_id = $1 AND archived_at IS NULL', [sessionId]);
   }
 
   getMessageCount(sessionId: string): number {
@@ -1816,6 +1829,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
        FROM messages
        WHERE session_id = $1
          AND role IN ('user', 'assistant')
+         AND archived_at IS NULL
          AND ($2::text IS NULL OR created_at < (SELECT created_at FROM messages WHERE id = $2 AND session_id = $1))
        ORDER BY created_at DESC
        LIMIT $3`,
@@ -1824,7 +1838,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     const hasMore = result.rows.length > limit;
     const rows = result.rows.slice(0, limit);
     const totalResult = await this.pool.query(
-      `SELECT COUNT(*)::int as cnt FROM messages WHERE session_id = $1 AND role IN ('user', 'assistant')`,
+      `SELECT COUNT(*)::int as cnt FROM messages WHERE session_id = $1 AND role IN ('user', 'assistant') AND archived_at IS NULL`,
       [sessionId],
     );
     const total = totalResult.rows[0].cnt as number;

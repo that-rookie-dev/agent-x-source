@@ -1650,7 +1650,7 @@ app.use('/api/chat', chatRateLimiter.middleware);
 // NEW: Streaming SSE endpoint for real-time progress visualization
 app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
@@ -1660,6 +1660,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
       forceWebSearch?: boolean;
+      userMessagePersisted?: boolean;
     };
     const eng = getEngine();
     
@@ -1812,7 +1813,10 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       try { agent.cancel(); } catch { /* ignore */ }
     });
 
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, forceWebSearch ? { forceWebSearch: true } : undefined);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+      ...(forceWebSearch ? { forceWebSearch: true } : {}),
+      ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
+    });
     sendEvent('started', { turnId: turn.turnId, async: true });
     return;
   } catch (e: unknown) {
@@ -1824,7 +1828,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
 // LEGACY comment removed — async turn endpoint used by ChatPanel (SSE uses message-stream).
 app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
@@ -1834,6 +1838,7 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
       forceWebSearch?: boolean;
+      userMessagePersisted?: boolean;
     };
     const eng = getEngine();
     // Auto-create agent if none exists (first message in session)
@@ -1915,7 +1920,10 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     }
 
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, forceWebSearch ? { forceWebSearch: true } : undefined);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+      ...(forceWebSearch ? { forceWebSearch: true } : {}),
+      ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
+    });
 
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
@@ -3005,6 +3013,29 @@ app.delete('/api/sessions/:id', (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     getLogger().error('DELETE_API_SESSIONS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'delete-failed' });
+  }
+});
+
+// Soft-archive all messages in a session: hides them from the UI (faster loads)
+// without deleting anything — DB rows and memory embeddings stay intact.
+app.post('/api/sessions/:id/archive-messages', (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const eng = getEngine();
+    const peek = eng.sessionManager.getSessionById(sessionId);
+    if (!peek) { res.status(404).json({ error: 'not-found' }); return; }
+    const store = (eng.sessionManager as unknown as {
+      store: { archiveSessionMessages?: (id: string) => void };
+    }).store;
+    if (!store.archiveSessionMessages) {
+      res.status(501).json({ error: 'archive-not-supported' });
+      return;
+    }
+    store.archiveSessionMessages(sessionId);
+    res.json({ ok: true });
+  } catch (e) {
+    getLogger().error('ARCHIVE_SESSION_MESSAGES', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: 'archive-failed' });
   }
 });
 

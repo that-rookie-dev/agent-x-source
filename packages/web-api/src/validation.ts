@@ -40,6 +40,8 @@ export const chatMessageSchema = z.object({
   crewSuggestionResolved: z.boolean().optional(),
   /** After in-chat crew roster picker — lead crew asks intake question first. */
   crewIntakeFromPicker: z.boolean().optional(),
+  /** User turn already persisted (e.g. crew roster picker) — skip message_sent persistence. */
+  userMessagePersisted: z.boolean().optional(),
   primaryCrewId: z.string().optional(),
   priorUserMessages: z.array(z.string()).optional(),
   /** Globe toggle in chat — force web search on this turn. */

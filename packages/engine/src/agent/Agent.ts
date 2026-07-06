@@ -37,6 +37,10 @@ import { buildCrewRosterHintBlock } from '../crew/crew-roster-hint.js';
 import { createCrewKeywordExpander } from '../crew/crew-keyword-expander.js';
 import { getCrewSuggestionService } from '../crew/get-crew-store.js';
 import { ensureCrewMembersOnRoster, type CrewCatalogRecruitStore } from '../crew/crew-mission-deploy.js';
+import {
+  buildCrewDeploymentIntakeQuestionnaire,
+  needsCrewDeploymentIntake,
+} from '../crew/crew-deployment-intake.js';
 import { buildCrewSuggestionSearchQuery } from './crew-auto-compose.js';
 import { scoreMatchCandidates, type RawMatchRow } from '../crew/CrewMatchService.js';
 import { setToolRegistryInstance } from '../commands/builtin/tools.js';
@@ -235,6 +239,7 @@ export class Agent {
   private scope: Scope | null = null;
   private _abortSignalController: AbortController | null = null;
   private pendingInstruction: string | null = null;
+  private pendingVoiceMerge: { messageId: string; prefixContent: string } | null = null;
   private pendingDelegateCrewIds: string[] | null = null;
   private turnWebSearchPolicy: WebSearchTurnPolicy = 'off';
   private forcedWebSearchToolName: 'deep_web_search' | 'web_search' | null = null;
@@ -1796,7 +1801,7 @@ Rules:
     return trimmed;
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1867,6 +1872,7 @@ Rules:
 
     // Store the per-message instruction for injection during completion (not in history)
     this.pendingInstruction = options?.instruction || null;
+    this.pendingVoiceMerge = options?.voiceMergeIntoMessage ?? null;
     this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
 
     const searchStatus = isWebSearchAvailableForChat(this.config);
@@ -1939,7 +1945,7 @@ Rules:
     }
 
     // Add user message (clean, without instruction)
-    if (!options?.retry) {
+    if (!options?.retry && !options?.voiceContinuation) {
       const turnBoundary = this.messages.length > 0
         ? `\n[TURN ${this.currentTurnId} — treat prior messages as context only unless the user references them]`
         : '';
@@ -1947,7 +1953,9 @@ Rules:
     }
 
     // Record in context tracker
-    this.contextTracker.record('user', cleanContent);
+    if (!options?.voiceContinuation) {
+      this.contextTracker.record('user', cleanContent);
+    }
 
     const userMessage: Message = {
       id: generateMessageId(),
@@ -1959,8 +1967,10 @@ Rules:
       tokenCount: 0,
     };
 
-    if (!options?.retry) {
-      this.emit({ type: 'message_sent', message: userMessage });
+    if (!options?.retry && !options?.voiceContinuation) {
+      if (!options?.userMessagePersisted) {
+        this.emit({ type: 'message_sent', message: userMessage });
+      }
       const userTokens = estimateTokens(cleanContent);
       this.tokenTracker.addTokenUsage(userTokens, 0);
       const ctxWindow = this.getContextWindow();
@@ -2062,7 +2072,27 @@ Rules:
         delegateIds.includes(m.crew.id) && m.crew.enabled !== false,
       );
     if (delegatedMembers.length > 0) {
-        return await this.executeCrewMission(delegatedMembers, cleanContent, startTime, classificationContext);
+        let missionTask = cleanContent;
+        if (options?.crewIntakeFromPicker && needsCrewDeploymentIntake(cleanContent)) {
+          const primary = delegatedMembers.find((m) => m.crew.id === options.primaryCrewId) ?? delegatedMembers[0];
+          this.activeClarificationResume = {
+            kind: 'crew_intake',
+            questionnaireMessageId: '',
+            userText: cleanContent,
+            delegateCrewIds: delegateIds,
+            primaryCrewId: options.primaryCrewId,
+            crewIntakeFromPicker: true,
+          };
+          const questionnaire = buildCrewDeploymentIntakeQuestionnaire(
+            cleanContent,
+            primary?.crew.name,
+          );
+          const intakeAnswer = await this.waitForQuestionnaireResponse(questionnaire);
+          if (intakeAnswer && intakeAnswer !== '(skipped)') {
+            missionTask = `${cleanContent}\n\n[User provided planning details]\n${intakeAnswer.trim()}`;
+          }
+        }
+        return await this.executeCrewMission(delegatedMembers, missionTask, startTime, classificationContext);
       }
       getLogger().warn('AGENT', `Crew deploy failed: no enabled members for ids ${delegateIds.join(', ')}`);
       this.emit({
@@ -2393,6 +2423,7 @@ Rules:
     } finally {
       this.turnWebSearchPolicy = 'off';
       this.forcedWebSearchToolName = null;
+      this.pendingVoiceMerge = null;
       this.completeTurnTelemetry(startTime);
       this.lifecycle.forceTransition('idle');
       this.scope = null;
@@ -2567,6 +2598,7 @@ Rules:
       aiMessages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0),
       this.tokenTracker.inputTokenCount,
       this.tokenTracker.outputTokenCount,
+      this.pendingVoiceMerge ?? undefined,
     );
     this.activeStreamHandler = streamHandler;
 
@@ -2650,6 +2682,11 @@ Rules:
 
       const text = streamHandler.getState().accumulatedContent || '';
       let content = text.trim();
+      if (this.pendingVoiceMerge) {
+        const phase2Body = content.replace(/⟨voice⟩[\s\S]*?⟨\/voice⟩\s*/gi, '').trim();
+        const prefix = this.pendingVoiceMerge.prefixContent.trim();
+        content = phase2Body ? `${prefix}\n\n${phase2Body}` : prefix;
+      }
       
       // ─── CRITICAL FIX: Populate tool execution log from stream handler ───
       const streamToolExecs = streamHandler.getState().toolExecutions;
@@ -2720,7 +2757,7 @@ Rules:
       await this.reinforceMemoryContext();
 
       return this.tagCrewPrivateAssistant({
-        id: generateMessageId(),
+        id: this.pendingVoiceMerge?.messageId ?? generateMessageId(),
         sessionId: this.sessionId,
         role: 'assistant' as const,
         content,
@@ -2883,8 +2920,17 @@ Rules:
       lines.push('', identity.evolutionLog);
     }
 
-    // No hardcoded role — the description above defines who the agent is
-    lines.push('', 'Your job is to EXECUTE, not just describe. Take action. Deliver complete results.');
+    // Role guidance — crew workers execute; Agent-X explains unless asked to build
+    if (this.options.promptProfile === 'crew_worker') {
+      lines.push('', 'Your job is to EXECUTE, not just describe. Take action. Deliver complete results.');
+    } else {
+      lines.push(
+        '',
+        'Help the user in clear, approachable language.',
+        'When they want something built, fixed, or automated on their machine — act and deliver.',
+        'When they want to understand a topic (including technical curiosity), explain without assuming they are engineers — no code or shell steps unless they ask for that depth.',
+      );
+    }
 
     return lines.join('\n');
   }
@@ -2926,7 +2972,7 @@ Rules:
     if (this.options.promptProfile === 'crew_worker') {
       const ctx = this.createSectionContext();
       this.promptAssembly
-        .register(createRulesSection())
+        .register(createRulesSection({ technicalExecutor: true }))
         .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx))

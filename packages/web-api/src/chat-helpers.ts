@@ -128,7 +128,6 @@ const TURN_ACTIVITY_EVENTS = new Set([
   'tool_called',
   'tool_result',
   'stream_chunk',
-  'message_received',
   'step_start',
   'step_finish',
   'operation_file_edited',
@@ -152,6 +151,9 @@ export function runAgentTurnAsync(
     voiceTurn?: boolean;
     turnTimeoutMs?: number;
     fixedTurnTimeout?: boolean;
+    userMessagePersisted?: boolean;
+    voiceContinuation?: boolean;
+    voiceMergeIntoMessage?: { messageId: string; prefixContent: string };
     resumeCrewIntake?: {
       originalUserText: string;
       intakeAnswer: string;
@@ -186,7 +188,9 @@ export function runAgentTurnAsync(
     }
   };
 
+  let turnCompleted = false;
   const onTimeout = () => {
+    if (turnCompleted) return;
     try {
       if (agent.isAwaitingClarification?.()) {
         agent.abortClarificationWait?.();
@@ -247,9 +251,13 @@ export function runAgentTurnAsync(
     ...(primaryCrewId ? { primaryCrewId } : {}),
     ...(extra?.forceWebSearch ? { forceWebSearch: true } : {}),
     ...(extra?.voiceTurn ? { voiceTurn: true } : {}),
+    ...(extra?.userMessagePersisted ? { userMessagePersisted: true } : {}),
+    ...(extra?.voiceContinuation ? { voiceContinuation: true } : {}),
+    ...(extra?.voiceMergeIntoMessage ? { voiceMergeIntoMessage: extra.voiceMergeIntoMessage } : {}),
     ...(extra?.resumeCrewIntake ? { resumeCrewIntake: extra.resumeCrewIntake } : {}),
   })
     .then((message) => {
+      turnCompleted = true;
       if (timeoutId) clearTimeout(timeoutId);
       unsubActivity();
       clearVoiceTurn();
@@ -264,6 +272,7 @@ export function runAgentTurnAsync(
       onComplete?.(message);
     })
     .catch((e: unknown) => {
+      turnCompleted = true;
       if (timeoutId) clearTimeout(timeoutId);
       unsubActivity();
       clearVoiceTurn();

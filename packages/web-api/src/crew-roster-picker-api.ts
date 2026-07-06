@@ -3,6 +3,7 @@ import type { CrewMatchCandidate, CrewRosterPickerRecord, CrewSuggestionEvaluati
 import { getEngine } from './engine.js';
 
 type MessageStore = {
+  getMessages?: (sessionId: string) => Array<Record<string, unknown>>;
   insertMessage?: (msg: {
     id: string;
     sessionId: string;
@@ -22,6 +23,40 @@ function getMessageStore(): MessageStore | null {
   return (eng.sessionManager as unknown as { store?: MessageStore })?.store ?? null;
 }
 
+function findExistingPendingPicker(
+  sessionId: string,
+  userText: string,
+): { userMessageId: string; pickerMessageId: string; pickerPartId: string } | null {
+  const store = getMessageStore();
+  const msgs = store?.getMessages?.(sessionId) ?? [];
+  for (let i = msgs.length - 1; i >= 0; i -= 1) {
+    const msg = msgs[i]!;
+    if (msg['role'] !== 'assistant') continue;
+    const parts = msg['parts'] as Array<Record<string, unknown>> | undefined;
+    if (!Array.isArray(parts)) continue;
+    const part = parts.find((p) => p['type'] === 'crew_roster_picker');
+    const record = part?.['crewRosterPicker'] as CrewRosterPickerRecord | undefined;
+    if (!record || record.status !== 'pending' || record.pendingUserText !== userText) continue;
+    const pickerMessageId = String(msg['id'] ?? '');
+    const pickerPartId = String(part?.['id'] ?? record.id);
+    let userMessageId = '';
+    for (let j = i - 1; j >= 0; j -= 1) {
+      const userMsg = msgs[j]!;
+      if (userMsg['role'] === 'user' && userMsg['content'] === userText) {
+        userMessageId = String(userMsg['id'] ?? '');
+        break;
+      }
+    }
+    if (!pickerMessageId || !pickerPartId) continue;
+    return {
+      userMessageId: userMessageId || generateId(),
+      pickerMessageId,
+      pickerPartId,
+    };
+  }
+  return null;
+}
+
 export function persistCrewRosterPickerOffer(input: {
   sessionId: string;
   userText: string;
@@ -29,6 +64,9 @@ export function persistCrewRosterPickerOffer(input: {
   attachments?: Array<{ name: string }>;
   userMessageId?: string;
 }): { userMessageId: string; pickerMessageId: string; pickerPartId: string } {
+  const existing = findExistingPendingPicker(input.sessionId, input.userText);
+  if (existing) return existing;
+
   const store = getMessageStore();
   const now = new Date().toISOString();
   const userMessageId = input.userMessageId ?? generateId();

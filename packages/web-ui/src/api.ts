@@ -324,6 +324,7 @@ export const chat = {
     crewIntakeFromPicker?: boolean,
     primaryCrewId?: string,
     forceWebSearch?: boolean,
+    userMessagePersisted?: boolean,
   ) =>
     postChatAsync('/chat/message', {
       text,
@@ -335,6 +336,7 @@ export const chat = {
       crewIntakeFromPicker,
       primaryCrewId,
       forceWebSearch,
+      userMessagePersisted,
     }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
@@ -466,6 +468,8 @@ export const sessions = {
   create: (scopePath?: string) => request<{ sessionId: string }>('/sessions', { method: 'POST', body: scopePath ? JSON.stringify({ scopePath }) : undefined }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
+  // Soft-archive: hides messages from the UI without deleting DB rows or memory embeddings
+  archiveMessages: (id: string) => request<{ ok: boolean }>(`/sessions/${id}/archive-messages`, { method: 'POST' }),
   restore: (id: string, opts?: { perRole?: number }) =>
     request<{
       session: SessionInfo;

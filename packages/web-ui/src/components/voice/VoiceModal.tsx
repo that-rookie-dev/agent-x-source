@@ -14,6 +14,8 @@ import { voiceDisabledReason, markVoiceOutputUnlocked } from '../../voice/suppor
 import { loadVoiceInputMode, saveVoiceInputMode } from '../../voice/input-mode-preference';
 import { useVoice } from './VoiceProvider';
 import { COMMS_MONO, commsTheme, friendlyVoiceError } from './voice-comms-theme';
+import { phaseActiveChannel, resolveCommsPhase } from './voice-comms-phase';
+import { CommsEllipsis, CommsSpinner } from './CommsSpinner';
 import { VoiceWaveform } from './VoiceWaveform';
 import { DuplexSilenceProgress } from './DuplexSilenceProgress';
 import { VoiceTurnTimingsBar } from './VoiceTurnTimingsBar';
@@ -29,48 +31,20 @@ export interface VoiceModalProps {
   autoStart?: boolean;
 }
 
-type Channel = 'operator' | 'relay' | 'agent';
 type InputMode = 'push-to-talk' | 'duplex';
 
-function resolveActiveChannel(
-  state: string,
-  holding: boolean,
-  commsReady: boolean,
-  bootPhase: string,
-  inputMode: InputMode,
-): Channel | null {
-  if (bootPhase === 'booting') return 'relay';
-  if (!commsReady) return 'relay';
-  if (state === 'connecting') return 'relay';
-  if (state === 'processing') return 'relay';
-  if (state === 'speaking') return 'agent';
-  if (inputMode === 'duplex' && state === 'listening') return 'operator';
-  if (state === 'listening' && holding) return 'operator';
-  if (state === 'listening') return 'operator';
-  if (state === 'ready' || state === 'idle') return 'relay';
-  return null;
-}
-
-function statusLabel(
-  state: string,
-  holding: boolean,
-  agentStatus: string,
-  commsReady: boolean,
-  bootPhase: string,
-  inputMode: InputMode,
-): string {
-  if (bootPhase === 'booting') return 'INITIALIZING';
-  if (bootPhase === 'failed') return 'SIGNAL LOST';
-  if (!commsReady) return 'LINKING COMMS';
-  if (state === 'connecting') return 'LINKING SESSION';
-  if (inputMode === 'duplex' && state === 'listening' && !holding) return 'AWAITING VOICE';
-  if (state === 'listening' && holding) return 'RECORDING';
-  if (state === 'listening') return 'MIC LIVE';
-  if (state === 'processing') return agentStatus ? agentStatus.toUpperCase() : 'PROCESSING';
-  if (state === 'speaking') return 'TRANSMITTING';
-  if (state === 'error') return 'SIGNAL LOST';
-  if (commsReady && (state === 'ready' || state === 'idle')) return 'COMMS READY';
-  return 'STANDBY';
+function phaseStatusLabel(phase: ReturnType<typeof resolveCommsPhase>, agentStatus: string): string {
+  switch (phase) {
+    case 'boot': return 'INITIALIZING';
+    case 'link': return 'LINKING COMMS';
+    case 'standby': return 'COMMS READY';
+    case 'operator_record': return 'UPLINK · LIVE';
+    case 'operator_stt': return 'DECODING SIGNAL';
+    case 'relay_process': return agentStatus ? agentStatus.toUpperCase() : 'RELAY · PROCESSING';
+    case 'agent_prep': return 'SYNTHESIZING VOICE';
+    case 'agent_tx': return 'DOWNLINK · LIVE';
+    default: return 'STANDBY';
+  }
 }
 
 function CommsPanel({
@@ -78,16 +52,19 @@ function CommsPanel({
   title,
   active,
   ready,
+  accent,
   children,
 }: {
   codename: string;
   title: string;
   active: boolean;
   ready?: boolean;
+  accent?: string;
   children: ReactNode;
 }) {
   const border = ready ? commsTheme.relayReadyBorder : active ? commsTheme.borderActive : commsTheme.border;
   const bg = ready ? commsTheme.relayReadyBg : active ? commsTheme.panelActive : commsTheme.panel;
+  const tick = accent ?? (ready ? commsTheme.relayReady : active ? commsTheme.text : commsTheme.border);
 
   return (
     <Box sx={{
@@ -98,20 +75,42 @@ function CommsPanel({
       minHeight: 168,
       display: 'flex',
       flexDirection: 'column',
-      transition: 'border-color 0.25s, background-color 0.25s, box-shadow 0.25s',
+      transition: 'border-color 0.3s, background-color 0.3s, box-shadow 0.3s',
       position: 'relative',
       overflow: 'hidden',
-      boxShadow: ready ? `0 0 24px ${commsTheme.relayReadyBg}` : 'none',
+      boxShadow: active
+        ? `0 0 20px ${accent ? `${accent}18` : 'rgba(255,255,255,0.04)'}`
+        : ready ? `0 0 24px ${commsTheme.relayReadyBg}` : 'none',
       '&::before': active || ready ? {
         content: '""',
         position: 'absolute',
         inset: 0,
         background: ready
           ? 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(34,197,94,0.04) 2px, rgba(34,197,94,0.04) 4px)'
-          : 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.02) 2px, rgba(255,255,255,0.02) 4px)',
+          : 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,255,255,0.015) 3px, rgba(255,255,255,0.015) 6px)',
         pointerEvents: 'none',
+        animation: active && !ready ? 'commsScan 4s linear infinite' : 'none',
+        '@keyframes commsScan': {
+          '0%': { transform: 'translateY(-100%)' },
+          '100%': { transform: 'translateY(100%)' },
+        },
       } : undefined,
+      '& .comms-corner': {
+        position: 'absolute',
+        width: 7,
+        height: 7,
+        borderColor: tick,
+        borderStyle: 'solid',
+        opacity: active || ready ? 0.7 : 0.25,
+        transition: 'opacity 0.3s',
+        pointerEvents: 'none',
+        zIndex: 2,
+      },
     }}>
+      <Box className="comms-corner" sx={{ top: 5, left: 5, borderWidth: '1px 0 0 1px' }} />
+      <Box className="comms-corner" sx={{ top: 5, right: 5, borderWidth: '1px 1px 0 0' }} />
+      <Box className="comms-corner" sx={{ bottom: 5, left: 5, borderWidth: '0 0 1px 1px' }} />
+      <Box className="comms-corner" sx={{ bottom: 5, right: 5, borderWidth: '0 1px 1px 0' }} />
       <Typography sx={{
         fontFamily: COMMS_MONO,
         fontSize: '0.48rem',
@@ -305,12 +304,29 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
   const activityLog = useVoiceActivityLog(chatSessionId, turnEpoch, open);
   const showMissionLog = commsReady;
   const showSilenceBar = isDuplex && commsReady && session.state === 'listening' && session.silenceProgress > 0;
-  const relayReady = commsReady && !session.holding && session.state !== 'connecting' && session.state !== 'processing';
-  const activeChannel = resolveActiveChannel(session.state, session.holding, commsReady, bootPhase, inputMode);
-  const status = statusLabel(session.state, session.holding, session.agentStatus, commsReady, bootPhase, inputMode);
-  const capturedText = (session.finalTranscript || session.partialTranscript || session.transcript).trim();
-  const operatorText = capturedText;
-  const showOperatorText = Boolean(operatorText);
+
+  const operatorText = (session.finalTranscript || session.partialTranscript || session.transcript).trim();
+  const commsPhase = resolveCommsPhase({
+    bootPhase,
+    commsReady,
+    state: session.state,
+    holding: session.holding,
+    isDuplex,
+    operatorText,
+    agentText: session.agentText,
+    playbackLevel: session.playbackLevel,
+  });
+  const activeChannel = phaseActiveChannel(commsPhase);
+  const relayReady = commsPhase === 'standby';
+  const status = bootPhase === 'failed' || session.state === 'error'
+    ? 'SIGNAL LOST'
+    : phaseStatusLabel(commsPhase, session.agentStatus);
+
+  const operatorWaves = commsPhase === 'operator_record';
+  const operatorStt = commsPhase === 'operator_stt';
+  const agentWaves = commsPhase === 'agent_tx';
+  const agentPrep = commsPhase === 'agent_prep';
+  const showOperatorText = Boolean(operatorText) && commsPhase !== 'operator_record';
 
   const footerHint = useMemo(() => {
     if (envBlocked) return envBlocked;
@@ -334,9 +350,13 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
     ? commsTheme.error
     : relayReady
       ? commsTheme.relayReady
-      : activeChannel
-        ? commsTheme.text
-        : commsTheme.textDim;
+      : activeChannel === 'operator'
+        ? commsTheme.operator
+        : activeChannel === 'agent'
+          ? commsTheme.agent
+          : activeChannel
+            ? commsTheme.text
+            : commsTheme.textDim;
 
   return (
     <Dialog
@@ -419,38 +439,59 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
         </Box>
 
         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 0.55fr 1fr', gap: 1.5, mb: 1.5 }}>
-          <CommsPanel codename="CHANNEL A" title="Operator" active={activeChannel === 'operator'}>
-            <VoiceWaveform
-              level={session.audioLevel}
-              active={activeChannel === 'operator'}
-              accent={commsTheme.operator}
-            />
+          <CommsPanel
+            codename="CHANNEL A"
+            title="Operator"
+            active={activeChannel === 'operator'}
+            accent={commsTheme.operator}
+          >
+            {operatorWaves && (
+              <VoiceWaveform
+                level={session.audioLevel}
+                active
+                accent={commsTheme.operator}
+              />
+            )}
+            {operatorStt && (
+              <Box sx={{ py: 1 }}>
+                <CommsSpinner color={commsTheme.operator} />
+                <Typography sx={{ mt: 1, textAlign: 'center', fontFamily: COMMS_MONO, fontSize: '0.52rem', color: commsTheme.operator, letterSpacing: '1px' }}>
+                  DECODING UPLINK
+                </Typography>
+                <CommsEllipsis color={commsTheme.operator} />
+              </Box>
+            )}
+            {!operatorWaves && !operatorStt && (
+              <VoiceWaveform
+                level={0}
+                active={false}
+                accent={commsTheme.operator}
+                height={40}
+              />
+            )}
             {showOperatorText && (
               <Typography sx={{
-                mt: 1,
+                mt: operatorWaves || operatorStt ? 1 : 0.5,
                 fontFamily: COMMS_MONO,
                 fontSize: '0.58rem',
-                color: commsTheme.textSecondary,
+                color: commsTheme.operator,
                 lineHeight: 1.45,
                 wordBreak: 'break-word',
-                maxHeight: 64,
+                maxHeight: 72,
                 overflow: 'auto',
+                borderLeft: `2px solid ${commsTheme.operator}55`,
+                pl: 1,
               }}>
                 {operatorText}
               </Typography>
             )}
-            {activeChannel === 'operator' && !operatorText && isDuplex && (
-              <Typography sx={{ mt: 1, fontFamily: COMMS_MONO, fontSize: '0.55rem', color: commsTheme.textDim }}>
-                Listening — pause 5 s when done to send
+            {commsPhase === 'operator_record' && !showOperatorText && (
+              <Typography sx={{ mt: 1, fontFamily: COMMS_MONO, fontSize: '0.52rem', color: commsTheme.textDim, textAlign: 'center' }}>
+                {isDuplex ? 'Transmit · pause 5 s to send' : 'Channel open — speak now'}
               </Typography>
             )}
-            {activeChannel === 'operator' && !operatorText && !isDuplex && (
-              <Typography sx={{ mt: 1, fontFamily: COMMS_MONO, fontSize: '0.55rem', color: commsTheme.textDim }}>
-                Speak now — audio is being captured
-              </Typography>
-            )}
-            {commsReady && !session.holding && session.state !== 'listening' && (
-              <Typography sx={{ mt: 1, fontFamily: COMMS_MONO, fontSize: '0.5rem', color: commsTheme.textDim }}>
+            {commsPhase === 'standby' && (
+              <Typography sx={{ mt: 1, fontFamily: COMMS_MONO, fontSize: '0.5rem', color: commsTheme.textDim, textAlign: 'center' }}>
                 Awaiting transmission
               </Typography>
             )}
@@ -458,78 +499,104 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
 
           <CommsPanel
             codename="RELAY"
-            title={relayReady ? 'Link Status' : 'Processing'}
+            title={relayReady ? 'Link Status' : 'Mission Relay'}
             active={activeChannel === 'relay' && !relayReady}
             ready={relayReady}
+            accent={commsTheme.relayReady}
           >
-            {bootPhase === 'booting' && (
+            {commsPhase === 'boot' && (
               <>
-                <RelayPulse active />
-                <Typography sx={{ textAlign: 'center', fontFamily: COMMS_MONO, fontSize: '0.55rem', color: commsTheme.textDim }}>
+                <CommsSpinner color={commsTheme.textDim} />
+                <Typography sx={{ textAlign: 'center', fontFamily: COMMS_MONO, fontSize: '0.52rem', color: commsTheme.textDim, mt: 1 }}>
                   Warming STT / TTS engines…
                 </Typography>
               </>
             )}
+            {commsPhase === 'link' && (
+              <>
+                <RelayPulse active />
+                <Typography sx={{ textAlign: 'center', fontFamily: COMMS_MONO, fontSize: '0.52rem', color: commsTheme.textDim, mt: 0.5 }}>
+                  {session.state === 'connecting' ? 'Opening secure session…' : 'Establishing link…'}
+                </Typography>
+              </>
+            )}
             {bootPhase === 'failed' && (
-              <Typography sx={{ textAlign: 'center', fontFamily: COMMS_MONO, fontSize: '0.55rem', color: commsTheme.error, lineHeight: 1.45 }}>
+              <Typography sx={{ textAlign: 'center', fontFamily: COMMS_MONO, fontSize: '0.52rem', color: commsTheme.error, lineHeight: 1.45 }}>
                 {friendlyVoiceError(bootError ?? 'Voice engine offline')}
               </Typography>
             )}
             {relayReady && (
               <RelayReadyPanel health={sidecarHealth} wsLinked={wsLinked} />
             )}
-            {!relayReady && bootPhase === 'ready' && session.state === 'connecting' && (
-              <>
-                <RelayPulse active />
-                <Typography sx={{ textAlign: 'center', fontFamily: COMMS_MONO, fontSize: '0.55rem', color: commsTheme.textDim }}>
-                  Opening secure session…
+            {commsPhase === 'relay_process' && (
+              <Box sx={{ textAlign: 'center', py: 0.5 }}>
+                <CommsSpinner color={commsTheme.text} />
+                <Typography sx={{ fontFamily: COMMS_MONO, fontSize: '0.55rem', fontWeight: 700, color: commsTheme.text, letterSpacing: '1px', mt: 1 }}>
+                  AGENT RELAY
                 </Typography>
-              </>
-            )}
-            {!relayReady && bootPhase === 'ready' && session.state === 'processing' && (
-              <>
-                <RelayPulse active />
-                <Typography sx={{ textAlign: 'center', fontFamily: COMMS_MONO, fontSize: '0.55rem', color: commsTheme.textSecondary }}>
-                  {session.agentStatus || 'Transcribing & routing'}
+                <Typography sx={{ fontFamily: COMMS_MONO, fontSize: '0.5rem', color: commsTheme.textDim, mt: 0.5 }}>
+                  {session.agentStatus || 'Processing request'}
                 </Typography>
-              </>
+                <CommsEllipsis />
+              </Box>
             )}
           </CommsPanel>
 
-          <CommsPanel codename="CHANNEL B" title="Agent" active={activeChannel === 'agent'}>
-            <VoiceWaveform
-              level={session.playbackLevel}
-              active={activeChannel === 'agent'}
-              accent={commsTheme.agent}
-            />
+          <CommsPanel
+            codename="CHANNEL B"
+            title="Agent"
+            active={activeChannel === 'agent'}
+            accent={commsTheme.agent}
+          >
+            {agentWaves && (
+              <VoiceWaveform
+                level={session.playbackLevel}
+                active
+                accent={commsTheme.agent}
+              />
+            )}
+            {agentPrep && (
+              <Box sx={{ py: 1 }}>
+                <CommsSpinner color={commsTheme.agent} />
+                <Typography sx={{ mt: 1, textAlign: 'center', fontFamily: COMMS_MONO, fontSize: '0.52rem', color: commsTheme.agent, letterSpacing: '1px' }}>
+                  VOICE SYNTHESIS
+                </Typography>
+                <CommsEllipsis color={commsTheme.agent} />
+              </Box>
+            )}
+            {!agentWaves && !agentPrep && (
+              <VoiceWaveform
+                level={0}
+                active={false}
+                accent={commsTheme.agent}
+                height={40}
+              />
+            )}
             {session.agentText && (
               <Typography sx={{
-                mt: 1,
+                mt: agentWaves || agentPrep ? 1 : 0.5,
                 fontFamily: COMMS_MONO,
                 fontSize: '0.58rem',
                 color: commsTheme.agent,
                 lineHeight: 1.45,
                 wordBreak: 'break-word',
-                maxHeight: 64,
+                maxHeight: 72,
                 overflow: 'auto',
+                borderLeft: `2px solid ${commsTheme.agent}55`,
+                pl: 1,
               }}>
                 {session.agentText}
               </Typography>
             )}
-            {activeChannel === 'agent' && !session.agentText && (
-              <Typography sx={{ mt: 1, fontFamily: COMMS_MONO, fontSize: '0.55rem', color: commsTheme.textDim }}>
-                Playing response audio…
-              </Typography>
-            )}
-            {commsReady && session.state !== 'speaking' && !session.agentText && (
-              <Typography sx={{ mt: 1, fontFamily: COMMS_MONO, fontSize: '0.5rem', color: commsTheme.textDim }}>
+            {commsPhase === 'standby' && !session.agentText && (
+              <Typography sx={{ mt: 1, fontFamily: COMMS_MONO, fontSize: '0.5rem', color: commsTheme.textDim, textAlign: 'center' }}>
                 Standing by
               </Typography>
             )}
           </CommsPanel>
         </Box>
 
-        <Box sx={{ px: 2, mb: 1 }}>
+        <Box sx={{ mb: 1 }}>
           <VoiceActivityLog key={turnEpoch} entries={activityLog} visible={showMissionLog} />
           {session.permissionPrompt && (
             <VoicePermissionCard

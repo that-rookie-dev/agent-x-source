@@ -307,13 +307,6 @@ function appendContextFile(
  */
 export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[] }): void {
   appendContextFile(sessionId, role, content, undefined, extra);
-  try {
-    const eng = getEngine();
-    const store = (eng.sessionManager as any).store;
-    if (store?.insertMessage && content) {
-      store.insertMessage({ sessionId, role, content, toolCalls: extra?.toolCalls });
-    }
-  } catch { /* best-effort */ }
 }
 
 let wss: WebSocketServer | null = null;
@@ -927,11 +920,30 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
         try {
           flushTextBuffer();
           const msg: any = (event as any).message;
+          const isUpdate = (event as { isUpdate?: boolean }).isUpdate === true;
           const text = repairStreamTextGlitches(stripToolNoise((msg?.content as string) || (event as any).content as string || ''));
           const crew = msg?.crew as CrewInfo | undefined;
           if (sessionId && text) {
             const thinkingText = accumulatedThinking || undefined;
-            appendContextFile(sessionId, 'assistant', text, crew, buildExtra(thinkingText));
+            const extra = buildExtra(thinkingText);
+            if (isUpdate && msg?.id) {
+              const store = (eng.sessionManager as unknown as {
+                store?: {
+                  getMessages?: (sid: string) => Array<Record<string, unknown>>;
+                  updateMessage?: (sid: string, mid: string, patch: Record<string, unknown>) => void;
+                };
+              }).store;
+              const existing = store?.getMessages?.(sessionId)?.find((m) => m['id'] === msg.id);
+              const existingParts = Array.isArray(existing?.['parts']) ? existing!['parts'] as Array<Record<string, unknown>> : [];
+              const newParts = Array.isArray(extra.parts) ? extra.parts as Array<Record<string, unknown>> : [];
+              const mergedParts = newParts.length > 0 ? [...existingParts, ...newParts] : existingParts;
+              store?.updateMessage?.(sessionId, msg.id, {
+                content: text,
+                ...(mergedParts.length > 0 ? { parts: mergedParts } : {}),
+              });
+            } else {
+              appendContextFile(sessionId, 'assistant', text, crew, extra);
+            }
             ingestConversationMemory(sessionId, 'assistant', text).catch((e) => getLogger().warn('MEMORY_INGEST', `assistant message ingest failed: ${e instanceof Error ? e.message : String(e)}`));
           }
         } finally {

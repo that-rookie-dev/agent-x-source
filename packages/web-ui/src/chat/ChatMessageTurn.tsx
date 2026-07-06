@@ -260,6 +260,30 @@ function renderParts(
     );
   }
 
+  const firstTextIdx = ordered.findIndex((p) => p.type === 'text');
+  if (firstTextIdx >= 0) {
+    const beforeText = ordered.slice(0, firstTextIdx);
+    const textAndAfter = ordered.slice(firstTextIdx);
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {beforeText.map((part, i) => {
+          const prev = beforeText[i - 1];
+          const compactTop = part.type === 'tool' && prev?.type === 'tool';
+          if (part.type === 'deep_search' && part.deepSearch) {
+            return renderDeepSearchPart(part, prev?.type === 'tool');
+          }
+          return renderMainPart(part, compactTop);
+        })}
+        {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
+        {textAndAfter.map((part, i) => {
+          const prev = textAndAfter[i - 1];
+          const compactTop = part.type === 'tool' && prev?.type === 'tool';
+          return renderMainPart(part, compactTop);
+        })}
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       {ordered.map((part, i) => {
@@ -328,11 +352,11 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     voiceSummary,
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {cleanContent && <CrewAwareMarkdown content={cleanContent} webSources={webSources} />}
       {displayMessage.toolCalls?.map((t, i) => (
         <InlineToolCall key={t.id} tool={t} compactTop={i > 0} />
       ))}
       {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
+      {cleanContent && <CrewAwareMarkdown content={cleanContent} webSources={webSources} />}
     </Box>
   );
 

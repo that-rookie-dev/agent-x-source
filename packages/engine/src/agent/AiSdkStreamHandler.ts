@@ -185,6 +185,7 @@ export function createAiSdkStreamHandler(
   promptCharEstimate = 0,
   sessionInputBaseline = 0,
   sessionOutputBaseline = 0,
+  voiceMerge?: { messageId: string; prefixContent: string },
 ) {
   const state: StreamState = {
     accumulatedContent: '',
@@ -489,10 +490,19 @@ export function createAiSdkStreamHandler(
           break;
         }
 
-        const finalContent = trimmedContent || 'I apologize, I was unable to generate a response.';
+        let finalContent = trimmedContent || 'I apologize, I was unable to generate a response.';
+        let outMessageId = messageId;
+        let isUpdate = false;
+        if (voiceMerge) {
+          outMessageId = voiceMerge.messageId;
+          const phase2Body = finalContent.replace(/⟨voice⟩[\s\S]*?⟨\/voice⟩\s*/gi, '').trim();
+          const prefix = voiceMerge.prefixContent.trim();
+          finalContent = phase2Body ? `${prefix}\n\n${phase2Body}` : prefix;
+          isUpdate = true;
+        }
 
         const assistantMessage: Message = {
-          id: messageId,
+          id: outMessageId,
           sessionId,
           role: 'assistant',
           content: finalContent,
@@ -508,6 +518,7 @@ export function createAiSdkStreamHandler(
           type: 'message_received',
           message: assistantMessage,
           elapsed,
+          ...(isUpdate ? { isUpdate: true } : {}),
         });
 
         onSessionEvent?.({ type: 'finish', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { content: state.accumulatedContent, usage: usage ? { inputTokens: state.totalInputTokens, outputTokens: state.totalOutputTokens } : undefined } });

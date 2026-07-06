@@ -35,6 +35,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import HistoryIcon from '@mui/icons-material/History';
 import ForumIcon from '@mui/icons-material/Forum';
 import DownloadIcon from '@mui/icons-material/Download';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import GroupsIcon from '@mui/icons-material/Groups';
 import MicIcon from '@mui/icons-material/Mic';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
@@ -141,16 +142,17 @@ const panelHeaderRowSx = {
   flexShrink: 0,
 };
 
-const sidebarSectionHeaderSx = {
+const sidebarSectionHeaderSx = (expanded: boolean) => ({
   ...panelHeaderRowSx,
+  borderBottom: expanded ? `1px solid ${colors.border.default}` : 'none',
   cursor: 'pointer',
   '&:hover': { bgcolor: colors.bg.tertiary + '40' },
-};
+});
 
-const sidebarSectionHeaderWithDividerSx = {
-  ...sidebarSectionHeaderSx,
+const sidebarSectionHeaderWithDividerSx = (expanded: boolean) => ({
+  ...sidebarSectionHeaderSx(expanded),
   borderTop: `1px solid ${colors.border.default}`,
-};
+});
 
 const sidebarSectionContentSx = {
   px: 1.5,
@@ -754,6 +756,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const [crewDossierCrew, setCrewDossierCrew] = useState<PrebuiltCrew | null>(null);
   const pendingSendTextRef = useRef<string | null>(null);
   const crewSuggestionHandledRef = useRef(false);
+  const crewGateInFlightRef = useRef(false);
   const attachCrewRosterPickerRef = useRef<(
     text: string,
     evaluation: CrewSuggestionEvaluation,
@@ -1343,7 +1346,20 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         const msg = ev.message as { id?: string; content?: string; role?: string } | undefined;
         const text = typeof msg?.content === 'string' ? msg.content.trim() : '';
         if (!text || msg?.role !== 'user') return;
-        appendVoiceUserTurn(text, msg.id);
+        // Text chat already added the user bubble locally — only sync voice-only turns.
+        setMessages((prev) => {
+          if (prev.some((m) => m.role === 'user' && m.content === text)) return prev;
+          return [
+            ...prev,
+            {
+              id: msg?.id ?? crypto.randomUUID(),
+              role: 'user',
+              content: text,
+              streaming: false,
+              voiceInput: true,
+            },
+          ];
+        });
         return;
       }
 
@@ -2296,6 +2312,15 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     const sessionId = await ensureSession();
     if (!sessionId) return false;
 
+    const alreadyPending = messages.some((m) =>
+      m.parts?.some((p) =>
+        p.type === 'crew_roster_picker'
+        && p.crewRosterPicker?.status === 'pending'
+        && p.crewRosterPicker.pendingUserText === trimmed,
+      ),
+    );
+    if (alreadyPending) return true;
+
     try {
       const persisted = await crewSuggestions.offerRosterPicker(sessionId, {
         userText: trimmed,
@@ -2360,7 +2385,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to offer crew roster'));
       return false;
     }
-  }, [attachments, isCrewPrivateSession, ensureSession, replaceWarning]);
+  }, [attachments, isCrewPrivateSession, ensureSession, replaceWarning, messages]);
 
   useEffect(() => {
     attachCrewRosterPickerRef.current = attachCrewRosterPicker;
@@ -2374,6 +2399,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
       skipUserMessage?: boolean;
+      userMessagePersisted?: boolean;
     },
   ) => {
     const trimmed = sanitizeForJson(text.trim());
@@ -2420,6 +2446,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         options?.crewIntakeFromPicker,
         options?.primaryCrewId,
         webSearchAvailable && webSearchForce,
+        options?.userMessagePersisted ?? options?.skipUserMessage,
       );
       if (result?.crewSuggestionRequired && result.evaluation) {
         endTurnUi();
@@ -2474,10 +2501,13 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const runCrewSuggestionGate = useCallback(async (trimmed: string): Promise<boolean> => {
     if (isCrewPrivateSession || coreSession) return false;
     if (/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) return false;
+    if (crewGateInFlightRef.current) return false;
 
     const sessionId = await ensureSession();
     if (!sessionId) return false;
 
+    crewGateInFlightRef.current = true;
+    try {
     const userMessageId = crypto.randomUUID();
     const evalAssistant = createCrewSuggestionEvalMessage();
     const userMsg: UIMessage = {
@@ -2521,6 +2551,9 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     setMessages((prev) => prev.filter((m) => m.id !== evalAssistant.id));
     await executeSend(trimmed, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
     return true;
+    } finally {
+      crewGateInFlightRef.current = false;
+    }
   }, [
     attachments,
     attachCrewRosterPicker,
@@ -2689,7 +2722,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
           pickerPartId,
         });
         markCrewRosterPickerResolved(messageId, 'skipped');
-        await executeSend(text, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+        await executeSend(text, undefined, { crewSuggestionResolved: true, skipUserMessage: true, userMessagePersisted: true });
         return;
       }
       const primaryCrewId = result.deployedPrimaryCrewId
@@ -2707,6 +2740,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         crewSuggestionResolved: true,
         primaryCrewId,
         skipUserMessage: true,
+        userMessagePersisted: true,
+        crewIntakeFromPicker: true,
       });
     } catch (err) {
       revertCrewRosterPickerPending(messageId);
@@ -2738,7 +2773,11 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
           pickerPartId: pickerPart?.id,
         });
       }
-      await executeSend(record.pendingUserText, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+      await executeSend(record.pendingUserText, undefined, {
+        crewSuggestionResolved: true,
+        skipUserMessage: true,
+        userMessagePersisted: true,
+      });
     } catch (err) {
       revertCrewRosterPickerPending(messageId);
       setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to skip crew picker'));
@@ -3257,6 +3296,30 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     void startNewSession(folder);
   };
 
+  // Clear session view: soft-archives messages (kept in DB + memory), two-step confirm
+  const [clearArmed, setClearArmed] = useState(false);
+  const clearArmTimerRef = useRef<number | null>(null);
+  const handleClearSession = async () => {
+    const sid = currentSessionIdRef.current;
+    if (!sid) return;
+    if (!clearArmed) {
+      setClearArmed(true);
+      if (clearArmTimerRef.current) window.clearTimeout(clearArmTimerRef.current);
+      clearArmTimerRef.current = window.setTimeout(() => setClearArmed(false), 4000);
+      return;
+    }
+    if (clearArmTimerRef.current) { window.clearTimeout(clearArmTimerRef.current); clearArmTimerRef.current = null; }
+    setClearArmed(false);
+    try {
+      await sessions.archiveMessages(sid);
+      setMessages([]);
+      setHasOlderMessages(false);
+      setPendingFeedbackMessageId(null);
+    } catch (e) {
+      setWarnings([`Failed to clear session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
+    }
+  };
+
   const startNewSession = async (folder: string) => {
     setWarnings([]);
     setStreaming(false);
@@ -3530,9 +3593,11 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
           zIndex: 1,
           transition: 'border-color 0.6s ease',
         }}>
-          <IconButton size="small" onClick={handleShowSessions} sx={{ color: colors.text.dim, p: 0.5 }}>
-            <ArrowBackIcon sx={{ fontSize: 16 }} />
-          </IconButton>
+          {!coreSession && (
+            <IconButton size="small" onClick={handleShowSessions} sx={{ color: colors.text.dim, p: 0.5 }}>
+              <ArrowBackIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          )}
           {parentSessionId && (
             <Chip size="small"
               icon={<ArrowBackIcon sx={{ fontSize: 10 }} />}
@@ -3573,15 +3638,34 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               <DownloadIcon sx={{ fontSize: 14 }} />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Command palette (⌘K)" arrow>
-            <IconButton size="small" onClick={() => setPaletteOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.purple } }}>
-              <BoltIcon sx={{ fontSize: 14 }} />
-            </IconButton>
-          </Tooltip>
-          <Button size="small" startIcon={<AddIcon sx={{ fontSize: 12 }} />} onClick={() => handleNewSession()}
-            sx={{ color: colors.accent.green, fontSize: '0.55rem', textTransform: 'none', minWidth: 'auto' }}>
-            New
-          </Button>
+          {coreSession && (
+            <Tooltip title={clearArmed ? 'Click again to confirm clear' : 'Clear session view (archives messages; DB & memory untouched)'} arrow>
+              <IconButton
+                size="small"
+                onClick={() => { void handleClearSession(); }}
+                sx={{
+                  color: clearArmed ? colors.accent.red : colors.text.dim,
+                  p: 0.5,
+                  '&:hover': { color: colors.accent.red },
+                }}
+              >
+                <DeleteSweepIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {!coreSession && (
+            <Tooltip title="Command palette (⌘K)" arrow>
+              <IconButton size="small" onClick={() => setPaletteOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.purple } }}>
+                <BoltIcon sx={{ fontSize: 14 }} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {!coreSession && (
+            <Button size="small" startIcon={<AddIcon sx={{ fontSize: 12 }} />} onClick={() => handleNewSession()}
+              sx={{ color: colors.accent.green, fontSize: '0.55rem', textTransform: 'none', minWidth: 'auto' }}>
+              New
+            </Button>
+          )}
         </Box>
 
         {showMedicalSessionDisclaimer && <MedicalDisclaimerChatSessionStrip />}
@@ -4060,7 +4144,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         <Box>
           <Box
             onClick={() => setContextExpanded(!contextExpanded)}
-            sx={sidebarSectionHeaderSx}
+            sx={sidebarSectionHeaderSx(contextExpanded)}
           >
             <ArticleIcon sx={{ fontSize: 12, color: '#00bcd4' }} />
               <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -4097,7 +4181,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         <Box>
           <Box
             onClick={() => setTokenExpanded(!tokenExpanded)}
-            sx={sidebarSectionHeaderWithDividerSx}
+            sx={sidebarSectionHeaderWithDividerSx(tokenExpanded)}
           >
             <AutoGraphIcon sx={{ fontSize: 12, color: '#4caf50' }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -4210,7 +4294,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         <Box>
           <Box
             onClick={() => setMissionExpanded(!missionExpanded)}
-            sx={sidebarSectionHeaderWithDividerSx}
+            sx={sidebarSectionHeaderWithDividerSx(missionExpanded)}
           >
             <GroupsIcon sx={{ fontSize: 12, color: crewTheme.accent.tactical }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -4319,7 +4403,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         <Box sx={{ flex: 1, overflow: 'auto' }}>
           <Box
             onClick={() => setTasksExpanded(!tasksExpanded)}
-            sx={sidebarSectionHeaderWithDividerSx}
+            sx={sidebarSectionHeaderWithDividerSx(tasksExpanded)}
           >
             <ChecklistIcon sx={{ fontSize: 12, color: colors.accent.blue }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>

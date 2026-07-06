@@ -6,8 +6,12 @@ import { VoiceStreamSpeakPipeline, VoiceTurnTimingTracker } from './voice-turn-t
 import {
   VoiceBlockStreamExtractor,
   buildVoiceFallback,
-  buildVoiceTurnInstruction,
+  buildVoiceSummaryPhaseInstruction,
+  buildVoiceFollowUpPhaseInstruction,
+  buildVoiceChatReportPhaseInstruction,
   extractVoiceSpeakable,
+  isVoiceSummaryOnlyMessage,
+  userWantsVoiceChatReport,
 } from './voice-speakable.js';
 import { validateVoiceWebSocketConnection } from './auth.js';
 import { ensureSubscribed } from './ws.js';
@@ -439,10 +443,8 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, chunk: 
   if (session.duplexTurnInFlight) return;
 
   if (session.speaking) {
-    ws.send(JSON.stringify({ type: 'playback_interrupted' }));
-    session.speaking = false;
-    session.recording = true;
-    await cancelActiveSynth(session);
+    // Agent is speaking — ignore mic chunks (prevents echo/noise from cutting off TTS).
+    return;
   }
 
   const now = Date.now();
@@ -685,94 +687,122 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       ws.send(JSON.stringify({ type: 'voice_timing', ...timings.snapshot() }));
     };
 
-    const turnId = randomUUID();
-    runAgentTurnAsync(
-      agent,
-      text,
-      buildVoiceTurnInstruction(),
-      false,
-      turnId,
-      sid,
-      async (message) => {
+    const completeVoiceTurn = async () => {
+      sendTimings();
+      ws.send(JSON.stringify({ type: 'audio_end' }));
+      ws.send(JSON.stringify({
+        type: 'agent_status',
+        status: 'complete',
+        text: agentDisplayText.trim() || undefined,
+      }));
+      session.speaking = false;
+      session.activeSynthId = undefined;
+      voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+      if (session.mode === 'duplex') {
+        void resetDuplexListening(session);
+      }
+    };
+
+    const handleVoiceTurnError = (error: unknown) => {
+      session.unsub?.();
+      session.unsub = undefined;
+      session.speaking = false;
+      if (session.mode === 'duplex') {
+        void resetDuplexListening(session);
+      }
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const now = Date.now();
+      if (now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
+        session.duplexLastErrorAt = now;
+        sendError(ws, errMsg);
+      }
+      voiceSession?.fail(errMsg);
+    };
+
+    try {
+      const priorAssistant = getLastAssistantInSession(sid);
+      const pendingVoiceSummary = priorAssistant != null
+        && isVoiceSummaryOnlyMessage(priorAssistant.content);
+      const wantsChatReport = userWantsVoiceChatReport(text);
+
+      const turnInstruction = pendingVoiceSummary && wantsChatReport
+        ? buildVoiceChatReportPhaseInstruction()
+        : pendingVoiceSummary
+          ? buildVoiceFollowUpPhaseInstruction()
+          : buildVoiceSummaryPhaseInstruction();
+
+      const chatReportOnly = pendingVoiceSummary && wantsChatReport;
+      if (chatReportOnly) {
+        session.textOnlyPlayback = true;
+      }
+
+      const turnId = randomUUID();
+      const turnMessage = await runVoiceAgentPhase(
+        agent,
+        text,
+        turnInstruction,
+        turnId,
+        sid,
+        chatReportOnly && priorAssistant
+          ? {
+            voiceMergeIntoMessage: {
+              messageId: priorAssistant.id,
+              prefixContent: priorAssistant.content,
+            },
+          }
+          : {},
+      );
+
+      const turnContent = extractAssistantText(turnMessage);
+      const { voice, chat: strayChat } = extractVoiceSpeakable(turnContent);
+
+      if (!turnContent.trim()) {
         session.unsub?.();
         session.unsub = undefined;
-        const content = extractAssistantText(message);
-        const { voice, chat } = extractVoiceSpeakable(content);
-        if (content) {
-          agentDisplayText = chat || content;
-        }
-
-        const completeVoiceTurn = async () => {
-          sendTimings();
-          ws.send(JSON.stringify({ type: 'audio_end' }));
-          ws.send(JSON.stringify({
-            type: 'agent_status',
-            status: 'complete',
-            text: agentDisplayText.trim() || undefined,
-          }));
-          session.speaking = false;
-          session.activeSynthId = undefined;
-          voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
-          if (session.mode === 'duplex') {
-            void resetDuplexListening(session);
-          }
-        };
-
-        if (!content?.trim()) {
-          ws.send(JSON.stringify({ type: 'agent_status', status: 'complete', empty: true }));
-          sendTimings();
-          voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
-          if (session.mode === 'duplex') {
-            void resetDuplexListening(session);
-          }
-          return;
-        }
-        if (session.textOnlyPlayback) {
-          ws.send(JSON.stringify({
-            type: 'agent_status',
-            status: 'complete',
-            textOnly: true,
-            text: chat || content,
-          }));
-          sendTimings();
-          voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
-          if (session.mode === 'duplex') {
-            void resetDuplexListening(session);
-          }
-          return;
-        }
-
-        const speakText = voice || buildVoiceFallback(chat || content);
-        if (speakPipeline.streamed || voiceExtractor.closed) {
-          await speakPipeline.flush();
-        } else {
-          await speakPipeline.flush(speakText);
-        }
-        await completeVoiceTurn();
-      },
-      (error) => {
-        session.unsub?.();
-        session.speaking = false;
+        ws.send(JSON.stringify({ type: 'agent_status', status: 'complete', empty: true }));
+        sendTimings();
+        voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
         if (session.mode === 'duplex') {
-          void resetDuplexListening(session);
+          await resetDuplexListening(session);
         }
-        const now = Date.now();
-        if (now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
-          session.duplexLastErrorAt = now;
-          sendError(ws, error);
+        return;
+      }
+
+      if (session.textOnlyPlayback) {
+        session.unsub?.();
+        session.unsub = undefined;
+        agentDisplayText = strayChat || turnContent;
+        ws.send(JSON.stringify({
+          type: 'agent_status',
+          status: 'complete',
+          textOnly: true,
+          text: agentDisplayText,
+        }));
+        sendTimings();
+        voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+        if (session.mode === 'duplex') {
+          await resetDuplexListening(session);
         }
-        voiceSession?.fail(error);
-      },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      {
-        voiceTurn: true,
-        turnTimeoutMs: VOICE_TURN_TIMEOUT_MS,
-        fixedTurnTimeout: true,
-      },
-    );
+        return;
+      }
+
+      const speakText = voice || buildVoiceFallback(strayChat || turnContent);
+      if (speakPipeline.streamed || voiceExtractor.closed) {
+        await speakPipeline.flush();
+      } else {
+        await speakPipeline.flush(speakText);
+      }
+
+      session.unsub?.();
+      session.unsub = undefined;
+
+      const { chat: spokenChat } = extractVoiceSpeakable(turnContent);
+      agentDisplayText = spokenChat || strayChat || voice || '';
+
+      await completeVoiceTurn();
+    } catch (phaseError) {
+      handleVoiceTurnError(phaseError);
+    }
   } catch (error) {
     const raw = error instanceof Error ? error.message : String(error);
     const message = raw.includes('fetch failed') || raw.includes('ECONNREFUSED')
@@ -790,6 +820,61 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       voiceSession?.fail(error);
     }
   }
+}
+
+function getLastAssistantInSession(sessionId: string): { id: string; content: string } | null {
+  try {
+    const store = (getEngine().sessionManager as unknown as {
+      store?: { getMessages?: (sid: string) => Array<{ id?: string; role?: string; content?: string }> };
+    }).store;
+    const msgs = store?.getMessages?.(sessionId) ?? [];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const msg = msgs[i];
+      if (msg?.role === 'assistant' && typeof msg.content === 'string') {
+        const id = msg.id;
+        if (typeof id === 'string' && id.length > 0) {
+          return { id, content: msg.content };
+        }
+      }
+    }
+  } catch { /* best-effort */ }
+  return null;
+}
+
+function runVoiceAgentPhase(
+  agent: NonNullable<ReturnType<typeof getEngine>['agent']>,
+  userText: string,
+  instruction: string,
+  turnId: string,
+  sid: string,
+  extra: {
+    voiceContinuation?: boolean;
+    voiceMergeIntoMessage?: { messageId: string; prefixContent: string };
+    userMessagePersisted?: boolean;
+  } = {},
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    runAgentTurnAsync(
+      agent,
+      userText,
+      instruction,
+      false,
+      turnId,
+      sid,
+      (message) => resolve(message),
+      (error) => reject(new Error(error)),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        voiceTurn: true,
+        turnTimeoutMs: VOICE_TURN_TIMEOUT_MS,
+        fixedTurnTimeout: true,
+        ...extra,
+      },
+    );
+  });
 }
 
 function extractAssistantText(message: unknown): string {
