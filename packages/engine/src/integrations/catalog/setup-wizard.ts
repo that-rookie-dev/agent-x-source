@@ -307,9 +307,16 @@ const PROVIDER_SETUP_COPY: Record<string, ProviderSetupCopy> = {
     ],
   },
   gmail: {
-    highlights: ['Read and draft Gmail messages', 'Manage inbox tasks from chat'],
+    highlights: [
+      'Search and read messages in your inbox',
+      'Send email with attachments (confirmed in chat)',
+      'Manage labels, drafts, and folders',
+    ],
     connectGuide: [
-      { title: 'OAuth setup', body: 'This community package uses a local OAuth helper. Follow the package auth flow after connecting.', link: 'https://mail.google.com' },
+      { title: 'Enable Gmail API', body: 'In Google Cloud Console enable the Gmail API for your project.', link: 'https://console.cloud.google.com/apis/library/gmail.googleapis.com' },
+      { title: 'OAuth consent screen', body: 'If the app is in Testing mode, add your Google email under Test users. Under Data access, add gmail.modify and gmail.settings.basic scopes.', link: 'https://console.cloud.google.com/apis/credentials/consent' },
+      { title: 'Create a Web OAuth client', body: 'Application type must be Web application. Add http://localhost:3000/oauth2callback under Authorized redirect URIs (Gmail MCP does not use Desktop clients).', link: 'https://console.cloud.google.com/apis/credentials/oauthclient' },
+      { title: 'Sign in with Google', body: 'After saving credentials, click Sign in — a browser window opens for one-time Gmail authorization.' },
     ],
   },
   twilio: {

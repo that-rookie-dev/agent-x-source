@@ -11,11 +11,15 @@ export interface McpStdioAuthPaths {
   credentialsPath: string;
 }
 
-export function getMcpStdioAuthPaths(connectionId: string, baseDir?: string): McpStdioAuthPaths {
+export function getMcpStdioAuthPaths(
+  connectionId: string,
+  baseDir?: string,
+  credentialsFileName = '.gdrive-server-credentials.json',
+): McpStdioAuthPaths {
   const dir = join(baseDir ?? getDataDir(), 'integrations', 'stdio-auth', connectionId);
   return {
     oauthKeysPath: join(dir, 'gcp-oauth.keys.json'),
-    credentialsPath: join(dir, '.gdrive-server-credentials.json'),
+    credentialsPath: join(dir, credentialsFileName),
   };
 }
 
@@ -24,20 +28,31 @@ export function writeGoogleOAuthKeysFile(
   clientId: string,
   clientSecret: string,
   baseDir?: string,
+  config?: Pick<IntegrationMcpStdioAuth, 'oauthKeysFormat' | 'webRedirectUris'>,
 ): string {
   const paths = getMcpStdioAuthPaths(connectionId, baseDir);
   mkdirSync(join(paths.oauthKeysPath, '..'), { recursive: true });
-  const payload = {
-    installed: {
-      client_id: clientId.trim(),
-      project_id: 'agent-x',
-      auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-      token_uri: 'https://oauth2.googleapis.com/token',
-      auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
-      client_secret: clientSecret.trim(),
-      redirect_uris: ['http://localhost'],
-    },
+  const oauthCommon = {
+    client_id: clientId.trim(),
+    project_id: 'agent-x',
+    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+    token_uri: 'https://oauth2.googleapis.com/token',
+    auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+    client_secret: clientSecret.trim(),
   };
+  const payload = config?.oauthKeysFormat === 'web'
+    ? {
+        web: {
+          ...oauthCommon,
+          redirect_uris: config.webRedirectUris ?? ['http://localhost:3000/oauth2callback'],
+        },
+      }
+    : {
+        installed: {
+          ...oauthCommon,
+          redirect_uris: ['http://localhost'],
+        },
+      };
   writeFileSync(paths.oauthKeysPath, JSON.stringify(payload, null, 2), 'utf-8');
   return paths.oauthKeysPath;
 }
@@ -57,7 +72,7 @@ export function resolveMcpStdioAuthCredentials(
     ?? process.env['G-DRIVE_CLIENT_SECRET']?.trim()
     ?? process.env['GOOGLE_OAUTH_CLIENT_SECRET']?.trim();
   if (!clientId || !clientSecret) return null;
-  writeGoogleOAuthKeysFile(connectionId, clientId, clientSecret, baseDir);
+  writeGoogleOAuthKeysFile(connectionId, clientId, clientSecret, baseDir, config);
   return { clientId, clientSecret };
 }
 
@@ -66,7 +81,7 @@ export function buildMcpStdioAuthEnv(
   connectionId: string,
   baseDir?: string,
 ): Record<string, string> {
-  const paths = getMcpStdioAuthPaths(connectionId, baseDir);
+  const paths = getMcpStdioAuthPaths(connectionId, baseDir, config.credentialsFileName);
   return {
     [config.oauthPathEnv]: paths.oauthKeysPath,
     [config.credentialsPathEnv]: paths.credentialsPath,
@@ -74,11 +89,11 @@ export function buildMcpStdioAuthEnv(
 }
 
 export function hasMcpStdioAuthCredentials(
-  _config: IntegrationMcpStdioAuth,
+  config: IntegrationMcpStdioAuth,
   connectionId: string,
   baseDir?: string,
 ): boolean {
-  const paths = getMcpStdioAuthPaths(connectionId, baseDir);
+  const paths = getMcpStdioAuthPaths(connectionId, baseDir, config.credentialsFileName);
   return existsSync(paths.credentialsPath);
 }
 
@@ -93,17 +108,27 @@ export function isMcpStdioAuthPending(
   return Boolean(config && !hasMcpStdioAuthCredentials(config, connectionId, baseDir));
 }
 
-export function formatMcpStdioAuthError(output: string): string {
+export function formatMcpStdioAuthError(output: string, providerId?: string): string {
   const trimmed = output.trim();
   const lower = trimmed.toLowerCase();
   if (lower.includes('access_denied') || lower.includes('error 403') || lower.includes('403: access_denied')) {
+    const gmailHints = providerId === 'gmail' || lower.includes('localhost:3000/oauth2callback')
+      ? [
+          '2. Credentials → create OAuth client type Web application (not Desktop).',
+          '3. Authorized redirect URIs → add http://localhost:3000/oauth2callback',
+          '4. OAuth consent screen → Data access → add gmail.modify and gmail.settings.basic scopes.',
+          '5. Enable the Gmail API for this project.',
+        ]
+      : [
+          '2. Credentials → OAuth client must be type Desktop app (not Web).',
+          '3. Enable the Gmail or Google Drive API for this project.',
+        ];
     return [
       'Google returned Error 403: access_denied.',
       '',
       'Fix in Google Cloud Console:',
       '1. OAuth consent screen → add your Google account under Test users (required when the app is in Testing).',
-      '2. Credentials → OAuth client must be type Desktop app (not Web).',
-      '3. Enable the Google Drive API for this project.',
+      ...gmailHints,
       '',
       'Then click Sign in again.',
     ].join('\n');
@@ -145,13 +170,16 @@ export async function runMcpStdioAuthCommand(
     child.on('close', (code) => {
       const output = [stdout, stderr].filter(Boolean).join('\n').trim();
       if (code === 0) {
-        resolve({ success: true, output: output || 'Google Drive authorization completed.' });
+        resolve({ success: true, output: output || 'Google authorization completed.' });
         return;
       }
       logger.warn('MCP_STDIO_AUTH', `${provider.id} auth exited ${code}: ${output.slice(0, 500)}`);
       resolve({
         success: false,
-        output: formatMcpStdioAuthError(output || `Authorization failed (exit ${code ?? 'unknown'})`),
+        output: formatMcpStdioAuthError(
+          output || `Authorization failed (exit ${code ?? 'unknown'})`,
+          provider.id,
+        ),
       });
     });
   });

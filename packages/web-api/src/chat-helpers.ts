@@ -1,6 +1,7 @@
 import type { Agent } from '@agentx/engine';
 import { applyWebSearchConfigFromAgentConfig, isWebSearchAvailableForChat } from '@agentx/engine';
-import type { AgentXConfig } from '@agentx/shared';
+import type { AgentPersonaConfig, AgentXConfig, ClientSituation } from '@agentx/shared';
+import { normalizeClientSituation } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
@@ -102,6 +103,26 @@ YOUR RESPONSIBILITIES:
 - Trust the auto-healing system; do not retry failed operations yourself`;
 }
 
+export function refreshAgentPersona(agent: Agent): void {
+  try {
+    const eng = getEngine();
+    const store = (eng.sessionManager as unknown as { store?: { getPersona?: () => AgentPersonaConfig | null } })?.store;
+    if (!store?.getPersona) return;
+    const persona = store.getPersona();
+    const current = (agent as unknown as { persona?: AgentPersonaConfig | null }).persona;
+    if (JSON.stringify(persona) === JSON.stringify(current)) return;
+    agent.applyPersona(persona);
+  } catch { /* best-effort */ }
+}
+
+export function applyClientSituation(agent: Agent, situation: unknown): ClientSituation | null {
+  const normalized = normalizeClientSituation(situation);
+  if (normalized) {
+    agent.setClientSituation(normalized);
+  }
+  return normalized;
+}
+
 export function buildInstructionForMode(
   mode: 'agent' | 'plan',
   opts?: { crewPrivate?: boolean },
@@ -160,6 +181,7 @@ export function runAgentTurnAsync(
       delegateCrewIds: string[];
       primaryCrewId?: string;
     };
+    clientSituation?: ClientSituation | null;
   },
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -242,6 +264,12 @@ export function runAgentTurnAsync(
   });
   timeoutId = setTimeout(onTimeout, turnTimeoutMs);
 
+  refreshAgentPersona(agent);
+  const clientSituation = extra?.clientSituation ?? null;
+  if (clientSituation) {
+    agent.setClientSituation(clientSituation);
+  }
+
   void agent.sendMessage(fullText, {
     ...(instruction ? { instruction } : {}),
     ...(retry ? { retry: true } : {}),
@@ -255,6 +283,7 @@ export function runAgentTurnAsync(
     ...(extra?.voiceContinuation ? { voiceContinuation: true } : {}),
     ...(extra?.voiceMergeIntoMessage ? { voiceMergeIntoMessage: extra.voiceMergeIntoMessage } : {}),
     ...(extra?.resumeCrewIntake ? { resumeCrewIntake: extra.resumeCrewIntake } : {}),
+    ...(clientSituation ? { clientSituation } : {}),
   })
     .then((message) => {
       turnCompleted = true;

@@ -145,6 +145,11 @@ export interface IntegrationMcpStdioAuth {
   authArg: string;
   oauthPathEnv: string;
   credentialsPathEnv: string;
+  /** Filename under integrations/stdio-auth/{connectionId}/ (default: .gdrive-server-credentials.json). */
+  credentialsFileName?: string;
+  /** gcp-oauth.keys.json shape — Gmail MCP expects web + localhost:3000 redirect. */
+  oauthKeysFormat?: 'installed' | 'web';
+  webRedirectUris?: string[];
   clientIdField: string;
   clientSecretField: string;
   clientIdEnv?: string;

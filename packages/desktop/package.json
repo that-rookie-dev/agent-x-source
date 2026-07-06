@@ -107,7 +107,8 @@
       "gatekeeperAssess": false,
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Agent-X uses your microphone for voice commands and speech-to-text."
+        "NSMicrophoneUsageDescription": "Agent-X uses your microphone for voice commands and speech-to-text.",
+        "NSLocationWhenInUseUsageDescription": "Agent-X uses your location for local weather, maps, and recommendations."
       }
     },
     "dmg": {

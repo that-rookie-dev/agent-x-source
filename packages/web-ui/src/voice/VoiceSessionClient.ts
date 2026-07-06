@@ -1,4 +1,5 @@
 import { syncAuthTokenFromSession } from '../api';
+import { collectClientSituation } from '../client-situation.js';
 import { VOICE_SAMPLE_RATE, mergeInt16Chunks } from './pcm.js';
 import { StreamingPlayback } from './playback.js';
 import { VOICE_CAPTURE_PROCESSOR_NAME, VOICE_CAPTURE_PROCESSOR_URL } from './audioWorkletProcessor.js';
@@ -140,12 +141,15 @@ export class VoiceSessionClient {
 
       ws.onopen = () => {
         this.ws = ws;
-        ws.send(JSON.stringify({
-          type: 'session_start',
-          mode: this.mode,
-          sessionId: crypto.randomUUID(),
-          ...(this.chatSessionId ? { chatSessionId: this.chatSessionId } : {}),
-        }));
+        void collectClientSituation().then((clientSituation) => {
+          ws.send(JSON.stringify({
+            type: 'session_start',
+            mode: this.mode,
+            sessionId: crypto.randomUUID(),
+            ...(this.chatSessionId ? { chatSessionId: this.chatSessionId } : {}),
+            clientSituation,
+          }));
+        });
       };
 
       ws.onmessage = (event) => {
@@ -291,6 +295,10 @@ export class VoiceSessionClient {
     }
     await this.stopCaptureOnly();
     this.listenStartedAt = 0;
+    try {
+      const clientSituation = await collectClientSituation();
+      this.ws?.send(JSON.stringify({ type: 'client_situation', clientSituation }));
+    } catch { /* best-effort */ }
     this.ws?.send(JSON.stringify({ type: 'audio_end' }));
     this.setState('processing');
   }

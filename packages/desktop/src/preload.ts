@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('agentx', {
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   openInternalWindow: (url: string) => ipcRenderer.invoke('window:openInternal', url),
+  /** IANA timezone from the desktop shell — geolocation still comes from the renderer. */
+  getTimezone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
   checkMicrophoneAccess: () =>
     ipcRenderer.invoke('permissions:checkMicrophone') as Promise<{ granted: boolean; state: string }>,
   requestMicrophoneAccess: () =>

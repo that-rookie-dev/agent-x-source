@@ -172,6 +172,21 @@ export class ToolExecutor {
     this.handlers.set(toolId, handler);
   }
 
+  hasHandler(toolId: string): boolean {
+    return this.handlers.has(toolId);
+  }
+
+  unregisterHandlersByPrefix(prefix: string): number {
+    let removed = 0;
+    for (const toolId of [...this.handlers.keys()]) {
+      if (toolId.startsWith(prefix)) {
+        this.handlers.delete(toolId);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
   async execute(
     toolId: string,
     args: Record<string, unknown>,

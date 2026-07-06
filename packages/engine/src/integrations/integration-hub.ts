@@ -77,7 +77,7 @@ interface ActiveSession {
 
 export interface IntegrationTurnSnapshot {
   registeredCount: number;
-  connected: Array<{ providerId: string; name: string; toolCount: number }>;
+  connected: Array<{ providerId: string; name: string; toolCount: number; handlersReady: boolean }>;
   unavailable: Array<{ providerId: string; name: string; error?: string }>;
 }
 
@@ -182,7 +182,12 @@ export class IntegrationHub {
       const name = provider?.name ?? connection.displayName ?? connection.providerId;
       const active = this.sessions.get(connection.id);
       if (active) {
-        connected.push({ providerId: connection.providerId, name, toolCount: active.tools.length });
+        connected.push({
+          providerId: connection.providerId,
+          name,
+          toolCount: active.tools.length,
+          handlersReady: executor ? this.connectionHandlersReady(connection.id, executor) : true,
+        });
         continue;
       }
       unavailable.push({
@@ -197,7 +202,19 @@ export class IntegrationHub {
     return promptHint ? { snapshot, promptHint } : { snapshot };
   }
 
-  private buildIntegrationPromptHint(userText: string, snapshot: IntegrationTurnSnapshot): string | undefined {
+  private connectionHandlersReady(
+    connectionId: string,
+    executor: ToolExecutor,
+  ): boolean {
+    const active = this.sessions.get(connectionId);
+    if (!active || active.tools.length === 0) return false;
+    return active.tools.some((mapped) => executor.hasHandler(mapped.definition.id));
+  }
+
+  private buildIntegrationPromptHint(
+    userText: string,
+    snapshot: IntegrationTurnSnapshot,
+  ): string | undefined {
     const lower = userText.toLowerCase();
     if (!lower.trim()) return undefined;
 
@@ -225,11 +242,18 @@ export class IntegrationHub {
     const placesIntent = detectPlacesSearchRequest(userText) || mentionsGoogleMapsProvider(userText);
     if (placesIntent) {
       const maps = snapshot.connected.find((entry) => entry.providerId === 'google-maps');
-      if (maps) {
+      if (maps?.handlersReady) {
         return [
           '[INTEGRATION PLACES] Google Maps MCP is connected.',
           'Use integration__google-maps__maps_search_places (and maps_place_details if needed) — NOT deep_web_search or web_search.',
           'In your reply, use the Google Maps links from the tool output. Never show raw latitude/longitude coordinates.',
+          'If the tool fails, say Maps is unavailable — do NOT claim you mapped locations or substitute IP-based guesses.',
+        ].join(' ');
+      }
+      if (maps && !maps.handlersReady) {
+        return [
+          '[INTEGRATION DEGRADED] Google Maps is connected in MCP Store but tools are not ready on this turn.',
+          'Tell the user Maps is temporarily unavailable. Use web_search if appropriate — do NOT claim you mapped locations.',
         ].join(' ');
       }
     }
@@ -247,6 +271,12 @@ export class IntegrationHub {
 
     for (const entry of snapshot.connected) {
       if (!mentionsProvider(entry.providerId, entry.name)) continue;
+      if (!entry.handlersReady) {
+        return [
+          `[INTEGRATION DEGRADED] ${entry.name} MCP is connected but tools are not ready.`,
+          'Tell the user the integration is temporarily unavailable — do not substitute local filesystem search.',
+        ].join(' ');
+      }
       const active = [...this.sessions.values()].find((s) => s.providerId === entry.providerId);
       const examples = active?.tools.slice(0, 6).map((t) => t.toolId).join(', ') ?? '';
       return [
@@ -790,6 +820,7 @@ export class IntegrationHub {
   syncToToolkit(registry: ToolRegistry, executor: ToolExecutor): number {
     for (const prefix of integrationToolUnregisterPrefixes()) {
       registry.unregisterByPrefix(prefix);
+      executor.unregisterHandlersByPrefix(prefix);
     }
     let registered = 0;
     for (const connection of this.store.listConnections()) {
@@ -804,6 +835,7 @@ export class IntegrationHub {
 
     for (const prefix of integrationToolUnregisterPrefixes(active.providerId)) {
       registry.unregisterByPrefix(prefix);
+      executor.unregisterHandlersByPrefix(prefix);
     }
     const provider = this.resolveProvider(active.providerId);
     const bridgeNames = new Set(
@@ -995,7 +1027,7 @@ export class IntegrationHub {
     }
     return {
       success: false,
-      output: formatMcpStdioAuthError(result.output),
+      output: formatMcpStdioAuthError(result.output, provider.id),
     };
   }
 

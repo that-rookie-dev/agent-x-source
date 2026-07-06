@@ -354,6 +354,11 @@ function createWindow(): void {
       callback(true);
       return;
     }
+    if (permission === 'geolocation' && reqOrigin === appOrigin) {
+      console.info('[desktop] granting geolocation for app origin');
+      callback(true);
+      return;
+    }
     if (permission === 'media') {
       const mediaDetails = details as Electron.MediaAccessPermissionRequest;
       const mediaTypes = mediaDetails.mediaTypes ?? [];

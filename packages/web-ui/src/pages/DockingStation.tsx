@@ -11,6 +11,7 @@ import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import { Footer } from '../components/Footer';
 import { useVoiceOptional } from '../components/voice/VoiceProvider';
+import { useLocationPermission } from '../hooks/useLocationPermission';
 import { webuiActive, agent, crewCatalog, crews, type AgentVitals, type CatalogSeedStatusResponse, type Crew } from '../api';
 import type { HealthStatus } from '../api';
 
@@ -72,6 +73,7 @@ function buildTerminalLines(
 export function DockingStation() {
   const { serverOnline, refreshHealth, healthData } = useApp();
   const voice = useVoiceOptional();
+  const location = useLocationPermission(true);
   const navigate = useNavigate();
   const [checking, setChecking] = useState(true);
   const [visibleLines, setVisibleLines] = useState(0);
@@ -177,6 +179,37 @@ export function DockingStation() {
   const version = healthData?.version || '';
   const crewCatalogCount = computeTotalCrewCatalogCount(catalogSeed, rosterCrews);
 
+  const voiceNeedsReady = Boolean(voice?.voiceReady);
+  const voiceResolved = !voiceNeedsReady
+    || voice?.warmupPhase === 'ready'
+    || voice?.warmupPhase === 'failed'
+    || voice?.warmupPhase === 'disabled';
+  const voiceOk = !voiceNeedsReady || voice?.warmupPhase === 'ready';
+  const systemsResolved = !checking && location.resolved && voiceResolved;
+  const canLaunch = serverOnline && systemsResolved && voiceOk;
+  const preparing = serverOnline && !canLaunch;
+
+  const locationColor =
+    location.state === 'granted' ? colors.accent.green
+      : location.state === 'ip_approx' ? colors.accent.blue
+        : location.state === 'vpn_blocked' ? colors.accent.orange
+          : location.state === 'denied' ? colors.accent.red
+            : location.state === 'unavailable' ? colors.text.dim
+              : colors.accent.orange;
+
+  const voiceColor = !voice
+    ? colors.text.dim
+    : voice.warmupPhase === 'ready' ? colors.accent.green
+      : voice.warmupPhase === 'booting' || voice.warmupPhase === 'idle' ? colors.accent.orange
+        : voice.warmupPhase === 'failed' ? colors.accent.red
+          : colors.text.dim;
+
+  const voiceLabel = !voice
+    ? 'Unavailable'
+    : !voice.voiceReady
+      ? 'Not supported here'
+      : voice.warmupLabel;
+
   return (
     <Box sx={{
       height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column',
@@ -261,6 +294,32 @@ export function DockingStation() {
 
           <StatusRow label="Worker" value={serverOnline ? 'Online' : 'Offline'} color={serverOnline ? colors.accent.green : colors.accent.red} checking={checking} />
           <StatusRow label="Engine" value={serverOnline && healthData?.agentActive ? 'Active' : serverOnline ? 'Standby' : 'Down'} color={serverOnline && healthData?.agentActive ? colors.accent.green : serverOnline ? colors.accent.orange : colors.accent.red} />
+          {serverOnline && (
+            <>
+              <StatusRow
+                label="Location"
+                value={location.label}
+                color={locationColor}
+                checking={location.state === 'checking'}
+                onClick={(location.state === 'denied' || location.state === 'vpn_blocked')
+                  ? () => { void location.refresh(); }
+                  : undefined}
+                title={location.state === 'denied'
+                  ? 'Click to request location again'
+                  : location.state === 'vpn_blocked'
+                    ? 'VPN/proxy detected — click to retry'
+                    : undefined}
+              />
+              <StatusRow
+                label="Voice engine"
+                value={voiceLabel}
+                color={voiceColor}
+                checking={voiceNeedsReady && (voice?.warmupPhase === 'booting' || voice?.warmupPhase === 'idle')}
+                onClick={voice?.warmupPhase === 'failed' ? voice.retryVoiceWarmup : undefined}
+                title={voice?.warmupPhase === 'failed' ? (voice.warmupError ?? 'Click to retry voice setup') : undefined}
+              />
+            </>
+          )}
           {healthData && (
             <>
               <StatusRow label="Provider" value={healthData.config?.provider || '—'} color={colors.text.primary} />
@@ -273,19 +332,6 @@ export function DockingStation() {
               <StatusRow label="Sessions" value={String(healthData.sessionCount ?? 0)} color={colors.text.primary} />
               <StatusRow label="Memory" value={`${Math.round((healthData.memory?.heapUsed ?? 0) / 1024 / 1024)} MB`} color={colors.text.primary} />
               <StatusRow label="Uptime" value={formatUptime(healthData.uptime)} color={colors.text.primary} />
-              {voice && voice.voiceReady && voice.warmupPhase !== 'disabled' && (
-                <StatusRow
-                  label="Voice engine"
-                  value={voice.warmupLabel}
-                  color={
-                    voice.warmupPhase === 'ready' ? colors.accent.green
-                      : voice.warmupPhase === 'booting' ? colors.accent.orange
-                        : voice.warmupPhase === 'failed' ? colors.accent.red
-                          : colors.text.dim
-                  }
-                  checking={voice.warmupPhase === 'booting' || voice.warmupPhase === 'idle'}
-                />
-              )}
             </>
           )}
 
@@ -324,17 +370,25 @@ export function DockingStation() {
             <Button
               fullWidth
               variant="contained"
-              startIcon={<RocketLaunchIcon sx={{ fontSize: '0.85rem !important' }} />}
+              disabled={!canLaunch}
+              startIcon={preparing
+                ? <CircularProgress size={14} sx={{ color: colors.text.dim }} />
+                : <RocketLaunchIcon sx={{ fontSize: '0.85rem !important' }} />}
               onClick={handleLaunch}
               sx={{
                 py: 1.3,
-                bgcolor: colors.text.primary, color: colors.bg.primary,
+                bgcolor: canLaunch ? colors.text.primary : colors.bg.tertiary,
+                color: canLaunch ? colors.bg.primary : colors.text.dim,
                 fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
                 fontSize: '0.7rem', letterSpacing: '2px', borderRadius: '3px',
-                '&:hover': { bgcolor: '#ddd' },
+                '&:hover': { bgcolor: canLaunch ? '#ddd' : colors.bg.tertiary },
+                '&.Mui-disabled': {
+                  bgcolor: colors.bg.tertiary,
+                  color: colors.text.dim,
+                },
               }}
             >
-              LAUNCH
+              {preparing ? 'PREPARING…' : 'LAUNCH'}
             </Button>
           ) : (
             <Box>
@@ -388,16 +442,50 @@ export function DockingStation() {
   );
 }
 
-function StatusRow({ label, value, color, checking }: { label: string; value: string; color: string; checking?: boolean }) {
+function StatusRow({
+  label,
+  value,
+  color,
+  checking,
+  onClick,
+  title,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  checking?: boolean;
+  onClick?: () => void;
+  title?: string;
+}) {
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        mb: 1,
+        cursor: onClick ? 'pointer' : 'default',
+      }}
+      onClick={onClick}
+      title={title}
+    >
       <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim }}>
         {label}
       </Typography>
       {checking ? (
         <CircularProgress size={8} sx={{ color: colors.text.dim }} />
       ) : (
-        <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color, fontWeight: 500 }}>
+        <Typography sx={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '0.55rem',
+          color,
+          fontWeight: 500,
+          textAlign: 'right',
+          maxWidth: '58%',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
           {value}
         </Typography>
       )}

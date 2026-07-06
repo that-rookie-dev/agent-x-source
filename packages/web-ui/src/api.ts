@@ -1,5 +1,6 @@
 // Centralized API client for all web-api endpoints
 
+import type { ClientSituation } from '@agentx/shared';
 import { notifyVoiceConfigUpdated } from './voice/support';
 
 const BASE = '/api';
@@ -325,6 +326,7 @@ export const chat = {
     primaryCrewId?: string,
     forceWebSearch?: boolean,
     userMessagePersisted?: boolean,
+    clientSituation?: ClientSituation,
   ) =>
     postChatAsync('/chat/message', {
       text,
@@ -337,6 +339,7 @@ export const chat = {
       primaryCrewId,
       forceWebSearch,
       userMessagePersisted,
+      clientSituation,
     }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
@@ -351,6 +354,7 @@ export const chat = {
     crewSuggestionResolved?: boolean,
     crewIntakeFromPicker?: boolean,
     primaryCrewId?: string,
+    clientSituation?: ClientSituation,
   ): Promise<{ ok: boolean; message?: ChatMessage; clarification?: boolean; error?: string }> => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -364,7 +368,7 @@ export const chat = {
         method: 'POST',
         credentials: 'include',
         headers,
-        body: JSON.stringify({ text, attachments, retry, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId }),
+        body: JSON.stringify({ text, attachments, retry, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation }),
       });
 
       if (response.status === 401) {
@@ -1973,6 +1977,9 @@ export interface IntegrationProvider {
       authArg: string;
       oauthPathEnv: string;
       credentialsPathEnv: string;
+      credentialsFileName?: string;
+      oauthKeysFormat?: 'installed' | 'web';
+      webRedirectUris?: string[];
       clientIdField: string;
       clientSecretField: string;
       clientIdEnv?: string;

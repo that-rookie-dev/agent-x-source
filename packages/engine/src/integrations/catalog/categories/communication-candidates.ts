@@ -15,17 +15,6 @@ export const COMMUNICATION_CANDIDATES = [
     evaluationNotes: 'Community MCP package published on npm.',
   }),
   candidateStdio({
-    id: 'gmail',
-    name: 'Gmail',
-    category: 'communication',
-    pkg: '@gongrzhe/server-gmail-autoauth-mcp',
-    description: 'Read and draft Gmail messages.',
-    icon: 'mail',
-    website: 'https://mail.google.com',
-    authPrimary: 'oauth',
-    evaluationNotes: 'Community Gmail MCP with local OAuth helper.',
-  }),
-  candidateStdio({
     id: 'twilio',
     name: 'Twilio',
     category: 'communication',

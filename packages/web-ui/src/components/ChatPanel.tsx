@@ -49,6 +49,7 @@ import {
   type PaletteAction,
 } from './ChatEnhancements';
 import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
+import { collectClientSituation } from '../client-situation.js';
 import { eventBelongsToViewSession } from '../chat/session-stream-filter';
 import { ActionPreviewCard } from './integrations/ActionPreviewCard';
 import { colors } from '../theme';
@@ -2436,6 +2437,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     const crewResolved = options?.crewSuggestionResolved ?? Boolean(delegateCrewIds?.length);
 
     try {
+      const clientSituation = await collectClientSituation();
       const result = await chat.send(
         trimmed,
         fileRefs,
@@ -2447,6 +2449,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         options?.primaryCrewId,
         webSearchAvailable && webSearchForce,
         options?.userMessagePersisted ?? options?.skipUserMessage,
+        clientSituation,
       );
       if (result?.crewSuggestionRequired && result.evaluation) {
         endTurnUi();
@@ -2607,7 +2610,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     });
 
     try {
-      const result = await chat.send(sanitizeForJson(text), undefined, true);
+      const clientSituation = await collectClientSituation();
+      const result = await chat.send(sanitizeForJson(text), undefined, true, undefined, undefined, undefined, undefined, undefined, undefined, undefined, clientSituation);
       if (result?.turnId) activeTurnIdRef.current = result.turnId;
       if (result?.async) return;
       setMessages(prev => {

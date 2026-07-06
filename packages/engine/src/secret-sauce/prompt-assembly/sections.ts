@@ -1,5 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
+import type { AgentPersonaConfig, ClientSituation } from '@agentx/shared';
+import { resolveClientNow, resolveClientTimezone } from '@agentx/shared';
 import type { PromptSection } from './types.js';
 
 /**
@@ -26,8 +28,10 @@ export interface SectionContext {
   personaName: string;
   experienceEngine: { getProvenContext(): string; getCautionContext(): string } | null;
   growthEngine: { getGrowthContext(): string } | null;
-  turnFeedbackService: { buildPromptContext(): string } | null;
+  turnFeedbackService: { buildPromptContext: () => string } | null;
   memoryContext?: { getContext(): Promise<MemoryContextState> } | null;
+  getPersona(): AgentPersonaConfig | null;
+  getClientSituation(): ClientSituation | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -79,6 +83,46 @@ export function createIdentitySection(ctx: SectionContext): PromptSection<string
   };
 }
 
+export function createPersonaToneSection(ctx: SectionContext): PromptSection<string> {
+  const build = (): string => {
+    const persona = ctx.getPersona();
+    if (!persona) {
+      return [
+        'Match your [IDENTITY] name and description for voice and tone.',
+        'The user may change persona settings at any time — follow the latest [IDENTITY] block.',
+        'Default to plain, accessible language unless they ask for technical depth.',
+      ].join('\n');
+    }
+    const style = persona.communicationStyle || 'direct';
+    const traits = persona.traits?.length ? persona.traits.join(', ') : 'none listed';
+    const styleGuide =
+      style === 'formal'
+        ? 'Speak professionally and precisely; avoid slang unless the user uses it first.'
+        : style === 'casual'
+          ? 'Speak warmly and conversationally; contractions and friendly phrasing are fine.'
+          : style === 'empathetic'
+            ? 'Acknowledge feelings; be supportive and patient in tone.'
+            : 'Be clear and concise; get to the point without fluff.';
+    return [
+      `You are ${persona.name}. Tone and voice MUST follow this persona — not a generic assistant or any fixed character.`,
+      `Communication style: ${style}. Traits: ${traits}.`,
+      persona.description ? `Persona: ${persona.description}` : '',
+      'The user may change persona mid-session — always follow the latest [IDENTITY] and this block.',
+      styleGuide,
+      'Technical depth: plain language by default; code and shell only when they ask for builds, debugging, or say they are technical.',
+    ].filter(Boolean).join('\n');
+  };
+  return {
+    key: 'core/persona-tone',
+    load: build,
+    render: (text) => `[PERSONA TONE]\n${text}\n[/PERSONA TONE]`,
+    diff: (prev, current) => {
+      if (prev === current) return null;
+      return `[PERSONA TONE — UPDATED]\n${current}\n[/PERSONA TONE]`;
+    },
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // Working directory
 // ─────────────────────────────────────────────────────────────
@@ -123,12 +167,12 @@ export function createRulesSection(opts?: { technicalExecutor?: boolean }): Prom
       `- Builds/tests → shell_exec or test_run/build tools.`,
       ``,
     ] : [
-      `AUDIENCE & TONE (Agent-X default — not crew specialists):`,
-      `- Assume the user may NOT be technical unless they use dev jargon, ask for code/scripts, or request work on their machine.`,
-      `- Curiosity and "how does X work" questions (e.g. quantum computing, AI, finance): explain in plain language with analogies — NO code snippets, NO shell/python steps, NO "run this command".`,
-      `- Do NOT volunteer scripts, terminal commands, file paths, or implementation tutorials unless they explicitly asked to build, fix, debug, install, or automate something.`,
-      `- Technical depth and code blocks are for when they ask for code, debugging, setup, automation, or say they are technical.`,
-      `- @Crew specialists handle deep technical execution in their domain; you coordinate and summarize in accessible language unless they want engineer-to-engineer detail.`,
+      `AUDIENCE & TONE:`,
+      `- Follow [PERSONA TONE] and [IDENTITY] on every turn — persona is dynamic; the user may change it at any time.`,
+      `- Never default to a fixed assistant voice (e.g. "Jarvis") or assume the user is an engineer.`,
+      `- Curiosity questions (e.g. quantum computing): plain language and analogies — NO code or shell unless they asked for technical depth.`,
+      `- Do NOT volunteer scripts, terminal commands, or file paths unless they asked to build, fix, debug, or automate.`,
+      `- @Crew specialists handle deep technical execution; you coordinate and summarize unless they want engineer-to-engineer detail.`,
       ``,
     ]),
     `RESPONSE FORMAT:`,
@@ -381,17 +425,38 @@ export function createCurrentTimeSection(ctx: SectionContext): PromptSection<{
   local: string;
   offset: string;
 }> {
+  const loadTime = () => {
+    const situation = ctx.getClientSituation();
+    const timezone = resolveClientTimezone(situation, ctx.getUserTimezone());
+    const now = resolveClientNow(situation ?? undefined);
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'longOffset',
+    });
+    const parts = formatter.formatToParts(now);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName');
+    const raw = tzPart?.value ?? '';
+    const match = raw.match(/GMT([+-])(\d{1,2}):?(\d{2})?/);
+    let offset = '+00:00';
+    if (match) {
+      const sign = match[1];
+      const hrs = match[2]!.padStart(2, '0');
+      const mins = (match[3] ?? '00').padStart(2, '0');
+      offset = `${sign}${hrs}:${mins}`;
+    }
+    return {
+      iso: now.toISOString(),
+      timezone,
+      local: now.toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: timezone }),
+      offset,
+    };
+  };
   const renderTime = (t: { iso: string; timezone: string; local: string; offset: string }, updated = false) =>
     `[CURRENT_TIME${updated ? ' — UPDATED' : ''}]\nNow: ${t.iso}\nUser timezone: ${t.timezone}\nLocal time (user): ${t.local}\nUTC offset: ${t.offset}\n[/CURRENT_TIME]`;
 
   return {
     key: 'core/current-time',
-    load: () => ({
-      iso: new Date().toISOString(),
-      timezone: ctx.getUserTimezone(),
-      local: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: ctx.getUserTimezone() }),
-      offset: ctx.getUtcOffset(),
-    }),
+    load: loadTime,
     render: (t) => renderTime(t),
     diff: (prev, current) => {
       if (!current) return null;

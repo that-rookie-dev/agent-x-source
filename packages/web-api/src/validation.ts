@@ -28,6 +28,19 @@ const MAX_CHAT_TEXT_LEN = 100_000;
 const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_CONTENT_LEN = 512_000;
 
+export const clientSituationSchema = z.object({
+  clientNow: z.string().min(1).max(64),
+  timezone: z.string().min(1).max(128),
+  locationLabel: z.string().max(256).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  accuracyMeters: z.number().min(0).max(1_000_000).optional(),
+  source: z.enum(['browser', 'desktop', 'server']),
+  locationMethod: z.enum(['gps', 'ip', 'timezone_only']).optional(),
+  locationConfidence: z.enum(['high', 'low', 'unknown']).optional(),
+  vpnSuspected: z.boolean().optional(),
+}).optional();
+
 export const chatMessageSchema = z.object({
   text: z.string().min(1, 'text is required').max(MAX_CHAT_TEXT_LEN),
   attachments: z.array(z.object({
@@ -52,6 +65,7 @@ export const chatMessageSchema = z.object({
     delegateCrewIds: z.array(z.string()),
     primaryCrewId: z.string().optional(),
   }).optional(),
+  clientSituation: clientSituationSchema,
 });
 
 export const crewSuggestionEvaluateSchema = z.object({
@@ -117,6 +131,7 @@ export const chatSteerSchema = z.object({
   crewSuggestionResolved: z.boolean().optional(),
   crewIntakeFromPicker: z.boolean().optional(),
   primaryCrewId: z.string().optional(),
+  clientSituation: clientSituationSchema,
 });
 
 export const clarificationRespondSchema = z.object({

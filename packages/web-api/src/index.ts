@@ -7,7 +7,7 @@ import os from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, voiceConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported, resolveRuntimeSettings } from '@agentx/shared';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, voiceConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported, resolveRuntimeSettings, normalizeClientSituation } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady, applyRuntimeSettings } from './engine.js';
 import { applyChannelsConfig, discoverTelegramBot, getTelegramInboundStatus, getTelegramRuntimeHints, restartTelegramInbound, saveVerifiedTelegram, sendTelegramGreeting } from './channels-sync.js';
 import { buildGraphRagSummarizer } from './distillation-generator.js';
@@ -662,9 +662,9 @@ app.put('/api/agent/persona', async (req, res) => {
       };
       (eng.agent as any).persona = personaData;
       // Re-seed identity manager so evolution overlay is in sync
-      try { (eng.agent as any).secretSauce?.identity?.seedFromPersona(personaData); } catch (e) {}
-      // Force a system prompt rebuild on next turn
-      (eng.agent as any).lastContextEpoch = -1;
+      try { eng.agent.applyPersona(personaData); } catch (e) {
+        try { (eng.agent as any).secretSauce?.identity?.seedFromPersona(personaData); } catch { /* ignore */ }
+      }
     }
     res.json({ ok: true });
   } catch (err) {
@@ -1650,7 +1650,7 @@ app.use('/api/chat', chatRateLimiter.middleware);
 // NEW: Streaming SSE endpoint for real-time progress visualization
 app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, clientSituation: clientSituationRaw } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
@@ -1661,7 +1661,9 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       primaryCrewId?: string;
       forceWebSearch?: boolean;
       userMessagePersisted?: boolean;
+      clientSituation?: unknown;
     };
+    const clientSituation = normalizeClientSituation(clientSituationRaw);
     const eng = getEngine();
     
     // Auto-create agent if none exists
@@ -1816,6 +1818,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
     runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
       ...(forceWebSearch ? { forceWebSearch: true } : {}),
       ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
+      ...(clientSituation ? { clientSituation } : {}),
     });
     sendEvent('started', { turnId: turn.turnId, async: true });
     return;
@@ -1828,7 +1831,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
 // LEGACY comment removed — async turn endpoint used by ChatPanel (SSE uses message-stream).
 app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, clientSituation: clientSituationRaw } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
@@ -1839,7 +1842,9 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
       primaryCrewId?: string;
       forceWebSearch?: boolean;
       userMessagePersisted?: boolean;
+      clientSituation?: unknown;
     };
+    const clientSituation = normalizeClientSituation(clientSituationRaw);
     const eng = getEngine();
     // Auto-create agent if none exists (first message in session)
     if (!eng.agent) {
@@ -1923,6 +1928,7 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
       ...(forceWebSearch ? { forceWebSearch: true } : {}),
       ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
+      ...(clientSituation ? { clientSituation } : {}),
     });
 
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
@@ -2002,14 +2008,16 @@ app.delete('/api/chat/queue', (_req, res) => {
 // Steer: cancel current task, then immediately send a new message
 app.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
   try {
-    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
+    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       delegateCrewIds?: string[];
       crewSuggestionResolved?: boolean;
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
+      clientSituation?: unknown;
     };
+    const clientSituation = normalizeClientSituation(clientSituationRaw);
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
@@ -2023,7 +2031,9 @@ app.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
     const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
+    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+      ...(clientSituation ? { clientSituation } : {}),
+    });
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
     getLogger().error('POST_API_CHAT_STEER', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'steer-failed' });
@@ -2051,14 +2061,16 @@ app.post('/api/chat/checkpoint-respond', async (req, res) => {
 
 app.post('/api/chat/stop-and-send', validate(chatSteerSchema), async (req, res) => {
   try {
-    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
+    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       delegateCrewIds?: string[];
       crewSuggestionResolved?: boolean;
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
+      clientSituation?: unknown;
     };
+    const clientSituation = normalizeClientSituation(clientSituationRaw);
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
@@ -2076,7 +2088,9 @@ app.post('/api/chat/stop-and-send', validate(chatSteerSchema), async (req, res) 
         : buildInstructionForMode(mode));
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
+    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+      ...(clientSituation ? { clientSituation } : {}),
+    });
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
     getLogger().error('POST_API_CHAT_STOP_AND_SEND', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'stop-and-send-failed' });

@@ -13,8 +13,9 @@ import type {
   QuestionnairePayload,
   ClarificationSource,
   QuestionnaireRecord,
+  ClientSituation,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { Mutex } from '../concurrency/Mutex.js';
 import { join, resolve, normalize } from 'node:path';
@@ -55,7 +56,7 @@ import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
 import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
 import {
   buildCompletionMessages,
@@ -230,6 +231,7 @@ export class Agent {
   private messages: CompletionMessage[] = [];
   private config: AgentXConfig;
   private persona: AgentPersonaConfig | null = null;
+  private clientSituation: ClientSituation | null = null;
   private sessionId: string;
   private scopePath: string;
   /** Public accessor for session ID — needed by SmartSubAgent to pass parentSessionId to crew workers. */
@@ -1801,7 +1803,7 @@ Rules:
     return trimmed;
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string }; clientSituation?: ClientSituation | null }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1874,6 +1876,9 @@ Rules:
     this.pendingInstruction = options?.instruction || null;
     this.pendingVoiceMerge = options?.voiceMergeIntoMessage ?? null;
     this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
+    if (options?.clientSituation) {
+      this.clientSituation = options.clientSituation;
+    }
 
     const searchStatus = isWebSearchAvailableForChat(this.config);
     if (this.options.channelSession) {
@@ -2565,6 +2570,15 @@ Rules:
       }
     }
 
+    if (this.clientSituation) {
+      const situationBlock = formatClientSituationBlock(this.clientSituation);
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[CLIENT_SITUATION]')) {
+        aiMessages[userIdx] = { role: 'user', content: `${situationBlock}\n\n${userMsg.content}` };
+      }
+    }
+
     if (integrationHint) {
       const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
@@ -2747,11 +2761,7 @@ Rules:
       });
 
       // Stream handler already emitted message_received in its finish case.
-      // Only push to local state and compact — no second emit needed.
-      const ledgerNote = this.toolLedger.formatForHistory();
-      if (ledgerNote) {
-        this.messages.push({ role: 'system', content: ledgerNote });
-      }
+      // Only push assistant content — tool ledger is persisted via persistToolLedger (not in agent history).
       this.messages.push({ role: 'assistant', content });
       await this.compactContext();
       await this.reinforceMemoryContext();
@@ -2920,19 +2930,24 @@ Rules:
       lines.push('', identity.evolutionLog);
     }
 
-    // Role guidance — crew workers execute; Agent-X explains unless asked to build
+    // Role guidance — crew workers execute; Agent-X tone comes from [PERSONA TONE]
     if (this.options.promptProfile === 'crew_worker') {
       lines.push('', 'Your job is to EXECUTE, not just describe. Take action. Deliver complete results.');
-    } else {
-      lines.push(
-        '',
-        'Help the user in clear, approachable language.',
-        'When they want something built, fixed, or automated on their machine — act and deliver.',
-        'When they want to understand a topic (including technical curiosity), explain without assuming they are engineers — no code or shell steps unless they ask for that depth.',
-      );
     }
 
     return lines.join('\n');
+  }
+
+  setClientSituation(situation: ClientSituation | null): void {
+    this.clientSituation = situation;
+  }
+
+  applyPersona(persona: AgentPersonaConfig | null): void {
+    this.persona = persona;
+    if (persona) {
+      this.secretSauce.identity.seedFromPersona(persona);
+    }
+    this.rebuildSystemPrompt();
   }
 
   private createSectionContext(): SectionContext {
@@ -2965,6 +2980,8 @@ Rules:
       growthEngine: { getGrowthContext: () => this.growthEngine.getGrowthContext() },
       turnFeedbackService: { buildPromptContext: () => this.turnFeedbackService.buildPromptContext(this.sessionId) },
       memoryContext: { getContext: () => this.buildMemoryContext() },
+      getPersona: () => this.persona,
+      getClientSituation: () => this.clientSituation,
     };
   }
 
@@ -3022,6 +3039,7 @@ Rules:
       this.promptAssembly
         .register(createProviderPromptSection(ctx))
         .register(createIdentitySection(ctx))
+        .register(createPersonaToneSection(ctx))
         .register(createWorkingDirectorySection(ctx))
         .register(createCompactRulesSection())
         .register(createChannelSuperSessionSection())
@@ -3050,6 +3068,7 @@ Rules:
       this.promptAssembly
         .register(createProviderPromptSection(ctx))
         .register(createIdentitySection(ctx))
+        .register(createPersonaToneSection(ctx))
         .register(createLocalPersonaGuardSection())
         .register(createWorkingDirectorySection(ctx))
         .register(createCompactRulesSection())
@@ -3061,6 +3080,7 @@ Rules:
       this.promptAssembly
         .register(createProviderPromptSection(ctx))
         .register(createIdentitySection(ctx))
+        .register(createPersonaToneSection(ctx))
         .register(createWorkingDirectorySection(ctx))
         .register(createRulesSection())
         .register(createQuestionnaireGuideSection())
@@ -3932,7 +3952,7 @@ Only include specialists that are actually needed for this task.`;
    * Get the user's timezone from config, falling back to system timezone.
    */
   private getUserTimezone(): string {
-    return this.config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return resolveClientTimezone(this.clientSituation, this.config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
   }
 
   /**

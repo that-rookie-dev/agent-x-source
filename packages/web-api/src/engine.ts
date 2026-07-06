@@ -548,8 +548,7 @@ export function createAgent(
     if (store?.getMessages) {
       const msgs = store.getMessages(session.id) as Array<{ role: string; content: string; parts?: unknown }>;
       const restorable = msgs.filter((m) =>
-        m.role === 'user' || m.role === 'assistant' ||
-        (m.role === 'system' && m.content?.includes('[TURN TOOL LEDGER]')),
+        m.role === 'user' || m.role === 'assistant',
       );
       const recent = restorable.slice(-24);
       const historyEntries = hydrateMessageHistoryEntries(recent);

@@ -20,6 +20,9 @@ import { getEngine, createAgent, destroyAgent } from './engine.js';
 import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS } from './chat-helpers.js';
 import { getVoiceService, resetVoiceService } from './voice-runtime.js';
 import { parseVoicePermissionIntent, type VoicePermissionIntent } from './voice-permission-intent.js';
+import { normalizeClientSituation } from '@agentx/shared';
+import { refreshAgentPersona } from './chat-helpers.js';
+import type { ClientSituation } from '@agentx/shared';
 
 const SAMPLE_RATE = 16_000;
 /** Continuous silence after spoken words before auto-send in duplex mode. */
@@ -72,6 +75,7 @@ interface VoiceWsSession {
   unsub?: () => void;
   /** Active voice-native permission prompt awaiting a spoken/tapped decision. */
   pendingPermission?: PendingVoicePermission;
+  clientSituation?: ClientSituation;
 }
 
 const activeSessions = new Map<WebSocket, VoiceWsSession>();
@@ -344,6 +348,12 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
         if (intent) await resolveVoicePermission(ws, session, intent);
       }
       break;
+    case 'client_situation':
+      if (session) {
+        const situation = normalizeClientSituation(msg.clientSituation ?? msg);
+        if (situation) session.clientSituation = situation;
+      }
+      break;
     case 'session_end':
       cleanupSession(ws);
       ws.close();
@@ -415,6 +425,7 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
   const mode = msg.mode === 'duplex' ? 'duplex' : 'push-to-talk';
   const chatSessionId = typeof msg.chatSessionId === 'string' ? msg.chatSessionId : undefined;
   const voiceWsSessionId = String(msg.sessionId ?? randomUUID());
+  const clientSituation = normalizeClientSituation(msg.clientSituation);
   const voiceSession = service.createSession({ transport: 'web', mode, sessionId: voiceWsSessionId });
   const transport = new WebSocketVoiceTransport({ ws, sessionId: voiceWsSessionId, mode });
   activeSessions.set(ws, {
@@ -434,6 +445,7 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
     duplexTurnInFlight: false,
     duplexLastErrorAt: 0,
     transport,
+    ...(clientSituation ? { clientSituation } : {}),
   });
   voiceSession.setState(mode === 'duplex' ? 'listening' : 'idle');
   ws.send(JSON.stringify({ type: 'session_ready', sessionId: voiceSession.sessionId, mode }));
@@ -606,6 +618,10 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       voiceSession?.setState('idle');
       return;
     }
+    refreshAgentPersona(agent);
+    if (session.clientSituation) {
+      agent.setClientSituation(session.clientSituation);
+    }
     const sid = chatSessionId;
     ensureSubscribed();
 
@@ -743,14 +759,17 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
         turnInstruction,
         turnId,
         sid,
-        chatReportOnly && priorAssistant
-          ? {
-            voiceMergeIntoMessage: {
-              messageId: priorAssistant.id,
-              prefixContent: priorAssistant.content,
-            },
-          }
-          : {},
+        {
+          ...(chatReportOnly && priorAssistant
+            ? {
+              voiceMergeIntoMessage: {
+                messageId: priorAssistant.id,
+                prefixContent: priorAssistant.content,
+              },
+            }
+            : {}),
+          ...(session.clientSituation ? { clientSituation: session.clientSituation } : {}),
+        },
       );
 
       const turnContent = extractAssistantText(turnMessage);
@@ -851,6 +870,7 @@ function runVoiceAgentPhase(
     voiceContinuation?: boolean;
     voiceMergeIntoMessage?: { messageId: string; prefixContent: string };
     userMessagePersisted?: boolean;
+    clientSituation?: ClientSituation;
   } = {},
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
