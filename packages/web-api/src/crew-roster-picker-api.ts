@@ -27,10 +27,11 @@ export function persistCrewRosterPickerOffer(input: {
   userText: string;
   evaluation: CrewSuggestionEvaluation;
   attachments?: Array<{ name: string }>;
+  userMessageId?: string;
 }): { userMessageId: string; pickerMessageId: string; pickerPartId: string } {
   const store = getMessageStore();
   const now = new Date().toISOString();
-  const userMessageId = generateId();
+  const userMessageId = input.userMessageId ?? generateId();
   const pickerMessageId = generateId();
   const pickerPartId = generateId();
 

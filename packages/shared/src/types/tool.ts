@@ -75,5 +75,7 @@ export interface ToolExecutionContext {
   agentId?: string;
   timeout: number;
   mode?: 'agent' | 'plan';
+  /** Voice comms turn — tighter tool time budgets. */
+  voiceTurn?: boolean;
   onOutput?: (output: string) => void;
 }

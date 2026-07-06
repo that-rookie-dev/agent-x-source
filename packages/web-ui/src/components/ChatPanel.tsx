@@ -54,7 +54,6 @@ import { colors } from '../theme';
 import ModeEscalationModal from './ModeEscalationModal';
 import StepCapModal from './StepCapModal';
 import ModeSuggestionModal, { DISMISS_KEY, shouldSuggestMode } from './ModeSuggestionModal';
-import CrewSuggestionModal from './crew/CrewSuggestionModal';
 import { CrewProfileDialog } from './crew/CrewProfileDialog';
 import type { PrebuiltCrew } from './crew/CrewHubDialog';
 import { ChatInputBar, type ChatInputBarHandle } from './ChatInputBar';
@@ -72,7 +71,8 @@ import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingCh
 import { CHAT_INITIAL_MESSAGES_PER_ROLE, CORE_SESSION_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
 import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
-import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer, explicitCrewRequest } from '@agentx/shared/browser';
+import { createCrewSuggestionEvalMessage, shouldOfferCrewRosterPicker } from '../chat/crew-suggestion-flow';
+import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
 import {
   upsertDeepSearchPart,
@@ -668,6 +668,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     turnActiveRef.current = true;
     isInitialLoadRef.current = false;
     setStreaming(true);
+    setTurnActivity(null);
+    setLoadingSteps(null);
     setPendingFeedbackMessageId(null);
   }, []);
 
@@ -675,9 +677,16 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     const trimmed = sanitizeForJson(text.trim());
     if (!trimmed) return;
     setMessages((prev) => {
-      for (let i = Math.max(0, prev.length - 5); i < prev.length; i += 1) {
+      for (let i = Math.max(0, prev.length - 8); i < prev.length; i += 1) {
         const m = prev[i];
-        if (m?.role === 'user' && m.content === trimmed) return prev;
+        if (m?.role === 'user' && m.content === trimmed) {
+          if (m.voiceInput) return prev;
+          return prev.map((msg, idx) => (
+            idx === i
+              ? { ...msg, voiceInput: true, id: messageId ?? msg.id }
+              : msg
+          ));
+        }
       }
       return [
         ...prev,
@@ -726,18 +735,30 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     if (!voiceCtx) return;
     voiceCtx.registerInlineVoiceHandler((autoStart) => {
       setComposerMode('voice');
+      requestAnimationFrame(() => {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+      });
       if (autoStart) setVoiceAutoStart(true);
     });
-    return () => voiceCtx.registerInlineVoiceHandler(null);
-  }, [voiceCtx]);
+    voiceCtx.registerVoiceChatBridge({
+      onTranscriptFinal: handleVoiceTranscript,
+      onAgentRunning: beginVoiceAgentTurn,
+    });
+    return () => {
+      voiceCtx.registerInlineVoiceHandler(null);
+      voiceCtx.registerVoiceChatBridge(null);
+    };
+  }, [voiceCtx, handleVoiceTranscript, beginVoiceAgentTurn]);
   const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
-  const [crewSuggestOpen, setCrewSuggestOpen] = useState(false);
-  const [crewEvaluation, setCrewEvaluation] = useState<CrewSuggestionEvaluation | null>(null);
   const [crewDossierOpen, setCrewDossierOpen] = useState(false);
   const [crewDossierCrew, setCrewDossierCrew] = useState<PrebuiltCrew | null>(null);
   const pendingSendTextRef = useRef<string | null>(null);
-  const pendingCrewCandidatesRef = useRef<CrewMatchCandidate[]>([]);
   const crewSuggestionHandledRef = useRef(false);
+  const attachCrewRosterPickerRef = useRef<(
+    text: string,
+    evaluation: CrewSuggestionEvaluation,
+    opts?: { userMessageId?: string; evalAssistantMessageId?: string },
+  ) => Promise<boolean>>(async () => false);
 
   const handleTurnFeedback = useCallback(async (messageId: string, rating: TurnFeedbackRating) => {
     const sessionId = currentSessionIdRef.current;
@@ -785,14 +806,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       setPendingFeedbackMessageId(candidate.messageId);
     }
   }, [messages]);
-
-  const openCrewSuggestionFromEvaluation = useCallback((evaluation: CrewSuggestionEvaluation, text: string) => {
-    if (!evaluation.shouldSuggest || evaluation.candidates.length === 0) return;
-    pendingSendTextRef.current = text;
-    pendingCrewCandidatesRef.current = evaluation.candidates;
-    setCrewEvaluation(evaluation);
-    setCrewSuggestOpen(true);
-  }, []);
 
   // Smart auto-scroll state
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -1793,29 +1806,16 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             // Do not auto-switch — ModeEscalationModal handles user choice
             return prev;
 
-          case 'crew_suggestion': {
-            // Ignore stale crew_suggestion replayed from telemetry buffer on page load / SSE reconnect
-            if (isInitialLoadRef.current) return prev;
-            if (crewSuggestionHandledRef.current || crewSuggestOpen) return prev;
-            const evaluation = (ev as { evaluation?: CrewSuggestionEvaluation }).evaluation;
-            const message = (ev as { message?: string }).message;
-            if (evaluation?.shouldSuggest && message) {
-              crewSuggestionHandledRef.current = true;
-              openCrewSuggestionFromEvaluation(evaluation, message);
-            }
-            return prev;
-          }
-
+          case 'crew_suggestion':
           case 'crew_suggestion_required': {
-            if (isCrewPrivateRef.current) return prev;
-            if (crewSuggestionHandledRef.current || crewSuggestOpen) return prev;
+            if (isInitialLoadRef.current) return prev;
+            if (isCrewPrivateRef.current || crewSuggestionHandledRef.current) return prev;
             const evaluation = (ev as { evaluation?: CrewSuggestionEvaluation }).evaluation;
             const message = (ev as { message?: string }).message;
-            if (evaluation?.shouldSuggest && message) {
-              setStreaming(false);
-              crewSuggestionHandledRef.current = true;
-              openCrewSuggestionFromEvaluation(evaluation, message);
-            }
+            if (!evaluation || !message || !shouldOfferCrewRosterPicker(evaluation)) return prev;
+            if (ev.type === 'crew_suggestion_required') setStreaming(false);
+            crewSuggestionHandledRef.current = true;
+            void attachCrewRosterPickerRef.current(message, evaluation);
             return prev;
           }
 
@@ -2245,97 +2245,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     return null;
   }, [navigate, ensureDefaultCwd]);
 
-  const maybeOfferCrewSuggestion = useCallback(async (text: string): Promise<boolean> => {
-    if (isCrewPrivateSession) return false;
-    const hasMention = /(?<!\w)@([\w][\w.-]*)/.test(text);
-    if (hasMention) return false;
-    const sessionId = await ensureSession();
-    if (!sessionId) return false;
-    try {
-      const priorUserMessages = messages
-        .filter((m) => m.role === 'user')
-        .map((m) => m.content)
-        .slice(-3);
-      const evaluation = await crewSuggestions.evaluate(text, sessionId, priorUserMessages);
-      if (evaluation.reasons.includes('catalog-unavailable')) {
-        setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
-      }
-      if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
-        crewSuggestionHandledRef.current = true;
-        openCrewSuggestionFromEvaluation(evaluation, text);
-        return true;
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Crew suggestion check failed';
-      if (import.meta.env.DEV) {
-        setWarnings((prev) => replaceWarning(prev, `Crew suggestion: ${msg}`));
-      }
-    }
-    return false;
-  }, [messages, ensureSession, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
-
-  const evaluateCrewForMessage = useCallback(async (text: string) => {
-    const sessionId = await ensureSession();
-    if (!sessionId) return null;
-    const priorUserMessages = messages
-      .filter((m) => m.role === 'user')
-      .map((m) => m.content)
-      .slice(-3);
-    return crewSuggestions.evaluate(text, sessionId, priorUserMessages);
-  }, [messages, ensureSession]);
-
-  const offerInlineCrewRoster = useCallback(async (text: string, evaluation: CrewSuggestionEvaluation): Promise<boolean> => {
-    if (isCrewPrivateSession) return false;
-    if (evaluation.candidates.length === 0) return false;
-    // High-confidence matches use the modal — never duplicate with in-chat picker cards.
-    if (evaluation.shouldSuggest) return false;
-
-    const trimmed = sanitizeForJson(text.trim());
-    if (!trimmed) return false;
-    const sessionId = await ensureSession();
-    if (!sessionId) return false;
-
-    try {
-      const persisted = await crewSuggestions.offerRosterPicker(sessionId, {
-        userText: trimmed,
-        evaluation,
-        attachments: attachments.map((a) => ({ name: a.name })),
-      });
-
-      const pickerRecord = {
-        id: persisted.pickerPartId,
-        status: 'pending' as const,
-        evaluation,
-        pendingUserText: trimmed,
-      };
-      const userMsg: UIMessage = {
-        id: persisted.userMessageId,
-        role: 'user',
-        content: trimmed,
-        streaming: false,
-        attachments: attachments.map((a) => ({ name: a.name })),
-      };
-      const pickerMsg: UIMessage = {
-        id: persisted.pickerMessageId,
-        role: 'assistant',
-        content: '',
-        streaming: false,
-        parts: [{
-          type: 'crew_roster_picker',
-          id: persisted.pickerPartId,
-          crewRosterPicker: pickerRecord,
-        }],
-      };
-      setMessages((prev) => [...prev, userMsg, pickerMsg]);
-      inputBarRef.current?.clear();
-      setAttachments([]);
-      return true;
-    } catch (err) {
-      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to offer crew roster'));
-      return false;
-    }
-  }, [attachments, isCrewPrivateSession, ensureSession, replaceWarning]);
-
   const handleViewCrewDossier = useCallback(async (candidate: CrewMatchCandidate) => {
     if (candidate.onRoster || candidate.origin === 'custom' || candidate.origin === 'hub_roster') {
       const roster = crewList.find((c) => c.id === candidate.id);
@@ -2373,6 +2282,89 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to load crew dossier'));
     }
   }, [crewList]);
+
+  const attachCrewRosterPicker = useCallback(async (
+    text: string,
+    evaluation: CrewSuggestionEvaluation,
+    opts?: { userMessageId?: string; evalAssistantMessageId?: string },
+  ): Promise<boolean> => {
+    if (isCrewPrivateSession) return false;
+    if (!shouldOfferCrewRosterPicker(evaluation)) return false;
+
+    const trimmed = sanitizeForJson(text.trim());
+    if (!trimmed) return false;
+    const sessionId = await ensureSession();
+    if (!sessionId) return false;
+
+    try {
+      const persisted = await crewSuggestions.offerRosterPicker(sessionId, {
+        userText: trimmed,
+        evaluation,
+        attachments: attachments.map((a) => ({ name: a.name })),
+        userMessageId: opts?.userMessageId,
+      });
+
+      const pickerRecord = {
+        id: persisted.pickerPartId,
+        status: 'pending' as const,
+        evaluation,
+        pendingUserText: trimmed,
+      };
+      const pickerMsg: UIMessage = {
+        id: persisted.pickerMessageId,
+        role: 'assistant',
+        content: '',
+        streaming: false,
+        parts: [{
+          type: 'crew_roster_picker',
+          id: persisted.pickerPartId,
+          crewRosterPicker: pickerRecord,
+        }],
+      };
+
+      setMessages((prev) => {
+        if (opts?.userMessageId && opts?.evalAssistantMessageId) {
+          return prev.map((m) => {
+            if (m.id === opts.userMessageId) {
+              return {
+                ...m,
+                id: persisted.userMessageId,
+                content: trimmed,
+              };
+            }
+            if (m.id === opts.evalAssistantMessageId) return pickerMsg;
+            return m;
+          });
+        }
+
+        if (opts?.userMessageId) {
+          return [
+            ...prev.map((m) => (m.id === opts.userMessageId ? { ...m, id: persisted.userMessageId } : m)),
+            pickerMsg,
+          ];
+        }
+
+        const userMsg: UIMessage = {
+          id: persisted.userMessageId,
+          role: 'user',
+          content: trimmed,
+          streaming: false,
+          attachments: attachments.map((a) => ({ name: a.name })),
+        };
+        return [...prev, userMsg, pickerMsg];
+      });
+      inputBarRef.current?.clear();
+      setAttachments([]);
+      return true;
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to offer crew roster'));
+      return false;
+    }
+  }, [attachments, isCrewPrivateSession, ensureSession, replaceWarning]);
+
+  useEffect(() => {
+    attachCrewRosterPickerRef.current = attachCrewRosterPicker;
+  }, [attachCrewRosterPicker]);
 
   const executeSend = useCallback(async (
     text: string,
@@ -2431,13 +2423,17 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       );
       if (result?.crewSuggestionRequired && result.evaluation) {
         endTurnUi();
+        let existingUserId: string | undefined;
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (last?.role === 'user' && last.content === trimmed) return prev.slice(0, -1);
-          return prev;
+          const next = last?.role === 'assistant' && last.streaming ? prev.slice(0, -1) : prev;
+          existingUserId = next.find((m) => m.role === 'user' && m.content === trimmed)?.id;
+          return next;
         });
         crewSuggestionHandledRef.current = true;
-        openCrewSuggestionFromEvaluation(result.evaluation, trimmed);
+        await attachCrewRosterPicker(trimmed, result.evaluation, existingUserId
+          ? { userMessageId: existingUserId }
+          : undefined);
         return;
       }
       if (result?.turnId) activeTurnIdRef.current = result.turnId;
@@ -2473,16 +2469,77 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       });
       endTurnUi();
     }
-  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, openCrewSuggestionFromEvaluation, beginTurnUi, endTurnUi, webSearchAvailable, webSearchForce]);
+  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, attachCrewRosterPicker, beginTurnUi, endTurnUi, webSearchAvailable, webSearchForce]);
+
+  const runCrewSuggestionGate = useCallback(async (trimmed: string): Promise<boolean> => {
+    if (isCrewPrivateSession || coreSession) return false;
+    if (/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) return false;
+
+    const sessionId = await ensureSession();
+    if (!sessionId) return false;
+
+    const userMessageId = crypto.randomUUID();
+    const evalAssistant = createCrewSuggestionEvalMessage();
+    const userMsg: UIMessage = {
+      id: userMessageId,
+      role: 'user',
+      content: sanitizeForJson(trimmed),
+      streaming: false,
+      attachments: attachments.map((a) => ({ name: a.name })),
+    };
+
+    setMessages((prev) => [...prev, userMsg, evalAssistant]);
+    inputBarRef.current?.clear();
+    setAttachments([]);
+
+    const priorUserMessages = [
+      ...messages.filter((m) => m.role === 'user').map((m) => m.content),
+      trimmed,
+    ].slice(-3);
+
+    try {
+      const evaluation = await crewSuggestions.evaluate(trimmed, sessionId, priorUserMessages);
+      if (evaluation?.reasons.includes('catalog-unavailable')) {
+        setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
+      }
+
+      if (evaluation && shouldOfferCrewRosterPicker(evaluation)) {
+        crewSuggestionHandledRef.current = true;
+        const attached = await attachCrewRosterPicker(trimmed, evaluation, {
+          userMessageId,
+          evalAssistantMessageId: evalAssistant.id,
+        });
+        if (attached) return true;
+      }
+    } catch (err) {
+      if (import.meta.env.DEV) {
+        const msg = err instanceof Error ? err.message : 'Crew suggestion check failed';
+        setWarnings((prev) => replaceWarning(prev, `Crew suggestion: ${msg}`));
+      }
+    }
+
+    setMessages((prev) => prev.filter((m) => m.id !== evalAssistant.id));
+    await executeSend(trimmed, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+    return true;
+  }, [
+    attachments,
+    attachCrewRosterPicker,
+    coreSession,
+    ensureSession,
+    executeSend,
+    isCrewPrivateSession,
+    messages,
+    replaceWarning,
+  ]);
 
   const sendAfterModeChoice = useCallback(async (text: string, switchToAgent: boolean) => {
     if (switchToAgent) {
       setAgentMode('agent');
       await sessionSettings.setMode('agent').catch(() => {});
     }
-    if (await maybeOfferCrewSuggestion(text)) return;
+    if (await runCrewSuggestionGate(text)) return;
     await executeSend(text, undefined, { crewSuggestionResolved: true });
-  }, [maybeOfferCrewSuggestion, executeSend]);
+  }, [runCrewSuggestionGate, executeSend]);
 
   const handleSend = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -2494,35 +2551,9 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       return;
     }
 
-    if (!isCrewPrivateSession && !coreSession && !/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) {
-      try {
-        const evaluation = await evaluateCrewForMessage(trimmed);
-        if (evaluation) {
-          if (evaluation.reasons.includes('catalog-unavailable')) {
-            setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
-          }
-          // Modal first for high-confidence specialist matches — one UI surface only.
-          if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
-            crewSuggestionHandledRef.current = true;
-            openCrewSuggestionFromEvaluation(evaluation, trimmed);
-            return;
-          }
-          const workforceIntent = explicitCrewRequest(trimmed);
-          if (workforceIntent && evaluation.candidates.length > 0) {
-            crewSuggestionHandledRef.current = true;
-            if (await offerInlineCrewRoster(trimmed, evaluation)) return;
-          }
-          if (await offerInlineCrewRoster(trimmed, evaluation)) return;
-        }
-      } catch {
-        if (await maybeOfferCrewSuggestion(trimmed)) return;
-      }
-    } else if (await maybeOfferCrewSuggestion(trimmed)) {
-      return;
-    }
-
+    if (await runCrewSuggestionGate(trimmed)) return;
     await executeSend(trimmed);
-  }, [attachments.length, agentMode, executeSend, maybeOfferCrewSuggestion, evaluateCrewForMessage, offerInlineCrewRoster, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
+  }, [attachments.length, agentMode, executeSend, runCrewSuggestionGate]);
 
   // Retry last user message — re-sends without duplicating the user message,
   // replaces the existing assistant response on success.
@@ -2530,7 +2561,10 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     if (!text || streaming || !currentProvider || !currentModel) return;
     if (!(await ensureSession())) return;
 
+    try { await chat.cancel(); } catch { /* ignore */ }
     resendInProgressRef.current = true;
+    setTurnActivity(null);
+    setLoadingSteps(null);
     beginTurnUi();
 
     // Remove the old assistant response — SSE will update the placeholder
@@ -2680,7 +2714,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     }
   }, [messages, markCrewRosterPickerResolved, revertCrewRosterPickerPending, ensureSession, executeSend, replaceWarning]);
 
-  const handleCrewRosterPickerSkip = useCallback(async (messageId: string) => {
+  const handleCrewRosterPickerSkip = useCallback(async (messageId: string, dismissForSession = false) => {
     const pickerMsg = messages.find((m) => m.id === messageId);
     const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
     const record = pickerPart?.crewRosterPicker;
@@ -2691,6 +2725,11 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     try {
       const sessionId = await ensureSession();
       if (sessionId) {
+        await crewSuggestions.resolve({
+          sessionId,
+          action: dismissForSession ? 'dismiss' : 'skip',
+          dismissForSession,
+        });
         await crewSuggestions.updateRosterPicker(sessionId, {
           pickerMessageId: messageId,
           status: 'skipped',
@@ -2826,10 +2865,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   }, []);
 
   useEffect(() => {
-    setCrewSuggestOpen(false);
-    setCrewEvaluation(null);
     pendingSendTextRef.current = null;
-    pendingCrewCandidatesRef.current = [];
     crewSuggestionHandledRef.current = false;
   }, [currentSessionId]);
   useEffect(() => { resetCrewMissionState(); }, [currentSessionId, resetCrewMissionState]);
@@ -3979,7 +4015,17 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                     size="small"
                     icon={composerMode === 'text' ? <MicIcon sx={{ fontSize: '14px !important' }} /> : <KeyboardIcon sx={{ fontSize: '14px !important' }} />}
                     label={composerMode === 'text' ? 'Voice' : 'Text'}
-                    onClick={() => setComposerMode((m) => (m === 'text' ? 'voice' : 'text'))}
+                    onClick={() => {
+                      setComposerMode((m) => {
+                        const next = m === 'text' ? 'voice' : 'text';
+                        if (next === 'voice') {
+                          requestAnimationFrame(() => {
+                            (document.activeElement as HTMLElement | null)?.blur?.();
+                          });
+                        }
+                        return next;
+                      });
+                    }}
                     sx={{
                       fontSize: '0.55rem', height: 20, cursor: 'pointer',
                       bgcolor: composerMode === 'voice' ? colors.accent.green + '18' : colors.bg.tertiary,
@@ -4363,82 +4409,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
           setStreaming(false);
         }}
       />
-      {!isCrewPrivateSession && (
-      <CrewSuggestionModal
-        open={crewSuggestOpen}
-        evaluation={crewEvaluation}
-        planMode={agentMode === 'plan'}
-        onViewDossier={(candidate) => { void handleViewCrewDossier(candidate); }}
-        onReenableSuggestions={() => {
-          const sessionId = currentSessionIdRef.current;
-          if (!sessionId) return;
-          void crewSuggestions.clearDismiss(sessionId).then(() => {
-            setWarnings((prev) => replaceWarning(prev, 'Crew suggestions re-enabled for this session.'));
-          }).catch(() => {
-            setWarnings((prev) => replaceWarning(prev, 'Failed to re-enable crew suggestions.'));
-          });
-        }}
-        onDeploy={async (selected, dismissForSession) => {
-          setCrewSuggestOpen(false);
-          const text = pendingSendTextRef.current;
-          const candidates = pendingCrewCandidatesRef.current;
-          const sessionId = currentSessionIdRef.current;
-          pendingSendTextRef.current = null;
-          pendingCrewCandidatesRef.current = [];
-          setCrewEvaluation(null);
-          if (!text || !sessionId) return;
-          try {
-            const result = await crewSuggestions.resolve({
-              sessionId,
-              action: 'deploy',
-              dismissForSession,
-              selectedCandidateIds: selected.map((c) => c.id),
-              candidates,
-            });
-            if (!result.deployedCrewIds?.length) {
-              setWarnings((prev) => replaceWarning(prev, 'Crew deploy failed — no specialists were attached. Continuing with Agent-X.'));
-              await executeSend(text, undefined, { crewSuggestionResolved: true });
-              return;
-            }
-            const primaryCrewId = result.deployedPrimaryCrewId ?? result.deployedCrewIds[0];
-            crews.list().then((list) => setCrewList(list)).catch(() => {});
-            await executeSend(text, result.deployedCrewIds, {
-              crewSuggestionResolved: true,
-              primaryCrewId,
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Crew deploy failed';
-            setWarnings((prev) => replaceWarning(prev, msg.includes('crew-deploy') ? 'Crew deploy failed — continuing with Agent-X only.' : msg));
-            await executeSend(text, undefined, { crewSuggestionResolved: true });
-          }
-        }}
-        onSkip={async (dismissForSession) => {
-          setCrewSuggestOpen(false);
-          const text = pendingSendTextRef.current;
-          const sessionId = currentSessionIdRef.current;
-          pendingSendTextRef.current = null;
-          pendingCrewCandidatesRef.current = [];
-          setCrewEvaluation(null);
-          if (sessionId) {
-            try {
-              await crewSuggestions.resolve({
-                sessionId,
-                action: dismissForSession ? 'dismiss' : 'skip',
-                dismissForSession,
-              });
-            } catch { /* best-effort */ }
-          }
-          if (text) await executeSend(text, undefined, { crewSuggestionResolved: true });
-        }}
-        onClose={() => {
-          setCrewSuggestOpen(false);
-          setCrewEvaluation(null);
-          pendingSendTextRef.current = null;
-          pendingCrewCandidatesRef.current = [];
-          crewSuggestionHandledRef.current = false;
-        }}
-      />
-      )}
       <CrewProfileDialog
         open={crewDossierOpen}
         crew={crewDossierCrew}

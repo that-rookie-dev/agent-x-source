@@ -44,7 +44,8 @@ export async function shellExec(args: Record<string, unknown>, context: ToolExec
   const cwd = args['cwd'] ? resolve(context.scopePath, args['cwd'] as string) : context.scopePath;
   const scopeErr = validateCommandScope(command, context.scopePath, cwd);
   if (scopeErr) return { success: false, output: scopeErr, error: 'SCOPE_VIOLATION' };
-  const timeout = (args['timeout'] as number) ?? 30000;
+  const maxShellTimeout = context.voiceTurn ? 20_000 : 600_000;
+  const timeout = Math.min((args['timeout'] as number) ?? 30000, maxShellTimeout);
   const maxLength = (args['maxLength'] as number) ?? 30000;
 
   if (shouldUseSandbox()) {

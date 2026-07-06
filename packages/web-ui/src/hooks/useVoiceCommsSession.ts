@@ -63,8 +63,9 @@ export function useVoiceCommsSession({
 
   useEffect(() => {
     if (!pttEnabled) return;
+    if (!isDuplex) return;
     void session.startSession();
-  }, [pttEnabled, inputMode, session.startSession]);
+  }, [pttEnabled, isDuplex, session.startSession]);
 
   useEffect(() => {
     if (active) return;

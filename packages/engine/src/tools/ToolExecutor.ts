@@ -55,6 +55,7 @@ export class ToolExecutor {
   private sessionRules: PermissionRule[] = [];
   private agentPermissions: PermissionRule[] = [];
   private userConfigRules: PermissionRule[] = [];
+  private voiceTurnActive = false;
 
   constructor(registry: ToolRegistry, scopePath: string) {
     this.registry = registry;
@@ -85,6 +86,10 @@ export class ToolExecutor {
 
   setUserConfigRules(rules: PermissionRule[]): void {
     this.userConfigRules = rules;
+  }
+
+  setVoiceTurnActive(active: boolean): void {
+    this.voiceTurnActive = active;
   }
 
   getExecutionHistory(): ToolExecutionEntry[] {
@@ -301,7 +306,8 @@ export class ToolExecutor {
     const context: ToolExecutionContext = {
       sessionId,
       scopePath: this.scopeGuard.getScopePath(),
-      timeout: 30_000,
+      timeout: this.voiceTurnActive ? 22_000 : 30_000,
+      voiceTurn: this.voiceTurnActive,
       mode: this.mode,
       onOutput: onToolOutput,
     };

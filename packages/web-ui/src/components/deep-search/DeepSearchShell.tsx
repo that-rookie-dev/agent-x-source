@@ -113,9 +113,14 @@ export function DeepSearchShell({
         </Box>
       ) : (
         <Box sx={{ px: 1, py: 0.85 }}>
-          <Typography sx={{ fontSize: '0.58rem', color: colors.text.secondary }}>
+          <Typography sx={{ fontSize: '0.58rem', color: colors.text.secondary, mb: providersLabel ? 0.35 : 0 }}>
             No ranked results met the quality threshold.
           </Typography>
+          {!providersLabel && (
+            <Typography sx={{ fontSize: '0.52rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
+              No search providers were recorded for this run.
+            </Typography>
+          )}
         </Box>
       )}
     </Box>

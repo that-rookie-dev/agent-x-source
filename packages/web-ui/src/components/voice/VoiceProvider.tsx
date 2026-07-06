@@ -21,6 +21,8 @@ interface VoiceContextValue {
   closeVoiceModal: () => void;
   registerChatSession: (sessionId: string | null) => void;
   registerInlineVoiceHandler: (handler: ((autoStart?: boolean) => void) | null) => void;
+  registerVoiceChatBridge: (bridge: VoiceChatBridge | null) => void;
+  getVoiceChatBridge: () => VoiceChatBridge | null;
   inlineVoiceAvailable: boolean;
   coreSessionId: string | null;
   voiceReady: boolean;
@@ -34,6 +36,11 @@ interface VoiceContextValue {
 }
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
+
+export interface VoiceChatBridge {
+  onTranscriptFinal?: (text: string, empty: boolean) => void;
+  onAgentRunning?: () => void;
+}
 
 export function useVoice(): VoiceContextValue {
   const ctx = useContext(VoiceContext);
@@ -63,6 +70,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   const [canRunWeb, setCanRunWeb] = useState(false);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const inlineVoiceHandlerRef = useRef<((autoStart?: boolean) => void) | null>(null);
+  const voiceChatBridgeRef = useRef<VoiceChatBridge | null>(null);
   const modalSessionRef = useRef<string | null>(null);
 
   const applyVoiceConfigSnapshot = useCallback((cfg: VoiceConfig) => {
@@ -145,6 +153,12 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     inlineVoiceHandlerRef.current = handler;
   }, []);
 
+  const registerVoiceChatBridge = useCallback((bridge: VoiceChatBridge | null) => {
+    voiceChatBridgeRef.current = bridge;
+  }, []);
+
+  const getVoiceChatBridge = useCallback(() => voiceChatBridgeRef.current, []);
+
   const onWakeWord = useCallback(() => {
     void (async () => {
       if (!voiceEnabled || !canRunWeb || voiceDisabledReason()) return;
@@ -178,6 +192,8 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     closeVoiceModal,
     registerChatSession,
     registerInlineVoiceHandler,
+    registerVoiceChatBridge,
+    getVoiceChatBridge,
     inlineVoiceAvailable: Boolean(activeChatSessionId),
     coreSessionId,
     voiceReady: voiceEnabled && canRunWeb && !voiceDisabledReason(),
@@ -193,6 +209,8 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     closeVoiceModal,
     registerChatSession,
     registerInlineVoiceHandler,
+    registerVoiceChatBridge,
+    getVoiceChatBridge,
     activeChatSessionId,
     coreSessionId,
     voiceEnabled,

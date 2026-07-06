@@ -16,9 +16,16 @@ export function collectSearchProviders(
   bundle?: DeepSearchResultBundle | null,
   results?: DeepSearchResult[],
 ): string[] {
-  const rows = results ?? bundle?.results ?? [];
+  const fromStats = bundle?.stats?.providers ?? [];
   const seen = new Set<string>();
   const labels: string[] = [];
+  for (const id of fromStats) {
+    const key = id.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    labels.push(formatSearchProviderLabel(id));
+  }
+  const rows = results ?? bundle?.results ?? [];
   for (const row of rows) {
     const id = row.source?.provider?.trim().toLowerCase();
     if (!id || seen.has(id)) continue;

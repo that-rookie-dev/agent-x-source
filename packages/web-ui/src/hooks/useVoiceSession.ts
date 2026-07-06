@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { syncAuthTokenFromSession } from '../api';
-import { VoiceSessionClient, type VoiceClientState, type VoiceTurnTimings } from '../voice/VoiceSessionClient';
+import { VoiceSessionClient, type VoiceClientState, type VoiceTurnTimings, type VoicePermissionPrompt, type VoicePermissionChoice } from '../voice/VoiceSessionClient';
 import { VOICE_MAX_TURN_SECONDS, VOICE_TURN_COUNTDOWN_FROM_SECONDS, VOICE_MIN_RECORDING_MS } from '../voice/constants';
 import { markVoiceOutputUnlocked } from '../voice/support';
 import { friendlyVoiceError } from '../components/voice/voice-comms-theme';
@@ -43,8 +43,10 @@ export function useVoiceSession(
   const [muted, setMuted] = useState(false);
   const [textOnlyPlayback, setTextOnlyPlayback] = useState(false);
   const [voiceTimings, setVoiceTimings] = useState<VoiceTurnTimings | null>(null);
+  const [permissionPrompt, setPermissionPrompt] = useState<VoicePermissionPrompt | null>(null);
   const timerRef = useRef<number | null>(null);
   const pushToTalkActiveRef = useRef(false);
+  const pendingEndRef = useRef(false);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) {
@@ -114,6 +116,8 @@ export function useVoiceSession(
           setVoiceTimings(timings);
           callbacksRef.current?.onVoiceTiming?.(timings);
         },
+        onPermissionPrompt: (prompt) => setPermissionPrompt(prompt),
+        onPermissionResolved: () => setPermissionPrompt(null),
       });
     }
     return clientRef.current;
@@ -136,18 +140,37 @@ export function useVoiceSession(
 
   const stopSession = useCallback(() => {
     pushToTalkActiveRef.current = false;
+    pendingEndRef.current = false;
     clientRef.current?.disconnect();
     clientRef.current = null;
     setHolding(false);
     stopTimer();
     setState('idle');
     setAgentStatus('');
+    setPermissionPrompt(null);
   }, [stopTimer]);
+
+  const respondToPermission = useCallback((choice: VoicePermissionChoice) => {
+    clientRef.current?.respondToPermission(choice);
+    setPermissionPrompt(null);
+  }, []);
+
+  const finishPushToTalkCapture = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client) return;
+    const tooShort = client.getListenDurationMs() < VOICE_MIN_RECORDING_MS;
+    if (tooShort) {
+      await client.cancelListening();
+      return;
+    }
+    await client.stopListening();
+  }, []);
 
   const beginPushToTalk = useCallback(async () => {
     const client = ensureClient();
     if (!client || muted) return;
     pushToTalkActiveRef.current = true;
+    pendingEndRef.current = false;
     setError(null);
     setTextOnlyPlayback(false);
     setHolding(true);
@@ -156,18 +179,20 @@ export function useVoiceSession(
       await ensureVoiceAuthToken();
       await client.connect();
       if (!pushToTalkActiveRef.current) {
-        await client.stopListening();
+        await client.cancelListening();
         setHolding(false);
         return;
       }
       await client.startListening();
-      if (!pushToTalkActiveRef.current) {
-        await client.stopListening();
+      if (!pushToTalkActiveRef.current || pendingEndRef.current) {
+        pendingEndRef.current = false;
+        await finishPushToTalkCapture();
         setHolding(false);
         return;
       }
     } catch (err) {
       pushToTalkActiveRef.current = false;
+      pendingEndRef.current = false;
       setHolding(false);
       setError(friendlyVoiceError(err instanceof Error ? err.message : 'Voice capture failed'));
       return;
@@ -185,21 +210,20 @@ export function useVoiceSession(
         return next;
       });
     }, 1000);
-  }, [ensureClient, ensureVoiceAuthToken, muted, stopTimer]);
+  }, [ensureClient, ensureVoiceAuthToken, muted, stopTimer, finishPushToTalkCapture]);
 
   const endPushToTalk = useCallback(async () => {
-    if (!pushToTalkActiveRef.current) return;
     pushToTalkActiveRef.current = false;
     setHolding(false);
     stopTimer();
-    if (!clientRef.current) return;
-    const tooShort = clientRef.current.getListenDurationMs() < VOICE_MIN_RECORDING_MS;
-    if (tooShort) {
-      await clientRef.current.cancelListening();
+    const client = clientRef.current;
+    if (!client || client.getState() !== 'listening') {
+      pendingEndRef.current = true;
       return;
     }
-    await clientRef.current.stopListening();
-  }, [stopTimer]);
+    pendingEndRef.current = false;
+    await finishPushToTalkCapture();
+  }, [stopTimer, finishPushToTalkCapture]);
 
   const beginTalk = mode === 'duplex' ? startSession : beginPushToTalk;
   const endTalk = mode === 'duplex' ? stopSession : endPushToTalk;
@@ -242,6 +266,8 @@ export function useVoiceSession(
     mode,
     textOnlyPlayback,
     voiceTimings,
+    permissionPrompt,
+    respondToPermission,
     startSession,
     stopSession,
     beginPushToTalk,

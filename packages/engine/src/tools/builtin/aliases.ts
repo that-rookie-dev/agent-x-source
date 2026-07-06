@@ -7,6 +7,8 @@ import * as shell from './shell.js';
 import { getRAGEngineInstance } from '../../commands/builtin/rag_index.js';
 import { getMemoryFabricInstance } from '../../neural/MemoryFabric.js';
 import { getEmbedderInstance } from '../../neural/OnnxEmbeddingProvider.js';
+import { USER_PROFILE_TAG } from '../../neural/UserChatMemoryIngester.js';
+import { CHAT_MEMORY_TAG } from '../../neural/ChatTurnMemoryIngester.js';
 
 async function tryImport<T>(path: string, exportName: string): Promise<T | null> {
   try {
@@ -159,10 +161,39 @@ export async function memoryRead(args: Record<string, unknown>, context: ToolExe
   return ai.memoryRecall({ key: args['key'] ?? args['query'] }, context);
 }
 
-/** Search agent memory keys (prefix/substring match). */
+/** Search agent memory keys (prefix/substring) and semantic chat memories in the fabric. */
 export async function memorySearch(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
   const query = (args['query'] ?? args['pattern']) as string;
   if (!query) return { success: false, output: 'query is required', error: 'INVALID_ARGS' };
+
+  const fabric = getMemoryFabricInstance();
+  const embedder = getEmbedderInstance();
+  if (fabric && embedder) {
+    try {
+      const embedding = await embedder.embed(query);
+      const [chatNodes, profileNodes] = await Promise.all([
+        fabric.vectorSearch(embedding, { limit: 8, tag: CHAT_MEMORY_TAG, sessionId: null }),
+        fabric.vectorSearch(embedding, { limit: 5, tag: USER_PROFILE_TAG, sessionId: null }),
+      ]);
+      const lines: string[] = [];
+      if (chatNodes.length > 0) {
+        lines.push('=== PAST CONVERSATIONS ===');
+        chatNodes.forEach((n, i) => {
+          const body = (n.content ?? '').replace(/\n+/g, ' ').slice(0, 350);
+          lines.push(`[${i + 1}] ${n.label ?? 'chat'}\n${body}${body.length >= 350 ? '…' : ''}`);
+        });
+      }
+      if (profileNodes.length > 0) {
+        lines.push('\n=== USER PROFILE ===');
+        profileNodes.forEach((n, i) => {
+          lines.push(`[${i + 1}] ${n.label ?? 'profile'}: ${(n.content ?? '').slice(0, 200)}`);
+        });
+      }
+      if (lines.length > 0) {
+        return { success: true, output: lines.join('\n'), metadata: { count: chatNodes.length + profileNodes.length } };
+      }
+    } catch { /* fall through to legacy memory */ }
+  }
 
   try {
     const listMemories = await tryImport<(q?: string) => Promise<Array<{ key: string; value: string }>>>(
@@ -228,6 +259,11 @@ export async function memoryFabricSearch(args: Record<string, unknown>, _context
   try {
     const embedding = await embedder.embed(query);
 
+    const [chatMemories, profileMemories] = await Promise.all([
+      fabric.vectorSearch(embedding, { limit: topK, tag: CHAT_MEMORY_TAG, sessionId: null }),
+      fabric.vectorSearch(embedding, { limit: Math.max(3, Math.floor(topK / 2)), tag: USER_PROFILE_TAG, sessionId: null }),
+    ]);
+
     // Pass 1: Vector search for direct semantic matches (both semantic entities and chunk nodes).
     const vectorResults = await fabric.vectorSearch(embedding, { limit: topK * 2 });
 
@@ -272,6 +308,14 @@ export async function memoryFabricSearch(args: Record<string, unknown>, _context
     };
 
     const parts: string[] = [];
+    if (chatMemories.length > 0) {
+      parts.push('=== PAST CONVERSATIONS ===');
+      chatMemories.forEach((n, i) => parts.push(fmtNode(n, i)));
+    }
+    if (profileMemories.length > 0) {
+      parts.push('\n=== USER PROFILE MEMORIES ===');
+      profileMemories.forEach((n, i) => parts.push(fmtNode(n, i)));
+    }
     if (communityResults.length > 0) {
       parts.push('=== COMMUNITY SUMMARIES ===');
       communityResults.forEach((n, i) => parts.push(fmtNode(n, i)));
@@ -286,10 +330,10 @@ export async function memoryFabricSearch(args: Record<string, unknown>, _context
     }
 
     if (parts.length === 0) {
-      return { success: true, output: 'No matching documents found in the memory fabric. Make sure documents have been ingested via RAG Studio.', metadata: { count: 0 } };
+      return { success: true, output: 'No matching memories or documents found. Chat turns are embedded automatically after each conversation; upload files via RAG Studio for document search.', metadata: { count: 0 } };
     }
 
-    return { success: true, output: parts.join('\n\n'), metadata: { count: entities.length + graphNodes.length } };
+    return { success: true, output: parts.join('\n\n'), metadata: { count: entities.length + graphNodes.length + chatMemories.length + profileMemories.length } };
   } catch (e) {
     return { success: false, output: `Memory fabric search failed: ${e instanceof Error ? e.message : String(e)}`, error: 'FABRIC_ERROR' };
   }

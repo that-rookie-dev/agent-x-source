@@ -61,6 +61,9 @@ export function shouldExtractUserChatMemory(userMessage: string): boolean {
     'your name', 'you are called', 'be called', 'call you',
     'i need you to know', 'for context', 'just so you know',
     'i usually', 'i typically', 'my goal', 'my role',
+    'do you remember', 'you remember', 'we discussed', 'we talked',
+    'last time', 'previously', 'earlier', 'old memory', 'past conversation',
+    'what did i say', 'what did we', 'recall', 'my memory',
   ];
   return triggers.some((t) => lower.includes(t));
 }

@@ -132,6 +132,8 @@ export { GraphRagRetriever } from './neural/GraphRagRetriever.js';
 export type { GraphRagRetrievalOptions, GraphRagResult } from './neural/GraphRagRetriever.js';
 export { UserChatMemoryIngester, USER_PROFILE_TAG, shouldExtractUserChatMemory } from './neural/UserChatMemoryIngester.js';
 export type { UserChatMemoryFact } from './neural/UserChatMemoryIngester.js';
+export { ChatTurnMemoryIngester, CHAT_MEMORY_TAG } from './neural/ChatTurnMemoryIngester.js';
+export { backfillChatMemoryFromSessions } from './neural/ChatHistoryMemoryBackfill.js';
 export { setLocalModelConfig } from './neural/LocalModelConfig.js';
 export { LocalLLMJudge } from './neural/LocalLLMJudge.js';
 export type { NodeCreatedEvent, SynapseConnectedEvent, NeuronActivatedEvent, BrainEvent, BrainEventListener } from './neural/BrainEventStreamer.js';

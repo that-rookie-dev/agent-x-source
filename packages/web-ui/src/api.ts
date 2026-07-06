@@ -266,6 +266,7 @@ export const crewSuggestions = {
     userText: string;
     evaluation: CrewSuggestionEvaluation;
     attachments?: Array<{ name: string }>;
+    userMessageId?: string;
   }) => request<{ ok: boolean; userMessageId: string; pickerMessageId: string; pickerPartId: string }>(
     `/sessions/${sessionId}/crew-roster-picker`,
     { method: 'POST', body: JSON.stringify(body) },

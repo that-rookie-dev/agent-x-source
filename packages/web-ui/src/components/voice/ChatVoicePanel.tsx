@@ -149,17 +149,6 @@ export function ChatVoicePanel({
               {capturedText}
             </Typography>
           ) : null}
-          {!comms.isDuplex && comms.commsReady && comms.micReady && !capturedText && (
-            <Typography sx={{
-              fontSize: '0.42rem',
-              color: colors.text.dim,
-              mt: 0.25,
-              lineHeight: 1.25,
-              textAlign: 'center',
-            }}>
-              Hold Space to talk · release to send
-            </Typography>
-          )}
         </Box>
         <Box sx={{
           px: 0.75,

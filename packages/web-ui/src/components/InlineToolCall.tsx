@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, memo, startTransition } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { isIntegrationToolId } from '@agentx/shared/browser';
@@ -63,7 +63,7 @@ function getToolRenderer(tool: InlineToolData): ((props: { tool: InlineToolData 
   return null;
 }
 
-export function InlineToolCall({ tool, compactTop }: { tool: InlineToolData; compactTop?: boolean }) {
+function InlineToolCallComponent({ tool, compactTop }: { tool: InlineToolData; compactTop?: boolean }) {
   const isEditTool = EDIT_TOOLS.has(tool.name);
   const isDeepSearchTool = tool.name === 'deep_web_search';
   const hasDiff = !!(tool.metadata?.diff || (tool.result && tool.result.includes('---') && tool.result.includes('+++')));
@@ -107,7 +107,10 @@ export function InlineToolCall({ tool, compactTop }: { tool: InlineToolData; com
     }}>
       <Box
         ref={headerRef}
-        onClick={() => !isDeepSearchTool && tool.status !== 'running' && setExpanded(e => !e)}
+        onClick={() => {
+          if (isDeepSearchTool || tool.status === 'running') return;
+          startTransition(() => setExpanded((e) => !e));
+        }}
         sx={{
           display: 'flex', alignItems: 'center', gap: 0.625, py: 0.75, px: 1,
           opacity: tool.status === 'running' ? 0.7 : 1,
@@ -174,8 +177,8 @@ export function InlineToolCall({ tool, compactTop }: { tool: InlineToolData; com
 }
 
 function DefaultDetailsPanel({ tool, cc }: { tool: InlineToolData; cc: string }) {
-  const argsRaw = formatArgsRaw(tool);
-  const resultText = formatResult(tool);
+  const argsRaw = useMemo(() => formatArgsRaw(tool), [tool.args, tool.name]);
+  const resultText = useMemo(() => formatResult(tool), [tool.result, tool.status, tool.name]);
 
   return (
     <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${cc}15` }}>
@@ -238,8 +241,28 @@ function Pre({ children }: { children: string }) {
       fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
       color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
       maxHeight: 300, overflow: 'auto', wordBreak: 'break-word',
+      contentVisibility: 'auto',
     }}>
       {children}
     </Box>
   );
 }
+
+function inlineToolPropsEqual(
+  prev: { tool: InlineToolData; compactTop?: boolean },
+  next: { tool: InlineToolData; compactTop?: boolean },
+): boolean {
+  if (prev.compactTop !== next.compactTop) return false;
+  const a = prev.tool;
+  const b = next.tool;
+  return a.id === b.id
+    && a.name === b.name
+    && a.status === b.status
+    && a.result === b.result
+    && a.streamOutput === b.streamOutput
+    && a.elapsed === b.elapsed
+    && a.args === b.args
+    && a.metadata === b.metadata;
+}
+
+export const InlineToolCall = memo(InlineToolCallComponent, inlineToolPropsEqual);

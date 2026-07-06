@@ -20,6 +20,16 @@ export type VoiceClientState =
   | 'speaking'
   | 'error';
 
+export interface VoicePermissionPrompt {
+  requestId: string;
+  tool: string;
+  riskLevel: string;
+  argsSummary?: string;
+  commandPreview?: string;
+}
+
+export type VoicePermissionChoice = 'allow_once' | 'allow_always' | 'deny' | 'approve_all';
+
 export interface VoiceSessionClientEvents {
   onStateChange?: (state: VoiceClientState) => void;
   onTranscriptPartial?: (text: string) => void;
@@ -31,6 +41,8 @@ export interface VoiceSessionClientEvents {
   onPlaybackLevel?: (level: number) => void;
   onDuplexSilence?: (elapsedMs: number, thresholdMs: number) => void;
   onVoiceTiming?: (timings: VoiceTurnTimings) => void;
+  onPermissionPrompt?: (prompt: VoicePermissionPrompt) => void;
+  onPermissionResolved?: (requestId: string, choice: string, reason?: string) => void;
 }
 
 export interface VoiceTurnTimings {
@@ -87,11 +99,15 @@ export class VoiceSessionClient {
   }
 
   async connect(): Promise<void> {
-    if (this.ws?.readyState === WebSocket.OPEN && (this.state === 'ready' || this.state === 'listening')) {
-      return;
-    }
     if (this.connectPromise) {
       return this.connectPromise;
+    }
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      if (this.state !== 'idle' && this.state !== 'error') {
+        return;
+      }
+      try { this.ws.close(); } catch { /* ignore */ }
+      this.ws = null;
     }
 
     this.setState('connecting');
@@ -283,8 +299,10 @@ export class VoiceSessionClient {
     this.interruptPlayback();
     void this.playback.close();
     void this.stopCaptureOnly();
-    this.ws?.send(JSON.stringify({ type: 'session_end' }));
-    this.ws?.close();
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'session_end' }));
+      this.ws.close();
+    }
     this.ws = null;
     this.connectPromise = null;
     this.setState('idle');
@@ -295,6 +313,12 @@ export class VoiceSessionClient {
     this.ws?.send(JSON.stringify({ type: 'playback_interrupted' }));
     if (this.mode === 'duplex') {
       this.setState('listening');
+    }
+  }
+
+  respondToPermission(choice: VoicePermissionChoice): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'permission_response', choice }));
     }
   }
 
@@ -372,6 +396,22 @@ export class VoiceSessionClient {
         }
         break;
       }
+      case 'permission_prompt':
+        this.events.onPermissionPrompt?.({
+          requestId: String(msg.requestId ?? ''),
+          tool: String(msg.tool ?? 'tool'),
+          riskLevel: String(msg.riskLevel ?? 'medium'),
+          argsSummary: typeof msg.argsSummary === 'string' ? msg.argsSummary : undefined,
+          commandPreview: typeof msg.commandPreview === 'string' ? msg.commandPreview : undefined,
+        });
+        break;
+      case 'permission_resolved':
+        this.events.onPermissionResolved?.(
+          String(msg.requestId ?? ''),
+          String(msg.choice ?? ''),
+          typeof msg.reason === 'string' ? msg.reason : undefined,
+        );
+        break;
       case 'recording_discarded':
         this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
         break;

@@ -36,7 +36,7 @@ export function buildCrewRosterHintFromEvaluation(
     ].join('\n');
   }
 
-  // High-confidence matches use the modal — agent should not duplicate unless modal was skipped.
+  // High-confidence matches use the in-chat roster picker — agent should not duplicate unless user skipped.
   if (evaluation.shouldSuggest) return null;
 
   const lines = evaluation.candidates.slice(0, 5).map(formatCandidateLine);

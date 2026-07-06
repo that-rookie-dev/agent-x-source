@@ -17,6 +17,10 @@ import { COMMS_MONO, commsTheme, friendlyVoiceError } from './voice-comms-theme'
 import { VoiceWaveform } from './VoiceWaveform';
 import { DuplexSilenceProgress } from './DuplexSilenceProgress';
 import { VoiceTurnTimingsBar } from './VoiceTurnTimingsBar';
+import { VoiceActivityLog } from './VoiceActivityLog';
+import { VoicePermissionCard } from './VoicePermissionCard';
+import { useVoiceActivityLog } from '../../hooks/useVoiceActivityLog';
+import { useVoiceTurnEpoch } from '../../hooks/useVoiceTurnEpoch';
 
 export interface VoiceModalProps {
   open: boolean;
@@ -233,7 +237,14 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
   const pttEnabled = prerequisitesOk && commsReady && micReady;
   const isDuplex = inputMode === 'duplex';
 
-  const session = useVoiceSession(pttEnabled, inputMode, chatSessionId ?? undefined);
+  const session = useVoiceSession(pttEnabled, inputMode, chatSessionId ?? undefined, {
+    onTranscriptFinal: (text, empty) => {
+      voiceCtx.getVoiceChatBridge()?.onTranscriptFinal?.(text, empty);
+    },
+    onAgentRunning: () => {
+      voiceCtx.getVoiceChatBridge()?.onAgentRunning?.();
+    },
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -247,8 +258,9 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
 
   useEffect(() => {
     if (!pttEnabled) return;
+    if (!isDuplex) return;
     void session.startSession();
-  }, [pttEnabled, inputMode, session.startSession]);
+  }, [pttEnabled, isDuplex, session.startSession]);
 
   const beginVoice = useCallback(async () => {
     if (!pttEnabled) return;
@@ -289,6 +301,9 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
   }, [open, session]);
 
   const wsLinked = session.state === 'ready' || session.state === 'listening' || session.state === 'processing' || session.state === 'speaking';
+  const turnEpoch = useVoiceTurnEpoch(session.state, session.holding, open);
+  const activityLog = useVoiceActivityLog(chatSessionId, turnEpoch, open);
+  const showMissionLog = commsReady;
   const showSilenceBar = isDuplex && commsReady && session.state === 'listening' && session.silenceProgress > 0;
   const relayReady = commsReady && !session.holding && session.state !== 'connecting' && session.state !== 'processing';
   const activeChannel = resolveActiveChannel(session.state, session.holding, commsReady, bootPhase, inputMode);
@@ -514,7 +529,14 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
           </CommsPanel>
         </Box>
 
-        <Box sx={{ px: 1, mb: 1 }}>
+        <Box sx={{ px: 2, mb: 1 }}>
+          <VoiceActivityLog key={turnEpoch} entries={activityLog} visible={showMissionLog} />
+          {session.permissionPrompt && (
+            <VoicePermissionCard
+              prompt={session.permissionPrompt}
+              onRespond={session.respondToPermission}
+            />
+          )}
           <DuplexSilenceProgress progress={session.silenceProgress} visible={showSilenceBar} />
           <VoiceTurnTimingsBar timings={session.voiceTimings} mono={COMMS_MONO} />
         </Box>

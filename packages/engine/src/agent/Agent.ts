@@ -45,10 +45,11 @@ import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
-import { MemoryFabric, type MemoryNode } from '../neural/MemoryFabric.js';
-import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
+import { MemoryFabric, type MemoryNode, setMemoryFabricInstance, getMemoryFabricInstance } from '../neural/MemoryFabric.js';
+import { OnnxEmbeddingProvider, setEmbedderInstance, getEmbedderInstance } from '../neural/OnnxEmbeddingProvider.js';
 import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
+import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
 import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
@@ -148,6 +149,40 @@ function getLoadingSteps(_intent: string): Array<{ id: string; label: string; st
   return [{ id: 'load', label: labels[Math.floor(Math.random() * labels.length)]!, status: 'active' as const }];
 }
 
+/**
+ * Build a human/voice-friendly preview of what a tool wants to do, for permission prompts.
+ * `commandPreview` is a raw string (e.g. shell command); `argsSummary` is a short spoken phrase.
+ */
+function summarizePermissionArgs(
+  args?: Record<string, unknown>,
+): { commandPreview?: string; argsSummary?: string } {
+  if (!args) return {};
+  const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
+
+  const cmd = str(args['command'] ?? args['cmd']);
+  if (cmd) {
+    const trimmed = cmd.trim().slice(0, 400);
+    return { commandPreview: trimmed, argsSummary: `run the command ${trimmed.slice(0, 160)}` };
+  }
+
+  const url = str(args['url']);
+  if (url) {
+    return { commandPreview: url, argsSummary: `access ${url.slice(0, 160)}` };
+  }
+
+  const path = str(args['path'] ?? args['file'] ?? args['filePath'] ?? args['target'] ?? args['to']);
+  if (path) {
+    return { commandPreview: path, argsSummary: `use the path ${path.slice(0, 160)}` };
+  }
+
+  const query = str(args['query']);
+  if (query) {
+    return { commandPreview: query, argsSummary: `search for ${query.slice(0, 160)}` };
+  }
+
+  return {};
+}
+
 export interface AgentOptions {
   config: AgentXConfig;
   sessionId: string;
@@ -210,6 +245,7 @@ export class Agent {
   private get secretSauce(): SecretSauceManager { if (!this._secretSauce) { this._secretSauce = new SecretSauceManager(); } return this._secretSauce; }
   private memoryExtractor: MemoryExtractor | null = null;
   private userChatMemoryIngester: UserChatMemoryIngester | null = null;
+  private chatTurnMemoryIngester: ChatTurnMemoryIngester | null = null;
   private errorShield: ErrorShield;
   private toolExecutor?: EnhancedToolExecutor;
   private toolRegistry?: ToolRegistry;
@@ -1124,14 +1160,20 @@ export class Agent {
 
   private get memoryFabric(): MemoryFabric | null {
     if (!this._memoryFabric && this._pgPool) {
-      this._memoryFabric = new MemoryFabric(this._pgPool);
+      this._memoryFabric = getMemoryFabricInstance() ?? new MemoryFabric(this._pgPool);
+      if (!getMemoryFabricInstance()) {
+        setMemoryFabricInstance(this._memoryFabric);
+      }
     }
     return this._memoryFabric;
   }
 
   private get memoryEmbedder(): EmbeddingProvider | null {
     if (!this._memoryEmbedder) {
-      this._memoryEmbedder = new OnnxEmbeddingProvider();
+      this._memoryEmbedder = getEmbedderInstance() ?? new OnnxEmbeddingProvider();
+      if (!getEmbedderInstance()) {
+        setEmbedderInstance(this._memoryEmbedder as OnnxEmbeddingProvider);
+      }
     }
     return this._memoryEmbedder;
   }
@@ -1754,7 +1796,7 @@ Rules:
     return trimmed;
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -2768,10 +2810,19 @@ Rules:
       // Silent failure — memory extraction is best-effort
     });
 
-    // Super-session: persist user-profile facts to global vector memory (shared across all sessions).
-    if ((this.options.contextKind ?? 'agent_x') !== 'agent_x_core') return;
     const fabric = this.memoryFabric;
     const embedder = this.memoryEmbedder;
+    if (fabric && embedder && this.config.neuralBrain !== false) {
+      if (!this.chatTurnMemoryIngester) {
+        this.chatTurnMemoryIngester = new ChatTurnMemoryIngester(fabric, embedder);
+      }
+      void this.chatTurnMemoryIngester.ingestTurn(userMessage, assistantResponse, this.sessionId).catch(() => {
+        // Silent failure — chat turn embedding is best-effort
+      });
+    }
+
+    // Super-session: persist user-profile facts to global vector memory (shared across all sessions).
+    if ((this.options.contextKind ?? 'agent_x') !== 'agent_x_core') return;
     if (!fabric || !embedder || this.config.neuralBrain === false) return;
 
     if (!this.userChatMemoryIngester) {
@@ -3201,6 +3252,7 @@ Rules:
       if (isPermissionExemptTool(toolId)) return 'allow_once';
       if (this.isDelegatedWorker || this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
       const requestId = randomUUID();
+      const { commandPreview, argsSummary } = summarizePermissionArgs(context?.args);
       return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
         this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
         this.emit({
@@ -3210,6 +3262,8 @@ Rules:
           path,
           riskLevel,
           integrationPreview: context?.integrationPreview,
+          ...(commandPreview ? { commandPreview } : {}),
+          ...(argsSummary ? { argsSummary } : {}),
         });
       });
     });

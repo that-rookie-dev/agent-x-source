@@ -16,7 +16,7 @@ interface ChatMessageListProps {
   onOpenChildSession?: (props: { childSessionId: string; label: string; kind: 'sub_agent' | 'crew_worker'; status: 'running' | 'done' | 'error'; task?: string }) => void;
   onQuestionnaireRespond?: (messageId: string, response: string) => void;
   onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void;
-  onCrewRosterPickerSkip?: (messageId: string) => void;
+  onCrewRosterPickerSkip?: (messageId: string, dismissForSession?: boolean) => void;
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
   pendingFeedbackMessageId?: string | null;
   onTurnFeedback?: (messageId: string, rating: import('@agentx/shared/browser').TurnFeedbackRating) => void;

@@ -7,6 +7,8 @@ import { turnRegistry } from './turn-registry.js';
 import { getLogger, sanitizeForJson, generateId } from '@agentx/shared';
 
 export const TURN_TIMEOUT_MS = 600_000;
+/** Wall-clock cap for voice comms modal turns (no heartbeat extension). */
+export const VOICE_TURN_TIMEOUT_MS = 90_000;
 
 export function getForceWebSearchError(cfg: AgentXConfig, forceWebSearch?: boolean): string | null {
   if (!forceWebSearch) return null;
@@ -147,6 +149,9 @@ export function runAgentTurnAsync(
   primaryCrewId?: string,
   extra?: {
     forceWebSearch?: boolean;
+    voiceTurn?: boolean;
+    turnTimeoutMs?: number;
+    fixedTurnTimeout?: boolean;
     resumeCrewIntake?: {
       originalUserText: string;
       intakeAnswer: string;
@@ -157,6 +162,21 @@ export function runAgentTurnAsync(
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   let timeoutPaused = false;
+  const turnTimeoutMs = extra?.turnTimeoutMs ?? TURN_TIMEOUT_MS;
+  const fixedTurnTimeout = extra?.fixedTurnTimeout ?? false;
+
+  if (extra?.voiceTurn) {
+    try {
+      agent.getToolExecutor()?.setVoiceTurnActive?.(true);
+    } catch { /* best-effort */ }
+  }
+
+  const clearVoiceTurn = () => {
+    if (!extra?.voiceTurn) return;
+    try {
+      agent.getToolExecutor()?.setVoiceTurnActive?.(false);
+    } catch { /* best-effort */ }
+  };
 
   const pauseTimeout = () => {
     timeoutPaused = true;
@@ -177,17 +197,19 @@ export function runAgentTurnAsync(
       if (partial) {
         persistMessageDirect(sessionId, 'assistant', partial + '\n\n⚠ Turn timed out — partial output saved.');
       }
+      clearVoiceTurn();
       onError?.('The operation was aborted due to timeout', partial);
     } catch { /* best-effort */ }
   };
   const scheduleTimeout = () => {
-    if (timeoutPaused) return;
+    if (timeoutPaused || fixedTurnTimeout) return;
     if (timeoutId) clearTimeout(timeoutId);
-    timeoutId = setTimeout(onTimeout, TURN_TIMEOUT_MS);
+    timeoutId = setTimeout(onTimeout, turnTimeoutMs);
   };
   const unsubActivity = agent.events.on((event) => {
     const type = event.type as string;
-    if (type === 'clarification_required') {
+    if (type === 'clarification_required' || type === 'permission_required') {
+      // Human-in-the-loop: stop the clock until they respond (voice or UI).
       pauseTimeout();
       return;
     }
@@ -199,11 +221,22 @@ export function runAgentTurnAsync(
       }
       return;
     }
-    if (TURN_ACTIVITY_EVENTS.has(type)) {
+    if (timeoutPaused && TURN_ACTIVITY_EVENTS.has(type)) {
+      // A permission/clarification was resolved and work resumed — restart the clock.
+      timeoutPaused = false;
+      if (fixedTurnTimeout) {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(onTimeout, turnTimeoutMs);
+      } else {
+        scheduleTimeout();
+      }
+      return;
+    }
+    if (!fixedTurnTimeout && TURN_ACTIVITY_EVENTS.has(type)) {
       scheduleTimeout();
     }
   });
-  scheduleTimeout();
+  timeoutId = setTimeout(onTimeout, turnTimeoutMs);
 
   void agent.sendMessage(fullText, {
     ...(instruction ? { instruction } : {}),
@@ -213,11 +246,13 @@ export function runAgentTurnAsync(
     ...(crewIntakeFromPicker ? { crewIntakeFromPicker: true } : {}),
     ...(primaryCrewId ? { primaryCrewId } : {}),
     ...(extra?.forceWebSearch ? { forceWebSearch: true } : {}),
+    ...(extra?.voiceTurn ? { voiceTurn: true } : {}),
     ...(extra?.resumeCrewIntake ? { resumeCrewIntake: extra.resumeCrewIntake } : {}),
   })
     .then((message) => {
       if (timeoutId) clearTimeout(timeoutId);
       unsubActivity();
+      clearVoiceTurn();
       persistToolLedger(agent, sessionId);
       if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
         turnRegistry.complete(turnId, message as any);
@@ -231,6 +266,7 @@ export function runAgentTurnAsync(
     .catch((e: unknown) => {
       if (timeoutId) clearTimeout(timeoutId);
       unsubActivity();
+      clearVoiceTurn();
       const errMsg = e instanceof Error ? e.message : 'chat-failed';
       const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, errMsg, partial);

@@ -22,7 +22,8 @@ ${VOICE_BLOCK_CLOSE}
 Rules:
 - Put the ${VOICE_BLOCK_OPEN} block before the detailed chat body.
 - Never put markdown or URLs inside the voice block.
-- Keep the voice block under 80 words.`;
+- Keep the voice block under 80 words.
+- This is a live voice turn: answer quickly. Prefer web_search or http_get for live facts (weather, news). Do not use shell_exec unless absolutely necessary (max ~20s).`;
 }
 
 export function extractVoiceSpeakable(content: string): { voice: string; chat: string } {

@@ -390,6 +390,19 @@ export class MemoryFabric {
     return { created: true, nodeId: node.id };
   }
 
+  /** Skip duplicate chat-turn embeddings (same session + user turn label). */
+  async hasChatMemoryTurn(sourceSessionId: string, label: string): Promise<boolean> {
+    const { rows } = await this.pool.query<{ id: string }>(
+      `SELECT id FROM memory_nodes
+       WHERE tag = 'chat_memory'
+         AND provenance->>'sourceSessionId' = $1
+         AND label = $2
+       LIMIT 1`,
+      [sourceSessionId, label],
+    );
+    return rows.length > 0;
+  }
+
   async createNode(input: MemoryNodeInput): Promise<MemoryNode> {
     const redacted = await this.piiRedactor.redact(input.content);
     const content = redacted.redacted;

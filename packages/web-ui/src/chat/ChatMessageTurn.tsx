@@ -127,8 +127,9 @@ function renderParts(
   onQuestionnaireRespond?: (messageId: string, response: string) => void,
   messageId?: string,
   onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void,
-  onCrewRosterPickerSkip?: (messageId: string) => void,
+  onCrewRosterPickerSkip?: (messageId: string, dismissForSession?: boolean) => void,
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void,
+  voiceSummary?: string | null,
 ) {
   const filtered = parts.filter((p) => {
     if (p.type === 'deep_search') {
@@ -144,6 +145,20 @@ function renderParts(
 
   const ordered = orderPartsForChatRender(filtered);
   const webSources = collectWebSourceUrls(ordered);
+
+  const firstDeepIdx = ordered.findIndex((p) => p.type === 'deep_search');
+  const lastDeepIdx = ordered.reduce((acc, p, i) => (p.type === 'deep_search' ? i : acc), -1);
+  const hasDeepSearch = firstDeepIdx >= 0;
+
+  const renderDeepSearchPart = (part: PartEntry, afterTool: boolean) => (
+    <Box key={part.id} sx={{ mb: 0.25, mt: afterTool ? -0.625 : 0 }}>
+      <DeepSearchMessageBlock
+        bundle={part.deepSearch!.bundle}
+        progress={part.deepSearch!.progress}
+        running={part.deepSearch!.running}
+      />
+    </Box>
+  );
 
   const renderMainPart = (part: PartEntry, compactTop = false) => {
     switch (part.type) {
@@ -177,7 +192,7 @@ function renderParts(
             }
             onSkip={
               part.crewRosterPicker.status === 'pending' && onCrewRosterPickerSkip && messageId
-                ? () => onCrewRosterPickerSkip(messageId)
+                ? (dismissForSession) => onCrewRosterPickerSkip(messageId, dismissForSession)
                 : undefined
             }
             onViewDossier={onViewCrewDossier}
@@ -218,27 +233,47 @@ function renderParts(
     }
   };
 
+  if (hasDeepSearch) {
+    const before = ordered.slice(0, firstDeepIdx);
+    const deepParts = ordered.filter((p) => p.type === 'deep_search');
+    const after = ordered.slice(lastDeepIdx + 1);
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {before.map((part, i) => {
+          const prev = before[i - 1];
+          const compactTop = part.type === 'tool' && prev?.type === 'tool';
+          return renderMainPart(part, compactTop);
+        })}
+        {deepParts.map((part, i) => {
+          const prev = i === 0 ? before[before.length - 1] : deepParts[i - 1];
+          const afterTool = prev?.type === 'tool';
+          return renderDeepSearchPart(part, afterTool);
+        })}
+        {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
+        {after.map((part, i) => {
+          const prev = after[i - 1];
+          const compactTop = part.type === 'tool' && prev?.type === 'tool';
+          return renderMainPart(part, compactTop);
+        })}
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       {ordered.map((part, i) => {
         const prev = ordered[i - 1];
         const compactTop = part.type === 'tool' && prev?.type === 'tool';
-        const afterTool = part.type === 'deep_search' && prev?.type === 'tool';
 
         if (part.type === 'deep_search' && part.deepSearch) {
-          return (
-            <Box key={part.id} sx={{ mb: 0.25, mt: afterTool ? -0.625 : 0 }}>
-              <DeepSearchMessageBlock
-                bundle={part.deepSearch.bundle}
-                progress={part.deepSearch.progress}
-                running={part.deepSearch.running}
-              />
-            </Box>
-          );
+          const afterTool = prev?.type === 'tool';
+          return renderDeepSearchPart(part, afterTool);
         }
 
         return renderMainPart(part, compactTop);
       })}
+      {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
     </Box>
   );
 }
@@ -249,7 +284,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void;
   onQuestionnaireRespond?: (messageId: string, response: string) => void;
   onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void;
-  onCrewRosterPickerSkip?: (messageId: string) => void;
+  onCrewRosterPickerSkip?: (messageId: string, dismissForSession?: boolean) => void;
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
   showFeedback?: boolean;
   onTurnFeedback?: (messageId: string, rating: TurnFeedbackRating) => void;
@@ -290,12 +325,14 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     onCrewRosterPickerSubmit,
     onCrewRosterPickerSkip,
     onViewCrewDossier,
+    voiceSummary,
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       {cleanContent && <CrewAwareMarkdown content={cleanContent} webSources={webSources} />}
       {displayMessage.toolCalls?.map((t, i) => (
         <InlineToolCall key={t.id} tool={t} compactTop={i > 0} />
       ))}
+      {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
     </Box>
   );
 
@@ -354,8 +391,6 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
           ))}
         </Box>
       )}
-
-      {voiceSummary && <VoiceSummaryCard text={voiceSummary} />}
 
       {hasParts || cleanContent || hasQuestionnaire ? contentBlock : null}
 

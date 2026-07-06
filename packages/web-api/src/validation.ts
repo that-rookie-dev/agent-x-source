@@ -133,6 +133,7 @@ export const crewRosterPickerOfferSchema = z.object({
     reasons: z.array(z.string()),
   }),
   attachments: z.array(z.object({ name: z.string() })).optional(),
+  userMessageId: z.string().min(1).optional(),
 });
 
 export const crewRosterPickerUpdateSchema = z.object({

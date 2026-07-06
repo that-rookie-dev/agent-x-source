@@ -41,7 +41,7 @@ import {
 } from './ingestion-governor.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath, getBackgroundTaskPool } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath, getBackgroundTaskPool, setMemoryFabricInstance, setEmbedderInstance, backfillChatMemoryFromSessions } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -1472,17 +1472,18 @@ app.post('/api/crew-suggestions/clear-dismiss', postCrewSuggestionClearDismiss);
 app.post('/api/sessions/:id/crew-roster-picker', validate(crewRosterPickerOfferSchema), (req, res) => {
   try {
     const sessionId = req.params['id']!;
-    const { userText, evaluation, attachments } = req.body as {
+    const { userText, evaluation, attachments, userMessageId } = req.body as {
       userText: string;
       evaluation: import('@agentx/shared').CrewSuggestionEvaluation;
       attachments?: Array<{ name: string }>;
+      userMessageId?: string;
     };
     const eng = getEngine();
     if (!eng.sessionManager.getSessionById(sessionId)) {
       res.status(404).json({ error: 'not-found' });
       return;
     }
-    const ids = persistCrewRosterPickerOffer({ sessionId, userText, evaluation, attachments });
+    const ids = persistCrewRosterPickerOffer({ sessionId, userText, evaluation, attachments, userMessageId });
     res.json({ ok: true, ...ids });
   } catch (e: unknown) {
     getLogger().error('CREW_ROSTER_PICKER_OFFER', e instanceof Error ? e : String(e));
@@ -4822,6 +4823,9 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
       getLogger().info('INGESTION_WORKER', 'Neural brain enabled — ingestion worker registered (governor controls run/pause).');
       const fabric = new MemoryFabric(pgPool as any);
       const embedder = new OnnxEmbeddingProvider();
+      setMemoryFabricInstance(fabric);
+      setEmbedderInstance(embedder);
+      void backfillChatMemoryFromSessions(pgPool as any, fabric, embedder).catch(() => { /* best-effort */ });
       ingestionWorker = new IngestionWorker(pgPool as any, fabric, {
         concurrency: 1,
         pollIntervalMs: 10000,

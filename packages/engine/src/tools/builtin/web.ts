@@ -166,10 +166,11 @@ export async function webSearch(args: Record<string, unknown>, _context: ToolExe
     const hits = await runWebSearch(query, 8);
 
     if (hits.length === 0) {
+      const providers = describeActiveWebSearchProviders();
       return {
-        success: false,
-        output: `No web results found. Active providers: ${describeActiveWebSearchProviders()}. Enable DuckDuckGo or configure BYOK providers in Settings → Tools → Web Search.`,
-        metadata: { query, resultCount: 0 },
+        success: true,
+        output: `Web search completed with no results (queried: ${providers}). The providers are enabled — try rephrasing the query, a shorter topic, or use http_get on a known URL.`,
+        metadata: { query, resultCount: 0, providers: providers.split(',').map((p) => p.trim()) },
       };
     }
 

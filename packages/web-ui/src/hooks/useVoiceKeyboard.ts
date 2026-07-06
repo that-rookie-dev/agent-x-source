@@ -44,7 +44,6 @@ export function useVoiceKeyboard(options: {
         if (opts.onDoubleTapSpace && now - lastSpaceDownRef.current < DOUBLE_TAP_SPACE_MS) {
           event.preventDefault();
           lastSpaceDownRef.current = 0;
-          opts.onEndPushToTalk();
           opts.onDoubleTapSpace();
           return;
         }
@@ -60,12 +59,14 @@ export function useVoiceKeyboard(options: {
           })
         ) {
           event.preventDefault();
+          event.stopPropagation();
           opts.onBeginPushToTalk();
           return;
         }
 
         if (opts.onDoubleTapSpace && opts.globalSpace) {
           event.preventDefault();
+          event.stopPropagation();
         }
         return;
       }
@@ -82,15 +83,16 @@ export function useVoiceKeyboard(options: {
         })
       ) {
         event.preventDefault();
+        event.stopPropagation();
         opts.onEndPushToTalk();
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keyup', onKeyUp, true);
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
     };
   }, [options.enabled]);
 }
