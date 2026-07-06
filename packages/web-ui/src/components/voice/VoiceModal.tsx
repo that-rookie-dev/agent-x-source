@@ -16,6 +16,7 @@ import { useVoice } from './VoiceProvider';
 import { COMMS_MONO, commsTheme, friendlyVoiceError } from './voice-comms-theme';
 import { VoiceWaveform } from './VoiceWaveform';
 import { DuplexSilenceProgress } from './DuplexSilenceProgress';
+import { VoiceTurnTimingsBar } from './VoiceTurnTimingsBar';
 
 export interface VoiceModalProps {
   open: boolean;
@@ -260,16 +261,22 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
     await session.endPushToTalk();
   }, [pttEnabled, session]);
 
+  const toggleInputMode = useCallback(() => {
+    session.cancel();
+    setInputMode(isDuplex ? 'push-to-talk' : 'duplex');
+  }, [isDuplex, session, setInputMode]);
+
   useVoiceKeyboard({
-    enabled: pttEnabled && !isDuplex,
+    enabled: pttEnabled && open,
     globalSpace: true,
     composerFocused: false,
     composerEmpty: true,
-    pushToTalk: true,
+    pushToTalk: !isDuplex,
     onBeginPushToTalk: () => { void beginVoice(); },
     onEndPushToTalk: () => { void endVoice(); },
     onToggleSession: () => {},
     onInterruptPlayback: () => session.interruptPlayback(),
+    onDoubleTapSpace: toggleInputMode,
   });
 
   useEffect(() => {
@@ -286,8 +293,9 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
   const relayReady = commsReady && !session.holding && session.state !== 'connecting' && session.state !== 'processing';
   const activeChannel = resolveActiveChannel(session.state, session.holding, commsReady, bootPhase, inputMode);
   const status = statusLabel(session.state, session.holding, session.agentStatus, commsReady, bootPhase, inputMode);
-  const operatorText = session.partialTranscript || (session.state === 'processing' || session.state === 'speaking' ? session.finalTranscript : session.transcript);
-  const showOperatorText = Boolean(operatorText) && (activeChannel === 'operator' || session.state === 'processing' || session.state === 'speaking');
+  const capturedText = (session.finalTranscript || session.partialTranscript || session.transcript).trim();
+  const operatorText = capturedText;
+  const showOperatorText = Boolean(operatorText);
 
   const footerHint = useMemo(() => {
     if (envBlocked) return envBlocked;
@@ -508,6 +516,7 @@ export function VoiceModal({ open, chatSessionId, onClose, autoStart = false }: 
 
         <Box sx={{ px: 1, mb: 1 }}>
           <DuplexSilenceProgress progress={session.silenceProgress} visible={showSilenceBar} />
+          <VoiceTurnTimingsBar timings={session.voiceTimings} mono={COMMS_MONO} />
         </Box>
 
         <Typography sx={{

@@ -5,6 +5,7 @@ import { colors } from '../../theme';
 import { DeepSearchResultCard } from './DeepSearchResultCard';
 import { ResearchBoardTrigger } from './DeepSearchResearchBoard';
 import { searchResultsRowSx, deepSearchShellSx } from './card-utils';
+import { formatSearchProvidersList } from './provider-labels';
 
 function ProgressStrip({ progress, running }: { progress?: DeepSearchProgress; running?: boolean }) {
   if (!progress && !running) return null;
@@ -39,6 +40,7 @@ export function DeepSearchShell({
 
   const results = bundle?.results ?? [];
   const stats = bundle?.stats;
+  const providersLabel = formatSearchProvidersList(bundle, results);
 
   return (
     <Box sx={deepSearchShellSx}>
@@ -52,15 +54,26 @@ export function DeepSearchShell({
         gap: 0.75,
         flexWrap: 'wrap',
       }}>
-        <Typography sx={{
-          fontSize: '0.58rem',
-          fontWeight: 700,
-          letterSpacing: '0.8px',
-          fontFamily: "'JetBrains Mono', monospace",
-          color: colors.accent.cyan,
-        }}>
-          DEEP WEB SEARCH
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, flexWrap: 'wrap' }}>
+          <Typography sx={{
+            fontSize: '0.58rem',
+            fontWeight: 700,
+            letterSpacing: '0.8px',
+            fontFamily: "'JetBrains Mono', monospace",
+            color: colors.accent.cyan,
+          }}>
+            DEEP WEB SEARCH
+          </Typography>
+          {providersLabel && (
+            <Typography sx={{
+              fontSize: '0.5rem',
+              color: colors.text.secondary,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}>
+              via {providersLabel}
+            </Typography>
+          )}
+        </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
           {stats && (
             <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>

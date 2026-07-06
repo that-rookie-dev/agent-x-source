@@ -1,5 +1,5 @@
 import { syncAuthTokenFromSession } from '../api';
-import { VOICE_SAMPLE_RATE } from './pcm.js';
+import { VOICE_SAMPLE_RATE, mergeInt16Chunks } from './pcm.js';
 import { StreamingPlayback } from './playback.js';
 import { VOICE_CAPTURE_PROCESSOR_NAME, VOICE_CAPTURE_PROCESSOR_URL } from './audioWorkletProcessor.js';
 import { isVoiceOutputUnlocked, markVoiceOutputUnlocked } from './support.js';
@@ -8,6 +8,8 @@ export const VOICE_WS_PATH = '/ws/voice';
 export { VOICE_SAMPLE_RATE };
 
 const VOICE_CONNECT_TIMEOUT_MS = 120_000;
+/** Duplex mode: batch mic frames before sending to avoid STT overload (~4 calls/s). */
+const DUPLEX_SEND_INTERVAL_MS = 250;
 
 export type VoiceClientState =
   | 'idle'
@@ -28,6 +30,15 @@ export interface VoiceSessionClientEvents {
   onAudioLevel?: (level: number) => void;
   onPlaybackLevel?: (level: number) => void;
   onDuplexSilence?: (elapsedMs: number, thresholdMs: number) => void;
+  onVoiceTiming?: (timings: VoiceTurnTimings) => void;
+}
+
+export interface VoiceTurnTimings {
+  sttMs: number;
+  thinkingMs: number;
+  ttsMs: number;
+  totalMs: number;
+  firstAudioMs: number;
 }
 
 export interface VoiceSessionClientOptions extends VoiceSessionClientEvents {
@@ -53,9 +64,12 @@ export class VoiceSessionClient {
   private workletNode: AudioWorkletNode | null = null;
   private playback = new StreamingPlayback();
   private duplexActive = false;
+  private duplexPendingChunks: Int16Array[] = [];
+  private duplexFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private skipPlayback = false;
   private pendingChunkMeta: { sampleRate: number } | null = null;
   private connectPromise: Promise<void> | null = null;
+  private listenStartedAt = 0;
 
   constructor(options: VoiceSessionClientOptions = {}) {
     this.events = options;
@@ -169,6 +183,31 @@ export class VoiceSessionClient {
     return this.connectPromise;
   }
 
+  private flushDuplexAudio(): void {
+    this.duplexFlushTimer = null;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.duplexPendingChunks.length === 0) {
+      this.duplexPendingChunks = [];
+      return;
+    }
+    const merged = mergeInt16Chunks(this.duplexPendingChunks);
+    this.duplexPendingChunks = [];
+    this.ws.send(merged.buffer);
+  }
+
+  private queueDuplexAudio(pcm: Int16Array): void {
+    this.duplexPendingChunks.push(pcm);
+    if (this.duplexFlushTimer !== null) return;
+    this.duplexFlushTimer = setTimeout(() => this.flushDuplexAudio(), DUPLEX_SEND_INTERVAL_MS);
+  }
+
+  private clearDuplexSendBuffer(): void {
+    if (this.duplexFlushTimer !== null) {
+      clearTimeout(this.duplexFlushTimer);
+      this.duplexFlushTimer = null;
+    }
+    this.duplexPendingChunks = [];
+  }
+
   async startListening(): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       await this.connect();
@@ -197,7 +236,11 @@ export class VoiceSessionClient {
         this.events.onAudioLevel(Math.min(1, sum / Math.max(1, pcm.length) / 8000));
       }
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(pcm.buffer);
+        if (this.mode === 'duplex') {
+          this.queueDuplexAudio(pcm);
+        } else {
+          this.ws.send(pcm.buffer);
+        }
       }
       if (this.state === 'speaking') {
         this.interruptPlayback();
@@ -206,8 +249,24 @@ export class VoiceSessionClient {
     source.connect(this.workletNode);
     this.workletNode.connect(this.audioContext.destination);
     this.ws?.send(JSON.stringify({ type: 'audio_start' }));
+    this.listenStartedAt = Date.now();
     this.duplexActive = this.mode === 'duplex';
     this.setState('listening');
+  }
+
+  async cancelListening(): Promise<void> {
+    if (this.mode === 'duplex' && this.duplexActive) return;
+    await this.stopCaptureOnly();
+    this.listenStartedAt = 0;
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'audio_cancel' }));
+    }
+    this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
+  }
+
+  getListenDurationMs(): number {
+    if (!this.listenStartedAt) return 0;
+    return Date.now() - this.listenStartedAt;
   }
 
   async stopListening(): Promise<void> {
@@ -215,6 +274,7 @@ export class VoiceSessionClient {
       return;
     }
     await this.stopCaptureOnly();
+    this.listenStartedAt = 0;
     this.ws?.send(JSON.stringify({ type: 'audio_end' }));
     this.setState('processing');
   }
@@ -253,6 +313,7 @@ export class VoiceSessionClient {
   }
 
   private async stopCaptureOnly(): Promise<void> {
+    this.clearDuplexSendBuffer();
     this.workletNode?.disconnect();
     this.workletNode = null;
     await this.audioContext?.close();
@@ -266,9 +327,17 @@ export class VoiceSessionClient {
       case 'transcript_partial':
         this.events.onTranscriptPartial?.(String(msg.text ?? ''));
         break;
-      case 'transcript_final':
-        this.events.onTranscriptFinal?.(String(msg.text ?? ''), Boolean(msg.empty));
+      case 'transcript_final': {
+        const text = String(msg.text ?? '');
+        const empty = Boolean(msg.empty);
+        this.events.onTranscriptFinal?.(text, empty);
+        if (empty || !text.trim()) {
+          this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
+        } else if (!empty && text.trim()) {
+          this.setState('processing');
+        }
         break;
+      }
       case 'agent_status': {
         const status = String(msg.status ?? '');
         if (typeof msg.text === 'string' && msg.text.trim()) {
@@ -291,6 +360,20 @@ export class VoiceSessionClient {
           Number(msg.elapsedMs ?? 0),
           Number(msg.thresholdMs ?? 5000),
         );
+        break;
+      case 'voice_timing': {
+        const sttMs = Number(msg.sttMs);
+        const thinkingMs = Number(msg.thinkingMs);
+        const ttsMs = Number(msg.ttsMs);
+        const totalMs = Number(msg.totalMs);
+        const firstAudioMs = Number(msg.firstAudioMs);
+        if ([sttMs, thinkingMs, ttsMs, totalMs, firstAudioMs].every(Number.isFinite)) {
+          this.events.onVoiceTiming?.({ sttMs, thinkingMs, ttsMs, totalMs, firstAudioMs });
+        }
+        break;
+      }
+      case 'recording_discarded':
+        this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
         break;
       case 'error':
         this.setState('error');

@@ -59,6 +59,7 @@ import { CrewProfileDialog } from './crew/CrewProfileDialog';
 import type { PrebuiltCrew } from './crew/CrewHubDialog';
 import { ChatInputBar, type ChatInputBarHandle } from './ChatInputBar';
 import { ChatVoicePanel } from './voice/ChatVoicePanel';
+import type { VoiceTurnTimings } from '../voice/VoiceSessionClient';
 import { useVoiceOptional } from './voice/VoiceProvider';
 import { WebSearchGlobeToggle, readWebSearchForcePreference, writeWebSearchForcePreference } from './WebSearchGlobeToggle';
 import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
@@ -144,6 +145,17 @@ const sidebarSectionHeaderSx = {
   ...panelHeaderRowSx,
   cursor: 'pointer',
   '&:hover': { bgcolor: colors.bg.tertiary + '40' },
+};
+
+const sidebarSectionHeaderWithDividerSx = {
+  ...sidebarSectionHeaderSx,
+  borderTop: `1px solid ${colors.border.default}`,
+};
+
+const sidebarSectionContentSx = {
+  px: 1.5,
+  pt: 1,
+  pb: 1.5,
 };
 
 interface UIMessage extends ChatMessage {
@@ -659,6 +671,52 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     setPendingFeedbackMessageId(null);
   }, []);
 
+  const appendVoiceUserTurn = useCallback((text: string, messageId?: string) => {
+    const trimmed = sanitizeForJson(text.trim());
+    if (!trimmed) return;
+    setMessages((prev) => {
+      for (let i = Math.max(0, prev.length - 5); i < prev.length; i += 1) {
+        const m = prev[i];
+        if (m?.role === 'user' && m.content === trimmed) return prev;
+      }
+      return [
+        ...prev,
+        { id: messageId ?? crypto.randomUUID(), role: 'user', content: trimmed, streaming: false, voiceInput: true },
+      ];
+    });
+  }, []);
+
+  const beginVoiceAgentTurn = useCallback(() => {
+    beginTurnUi();
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.role === 'assistant' && last.streaming) return prev;
+      if (last?.role === 'user') {
+        return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
+      }
+      return prev;
+    });
+  }, [beginTurnUi]);
+
+  const scrollAfterVoiceUserRef = useRef<() => void>(() => {});
+
+  const handleVoiceTranscript = useCallback((text: string, empty: boolean) => {
+    if (empty) return;
+    appendVoiceUserTurn(text);
+    requestAnimationFrame(() => scrollAfterVoiceUserRef.current());
+  }, [appendVoiceUserTurn]);
+
+  const handleVoiceTiming = useCallback((timings: VoiceTurnTimings) => {
+    setMessages((prev) => {
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        const msg = prev[i];
+        if (msg?.role !== 'assistant') continue;
+        return [...prev.slice(0, i), { ...msg, voiceTimings: timings }, ...prev.slice(i + 1)];
+      }
+      return prev;
+    });
+  }, []);
+
   useEffect(() => {
     voiceCtx?.registerChatSession(currentSessionId);
     return () => voiceCtx?.registerChatSession(null);
@@ -768,6 +826,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       el.scrollTop = el.scrollHeight;
     }
   }, []);
+
+  scrollAfterVoiceUserRef.current = () => scrollMessagesToBottom('smooth');
 
   const loadOlderMessages = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
@@ -1264,6 +1324,15 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       // Reset activity timer on every event from the agent
       lastActivityRef.current = Date.now();
       setLastEventAt(Date.now());
+
+      if (ev.type === 'message_sent') {
+        if (isInitialLoadRef.current) return;
+        const msg = ev.message as { id?: string; content?: string; role?: string } | undefined;
+        const text = typeof msg?.content === 'string' ? msg.content.trim() : '';
+        if (!text || msg?.role !== 'user') return;
+        appendVoiceUserTurn(text, msg.id);
+        return;
+      }
 
       // RAF-batch high-frequency tool events to prevent render storm on long-running tasks
       if (ev.type === 'tool_executing' || ev.type === 'tool_output' || ev.type === 'tool_complete') {
@@ -3706,7 +3775,9 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             ) : (
               <ChatVoicePanel
                 chatSessionId={currentSessionId}
-                onAgentRunning={beginTurnUi}
+                onAgentRunning={beginVoiceAgentTurn}
+                onTranscriptFinal={handleVoiceTranscript}
+                onVoiceTiming={handleVoiceTiming}
                 autoStart={voiceAutoStart}
                 onAutoStartConsumed={() => setVoiceAutoStart(false)}
               />
@@ -3717,28 +3788,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               display: 'flex', alignItems: 'center', gap: 0.5, px: 1.25, py: 0.5,
               borderTop: `1px solid ${colors.border.default}20`,
             }}>
-            {/* Text / Voice composer toggle */}
-            {voiceCtx?.voiceReady && (
-              <Tooltip title={composerMode === 'text' ? 'Switch to voice' : 'Switch to text'} arrow>
-                <Chip
-                  size="small"
-                  icon={composerMode === 'text' ? <MicIcon sx={{ fontSize: '14px !important' }} /> : <KeyboardIcon sx={{ fontSize: '14px !important' }} />}
-                  label={composerMode === 'text' ? 'Voice' : 'Text'}
-                  onClick={() => setComposerMode((m) => (m === 'text' ? 'voice' : 'text'))}
-                  sx={{
-                    fontSize: '0.55rem', height: 20, cursor: 'pointer',
-                    bgcolor: composerMode === 'voice' ? colors.accent.green + '18' : colors.bg.tertiary,
-                    border: `1px solid ${composerMode === 'voice' ? colors.accent.green + '40' : colors.border.default}`,
-                    borderRadius: '10px',
-                    color: composerMode === 'voice' ? colors.accent.green : colors.text.secondary,
-                    '& .MuiChip-icon': { color: 'inherit' },
-                    '&:hover': { bgcolor: composerMode === 'voice' ? colors.accent.green + '28' : colors.bg.primary },
-                  }}
-                />
-              </Tooltip>
-              )}
-
-              {/* Plus button for file attach */}
+            {/* Plus button for file attach */}
               <Tooltip title="Attach files" arrow>
                 <IconButton size="small" onClick={() => fileInputRef.current?.click()} sx={{ color: colors.text.dim, p: 0.25, '&:hover': { color: colors.text.secondary } }}>
                   <AddIcon sx={{ fontSize: 16 }} />
@@ -3922,20 +3972,24 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               {/* Spacer */}
               <Box sx={{ flex: 1 }} />
 
-              {/* CWD — click to copy */}
-              {cwd && (
-                <Tooltip title={cwd} arrow>
-                  <Typography
-                    onClick={() => { void copyToClipboard(cwd); }}
+              {/* Text / Voice composer toggle */}
+              {voiceCtx?.voiceReady && (
+                <Tooltip title={composerMode === 'text' ? 'Switch to voice' : 'Switch to text'} arrow>
+                  <Chip
+                    size="small"
+                    icon={composerMode === 'text' ? <MicIcon sx={{ fontSize: '14px !important' }} /> : <KeyboardIcon sx={{ fontSize: '14px !important' }} />}
+                    label={composerMode === 'text' ? 'Voice' : 'Text'}
+                    onClick={() => setComposerMode((m) => (m === 'text' ? 'voice' : 'text'))}
                     sx={{
-                      fontSize: '0.45rem', color: colors.text.dim,
-                      fontFamily: "'JetBrains Mono', monospace",
-                      maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                      cursor: 'pointer', '&:hover': { color: colors.text.secondary },
+                      fontSize: '0.55rem', height: 20, cursor: 'pointer',
+                      bgcolor: composerMode === 'voice' ? colors.accent.green + '18' : colors.bg.tertiary,
+                      border: `1px solid ${composerMode === 'voice' ? colors.accent.green + '40' : colors.border.default}`,
+                      borderRadius: '10px',
+                      color: composerMode === 'voice' ? colors.accent.green : colors.text.secondary,
+                      '& .MuiChip-icon': { color: 'inherit' },
+                      '&:hover': { bgcolor: composerMode === 'voice' ? colors.accent.green + '28' : colors.bg.primary },
                     }}
-                  >
-                    {cwd.split('/').slice(-2).join('/')}
-                  </Typography>
+                  />
                 </Tooltip>
               )}
             </Box>
@@ -3979,7 +4033,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               </IconButton>
           </Box>
           {contextExpanded && (
-            <Box sx={{ px: 1.5, pb: 1.5 }}>
+            <Box sx={sidebarSectionContentSx}>
               {contextData ? (
                 <Box sx={{ bgcolor: colors.bg.tertiary, borderRadius: 0.75, p: 1, maxHeight: 300, overflow: 'auto' }}>
                   <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, whiteSpace: 'pre-wrap', lineHeight: 1.5, wordBreak: 'break-word' }}>
@@ -3997,7 +4051,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         <Box>
           <Box
             onClick={() => setTokenExpanded(!tokenExpanded)}
-            sx={sidebarSectionHeaderSx}
+            sx={sidebarSectionHeaderWithDividerSx}
           >
             <AutoGraphIcon sx={{ fontSize: 12, color: '#4caf50' }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -4011,7 +4065,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             </Typography>
           </Box>
           {tokenExpanded && (
-          <Box sx={{ px: 1.5, pb: 1.5 }}>
+          <Box sx={sidebarSectionContentSx}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
             <Typography sx={{ fontSize: '0.65rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.primary }}>
               {tokenUsed.toLocaleString()}
@@ -4110,7 +4164,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         <Box>
           <Box
             onClick={() => setMissionExpanded(!missionExpanded)}
-            sx={sidebarSectionHeaderSx}
+            sx={sidebarSectionHeaderWithDividerSx}
           >
             <GroupsIcon sx={{ fontSize: 12, color: crewTheme.accent.tactical }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -4134,7 +4188,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
           </Box>
 
           {missionExpanded && (
-          <Box sx={{ px: 1.5, pb: 1.5 }}>
+          <Box sx={sidebarSectionContentSx}>
             {/* Manual add-crew search */}
             {crewAddOpen && (
               <Box sx={{ mb: 1, position: 'relative' }}>
@@ -4219,7 +4273,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         <Box sx={{ flex: 1, overflow: 'auto' }}>
           <Box
             onClick={() => setTasksExpanded(!tasksExpanded)}
-            sx={sidebarSectionHeaderSx}
+            sx={sidebarSectionHeaderWithDividerSx}
           >
             <ChecklistIcon sx={{ fontSize: 12, color: colors.accent.blue }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -4230,7 +4284,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             )}
           </Box>
           {tasksExpanded && (
-          <Box sx={{ px: 1.5, pb: 1.5 }}>
+          <Box sx={sidebarSectionContentSx}>
 
           {todoItems.map((item) => (
             <Box key={item.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.3 }}>

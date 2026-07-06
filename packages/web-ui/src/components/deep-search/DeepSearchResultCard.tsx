@@ -6,6 +6,7 @@ import { ScoreBadge, TypeBadge } from './shared';
 import { HasImageChip, searchCardSx, searchCardItemSx, OpenLinkHint, openSearchResultUrl } from './card-utils';
 import { detectPlatform, resultHasPreviewImage } from './platform-detect';
 import { PlatformResultBody, PlatformCardChrome } from './PlatformResultCard';
+import { formatSearchProviderLabel } from './provider-labels';
 
 const PLATFORM_ACCENTS: Record<string, string> = {
   youtube: '#ff000044',
@@ -22,10 +23,16 @@ function openOnActivate(
   open();
 }
 
+function resultSourceMeta(rank: number, result: DeepSearchResult): string {
+  const provider = result.source?.provider ? formatSearchProviderLabel(result.source.provider) : null;
+  return provider ? `#${rank} · ${result.domain} · ${provider}` : `#${rank} · ${result.domain}`;
+}
+
 export function DeepSearchResultCard({ result, rank }: { result: DeepSearchResult; rank: number }) {
   const platform = detectPlatform(result);
   const hasImage = resultHasPreviewImage(result);
   const handleOpen = () => openSearchResultUrl(result.url);
+  const sourceMeta = resultSourceMeta(rank, result);
 
   if (platform !== 'default') {
     return (
@@ -63,7 +70,7 @@ export function DeepSearchResultCard({ result, rank }: { result: DeepSearchResul
               <Box component="img" src={result.faviconUrl} alt="" sx={{ width: 12, height: 12, borderRadius: '2px' }} />
             )}
             <Typography sx={{ fontSize: '0.52rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-              #{rank} · {result.domain}
+              {sourceMeta}
             </Typography>
             {hasImage && <HasImageChip />}
             <Box sx={{ flex: 1 }} />

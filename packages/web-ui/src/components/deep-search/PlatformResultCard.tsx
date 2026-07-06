@@ -8,6 +8,7 @@ import { colors } from '../../theme';
 import { ScoreBadge } from './shared';
 import { HasImageChip, searchCardSx, OpenLinkHint } from './card-utils';
 import { detectPlatform } from './platform-detect';
+import { formatSearchProviderLabel } from './provider-labels';
 
 export type { PlatformKind } from './platform-detect';
 export { detectPlatform } from './platform-detect';
@@ -147,6 +148,8 @@ export function PlatformCardChrome({
   onOpen?: () => void;
 }) {
   const borderAccent = accent ?? colors.border.default;
+  const provider = result.source?.provider ? formatSearchProviderLabel(result.source.provider) : null;
+  const sourceMeta = provider ? `#${rank} · ${result.domain} · ${provider}` : `#${rank} · ${result.domain}`;
   return (
     <Box
       role="button"
@@ -171,7 +174,7 @@ export function PlatformCardChrome({
       <Box sx={{ p: 0.85, flex: 1, display: 'flex', flexDirection: 'column', gap: 0.45 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
           <Typography sx={{ fontSize: '0.52rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-            #{rank} · {result.domain}
+            {sourceMeta}
           </Typography>
           {hasImage && <HasImageChip />}
         </Box>

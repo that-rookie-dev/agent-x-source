@@ -1,5 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { shouldBeginPushToTalkOnSpace, shouldEndPushToTalkOnSpace } from '../voice/wake-phrase';
+
+const DOUBLE_TAP_SPACE_MS = 350;
 
 export function useVoiceKeyboard(options: {
   enabled: boolean;
@@ -12,48 +14,75 @@ export function useVoiceKeyboard(options: {
   onEndPushToTalk: () => void;
   onToggleSession: () => void;
   onInterruptPlayback: () => void;
+  /** Two quick Space presses toggle push-to-talk ↔ hands-free. */
+  onDoubleTapSpace?: () => void;
 }) {
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+  const lastSpaceDownRef = useRef(0);
+
   useEffect(() => {
     if (!options.enabled) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
+      const opts = optionsRef.current;
       const mod = event.metaKey || event.ctrlKey;
       if (mod && event.shiftKey && event.key.toLowerCase() === 'm') {
         event.preventDefault();
-        options.onToggleSession();
+        opts.onToggleSession();
         return;
       }
       if (event.key === 'Escape') {
-        options.onInterruptPlayback();
-        if (options.pushToTalk) options.onEndPushToTalk();
+        opts.onInterruptPlayback();
+        if (opts.pushToTalk) opts.onEndPushToTalk();
         return;
       }
-      if (
-        options.pushToTalk &&
-        event.key === ' ' &&
-        shouldBeginPushToTalkOnSpace({
-          globalSpace: options.globalSpace,
-          composerFocused: options.composerFocused,
-          composerEmpty: options.composerEmpty,
-          repeat: event.repeat,
-        })
-      ) {
-        event.preventDefault();
-        options.onBeginPushToTalk();
+      if (event.key === ' ') {
+        if (event.repeat) return;
+
+        const now = Date.now();
+        if (opts.onDoubleTapSpace && now - lastSpaceDownRef.current < DOUBLE_TAP_SPACE_MS) {
+          event.preventDefault();
+          lastSpaceDownRef.current = 0;
+          opts.onEndPushToTalk();
+          opts.onDoubleTapSpace();
+          return;
+        }
+        lastSpaceDownRef.current = now;
+
+        if (
+          opts.pushToTalk &&
+          shouldBeginPushToTalkOnSpace({
+            globalSpace: opts.globalSpace,
+            composerFocused: opts.composerFocused,
+            composerEmpty: opts.composerEmpty,
+            repeat: false,
+          })
+        ) {
+          event.preventDefault();
+          opts.onBeginPushToTalk();
+          return;
+        }
+
+        if (opts.onDoubleTapSpace && opts.globalSpace) {
+          event.preventDefault();
+        }
+        return;
       }
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
+      const opts = optionsRef.current;
       if (
-        options.pushToTalk &&
+        opts.pushToTalk &&
         event.key === ' ' &&
         shouldEndPushToTalkOnSpace({
-          globalSpace: options.globalSpace,
-          composerFocused: options.composerFocused,
+          globalSpace: opts.globalSpace,
+          composerFocused: opts.composerFocused,
         })
       ) {
         event.preventDefault();
-        options.onEndPushToTalk();
+        opts.onEndPushToTalk();
       }
     };
 
@@ -63,5 +92,5 @@ export function useVoiceKeyboard(options: {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [options]);
+  }, [options.enabled]);
 }

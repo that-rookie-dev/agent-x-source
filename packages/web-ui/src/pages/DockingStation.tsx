@@ -159,7 +159,7 @@ export function DockingStation() {
   }, [healthData, catalogSeed, rosterCrews]);
 
   const handleLaunch = useCallback(() => {
-    navigate('/console/chat');
+    navigate('/console/agent-x');
   }, [navigate]);
 
   useEffect(() => {

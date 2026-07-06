@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { syncAuthTokenFromSession } from '../api';
-import { VoiceSessionClient, type VoiceClientState } from '../voice/VoiceSessionClient';
-import { VOICE_MAX_TURN_SECONDS, VOICE_TURN_COUNTDOWN_FROM_SECONDS } from '../voice/constants';
+import { VoiceSessionClient, type VoiceClientState, type VoiceTurnTimings } from '../voice/VoiceSessionClient';
+import { VOICE_MAX_TURN_SECONDS, VOICE_TURN_COUNTDOWN_FROM_SECONDS, VOICE_MIN_RECORDING_MS } from '../voice/constants';
 import { markVoiceOutputUnlocked } from '../voice/support';
 import { friendlyVoiceError } from '../components/voice/voice-comms-theme';
 
@@ -10,6 +10,7 @@ export type VoiceHookState = VoiceClientState;
 export interface VoiceSessionCallbacks {
   onTranscriptFinal?: (text: string, empty: boolean) => void;
   onAgentRunning?: () => void;
+  onVoiceTiming?: (timings: VoiceTurnTimings) => void;
 }
 
 export function useVoiceSession(
@@ -41,6 +42,7 @@ export function useVoiceSession(
   const [silenceProgress, setSilenceProgress] = useState(0);
   const [muted, setMuted] = useState(false);
   const [textOnlyPlayback, setTextOnlyPlayback] = useState(false);
+  const [voiceTimings, setVoiceTimings] = useState<VoiceTurnTimings | null>(null);
   const timerRef = useRef<number | null>(null);
   const pushToTalkActiveRef = useRef(false);
 
@@ -73,14 +75,20 @@ export function useVoiceSession(
       clientRef.current = new VoiceSessionClient({
         mode,
         chatSessionId,
-        onStateChange: setState,
+        onStateChange: (state) => {
+          setState(state);
+          if (state === 'listening' || state === 'ready') {
+            setError(null);
+          }
+        },
         onTranscriptPartial: setPartialTranscript,
         onTranscriptFinal: (text, empty) => {
+          callbacksRef.current?.onTranscriptFinal?.(text, Boolean(empty));
           setTranscript(text);
           setPartialTranscript('');
           setAgentText('');
           setSilenceProgress(0);
-          callbacksRef.current?.onTranscriptFinal?.(text, Boolean(empty));
+          setVoiceTimings(null);
         },
         onAgentText: setAgentText,
         onAgentStatus: (status) => {
@@ -101,6 +109,10 @@ export function useVoiceSession(
             return;
           }
           setSilenceProgress(thresholdMs > 0 ? Math.min(1, elapsedMs / thresholdMs) : 0);
+        },
+        onVoiceTiming: (timings) => {
+          setVoiceTimings(timings);
+          callbacksRef.current?.onVoiceTiming?.(timings);
         },
       });
     }
@@ -181,6 +193,11 @@ export function useVoiceSession(
     setHolding(false);
     stopTimer();
     if (!clientRef.current) return;
+    const tooShort = clientRef.current.getListenDurationMs() < VOICE_MIN_RECORDING_MS;
+    if (tooShort) {
+      await clientRef.current.cancelListening();
+      return;
+    }
     await clientRef.current.stopListening();
   }, [stopTimer]);
 
@@ -224,6 +241,7 @@ export function useVoiceSession(
     setMuted,
     mode,
     textOnlyPlayback,
+    voiceTimings,
     startSession,
     stopSession,
     beginPushToTalk,

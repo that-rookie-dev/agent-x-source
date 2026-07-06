@@ -2,6 +2,13 @@ import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { VoiceService, WebSocketVoiceTransport } from '@agentx/engine';
+import { VoiceStreamSpeakPipeline, VoiceTurnTimingTracker } from './voice-turn-tts.js';
+import {
+  VoiceBlockStreamExtractor,
+  buildVoiceFallback,
+  buildVoiceTurnInstruction,
+  extractVoiceSpeakable,
+} from './voice-speakable.js';
 import { validateVoiceWebSocketConnection } from './auth.js';
 import { ensureSubscribed } from './ws.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
@@ -10,8 +17,21 @@ import { runAgentTurnAsync } from './chat-helpers.js';
 import { getVoiceService, resetVoiceService } from './voice-runtime.js';
 
 const SAMPLE_RATE = 16_000;
-/** Continuous silence after speech before auto-send in duplex mode. */
+/** Continuous silence after spoken words before auto-send in duplex mode. */
 export const DUPLEX_END_SILENCE_MS = 5_000;
+/** Minimum interval between streaming STT passes in duplex (avoids sidecar overload). */
+const DUPLEX_STT_INTERVAL_MS = 350;
+/** Minimum gap between duplicate error frames to the client. */
+const DUPLEX_ERROR_COOLDOWN_MS = 8_000;
+/** PTT shorter than this is treated as accidental (double-tap, mis-click). */
+const MIN_PTT_RECORDING_MS = 1_000;
+
+function hasMeaningfulWords(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 2) return false;
+  return /[\p{L}\p{N}]/u.test(trimmed);
+}
 let voiceWss: WebSocketServer | undefined;
 
 interface VoiceWsSession {
@@ -25,6 +45,14 @@ interface VoiceWsSession {
   activeSynthId?: string;
   duplexSilenceMs: number;
   duplexHadSpeech: boolean;
+  /** True once STT produced real words — gap timer only runs after this. */
+  duplexHadWords: boolean;
+  duplexLastPartial: string;
+  duplexLastWordAt: number;
+  duplexLastSttAt: number;
+  duplexTurnInFlight: boolean;
+  duplexLastErrorAt: number;
+  recordingStartedAt?: number;
   transport: WebSocketVoiceTransport;
   progress?: ReturnType<VoiceService['createProgressSession']>;
   unsub?: () => void;
@@ -47,6 +75,24 @@ async function cancelActiveSynth(session: VoiceWsSession): Promise<void> {
   const client = await getVoiceService().getSidecarManager().start();
   await client.cancel({ requestId: session.activeSynthId });
   session.activeSynthId = undefined;
+}
+
+function pttRecordingDurationMs(session: VoiceWsSession): number {
+  if (session.mode !== 'push-to-talk' || !session.recordingStartedAt) return 0;
+  return Date.now() - session.recordingStartedAt;
+}
+
+function isAccidentalPttRecording(session: VoiceWsSession): boolean {
+  return session.mode === 'push-to-talk' && pttRecordingDurationMs(session) < MIN_PTT_RECORDING_MS;
+}
+
+async function discardAccidentalPttRecording(ws: WebSocket, session: VoiceWsSession): Promise<void> {
+  session.recording = false;
+  session.audioChunks = [];
+  session.recordingStartedAt = undefined;
+  const voiceSession = getVoiceService().getSession(session.sessionId);
+  voiceSession?.setState('idle');
+  ws.send(JSON.stringify({ type: 'recording_discarded', reason: 'too_short' }));
 }
 
 export function setupVoiceWebSocket(_server: Server): void {
@@ -109,14 +155,23 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
     case 'audio_start':
       if (session) {
         session.recording = true;
+        session.recordingStartedAt = Date.now();
         session.audioChunks = [];
         session.duplexSilenceMs = 0;
+        session.duplexHadSpeech = false;
+        session.duplexHadWords = false;
+        session.duplexLastPartial = '';
+        session.duplexLastWordAt = 0;
+        session.duplexTurnInFlight = false;
         session.textOnlyPlayback = false;
         await getVoiceService().streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
       }
       break;
     case 'audio_end':
       if (session) await finishTurn(ws, session);
+      break;
+    case 'audio_cancel':
+      if (session) await discardAccidentalPttRecording(ws, session);
       break;
     case 'playback_interrupted':
       if (session) {
@@ -215,6 +270,12 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
     textOnlyPlayback: false,
     duplexSilenceMs: 0,
     duplexHadSpeech: false,
+    duplexHadWords: false,
+    duplexLastPartial: '',
+    duplexLastWordAt: 0,
+    duplexLastSttAt: 0,
+    duplexTurnInFlight: false,
+    duplexLastErrorAt: 0,
     transport,
   });
   voiceSession.setState(mode === 'duplex' ? 'listening' : 'idle');
@@ -222,6 +283,8 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
 }
 
 async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, chunk: Buffer): Promise<void> {
+  if (session.duplexTurnInFlight) return;
+
   if (session.speaking) {
     ws.send(JSON.stringify({ type: 'playback_interrupted' }));
     session.speaking = false;
@@ -229,18 +292,45 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, chunk: 
     await cancelActiveSynth(session);
   }
 
-  const service = getVoiceService();
-  const stream = await service.streamTranscribeChunk(chunk, SAMPLE_RATE);
-  if (stream.partial) {
-    session.duplexHadSpeech = true;
-    ws.send(JSON.stringify({ type: 'transcript_partial', text: stream.partial }));
+  const now = Date.now();
+  if (now - session.duplexLastSttAt < DUPLEX_STT_INTERVAL_MS) {
+    return;
   }
-  if (stream.isSpeech === true) {
-    session.duplexHadSpeech = true;
-    session.duplexSilenceMs = 0;
-    ws.send(JSON.stringify({ type: 'duplex_silence', elapsedMs: 0, thresholdMs: DUPLEX_END_SILENCE_MS }));
-  } else if (stream.isSpeech === false && session.duplexHadSpeech) {
-    session.duplexSilenceMs += Math.round((chunk.length / 2 / SAMPLE_RATE) * 1000);
+  session.duplexLastSttAt = now;
+
+  const service = getVoiceService();
+  let stream: Awaited<ReturnType<typeof service.streamTranscribeChunk>>;
+  try {
+    stream = await service.streamTranscribeChunk(chunk, SAMPLE_RATE);
+  } catch (err) {
+    if (now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
+      session.duplexLastErrorAt = now;
+      const raw = err instanceof Error ? err.message : String(err);
+      const message = raw.includes('fetch failed') || raw.includes('ECONNREFUSED')
+        ? 'Voice STT temporarily unavailable — keep speaking or switch to push-to-talk'
+        : raw;
+      sendError(ws, message);
+    }
+    return;
+  }
+
+  const partial = stream.partial?.trim() ?? '';
+  const wordsNow = partial || stream.text?.trim() || '';
+
+  if (hasMeaningfulWords(wordsNow)) {
+    if (wordsNow !== session.duplexLastPartial) {
+      session.duplexLastPartial = wordsNow;
+      session.duplexLastWordAt = now;
+      session.duplexHadWords = true;
+      session.duplexHadSpeech = true;
+      session.duplexSilenceMs = 0;
+      ws.send(JSON.stringify({ type: 'duplex_silence', elapsedMs: 0, thresholdMs: DUPLEX_END_SILENCE_MS }));
+    }
+    if (partial) {
+      ws.send(JSON.stringify({ type: 'transcript_partial', text: partial }));
+    }
+  } else if (session.duplexHadWords && session.duplexLastWordAt > 0) {
+    session.duplexSilenceMs = now - session.duplexLastWordAt;
     ws.send(JSON.stringify({
       type: 'duplex_silence',
       elapsedMs: session.duplexSilenceMs,
@@ -248,22 +338,35 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, chunk: 
     }));
   }
 
-  const silenceReached = session.duplexHadSpeech && session.duplexSilenceMs >= DUPLEX_END_SILENCE_MS;
-  const shouldFinalize = session.duplexHadSpeech && (Boolean(stream.speechEnd) || silenceReached);
-  if (shouldFinalize && session.audioChunks.length > 0) {
+  const silenceReached = session.duplexHadWords
+    && session.duplexLastWordAt > 0
+    && session.duplexSilenceMs >= DUPLEX_END_SILENCE_MS;
+  const shouldFinalize = session.duplexHadWords && silenceReached;
+
+  if (shouldFinalize && session.audioChunks.length > 0 && !session.duplexTurnInFlight) {
     session.recording = false;
     await finishTurn(ws, session);
-    if (session.mode === 'duplex') {
-      session.recording = true;
-      session.audioChunks = [];
-      session.duplexSilenceMs = 0;
-      session.duplexHadSpeech = false;
-      await service.streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
-    }
   }
 }
 
+async function resetDuplexListening(session: VoiceWsSession): Promise<void> {
+  session.recording = true;
+  session.duplexTurnInFlight = false;
+  session.audioChunks = [];
+  session.duplexSilenceMs = 0;
+  session.duplexHadSpeech = false;
+  session.duplexHadWords = false;
+  session.duplexLastPartial = '';
+  session.duplexLastWordAt = 0;
+  try {
+    await getVoiceService().streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
+  } catch { /* best-effort */ }
+}
+
 async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void> {
+  if (session.mode === 'duplex') {
+    session.duplexTurnInFlight = true;
+  }
   session.recording = false;
   session.textOnlyPlayback = false;
   const service = getVoiceService();
@@ -273,26 +376,43 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
   const pcm = Buffer.concat(session.audioChunks);
   session.audioChunks = [];
   if (pcm.length === 0) {
+    if (session.mode === 'duplex' || isAccidentalPttRecording(session)) {
+      voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+      session.recordingStartedAt = undefined;
+      if (session.mode === 'duplex') {
+        await resetDuplexListening(session);
+      } else {
+        ws.send(JSON.stringify({ type: 'recording_discarded', reason: 'too_short' }));
+      }
+      return;
+    }
     sendError(ws, 'No speech detected');
     voiceSession?.setState('idle');
     return;
   }
 
+  const timings = new VoiceTurnTimingTracker();
   try {
     const transcript = session.mode === 'duplex'
       ? await service.streamTranscribeChunk(pcm, SAMPLE_RATE, { finalize: true })
       : { text: (await service.transcribePcmBuffer(pcm, SAMPLE_RATE)).text };
+    timings.markSttDone();
 
     const text = transcript.text?.trim() ?? '';
     if (!text) {
+      if (isAccidentalPttRecording(session)) {
+        await discardAccidentalPttRecording(ws, session);
+        return;
+      }
       ws.send(JSON.stringify({ type: 'transcript_final', text: '', empty: true }));
       voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+      if (session.mode === 'duplex') {
+        await resetDuplexListening(session);
+      }
       return;
     }
 
     ws.send(JSON.stringify({ type: 'transcript_final', text }));
-    voiceSession?.setState('agent_running');
-    ws.send(JSON.stringify({ type: 'agent_status', status: 'running' }));
 
     const chatSessionId = await resolveVoiceChatSessionId(session.chatSessionId);
     if (!chatSessionId) {
@@ -332,16 +452,62 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       }
     }, { transcript: text });
     session.progress = progress;
+
+    let agentDisplayText = '';
+    let firstSpeakStatusSent = false;
+    const voiceExtractor = new VoiceBlockStreamExtractor();
+    const speakPipeline = new VoiceStreamSpeakPipeline(async (unit) => {
+      if (session.textOnlyPlayback) return;
+      const t0 = Date.now();
+      if (!firstSpeakStatusSent) {
+        firstSpeakStatusSent = true;
+        timings.markFirstAudio();
+        voiceSession?.setState('speaking');
+        session.speaking = true;
+        ws.send(JSON.stringify({
+          type: 'agent_status',
+          status: 'speaking',
+          text: agentDisplayText.trim() || undefined,
+        }));
+      }
+      const synthId = randomUUID();
+      session.activeSynthId = synthId;
+      const stream = await service.synthesizeStreamText(unit, { requestId: synthId });
+      for (const chunk of stream.chunks) {
+        if (session.activeSynthId !== stream.requestId) break;
+        const audio = Buffer.from(chunk.pcmBase64, 'base64');
+        await sendSessionAudio(session, audio, chunk.sampleRate, false);
+      }
+      if (session.activeSynthId === synthId) {
+        session.activeSynthId = undefined;
+      }
+      timings.addTtsMs(Date.now() - t0);
+    });
+
     const unsub = agent.events.on((event) => {
-      void progress.handleEngineEvent(event as { type?: string; stage?: string; tool?: string });
+      const ev = event as { type?: string; content?: string; stage?: string; tool?: string };
+      if (ev.type === 'stream_chunk' && typeof ev.content === 'string' && ev.content) {
+        agentDisplayText += ev.content;
+        const speakDelta = voiceExtractor.pullSpeakDelta(ev.content);
+        if (speakDelta) speakPipeline.feed(speakDelta);
+      }
+      void progress.handleEngineEvent(ev);
     });
     session.unsub = unsub;
+
+    voiceSession?.setState('agent_running');
+    ws.send(JSON.stringify({ type: 'agent_status', status: 'running' }));
+    timings.markAgentStarted();
+
+    const sendTimings = () => {
+      ws.send(JSON.stringify({ type: 'voice_timing', ...timings.snapshot() }));
+    };
 
     const turnId = randomUUID();
     runAgentTurnAsync(
       agent,
       text,
-      undefined,
+      buildVoiceTurnInstruction(),
       false,
       turnId,
       sid,
@@ -349,44 +515,70 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
         session.unsub?.();
         session.unsub = undefined;
         const content = extractAssistantText(message);
-        if (!content) {
-          ws.send(JSON.stringify({ type: 'agent_status', status: 'complete', empty: true }));
-          voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
-          return;
+        const { voice, chat } = extractVoiceSpeakable(content);
+        if (content) {
+          agentDisplayText = chat || content;
         }
-        if (session.textOnlyPlayback) {
-          ws.send(JSON.stringify({ type: 'agent_status', status: 'complete', textOnly: true }));
+
+        const completeVoiceTurn = async () => {
+          sendTimings();
+          ws.send(JSON.stringify({ type: 'audio_end' }));
+          ws.send(JSON.stringify({
+            type: 'agent_status',
+            status: 'complete',
+            text: agentDisplayText.trim() || undefined,
+          }));
+          session.speaking = false;
+          session.activeSynthId = undefined;
           voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
           if (session.mode === 'duplex') {
-            session.recording = true;
+            void resetDuplexListening(session);
+          }
+        };
+
+        if (!content?.trim()) {
+          ws.send(JSON.stringify({ type: 'agent_status', status: 'complete', empty: true }));
+          sendTimings();
+          voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+          if (session.mode === 'duplex') {
+            void resetDuplexListening(session);
           }
           return;
         }
-        voiceSession?.setState('speaking');
-        session.speaking = true;
-        ws.send(JSON.stringify({ type: 'agent_status', status: 'speaking', text: content }));
+        if (session.textOnlyPlayback) {
+          ws.send(JSON.stringify({
+            type: 'agent_status',
+            status: 'complete',
+            textOnly: true,
+            text: chat || content,
+          }));
+          sendTimings();
+          voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+          if (session.mode === 'duplex') {
+            void resetDuplexListening(session);
+          }
+          return;
+        }
 
-        const synthId = randomUUID();
-        session.activeSynthId = synthId;
-        const stream = await service.synthesizeStreamText(content, { requestId: synthId });
-        for (const chunk of stream.chunks) {
-          if (session.activeSynthId !== stream.requestId) break;
-          const audio = Buffer.from(chunk.pcmBase64, 'base64');
-          await sendSessionAudio(session, audio, chunk.sampleRate, false);
+        const speakText = voice || buildVoiceFallback(chat || content);
+        if (speakPipeline.streamed || voiceExtractor.closed) {
+          await speakPipeline.flush();
+        } else {
+          await speakPipeline.flush(speakText);
         }
-        ws.send(JSON.stringify({ type: 'audio_end' }));
-        ws.send(JSON.stringify({ type: 'agent_status', status: 'complete' }));
-        session.speaking = false;
-        session.activeSynthId = undefined;
-        voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
-        if (session.mode === 'duplex') {
-          session.recording = true;
-        }
+        await completeVoiceTurn();
       },
       (error) => {
         session.unsub?.();
         session.speaking = false;
-        sendError(ws, error);
+        if (session.mode === 'duplex') {
+          void resetDuplexListening(session);
+        }
+        const now = Date.now();
+        if (now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
+          session.duplexLastErrorAt = now;
+          sendError(ws, error);
+        }
         voiceSession?.fail(error);
       },
     );
@@ -395,8 +587,17 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
     const message = raw.includes('fetch failed') || raw.includes('ECONNREFUSED')
       ? 'Voice engine offline — verify setup in Settings → Voice and restart Agent-X'
       : raw;
-    sendError(ws, message);
-    voiceSession?.fail(error);
+    const now = Date.now();
+    if (session.mode !== 'duplex' || now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
+      session.duplexLastErrorAt = now;
+      sendError(ws, message);
+    }
+    if (session.mode === 'duplex') {
+      voiceSession?.setState('listening');
+      await resetDuplexListening(session);
+    } else {
+      voiceSession?.fail(error);
+    }
   }
 }
 

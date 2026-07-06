@@ -18,6 +18,8 @@ import { CrewRosterPickerMessage } from '../components/crew/CrewRosterPickerMess
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { TurnFeedbackBar } from './TurnFeedbackBar';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
+import { formatVoiceTimingMs } from '../voice/timing';
+import { extractVoiceChannelBlock, stripVoiceChannelBlock } from './utils';
 
 function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   const [expanded, setExpanded] = useState(false);
@@ -36,6 +38,86 @@ function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
         </Box>
       )}
     </>
+  );
+}
+
+function VoiceSummaryCard({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <Box sx={{
+      mb: 1.25,
+      borderRadius: 1,
+      overflow: 'hidden',
+      border: `1px solid ${colors.border.strong}70`,
+      bgcolor: '#050607',
+    }}>
+      <Box
+        onClick={() => setExpanded((open) => !open)}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.75,
+          px: 1,
+          py: 0.75,
+          cursor: 'pointer',
+          '&:hover': { bgcolor: `${colors.text.primary}06` },
+        }}
+      >
+        <Typography sx={{
+          fontSize: '0.65rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          color: colors.accent.green,
+          lineHeight: 1,
+        }}>
+          ◌
+        </Typography>
+        <Typography sx={{
+          fontSize: '0.6rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          fontWeight: 600,
+          color: colors.text.primary,
+          flexShrink: 0,
+        }}>
+          Voice summary
+        </Typography>
+        <Typography sx={{
+          fontSize: '0.55rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          color: colors.text.dim,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          minWidth: 0,
+          flex: 1,
+        }}>
+          {expanded ? 'spoken response' : text}
+        </Typography>
+        <Typography sx={{
+          fontSize: '0.55rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          color: colors.text.dim,
+          flexShrink: 0,
+          transition: 'transform 0.15s',
+          transform: expanded ? 'rotate(180deg)' : 'none',
+        }}>
+          ▾
+        </Typography>
+      </Box>
+      {expanded && (
+        <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.border.strong}55` }}>
+          <Typography sx={{
+            fontSize: '0.62rem',
+            color: colors.text.secondary,
+            fontFamily: "'JetBrains Mono', monospace",
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            lineHeight: 1.55,
+          }}>
+            {text}
+          </Typography>
+        </Box>
+      )}
+    </Box>
   );
 }
 
@@ -66,9 +148,9 @@ function renderParts(
   const renderMainPart = (part: PartEntry, compactTop = false) => {
     switch (part.type) {
       case 'text':
-        return part.content
-          ? <CrewAwareMarkdown key={part.id} content={part.content} webSources={webSources} />
-          : null;
+        if (!part.content) return null;
+        const textContent = stripVoiceChannelBlock(part.content);
+        return textContent ? <CrewAwareMarkdown key={part.id} content={textContent} webSources={webSources} /> : null;
       case 'questionnaire':
         if (!part.questionnaire) return null;
         return (
@@ -195,6 +277,8 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     })),
   };
   const cleanContent = displayContent(displayMessage);
+  const voiceSummary = extractVoiceChannelBlock(displayMessage.content || '')
+    || extractVoiceChannelBlock(displayMessage.parts?.filter((p) => p.type === 'text' && p.content).map((p) => p.content).join('') || '');
   const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
   const webSources = collectWebSourceUrls(displayMessage.parts);
   const hasQuestionnaire = !!(displayMessage.parts?.some((p) => p.type === 'questionnaire'));
@@ -271,6 +355,8 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
         </Box>
       )}
 
+      {voiceSummary && <VoiceSummaryCard text={voiceSummary} />}
+
       {hasParts || cleanContent || hasQuestionnaire ? contentBlock : null}
 
       {message.streaming && !cleanContent && !hasParts && !hasQuestionnaire && (
@@ -303,6 +389,17 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
                 {message.turnTokens.toLocaleString()} tok
               </Typography>
             )}
+            {message.voiceTimings && (
+              <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
+                STT {formatVoiceTimingMs(message.voiceTimings.sttMs)}
+                {' · '}
+                Think {formatVoiceTimingMs(message.voiceTimings.thinkingMs)}
+                {' · '}
+                TTS {formatVoiceTimingMs(message.voiceTimings.ttsMs)}
+                {' · '}
+                Total {formatVoiceTimingMs(message.voiceTimings.totalMs)}
+              </Typography>
+            )}
         </Box>
       )}
     </Box>
@@ -327,6 +424,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   if (pm.crew?.crewId !== nm.crew?.crewId || pm.crew?.name !== nm.crew?.name) return false;
   if (pm.subAgents !== nm.subAgents) return false;
   if (pm.turnFeedback?.rating !== nm.turnFeedback?.rating) return false;
+  if (pm.voiceTimings?.totalMs !== nm.voiceTimings?.totalMs) return false;
   const prevDeep = pm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
   const nextDeep = nm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
   if (prevDeep !== nextDeep) return false;
@@ -336,6 +434,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
     for (let i = 0; i < prevParts.length; i++) {
       const pp = prevParts[i]!;
       const np = nextParts[i]!;
+      if (pp.type === 'text' && np.type === 'text' && pp.content !== np.content) return false;
       if (pp.type === 'questionnaire' && np.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
       if (pp.type === 'tool' && np.type === 'tool') {
         if (pp.id !== np.id) return false;

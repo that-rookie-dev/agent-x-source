@@ -54,10 +54,10 @@ export function Console() {
   const navigate = useNavigate();
   const { unreadNotificationCount } = useApp();
   const neuralBrainSupported = useNeuralBrainSupported();
-  const activePanel = (panel || 'chat') as PanelId;
+  const activePanel = (sessionId ? 'chat' : (panel || 'agent-x')) as PanelId;
   useEffect(() => {
-    if (panel === 'health') navigate('/console/chat', { replace: true });
-    if (panel === 'rag-studio' && !neuralBrainSupported) navigate('/console/chat', { replace: true });
+    if (panel === 'health') navigate('/console/agent-x', { replace: true });
+    if (panel === 'rag-studio' && !neuralBrainSupported) navigate('/console/agent-x', { replace: true });
   }, [panel, navigate, neuralBrainSupported]);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsPosition, setLogsPosition] = useState<'bottom' | 'right'>('bottom');

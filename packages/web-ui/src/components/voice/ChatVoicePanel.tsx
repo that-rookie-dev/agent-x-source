@@ -14,6 +14,8 @@ import { friendlyVoiceError } from './voice-comms-theme';
 export interface ChatVoicePanelProps {
   chatSessionId: string | null;
   onAgentRunning?: () => void;
+  onTranscriptFinal?: (text: string, empty: boolean) => void;
+  onVoiceTiming?: (timings: import('../../voice/VoiceSessionClient').VoiceTurnTimings) => void;
   autoStart?: boolean;
   onAutoStartConsumed?: () => void;
 }
@@ -21,6 +23,8 @@ export interface ChatVoicePanelProps {
 export function ChatVoicePanel({
   chatSessionId,
   onAgentRunning,
+  onTranscriptFinal,
+  onVoiceTiming,
   autoStart = false,
   onAutoStartConsumed,
 }: ChatVoicePanelProps) {
@@ -28,6 +32,8 @@ export function ChatVoicePanel({
     active: Boolean(chatSessionId),
     chatSessionId,
     onAgentRunning,
+    onTranscriptFinal,
+    onVoiceTiming,
     requestMicOnActivate: true,
   });
 
@@ -40,16 +46,14 @@ export function ChatVoicePanel({
   const showSilenceBar = comms.isDuplex
     && comms.commsReady
     && comms.session.state === 'listening'
-    && comms.session.silenceProgress > 0;
+    && comms.session.silenceProgress > 0
+    && !comms.session.error;
+
+  const capturedText = comms.session.partialTranscript || comms.session.finalTranscript;
 
   return (
-    <Box sx={{
-      px: 1.25,
-      py: 1,
-      borderTop: `1px solid ${colors.border.default}20`,
-      bgcolor: colors.bg.secondary,
-    }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.75 }}>
+    <Box sx={{ px: 1.25, py: 0.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
         <ToggleButtonGroup
           exclusive
           size="small"
@@ -114,41 +118,65 @@ export function ChatVoicePanel({
         </Box>
       </Box>
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 0.5 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75, mb: 0.35 }}>
         <Box sx={{
           px: 0.75,
           py: 0.5,
           borderRadius: 1,
-          border: `1px solid ${comms.operatorActive ? colors.accent.cyan + '55' : colors.border.default}`,
-          bgcolor: comms.operatorActive ? colors.accent.cyan + '08' : colors.bg.primary,
+          bgcolor: colors.bg.secondary,
+          border: `1px solid ${comms.operatorActive ? colors.accent.green + '55' : colors.border.default}`,
         }}>
-          <Typography sx={{ fontSize: '0.48rem', color: colors.text.dim, mb: 0.25, letterSpacing: '1px' }}>
+          <Typography sx={{ fontSize: '0.44rem', color: colors.text.tertiary, mb: 0.35, pl: 0.15, letterSpacing: '0.8px', lineHeight: 1 }}>
             YOU
           </Typography>
           <VoiceWaveform
             level={comms.session.audioLevel}
             active={comms.operatorActive}
-            accent={colors.accent.cyan}
-            height={32}
-            bars={20}
+            accent={colors.accent.green}
+            height={22}
+            bars={14}
           />
+          {capturedText ? (
+            <Typography sx={{
+              fontSize: '0.48rem',
+              color: colors.text.secondary,
+              mt: 0.3,
+              lineHeight: 1.35,
+              wordBreak: 'break-word',
+              maxHeight: 48,
+              overflow: 'auto',
+            }}>
+              {capturedText}
+            </Typography>
+          ) : null}
+          {!comms.isDuplex && comms.commsReady && comms.micReady && !capturedText && (
+            <Typography sx={{
+              fontSize: '0.42rem',
+              color: colors.text.dim,
+              mt: 0.25,
+              lineHeight: 1.25,
+              textAlign: 'center',
+            }}>
+              Hold Space to talk · release to send
+            </Typography>
+          )}
         </Box>
         <Box sx={{
           px: 0.75,
           py: 0.5,
           borderRadius: 1,
+          bgcolor: colors.bg.secondary,
           border: `1px solid ${comms.agentActive ? colors.accent.green + '55' : colors.border.default}`,
-          bgcolor: comms.agentActive ? colors.accent.green + '08' : colors.bg.primary,
         }}>
-          <Typography sx={{ fontSize: '0.48rem', color: colors.text.dim, mb: 0.25, letterSpacing: '1px' }}>
+          <Typography sx={{ fontSize: '0.44rem', color: colors.text.tertiary, mb: 0.35, pl: 0.15, letterSpacing: '0.8px', lineHeight: 1 }}>
             AGENT
           </Typography>
           <VoiceWaveform
             level={comms.session.playbackLevel}
             active={comms.agentActive}
             accent={colors.accent.green}
-            height={32}
-            bars={20}
+            height={22}
+            bars={14}
           />
         </Box>
       </Box>
@@ -158,12 +186,6 @@ export function ChatVoicePanel({
       {comms.session.error && (
         <Typography sx={{ fontSize: '0.52rem', color: colors.accent.red, mt: 0.5 }}>
           {friendlyVoiceError(comms.session.error)}
-        </Typography>
-      )}
-
-      {!comms.isDuplex && comms.commsReady && comms.micReady && (
-        <Typography sx={{ fontSize: '0.48rem', color: colors.text.dim, mt: 0.25, textAlign: 'center' }}>
-          Hold Space to talk · release to send
         </Typography>
       )}
     </Box>

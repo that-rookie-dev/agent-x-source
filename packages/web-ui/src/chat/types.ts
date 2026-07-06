@@ -51,6 +51,13 @@ export interface UIMessage extends ChatMessage {
   attachments?: { name: string }[];
   turnTokens?: number;
   turnCostUsd?: number;
+  voiceTimings?: {
+    sttMs: number;
+    thinkingMs: number;
+    ttsMs: number;
+    totalMs: number;
+    firstAudioMs: number;
+  };
   /** True when the user message came from voice input. */
   voiceInput?: boolean;
   /** Hide spoken playback for this assistant turn. */

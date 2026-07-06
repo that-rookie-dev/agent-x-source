@@ -24,7 +24,7 @@ export function DuplexSilenceProgress({ progress, visible, compact = false }: Du
           color: colors.text.dim,
           letterSpacing: '0.5px',
         }}>
-          End-of-turn silence
+          End-of-turn pause
         </Typography>
         <Typography sx={{
           fontFamily: COMMS_MONO,

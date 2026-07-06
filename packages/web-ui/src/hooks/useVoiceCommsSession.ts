@@ -5,11 +5,14 @@ import { useVoiceSession } from './useVoiceSession';
 import { useVoiceOptional } from '../components/voice/VoiceProvider';
 import { voiceDisabledReason, markVoiceOutputUnlocked } from '../voice/support';
 import { loadVoiceInputMode, saveVoiceInputMode, type VoiceInputMode } from '../voice/input-mode-preference';
+import type { VoiceTurnTimings } from '../voice/VoiceSessionClient';
 
 export interface UseVoiceCommsSessionOptions {
   active: boolean;
   chatSessionId?: string | null;
   onAgentRunning?: () => void;
+  onTranscriptFinal?: (text: string, empty: boolean) => void;
+  onVoiceTiming?: (timings: VoiceTurnTimings) => void;
   /** Request OS mic permission when panel becomes active. */
   requestMicOnActivate?: boolean;
 }
@@ -18,6 +21,8 @@ export function useVoiceCommsSession({
   active,
   chatSessionId,
   onAgentRunning,
+  onTranscriptFinal,
+  onVoiceTiming,
   requestMicOnActivate = false,
 }: UseVoiceCommsSessionOptions) {
   const mic = useMicrophonePermission();
@@ -42,7 +47,7 @@ export function useVoiceCommsSession({
     pttEnabled,
     inputMode,
     chatSessionId ?? undefined,
-    { onAgentRunning },
+    { onAgentRunning, onTranscriptFinal, onVoiceTiming },
   );
 
   useEffect(() => {
@@ -77,16 +82,22 @@ export function useVoiceCommsSession({
     await session.endPushToTalk();
   }, [pttEnabled, session]);
 
+  const toggleInputMode = useCallback(() => {
+    session.cancel();
+    setInputMode(isDuplex ? 'push-to-talk' : 'duplex');
+  }, [isDuplex, session, setInputMode]);
+
   useVoiceKeyboard({
-    enabled: pttEnabled && active && !isDuplex,
+    enabled: pttEnabled && active,
     globalSpace: active,
     composerFocused: false,
     composerEmpty: true,
-    pushToTalk: true,
+    pushToTalk: !isDuplex,
     onBeginPushToTalk: () => { void beginVoice(); },
     onEndPushToTalk: () => { void endVoice(); },
     onToggleSession: () => {},
     onInterruptPlayback: () => session.interruptPlayback(),
+    onDoubleTapSpace: toggleInputMode,
   });
 
   const operatorActive = session.state === 'listening' && (isDuplex || session.holding);
@@ -101,7 +112,7 @@ export function useVoiceCommsSession({
     if (!commsReady) return 'Linking comms…';
     if (mic.state !== 'granted') return mic.blocked ? 'Mic blocked' : 'Allow microphone';
     if (session.state === 'connecting') return 'Opening session…';
-    if (isDuplex && session.state === 'listening') return 'Hands-free · speak naturally';
+    if (isDuplex && session.state === 'listening') return 'Hands-free · pause after speaking';
     if (session.holding && session.state === 'listening') return 'Recording · release Space';
     if (session.state === 'processing') return session.agentStatus || 'Processing…';
     if (session.state === 'speaking') return 'Agent speaking';
