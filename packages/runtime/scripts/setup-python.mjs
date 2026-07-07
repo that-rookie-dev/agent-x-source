@@ -28,10 +28,6 @@ if (!url) {
 
 const IS_WIN = platform() === 'win32';
 
-function shellPath(p) {
-  return IS_WIN ? p.replace(/\\/g, '/') : p;
-}
-
 const pythonBin = IS_WIN
   ? join(OUT_DIR, 'python.exe')
   : join(OUT_DIR, 'bin', 'python3');
@@ -56,8 +52,8 @@ const file = createWriteStream(TARBALL);
 await pipeline(res.body, file);
 
 console.log('Extracting...');
-const tarCmd = `tar -xzf "${shellPath(TARBALL)}" -C "${shellPath(OUT_DIR)}" --strip-components=1`;
-execSync(tarCmd, { stdio: 'pipe' });
+// Use a relative tarball path from OUT_DIR — Git Bash tar on Windows treats D:/... as a remote host.
+execSync('tar -xzf python.tar.gz --strip-components=1', { cwd: OUT_DIR, stdio: 'pipe' });
 
 // Windows PBS archives sometimes have a nested 'python/' directory inside the tarball
 if (IS_WIN) {

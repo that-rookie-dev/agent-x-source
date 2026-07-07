@@ -24,10 +24,6 @@ const workspaceRoot = join(serverRoot, '..', '..');
 const storeDir = join(workspaceRoot, 'node_modules', '.pnpm');
 const IS_WIN = platform() === 'win32';
 
-function shellPath(p) {
-  return IS_WIN ? p.replace(/\\/g, '/') : p;
-}
-
 function getPlatformSuffix() {
   const os = platform();
   const cpu = arch();
@@ -151,7 +147,9 @@ execSync('npm install --omit=dev --ignore-scripts', { cwd: staging, stdio: 'inhe
 copyPgDeps(join(resourcesDir, 'web-api', 'node_modules'));
 
 console.log(`Creating ${tarball}...`);
-execSync(`tar -czf "${shellPath(tarball)}" -C "${shellPath(staging)}" .`, { stdio: 'inherit' });
+// Use paths relative to staging — Git Bash tar on Windows treats D:/... as a remote host.
+const tarballName = `agentx-${suffix}-server.tar.gz`;
+execSync(`tar -czf "../release/${tarballName}" .`, { cwd: staging, stdio: 'inherit' });
 
 rmSync(staging, { recursive: true, force: true });
 console.log(`Server tarball ready: ${tarball}`);
