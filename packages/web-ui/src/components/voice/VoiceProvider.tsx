@@ -67,7 +67,6 @@ interface VoiceProviderProps {
 
 export function VoiceProvider({ children }: VoiceProviderProps) {
   const [coreSessionId, setCoreSessionId] = useState<string | null>(null);
-  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
   const [wakePhrase, setWakePhrase] = useState(() => resolveWakePhrase());
@@ -161,7 +160,6 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   }, [activeChatSessionId, voiceEnabled, canRunWeb]);
 
   const registerChatSession = useCallback((sessionId: string | null) => {
-    setChatSessionId(sessionId);
     setActiveChatSessionId(sessionId);
   }, []);
 
