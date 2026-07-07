@@ -127,7 +127,7 @@ writeFileSync(join(staging, 'package.json'), JSON.stringify({
   version: runtimePkg.version,
   type: 'commonjs',
   dependencies: {
-    embedded-postgres: runtimePkg.dependencies['embedded-postgres'],
+    'embedded-postgres': runtimePkg.dependencies['embedded-postgres'],
     pg: runtimePkg.dependencies.pg,
   },
   optionalDependencies: runtimePkg.optionalDependencies,
