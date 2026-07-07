@@ -140,7 +140,7 @@ jobs:
             return 1
           }
           cd packages/desktop
-          retry npm install
+          retry node scripts/materialize-pack-deps.mjs
           # When cross-compiling for x64 on an arm64 runner, npm skips the
           # darwin-x64 optional dependency (cpu mismatch). Force-install it
           # with --os/--cpu overrides so electron-builder can bundle it into
@@ -231,7 +231,7 @@ jobs:
             return 1
           }
           cd packages/desktop
-          retry npm install
+          retry node scripts/materialize-pack-deps.mjs
           retry npm run build
           retry npx electron-builder --linux ${{ matrix.desktop_targets }}
         env:
@@ -319,7 +319,7 @@ jobs:
             return 1
           }
           cd packages/desktop
-          retry npm install
+          retry node scripts/materialize-pack-deps.mjs
           retry npm run dist:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
