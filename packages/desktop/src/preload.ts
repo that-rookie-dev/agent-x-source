@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('agentx', {
   localModelSupported: ipcRenderer.sendSync('system:localModelSupported'),
   neuralBrainSupported: ipcRenderer.sendSync('system:neuralBrainSupported'),
   styleTtsSupported: ipcRenderer.sendSync('system:styleTtsSupported'),
+  voiceWarmupSupported: ipcRenderer.sendSync('system:voiceWarmupSupported'),
   minimize: () => ipcRenderer.send('window:minimize'),
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),

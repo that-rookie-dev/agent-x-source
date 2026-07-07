@@ -35,8 +35,10 @@ export interface VoiceSessionClientEvents {
   onStateChange?: (state: VoiceClientState) => void;
   onTranscriptPartial?: (text: string) => void;
   onTranscriptFinal?: (text: string, empty?: boolean) => void;
+  onTranscriptPending?: () => void;
   onAgentText?: (text: string) => void;
   onError?: (message: string) => void;
+  onWarning?: (message: string) => void;
   onAgentStatus?: (status: string) => void;
   onAudioLevel?: (level: number) => void;
   onPlaybackLevel?: (level: number) => void;
@@ -44,6 +46,8 @@ export interface VoiceSessionClientEvents {
   onVoiceTiming?: (timings: VoiceTurnTimings) => void;
   onPermissionPrompt?: (prompt: VoicePermissionPrompt) => void;
   onPermissionResolved?: (requestId: string, choice: string, reason?: string) => void;
+  onRecordingDiscarded?: (reason: string) => void;
+  onPlaybackIdle?: () => void;
 }
 
 export interface VoiceTurnTimings {
@@ -83,15 +87,43 @@ export class VoiceSessionClient {
   private pendingChunkMeta: { sampleRate: number } | null = null;
   private connectPromise: Promise<void> | null = null;
   private listenStartedAt = 0;
+  /** PTT: mic graph is open but not streaming until armed. */
+  private micPrepared = false;
+  private captureArmed = false;
 
   constructor(options: VoiceSessionClientOptions = {}) {
     this.events = options;
     this.mode = options.mode ?? 'push-to-talk';
     this.chatSessionId = options.chatSessionId;
+    this.playback.setOnIdle(() => {
+      this.events.onPlaybackLevel?.(0);
+      this.events.onPlaybackIdle?.();
+    });
   }
 
   getState(): VoiceClientState {
     return this.state;
+  }
+
+  /** True when the voice WebSocket is open and the session is usable. */
+  isLinkLive(): boolean {
+    return (
+      this.ws?.readyState === WebSocket.OPEN &&
+      this.state !== 'idle' &&
+      this.state !== 'error'
+    );
+  }
+
+  isPlaybackActive(): boolean {
+    return this.playback.playing;
+  }
+
+  isMicPrepared(): boolean {
+    return this.micPrepared && this.workletNode !== null;
+  }
+
+  isPttReady(): boolean {
+    return this.isLinkLive() && (this.mode === 'duplex' || this.isMicPrepared());
   }
 
   private setState(state: VoiceClientState): void {
@@ -228,12 +260,85 @@ export class VoiceSessionClient {
     this.duplexPendingChunks = [];
   }
 
-  async startListening(): Promise<void> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      await this.connect();
+  private onCapturePcm(pcm: Int16Array): void {
+    const levelActive = this.mode === 'duplex' || this.captureArmed;
+    if (this.events.onAudioLevel && levelActive) {
+      let sum = 0;
+      for (let i = 0; i < pcm.length; i += 1) sum += Math.abs(pcm[i]!);
+      this.events.onAudioLevel(Math.min(1, sum / Math.max(1, pcm.length) / 8000));
     }
-    if (this.workletNode) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (this.mode === 'duplex') {
+      if (this.state !== 'speaking') {
+        this.queueDuplexAudio(pcm);
+      }
+      return;
+    }
+    if (!this.captureArmed) return;
+    this.ws.send(pcm.buffer);
+  }
 
+  /** PTT: open mic hardware without starting a server recording. */
+  async prepareMicrophone(): Promise<void> {
+    if (this.mode === 'duplex') {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        await this.connect();
+      }
+      if (this.state !== 'listening') {
+        await this.startDuplexListening();
+      }
+      return;
+    }
+    if (this.isMicPrepared()) {
+      if (this.audioContext?.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+      return;
+    }
+    if (this.workletNode) {
+      await this.stopCaptureOnly();
+    }
+
+    this.skipPlayback = false;
+    this.captureArmed = false;
+    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: VOICE_SAMPLE_RATE,
+      },
+    });
+    this.audioContext = new AudioContext({ sampleRate: VOICE_SAMPLE_RATE });
+    await this.audioContext.audioWorklet.addModule(VOICE_CAPTURE_PROCESSOR_URL);
+    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+    this.workletNode = new AudioWorkletNode(this.audioContext, VOICE_CAPTURE_PROCESSOR_NAME);
+    this.workletNode.port.onmessage = (event: MessageEvent<{ pcm: ArrayBuffer }>) => {
+      this.onCapturePcm(new Int16Array(event.data.pcm));
+    };
+    source.connect(this.workletNode);
+    this.workletNode.connect(this.audioContext.destination);
+    this.micPrepared = true;
+    if (this.state !== 'processing' && this.state !== 'speaking' && this.state !== 'connecting') {
+      this.setState('ready');
+    }
+  }
+
+  /** PTT: begin streaming mic audio to the server (mic must be prepared). */
+  armCapture(): void {
+    if (this.mode !== 'push-to-talk' || !this.isMicPrepared()) return;
+    this.playback.clearHistory();
+    this.captureArmed = true;
+    this.listenStartedAt = Date.now();
+    this.ws?.send(JSON.stringify({ type: 'audio_start' }));
+    this.setState('listening');
+  }
+
+  private async startDuplexListening(): Promise<void> {
+    if (this.workletNode) {
+      await this.stopCaptureOnly();
+    }
     this.skipPlayback = false;
     this.mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -249,33 +354,41 @@ export class VoiceSessionClient {
     const source = this.audioContext.createMediaStreamSource(this.mediaStream);
     this.workletNode = new AudioWorkletNode(this.audioContext, VOICE_CAPTURE_PROCESSOR_NAME);
     this.workletNode.port.onmessage = (event: MessageEvent<{ pcm: ArrayBuffer }>) => {
-      const pcm = new Int16Array(event.data.pcm);
-      if (this.events.onAudioLevel) {
-        let sum = 0;
-        for (let i = 0; i < pcm.length; i += 1) sum += Math.abs(pcm[i]!);
-        this.events.onAudioLevel(Math.min(1, sum / Math.max(1, pcm.length) / 8000));
-      }
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        if (this.mode === 'duplex') {
-          // Don't stream mic audio while agent TTS is playing — avoids false barge-in.
-          if (this.state !== 'speaking') {
-            this.queueDuplexAudio(pcm);
-          }
-        } else {
-          this.ws.send(pcm.buffer);
-        }
-      }
+      this.onCapturePcm(new Int16Array(event.data.pcm));
     };
     source.connect(this.workletNode);
     this.workletNode.connect(this.audioContext.destination);
     this.ws?.send(JSON.stringify({ type: 'audio_start' }));
     this.listenStartedAt = Date.now();
-    this.duplexActive = this.mode === 'duplex';
+    this.duplexActive = true;
+    this.micPrepared = true;
+    this.captureArmed = true;
     this.setState('listening');
+  }
+
+  async startListening(): Promise<void> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      await this.connect();
+    }
+    if (this.mode === 'duplex') {
+      await this.startDuplexListening();
+      return;
+    }
+    await this.prepareMicrophone();
+    this.armCapture();
   }
 
   async cancelListening(): Promise<void> {
     if (this.mode === 'duplex' && this.duplexActive) return;
+    if (this.mode === 'push-to-talk') {
+      this.captureArmed = false;
+      this.listenStartedAt = 0;
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'audio_cancel' }));
+      }
+      this.setState('ready');
+      return;
+    }
     await this.stopCaptureOnly();
     this.listenStartedAt = 0;
     if (this.ws?.readyState === WebSocket.OPEN) {
@@ -293,6 +406,17 @@ export class VoiceSessionClient {
     if (this.mode === 'duplex' && this.duplexActive) {
       return;
     }
+    if (this.mode === 'push-to-talk') {
+      this.captureArmed = false;
+      this.listenStartedAt = 0;
+      try {
+        const clientSituation = await collectClientSituation();
+        this.ws?.send(JSON.stringify({ type: 'client_situation', clientSituation }));
+      } catch { /* best-effort */ }
+      this.ws?.send(JSON.stringify({ type: 'audio_end' }));
+      this.setState('processing');
+      return;
+    }
     await this.stopCaptureOnly();
     this.listenStartedAt = 0;
     try {
@@ -306,6 +430,8 @@ export class VoiceSessionClient {
   disconnect(): void {
     this.interruptPlayback();
     void this.playback.close();
+    this.micPrepared = false;
+    this.captureArmed = false;
     void this.stopCaptureOnly();
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'session_end' }));
@@ -321,6 +447,8 @@ export class VoiceSessionClient {
     this.ws?.send(JSON.stringify({ type: 'playback_interrupted' }));
     if (this.mode === 'duplex') {
       this.setState('listening');
+    } else {
+      this.setState('ready');
     }
   }
 
@@ -346,6 +474,9 @@ export class VoiceSessionClient {
 
   private async stopCaptureOnly(): Promise<void> {
     this.clearDuplexSendBuffer();
+    this.micPrepared = false;
+    this.captureArmed = false;
+    this.duplexActive = false;
     this.workletNode?.disconnect();
     this.workletNode = null;
     await this.audioContext?.close();
@@ -358,6 +489,9 @@ export class VoiceSessionClient {
     switch (msg.type) {
       case 'transcript_partial':
         this.events.onTranscriptPartial?.(String(msg.text ?? ''));
+        break;
+      case 'transcript_pending':
+        this.events.onTranscriptPending?.();
         break;
       case 'transcript_final': {
         const text = String(msg.text ?? '');
@@ -379,6 +513,8 @@ export class VoiceSessionClient {
         if (status === 'speaking') this.setState('speaking');
         if (status === 'complete') this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
         if (status === 'running') this.setState('processing');
+        // Server signalled duplex recovery — resync out of any stale error state.
+        if (status === 'listening' && this.mode === 'duplex') this.setState('listening');
         break;
       }
       case 'audio_chunk_meta':
@@ -420,8 +556,19 @@ export class VoiceSessionClient {
           typeof msg.reason === 'string' ? msg.reason : undefined,
         );
         break;
-      case 'recording_discarded':
+      case 'recording_discarded': {
+        const reason = String(msg.reason ?? 'discarded');
         this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
+        this.events.onRecordingDiscarded?.(reason);
+        break;
+      }
+      case 'voice_warning':
+        // Recoverable hiccup (duplex STT/turn) — the server is still listening.
+        // Surface a transient hint but keep the session alive.
+        this.events.onWarning?.(String(msg.message ?? 'Voice hiccup'));
+        if (this.mode === 'duplex' && this.state === 'error') {
+          this.setState('listening');
+        }
         break;
       case 'error':
         this.setState('error');

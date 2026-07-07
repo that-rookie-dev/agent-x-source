@@ -26,6 +26,7 @@ import {
   recordTurnFeedback,
   loadSessionMessagesPage,
   getForceWebSearchError,
+  cancelActiveSessionTurn,
 } from './chat-helpers.js';
 import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
@@ -67,7 +68,7 @@ import localModelRouter from './local-model-api.js';
 import embeddingModelRouter from './embedding-model-api.js';
 import modelBenchmarkRouter from './model-benchmark-api.js';
 import voiceRouter from './voice-api.js';
-import { integrationsRouter } from './integrations-api.js';
+import { integrationsRouter, handleMcpStdioOAuthCallback } from './integrations-api.js';
 import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutomation } from './automation/index.js';
 import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
@@ -353,6 +354,9 @@ const upload = multer({
 // Auth routes (must be before auth middleware)
 // Mount under /api so endpoints are /api/auth/*, matching web-ui calls
 app.use('/api', createAuthRouter());
+
+// Gmail MCP OAuth callback (Google redirects here — no /api prefix)
+app.get('/oauth2callback', (req, res) => { void handleMcpStdioOAuthCallback(req, res); });
 
 // Auth middleware — protects all /api/* routes except auth endpoints
 app.use(authMiddleware);
@@ -1953,6 +1957,8 @@ app.post('/api/chat/cancel', (_req, res) => {
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    const sid = (eng.sessionManager.getActiveSession?.() as { id?: string } | null | undefined)?.id;
+    if (sid) cancelActiveSessionTurn(sid);
     agent.cancel();
     res.json({ ok: true });
   } catch (e) {

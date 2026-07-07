@@ -8,6 +8,7 @@ interface AgentXDesktopBridge {
   localModelSupported: boolean;
   neuralBrainSupported: boolean;
   styleTtsSupported: boolean;
+  voiceWarmupSupported: boolean;
   minimize: () => void;
   maximize: () => void;
   close: () => void;

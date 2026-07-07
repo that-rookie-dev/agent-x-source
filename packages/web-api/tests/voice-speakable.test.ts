@@ -46,4 +46,13 @@ describe('voice interactive flow helpers', () => {
     expect(isVoiceSummaryOnlyMessage(voiceOnly)).toBe(true);
     expect(isVoiceSummaryOnlyMessage(`${voiceOnly}\n\n${'Detailed markdown body. '.repeat(8)}`)).toBe(false);
   });
+
+  it('strips stray tokens before the voice opener', async () => {
+    const { normalizeVoiceAssistantContent, extractVoiceSpeakable } = await import('../src/voice-speakable.js');
+    const raw = `承受${VOICE_BLOCK_OPEN}Good morning.${VOICE_BLOCK_CLOSE}`;
+    const normalized = normalizeVoiceAssistantContent(raw);
+    expect(normalized.startsWith(VOICE_BLOCK_OPEN)).toBe(true);
+    expect(extractVoiceSpeakable(raw).voice).toBe('Good morning.');
+    expect(extractVoiceSpeakable(raw).chat).toBe('');
+  });
 });

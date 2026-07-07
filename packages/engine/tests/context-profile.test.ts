@@ -124,4 +124,11 @@ describe('isCompactToolAllowed', () => {
     expect(isCompactToolAllowed('file_patch', true)).toBe(false);
     expect(isCompactToolAllowed('shell_exec', true)).toBe(true);
   });
+
+  it('allows integration tools in compact context', () => {
+    expect(isCompactToolAllowed('integration__gmail__search_emails', false)).toBe(true);
+    expect(isCompactToolAllowed('integration__gmail__send_email', true)).toBe(false);
+    expect(isCompactToolAllowed('integration__gmail__read_email', true)).toBe(true);
+    expect(isCompactToolAllowed('chart_generate', false)).toBe(false);
+  });
 });

@@ -504,9 +504,9 @@ router.get('/voice/sidecar/status', async (_req, res) => {
   try {
     const manager = getVoiceSidecarManager();
     const status = manager.getStatus();
-    if (status.state === 'ready') {
-      const client = manager.getClient();
-      const health = client ? await client.health() : undefined;
+    const client = manager.getClient();
+    if (client && (status.state === 'ready' || status.state === 'starting')) {
+      const health = await client.health(3_000).catch(() => undefined);
       return res.json({ sidecar: { ...status, health } });
     }
     res.json({ sidecar: status });
@@ -515,12 +515,66 @@ router.get('/voice/sidecar/status', async (_req, res) => {
   }
 });
 
+async function ensureVoiceRuntimeReady(): Promise<void> {
+  logVoiceEnvironment('ensure-prepare');
+  if (!existsSync(SIDE_CAR_PACKAGE_DIR)) {
+    throw new Error(`Voice sidecar package missing — reinstall Agent-X or run Settings → Voice → Deploy voice kit`);
+  }
+
+  const venvPy = venvPython();
+  const checkImport = async (): Promise<boolean> => {
+    if (!existsSync(venvPy)) return false;
+    try {
+      await execVoiceCommand(venvPy, ['-c', 'import agentx_voice'], {
+        label: 'check-agentx-voice-import',
+        timeout: 15_000,
+        env: pythonEnv(),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (!(await checkImport())) {
+    voiceInfo('Voice runtime not ready — installing Python dependencies');
+    sidecarManager = null;
+    const { resetVoiceService } = await import('./voice-runtime.js');
+    resetVoiceService();
+    await installVoiceDependencies();
+    if (!(await checkImport())) {
+      throw new Error('Voice Python environment failed to install — open Settings → Voice and run Deploy voice kit');
+    }
+  }
+}
+
+function formatEnsureError(raw: string): string {
+  if (raw.includes('fetch failed') || raw.includes('ECONNREFUSED')) {
+    return 'Voice engine offline — complete setup in Settings → Voice';
+  }
+  if (raw.includes('No module named')) {
+    return 'Voice Python environment incomplete — open Settings → Voice and run Deploy voice kit';
+  }
+  if (raw.includes('Timed out waiting for voice sidecar')) {
+    return 'Voice engine timed out starting — retry or check Settings → Voice';
+  }
+  return raw;
+}
+
 router.post('/voice/sidecar/ensure', async (_req, res) => {
   try {
     const config = mergeVoiceConfig(getEngine().configManager.load().voice);
     if (!config.enabled) {
       return res.status(400).json({ error: 'Voice is disabled — enable in Settings → Voice' });
     }
+    const capabilities = await buildVoiceCapabilities(config);
+    if (!capabilities.canRunWeb) {
+      return res.status(503).json({
+        ok: false,
+        error: 'Voice kit incomplete — open Settings → Voice and run Deploy voice kit',
+      });
+    }
+    await ensureVoiceRuntimeReady();
     const { getVoiceService } = await import('./voice-runtime.js');
     await getVoiceService().start();
     const manager = getVoiceSidecarManager();
@@ -532,13 +586,38 @@ router.post('/voice/sidecar/ensure', async (_req, res) => {
       sidecar: { ...status, health },
     });
   } catch (error) {
-    const raw = error instanceof Error ? error.message : String(error);
-    const offline = raw.includes('fetch failed') || raw.includes('ECONNREFUSED') || raw.includes('No module named');
+    const raw = formatExecError(error);
+    voiceError('sidecar/ensure failed', error);
     res.status(503).json({
       ok: false,
-      error: offline
-        ? 'Voice engine offline — complete setup in Settings → Voice'
-        : raw,
+      error: formatEnsureError(raw),
+      detail: raw,
+    });
+  }
+});
+
+router.post('/voice/sidecar/release', async (_req, res) => {
+  try {
+    const config = mergeVoiceConfig(getEngine().configManager.load().voice);
+    const { countActiveVoiceWebSocketSessions } = await import('./voice-ws.js');
+    if (countActiveVoiceWebSocketSessions() > 0) {
+      return res.json({ ok: true, skipped: 'sessions_active' });
+    }
+    const { getVoiceService } = await import('./voice-runtime.js');
+    const service = getVoiceService();
+    if (!config.enabled) {
+      await service.stop();
+      return res.json({ ok: true, stopped: true });
+    }
+    if (config.sidecar?.autoStart === true) {
+      return res.json({ ok: true, skipped: 'always_on' });
+    }
+    service.requestIdleUnload();
+    res.json({ ok: true, scheduled: true });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to release voice sidecar',
     });
   }
 });
@@ -709,6 +788,12 @@ function getVoiceSidecarManager(): VoiceSidecarManager {
       dataDir: voiceDataDir(),
       pythonExecutable: activePython(),
       env: pythonEnv(),
+      startupTimeoutMs: 60_000,
+      onLog: (level, message) => {
+        if (level === 'error') voiceError('sidecar process', new Error(message));
+        else if (level === 'warn') voiceWarn('sidecar process', { message });
+        else voiceInfo('sidecar process', { message });
+      },
     });
   }
   return sidecarManager;

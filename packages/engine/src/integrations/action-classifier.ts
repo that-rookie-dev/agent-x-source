@@ -28,7 +28,10 @@ export function isIntegrationEditOrDeleteTool(
 
   if (provider?.tools?.alwaysConfirm?.some((name) => {
     const n = name.toLowerCase();
-    return EDIT_DELETE_TOKENS.some((token) => n.includes(token));
+    return normalized === n
+      || normalized.startsWith(`${n}_`)
+      || normalized.endsWith(`_${n}`)
+      || normalized.includes(`_${n}_`);
   })) {
     return true;
   }

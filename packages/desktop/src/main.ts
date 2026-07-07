@@ -469,6 +469,9 @@ ipcMain.on('system:neuralBrainSupported', (event) => {
 ipcMain.on('system:styleTtsSupported', (event) => {
   event.returnValue = totalmem() / (1024 ** 3) >= 16;
 });
+ipcMain.on('system:voiceWarmupSupported', (event) => {
+  event.returnValue = totalmem() / (1024 ** 3) >= 8;
+});
 ipcMain.on('window:minimize', () => mainWindow?.minimize());
 ipcMain.on('window:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();

@@ -15,7 +15,7 @@ import type {
   QuestionnaireRecord,
   ClientSituation,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { Mutex } from '../concurrency/Mutex.js';
 import { join, resolve, normalize } from 'node:path';
@@ -56,7 +56,7 @@ import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
 import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createThirdPartyServicesSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
 import {
   buildCompletionMessages,
@@ -133,6 +133,8 @@ import {
   shouldUseInteractivePlanGates,
 } from './plan-mode-utils.js';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
+import { reconcileIntegrationHintWithActiveTools } from '../integrations/integration-tool-availability.js';
+import type { ThirdPartyTurnPolicy } from '../integrations/third-party-access.js';
 import { buildGoogleAiSdkProviderOptions, buildProviderConnectivityProbeUrl } from '../providers/google/gemini-metadata.js';
 import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
 import type { PartPersistFn } from './AiSdkStreamHandler.js';
@@ -220,8 +222,10 @@ export interface AgentOptions {
   parentSessionId?: string;
   /** Session context kind — drives super-session memory ingestion and mode defaults. */
   contextKind?: import('@agentx/shared').SessionContextKind;
-  /** Refresh MCP integration tools and return an optional turn hint before completion. */
-  prepareIntegrationTools?: (userText: string) => Promise<string | undefined>;
+  /** Refresh MCP integration tools; return optional turn hint and access policy before completion. */
+  prepareIntegrationTools?: (userText: string) => Promise<
+    string | { hint?: string; policy?: import('../integrations/third-party-access.js').ThirdPartyTurnPolicy } | undefined
+  >;
 }
 
 export class Agent {
@@ -354,6 +358,8 @@ export class Agent {
   private pendingStepApproval: ((stepId: string, approved: boolean, description?: string) => void) | null = null;
   private pendingModeEscalation: ((accepted: boolean) => void) | null = null;
   private pendingStepCap: ((continueRun: boolean) => void) | null = null;
+  /** Set when the user hits Stop — stream/tools must halt immediately. */
+  private userCancelledTurn = false;
   private turnState = new TurnStateManager();
   private toolLedger = new ToolLedger();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -572,6 +578,11 @@ export class Agent {
   }
 
   private async waitForQuestionnaireResponse(questionnaire: QuestionnairePayload): Promise<string> {
+    if (this.userCancelledTurn) {
+      const err = new Error('Turn aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
     // Messaging channels have no UI questionnaire modal — waiting would hang forever.
     if (this.options.channelSession) {
       getLogger().info('CHANNEL', 'Auto-proceeding past questionnaire on messaging channel');
@@ -949,13 +960,14 @@ export class Agent {
     });
 
     // Reset permissions for each new session — automation runs reuse the shared executor snapshot.
-    if (this.toolExecutor && !this.options.automationRun) {
-      this.toolExecutor.getPermissionManager().resetForNewSession(this.sessionId);
+    if (this.toolExecutor) {
+      if (!this.options.automationRun) {
+        this.toolExecutor.getPermissionManager().resetForNewSession(this.sessionId);
+      }
+      this.toolExecutor.setSessionContextKind(this.options.contextKind);
       if (this.options.channelSession) {
         this.toolExecutor.setAlwaysPromptPermissions(true);
       }
-    } else if (this.toolExecutor && this.options.channelSession) {
-      this.toolExecutor.setAlwaysPromptPermissions(true);
     }
 
     // Load user-configured permission overrides from config
@@ -1237,15 +1249,16 @@ export class Agent {
       // Query reformulation — rewrite follow-up messages into standalone search queries.
       const query = await this.reformulateQuery(rawQuery);
 
-      // Use parent session ID for crew workers so they can access the host conversation's memory.
-      const sessionId = this.options.parentSessionId ?? this.sessionId;
+      const memorySessionId = this.sessionId;
+      const isSuper = isMemoryFabricSuperSession(memorySessionId, this.options.contextKind);
       const result = await retriever.retrieve(query, {
-        sessionId,
+        sessionId: memorySessionId,
+        isSuperSession: isSuper,
         agentId: this.config.user?.callsign,
-        globalLimit: 3,
-        localLimit: 15,
+        globalLimit: isSuper ? 3 : 0,
+        localLimit: isSuper ? 15 : 8,
         vectorLimit: 8,
-        graphDepth: 2,
+        graphDepth: isSuper ? 2 : 1,
         minRelevance: 0.35,
       });
 
@@ -1258,7 +1271,11 @@ export class Agent {
       if (fabric && embedder) {
         try {
           const chunkEmbedding = await embedder.embed(query);
-          chunkNodes = await fabric.vectorSearch(chunkEmbedding, { limit: 5, category: 'source_doc' });
+          chunkNodes = await fabric.vectorSearch(chunkEmbedding, {
+            limit: 5,
+            category: 'source_doc',
+            ...(isSuper ? {} : { sessionId: memorySessionId }),
+          });
           // Filter by a lower threshold for chunks (0.25 — chunks are noisier).
           chunkNodes = chunkNodes.filter((n) => {
             const distance = (n as unknown as { distance?: number }).distance;
@@ -1439,13 +1456,17 @@ Rules:
         return text;
       };
       const service = new MemoryService(this._pgPool as any, embedder, generate);
+      const storageSessionId = resolveMemoryFabricWriteSessionId(
+        this.options.parentSessionId ?? this.sessionId,
+        this.options.contextKind,
+      );
       await service.ingest({
         text: content,
         label,
         category: 'source_doc',
         extract: true,
         embed: true,
-        sessionId: this.options.parentSessionId ?? this.sessionId,
+        sessionId: storageSessionId,
       });
       getLogger().info('WEB_INGEST', `Ingested ${toolId} result (${output.length} chars) into neural brain`);
     } catch (e) {
@@ -1480,24 +1501,62 @@ Rules:
   }
 
   /**
-   * Cancel an in-progress completion. Aborts the active stream and tool executions.
+   * Cancel an in-progress completion. Aborts the active stream, pending UI waits, and tool executions.
    */
   cancel(): void {
+    this.userCancelledTurn = true;
+    this.toolExecutor?.setTurnAborted(true);
+    this.toolExecutor?.setThirdPartyTurnPolicy(null);
+    this.abortAllPendingTurnWaits();
     this.abortClarificationWait();
+    this._abortSignalController?.abort();
     this.runStateMgr.cancel(this.sessionId);
     this.commandQueue.cancelSession(this.sessionId);
     this.stopTurnHeartbeat();
     this.turnState.cancel();
     this.emitTurnState('cancelled');
+    this.emit({ type: 'task_aborted', reason: 'Stopped by user' });
     this.emit({ type: 'loading_end' });
     if (this.scope) {
       this.scope.dispose();
       this.scope = null;
-      this._abortSignalController = null;
     }
-    this.lifecycle.transition('idle');
+    this._abortSignalController = null;
+    this.lifecycle.forceTransition('idle');
     this.subAgents.cancelAll();
     this.sessionRunner.interrupt();
+  }
+
+  /** True while a user-initiated stop is tearing down the active turn. */
+  isUserCancelled(): boolean {
+    return this.userCancelledTurn;
+  }
+
+  /** Resolve or reject every human-in-the-loop wait so nothing blocks after Stop. */
+  private abortAllPendingTurnWaits(): void {
+    for (const [requestId, entry] of this.pendingPermissions) {
+      try {
+        entry.resolve('deny');
+      } catch { /* ignore */ }
+      this.pendingPermissions.delete(requestId);
+    }
+
+    if (this.pendingModeEscalation) {
+      const resolve = this.pendingModeEscalation;
+      this.pendingModeEscalation = null;
+      resolve(false);
+    }
+
+    if (this.pendingStepCap) {
+      const resolve = this.pendingStepCap;
+      this.pendingStepCap = null;
+      resolve(false);
+    }
+
+    if (this.pendingStepApproval) {
+      this.pendingStepApproval('cancelled', false);
+      this.pendingStepApproval = null;
+    }
   }
 
   get agents(): SubAgentManager {
@@ -1708,7 +1767,13 @@ Rules:
   private waitForModeEscalation(toolId: string, _reason: string): Promise<boolean> {
     this.turnState.setPhase('awaiting_mode', `blocked:${toolId}`);
     return new Promise((resolve) => {
-      this.pendingModeEscalation = resolve;
+      this.pendingModeEscalation = (accepted) => {
+        if (this.userCancelledTurn) {
+          resolve(false);
+          return;
+        }
+        resolve(accepted);
+      };
     });
   }
 
@@ -1721,6 +1786,10 @@ Rules:
     this.emit({ type: 'step_cap_reached', currentSteps, maxSteps: this.completionStepBudget() });
     return new Promise((resolve) => {
       this.pendingStepCap = (cont) => {
+        if (this.userCancelledTurn) {
+          resolve(false);
+          return;
+        }
         if (cont) this.stepCapExtra++;
         resolve(cont);
       };
@@ -1817,6 +1886,8 @@ Rules:
     this.lifecycle.transition('receiving');
     this.scope = new Scope();
     this.clarificationStale = false;
+    this.userCancelledTurn = false;
+    this.toolExecutor?.setTurnAborted(false);
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
     try {
@@ -2364,8 +2435,11 @@ Rules:
       const classified = this.errorClassifier.classify(error);
       this.telemetry.markError(`turn-${startTime}`, classified.reason, classified.providerMessage ?? '');
 
-      // If cancelled by user, emit a soft cancellation event (not an error)
+      // If cancelled by user, propagate abort so the turn registry/UI finalize as cancelled.
       if (error instanceof Error && error.name === 'AbortError') {
+        if (this.userCancelledTurn) {
+          throw error;
+        }
         const cancelledMessage: Message = {
           id: generateMessageId(),
           sessionId: this.sessionId,
@@ -2429,6 +2503,9 @@ Rules:
       this.turnWebSearchPolicy = 'off';
       this.forcedWebSearchToolName = null;
       this.pendingVoiceMerge = null;
+      this.toolExecutor?.setTurnAborted(false);
+      this.toolExecutor?.setThirdPartyTurnPolicy(null);
+      this.userCancelledTurn = false;
       this.completeTurnTelemetry(startTime);
       this.lifecycle.forceTransition('idle');
       this.scope = null;
@@ -2478,9 +2555,17 @@ Rules:
       ? lastUserMsg.content.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim()
       : '';
     let integrationHint: string | undefined;
+    let integrationAccessPolicy: ThirdPartyTurnPolicy | undefined;
     if (this.options.prepareIntegrationTools && lastUserText) {
       try {
-        integrationHint = await this.options.prepareIntegrationTools(lastUserText);
+        const prep = await this.options.prepareIntegrationTools(lastUserText);
+        if (typeof prep === 'string') {
+          integrationHint = prep;
+        } else if (prep) {
+          integrationHint = prep.hint;
+          integrationAccessPolicy = prep.policy;
+          this.toolExecutor?.setThirdPartyTurnPolicy(prep.policy ?? null);
+        }
       } catch (error) {
         getLogger().warn('AGENT', `Integration pre-turn sync failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -2533,6 +2618,17 @@ Rules:
       for (const key of Object.keys(tools)) {
         if (denyCrewOrchestration.has(key)) delete tools[key];
       }
+    }
+
+    if (integrationHint !== undefined || integrationAccessPolicy !== undefined) {
+      const reconciled = reconcileIntegrationHintWithActiveTools(
+        integrationHint,
+        integrationAccessPolicy,
+        Object.keys(tools),
+      );
+      integrationHint = reconciled.hint;
+      integrationAccessPolicy = reconciled.policy;
+      this.toolExecutor?.setThirdPartyTurnPolicy(reconciled.policy ?? null);
     }
 
     const model = createAiSdkModel(this.config, this.getApiKey());
@@ -2833,6 +2929,7 @@ Rules:
       throw error;
     } finally {
       this.activeStreamHandler = null;
+      this.toolExecutor?.setThirdPartyTurnPolicy(null);
     }
   }
 
@@ -2863,13 +2960,19 @@ Rules:
       if (!this.chatTurnMemoryIngester) {
         this.chatTurnMemoryIngester = new ChatTurnMemoryIngester(fabric, embedder);
       }
-      void this.chatTurnMemoryIngester.ingestTurn(userMessage, assistantResponse, this.sessionId).catch(() => {
+      const storageSessionId = resolveMemoryFabricWriteSessionId(this.sessionId, this.options.contextKind);
+      void this.chatTurnMemoryIngester.ingestTurn(
+        userMessage,
+        assistantResponse,
+        this.sessionId,
+        storageSessionId,
+      ).catch(() => {
         // Silent failure — chat turn embedding is best-effort
       });
     }
 
     // Super-session: persist user-profile facts to global vector memory (shared across all sessions).
-    if ((this.options.contextKind ?? 'agent_x') !== 'agent_x_core') return;
+    if (!isMemoryFabricSuperSession(this.sessionId, this.options.contextKind)) return;
     if (!fabric || !embedder || this.config.neuralBrain === false) return;
 
     if (!this.userChatMemoryIngester) {
@@ -3044,6 +3147,7 @@ Rules:
         .register(createCompactRulesSection())
         .register(createChannelSuperSessionSection())
         .register(createChannelMessagingSection())
+        .register(createThirdPartyServicesSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx))
         .register(createSchedulingSection())
@@ -3083,6 +3187,7 @@ Rules:
         .register(createPersonaToneSection(ctx))
         .register(createWorkingDirectorySection(ctx))
         .register(createRulesSection())
+        .register(createThirdPartyServicesSection())
         .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx))
@@ -3316,9 +3421,11 @@ Rules:
     if (!this.toolExecutor || this.options.automationRun) return;
     this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel, context) => {
       if (isPermissionExemptTool(toolId)) return 'allow_once';
+      if (this.userCancelledTurn || this.toolExecutor?.isTurnAborted()) return 'deny';
       if (this.isDelegatedWorker || this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
       const requestId = randomUUID();
       const { commandPreview, argsSummary } = summarizePermissionArgs(context?.args);
+      if (this.userCancelledTurn) return 'deny';
       return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
         this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
         this.emit({

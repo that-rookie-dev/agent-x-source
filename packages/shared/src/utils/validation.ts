@@ -124,6 +124,7 @@ export const voiceConfigSchema = z.object({
   }).optional(),
   sidecar: z.object({
     autoStart: z.boolean().optional(),
+    idleUnloadMinutes: z.number().min(0).max(120).optional(),
   }).optional(),
   fillers: z.object({
     enabled: z.boolean().optional(),

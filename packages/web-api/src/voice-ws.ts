@@ -17,22 +17,23 @@ import { validateVoiceWebSocketConnection } from './auth.js';
 import { ensureSubscribed } from './ws.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
 import { getEngine, createAgent, destroyAgent } from './engine.js';
-import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS } from './chat-helpers.js';
+import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS, VOICE_TURN_MAX_MS } from './chat-helpers.js';
 import { getVoiceService, resetVoiceService } from './voice-runtime.js';
 import { parseVoicePermissionIntent, type VoicePermissionIntent } from './voice-permission-intent.js';
 import { normalizeClientSituation } from '@agentx/shared';
+import { normalizeVoiceAssistantContent } from './voice-speakable.js';
 import { refreshAgentPersona } from './chat-helpers.js';
 import type { ClientSituation } from '@agentx/shared';
 
 const SAMPLE_RATE = 16_000;
+/** Minimum interval between streaming STT preview passes (PTT + duplex). */
+const STT_PREVIEW_INTERVAL_MS = 400;
 /** Continuous silence after spoken words before auto-send in duplex mode. */
 export const DUPLEX_END_SILENCE_MS = 5_000;
-/** Minimum interval between streaming STT passes in duplex (avoids sidecar overload). */
-const DUPLEX_STT_INTERVAL_MS = 350;
 /** Minimum gap between duplicate error frames to the client. */
 const DUPLEX_ERROR_COOLDOWN_MS = 8_000;
 /** PTT shorter than this is treated as accidental (mis-click). */
-const MIN_PTT_RECORDING_MS = 400;
+const MIN_PTT_RECORDING_MS = 220;
 /** Auto-deny a voice permission prompt if the user doesn't respond in time. */
 const VOICE_PERMISSION_TIMEOUT_MS = 45_000;
 
@@ -69,6 +70,9 @@ interface VoiceWsSession {
   duplexLastSttAt: number;
   duplexTurnInFlight: boolean;
   duplexLastErrorAt: number;
+  /** PTT live-caption throttle (duplex reuses duplexLastSttAt). */
+  pttLastSttAt: number;
+  pttLastPartial: string;
   recordingStartedAt?: number;
   transport: WebSocketVoiceTransport;
   progress?: ReturnType<VoiceService['createProgressSession']>;
@@ -275,6 +279,8 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
 
     if (session.mode === 'duplex') {
       await handleDuplexChunk(ws, session, chunk);
+    } else if (session.mode === 'push-to-talk') {
+      await handlePttChunk(ws, session);
     }
     return;
   }
@@ -306,6 +312,8 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
         session.duplexLastPartial = '';
         session.duplexLastWordAt = 0;
         session.duplexTurnInFlight = false;
+        session.pttLastSttAt = 0;
+        session.pttLastPartial = '';
         session.textOnlyPlayback = false;
         await getVoiceService().streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
       }
@@ -444,6 +452,8 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
     duplexLastSttAt: 0,
     duplexTurnInFlight: false,
     duplexLastErrorAt: 0,
+    pttLastSttAt: 0,
+    pttLastPartial: '',
     transport,
     ...(clientSituation ? { clientSituation } : {}),
   });
@@ -451,7 +461,53 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
   ws.send(JSON.stringify({ type: 'session_ready', sessionId: voiceSession.sessionId, mode }));
 }
 
-async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, chunk: Buffer): Promise<void> {
+async function requestTranscriptPreview(
+  ws: WebSocket,
+  session: VoiceWsSession,
+  options: { throttleKey: 'duplex' | 'ptt' },
+): Promise<{ partial: string; wordsNow: string } | null> {
+  const now = Date.now();
+  const lastAt = options.throttleKey === 'duplex' ? session.duplexLastSttAt : session.pttLastSttAt;
+  if (now - lastAt < STT_PREVIEW_INTERVAL_MS) return null;
+
+  const cumulative = Buffer.concat(session.audioChunks);
+  if (cumulative.length < SAMPLE_RATE * 2 * 0.3) return null;
+
+  if (options.throttleKey === 'duplex') session.duplexLastSttAt = now;
+  else session.pttLastSttAt = now;
+
+  const service = getVoiceService();
+  let stream: Awaited<ReturnType<typeof service.streamTranscribeChunk>>;
+  try {
+    stream = await service.streamTranscribeChunk(cumulative, SAMPLE_RATE, { preview: true });
+  } catch (err) {
+    if (options.throttleKey === 'duplex' && now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
+      session.duplexLastErrorAt = now;
+      const raw = err instanceof Error ? err.message : String(err);
+      const message = raw.includes('fetch failed') || raw.includes('ECONNREFUSED')
+        ? 'Voice STT temporarily unavailable — keep speaking or switch to push-to-talk'
+        : raw;
+      sendWarning(ws, message);
+    }
+    return null;
+  }
+
+  const partial = stream.partial?.trim() ?? '';
+  const wordsNow = partial || stream.text?.trim() || '';
+  return { partial, wordsNow };
+}
+
+async function handlePttChunk(ws: WebSocket, session: VoiceWsSession): Promise<void> {
+  const preview = await requestTranscriptPreview(ws, session, { throttleKey: 'ptt' });
+  if (!preview) return;
+
+  const { partial } = preview;
+  if (!partial || partial === session.pttLastPartial) return;
+  session.pttLastPartial = partial;
+  ws.send(JSON.stringify({ type: 'transcript_partial', text: partial }));
+}
+
+async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, _chunk: Buffer): Promise<void> {
   if (session.duplexTurnInFlight) return;
 
   if (session.speaking) {
@@ -460,29 +516,10 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, chunk: 
   }
 
   const now = Date.now();
-  if (now - session.duplexLastSttAt < DUPLEX_STT_INTERVAL_MS) {
-    return;
-  }
-  session.duplexLastSttAt = now;
+  const preview = await requestTranscriptPreview(ws, session, { throttleKey: 'duplex' });
+  if (!preview) return;
 
-  const service = getVoiceService();
-  let stream: Awaited<ReturnType<typeof service.streamTranscribeChunk>>;
-  try {
-    stream = await service.streamTranscribeChunk(chunk, SAMPLE_RATE);
-  } catch (err) {
-    if (now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
-      session.duplexLastErrorAt = now;
-      const raw = err instanceof Error ? err.message : String(err);
-      const message = raw.includes('fetch failed') || raw.includes('ECONNREFUSED')
-        ? 'Voice STT temporarily unavailable — keep speaking or switch to push-to-talk'
-        : raw;
-      sendError(ws, message);
-    }
-    return;
-  }
-
-  const partial = stream.partial?.trim() ?? '';
-  const wordsNow = partial || stream.text?.trim() || '';
+  const { partial, wordsNow } = preview;
 
   if (hasMeaningfulWords(wordsNow)) {
     if (wordsNow !== session.duplexLastPartial) {
@@ -525,6 +562,8 @@ async function resetDuplexListening(session: VoiceWsSession): Promise<void> {
   session.duplexHadWords = false;
   session.duplexLastPartial = '';
   session.duplexLastWordAt = 0;
+  session.pttLastPartial = '';
+  session.pttLastSttAt = 0;
   try {
     await getVoiceService().streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
   } catch { /* best-effort */ }
@@ -560,9 +599,9 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
 
   const timings = new VoiceTurnTimingTracker();
   try {
-    const transcript = session.mode === 'duplex'
-      ? await service.streamTranscribeChunk(pcm, SAMPLE_RATE, { finalize: true })
-      : { text: (await service.transcribePcmBuffer(pcm, SAMPLE_RATE)).text };
+    ws.send(JSON.stringify({ type: 'transcript_pending' }));
+    await service.streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
+    const transcript = await service.streamTranscribeChunk(pcm, SAMPLE_RATE, { finalize: true });
     timings.markSttDone();
 
     const text = transcript.text?.trim() ?? '';
@@ -678,7 +717,7 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
         requestId?: string; riskLevel?: string; argsSummary?: string; commandPreview?: string; forAutomation?: boolean;
       };
       if (ev.type === 'stream_chunk' && typeof ev.content === 'string' && ev.content) {
-        agentDisplayText += ev.content;
+        agentDisplayText = normalizeVoiceAssistantContent(agentDisplayText + ev.content);
         const speakDelta = voiceExtractor.pullSpeakDelta(ev.content);
         if (speakDelta) speakPipeline.feed(speakDelta);
       }
@@ -723,15 +762,21 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       session.unsub?.();
       session.unsub = undefined;
       session.speaking = false;
-      if (session.mode === 'duplex') {
-        void resetDuplexListening(session);
-      }
       const errMsg = error instanceof Error ? error.message : String(error);
-      const now = Date.now();
-      if (now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
-        session.duplexLastErrorAt = now;
-        sendError(ws, errMsg);
+      if (session.mode === 'duplex') {
+        // Duplex recovers server-side — surface a transient warning, stay listening,
+        // and DON'T fatal-fail the session (which would strand the client on SIGNAL LOST).
+        void resetDuplexListening(session);
+        const now = Date.now();
+        if (now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
+          session.duplexLastErrorAt = now;
+          sendWarning(ws, errMsg);
+        }
+        voiceSession?.setState('listening');
+        notifyDuplexListening(ws);
+        return;
       }
+      sendError(ws, errMsg);
       voiceSession?.fail(errMsg);
     };
 
@@ -769,10 +814,11 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
             }
             : {}),
           ...(session.clientSituation ? { clientSituation: session.clientSituation } : {}),
+          userMessagePersisted: true,
         },
       );
 
-      const turnContent = extractAssistantText(turnMessage);
+      const turnContent = normalizeVoiceAssistantContent(extractAssistantText(turnMessage));
       const { voice, chat: strayChat } = extractVoiceSpeakable(turnContent);
 
       if (!turnContent.trim()) {
@@ -816,7 +862,7 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       session.unsub = undefined;
 
       const { chat: spokenChat } = extractVoiceSpeakable(turnContent);
-      agentDisplayText = spokenChat || strayChat || voice || '';
+      agentDisplayText = spokenChat || voice || '';
 
       await completeVoiceTurn();
     } catch (phaseError) {
@@ -828,14 +874,17 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       ? 'Voice engine offline — verify setup in Settings → Voice and restart Agent-X'
       : raw;
     const now = Date.now();
-    if (session.mode !== 'duplex' || now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
-      session.duplexLastErrorAt = now;
-      sendError(ws, message);
-    }
     if (session.mode === 'duplex') {
+      // Recoverable in hands-free: warn (throttled), reset, keep listening.
+      if (now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
+        session.duplexLastErrorAt = now;
+        sendWarning(ws, message);
+      }
       voiceSession?.setState('listening');
       await resetDuplexListening(session);
+      notifyDuplexListening(ws);
     } else {
+      sendError(ws, message);
       voiceSession?.fail(error);
     }
   }
@@ -889,8 +938,12 @@ function runVoiceAgentPhase(
       undefined,
       {
         voiceTurn: true,
+        // Idle-based: activity (tools/steps/heartbeat) resets this clock so a
+        // working hands-free turn isn't aborted mid-tool-run…
         turnTimeoutMs: VOICE_TURN_TIMEOUT_MS,
-        fixedTurnTimeout: true,
+        fixedTurnTimeout: false,
+        // …but a hard ceiling still guarantees the turn can't hang forever.
+        maxTurnMs: VOICE_TURN_MAX_MS,
         ...extra,
       },
     );
@@ -922,12 +975,35 @@ function cleanupSession(ws: WebSocket): void {
   void session.transport.close();
   getVoiceService().closeSession(session.sessionId);
   activeSessions.delete(ws);
+  getVoiceService().scheduleIdleUnloadIfIdle();
 }
 
 function sendError(ws: WebSocket, message: string): void {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify({ type: 'error', message }));
   }
+}
+
+/**
+ * Recoverable notice for duplex hands-free: the server has recovered and is
+ * still listening. The client should surface a transient hint WITHOUT tearing
+ * down the session (unlike `sendError`, which is fatal).
+ */
+function sendWarning(ws: WebSocket, message: string): void {
+  if (ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({ type: 'voice_warning', message }));
+  }
+}
+
+/** Tell the client the duplex session has recovered and is listening again. */
+function notifyDuplexListening(ws: WebSocket): void {
+  if (ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify({ type: 'agent_status', status: 'listening' }));
+  }
+}
+
+export function countActiveVoiceWebSocketSessions(): number {
+  return activeSessions.size;
 }
 
 export async function shutdownVoiceWebSocket(): Promise<void> {

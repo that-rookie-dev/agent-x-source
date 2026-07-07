@@ -27,19 +27,28 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const capabilitiesReady = useCapabilitiesReady();
   const [neuralBrainDisabled, setNeuralBrainDisabled] = useState(true);
   const voice = useVoiceOptional();
-  const inlineVoice = Boolean(voice?.inlineVoiceAvailable);
-  const voiceOpenHint = inlineVoice ? 'Switch to voice panel' : voice?.warmupLabel;
-  const showMicToggle = Boolean(voice?.voiceReady && !voice.wakeWordEnabled);
+  const showFooterMic = Boolean(voice?.voiceReady && !voice.wakeWordEnabled);
   const showWakeIndicator = Boolean(voice?.voiceReady && voice.wakeWordEnabled);
-  const showVoiceWarmup = Boolean(voice?.voiceReady || voice?.warmupPhase === 'booting' || voice?.warmupPhase === 'failed');
 
-  const voiceStatusColor = voice?.warmupPhase === 'ready'
-    ? colors.accent.green
-    : voice?.warmupPhase === 'booting'
-      ? colors.accent.orange
-      : voice?.warmupPhase === 'failed'
-        ? colors.accent.red
-        : colors.text.dim;
+  const footerMicColor = !voice
+    ? colors.text.dim
+    : voice.warmupPhase === 'ready'
+      ? colors.accent.green
+      : voice.warmupPhase === 'booting'
+        ? colors.accent.orange
+        : voice.warmupPhase === 'failed'
+          ? colors.accent.red
+          : colors.text.dim;
+
+  const footerMicTitle = !voice
+    ? 'Voice unavailable'
+    : voice.warmupPhase === 'failed'
+      ? voice.warmupError ?? 'Voice engine offline — check Settings → Voice'
+      : voice.warmupPhase === 'booting'
+        ? 'Warming voice engine…'
+        : voice.warmupPhase === 'ready'
+          ? 'Voice engine ready'
+          : 'Voice idle';
 
   useEffect(() => {
     health.check().then((h) => setVersion(h.version)).catch(() => {});
@@ -111,18 +120,14 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
           <>
             <Box
               component="span"
-              onClick={() => voice.openVoiceModal()}
-              title={`Wake word active — say "${voice.wakePhrase}" or click to open voice comms`}
+              title={`Wake word active — say "${voice.wakePhrase}" in chat voice mode`}
               sx={{
-                cursor: 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 0.5,
                 color: colors.accent.green,
                 letterSpacing: '0.04em',
                 userSelect: 'none',
-                '&:hover': { color: colors.accent.cyan },
-                transition: 'color 0.15s',
               }}
             >
               <Box
@@ -145,27 +150,18 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
             <span style={{ color: colors.border.default }}>/</span>
           </>
         )}
-        {showVoiceWarmup && voice && (
+        {showFooterMic && voice && (
           <>
             <Box
               component="span"
-              onClick={() => {
-                if (voice.warmupPhase === 'failed') voice.retryVoiceWarmup();
-                else if (voice.voiceReady) voice.openVoiceModal();
-              }}
-              title={voice.warmupPhase === 'failed'
-                ? `${voice.warmupError ?? 'Voice offline'} — click to retry`
-                : voiceOpenHint}
+              title={footerMicTitle}
               sx={{
-                cursor: 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 0.5,
-                color: voiceStatusColor,
+                color: footerMicColor,
                 letterSpacing: '0.04em',
                 userSelect: 'none',
-                '&:hover': { color: colors.accent.cyan },
-                transition: 'color 0.15s',
               }}
             >
               <Box
@@ -174,9 +170,11 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
                   width: 6,
                   height: 6,
                   borderRadius: '50%',
-                  bgcolor: voiceStatusColor,
+                  bgcolor: footerMicColor,
                   boxShadow: voice.warmupPhase === 'ready' ? `0 0 6px ${colors.accent.green}` : 'none',
-                  animation: voice.warmupPhase === 'booting' ? 'agentx-voice-warm-pulse 1.4s ease-in-out infinite' : 'none',
+                  animation: voice.warmupPhase === 'booting'
+                    ? 'agentx-voice-warm-pulse 1.4s ease-in-out infinite'
+                    : 'none',
                   '@keyframes agentx-voice-warm-pulse': {
                     '0%, 100%': { opacity: 0.35 },
                     '50%': { opacity: 1 },
@@ -184,26 +182,6 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
                 }}
               />
               <MicIcon sx={{ fontSize: 13 }} />
-            </Box>
-            <span style={{ color: colors.border.default }}>/</span>
-          </>
-        )}
-        {showMicToggle && !showVoiceWarmup && (
-          <>
-            <Box
-              component="span"
-              onClick={() => voice?.openVoiceModal()}
-              sx={{
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                color: colors.text.dim,
-                '&:hover': { color: colors.accent.cyan },
-                transition: 'color 0.15s',
-              }}
-              title={inlineVoice ? 'Switch to voice panel' : 'Voice comms (hold Space in modal)'}
-            >
-              <MicIcon sx={{ fontSize: 14 }} />
             </Box>
             <span style={{ color: colors.border.default }}>/</span>
           </>

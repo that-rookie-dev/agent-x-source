@@ -7,6 +7,9 @@ export const STYLETTS2_MIN_RAM_GB = 16;
 /** Minimum system RAM (GB) to offer local LLM model downloads in setup. */
 export const LOCAL_MODEL_MIN_RAM_GB = 32;
 
+/** Minimum system RAM (GB) to offer optional voice-engine warm-up at app launch. */
+export const VOICE_WARMUP_MIN_RAM_GB = 8;
+
 export function getSystemMemoryGB(totalBytes: number): number {
   return Math.round((totalBytes / (1024 ** 3)) * 10) / 10;
 }
@@ -23,11 +26,16 @@ export function isLocalModelSupported(totalMemoryGB: number): boolean {
   return totalMemoryGB >= LOCAL_MODEL_MIN_RAM_GB;
 }
 
+export function isVoiceWarmupSupported(totalMemoryGB: number): boolean {
+  return totalMemoryGB >= VOICE_WARMUP_MIN_RAM_GB;
+}
+
 export interface PublicSystemCapabilities {
   totalMemoryGB: number;
   localModelSupported: boolean;
   neuralBrainSupported: boolean;
   styleTtsSupported: boolean;
+  voiceWarmupSupported: boolean;
 }
 
 export function buildPublicSystemCapabilities(totalBytes: number): PublicSystemCapabilities {
@@ -37,5 +45,6 @@ export function buildPublicSystemCapabilities(totalBytes: number): PublicSystemC
     localModelSupported: isLocalModelSupported(totalMemoryGB),
     neuralBrainSupported: isNeuralBrainSupported(totalMemoryGB),
     styleTtsSupported: isStyleTtsSupported(totalMemoryGB),
+    voiceWarmupSupported: isVoiceWarmupSupported(totalMemoryGB),
   };
 }

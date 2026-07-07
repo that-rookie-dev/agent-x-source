@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react';
-import { isNeuralBrainSupported, isStyleTtsSupported } from '@agentx/shared/browser';
+import {
+  isNeuralBrainSupported,
+  isStyleTtsSupported,
+  isVoiceWarmupSupported,
+} from '@agentx/shared/browser';
 
 export interface SystemCapabilities {
   totalMemoryGB: number;
   localModelSupported: boolean;
   neuralBrainSupported: boolean;
   styleTtsSupported: boolean;
+  voiceWarmupSupported: boolean;
 }
 
 export function useSystemCapabilities(): SystemCapabilities | null {
@@ -17,6 +22,7 @@ export function useSystemCapabilities(): SystemCapabilities | null {
         localModelSupported: window.agentx.localModelSupported,
         neuralBrainSupported: window.agentx.neuralBrainSupported ?? isNeuralBrainSupported(totalMemoryGB),
         styleTtsSupported: window.agentx.styleTtsSupported ?? isStyleTtsSupported(totalMemoryGB),
+        voiceWarmupSupported: window.agentx.voiceWarmupSupported ?? isVoiceWarmupSupported(totalMemoryGB),
       };
     }
     return null;
@@ -38,10 +44,19 @@ export function useSystemCapabilities(): SystemCapabilities | null {
           styleTtsSupported: typeof data.styleTtsSupported === 'boolean'
             ? data.styleTtsSupported
             : isStyleTtsSupported(totalMemoryGB),
+          voiceWarmupSupported: typeof data.voiceWarmupSupported === 'boolean'
+            ? data.voiceWarmupSupported
+            : isVoiceWarmupSupported(totalMemoryGB),
         });
       })
       .catch(() => {
-        setCaps({ totalMemoryGB: 0, localModelSupported: false, neuralBrainSupported: false, styleTtsSupported: false });
+        setCaps({
+          totalMemoryGB: 0,
+          localModelSupported: false,
+          neuralBrainSupported: false,
+          styleTtsSupported: false,
+          voiceWarmupSupported: false,
+        });
       });
   }, [caps]);
 
@@ -71,4 +86,9 @@ export function useNeuralBrainSupported(): boolean {
 export function useStyleTtsSupported(): boolean {
   const caps = useSystemCapabilities();
   return caps?.styleTtsSupported ?? (window.agentx?.styleTtsSupported ?? false);
+}
+
+export function useVoiceWarmupSupported(): boolean {
+  const caps = useSystemCapabilities();
+  return caps?.voiceWarmupSupported ?? (window.agentx?.voiceWarmupSupported ?? false);
 }

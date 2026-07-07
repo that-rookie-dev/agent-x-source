@@ -48,6 +48,9 @@ export class VoiceService {
   private readonly fillerCache: FillerCache;
   private modelsWarmed = false;
   private warmedConfigKey = '';
+  private idleUnloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private startPromise: Promise<void> | null = null;
+  private pendingIdleUnload = false;
 
   constructor(options: VoiceServiceOptions) {
     this.dataDir = resolve(options.dataDir);
@@ -78,6 +81,16 @@ export class VoiceService {
 
   async start(): Promise<void> {
     if (!this.config.enabled) return;
+    if (this.startPromise) return this.startPromise;
+    this.startPromise = this.runStart().finally(() => {
+      this.startPromise = null;
+    });
+    return this.startPromise;
+  }
+
+  private async runStart(): Promise<void> {
+    this.cancelIdleUnload();
+    this.pendingIdleUnload = false;
     await cleanupVoiceTempDir(this.voiceDataDir);
     const client = await this.sidecar.start();
     const configKey = this.warmConfigKey();
@@ -103,6 +116,10 @@ export class VoiceService {
       this.modelsWarmed = true;
       this.warmedConfigKey = configKey;
     }
+    if (this.pendingIdleUnload) {
+      this.pendingIdleUnload = false;
+      this.scheduleIdleUnloadIfIdle();
+    }
   }
 
   private warmConfigKey(): string {
@@ -116,11 +133,53 @@ export class VoiceService {
   }
 
   async stop(): Promise<void> {
+    this.pendingIdleUnload = false;
+    this.cancelIdleUnload();
     for (const session of this.sessions.values()) {
       session.close();
     }
     this.sessions.clear();
     await this.sidecar.stop();
+    this.modelsWarmed = false;
+    this.warmedConfigKey = '';
+  }
+
+  /** Release the sidecar after idle minutes when no voice sessions are active. */
+  scheduleIdleUnloadIfIdle(): void {
+    if (this.config.sidecar?.autoStart === true) return;
+    if (this.sessions.size > 0) return;
+    const minutes = this.config.sidecar?.idleUnloadMinutes ?? 5;
+    if (minutes <= 0) return;
+    this.cancelIdleUnload();
+    const delayMs = minutes * 60_000;
+    this.idleUnloadTimer = setTimeout(() => {
+      this.idleUnloadTimer = null;
+      if (this.sessions.size > 0) return;
+      void this.stop().catch(() => {});
+    }, delayMs);
+  }
+
+  isSidecarReady(): boolean {
+    return this.sidecar.getStatus().state === 'ready';
+  }
+
+  /** Request unload when UI closes — never interrupts an in-flight start. */
+  requestIdleUnload(): void {
+    if (this.config.sidecar?.autoStart === true) return;
+    if (this.sessions.size > 0) return;
+    if (this.startPromise) {
+      this.pendingIdleUnload = true;
+      return;
+    }
+    if (!this.isSidecarReady()) return;
+    this.scheduleIdleUnloadIfIdle();
+  }
+
+  private cancelIdleUnload(): void {
+    if (this.idleUnloadTimer) {
+      clearTimeout(this.idleUnloadTimer);
+      this.idleUnloadTimer = null;
+    }
   }
 
   createSession(options: Omit<ConstructorParameters<typeof VoiceSession>[0], 'sessionId'> & { sessionId?: string }): VoiceSession {
@@ -143,6 +202,9 @@ export class VoiceService {
     const session = this.sessions.get(sessionId);
     session?.close();
     this.sessions.delete(sessionId);
+    if (this.sessions.size === 0) {
+      this.scheduleIdleUnloadIfIdle();
+    }
   }
 
   createProgressSession(
@@ -187,13 +249,18 @@ export class VoiceService {
     return result.text?.trim() ? result : { ...result, text: '' };
   }
 
-  async streamTranscribeChunk(pcm: Buffer, sampleRate: number, options: { reset?: boolean; finalize?: boolean } = {}) {
+  async streamTranscribeChunk(
+    pcm: Buffer,
+    sampleRate: number,
+    options: { reset?: boolean; finalize?: boolean; preview?: boolean } = {},
+  ) {
     const client = await this.sidecar.start();
     return client.streamTranscribe({
-      pcmBase64: pcm.toString('base64'),
+      pcmBase64: pcm.length > 0 ? pcm.toString('base64') : undefined,
       sampleRate,
       reset: options.reset,
       finalize: options.finalize,
+      preview: options.preview,
       modelId: this.config.stt?.modelId,
     });
   }

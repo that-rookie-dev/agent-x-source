@@ -50,7 +50,10 @@ export interface VoiceFillerConfig {
 }
 
 export interface VoiceSidecarConfig {
+  /** When true, warm the sidecar as soon as the web UI loads. Default false to save RAM. */
   autoStart?: boolean;
+  /** Unload the sidecar after this many idle minutes (0 = never). Default 5. */
+  idleUnloadMinutes?: number;
 }
 
 export interface VoiceDownloadedAsset {

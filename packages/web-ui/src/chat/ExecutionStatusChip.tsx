@@ -57,9 +57,9 @@ export function ExecutionStatusChip({
       sx={{
         display: 'inline-flex',
         alignItems: 'center',
-        px: 1.25,
-        py: 0.35,
-        borderRadius: '999px',
+        height: 20,
+        px: 1,
+        borderRadius: '10px',
         bgcolor: `${chipColor}10`,
         border: `1px solid ${chipColor}28`,
         animation: 'agentx-fadeIn 0.25s ease-out',

@@ -20,8 +20,9 @@ import {
   mergeVoiceConfig,
   VOICE_DEPLOY_STEPS,
 } from '../../voice/voice-config';
+import { VOICE_WARMUP_MIN_RAM_GB } from '@agentx/shared/browser';
 import { markVoiceOutputUnlocked } from '../../voice/support';
-import { useStyleTtsSupported } from '../../hooks/useSystemCapabilities';
+import { useStyleTtsSupported, useVoiceWarmupSupported, useSystemCapabilities, useCapabilitiesReady } from '../../hooks/useSystemCapabilities';
 import {
   settingsBtnGhostSx,
   settingsBtnPrimarySx,
@@ -79,6 +80,9 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const [ttsDownloadProgress, setTtsDownloadProgress] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const styleTtsSupported = useStyleTtsSupported();
+  const voiceWarmupSupported = useVoiceWarmupSupported();
+  const systemCaps = useSystemCapabilities();
+  const capabilitiesReady = useCapabilitiesReady();
   const voiceCtx = useVoiceOptional();
   const wakePhraseLabel = voiceCtx?.wakePhrase ?? 'your agent';
 
@@ -140,6 +144,13 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       tts: { ...voiceConfig.tts, engine: 'kokoro', voiceId: 'kokoro-af' },
     });
   }, [styleTtsSupported, ttsEngine]);
+
+  useEffect(() => {
+    if (!capabilitiesReady || voiceWarmupSupported || voiceConfig.sidecar?.autoStart !== true) return;
+    void persistVoice({
+      sidecar: { ...voiceConfig.sidecar, autoStart: false },
+    });
+  }, [capabilitiesReady, voiceWarmupSupported, voiceConfig.sidecar?.autoStart]);
 
   const pollSetup = () => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -400,7 +411,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
         )}
       </SettingsCard>
 
-      <SettingsCard title="Voice activation" subtitle="Wake word or footer mic in the app">
+      <SettingsCard title="Voice module" subtitle="Master switch for all voice features in the app">
         <FormControlLabel
           control={(
             <Switch
@@ -412,6 +423,16 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
           )}
           label={<Typography sx={{ fontSize: '0.72rem', ...settingsMonoSx }}>Enable voice module</Typography>}
         />
+        <Typography sx={{ ...settingsHelperSx, mt: 1.5 }}>
+          {voiceConfig.enabled
+            ? 'Footer mic (status), chat voice mode, and wake word are available.'
+            : 'Turned off — all voice icons and controls are hidden across Agent-X.'}
+          {!kitReady && ' Deploy the voice kit first.'}
+        </Typography>
+      </SettingsCard>
+
+      {voiceConfig.enabled && (
+      <SettingsCard title="Voice activation" subtitle="How you use voice in chat sessions">
         <FormControlLabel
           control={(
             <Switch
@@ -424,18 +445,60 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
                   wakeWord: { ...voiceConfig.wakeWord, enabled: e.target.checked },
                 });
               }}
-              disabled={!kitReady || !voiceConfig.enabled}
+              disabled={!kitReady}
             />
           )}
           label={<Typography sx={{ fontSize: '0.72rem', ...settingsMonoSx }}>Wake word ("{wakePhraseLabel}")</Typography>}
         />
         <Typography sx={{ ...settingsHelperSx, mt: 1.5 }}>
-          Wake word matches your agent persona name. With wake word off, use the mic icon in the footer (left of logger) to open voice comms.
-          Hold Space in the modal while speaking.
-          {!kitReady && ' Deploy the voice kit first.'}
+          Wake word matches your agent persona name. With wake word off, switch to voice mode from the chat composer toolbar.
+          Hold Space in chat voice mode while speaking.
         </Typography>
       </SettingsCard>
+      )}
 
+      {voiceConfig.enabled && (
+      <SettingsCard
+        title="Voice engine warm-up"
+        subtitle={voiceWarmupSupported
+          ? 'Keep speech models loaded while Agent-X is running'
+          : `Requires ${VOICE_WARMUP_MIN_RAM_GB} GB+ system RAM — on-demand only on this machine`}
+      >
+        {voiceWarmupSupported ? (
+          <>
+            <FormControlLabel
+              control={(
+                <Switch
+                  size="small"
+                  checked={voiceConfig.sidecar?.autoStart === true}
+                  onChange={(e) => void persistVoice({
+                    sidecar: { ...voiceConfig.sidecar, autoStart: e.target.checked },
+                  })}
+                  disabled={!kitReady}
+                />
+              )}
+              label={(
+                <Typography sx={{ fontSize: '0.72rem', color: settingsTheme.text.primary, ...settingsMonoSx }}>
+                  Keep voice engine running at launch
+                </Typography>
+              )}
+            />
+            <Typography sx={{ ...settingsHelperSx, mt: 1.5 }}>
+              {voiceConfig.sidecar?.autoStart
+                ? `Engine warms on the docking page and stays running until you quit Agent-X (${systemCaps?.totalMemoryGB ?? '—'} GB RAM).`
+                : `Off (recommended) — engine stays idle until you open chat voice mode, then shuts down after ${voiceConfig.sidecar?.idleUnloadMinutes ?? 5} idle minutes.`}
+            </Typography>
+          </>
+        ) : (
+          <Alert severity="info" sx={{ fontSize: '0.68rem', ...settingsMonoSx }}>
+            This machine has {systemCaps?.totalMemoryGB ?? '—'} GB RAM. The voice engine stays on-demand only
+            (starts when you open chat voice mode) to protect memory.
+          </Alert>
+        )}
+      </SettingsCard>
+      )}
+
+      {voiceConfig.enabled && (
       <SettingsCard title="Voice engine" subtitle="Speech synthesis model for spoken replies">
         <ToggleButtonGroup
           exclusive
@@ -485,6 +548,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
           Use the footer mic or wake word for live voice. Run these checks before your first session.
         </Typography>
       </SettingsCard>
+      )}
 
       <Box
         onClick={() => setAdvancedOpen((open) => !open)}
@@ -519,6 +583,14 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
               </Typography>
             )}
           />
+        </SettingsCard>
+
+        <SettingsCard title="Memory" subtitle="On-demand engine unload">
+          <Typography sx={{ ...settingsHelperSx }}>
+            {voiceConfig.sidecar?.autoStart
+              ? 'Not used while “keep engine running at launch” is enabled — the engine stays loaded until you quit Agent-X.'
+              : `When chat voice mode is closed, the engine unloads after ${voiceConfig.sidecar?.idleUnloadMinutes ?? 5} idle minutes to free RAM.`}
+          </Typography>
         </SettingsCard>
 
         <SettingsCard title="Spoken progress">

@@ -27,8 +27,10 @@ export interface GraphRagRetrievalOptions {
   graphDepth?: number;
   /** Agent ID filter for vector pass. */
   agentId?: string;
-  /** Session ID for episodic context. */
+  /** Session ID for episodic context; omit for super sessions that use global retrieval only. */
   sessionId?: string;
+  /** When false, skip global community/profile passes and scope vector search to sessionId. */
+  isSuperSession?: boolean;
   /** Minimum cosine similarity (0–1) for the vector pass. Results below this are filtered out. */
   minRelevance?: number;
 }
@@ -65,11 +67,14 @@ export class GraphRagRetriever {
     const userProfileLimit = options.userProfileLimit ?? 8;
     const graphDepth = options.graphDepth ?? 2;
     const minRelevance = options.minRelevance ?? 0;
+    const isSuper = options.isSuperSession === true;
 
     const embedding = await this.embedder.embed(query);
 
-    // Pass 1: Global — find relevant community summaries.
-    const global = await this.fabric.searchCommunitySummaries(embedding, globalLimit);
+    // Pass 1: Global — find relevant community summaries (super sessions only).
+    const global = isSuper && globalLimit > 0
+      ? await this.fabric.searchCommunitySummaries(embedding, globalLimit)
+      : [];
     getLogger().info('GRAPHRAG_RETRIEVE', `Global pass: ${global.length} community summaries`);
 
     // Pass 2: Local — expand from community members.
@@ -106,7 +111,11 @@ export class GraphRagRetriever {
     }
 
     // Pass 3: Vector — direct semantic matches, filtered by minimum relevance.
-    const vectorRaw = await this.fabric.vectorSearch(embedding, { limit: vectorLimit, agentId: options.agentId });
+    const vectorRaw = await this.fabric.vectorSearch(embedding, {
+      limit: vectorLimit,
+      agentId: options.agentId,
+      ...(isSuper || !options.sessionId ? {} : { sessionId: options.sessionId }),
+    });
     // Filter by cosine similarity: similarity = 1 - distance. The vectorSearch query
     // attaches a `distance` field to each row (not in the MemoryNode type, hence the cast).
     const vector = minRelevance > 0
@@ -117,12 +126,14 @@ export class GraphRagRetriever {
       : vectorRaw;
     getLogger().info('GRAPHRAG_RETRIEVE', `Vector pass: ${vector.length} direct matches (after relevance filter, min=${minRelevance})`);
 
-    // Pass 4: Global user-profile memories — shared across all sessions.
-    const userProfileRaw = await this.fabric.vectorSearch(embedding, {
-      limit: userProfileLimit,
-      tag: USER_PROFILE_TAG,
-      sessionId: null,
-    });
+    // Pass 4: Global user-profile memories — super sessions only.
+    const userProfileRaw = isSuper
+      ? await this.fabric.vectorSearch(embedding, {
+        limit: userProfileLimit,
+        tag: USER_PROFILE_TAG,
+        sessionId: null,
+      })
+      : [];
     const userProfile = minRelevance > 0
       ? userProfileRaw.filter((n) => {
           const distance = (n as unknown as { distance?: number }).distance;

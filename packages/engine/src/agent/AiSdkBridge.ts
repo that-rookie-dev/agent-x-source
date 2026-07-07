@@ -308,6 +308,11 @@ export function createAiSdkTools(
       description: toolDef.modelDescription,
       inputSchema: jsonSchema(schema),
         async execute(args, options) {
+           if (toolExecutor.isTurnAborted()) {
+             const err = new Error('Turn aborted');
+             err.name = 'AbortError';
+             throw err;
+           }
            const startTime = Date.now();
            const callId = options?.toolCallId || `tc-${toolDef.id}-${startTime}`;
            activeOutputCalls.set(callId, toolDef.id);

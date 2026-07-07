@@ -1,6 +1,6 @@
 /** Client-side text helpers (mirrors @agentx/shared). */
 
-import { attachDeepSearchPartsFromTools, normalizeMessageForUi, type MessagePart } from '@agentx/shared/browser';
+import { attachDeepSearchPartsFromTools, normalizeMessageForUi, normalizeVoiceAssistantContent, type MessagePart } from '@agentx/shared/browser';
 
 /** Apply tool_complete metadata only to the matching tool call (parallel same-name tools). */
 export function applyToolCompleteMetadata<T extends {
@@ -105,7 +105,9 @@ export function stripVoiceChannelBlock(content: string): string {
 }
 
 export function displayContent(message: { content?: string; parts?: Array<{ type: string; content?: string }> }): string {
-  const contentText = stripVoiceChannelBlock(repairStreamTextGlitches(stripToolNoise(message.content || '')));
+  const contentText = stripVoiceChannelBlock(
+    repairStreamTextGlitches(stripToolNoise(normalizeVoiceAssistantContent(message.content || ''))),
+  );
   if (!message.parts?.length) return contentText;
 
   const raw = message.parts

@@ -193,7 +193,7 @@ export function createRulesSection(opts?: { technicalExecutor?: boolean }): Prom
     `- ALWAYS call memory_fabric_search as your FIRST action before answering any question.`,
     `- This searches all documents uploaded via RAG Studio (PDFs, text files, web distillations).`,
     `- Even if you think you know the answer from training data, search first — the user's documents may contain specific information they want you to reference.`,
-    `- Only skip memory_fabric_search if the question is clearly about real-time actions (file operations, tool execution, scheduling) or personal conversation.`,
+    `- Skip memory_fabric_search when the question is clearly about: real-time actions (file ops, scheduling), personal conversation, OR any third-party app/account — see [THIRD_PARTY_SERVICES].`,
     `- If memory_fabric_search returns results, base your answer on those results and cite the source.`,
     `- If it returns "No matching documents", fall back to your knowledge or web_search.`,
     `[/RULES]`,
@@ -215,6 +215,7 @@ export function createCompactRulesSection(): PromptSection<string> {
     `Plain language by default — no code or shell unless the user asked for technical help.`,
     `Be concise. First-person. Answer the latest user message.`,
     `Search memory_fabric_search when the question may involve uploaded documents.`,
+    `Live external apps and accounts use MCP integrations or public web only — never shell or filesystem search for credentials (see [THIRD_PARTY_SERVICES]).`,
     `[/RULES]`,
   ].join('\n');
   return {
@@ -463,6 +464,45 @@ export function createCurrentTimeSection(ctx: SectionContext): PromptSection<{
       if (prev && JSON.stringify(prev) === JSON.stringify(current)) return null;
       return renderTime(current as { iso: string; timezone: string; local: string; offset: string }, true);
     },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Third-party services — MCP integrations, not local exploration
+// ─────────────────────────────────────────────────────────────
+
+export function createThirdPartyServicesSection(): PromptSection<string> {
+  const TEXT = [
+    `[THIRD_PARTY_SERVICES]`,
+    `Universal rule for ANY external app, API, or online account (email, Slack, Notion, GitHub, payments, databases, smart home, etc.):`,
+    ``,
+    `ALLOWED ACCESS PATHS (only these):`,
+    `1. Connected MCP integration — use integration__* tools (credentials are managed by Agent-X in MCP Store).`,
+    `2. Public internet — web_search / web_fetch when the data is openly available and needs no login, per that service's public docs.`,
+    `3. Agent-X workspace files — only when the user explicitly asked about files in their project/workspace, not to hunt third-party credentials.`,
+    ``,
+    `STRICTLY PROHIBITED:`,
+    `- Scanning the local machine for other apps' configs (Application Support, ~/.config, mcp.json, Claude/Cursor configs, gcloud, etc.)`,
+    `- shell_exec / bash / python_rpc to extract tokens, OAuth secrets, or API keys`,
+    `- file_find / glob / search_files / system_env hunting for credentials or "mcp" / "gmail" / "oauth"`,
+    `- Reading .env or config files outside the workspace to access third-party accounts`,
+    `- Installing SDKs or writing scripts to impersonate the user when an integration is not connected`,
+    ``,
+    `WHEN [INTEGRATION REQUIRED] or [INTEGRATION UNAVAILABLE] appears in the turn hint:`,
+    `- Tell the user to connect the app in Settings → MCP Store.`,
+    `- STOP — one short reply. No further tools except ask_clarification or public web_search for setup docs.`,
+    ``,
+    `WHEN [INTEGRATION SERVICE] appears:`,
+    `- Use only the integration tools named in that hint — they must appear in your active toolset. If they fail, report the error — never fall back to local scavenging.`,
+    `WHEN [INTEGRATION DEGRADED] appears (any MCP server):`,
+    `- Tell the user that integration did not load — reconnect in MCP Store or restart Agent-X. One short reply; no local credential search.`,
+    `[/THIRD_PARTY_SERVICES]`,
+  ].join('\n');
+  return {
+    key: 'core/third-party-services',
+    load: () => TEXT,
+    render: (text) => text,
+    diff: () => null,
   };
 }
 

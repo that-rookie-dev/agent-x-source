@@ -161,13 +161,18 @@ export class PostgresLifecycleManager {
     this.ensureExecutable(bin.postgres);
     this.options.onLog(`Starting PostgreSQL server on ${this.options.host}:${this.options.port}`);
 
+    const ramGb = totalmem() / (1024 ** 3);
+    const sharedBuffers = ramGb < 16 ? '64MB' : '128MB';
+    const workMem = ramGb < 16 ? '8MB' : '12MB';
     const args = [
       '-D', this.options.dataDir,
       '-h', this.options.host,
       '-p', this.options.port.toString(),
-      '-c', 'shared_buffers=128MB',
+      '-c', `shared_buffers=${sharedBuffers}`,
       '-c', 'max_connections=10',
-      '-c', 'work_mem=16MB',
+      '-c', `work_mem=${workMem}`,
+      '-c', 'maintenance_work_mem=32MB',
+      '-c', 'max_wal_size=512MB',
       '-c', 'listen_addresses=127.0.0.1',
       '-c', 'unix_socket_directories=',
     ];
@@ -175,7 +180,6 @@ export class PostgresLifecycleManager {
     const binaryDir = dirname(bin.postgres);
     const libDir = join(binaryDir, '..', 'lib', 'postgresql');
     const ext = platform() === 'win32' ? '.dll' : platform() === 'darwin' ? '.dylib' : '.so';
-    const ramGb = totalmem() / (1024 ** 3);
     if (isNeuralBrainSupported(ramGb) && existsSync(join(libDir, `age${ext}`))) {
       args.push('-c', 'shared_preload_libraries=age');
       this.options.onLog('Apache AGE preloading enabled');

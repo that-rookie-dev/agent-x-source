@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { VOICE_HANDS_FREE_ENABLED } from '../src/voice/voice-config';
 import { phaseActiveChannel, resolveCommsPhase } from '../src/components/voice/voice-comms-phase';
+
+describe('voice config', () => {
+  it('hides hands-free until push-to-talk is polished', () => {
+    expect(VOICE_HANDS_FREE_ENABLED).toBe(false);
+  });
+});
 
 const base = {
   bootPhase: 'ready',

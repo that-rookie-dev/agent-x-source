@@ -29,6 +29,7 @@ export function writeGoogleOAuthKeysFile(
   clientSecret: string,
   baseDir?: string,
   config?: Pick<IntegrationMcpStdioAuth, 'oauthKeysFormat' | 'webRedirectUris'>,
+  redirectUri?: string,
 ): string {
   const paths = getMcpStdioAuthPaths(connectionId, baseDir);
   mkdirSync(join(paths.oauthKeysPath, '..'), { recursive: true });
@@ -40,11 +41,14 @@ export function writeGoogleOAuthKeysFile(
     auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
     client_secret: clientSecret.trim(),
   };
+  const redirectUris = redirectUri
+    ? [redirectUri]
+    : config?.webRedirectUris ?? ['http://localhost:3000/oauth2callback'];
   const payload = config?.oauthKeysFormat === 'web'
     ? {
         web: {
           ...oauthCommon,
-          redirect_uris: config.webRedirectUris ?? ['http://localhost:3000/oauth2callback'],
+          redirect_uris: redirectUris,
         },
       }
     : {
@@ -112,10 +116,10 @@ export function formatMcpStdioAuthError(output: string, providerId?: string): st
   const trimmed = output.trim();
   const lower = trimmed.toLowerCase();
   if (lower.includes('access_denied') || lower.includes('error 403') || lower.includes('403: access_denied')) {
-    const gmailHints = providerId === 'gmail' || lower.includes('localhost:3000/oauth2callback')
+    const gmailHints = providerId === 'gmail' || lower.includes('oauth2callback')
       ? [
           '2. Credentials → create OAuth client type Web application (not Desktop).',
-          '3. Authorized redirect URIs → add http://localhost:3000/oauth2callback',
+          '3. Authorized redirect URIs → add your Agent-X callback (default http://localhost:3333/oauth2callback).',
           '4. OAuth consent screen → Data access → add gmail.modify and gmail.settings.basic scopes.',
           '5. Enable the Gmail API for this project.',
         ]
@@ -131,6 +135,16 @@ export function formatMcpStdioAuthError(output: string, providerId?: string): st
       ...gmailHints,
       '',
       'Then click Sign in again.',
+    ].join('\n');
+  }
+  if (lower.includes('eaddrinuse') || lower.includes('address already in use')) {
+    return [
+      'Google sign-in could not start a local callback server (port already in use).',
+      '',
+      'Agent-X now handles Gmail sign-in through its own server — restart Agent-X, click Sign in again,',
+      'and register this redirect URI in Google Cloud Console (Web OAuth client):',
+      '  http://localhost:3333/oauth2callback',
+      '(Use your AGENTX_PUBLIC_URL if you run on a different host/port.)',
     ].join('\n');
   }
   if (lower.includes('credentials not found')) {

@@ -5,7 +5,7 @@ import { validateWebSocketConnection } from './auth.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
 import type { DeepSearchProgress } from '@agentx/shared';
-import { MemoryFabric, MemoryService } from '@agentx/engine';
+import { MemoryFabric, MemoryService, TtlCache } from '@agentx/engine';
 import { buildDistillationGenerator, buildGraphRagGenerator } from './distillation-generator.js';
 
 let localEmbedder: import('@agentx/engine').OnnxEmbeddingProvider | null = null;
@@ -72,6 +72,7 @@ interface DistillJob {
 }
 
 const distillationQueue: DistillJob[] = [];
+const MAX_DISTILLATION_QUEUE = 50;
 let distillationRunning = false;
 
 async function processDistillationQueue(): Promise<void> {
@@ -202,6 +203,7 @@ async function processDistillationQueue(): Promise<void> {
 }
 
 function enqueueDistillation(job: DistillJob): void {
+  if (distillationQueue.length >= MAX_DISTILLATION_QUEUE) return;
   distillationQueue.push(job);
   void processDistillationQueue();
 }
@@ -320,10 +322,10 @@ function getMemoryFabric(): MemoryFabric | null {
   return new MemoryFabric(pool as any);
 }
 
-const sessionHubMap = new Map<string, { sourceId: string; hubId: string }>();
+const sessionHubCache = new TtlCache<{ sourceId: string; hubId: string }>(24 * 60 * 60 * 1000, 500);
 
 async function getSessionHub(sessionId: string, fabric: MemoryFabric): Promise<{ sourceId: string; hubId: string }> {
-  const cached = sessionHubMap.get(sessionId);
+  const cached = sessionHubCache.get(sessionId);
   if (cached) return cached;
 
   // Check if a hub already exists in the DB (survives server restarts).
@@ -337,7 +339,7 @@ async function getSessionHub(sessionId: string, fabric: MemoryFabric): Promise<{
       sourceId = source.id;
     }
     const value = { sourceId, hubId: existing.id };
-    sessionHubMap.set(sessionId, value);
+    sessionHubCache.set(sessionId, value);
     return value;
   }
 
@@ -361,7 +363,7 @@ async function getSessionHub(sessionId: string, fabric: MemoryFabric): Promise<{
     timestamp: new Date().toISOString(),
   });
   const value = { sourceId: source.id, hubId: hub.id };
-  sessionHubMap.set(sessionId, value);
+  sessionHubCache.set(sessionId, value);
   return value;
 }
 

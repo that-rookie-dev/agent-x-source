@@ -5,8 +5,8 @@ import json
 import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections import deque
 from typing import Any, Literal
-
 from agentx_voice import __version__
 from agentx_voice.protocol import SidecarConfig, health_payload
 from agentx_voice.stt_faster_whisper import FasterWhisperStt
@@ -25,7 +25,7 @@ class VoiceRuntime:
         self.styletts2 = StyleTts2(config.data_dir)
         self.vad = SileroVad(config.data_dir)
         self.active_tts_engine: TtsEngine = "kokoro"
-        self.cancelled_request_ids: set[str] = set()
+        self.cancelled_request_ids: deque[str] = deque(maxlen=500)
 
     def cancel(self, request: dict[str, Any]) -> dict[str, Any]:
         request_id = request.get("requestId")

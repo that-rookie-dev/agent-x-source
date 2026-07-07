@@ -38,7 +38,26 @@ export class StreamingPlayback {
     this.activeSources.push(source);
     source.onended = () => {
       this.activeSources = this.activeSources.filter((s) => s !== source);
+      this.scheduleIdleNotify();
     };
+  }
+
+  private onIdle: (() => void) | null = null;
+  private notifyIdleScheduled = false;
+
+  setOnIdle(handler: (() => void) | null): void {
+    this.onIdle = handler;
+  }
+
+  private scheduleIdleNotify(): void {
+    if (!this.onIdle || this.activeSources.length > 0 || this.notifyIdleScheduled) return;
+    this.notifyIdleScheduled = true;
+    window.setTimeout(() => {
+      this.notifyIdleScheduled = false;
+      if (this.activeSources.length === 0) {
+        this.onIdle?.();
+      }
+    }, 0);
   }
 
   stop(): void {
@@ -53,6 +72,7 @@ export class StreamingPlayback {
     if (this.context) {
       this.nextStartTime = this.context.currentTime;
     }
+    this.scheduleIdleNotify();
   }
 
   async replayLast(): Promise<void> {
@@ -73,6 +93,7 @@ export class StreamingPlayback {
 
   async close(): Promise<void> {
     this.stop();
+    this.clearHistory();
     await this.context?.close();
     this.context = null;
     this.nextStartTime = 0;

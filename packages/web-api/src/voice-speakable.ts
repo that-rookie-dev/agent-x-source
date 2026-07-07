@@ -3,6 +3,13 @@ import { normalizeTextForSpeech } from '@agentx/engine';
 export const VOICE_BLOCK_OPEN = '⟨voice⟩';
 export const VOICE_BLOCK_CLOSE = '⟨/voice⟩';
 
+/** Drop LLM token bleed before the voice opener (e.g. stray CJK characters). */
+export function normalizeVoiceAssistantContent(content: string): string {
+  const idx = content.indexOf(VOICE_BLOCK_OPEN);
+  if (idx > 0) return content.slice(idx);
+  return content;
+}
+
 const VOICE_BLOCK_RE = /⟨voice⟩([\s\S]*?)⟨\/voice⟩/i;
 const VOICE_BLOCK_STRIP_RE = /⟨voice⟩[\s\S]*?⟨\/voice⟩\s*/gi;
 
@@ -23,6 +30,7 @@ ${VOICE_BLOCK_OPEN}
 ${VOICE_BLOCK_CLOSE}
 
 CRITICAL RULES:
+- Your reply MUST start with ${VOICE_BLOCK_OPEN} — no characters, words, or tokens before it.
 - Do NOT say the full report is already in chat — it is not until they ask.
 - After ${VOICE_BLOCK_CLOSE} write NOTHING else.
 - Keep the voice block under 90 words.
@@ -98,12 +106,13 @@ export function holdBackVoiceCloseSuffix(text: string): { emit: string; held: nu
 }
 
 export function extractVoiceSpeakable(content: string): { voice: string; chat: string } {
-  const match = content.match(VOICE_BLOCK_RE);
+  const normalized = normalizeVoiceAssistantContent(content);
+  const match = normalized.match(VOICE_BLOCK_RE);
   if (!match) {
-    return { voice: '', chat: content.trim() };
+    return { voice: '', chat: normalized.trim() };
   }
   const voice = match[1]?.trim() ?? '';
-  const chat = content.replace(VOICE_BLOCK_STRIP_RE, '').trim();
+  const chat = normalized.replace(VOICE_BLOCK_STRIP_RE, '').trim();
   return { voice, chat };
 }
 
@@ -132,6 +141,7 @@ export class VoiceBlockStreamExtractor {
   pullSpeakDelta(delta: string): string {
     if (this.voiceClosed || !delta) return '';
     this.raw += delta;
+    this.raw = normalizeVoiceAssistantContent(this.raw);
 
     let body = this.raw;
     const openIdx = body.indexOf(VOICE_BLOCK_OPEN);

@@ -18,7 +18,8 @@ export const DEFAULT_VOICE_CONFIG: Required<Pick<VoiceConfig, 'enabled' | 'mode'
     fillerEngine: 'kokoro',
   },
   sidecar: {
-    autoStart: true,
+    autoStart: false,
+    idleUnloadMinutes: 5,
   },
   fillers: {
     enabled: true,

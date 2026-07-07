@@ -14,6 +14,12 @@ describe('voice constants', () => {
     expect(VOICE_MAX_TURN_SECONDS).toBe(60);
     expect(VOICE_TURN_COUNTDOWN_FROM_SECONDS).toBe(45);
   });
+
+  it('uses split accidental vs short-speech thresholds', async () => {
+    const mod = await import('../src/voice/constants');
+    expect(mod.VOICE_ACCIDENTAL_TAP_MS).toBeLessThan(mod.VOICE_MIN_RECORDING_MS);
+    expect(mod.VOICE_MIN_SPEECH_LEVEL).toBeGreaterThan(0);
+  });
 });
 
 describe('wake phrase helpers', () => {
@@ -24,7 +30,7 @@ describe('wake phrase helpers', () => {
     expect(mod.resolveWakePhrase('')).toBe(mod.WAKE_WORD_FALLBACK);
   });
 
-  it('allows global space in voice modal', async () => {
+  it('allows global space in chat voice mode', async () => {
     const mod = await import('../src/voice/wake-phrase');
     expect(mod.shouldBeginPushToTalkOnSpace({
       globalSpace: true,

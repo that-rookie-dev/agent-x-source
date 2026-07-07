@@ -10,10 +10,13 @@ export const RECOMMENDED_VOICE_ASSET_IDS = [
 
 export const VOICE_DEPLOY_STEPS = [
   'Deploy installs bundled Silero VAD and downloads speech models (~480 MB).',
-  'Choose how you talk: push-to-talk or open channel.',
+  'Hold Space in chat voice mode to talk — release to send.',
   'Run a comms check: hear a sample line, then test your microphone.',
-  'Open Chat and hold the mic — or press Space when the composer is empty.',
+  'Open Chat, switch to Voice, and hold Space to speak.',
 ] as const;
+
+/** Hands-free (duplex) UI — hidden until push-to-talk is polished. */
+export const VOICE_HANDS_FREE_ENABLED = false;
 
 export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
   return {
@@ -32,7 +35,7 @@ export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
       ...input?.tts,
       voiceId: input?.tts?.voiceId ?? ((input?.tts?.engine ?? 'kokoro') === 'styletts2' ? 'styletts2-default' : 'kokoro-af'),
     },
-    sidecar: { autoStart: true, ...input?.sidecar },
+    sidecar: { autoStart: false, idleUnloadMinutes: 5, ...input?.sidecar },
     fillers: { enabled: true, speakToolProgress: true, ...input?.fillers },
     wakeWord: { enabled: false, ...input?.wakeWord },
     downloadedAssets: input?.downloadedAssets ?? [],

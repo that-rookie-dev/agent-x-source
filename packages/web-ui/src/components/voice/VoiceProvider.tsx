@@ -8,17 +8,16 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { voice, personaApi, getAuthToken } from '../../api';
+import { voice, personaApi } from '../../api';
 import { useWakeWord } from '../../hooks/useWakeWord';
 import { useVoiceWarmup, type VoiceWarmupPhase } from '../../hooks/useVoiceWarmup';
 import { voiceDisabledReason } from '../../voice/support';
 import { resolveWakePhrase } from '../../voice/wake-phrase';
-import { VoiceModal } from './VoiceModal';
 import type { VoiceConfig, VoiceSidecarHealth } from '../../api';
 
 interface VoiceContextValue {
-  openVoiceModal: (sessionId?: string, autoStart?: boolean) => void;
-  closeVoiceModal: () => void;
+  /** Switch the active chat session to inline voice mode (chat page only). */
+  activateInlineVoice: (autoStart?: boolean) => void;
   registerChatSession: (sessionId: string | null) => void;
   registerInlineVoiceHandler: (handler: ((autoStart?: boolean) => void) | null) => void;
   registerVoiceChatBridge: (bridge: VoiceChatBridge | null) => void;
@@ -32,12 +31,20 @@ interface VoiceContextValue {
   warmupHealth?: VoiceSidecarHealth;
   warmupError: string | null;
   warmupLabel: string;
+  /** Settings → keep engine running at launch (docking warm-up). */
+  engineWarmAtLaunch: boolean;
+  ensureVoiceWarmup: () => void;
+  retainVoiceEngine: () => void;
+  releaseVoiceEngine: () => void;
+  releaseVoiceSidecar: () => void;
   retryVoiceWarmup: () => void;
 }
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
 
 export interface VoiceChatBridge {
+  onVoiceUserPending?: () => void;
+  onVoiceUserDiscarded?: () => void;
   onTranscriptFinal?: (text: string, empty: boolean) => void;
   onAgentRunning?: () => void;
 }
@@ -61,9 +68,6 @@ interface VoiceProviderProps {
 export function VoiceProvider({ children }: VoiceProviderProps) {
   const [coreSessionId, setCoreSessionId] = useState<string | null>(null);
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalSessionId, setModalSessionId] = useState<string | null>(null);
-  const [autoStart, setAutoStart] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
   const [wakePhrase, setWakePhrase] = useState(() => resolveWakePhrase());
@@ -71,7 +75,35 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const inlineVoiceHandlerRef = useRef<((autoStart?: boolean) => void) | null>(null);
   const voiceChatBridgeRef = useRef<VoiceChatBridge | null>(null);
-  const modalSessionRef = useRef<string | null>(null);
+  const voiceConsumersRef = useRef(0);
+  const releaseTimerRef = useRef<number | null>(null);
+
+  const warmup = useVoiceWarmup(voiceEnabled, canRunWeb);
+
+  const retainVoiceEngine = useCallback(() => {
+    voiceConsumersRef.current += 1;
+    if (releaseTimerRef.current !== null) {
+      window.clearTimeout(releaseTimerRef.current);
+      releaseTimerRef.current = null;
+    }
+    warmup.ensureWarmup();
+  }, [warmup.ensureWarmup]);
+
+  const releaseVoiceEngine = useCallback(() => {
+    voiceConsumersRef.current = Math.max(0, voiceConsumersRef.current - 1);
+    if (voiceConsumersRef.current > 0) return;
+    if (warmup.engineWarmAtLaunch) return;
+
+    if (releaseTimerRef.current !== null) {
+      window.clearTimeout(releaseTimerRef.current);
+    }
+    releaseTimerRef.current = window.setTimeout(() => {
+      releaseTimerRef.current = null;
+      if (voiceConsumersRef.current === 0 && !warmup.engineWarmAtLaunch) {
+        warmup.releaseSidecar();
+      }
+    }, 400);
+  }, [warmup.releaseSidecar, warmup.engineWarmAtLaunch]);
 
   const applyVoiceConfigSnapshot = useCallback((cfg: VoiceConfig) => {
     setVoiceEnabled(Boolean(cfg.enabled));
@@ -122,27 +154,11 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     };
   }, [loadVoiceState, applyVoiceConfigSnapshot]);
 
-  const resolveSession = useCallback((sessionId?: string) => {
-    return sessionId ?? chatSessionId ?? coreSessionId;
-  }, [chatSessionId, coreSessionId]);
-
-  const openVoiceModal = useCallback((sessionId?: string, startListening = false) => {
-    if (activeChatSessionId && inlineVoiceHandlerRef.current) {
-      inlineVoiceHandlerRef.current(startListening);
-      return;
-    }
-    const target = resolveSession(sessionId);
-    if (!target) return;
-    modalSessionRef.current = target;
-    setModalSessionId(target);
-    setAutoStart(startListening);
-    setModalOpen(true);
-  }, [resolveSession, activeChatSessionId]);
-
-  const closeVoiceModal = useCallback(() => {
-    setModalOpen(false);
-    setAutoStart(false);
-  }, []);
+  const activateInlineVoice = useCallback((startListening = false) => {
+    if (!voiceEnabled || !canRunWeb || voiceDisabledReason()) return;
+    if (!activeChatSessionId || !inlineVoiceHandlerRef.current) return;
+    inlineVoiceHandlerRef.current(startListening);
+  }, [activeChatSessionId, voiceEnabled, canRunWeb]);
 
   const registerChatSession = useCallback((sessionId: string | null) => {
     setChatSessionId(sessionId);
@@ -160,36 +176,13 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   const getVoiceChatBridge = useCallback(() => voiceChatBridgeRef.current, []);
 
   const onWakeWord = useCallback(() => {
-    void (async () => {
-      if (!voiceEnabled || !canRunWeb || voiceDisabledReason()) return;
-      let sessionId = coreSessionId;
-      if (!sessionId) {
-        try {
-          const core = await fetch('/api/agent-x-core/session', {
-            method: 'POST',
-            credentials: 'include',
-            headers: getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {},
-          }).then((r) => r.json() as Promise<{ sessionId?: string }>);
-          if (core.sessionId) {
-            setCoreSessionId(core.sessionId);
-            sessionId = core.sessionId;
-          }
-        } catch {
-          return;
-        }
-      }
-      if (!sessionId) return;
-      openVoiceModal(sessionId, true);
-    })();
-  }, [voiceEnabled, canRunWeb, openVoiceModal, coreSessionId]);
+    activateInlineVoice(true);
+  }, [activateInlineVoice]);
 
   useWakeWord(wakeWordEnabled && voiceEnabled && canRunWeb, wakePhrase, onWakeWord);
 
-  const warmup = useVoiceWarmup(voiceEnabled, canRunWeb);
-
   const value = useMemo<VoiceContextValue>(() => ({
-    openVoiceModal,
-    closeVoiceModal,
+    activateInlineVoice,
     registerChatSession,
     registerInlineVoiceHandler,
     registerVoiceChatBridge,
@@ -203,10 +196,14 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     warmupHealth: warmup.health,
     warmupError: warmup.error,
     warmupLabel: warmup.label,
+    engineWarmAtLaunch: warmup.engineWarmAtLaunch,
+    ensureVoiceWarmup: warmup.ensureWarmup,
+    retainVoiceEngine,
+    releaseVoiceEngine,
+    releaseVoiceSidecar: releaseVoiceEngine,
     retryVoiceWarmup: warmup.retry,
   }), [
-    openVoiceModal,
-    closeVoiceModal,
+    activateInlineVoice,
     registerChatSession,
     registerInlineVoiceHandler,
     registerVoiceChatBridge,
@@ -221,18 +218,16 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     warmup.health,
     warmup.error,
     warmup.label,
+    warmup.engineWarmAtLaunch,
+    warmup.ensureWarmup,
+    retainVoiceEngine,
+    releaseVoiceEngine,
     warmup.retry,
   ]);
 
   return (
     <VoiceContext.Provider value={value}>
       {children}
-      <VoiceModal
-        open={modalOpen}
-        chatSessionId={modalSessionId}
-        onClose={closeVoiceModal}
-        autoStart={autoStart}
-      />
     </VoiceContext.Provider>
   );
 }

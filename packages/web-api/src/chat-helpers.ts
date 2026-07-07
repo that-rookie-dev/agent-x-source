@@ -8,8 +8,14 @@ import { turnRegistry } from './turn-registry.js';
 import { getLogger, sanitizeForJson, generateId } from '@agentx/shared';
 
 export const TURN_TIMEOUT_MS = 600_000;
-/** Wall-clock cap for voice comms modal turns (no heartbeat extension). */
+/**
+ * Idle cap for voice comms turns: if the agent produces NO activity
+ * (tool/step/heartbeat/stream) for this long, the turn is aborted. Activity
+ * resets the clock so tool-heavy hands-free turns aren't killed mid-work.
+ */
 export const VOICE_TURN_TIMEOUT_MS = 90_000;
+/** Hard ceiling for a single voice turn regardless of ongoing activity. */
+export const VOICE_TURN_MAX_MS = 300_000;
 
 export function getForceWebSearchError(cfg: AgentXConfig, forceWebSearch?: boolean): string | null {
   if (!forceWebSearch) return null;
@@ -142,7 +148,7 @@ export function persistToolLedger(agent: Agent, sessionId: string): void {
   } catch { /* best-effort */ }
 }
 
-const TURN_ACTIVITY_EVENTS = new Set([
+export const TURN_ACTIVITY_EVENTS = new Set([
   'turn_heartbeat',
   'tool_executing',
   'tool_complete',
@@ -153,6 +159,28 @@ const TURN_ACTIVITY_EVENTS = new Set([
   'step_finish',
   'operation_file_edited',
 ]);
+
+const activeTurnBySession = new Map<string, string>();
+
+export function registerActiveTurn(sessionId: string, turnId: string): void {
+  activeTurnBySession.set(sessionId, turnId);
+}
+
+export function clearActiveTurn(sessionId: string, turnId?: string): void {
+  if (!turnId || activeTurnBySession.get(sessionId) === turnId) {
+    activeTurnBySession.delete(sessionId);
+  }
+}
+
+/** Cancel the in-flight turn for a session (Stop button). Returns the turn id if one was active. */
+export function cancelActiveSessionTurn(sessionId: string): string | undefined {
+  const turnId = activeTurnBySession.get(sessionId);
+  if (turnId) {
+    turnRegistry.cancel(turnId);
+    activeTurnBySession.delete(sessionId);
+  }
+  return turnId;
+}
 
 export function runAgentTurnAsync(
   agent: Agent,
@@ -172,6 +200,8 @@ export function runAgentTurnAsync(
     voiceTurn?: boolean;
     turnTimeoutMs?: number;
     fixedTurnTimeout?: boolean;
+    /** Hard ceiling (ms) that fires even while activity keeps resetting the idle clock. */
+    maxTurnMs?: number;
     userMessagePersisted?: boolean;
     voiceContinuation?: boolean;
     voiceMergeIntoMessage?: { messageId: string; prefixContent: string };
@@ -185,15 +215,19 @@ export function runAgentTurnAsync(
   },
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let maxTurnTimer: ReturnType<typeof setTimeout> | undefined;
   let timeoutPaused = false;
   const turnTimeoutMs = extra?.turnTimeoutMs ?? TURN_TIMEOUT_MS;
   const fixedTurnTimeout = extra?.fixedTurnTimeout ?? false;
+  const maxTurnMs = extra?.maxTurnMs;
 
   if (extra?.voiceTurn) {
     try {
       agent.getToolExecutor()?.setVoiceTurnActive?.(true);
     } catch { /* best-effort */ }
   }
+
+  registerActiveTurn(sessionId, turnId);
 
   const clearVoiceTurn = () => {
     if (!extra?.voiceTurn) return;
@@ -208,9 +242,24 @@ export function runAgentTurnAsync(
       clearTimeout(timeoutId);
       timeoutId = undefined;
     }
+    // Human-in-the-loop (clarification/permission) shouldn't burn the hard ceiling.
+    if (maxTurnTimer) {
+      clearTimeout(maxTurnTimer);
+      maxTurnTimer = undefined;
+    }
   };
 
   let turnCompleted = false;
+  const clearTimers = () => {
+    if (timeoutId) { clearTimeout(timeoutId); timeoutId = undefined; }
+    if (maxTurnTimer) { clearTimeout(maxTurnTimer); maxTurnTimer = undefined; }
+  };
+  const finalizeTurn = () => {
+    clearActiveTurn(sessionId, turnId);
+    clearTimers();
+    unsubActivity();
+    clearVoiceTurn();
+  };
   const onTimeout = () => {
     if (turnCompleted) return;
     try {
@@ -218,12 +267,13 @@ export function runAgentTurnAsync(
         agent.abortClarificationWait?.();
       }
       agent.cancel();
+      turnCompleted = true;
+      finalizeTurn();
       const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, 'The operation was aborted due to timeout', partial);
       if (partial) {
         persistMessageDirect(sessionId, 'assistant', partial + '\n\n⚠ Turn timed out — partial output saved.');
       }
-      clearVoiceTurn();
       onError?.('The operation was aborted due to timeout', partial);
     } catch { /* best-effort */ }
   };
@@ -256,6 +306,9 @@ export function runAgentTurnAsync(
       } else {
         scheduleTimeout();
       }
+      if (maxTurnMs && maxTurnMs > 0 && !maxTurnTimer) {
+        maxTurnTimer = setTimeout(onTimeout, maxTurnMs);
+      }
       return;
     }
     if (!fixedTurnTimeout && TURN_ACTIVITY_EVENTS.has(type)) {
@@ -263,6 +316,10 @@ export function runAgentTurnAsync(
     }
   });
   timeoutId = setTimeout(onTimeout, turnTimeoutMs);
+  if (maxTurnMs && maxTurnMs > 0) {
+    // Hard ceiling: fires regardless of activity or idle-clock resets.
+    maxTurnTimer = setTimeout(onTimeout, maxTurnMs);
+  }
 
   refreshAgentPersona(agent);
   const clientSituation = extra?.clientSituation ?? null;
@@ -287,9 +344,7 @@ export function runAgentTurnAsync(
   })
     .then((message) => {
       turnCompleted = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      unsubActivity();
-      clearVoiceTurn();
+      finalizeTurn();
       persistToolLedger(agent, sessionId);
       if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
         turnRegistry.complete(turnId, message as any);
@@ -302,9 +357,15 @@ export function runAgentTurnAsync(
     })
     .catch((e: unknown) => {
       turnCompleted = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      unsubActivity();
-      clearVoiceTurn();
+      finalizeTurn();
+      const isAbort = e instanceof Error && (e.name === 'AbortError' || /aborted/i.test(e.message));
+      if (isAbort) {
+        const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
+        turnRegistry.cancel(turnId);
+        persistToolLedger(agent, sessionId);
+        onError?.('Cancelled', partial);
+        return;
+      }
       const errMsg = e instanceof Error ? e.message : 'chat-failed';
       const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, errMsg, partial);

@@ -41,7 +41,12 @@ import { McpSession } from './mcp/client.js';
 import { getProviderBridgeTools, type IntegrationBridgeTool } from './mcp/provider-bridge.js';
 import { isMcpToolResultError } from './mcp/mcp-result.js';
 import { enhanceGoogleMapsToolOutput } from './mcp/google-maps-output.js';
-import { detectPlacesSearchRequest, mentionsGoogleMapsProvider } from './places-intent.js';
+import {
+  resolveThirdPartyAccess,
+  resolveMentionedProviderAccess,
+  type ThirdPartyTurnPolicy,
+} from './third-party-access.js';
+import { enrichConnectionAvailability } from './integration-tool-availability.js';
 import { IntegrationConnectionManager } from './mcp/connection-manager.js';
 import { OAuthPkceStore } from './oauth/pkce-flow.js';
 import { expandStdioArgs } from './stdio-args.js';
@@ -66,6 +71,13 @@ import {
   resolveMcpStdioAuthCredentials,
   runMcpStdioAuthCommand,
 } from './mcp-stdio-auth.js';
+import {
+  completeMcpStdioBrowserOAuth,
+  getMcpStdioOAuthRedirectUri,
+  McpStdioOAuthStore,
+  startMcpStdioBrowserOAuth,
+  usesNativeMcpStdioBrowserOAuth,
+} from './mcp-stdio-oauth-flow.js';
 import { runPreflightChecks, type PreflightContext } from './preflight.js';
 
 interface ActiveSession {
@@ -77,7 +89,7 @@ interface ActiveSession {
 
 export interface IntegrationTurnSnapshot {
   registeredCount: number;
-  connected: Array<{ providerId: string; name: string; toolCount: number; handlersReady: boolean }>;
+  connected: Array<import('./integration-tool-availability.js').IntegrationConnectionRef>;
   unavailable: Array<{ providerId: string; name: string; error?: string }>;
 }
 
@@ -93,6 +105,7 @@ export class IntegrationHub {
   private readonly store: IntegrationConnectionStore;
   private readonly audit: IntegrationAuditLog;
   private readonly oauth = new OAuthPkceStore();
+  private readonly mcpStdioOAuth = new McpStdioOAuthStore();
   private readonly oauthResults = new Map<string, StoredOAuthResult>();
   /** States consumed by completeOAuth but not yet written to oauthResults (token exchange + sync). */
   private readonly oauthInFlight = new Set<string>();
@@ -156,7 +169,7 @@ export class IntegrationHub {
     registry: ToolRegistry,
     executor: ToolExecutor,
     userText = '',
-  ): Promise<{ snapshot: IntegrationTurnSnapshot; promptHint?: string }> {
+  ): Promise<{ snapshot: IntegrationTurnSnapshot; promptHint?: string; accessPolicy?: ThirdPartyTurnPolicy }> {
     this.setToolkitBridge(registry, executor);
 
     for (const connection of this.store.listConnections()) {
@@ -176,18 +189,20 @@ export class IntegrationHub {
     const connected: IntegrationTurnSnapshot['connected'] = [];
     const unavailable: IntegrationTurnSnapshot['unavailable'] = [];
 
+    const registeredIntegrationToolIds = registry.list().map((t) => t.id);
+
     for (const connection of this.store.listConnections()) {
       if (!connection.enabled) continue;
       const provider = this.resolveProvider(connection.providerId);
       const name = provider?.name ?? connection.displayName ?? connection.providerId;
       const active = this.sessions.get(connection.id);
       if (active) {
-        connected.push({
+        connected.push(enrichConnectionAvailability({
           providerId: connection.providerId,
           name,
           toolCount: active.tools.length,
-          handlersReady: executor ? this.connectionHandlersReady(connection.id, executor) : true,
-        });
+          handlersReady: executor ? this.connectionHandlersReady(connection.id, executor) : false,
+        }, registeredIntegrationToolIds));
         continue;
       }
       unavailable.push({
@@ -198,8 +213,14 @@ export class IntegrationHub {
     }
 
     const snapshot: IntegrationTurnSnapshot = { registeredCount, connected, unavailable };
-    const promptHint = this.buildIntegrationPromptHint(userText, snapshot);
-    return promptHint ? { snapshot, promptHint } : { snapshot };
+    const { promptHint, policy } = this.buildIntegrationPromptHint(
+      userText,
+      snapshot,
+      registeredIntegrationToolIds,
+    );
+    return promptHint || policy
+      ? { snapshot, promptHint, accessPolicy: policy }
+      : { snapshot };
   }
 
   private connectionHandlersReady(
@@ -214,79 +235,38 @@ export class IntegrationHub {
   private buildIntegrationPromptHint(
     userText: string,
     snapshot: IntegrationTurnSnapshot,
-  ): string | undefined {
+    registeredIntegrationToolIds: string[],
+  ): { promptHint?: string; policy?: ThirdPartyTurnPolicy } {
     const lower = userText.toLowerCase();
-    if (!lower.trim()) return undefined;
+    if (!lower.trim()) return {};
 
-    const mentionsProvider = (providerId: string, name: string): boolean => {
-      const id = providerId.toLowerCase();
-      const label = name.toLowerCase();
-      return lower.includes(id) || (label.length >= 3 && lower.includes(label));
-    };
+    const catalog = this.listCatalog().map((p) => ({ id: p.id, name: p.name }));
 
     const readIntent =
       /\b(analys|analyz|read|open|summari|extract|review|inspect|tell me what|what you found|content of)\b/i.test(userText)
       || /\b(pdf|document|letter|spreadsheet|\.pdf)\b/i.test(lower);
 
-    if (readIntent) {
-      const drive = snapshot.connected.find((entry) => entry.providerId === 'google-drive');
-      if (drive) {
-        return [
-          '[INTEGRATION READ] Google Drive is connected.',
-          'Use integration__google-drive__read_file with fileName (e.g. "Experience_Letter.pdf") or fileId.',
-          'Do NOT use file_find, grep, read_file, shell_exec, or local filesystem tools — the file is in Google Drive, not on disk.',
-        ].join(' ');
-      }
+    const resolved = resolveThirdPartyAccess({
+      userText,
+      snapshot,
+      catalog,
+      driveReadIntent: readIntent,
+      registeredIntegrationToolIds,
+    });
+    if (resolved.promptHint || resolved.policy) {
+      return { promptHint: resolved.promptHint, policy: resolved.policy };
     }
 
-    const placesIntent = detectPlacesSearchRequest(userText) || mentionsGoogleMapsProvider(userText);
-    if (placesIntent) {
-      const maps = snapshot.connected.find((entry) => entry.providerId === 'google-maps');
-      if (maps?.handlersReady) {
-        return [
-          '[INTEGRATION PLACES] Google Maps MCP is connected.',
-          'Use integration__google-maps__maps_search_places (and maps_place_details if needed) — NOT deep_web_search or web_search.',
-          'In your reply, use the Google Maps links from the tool output. Never show raw latitude/longitude coordinates.',
-          'If the tool fails, say Maps is unavailable — do NOT claim you mapped locations or substitute IP-based guesses.',
-        ].join(' ');
-      }
-      if (maps && !maps.handlersReady) {
-        return [
-          '[INTEGRATION DEGRADED] Google Maps is connected in MCP Store but tools are not ready on this turn.',
-          'Tell the user Maps is temporarily unavailable. Use web_search if appropriate — do NOT claim you mapped locations.',
-        ].join(' ');
-      }
+    const mentioned = resolveMentionedProviderAccess(
+      userText,
+      snapshot,
+      registeredIntegrationToolIds,
+    );
+    if (mentioned) {
+      return { promptHint: mentioned.promptHint, policy: mentioned.policy };
     }
 
-    for (const entry of snapshot.unavailable) {
-      if (!mentionsProvider(entry.providerId, entry.name)) continue;
-      return [
-        `[INTEGRATION UNAVAILABLE] ${entry.name} MCP is not connected`,
-        entry.error ? `(${entry.error})` : '',
-        'Re-authenticate in MCP Store → Installed →',
-        entry.name + '.',
-        'Do NOT scan the local filesystem as a substitute for this request.',
-      ].filter(Boolean).join(' ');
-    }
-
-    for (const entry of snapshot.connected) {
-      if (!mentionsProvider(entry.providerId, entry.name)) continue;
-      if (!entry.handlersReady) {
-        return [
-          `[INTEGRATION DEGRADED] ${entry.name} MCP is connected but tools are not ready.`,
-          'Tell the user the integration is temporarily unavailable — do not substitute local filesystem search.',
-        ].join(' ');
-      }
-      const active = [...this.sessions.values()].find((s) => s.providerId === entry.providerId);
-      const examples = active?.tools.slice(0, 6).map((t) => t.toolId).join(', ') ?? '';
-      return [
-        `[INTEGRATION AVAILABLE] ${entry.name} MCP is connected (${entry.toolCount} tools).`,
-        examples ? `Prefer integration tools such as: ${examples}.` : '',
-        `Use integration__${entry.providerId}__* tools instead of filesystem search for ${entry.name} data.`,
-      ].filter(Boolean).join(' ');
-    }
-
-    return undefined;
+    return {};
   }
 
   private currentDek(): Buffer | null {
@@ -1010,6 +990,13 @@ export class IntegrationHub {
       return { success: false, output: 'This integration does not support MCP stdio auth' };
     }
 
+    if (usesNativeMcpStdioBrowserOAuth(config)) {
+      return {
+        success: false,
+        output: 'This integration uses Agent-X browser sign-in. Use startMcpStdioBrowserOAuth instead.',
+      };
+    }
+
     const secrets = await this.store.getSecrets(connectionId, this.currentDek());
     const resolved = resolveMcpStdioAuthCredentials(config, secrets, connectionId);
     if (!resolved) {
@@ -1029,6 +1016,64 @@ export class IntegrationHub {
       success: false,
       output: formatMcpStdioAuthError(result.output, provider.id),
     };
+  }
+
+  /** Gmail and other web-format MCP integrations: browser OAuth via Agent-X (no port-3000 helper). */
+  async startMcpStdioBrowserOAuth(connectionId: string): Promise<{ authUrl: string; state: string; redirectUri: string }> {
+    const connection = this.store.getConnection(connectionId);
+    if (!connection) {
+      throw new Error('Integration is not connected');
+    }
+    const provider = this.resolveProvider(connection.providerId);
+    const config = provider?.auth.mcpStdioAuth;
+    if (!provider || !config) {
+      throw new Error('This integration does not support MCP stdio auth');
+    }
+    if (!usesNativeMcpStdioBrowserOAuth(config)) {
+      throw new Error('This integration uses the MCP package auth helper — use runMcpStdioAuth instead.');
+    }
+
+    const secrets = await this.store.getSecrets(connectionId, this.currentDek());
+    return startMcpStdioBrowserOAuth(this.mcpStdioOAuth, {
+      connectionId,
+      provider,
+      config,
+      redirectBaseUrl: this.redirectBaseUrl,
+      secrets,
+    });
+  }
+
+  getMcpStdioOAuthRedirectUri(providerId: string): string {
+    const provider = this.resolveProvider(providerId);
+    const config = provider?.auth.mcpStdioAuth;
+    if (!config) {
+      return `${this.redirectBaseUrl}/oauth2callback`;
+    }
+    return getMcpStdioOAuthRedirectUri(this.redirectBaseUrl, config);
+  }
+
+  getMcpStdioOAuthResult(state: string): OAuthFlowResult {
+    return this.mcpStdioOAuth.getResult(state);
+  }
+
+  recordMcpStdioOAuthFailure(state: string, message: string): void {
+    const pending = this.mcpStdioOAuth.peek(state);
+    if (!pending) return;
+    this.mcpStdioOAuth.recordFailure(state, pending.connectionId, pending.providerId, message);
+  }
+
+  async completeMcpStdioBrowserOAuth(state: string, code: string): Promise<IntegrationConnection> {
+    const pending = this.mcpStdioOAuth.peek(state);
+    if (!pending) {
+      throw new Error('Sign-in session expired or invalid — click Sign in again.');
+    }
+    this.mcpStdioOAuth.markInFlight(state);
+    try {
+      const { connectionId } = await completeMcpStdioBrowserOAuth(this.mcpStdioOAuth, state, code);
+      return await this.syncConnection(connectionId);
+    } finally {
+      this.mcpStdioOAuth.clearInFlight(state);
+    }
   }
 
   getMcpStdioAuthStatus(connectionId: string): { signedIn: boolean; message?: string } {

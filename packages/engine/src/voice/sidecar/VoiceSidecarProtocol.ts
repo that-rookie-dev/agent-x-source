@@ -70,6 +70,8 @@ export interface VoiceSidecarStreamTranscribeRequest {
   sampleRate?: number;
   reset?: boolean;
   finalize?: boolean;
+  /** Decode request PCM for live captions without mutating the stream buffer. */
+  preview?: boolean;
   modelId?: string;
   language?: string;
 }

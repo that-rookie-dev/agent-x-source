@@ -1,4 +1,5 @@
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { resolveMemoryFabricSearchSessionFilter } from '@agentx/shared';
 import * as fs from './filesystem.js';
 import * as code from './code.js';
 import * as web from './web.js';
@@ -162,18 +163,22 @@ export async function memoryRead(args: Record<string, unknown>, context: ToolExe
 }
 
 /** Search agent memory keys (prefix/substring) and semantic chat memories in the fabric. */
-export async function memorySearch(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+export async function memorySearch(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const query = (args['query'] ?? args['pattern']) as string;
   if (!query) return { success: false, output: 'query is required', error: 'INVALID_ARGS' };
 
   const fabric = getMemoryFabricInstance();
   const embedder = getEmbedderInstance();
+  const sessionFilter = resolveMemoryFabricSearchSessionFilter(context.sessionId, context.contextKind);
+  const isSuper = sessionFilter === null;
   if (fabric && embedder) {
     try {
       const embedding = await embedder.embed(query);
       const [chatNodes, profileNodes] = await Promise.all([
-        fabric.vectorSearch(embedding, { limit: 8, tag: CHAT_MEMORY_TAG, sessionId: null }),
-        fabric.vectorSearch(embedding, { limit: 5, tag: USER_PROFILE_TAG, sessionId: null }),
+        fabric.vectorSearch(embedding, { limit: 8, tag: CHAT_MEMORY_TAG, sessionId: sessionFilter }),
+        isSuper
+          ? fabric.vectorSearch(embedding, { limit: 5, tag: USER_PROFILE_TAG, sessionId: null })
+          : Promise.resolve([]),
       ]);
       const lines: string[] = [];
       if (chatNodes.length > 0) {
@@ -244,7 +249,7 @@ export async function ragSearch(args: Record<string, unknown>, _context: ToolExe
  * Uses vector ANN + graph walk to find relevant chunks and entities from
  * uploaded PDFs, text files, and web distillations.
  */
-export async function memoryFabricSearch(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+export async function memoryFabricSearch(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const query = (args['query'] as string) ?? '';
   if (!query) return { success: false, output: 'query is required', error: 'INVALID_ARGS' };
 
@@ -256,19 +261,28 @@ export async function memoryFabricSearch(args: Record<string, unknown>, _context
 
   const topK = (args['limit'] as number) ?? 8;
   const includeChunks = (args['includeChunks'] as boolean) ?? true;
+  const sessionFilter = resolveMemoryFabricSearchSessionFilter(context.sessionId, context.contextKind);
+  const isSuper = sessionFilter === null;
   try {
     const embedding = await embedder.embed(query);
 
     const [chatMemories, profileMemories] = await Promise.all([
-      fabric.vectorSearch(embedding, { limit: topK, tag: CHAT_MEMORY_TAG, sessionId: null }),
-      fabric.vectorSearch(embedding, { limit: Math.max(3, Math.floor(topK / 2)), tag: USER_PROFILE_TAG, sessionId: null }),
+      fabric.vectorSearch(embedding, { limit: topK, tag: CHAT_MEMORY_TAG, sessionId: sessionFilter }),
+      isSuper
+        ? fabric.vectorSearch(embedding, { limit: Math.max(3, Math.floor(topK / 2)), tag: USER_PROFILE_TAG, sessionId: null })
+        : Promise.resolve([]),
     ]);
 
-    // Pass 1: Vector search for direct semantic matches (both semantic entities and chunk nodes).
-    const vectorResults = await fabric.vectorSearch(embedding, { limit: topK * 2 });
+    // Pass 1: Vector search for direct semantic matches (scoped to session when not super).
+    const vectorResults = await fabric.vectorSearch(embedding, {
+      limit: topK * 2,
+      ...(isSuper ? {} : { sessionId: sessionFilter }),
+    });
 
-    // Pass 2: Community summaries for high-level context.
-    const communityResults = await fabric.searchCommunitySummaries(embedding, 3).catch(() => []);
+    // Pass 2: Community summaries for high-level context (super sessions only).
+    const communityResults = isSuper
+      ? await fabric.searchCommunitySummaries(embedding, 3).catch(() => [])
+      : [];
 
     // Filter: prefer semantic/entity nodes, include chunks only if requested.
     const seen = new Set<string>();
@@ -287,10 +301,14 @@ export async function memoryFabricSearch(args: Record<string, unknown>, _context
         const walk = await fabric.graphWalk({ startNodeIds: seedIds, maxDepth: 1 });
         const newIds = walk.nodeIds.filter((id) => !seen.has(id)).slice(0, topK);
         if (newIds.length > 0) {
+          const sessionClause = isSuper
+            ? ''
+            : ` AND session_id = $2`;
+          const params: unknown[] = isSuper ? [newIds] : [newIds, sessionFilter];
           const { rows } = await (fabric as any)['pool'].query(
             `SELECT id, label, category, content, source_id AS "sourceId"
-             FROM memory_nodes WHERE id = ANY($1::uuid[]) AND status = 'active'`,
-            [newIds],
+             FROM memory_nodes WHERE id = ANY($1::uuid[]) AND status = 'active'${sessionClause}`,
+            params,
           );
           graphNodes = rows;
           for (const r of rows) seen.add(r.id);

@@ -5,11 +5,13 @@ const DOUBLE_TAP_SPACE_MS = 350;
 
 export function useVoiceKeyboard(options: {
   enabled: boolean;
-  /** When true, Space push-to-talk works without chat composer focus (voice modal). */
+  /** When true, Space push-to-talk works without chat composer focus (inline chat voice). */
   globalSpace?: boolean;
   composerFocused: boolean;
   composerEmpty: boolean;
   pushToTalk: boolean;
+  /** Block Space push-to-talk while agent turn is in flight. */
+  pushToTalkBlocked?: boolean;
   onBeginPushToTalk: () => void;
   onEndPushToTalk: () => void;
   onToggleSession: () => void;
@@ -20,6 +22,7 @@ export function useVoiceKeyboard(options: {
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const lastSpaceDownRef = useRef(0);
+  const spacePttHeldRef = useRef(false);
 
   useEffect(() => {
     if (!options.enabled) return;
@@ -33,6 +36,7 @@ export function useVoiceKeyboard(options: {
         return;
       }
       if (event.key === 'Escape') {
+        spacePttHeldRef.current = false;
         opts.onInterruptPlayback();
         if (opts.pushToTalk) opts.onEndPushToTalk();
         return;
@@ -51,6 +55,7 @@ export function useVoiceKeyboard(options: {
 
         if (
           opts.pushToTalk &&
+          !opts.pushToTalkBlocked &&
           shouldBeginPushToTalkOnSpace({
             globalSpace: opts.globalSpace,
             composerFocused: opts.composerFocused,
@@ -60,6 +65,7 @@ export function useVoiceKeyboard(options: {
         ) {
           event.preventDefault();
           event.stopPropagation();
+          spacePttHeldRef.current = true;
           opts.onBeginPushToTalk();
           return;
         }
@@ -77,6 +83,7 @@ export function useVoiceKeyboard(options: {
       if (
         opts.pushToTalk &&
         event.key === ' ' &&
+        spacePttHeldRef.current &&
         shouldEndPushToTalkOnSpace({
           globalSpace: opts.globalSpace,
           composerFocused: opts.composerFocused,
@@ -84,6 +91,7 @@ export function useVoiceKeyboard(options: {
       ) {
         event.preventDefault();
         event.stopPropagation();
+        spacePttHeldRef.current = false;
         opts.onEndPushToTalk();
       }
     };

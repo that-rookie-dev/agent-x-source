@@ -179,12 +179,14 @@ export function DockingStation() {
   const version = healthData?.version || '';
   const crewCatalogCount = computeTotalCrewCatalogCount(catalogSeed, rosterCrews);
 
-  const voiceNeedsReady = Boolean(voice?.voiceReady);
-  const voiceResolved = !voiceNeedsReady
+  const voiceModuleEnabled = Boolean(voice?.voiceReady);
+  const engineWarmAtLaunch = Boolean(voice?.engineWarmAtLaunch);
+  const voiceNeedsReady = voiceModuleEnabled && engineWarmAtLaunch;
+  const voiceLaunchReady = !voiceNeedsReady
     || voice?.warmupPhase === 'ready'
-    || voice?.warmupPhase === 'failed'
-    || voice?.warmupPhase === 'disabled';
-  const voiceOk = !voiceNeedsReady || voice?.warmupPhase === 'ready';
+    || voice?.warmupPhase === 'failed';
+  const voiceResolved = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
+  const voiceOk = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
   const systemsResolved = !checking && location.resolved && voiceResolved;
   const canLaunch = serverOnline && systemsResolved && voiceOk;
   const preparing = serverOnline && !canLaunch;
@@ -197,18 +199,20 @@ export function DockingStation() {
             : location.state === 'unavailable' ? colors.text.dim
               : colors.accent.orange;
 
-  const voiceColor = !voice
+  const voiceColor = !voice || !voiceModuleEnabled
     ? colors.text.dim
     : voice.warmupPhase === 'ready' ? colors.accent.green
-      : voice.warmupPhase === 'booting' || voice.warmupPhase === 'idle' ? colors.accent.orange
+      : voice.warmupPhase === 'booting' ? colors.accent.orange
         : voice.warmupPhase === 'failed' ? colors.accent.red
           : colors.text.dim;
 
-  const voiceLabel = !voice
-    ? 'Unavailable'
-    : !voice.voiceReady
-      ? 'Not supported here'
-      : voice.warmupLabel;
+  const voiceLabel = !voice || !voiceModuleEnabled
+    ? 'Disabled'
+    : engineWarmAtLaunch
+      ? voice.warmupLabel
+      : voice.warmupPhase === 'ready'
+        ? 'Ready (on demand)'
+        : 'On demand';
 
   return (
     <Box sx={{
@@ -310,14 +314,16 @@ export function DockingStation() {
                     ? 'VPN/proxy detected — click to retry'
                     : undefined}
               />
+              {voiceModuleEnabled && (
               <StatusRow
-                label="Voice engine"
+                label="Voice Engine"
                 value={voiceLabel}
                 color={voiceColor}
-                checking={voiceNeedsReady && (voice?.warmupPhase === 'booting' || voice?.warmupPhase === 'idle')}
+                checking={voiceNeedsReady && voice?.warmupPhase === 'booting'}
                 onClick={voice?.warmupPhase === 'failed' ? voice.retryVoiceWarmup : undefined}
                 title={voice?.warmupPhase === 'failed' ? (voice.warmupError ?? 'Click to retry voice setup') : undefined}
               />
+              )}
             </>
           )}
           {healthData && (

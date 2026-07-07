@@ -50,6 +50,9 @@ export const COMPACT_TOOL_IDS = new Set([
 ]);
 
 export function isCompactToolAllowed(toolId: string, planMode: boolean): boolean {
+  if (toolId.startsWith('integration__')) {
+    return planMode ? isToolAllowedInPlanMode(toolId) : true;
+  }
   if (!COMPACT_TOOL_IDS.has(toolId)) return false;
   if (planMode) return isToolAllowedInPlanMode(toolId);
   return true;

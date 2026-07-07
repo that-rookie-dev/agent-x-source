@@ -1123,7 +1123,7 @@ export interface VoiceConfig {
     };
     fillerEngine?: 'kokoro';
   };
-  sidecar?: { autoStart?: boolean };
+  sidecar?: { autoStart?: boolean; idleUnloadMinutes?: number };
   fillers?: { enabled?: boolean; speakToolProgress?: boolean };
   wakeWord?: {
     enabled?: boolean;
@@ -1712,6 +1712,8 @@ export const voice = {
     request<{ sidecar: VoiceSidecarStatusResponse['sidecar'] }>('/voice/sidecar/status'),
   ensureSidecar: () =>
     request<VoiceSidecarStatusResponse>('/voice/sidecar/ensure', { method: 'POST' }, 5 * 60_000),
+  releaseSidecar: () =>
+    request<{ ok: boolean; skipped?: string; scheduled?: boolean }>('/voice/sidecar/release', { method: 'POST' }),
   preview: (text: string, engine: TtsEngine, voiceId?: string, style?: VoiceTtsStyleConfig) =>
     request<{ audioBase64: string; mimeType: string; durationMs?: number }>(
       '/voice/preview',
@@ -2123,6 +2125,14 @@ export const integrations = {
     request<{ redirectUri: string }>('/integrations/oauth/redirect-uri'),
   runMcpAuth: (connectionId: string) =>
     request<{ success: boolean; output: string }>(`/integrations/${connectionId}/mcp-auth`, { method: 'POST' }),
+  startMcpAuth: (connectionId: string) =>
+    request<{ authUrl: string; state: string; redirectUri: string }>(`/integrations/${connectionId}/mcp-auth/start`, { method: 'POST' }),
+  mcpAuthResult: (state: string) =>
+    request<{ result: { status: 'pending' | 'completed' | 'failed' | 'expired'; message?: string } }>(
+      `/integrations/mcp-auth/result?state=${encodeURIComponent(state)}`,
+    ),
+  mcpAuthRedirectUri: (providerId = 'gmail') =>
+    request<{ redirectUri: string }>(`/integrations/mcp-auth/redirect-uri?providerId=${encodeURIComponent(providerId)}`),
   mcpAuthStatus: (connectionId: string) =>
     request<{ signedIn: boolean; message?: string }>(`/integrations/${connectionId}/mcp-auth/status`),
   oauthResult: (state: string) =>

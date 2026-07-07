@@ -1,7 +1,7 @@
 /**
- * Persists every Agent-X conversation turn into MemoryFabric as vector-indexed
- * nodes (tag: chat_memory). Shared globally (session_id NULL) so memory_fabric_search
- * and GraphRAG can recall past chat across sessions.
+ * Persists conversation turns into MemoryFabric as vector-indexed nodes (tag: chat_memory).
+ * Super sessions write to the global bucket (session_id NULL); all other sessions write
+ * under their own session_id so reads never bleed across sessions.
  */
 import type { EmbeddingProvider } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
@@ -17,6 +17,7 @@ type TurnJob = {
   userMessage: string;
   assistantResponse: string;
   sourceSessionId: string;
+  storageSessionId?: string;
 };
 
 function turnContent(userMessage: string, assistantResponse: string): string {
@@ -41,13 +42,23 @@ export class ChatTurnMemoryIngester {
   ) {}
 
   /** Queue a turn for durable embedding; never drops on concurrency pressure. */
-  ingestTurn(userMessage: string, assistantResponse: string, sourceSessionId: string): Promise<boolean> {
+  ingestTurn(
+    userMessage: string,
+    assistantResponse: string,
+    sourceSessionId: string,
+    storageSessionId?: string,
+  ): Promise<boolean> {
     const user = userMessage.trim();
     const assistant = assistantResponse.trim();
     if (user.length < MIN_CHARS || assistant.length < MIN_CHARS) {
       return Promise.resolve(false);
     }
-    this.queue.push({ userMessage: user, assistantResponse: assistant, sourceSessionId });
+    this.queue.push({
+      userMessage: user,
+      assistantResponse: assistant,
+      sourceSessionId,
+      storageSessionId,
+    });
     void this.drainQueue();
     return Promise.resolve(true);
   }
@@ -76,7 +87,7 @@ export class ChatTurnMemoryIngester {
   }
 
   private async embedJob(job: TurnJob): Promise<boolean> {
-    const { userMessage, assistantResponse, sourceSessionId } = job;
+    const { userMessage, assistantResponse, sourceSessionId, storageSessionId } = job;
     try {
       const label = userMessage.slice(0, 80);
       if (await this.fabric.hasChatMemoryTurn(sourceSessionId, label)) {
@@ -90,7 +101,7 @@ export class ChatTurnMemoryIngester {
         content,
         embedding,
         tag: CHAT_MEMORY_TAG,
-        sessionId: undefined,
+        sessionId: storageSessionId,
         confidence: 0.88,
         provenance: {
           type: 'chat_turn',

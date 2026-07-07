@@ -382,12 +382,13 @@ export function createAgent(
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
     prepareIntegrationTools: async (userText) => {
-      const { promptHint } = await eng.integrationHub.prepareForAgentTurn(
+      const { promptHint, accessPolicy } = await eng.integrationHub.prepareForAgentTurn(
         eng.toolkit.registry,
         eng.toolkit.executor,
         userText,
       );
-      return promptHint;
+      if (!promptHint && !accessPolicy) return undefined;
+      return { hint: promptHint, policy: accessPolicy };
     },
     onPart,
     persona: crewPrivateHost ? null : persona,

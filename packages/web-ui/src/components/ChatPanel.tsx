@@ -676,6 +676,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     setPendingFeedbackMessageId(null);
   }, []);
 
+  const voicePendingUserIdRef = useRef<string | null>(null);
+
   const appendVoiceUserTurn = useCallback((text: string, messageId?: string) => {
     const trimmed = sanitizeForJson(text.trim());
     if (!trimmed) return;
@@ -698,6 +700,21 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     });
   }, []);
 
+  const handleVoiceUserPending = useCallback(() => {
+    if (voicePendingUserIdRef.current) return;
+    const id = crypto.randomUUID();
+    voicePendingUserIdRef.current = id;
+    appendVoiceUserTurn('…', id);
+    requestAnimationFrame(() => scrollAfterVoiceUserRef.current());
+  }, [appendVoiceUserTurn]);
+
+  const handleVoiceUserDiscarded = useCallback(() => {
+    const pendingId = voicePendingUserIdRef.current;
+    voicePendingUserIdRef.current = null;
+    if (!pendingId) return;
+    setMessages((prev) => prev.filter((m) => m.id !== pendingId));
+  }, []);
+
   const beginVoiceAgentTurn = useCallback(() => {
     beginTurnUi();
     setMessages((prev) => {
@@ -713,10 +730,27 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const scrollAfterVoiceUserRef = useRef<() => void>(() => {});
 
   const handleVoiceTranscript = useCallback((text: string, empty: boolean) => {
-    if (empty) return;
-    appendVoiceUserTurn(text);
+    if (empty) {
+      handleVoiceUserDiscarded();
+      return;
+    }
+    const trimmed = sanitizeForJson(text.trim());
+    if (!trimmed) {
+      handleVoiceUserDiscarded();
+      return;
+    }
+    const pendingId = voicePendingUserIdRef.current;
+    voicePendingUserIdRef.current = null;
+    if (pendingId) {
+      setMessages((prev) => prev.map((m) => (
+        m.id === pendingId ? { ...m, content: trimmed, voiceInput: true } : m
+      )));
+    } else {
+      appendVoiceUserTurn(trimmed);
+    }
+    beginVoiceAgentTurn();
     requestAnimationFrame(() => scrollAfterVoiceUserRef.current());
-  }, [appendVoiceUserTurn]);
+  }, [appendVoiceUserTurn, beginVoiceAgentTurn, handleVoiceUserDiscarded]);
 
   const handleVoiceTiming = useCallback((timings: VoiceTurnTimings) => {
     setMessages((prev) => {
@@ -744,14 +778,16 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       if (autoStart) setVoiceAutoStart(true);
     });
     voiceCtx.registerVoiceChatBridge({
+      onVoiceUserPending: handleVoiceUserPending,
+      onVoiceUserDiscarded: handleVoiceUserDiscarded,
       onTranscriptFinal: handleVoiceTranscript,
-      onAgentRunning: beginVoiceAgentTurn,
+      onAgentRunning: () => {},
     });
     return () => {
       voiceCtx.registerInlineVoiceHandler(null);
       voiceCtx.registerVoiceChatBridge(null);
     };
-  }, [voiceCtx, handleVoiceTranscript, beginVoiceAgentTurn]);
+  }, [voiceCtx, handleVoiceUserPending, handleVoiceUserDiscarded, handleVoiceTranscript]);
   const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
   const [crewDossierOpen, setCrewDossierOpen] = useState(false);
   const [crewDossierCrew, setCrewDossierCrew] = useState<PrebuiltCrew | null>(null);
@@ -1888,9 +1924,17 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               setStreaming(false);
             } else if (phase === 'done' || phase === 'cancelled' || phase === 'idle') {
               stopTurnIndicator();
+              setPermissionPrompt(null);
+              setPendingPermissionCount(0);
             }
             return prev;
           }
+
+          case 'task_aborted':
+            setPermissionPrompt(null);
+            setPendingPermissionCount(0);
+            stopTurnIndicator();
+            return prev;
 
           case 'operation_file_edited':
           case 'operation_file_created':
@@ -2915,6 +2959,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
 
   const handleCancel = useCallback(async () => {
     endTurnUi();
+    setPermissionPrompt(null);
+    setPendingPermissionCount(0);
     try { await chat.cancel(); } catch { /* ignore */ }
   }, [endTurnUi]);
 
@@ -3840,15 +3886,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             pointerEvents: questionnairePending || sessionRestoring ? 'none' : 'auto',
             '&:focus-within': questionnairePending ? {} : { borderColor: hyperdriveMode ? '#ff00ff90' : agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
           }}>
-            {streaming && (
-              <Box sx={{ px: 1.25, pt: 0.75, pb: 0.25 }}>
-                <ExecutionStatusChip
-                  stage={turnActivity?.stage}
-                  step={turnActivity?.step}
-                  elapsedMs={turnActivity?.elapsedMs}
-                />
-              </Box>
-            )}
             {/* Permission banner above input */}
             {permissionPrompt && (
               <Box sx={{ px: 1.25, pt: 1.25, pb: 0.5 }}>
@@ -3899,7 +3936,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             ) : (
               <ChatVoicePanel
                 chatSessionId={currentSessionId}
-                onAgentRunning={beginVoiceAgentTurn}
+                onVoiceUserPending={handleVoiceUserPending}
+                onVoiceUserDiscarded={handleVoiceUserDiscarded}
                 onTranscriptFinal={handleVoiceTranscript}
                 onVoiceTiming={handleVoiceTiming}
                 autoStart={voiceAutoStart}
@@ -4095,6 +4133,14 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
 
               {/* Spacer */}
               <Box sx={{ flex: 1 }} />
+
+              {streaming && (
+                <ExecutionStatusChip
+                  stage={turnActivity?.stage}
+                  step={turnActivity?.step}
+                  elapsedMs={turnActivity?.elapsedMs}
+                />
+              )}
 
               {/* Text / Voice composer toggle */}
               {voiceCtx?.voiceReady && (
