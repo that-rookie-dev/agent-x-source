@@ -3,6 +3,7 @@
  * Output: packages/server/release/agentx-{platform}-server.tar.gz
  */
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -21,6 +22,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const serverRoot = join(__dirname, '..');
 const workspaceRoot = join(serverRoot, '..', '..');
 const storeDir = join(workspaceRoot, 'node_modules', '.pnpm');
+const IS_WIN = platform() === 'win32';
+
+function shellPath(p) {
+  return IS_WIN ? p.replace(/\\/g, '/') : p;
+}
 
 function getPlatformSuffix() {
   const os = platform();
@@ -115,7 +121,13 @@ if (!existsSync(daemonJs)) {
 }
 
 cpSync(daemonJs, join(staging, 'index.js'));
-cpSync(join(serverRoot, 'scripts', 'agentx-cli.sh'), join(staging, 'agentx'), { mode: 0o755 });
+const agentxDest = join(staging, IS_WIN ? 'agentx.cmd' : 'agentx');
+if (IS_WIN) {
+  writeFileSync(agentxDest, '@echo off\r\nnode "%~dp0index.js" %*\r\n');
+} else {
+  cpSync(join(serverRoot, 'scripts', 'agentx-cli.sh'), agentxDest);
+  chmodSync(agentxDest, 0o755);
+}
 
 const runtimePkg = JSON.parse(
   readFileSync(join(workspaceRoot, 'packages', 'runtime', 'package.json'), 'utf-8'),
@@ -139,7 +151,7 @@ execSync('npm install --omit=dev --ignore-scripts', { cwd: staging, stdio: 'inhe
 copyPgDeps(join(resourcesDir, 'web-api', 'node_modules'));
 
 console.log(`Creating ${tarball}...`);
-execSync(`tar -czf "${tarball}" -C "${staging}" .`, { stdio: 'inherit' });
+execSync(`tar -czf "${shellPath(tarball)}" -C "${shellPath(staging)}" .`, { stdio: 'inherit' });
 
 rmSync(staging, { recursive: true, force: true });
 console.log(`Server tarball ready: ${tarball}`);

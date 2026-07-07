@@ -28,6 +28,10 @@ if (!url) {
 
 const IS_WIN = platform() === 'win32';
 
+function shellPath(p) {
+  return IS_WIN ? p.replace(/\\/g, '/') : p;
+}
+
 const pythonBin = IS_WIN
   ? join(OUT_DIR, 'python.exe')
   : join(OUT_DIR, 'bin', 'python3');
@@ -52,7 +56,8 @@ const file = createWriteStream(TARBALL);
 await pipeline(res.body, file);
 
 console.log('Extracting...');
-execSync(`tar -xzf "${TARBALL}" -C "${OUT_DIR}" --strip-components=1`, { stdio: 'pipe' });
+const tarCmd = `tar -xzf "${shellPath(TARBALL)}" -C "${shellPath(OUT_DIR)}" --strip-components=1`;
+execSync(tarCmd, { stdio: 'pipe' });
 
 // Windows PBS archives sometimes have a nested 'python/' directory inside the tarball
 if (IS_WIN) {

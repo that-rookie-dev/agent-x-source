@@ -139,16 +139,11 @@ jobs:
             echo "failed after $max attempts" >&2
             return 1
           }
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            retry pnpm install --filter @agentx/desktop --config.supportedArchitectures.cpu=arm64,x64 --config.supportedArchitectures.os=darwin
+          fi
           cd packages/desktop
           retry node scripts/materialize-pack-deps.mjs
-          # When cross-compiling for x64 on an arm64 runner, npm skips the
-          # darwin-x64 optional dependency (cpu mismatch). Force-install it
-          # with --os/--cpu overrides so electron-builder can bundle it into
-          # the x64 app. This replaces darwin-arm64 (no longer needed —
-          # setup:extensions already ran via pnpm with universal pgvector).
-          if [ "${{ matrix.arch }}" = "x64" ]; then
-            retry npm install @embedded-postgres/darwin-x64@17.5.0-beta.15 --os=darwin --cpu=x64
-          fi
           retry npm run ${{ matrix.dist_script }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
