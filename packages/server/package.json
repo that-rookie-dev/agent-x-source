@@ -1,0 +1,25 @@
+{
+  "name": "@agentx/server",
+  "version": "0.8.6",
+  "private": true,
+  "type": "commonjs",
+  "main": "./dist/daemon.js",
+  "bin": {
+    "agentx-server": "./dist/daemon.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:deps": "pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/web-ui --filter @agentx/web-neuron --filter @agentx/runtime run build",
+    "pack:server": "pnpm run build:deps && pnpm --filter @agentx/runtime run setup:extensions && pnpm --filter @agentx/runtime run setup:python && pnpm --filter @agentx/runtime run setup:voice-bundled && pnpm run build && node scripts/pack-server.mjs",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@agentx/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0"
+  }
+}

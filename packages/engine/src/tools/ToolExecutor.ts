@@ -1,4 +1,4 @@
-import type { ToolResult, ToolExecutionContext, PermissionRule } from '@agentx/shared';
+import type { ToolResult, ToolExecutionContext, PermissionRule, SessionContextKind } from '@agentx/shared';
 import { isChannelSessionId } from '@agentx/shared';
 import { evaluateRules } from './permissions/RuleEngine.js';
 import { isPermissionExemptTool } from './permissions/exempt-tools.js';
@@ -9,6 +9,11 @@ import type { SafetyAuditor } from '../safety/SafetyAuditor.js';
 import type { PolicyEngine } from '../enterprise/PolicyEngine.js';
 import type { AgentInfo } from '../agent/AgentInfo.js';
 import { isPlanDeniedTool } from '../agent/plan-mode-utils.js';
+import type { ThirdPartyTurnPolicy } from '../integrations/third-party-access.js';
+import {
+  blockCredentialScavenger,
+  blockThirdPartyLocalSubstitute,
+} from '../integrations/third-party-access-guard.js';
 import { buildIntegrationActionPreview } from '../integrations/action-preview.js';
 import { isIntegrationToolId } from '../integrations/action-classifier.js';
 
@@ -55,6 +60,10 @@ export class ToolExecutor {
   private sessionRules: PermissionRule[] = [];
   private agentPermissions: PermissionRule[] = [];
   private userConfigRules: PermissionRule[] = [];
+  private voiceTurnActive = false;
+  private sessionContextKind?: SessionContextKind;
+  private thirdPartyTurnPolicy: ThirdPartyTurnPolicy | null = null;
+  private turnAborted = false;
 
   constructor(registry: ToolRegistry, scopePath: string) {
     this.registry = registry;
@@ -75,6 +84,10 @@ export class ToolExecutor {
     this.alwaysPromptPermissions = enabled;
   }
 
+  setSessionContextKind(kind?: SessionContextKind): void {
+    this.sessionContextKind = kind;
+  }
+
   setSessionRules(rules: PermissionRule[]): void {
     this.sessionRules = rules;
   }
@@ -85,6 +98,26 @@ export class ToolExecutor {
 
   setUserConfigRules(rules: PermissionRule[]): void {
     this.userConfigRules = rules;
+  }
+
+  setVoiceTurnActive(active: boolean): void {
+    this.voiceTurnActive = active;
+  }
+
+  setThirdPartyTurnPolicy(policy: ThirdPartyTurnPolicy | null): void {
+    this.thirdPartyTurnPolicy = policy;
+  }
+
+  getThirdPartyTurnPolicy(): ThirdPartyTurnPolicy | null {
+    return this.thirdPartyTurnPolicy;
+  }
+
+  setTurnAborted(aborted: boolean): void {
+    this.turnAborted = aborted;
+  }
+
+  isTurnAborted(): boolean {
+    return this.turnAborted;
   }
 
   getExecutionHistory(): ToolExecutionEntry[] {
@@ -167,11 +200,34 @@ export class ToolExecutor {
     this.handlers.set(toolId, handler);
   }
 
+  hasHandler(toolId: string): boolean {
+    return this.handlers.has(toolId);
+  }
+
+  unregisterHandlersByPrefix(prefix: string): number {
+    let removed = 0;
+    for (const toolId of [...this.handlers.keys()]) {
+      if (toolId.startsWith(prefix)) {
+        this.handlers.delete(toolId);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
   async execute(
     toolId: string,
     args: Record<string, unknown>,
     sessionId: string,
   ): Promise<ToolResult> {
+    if (this.turnAborted) {
+      return {
+        success: false,
+        output: 'Turn aborted — tool execution stopped.',
+        error: 'TURN_ABORTED',
+      };
+    }
+
     let tool = this.toolCache.get(toolId);
     if (!tool) {
       tool = this.registry.get(toolId);
@@ -199,6 +255,13 @@ export class ToolExecutor {
         };
       }
     }
+
+    // Third-party access — block local scavenging for external service requests
+    const scavengerBlock = blockCredentialScavenger(toolId, args);
+    if (scavengerBlock) return scavengerBlock;
+
+    const thirdPartyBlock = blockThirdPartyLocalSubstitute(toolId, this.thirdPartyTurnPolicy);
+    if (thirdPartyBlock) return thirdPartyBlock;
 
     // Safety audit — intercept before execution
     if (this.safetyAuditor) {
@@ -253,6 +316,14 @@ export class ToolExecutor {
       return { success: false, output: `"${toolId}" is not available.`, error: 'MODE_RESTRICTED' };
     }
 
+    if (this.turnAborted) {
+      return {
+        success: false,
+        output: 'Turn aborted — tool execution stopped.',
+        error: 'TURN_ABORTED',
+      };
+    }
+
     const permissionExempt = isPermissionExemptTool(toolId);
     const shouldPrompt = this.alwaysPromptPermissions || tool.riskLevel !== 'low';
     const permissionHandler = this.resolvePermissionRequestHandler(sessionId);
@@ -301,7 +372,9 @@ export class ToolExecutor {
     const context: ToolExecutionContext = {
       sessionId,
       scopePath: this.scopeGuard.getScopePath(),
-      timeout: 30_000,
+      contextKind: this.sessionContextKind,
+      timeout: this.voiceTurnActive ? 22_000 : 30_000,
+      voiceTurn: this.voiceTurnActive,
       mode: this.mode,
       onOutput: onToolOutput,
     };

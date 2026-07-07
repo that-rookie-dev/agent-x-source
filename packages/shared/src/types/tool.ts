@@ -69,11 +69,17 @@ export interface ToolResult {
   metadata?: Record<string, unknown>;
 }
 
+import type { SessionContextKind } from './session-context.js';
+
 export interface ToolExecutionContext {
   sessionId: string;
   scopePath: string;
   agentId?: string;
+  /** Drives memory fabric read/write scoping for tools. */
+  contextKind?: SessionContextKind;
   timeout: number;
   mode?: 'agent' | 'plan';
+  /** Voice comms turn — tighter tool time budgets. */
+  voiceTurn?: boolean;
   onOutput?: (output: string) => void;
 }

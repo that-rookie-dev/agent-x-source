@@ -11,6 +11,7 @@ import ViewStreamIcon from '@mui/icons-material/ViewStream';
 import { PanelHeader } from './PanelHeader';
 import { colors } from '../theme';
 import { getAuthToken } from '../api';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface LogEntry {
   timestamp: string;
@@ -147,12 +148,12 @@ export function LogsPanel({ onClose, onTogglePosition, position }: LogsPanelProp
     const text = filteredEntries
       .map((e) => `[${e.timestamp}] [${e.level.toUpperCase()}] [${e.code}] ${e.message}${e.stack ? '\n' + e.stack : ''}`)
       .join('\n');
-    navigator.clipboard.writeText(text).catch(() => {});
+    void copyToClipboard(text);
   }, [filteredEntries]);
 
   const handleCopyEntry = useCallback((entry: LogEntry, index: number) => {
     const text = `[${entry.timestamp}] [${entry.level.toUpperCase()}] [${entry.code}] ${entry.message}${entry.stack ? '\n' + entry.stack : ''}`;
-    navigator.clipboard.writeText(text).catch(() => {});
+    void copyToClipboard(text);
     setCopiedIndex(index);
     setTimeout(() => setCopiedIndex(null), 2000);
   }, []);

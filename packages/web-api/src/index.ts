@@ -7,11 +7,13 @@ import os from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady } from './engine.js';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, voiceConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported, resolveRuntimeSettings, normalizeClientSituation } from '@agentx/shared';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady, applyRuntimeSettings } from './engine.js';
 import { applyChannelsConfig, discoverTelegramBot, getTelegramInboundStatus, getTelegramRuntimeHints, restartTelegramInbound, saveVerifiedTelegram, sendTelegramGreeting } from './channels-sync.js';
 import { buildGraphRagSummarizer } from './distillation-generator.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect, broadcastBrainActivity } from './ws.js';
+import { setupVoiceWebSocket, shutdownVoiceWebSocket } from './voice-ws.js';
+import { attachWebSocketUpgradeRouter } from './ws-upgrade-router.js';
 import { turnRegistry } from './turn-registry.js';
 import {
   sessionSettings,
@@ -24,9 +26,11 @@ import {
   recordTurnFeedback,
   loadSessionMessagesPage,
   getForceWebSearchError,
+  cancelActiveSessionTurn,
 } from './chat-helpers.js';
 import { enrichSessionMessagesForUi, mergeNormalizedMessageForApi } from './message-enrich.js';
 import { authMiddleware, createAuthRouter } from './auth.js';
+import { redactConfigForClient, mergeConfigPreservingSecrets, redactProvidersForClient, REDACTED_SECRET } from './config-redaction.js';
 import { setIngestionWorkerRef, refreshIngestionWorkerGenerator } from './ingestion-worker-ref.js';
 import {
   bindIngestionWorker,
@@ -38,7 +42,7 @@ import {
 } from './ingestion-governor.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath, getBackgroundTaskPool, setMemoryFabricInstance, setEmbedderInstance, backfillChatMemoryFromSessions } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -57,17 +61,20 @@ import { persistCrewRosterPickerOffer, updateCrewRosterPickerStatus } from './cr
 import { handleClarificationRespond } from './clarification-resume.js';
 import { loadSessionResumeState } from './session-resume-state.js';
 import { postCrewChatSession } from './crew-chat.js';
+import { postAgentXCoreSession } from './agent-x-core.js';
 import { resolveHostCrewDisplay, resolveCrewPrivateHostForSession, syncHostCrewHonorificToSession } from './host-crew-session.js';
 import { memoryRouter } from './memory-api.js';
 import localModelRouter from './local-model-api.js';
 import embeddingModelRouter from './embedding-model-api.js';
 import modelBenchmarkRouter from './model-benchmark-api.js';
-import { integrationsRouter } from './integrations-api.js';
+import voiceRouter from './voice-api.js';
+import { integrationsRouter, handleMcpStdioOAuthCallback } from './integrations-api.js';
 import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutomation } from './automation/index.js';
 import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
+const HOST = process.env['AGENTX_HOST'] ?? '127.0.0.1';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Embedding models are downloaded at runtime (during the setup wizard) to the
@@ -348,6 +355,9 @@ const upload = multer({
 // Mount under /api so endpoints are /api/auth/*, matching web-ui calls
 app.use('/api', createAuthRouter());
 
+// Gmail MCP OAuth callback (Google redirects here — no /api prefix)
+app.get('/oauth2callback', (req, res) => { void handleMcpStdioOAuthCallback(req, res); });
+
 // Auth middleware — protects all /api/* routes except auth endpoints
 app.use(authMiddleware);
 
@@ -358,6 +368,7 @@ app.use('/api', memoryRouter);
 app.use('/api', localModelRouter);
 app.use('/api', embeddingModelRouter);
 app.use('/api', modelBenchmarkRouter);
+app.use('/api', voiceRouter);
 app.use('/api', integrationsRouter);
 registerAutomationRoutes(app);
 
@@ -375,9 +386,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// CORS + cache prevention
+// CORS — set AGENTX_CORS_ORIGIN for cross-origin clients; same-origin needs no header
+const corsOrigin = process.env.AGENTX_CORS_ORIGIN;
 app.use((_req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (corsOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Content-Disposition, X-Request-Id');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -482,12 +497,56 @@ app.get('/api/setup/status', (_req, res) => {
   }
 });
 
+app.post('/api/setup/complete', (req, res) => {
+  try {
+    const eng = getEngine();
+    const existing = eng.configManager.load();
+    const callsignRaw = typeof req.body?.callsign === 'string' ? req.body.callsign.trim() : '';
+    const callsign = callsignRaw || existing.user?.callsign?.trim() || '';
+    const merged: AgentXConfig = {
+      ...existing,
+      setupComplete: true,
+      ...(callsign ? { user: { callsign } } : {}),
+    };
+    eng.configManager.save(merged);
+    res.json({ ok: true, setupComplete: true });
+  } catch (err) {
+    getLogger().error('POST_API_SETUP_COMPLETE', err instanceof Error ? err : String(err));
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to mark setup complete',
+    });
+  }
+});
+
 app.get('/api/config', (_req, res) => {
   const eng = getEngine();
   try {
-    res.json(eng.configManager.load());
+    res.json(redactConfigForClient(eng.configManager.load()));
   } catch (e) {
     getLogger().error('GET_API_CONFIG', e instanceof Error ? e : String(e));    res.status(400).json({ error: 'Agent-X is not configured. Configure a provider and model first.' });
+  }
+});
+
+app.get('/api/runtime/status', (_req, res) => {
+  try {
+    const eng = getEngine();
+    const cfg = eng.configManager.load();
+    const resolved = resolveRuntimeSettings(cfg.runtime);
+    const pool = getBackgroundTaskPool();
+    res.json({
+      configured: resolved,
+      cpuCores: os.cpus().length,
+      backgroundPool: { running: pool.running, pending: pool.pending },
+      restartRequired: true,
+    });
+  } catch {
+    res.json({
+      configured: resolveRuntimeSettings(null),
+      cpuCores: os.cpus().length,
+      backgroundPool: { running: 0, pending: 0 },
+      restartRequired: true,
+    });
   }
 });
 
@@ -495,7 +554,7 @@ app.put('/api/config', (req, res) => {
   const eng = getEngine();
   try {
     const existing = eng.configManager.load();
-    const merged = { ...existing, ...req.body };
+    const merged = mergeConfigPreservingSecrets(existing, { ...existing, ...req.body });
     if (req.body.tools?.webSearch) {
       merged.tools = {
         ...existing.tools,
@@ -513,6 +572,31 @@ app.put('/api/config', (req, res) => {
         discord: { ...existing.channels?.discord, ...req.body.channels?.discord },
       };
     }
+    if (req.body.voice) {
+      merged.voice = {
+        ...existing.voice,
+        ...req.body.voice,
+        mode: { ...existing.voice?.mode, ...req.body.voice?.mode },
+        stt: { ...existing.voice?.stt, ...req.body.voice?.stt },
+        tts: { ...existing.voice?.tts, ...req.body.voice?.tts },
+        sidecar: { ...existing.voice?.sidecar, ...req.body.voice?.sidecar },
+        fillers: { ...existing.voice?.fillers, ...req.body.voice?.fillers },
+        wakeWord: { ...existing.voice?.wakeWord, ...req.body.voice?.wakeWord },
+        // downloadedAssets is server-managed (registered during voice setup /
+        // asset downloads). Never let the client overwrite it — stale UI state
+        // used to wipe installed assets here.
+        downloadedAssets: existing.voice?.downloadedAssets ?? [],
+      };
+      const voiceParse = voiceConfigSchema.safeParse(merged.voice);
+      if (!voiceParse.success) {
+        res.status(400).json({
+          error: 'invalid-voice-config',
+          message: voiceParse.error.issues.map((issue) => issue.message).join('; '),
+        });
+        return;
+      }
+      merged.voice = voiceParse.data ?? merged.voice;
+    }
     // Validate provider config — reject if it would leave zero configured providers
     // or unset the active provider. This ensures the ingestion worker's LLM
     // generator can always be built after login.
@@ -522,6 +606,7 @@ app.put('/api/config', (req, res) => {
       return;
     }
     eng.configManager.save(merged);
+    applyRuntimeSettings(merged);
     applyWebSearchConfigFromAgentConfig(merged);
     void applyChannelsConfig(merged).catch((e: unknown) => {
       getLogger().warn('CHANNELS', `Failed to apply channel config: ${e instanceof Error ? e.message : String(e)}`);
@@ -530,31 +615,11 @@ app.put('/api/config', (req, res) => {
     void refreshIngestionWorkerGenerator();
     res.json({ ok: true });
     } catch (err) {
-    // If load failed (e.g. DEK mismatch from different auth), save raw body as new config
-    try {
-      const body = req.body as Record<string, unknown>;
-      if (body.tools && typeof body.tools === 'object' && (body.tools as { webSearch?: unknown }).webSearch) {
-        const tools = body.tools as { webSearch?: import('@agentx/shared').WebSearchToolsConfig };
-        tools.webSearch = mergeWebSearchToolsConfig(undefined, tools.webSearch);
-      }
-      if (body.channels && typeof body.channels === 'object') {
-        const ch = body.channels as Record<string, unknown>;
-        body.channels = {
-          telegram: { ...(ch.telegram as object | undefined) },
-          slack: { ...(ch.slack as object | undefined) },
-          email: { ...(ch.email as object | undefined) },
-          discord: { ...(ch.discord as object | undefined) },
-        };
-      }
-      eng.configManager.save(req.body);
-      applyWebSearchConfigFromAgentConfig(req.body);
-      res.json({ ok: true });
-    } catch (saveErr) {
-      getLogger().error('PUT_API_CONFIG', err instanceof Error ? err : String(err));      res.status(500).json({
-        ok: false,
-        error: 'Failed to save config. Auth and config DEK may be out of sync. Re-create root user or ensure auth.json is shared between host and container.',
-      });
-    }
+    getLogger().error('PUT_API_CONFIG', err instanceof Error ? err : String(err));
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to save config. Auth and config DEK may be out of sync. Re-create root user or ensure auth.json is shared between host and container.',
+    });
   }
 });
 
@@ -601,9 +666,9 @@ app.put('/api/agent/persona', async (req, res) => {
       };
       (eng.agent as any).persona = personaData;
       // Re-seed identity manager so evolution overlay is in sync
-      try { (eng.agent as any).secretSauce?.identity?.seedFromPersona(personaData); } catch (e) {}
-      // Force a system prompt rebuild on next turn
-      (eng.agent as any).lastContextEpoch = -1;
+      try { eng.agent.applyPersona(personaData); } catch (e) {
+        try { (eng.agent as any).secretSauce?.identity?.seedFromPersona(personaData); } catch { /* ignore */ }
+      }
     }
     res.json({ ok: true });
   } catch (err) {
@@ -677,7 +742,21 @@ app.get('/api/providers/available', (_req, res) => {
 
 app.post('/api/provider/validate', async (req, res) => {
   try {
-    const { provider, apiKey, baseUrl } = req.body as { provider: string; apiKey?: string; baseUrl?: string };
+    const { provider, baseUrl } = req.body as { provider: string; apiKey?: string; baseUrl?: string };
+    let apiKey = req.body?.apiKey as string | undefined;
+    if (!apiKey || apiKey === REDACTED_SECRET) {
+      try {
+        const eng = getEngine();
+        const cfg = eng.configManager.load();
+        const creds = cfg.provider.providers[provider as ProviderId];
+        if (creds?.activeProfile && creds.profiles?.[creds.activeProfile]) {
+          apiKey = creds.profiles[creds.activeProfile]?.apiKey;
+        }
+        if (!apiKey) apiKey = creds?.apiKey;
+      } catch {
+        apiKey = undefined;
+      }
+    }
     const prov = ProviderFactory.create(provider as ProviderId, apiKey, baseUrl);
     const valid = await prov.validate();
     if (valid) {
@@ -692,8 +771,11 @@ app.post('/api/provider/validate', async (req, res) => {
 
 app.get('/api/provider/models', async (req, res) => {
   try {
+    if (req.query['apiKey']) {
+      return res.status(400).json({ error: 'apiKey query parameter is not allowed — configure keys in Settings' });
+    }
     let providerId = (req.query['provider'] as string) || '';
-    let apiKey = (req.query['apiKey'] as string) || undefined;
+    let apiKey: string | undefined;
     let baseUrl = (req.query['baseUrl'] as string) || undefined;
     if (!apiKey && !baseUrl) {
       try {
@@ -782,19 +864,9 @@ app.get('/api/providers', (_req, res) => {
   const eng = getEngine();
   try {
     const config = eng.configManager.load();
-    const configured: Array<{ id: string; configured: boolean; apiKey?: string; baseUrl?: string; profiles?: Array<{ id: string; label: string }>; activeProfile?: string }> = [];
-    for (const [id, creds] of Object.entries(config.provider.providers)) {
-      if (creds.configured) {
-        const entry: { id: string; configured: boolean; apiKey?: string; baseUrl?: string; profiles?: Array<{ id: string; label: string }>; activeProfile?: string } = {
-          id, configured: true, apiKey: creds.apiKey, baseUrl: creds.baseUrl,
-        };
-        if (creds.profiles) {
-          entry.profiles = Object.entries(creds.profiles).map(([pid, prof]) => ({ id: pid, label: prof.label }));
-        }
-        if (creds.activeProfile) entry.activeProfile = creds.activeProfile;
-        configured.push(entry);
-      }
-    }
+    const configured = redactProvidersForClient(
+      config.provider.providers as unknown as Record<string, Record<string, unknown>>,
+    ).filter((p) => p['configured']);
     res.json({ active: config.provider.activeProvider, providers: configured });
   } catch (e) {
     res.json({ active: '', providers: [] });
@@ -1404,17 +1476,18 @@ app.post('/api/crew-suggestions/clear-dismiss', postCrewSuggestionClearDismiss);
 app.post('/api/sessions/:id/crew-roster-picker', validate(crewRosterPickerOfferSchema), (req, res) => {
   try {
     const sessionId = req.params['id']!;
-    const { userText, evaluation, attachments } = req.body as {
+    const { userText, evaluation, attachments, userMessageId } = req.body as {
       userText: string;
       evaluation: import('@agentx/shared').CrewSuggestionEvaluation;
       attachments?: Array<{ name: string }>;
+      userMessageId?: string;
     };
     const eng = getEngine();
     if (!eng.sessionManager.getSessionById(sessionId)) {
       res.status(404).json({ error: 'not-found' });
       return;
     }
-    const ids = persistCrewRosterPickerOffer({ sessionId, userText, evaluation, attachments });
+    const ids = persistCrewRosterPickerOffer({ sessionId, userText, evaluation, attachments, userMessageId });
     res.json({ ok: true, ...ids });
   } catch (e: unknown) {
     getLogger().error('CREW_ROSTER_PICKER_OFFER', e instanceof Error ? e : String(e));
@@ -1453,6 +1526,7 @@ app.patch('/api/sessions/:id/crew-roster-picker', validate(crewRosterPickerUpdat
 const crewChatRateLimiter = createRateLimiter({ prefix: 'CREW_CHAT', label: 'CrewChat' });
 app.use('/api/crew-chat', crewChatRateLimiter.middleware);
 app.post('/api/crew-chat/sessions', validate(crewChatSessionSchema), postCrewChatSession);
+app.post('/api/agent-x-core/session', postAgentXCoreSession);
 
 app.get('/api/crew-catalog/categories', listCatalogCategories);
 app.get('/api/crew-catalog/seed-status', getCatalogSeedStatusHandler);
@@ -1580,7 +1654,7 @@ app.use('/api/chat', chatRateLimiter.middleware);
 // NEW: Streaming SSE endpoint for real-time progress visualization
 app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, clientSituation: clientSituationRaw } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
@@ -1590,7 +1664,10 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
       forceWebSearch?: boolean;
+      userMessagePersisted?: boolean;
+      clientSituation?: unknown;
     };
+    const clientSituation = normalizeClientSituation(clientSituationRaw);
     const eng = getEngine();
     
     // Auto-create agent if none exists
@@ -1709,40 +1786,44 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
     const turn = turnRegistry.create(sid);
     let finished = false;
 
-    const poll = setInterval(() => {
-      if (finished) return;
-      const record = turnRegistry.get(turn.turnId);
-      if (!record) return;
+    const finishTurn = (record: ReturnType<typeof turnRegistry.get>) => {
+      if (finished || !record) return;
       if (record.status === 'complete') {
         finished = true;
-        clearInterval(poll);
         if ((record.message as Record<string, unknown> | undefined)?.id === '__clarify__') {
           sendEvent('clarification', { ok: true });
         } else {
           sendEvent('complete', { ok: true, message: record.message, turnId: turn.turnId });
         }
         clearInterval(heartbeat);
+        unsubTurn();
         unsub();
         res.end();
       } else if (record.status === 'error' || record.status === 'cancelled') {
         finished = true;
-        clearInterval(poll);
         sendEvent('error', { error: record.error ?? 'chat-failed', code: 'PROCESSING_FAILED', partialContent: record.partialContent });
         clearInterval(heartbeat);
+        unsubTurn();
         unsub();
         res.end();
       }
-    }, 500);
+    };
+
+    const unsubTurn = turnRegistry.subscribe(turn.turnId, finishTurn);
 
     req.on('close', () => {
       finished = true;
-      clearInterval(poll);
+      unsubTurn();
       clearInterval(heartbeat);
       unsub();
       try { agent.cancel(); } catch { /* ignore */ }
     });
 
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, forceWebSearch ? { forceWebSearch: true } : undefined);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+      ...(forceWebSearch ? { forceWebSearch: true } : {}),
+      ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
+      ...(clientSituation ? { clientSituation } : {}),
+    });
     sendEvent('started', { turnId: turn.turnId, async: true });
     return;
   } catch (e: unknown) {
@@ -1754,7 +1835,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
 // LEGACY comment removed — async turn endpoint used by ChatPanel (SSE uses message-stream).
 app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
   try {
-    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch } = req.body as {
+    const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, clientSituation: clientSituationRaw } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       retry?: boolean;
@@ -1764,7 +1845,10 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
       forceWebSearch?: boolean;
+      userMessagePersisted?: boolean;
+      clientSituation?: unknown;
     };
+    const clientSituation = normalizeClientSituation(clientSituationRaw);
     const eng = getEngine();
     // Auto-create agent if none exists (first message in session)
     if (!eng.agent) {
@@ -1845,7 +1929,11 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     }
 
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, forceWebSearch ? { forceWebSearch: true } : undefined);
+    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+      ...(forceWebSearch ? { forceWebSearch: true } : {}),
+      ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
+      ...(clientSituation ? { clientSituation } : {}),
+    });
 
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
@@ -1869,6 +1957,8 @@ app.post('/api/chat/cancel', (_req, res) => {
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    const sid = (eng.sessionManager.getActiveSession?.() as { id?: string } | null | undefined)?.id;
+    if (sid) cancelActiveSessionTurn(sid);
     agent.cancel();
     res.json({ ok: true });
   } catch (e) {
@@ -1924,14 +2014,16 @@ app.delete('/api/chat/queue', (_req, res) => {
 // Steer: cancel current task, then immediately send a new message
 app.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
   try {
-    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
+    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       delegateCrewIds?: string[];
       crewSuggestionResolved?: boolean;
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
+      clientSituation?: unknown;
     };
+    const clientSituation = normalizeClientSituation(clientSituationRaw);
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
@@ -1945,7 +2037,9 @@ app.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
     const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
+    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+      ...(clientSituation ? { clientSituation } : {}),
+    });
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
     getLogger().error('POST_API_CHAT_STEER', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'steer-failed' });
@@ -1973,14 +2067,16 @@ app.post('/api/chat/checkpoint-respond', async (req, res) => {
 
 app.post('/api/chat/stop-and-send', validate(chatSteerSchema), async (req, res) => {
   try {
-    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
+    const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
       text: string;
       attachments?: { name: string; content: string }[];
       delegateCrewIds?: string[];
       crewSuggestionResolved?: boolean;
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
+      clientSituation?: unknown;
     };
+    const clientSituation = normalizeClientSituation(clientSituationRaw);
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
@@ -1998,7 +2094,9 @@ app.post('/api/chat/stop-and-send', validate(chatSteerSchema), async (req, res) 
         : buildInstructionForMode(mode));
     const sid = (agent as unknown as { sessionId: string }).sessionId;
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId);
+    runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+      ...(clientSituation ? { clientSituation } : {}),
+    });
     res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
   } catch (e: unknown) {
     getLogger().error('POST_API_CHAT_STOP_AND_SEND', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'stop-and-send-failed' });
@@ -2247,7 +2345,14 @@ function formatSize(bytes: number): string {
   return `${s.toFixed(1)} ${units[i]}`;
 }
 
+let dbStatusCache: { at: number; data: Record<string, unknown> } | null = null;
+const DB_STATUS_CACHE_MS = 60_000;
+
 async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<string, unknown>> {
+  const now = Date.now();
+  if (dbStatusCache && now - dbStatusCache.at < DB_STATUS_CACHE_MS) {
+    return dbStatusCache.data;
+  }
   const store = (eng.sessionManager as any)?.store;
   const pgConnected = !!(store && typeof store.isConnected === 'function' && store.isConnected());
   let dbSizeBytes = 0;
@@ -2310,7 +2415,7 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
     return { path: dir, sizeBytes, sizeFormatted: `${s.toFixed(1)} ${units[i]}` };
   }
 
-  return {
+  const result = {
     backend: 'postgres',
     connected: pgConnected,
     stats: {
@@ -2330,6 +2435,8 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
       connectionString,
     },
   };
+  dbStatusCache = { at: Date.now(), data: result };
+  return result;
 }
 
 app.get('/api/settings/db', async (_req, res) => {
@@ -2358,9 +2465,21 @@ app.get('/api/settings/web-search/status', async (_req, res) => {
 app.post('/api/settings/web-search/test', async (req, res) => {
   try {
     const provider = req.body?.provider as string;
-    const apiKey = String(req.body?.apiKey ?? '');
     if (provider !== 'brave' && provider !== 'exa' && provider !== 'tavily') {
       res.status(400).json({ ok: false, error: 'provider must be brave, exa, or tavily' });
+      return;
+    }
+    let apiKey = String(req.body?.apiKey ?? '').trim();
+    if (!apiKey || apiKey === REDACTED_SECRET) {
+      try {
+        const cfg = getEngine().configManager.load();
+        apiKey = cfg.tools?.webSearch?.[provider]?.apiKey?.trim() ?? '';
+      } catch {
+        apiKey = '';
+      }
+    }
+    if (!apiKey) {
+      res.status(400).json({ ok: false, error: 'No API key configured for this search provider' });
       return;
     }
     const result = await validateWebSearchProvider(provider, apiKey);
@@ -2899,6 +3018,11 @@ app.delete('/api/sessions/:id', (req, res) => {
   try {
     const sessionId = req.params['id']!;
     const eng = getEngine();
+    const peek = eng.sessionManager.getSessionById(sessionId);
+    if (peek?.contextKind === 'agent_x_core') {
+      res.status(403).json({ error: 'core-session-protected' });
+      return;
+    }
     const store = (eng.sessionManager as unknown as { store: { deleteSession: (id: string) => void } }).store;
     store.deleteSession(sessionId);
     // Clean up session folder on disk
@@ -2909,6 +3033,29 @@ app.delete('/api/sessions/:id', (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     getLogger().error('DELETE_API_SESSIONS_ID', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'delete-failed' });
+  }
+});
+
+// Soft-archive all messages in a session: hides them from the UI (faster loads)
+// without deleting anything — DB rows and memory embeddings stay intact.
+app.post('/api/sessions/:id/archive-messages', (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const eng = getEngine();
+    const peek = eng.sessionManager.getSessionById(sessionId);
+    if (!peek) { res.status(404).json({ error: 'not-found' }); return; }
+    const store = (eng.sessionManager as unknown as {
+      store: { archiveSessionMessages?: (id: string) => void };
+    }).store;
+    if (!store.archiveSessionMessages) {
+      res.status(501).json({ error: 'archive-not-supported' });
+      return;
+    }
+    store.archiveSessionMessages(sessionId);
+    res.json({ ok: true });
+  } catch (e) {
+    getLogger().error('ARCHIVE_SESSION_MESSAGES', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: 'archive-failed' });
   }
 });
 
@@ -4634,6 +4781,8 @@ app.get('*', async (req, res, next) => {
 // ───── Server ─────
 const server = createServer(app);
 setupWebSocket(server);
+setupVoiceWebSocket(server);
+attachWebSocketUpgradeRouter(server);
 
 export { app, server };
 
@@ -4694,6 +4843,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
     for (const handler of shutdownHandlers) { try { handler(); } catch {} }
     ingestionWorker?.stop();
     void shutdownAutomation().catch(() => {});
+    void shutdownVoiceWebSocket().catch(() => {});
     shutdownAgentXOverviewBridge();
     // 5. Flush log buffer and exit
     stopGlobalRateLimitCleanup();
@@ -4724,6 +4874,9 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
       getLogger().info('INGESTION_WORKER', 'Neural brain enabled — ingestion worker registered (governor controls run/pause).');
       const fabric = new MemoryFabric(pgPool as any);
       const embedder = new OnnxEmbeddingProvider();
+      setMemoryFabricInstance(fabric);
+      setEmbedderInstance(embedder);
+      void backfillChatMemoryFromSessions(pgPool as any, fabric, embedder).catch(() => { /* best-effort */ });
       ingestionWorker = new IngestionWorker(pgPool as any, fabric, {
         concurrency: 1,
         pollIntervalMs: 10000,
@@ -4817,8 +4970,8 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGQUIT', () => shutdown('SIGQUIT'));
 
-  return server.listen(port, () => {
-    console.log(`Agent-X web API listening on http://localhost:${port}`);
+  return server.listen(port, HOST, () => {
+    console.log(`Agent-X web API listening on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${port}`);
     initAgentXOverviewBridge();
     void bootstrapAutomationFromEngine().catch((e: unknown) => {
       getLogger().warn('AUTOMATION', e instanceof Error ? e.message : String(e));

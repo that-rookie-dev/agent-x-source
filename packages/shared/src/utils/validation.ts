@@ -83,6 +83,60 @@ export const localModelConfigSchema = z.object({
   })).optional(),
 }).optional();
 
+const voiceDownloadedAssetSchema = z.object({
+  assetId: z.string(),
+  kind: z.enum([
+    'python-runtime',
+    'sidecar-dependency',
+    'stt-model',
+    'tts-model',
+    'tts-voice',
+    'vad-model',
+    'helper-binary',
+  ]),
+  engine: z.enum(['faster-whisper', 'kokoro', 'styletts2']).optional(),
+  version: z.string().optional(),
+  installedAt: z.string(),
+  sizeBytes: z.number().optional(),
+  sha256: z.string().optional(),
+});
+
+export const voiceConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  mode: z.object({
+    web: z.enum(['off', 'push-to-talk', 'duplex']).optional(),
+    channels: z.enum(['off', 'voice-notes']).optional(),
+  }).optional(),
+  stt: z.object({
+    engine: z.literal('faster-whisper').default('faster-whisper'),
+    modelId: z.string().optional(),
+    computeType: z.enum(['auto', 'int8', 'int8_float16', 'float16', 'float32']).optional(),
+    device: z.enum(['auto', 'cpu', 'cuda']).optional(),
+  }).optional(),
+  tts: z.object({
+    engine: z.enum(['kokoro', 'styletts2']).default('kokoro'),
+    voiceId: z.string().optional(),
+    style: z.object({
+      emotion: z.string().optional(),
+      expressiveness: z.number().min(0).max(2).optional(),
+    }).optional(),
+    fillerEngine: z.literal('kokoro').optional(),
+  }).optional(),
+  sidecar: z.object({
+    autoStart: z.boolean().optional(),
+    idleUnloadMinutes: z.number().min(0).max(120).optional(),
+  }).optional(),
+  fillers: z.object({
+    enabled: z.boolean().optional(),
+    speakToolProgress: z.boolean().optional(),
+  }).optional(),
+  wakeWord: z.object({
+    enabled: z.boolean().optional(),
+    phrase: z.string().optional(),
+  }).optional(),
+  downloadedAssets: z.array(voiceDownloadedAssetSchema).optional(),
+}).optional();
+
 export const featureRoutingConfigSchema = z.object({
   memoryDistillation: z.enum(['cloud', 'local']).optional(),
   memoryExtraction: z.enum(['cloud', 'local']).optional(),
@@ -140,6 +194,12 @@ export const notificationChannelsConfigSchema = z.object({
   }).optional(),
 }).optional();
 
+export const runtimeSettingsSchema = z.object({
+  cpuBudgetPercent: z.number().int().min(10).max(80).optional(),
+  lazyStorageCache: z.boolean().optional(),
+  backgroundConcurrency: z.number().int().min(1).max(8).optional(),
+}).optional();
+
 export const agentXConfigSchema = z.object({
   provider: z.object({
     activeProvider: providerIdSchema,
@@ -169,6 +229,8 @@ export const agentXConfigSchema = z.object({
   rag: ragConfigSchema,
   tools: toolsConfigSchema,
   channels: notificationChannelsConfigSchema,
+  voice: voiceConfigSchema,
+  runtime: runtimeSettingsSchema,
   maxSubAgents: z.number().min(1).max(20).optional(),
   maxSteps: z.number().int().min(1).max(100).optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),

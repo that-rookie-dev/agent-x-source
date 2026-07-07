@@ -1,5 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
+import type { AgentPersonaConfig, ClientSituation } from '@agentx/shared';
+import { resolveClientNow, resolveClientTimezone } from '@agentx/shared';
 import type { PromptSection } from './types.js';
 
 /**
@@ -26,8 +28,10 @@ export interface SectionContext {
   personaName: string;
   experienceEngine: { getProvenContext(): string; getCautionContext(): string } | null;
   growthEngine: { getGrowthContext(): string } | null;
-  turnFeedbackService: { buildPromptContext(): string } | null;
+  turnFeedbackService: { buildPromptContext: () => string } | null;
   memoryContext?: { getContext(): Promise<MemoryContextState> } | null;
+  getPersona(): AgentPersonaConfig | null;
+  getClientSituation(): ClientSituation | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -44,22 +48,23 @@ export function createProviderPromptSection(ctx: SectionContext): PromptSection<
 }
 
 function selectProviderPrompt(_providerId: string, modelId: string): string {
+  const base = `You are an AI assistant on the user's own machine. Match depth and vocabulary to the user: plain language for everyday and curiosity questions; technical detail, code, and commands only when they ask for implementation help or clearly speak as a developer. Use tools when they genuinely help — never fabricate results.`;
+
   const md = modelId.toLowerCase();
 
   if (md.includes('gpt-4') || md.includes('o1') || md.includes('o3') || md.includes('gpt-4')) {
-    return `You are an AI agent running on the user's own machine. You have full autonomy to solve problems — use tools aggressively, chain actions, and don't stop until the job is done. You prefer to act rather than describe. Never fabricate tool output — run real commands and report real results.`;
+    return `${base} Prefer clear action when the user wants something done; prefer clear explanation when they want to understand.`;
   }
 
   if (md.includes('claude')) {
-    return `You are an AI agent running on the user's own machine. You approach problems systematically — plan first, then execute with precision. You maintain professional objectivity and provide thorough analysis. You use tools to gather information before making decisions. You never fabricate results — always run real commands.`;
+    return `${base} Be systematic and thorough without defaulting to engineer-to-engineer tone.`;
   }
 
   if (md.includes('gemini')) {
-    return `You are a CLI agent specializing in software engineering. You execute tasks in structured phases — explore, design, implement, verify. You prefer concrete action over discussion. Always verify your work before reporting completion.`;
+    return `${base} Structure answers clearly; do not default to CLI or coding tutorials unless requested.`;
   }
 
-  // Default for all other models
-  return `You are an autonomous AI agent running on the user's own machine. You execute tasks by taking real actions — never fabricate results. You chain tool calls to complete complex tasks. You prefer doing over describing.`;
+  return base;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -74,6 +79,46 @@ export function createIdentitySection(ctx: SectionContext): PromptSection<string
     diff: (prev, current) => {
       if (prev === current) return null;
       return `[IDENTITY — UPDATED]\n${current}\n[/IDENTITY]`;
+    },
+  };
+}
+
+export function createPersonaToneSection(ctx: SectionContext): PromptSection<string> {
+  const build = (): string => {
+    const persona = ctx.getPersona();
+    if (!persona) {
+      return [
+        'Match your [IDENTITY] name and description for voice and tone.',
+        'The user may change persona settings at any time — follow the latest [IDENTITY] block.',
+        'Default to plain, accessible language unless they ask for technical depth.',
+      ].join('\n');
+    }
+    const style = persona.communicationStyle || 'direct';
+    const traits = persona.traits?.length ? persona.traits.join(', ') : 'none listed';
+    const styleGuide =
+      style === 'formal'
+        ? 'Speak professionally and precisely; avoid slang unless the user uses it first.'
+        : style === 'casual'
+          ? 'Speak warmly and conversationally; contractions and friendly phrasing are fine.'
+          : style === 'empathetic'
+            ? 'Acknowledge feelings; be supportive and patient in tone.'
+            : 'Be clear and concise; get to the point without fluff.';
+    return [
+      `You are ${persona.name}. Tone and voice MUST follow this persona — not a generic assistant or any fixed character.`,
+      `Communication style: ${style}. Traits: ${traits}.`,
+      persona.description ? `Persona: ${persona.description}` : '',
+      'The user may change persona mid-session — always follow the latest [IDENTITY] and this block.',
+      styleGuide,
+      'Technical depth: plain language by default; code and shell only when they ask for builds, debugging, or say they are technical.',
+    ].filter(Boolean).join('\n');
+  };
+  return {
+    key: 'core/persona-tone',
+    load: build,
+    render: (text) => `[PERSONA TONE]\n${text}\n[/PERSONA TONE]`,
+    diff: (prev, current) => {
+      if (prev === current) return null;
+      return `[PERSONA TONE — UPDATED]\n${current}\n[/PERSONA TONE]`;
     },
   };
 }
@@ -97,7 +142,8 @@ export function createWorkingDirectorySection(ctx: SectionContext): PromptSectio
 // Rules — static behavioral rules
 // ─────────────────────────────────────────────────────────────
 
-export function createRulesSection(): PromptSection<string> {
+export function createRulesSection(opts?: { technicalExecutor?: boolean }): PromptSection<string> {
+  const technical = opts?.technicalExecutor === true;
   const RULES = [
     `[RULES]`,
     `AUTONOMOUS EXECUTION:`,
@@ -112,13 +158,23 @@ export function createRulesSection(): PromptSection<string> {
     `- Medium (4-8 steps, spanning multiple areas) → spawn 2-3 specialists in parallel.`,
     `- Complex (8+ steps) → decompose, spawn specialists, merge results.`,
     ``,
-    `SCRIPT EXECUTION (pick the lightest option):`,
-    `- Explore codebase → glob/grep/code_grep/file_read (never python_rpc for search).`,
-    `- JS/TS projects (package.json) → script_run (auto) or node_rpc; shell_exec for npm/pnpm scripts.`,
-    `- Python-only libs (pandas, numpy) → python_rpc or script_run with language=python.`,
-    `- One-liner shell → shell_exec (node -e, jq, curl).`,
-    `- Builds/tests → shell_exec or test_run/build tools.`,
-    ``,
+    ...(technical ? [
+      `SCRIPT EXECUTION (pick the lightest option):`,
+      `- Explore codebase → glob/grep/code_grep/file_read (never python_rpc for search).`,
+      `- JS/TS projects (package.json) → script_run (auto) or node_rpc; shell_exec for npm/pnpm scripts.`,
+      `- Python-only libs (pandas, numpy) → python_rpc or script_run with language=python.`,
+      `- One-liner shell → shell_exec (node -e, jq, curl).`,
+      `- Builds/tests → shell_exec or test_run/build tools.`,
+      ``,
+    ] : [
+      `AUDIENCE & TONE:`,
+      `- Follow [PERSONA TONE] and [IDENTITY] on every turn — persona is dynamic; the user may change it at any time.`,
+      `- Never default to a fixed assistant voice (e.g. "Jarvis") or assume the user is an engineer.`,
+      `- Curiosity questions (e.g. quantum computing): plain language and analogies — NO code or shell unless they asked for technical depth.`,
+      `- Do NOT volunteer scripts, terminal commands, or file paths unless they asked to build, fix, debug, or automate.`,
+      `- @Crew specialists handle deep technical execution; you coordinate and summarize unless they want engineer-to-engineer detail.`,
+      ``,
+    ]),
     `RESPONSE FORMAT:`,
     `- Be concise unless the task requires depth. Adjust length to the task.`,
     `- Confirmation: "Done: [what]". Error: "Failed: [why] — [fix]".`,
@@ -137,7 +193,7 @@ export function createRulesSection(): PromptSection<string> {
     `- ALWAYS call memory_fabric_search as your FIRST action before answering any question.`,
     `- This searches all documents uploaded via RAG Studio (PDFs, text files, web distillations).`,
     `- Even if you think you know the answer from training data, search first — the user's documents may contain specific information they want you to reference.`,
-    `- Only skip memory_fabric_search if the question is clearly about real-time actions (file operations, tool execution, scheduling) or personal conversation.`,
+    `- Skip memory_fabric_search when the question is clearly about: real-time actions (file ops, scheduling), personal conversation, OR any third-party app/account — see [THIRD_PARTY_SERVICES].`,
     `- If memory_fabric_search returns results, base your answer on those results and cite the source.`,
     `- If it returns "No matching documents", fall back to your knowledge or web_search.`,
     `[/RULES]`,
@@ -156,9 +212,10 @@ export function createCompactRulesSection(): PromptSection<string> {
     `[RULES]`,
     `ACT IMMEDIATELY — use tools when needed; do not narrate your process.`,
     `Use ask_clarification for questions (never plain-chat questions).`,
-    `Use glob/grep/file_read to explore; shell_exec for commands.`,
+    `Plain language by default — no code or shell unless the user asked for technical help.`,
     `Be concise. First-person. Answer the latest user message.`,
     `Search memory_fabric_search when the question may involve uploaded documents.`,
+    `Live external apps and accounts use MCP integrations or public web only — never shell or filesystem search for credentials (see [THIRD_PARTY_SERVICES]).`,
     `[/RULES]`,
   ].join('\n');
   return {
@@ -335,7 +392,8 @@ export const CHAT_MARKDOWN_PROMPT = [
   `- Lists: - bullets for findings; 1. numbered lists for ordered steps.`,
   `- Tables: markdown tables for comparisons, metrics, timelines, and multi-column data.`,
   `- Emphasis: **bold** and *italic* where it aids scanning.`,
-  `- Code: fenced \`\`\` blocks for commands and copyable snippets; inline \`backticks\` for paths, flags, and short identifiers.`,
+  `- Code: fenced \`\`\` blocks only when the user asked for code, commands, or copy-paste snippets — not for conceptual explanations (science, "how does X work", general curiosity).`,
+  `- Inline \`backticks\` for paths, flags, and identifiers only in technical replies the user requested.`,
   `- Callouts: > blockquotes for warnings, summaries, or key takeaways.`,
   `- Section breaks: blank lines or --- between major sections.`,
   ``,
@@ -368,23 +426,83 @@ export function createCurrentTimeSection(ctx: SectionContext): PromptSection<{
   local: string;
   offset: string;
 }> {
+  const loadTime = () => {
+    const situation = ctx.getClientSituation();
+    const timezone = resolveClientTimezone(situation, ctx.getUserTimezone());
+    const now = resolveClientNow(situation ?? undefined);
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'longOffset',
+    });
+    const parts = formatter.formatToParts(now);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName');
+    const raw = tzPart?.value ?? '';
+    const match = raw.match(/GMT([+-])(\d{1,2}):?(\d{2})?/);
+    let offset = '+00:00';
+    if (match) {
+      const sign = match[1];
+      const hrs = match[2]!.padStart(2, '0');
+      const mins = (match[3] ?? '00').padStart(2, '0');
+      offset = `${sign}${hrs}:${mins}`;
+    }
+    return {
+      iso: now.toISOString(),
+      timezone,
+      local: now.toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: timezone }),
+      offset,
+    };
+  };
   const renderTime = (t: { iso: string; timezone: string; local: string; offset: string }, updated = false) =>
     `[CURRENT_TIME${updated ? ' — UPDATED' : ''}]\nNow: ${t.iso}\nUser timezone: ${t.timezone}\nLocal time (user): ${t.local}\nUTC offset: ${t.offset}\n[/CURRENT_TIME]`;
 
   return {
     key: 'core/current-time',
-    load: () => ({
-      iso: new Date().toISOString(),
-      timezone: ctx.getUserTimezone(),
-      local: new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long', timeZone: ctx.getUserTimezone() }),
-      offset: ctx.getUtcOffset(),
-    }),
+    load: loadTime,
     render: (t) => renderTime(t),
     diff: (prev, current) => {
       if (!current) return null;
       if (prev && JSON.stringify(prev) === JSON.stringify(current)) return null;
       return renderTime(current as { iso: string; timezone: string; local: string; offset: string }, true);
     },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Third-party services — MCP integrations, not local exploration
+// ─────────────────────────────────────────────────────────────
+
+export function createThirdPartyServicesSection(): PromptSection<string> {
+  const TEXT = [
+    `[THIRD_PARTY_SERVICES]`,
+    `Universal rule for ANY external app, API, or online account (email, Slack, Notion, GitHub, payments, databases, smart home, etc.):`,
+    ``,
+    `ALLOWED ACCESS PATHS (only these):`,
+    `1. Connected MCP integration — use integration__* tools (credentials are managed by Agent-X in MCP Store).`,
+    `2. Public internet — web_search / web_fetch when the data is openly available and needs no login, per that service's public docs.`,
+    `3. Agent-X workspace files — only when the user explicitly asked about files in their project/workspace, not to hunt third-party credentials.`,
+    ``,
+    `STRICTLY PROHIBITED:`,
+    `- Scanning the local machine for other apps' configs (Application Support, ~/.config, mcp.json, Claude/Cursor configs, gcloud, etc.)`,
+    `- shell_exec / bash / python_rpc to extract tokens, OAuth secrets, or API keys`,
+    `- file_find / glob / search_files / system_env hunting for credentials or "mcp" / "gmail" / "oauth"`,
+    `- Reading .env or config files outside the workspace to access third-party accounts`,
+    `- Installing SDKs or writing scripts to impersonate the user when an integration is not connected`,
+    ``,
+    `WHEN [INTEGRATION REQUIRED] or [INTEGRATION UNAVAILABLE] appears in the turn hint:`,
+    `- Tell the user to connect the app in Settings → MCP Store.`,
+    `- STOP — one short reply. No further tools except ask_clarification or public web_search for setup docs.`,
+    ``,
+    `WHEN [INTEGRATION SERVICE] appears:`,
+    `- Use only the integration tools named in that hint — they must appear in your active toolset. If they fail, report the error — never fall back to local scavenging.`,
+    `WHEN [INTEGRATION DEGRADED] appears (any MCP server):`,
+    `- Tell the user that integration did not load — reconnect in MCP Store or restart Agent-X. One short reply; no local credential search.`,
+    `[/THIRD_PARTY_SERVICES]`,
+  ].join('\n');
+  return {
+    key: 'core/third-party-services',
+    load: () => TEXT,
+    render: (text) => text,
+    diff: () => null,
   };
 }
 

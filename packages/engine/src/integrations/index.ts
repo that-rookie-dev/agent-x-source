@@ -22,6 +22,14 @@ export { IntegrationTokenVault } from './oauth/token-vault.js';
 export { resolveIntegrationDek } from './oauth/integration-dek.js';
 export { discoverAuthorizationServerMetadata, discoverMcpResourceAuthorizationServer } from './oauth/discovery.js';
 export {
+  integrationToolsForProvider,
+  resolveProviderToolAvailability,
+  reconcileIntegrationHintWithActiveTools,
+  enrichConnectionAvailability,
+  type IntegrationConnectionRef,
+  type ProviderToolAvailability,
+} from './integration-tool-availability.js';
+export {
   listIntegrationProviders,
   getIntegrationProvider,
   listCatalogProviders,

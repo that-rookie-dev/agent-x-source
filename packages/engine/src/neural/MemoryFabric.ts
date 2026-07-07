@@ -390,6 +390,19 @@ export class MemoryFabric {
     return { created: true, nodeId: node.id };
   }
 
+  /** Skip duplicate chat-turn embeddings (same session + user turn label). */
+  async hasChatMemoryTurn(sourceSessionId: string, label: string): Promise<boolean> {
+    const { rows } = await this.pool.query<{ id: string }>(
+      `SELECT id FROM memory_nodes
+       WHERE tag = 'chat_memory'
+         AND provenance->>'sourceSessionId' = $1
+         AND label = $2
+       LIMIT 1`,
+      [sourceSessionId, label],
+    );
+    return rows.length > 0;
+  }
+
   async createNode(input: MemoryNodeInput): Promise<MemoryNode> {
     const redacted = await this.piiRedactor.redact(input.content);
     const content = redacted.redacted;
@@ -533,7 +546,7 @@ export class MemoryFabric {
     return node;
   }
 
-  async vectorSearch(embedding: number[], options: { limit?: number; category?: MemoryNodeCategory; agentId?: string } = {}): Promise<MemoryNode[]> {
+  async vectorSearch(embedding: number[], options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null } = {}): Promise<MemoryNode[]> {
     const limit = options.limit ?? 10;
     const useHalfvec = await this.isHalfvecAvailable();
     const vectorLiteral = `[${embedding.join(',')}]`;
@@ -541,6 +554,13 @@ export class MemoryFabric {
     const embeddingColumn = useHalfvec ? 'embedding_halfvec' : 'embedding';
     const vectorCast = useHalfvec ? 'halfvec' : 'vector';
     const vectorValue = useHalfvec ? halfvecLiteral : vectorLiteral;
+
+    let sessionFilter = '';
+    if (options.sessionId === null) {
+      sessionFilter = 'AND n.session_id IS NULL';
+    } else if (options.sessionId) {
+      sessionFilter = `AND n.session_id = '${options.sessionId}'`;
+    }
 
     const { rows } = await this.pool.query<MemoryNode>(
       `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
@@ -553,6 +573,8 @@ export class MemoryFabric {
        WHERE n.${embeddingColumn} IS NOT NULL
          AND n.status = 'active'
          ${options.category ? `AND n.category = '${options.category}'` : ''}
+         ${options.tag ? `AND n.tag = '${options.tag}'` : ''}
+         ${sessionFilter}
          ${options.agentId ? `AND (n.agent_id = '${options.agentId}' OR n.agent_id IS NULL)` : ''}
        ORDER BY n.${embeddingColumn} <=> $1::${vectorCast}
        LIMIT $2`,

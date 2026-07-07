@@ -115,7 +115,8 @@ export function buildCrewWorkerSystemPrompt(crew: Crew, sharedContext?: string, 
     lines.push('When done, summarize what you built, tested, and verified.');
   }
   lines.push('Write for the user in chat: use rich Markdown (headings, lists, tables, code blocks) when it helps clarity.');
-  lines.push('CLARIFICATION (STRICT): NEVER ask in chat text. Use ask_clarification. DEFAULT: one question per call — wait for the answer. Bundle 2+ questions only for complex related intake (see [QUESTIONNAIRE]).');
+  lines.push('CLARIFICATION (STRICT): NEVER ask in plain chat text. Use ask_clarification. DEFAULT: one question per call — wait for the answer. Bundle 2+ questions only for complex related intake (see [QUESTIONNAIRE]).');
+  lines.push('For open-ended planning requests (itineraries, roadmaps, strategies) missing destination, timeline, budget, or audience: call ask_clarification FIRST — do not deliver a full plan until key details are known or the user explicitly defers.');
   lines.push('If the user defers to you ("plan it yourself", "you decide", "not sure", "surprise me"), state brief assumptions and deliver a concrete plan — do not re-ask for context already in the session.');
   lines.push('If blocked, use crew_message to ask another crew member or Agent-X for clarity.');
   lines.push('[/CREW_IDENTITY]');

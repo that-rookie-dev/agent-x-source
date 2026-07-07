@@ -4,6 +4,7 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import { useApp } from './store/AppContext';
 import { ErrorBandProvider } from './components/ErrorBand';
+import { VoiceProvider } from './components/voice/VoiceProvider';
 import { DockingStation } from './pages/DockingStation';
 import { SetupAuth } from './pages/SetupAuth';
 import { SetupWizard } from './pages/SetupWizard';
@@ -84,17 +85,19 @@ export function App() {
 
   return (
     <ErrorBandProvider>
-      <DesktopStartupPermissions />
-      <Routes>
+      <VoiceProvider>
+        <DesktopStartupPermissions />
+        <Routes>
         <Route path="/login" element={<GuestGuard><Login /></GuestGuard>} />
         <Route path="/setup" element={<GuestGuard><SetupAuth /></GuestGuard>} />
         <Route path="/setup/wizard" element={<AuthGuard><SetupWizard /></AuthGuard>} />
         <Route path="/" element={<AuthGuard><DockingStation /></AuthGuard>} />
-        <Route path="/console" element={<Navigate to="/console/chat" replace />} />
+        <Route path="/console" element={<Navigate to="/console/agent-x" replace />} />
         <Route path="/console/:panel" element={<AuthGuard><Console /></AuthGuard>} />
         <Route path="/console/chat/:sessionId" element={<AuthGuard><Console /></AuthGuard>} />
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+        </Routes>
+      </VoiceProvider>
     </ErrorBandProvider>
   );
 }

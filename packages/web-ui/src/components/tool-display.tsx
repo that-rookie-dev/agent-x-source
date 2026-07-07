@@ -92,6 +92,8 @@ export function getToolDisplay(toolName: string, args: Record<string, unknown> |
       return { icon: <SmartToyIcon sx={iconSx} />, title: 'Agent', subtitle: label };
     case 'delegate_to_crew':
       return { icon: <GroupsIcon sx={iconSx} />, title: 'Crew', subtitle: label };
+    case 'crew_suggestion':
+      return { icon: <GroupsIcon sx={iconSx} />, title: 'Crew match', subtitle: label || 'Scanning specialists…' };
     case 'crew_message':
       return { icon: <ChatIcon sx={iconSx} />, title: 'Msg', subtitle: parsed.to ? `@${String(parsed.to)}` : undefined };
     case 'git_status':

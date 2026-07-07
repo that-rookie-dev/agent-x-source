@@ -20,6 +20,10 @@ export function providerMcpStdioAuth(provider: IntegrationProvider) {
   return provider.auth.mcpStdioAuth;
 }
 
+export function usesNativeMcpStdioBrowserOAuth(provider: IntegrationProvider): boolean {
+  return provider.auth.mcpStdioAuth?.oauthKeysFormat === 'web';
+}
+
 export function providerPackageSignIn(provider: IntegrationProvider) {
   return provider.auth.packageSignIn;
 }

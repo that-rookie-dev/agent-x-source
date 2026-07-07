@@ -103,10 +103,14 @@ export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNee
 
 export {
   NEURAL_BRAIN_MIN_RAM_GB,
+  STYLETTS2_MIN_RAM_GB,
   LOCAL_MODEL_MIN_RAM_GB,
+  VOICE_WARMUP_MIN_RAM_GB,
   getSystemMemoryGB,
   isNeuralBrainSupported,
+  isStyleTtsSupported,
   isLocalModelSupported,
+  isVoiceWarmupSupported,
   buildPublicSystemCapabilities,
 } from './utils/system-capabilities.js';
 export type { PublicSystemCapabilities } from './utils/system-capabilities.js';
@@ -133,11 +137,23 @@ export {
 } from './utils/channel-session.js';
 
 export {
+  isMemoryFabricSuperSession,
+  resolveMemoryFabricWriteSessionId,
+  resolveMemoryFabricSearchSessionFilter,
+} from './utils/memory-fabric-scope.js';
+
+export {
   generateAxId,
   isAxId,
   parseAxId,
 } from './utils/ax-id.js';
 export type { AxEntity } from './utils/ax-id.js';
+
+export {
+  VOICE_BLOCK_OPEN,
+  VOICE_BLOCK_CLOSE,
+  normalizeVoiceAssistantContent,
+} from './utils/voice-channel.js';
 
 export type {
   DeepSearchContentType,

@@ -5,17 +5,22 @@ import {
   REST,
   Routes,
   SlashCommandBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   type Interaction,
   type Message,
   type TextChannel,
   type ChatInputCommandInteraction,
+  type ButtonInteraction,
   ChannelType,
 } from 'discord.js';
 import type { Agent } from '../agent/Agent.js';
 import { AgentEventBus } from '../EventBus.js';
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { getDataDir } from '@agentx/shared';
+import { randomUUID } from 'node:crypto';
+import { getDataDir, isChannelUserAllowed } from '@agentx/shared';
 
 export interface DiscordConfig {
   botToken: string;
@@ -47,13 +52,77 @@ export class DiscordBridge {
   private readonly INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
   private readonly CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private filesDir: string;
+  private allowedUserIds: string[] = [];
+  private lastChannelByUser = new Map<string, string>();
+  private pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
+  private permRequesters = new Map<string, string>();
+  private permChannels = new Map<string, string>();
+  private wiredAgents = new WeakSet<Agent>();
 
   constructor() {
     this.eventBus = new AgentEventBus();
     this.filesDir = join(getDataDir(), 'discord-files');
-    if (!existsSync(this.filesDir)) {
-      mkdirSync(this.filesDir, { recursive: true });
-    }
+    void mkdir(this.filesDir, { recursive: true }).catch(() => {});
+  }
+
+  setAllowedUserIds(ids: string[]): void {
+    this.allowedUserIds = ids;
+  }
+
+  private isUserAllowed(userId: string): boolean {
+    return isChannelUserAllowed(userId, this.allowedUserIds);
+  }
+
+  wireAgentPermissions(agent: Agent, userId: string): void {
+    if (this.wiredAgents.has(agent)) return;
+    this.wiredAgents.add(agent);
+    const toolExecutor = agent.getToolExecutor?.();
+    if (!toolExecutor?.setChannelPermissionRequestHandler) return;
+
+    toolExecutor.setChannelPermissionRequestHandler(
+      async (toolId: string, path: string, riskLevel: string) => {
+        const channelId = this.lastChannelByUser.get(userId);
+        if (!channelId || !this.client) return 'deny' as const;
+
+        const permId = randomUUID();
+        this.permRequesters.set(permId, userId);
+        this.permChannels.set(permId, channelId);
+        const riskEmoji = riskLevel === 'high' ? '🔴' : riskLevel === 'medium' ? '🟡' : '🟢';
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`perm:${permId}:allow_once`).setLabel('Allow Once').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`perm:${permId}:allow_always`).setLabel('Always Allow').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`perm:${permId}:deny`).setLabel('Deny').setStyle(ButtonStyle.Danger),
+        );
+
+        try {
+          const channel = await this.client.channels.fetch(channelId);
+          if (channel?.isTextBased()) {
+            await (channel as TextChannel).send({
+              content: `${riskEmoji} **Permission Request**\n\nTool: \`${toolId}\`\nPath: \`${path}\`\nRisk: ${riskLevel}\n\nAllow this action?`,
+              components: [row],
+            });
+          }
+        } catch {
+          return 'deny' as const;
+        }
+
+        return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
+          const timeout = setTimeout(() => {
+            this.pendingPermissions.delete(permId);
+            this.permRequesters.delete(permId);
+            this.permChannels.delete(permId);
+            resolve('deny');
+          }, 120_000);
+          this.pendingPermissions.set(permId, (choice) => {
+            clearTimeout(timeout);
+            this.pendingPermissions.delete(permId);
+            this.permRequesters.delete(permId);
+            this.permChannels.delete(permId);
+            resolve(choice);
+          });
+        });
+      },
+    );
   }
 
   attach(agent: Agent): void {
@@ -180,6 +249,10 @@ export class DiscordBridge {
     });
 
     this.client.on(Events.InteractionCreate, async (interaction: Interaction) => {
+      if (interaction.isButton()) {
+        await this.handleButtonInteraction(interaction);
+        return;
+      }
       if (!interaction.isChatInputCommand()) return;
       await this.handleSlashCommand(interaction);
     });
@@ -272,9 +345,42 @@ export class DiscordBridge {
     }
   }
 
+  private async handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
+    const customId = interaction.customId;
+    if (!customId.startsWith('perm:')) return;
+
+    const parts = customId.split(':');
+    const permId = parts[1];
+    const choice = parts[2] as 'allow_once' | 'allow_always' | 'deny';
+    if (!permId || !choice) return;
+
+    const expectedRequester = this.permRequesters.get(permId);
+    if (expectedRequester && interaction.user.id !== expectedRequester) {
+      await interaction.reply({ content: '⚠️ Only the user who triggered this action can approve it.', ephemeral: true });
+      return;
+    }
+
+    const resolver = this.pendingPermissions.get(permId);
+    if (!resolver) {
+      await interaction.reply({ content: '⏰ Permission request expired.', ephemeral: true });
+      return;
+    }
+
+    resolver(choice);
+    const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';
+    await interaction.update({ content: label, components: [] });
+  }
+
   private async handleSlashCommand(interaction: ChatInputCommandInteraction): Promise<void> {
     const { commandName } = interaction;
     const userId = interaction.user.id;
+
+    if (!this.isUserAllowed(userId)) {
+      await interaction.reply({ content: '⚠️ Unauthorized. Configure allowed user IDs in Settings → Channels.', ephemeral: true });
+      return;
+    }
+
+    this.lastChannelByUser.set(userId, interaction.channelId);
 
     try {
       await interaction.deferReply();
@@ -333,6 +439,15 @@ export class DiscordBridge {
     if (!message.content && message.attachments.size === 0) return;
 
     const userId = message.author.id;
+
+    if (!this.isUserAllowed(userId)) {
+      if (message.channel.isTextBased()) {
+        await (message.channel as TextChannel).send('⚠️ Unauthorized. Configure allowed user IDs in Settings → Channels.');
+      }
+      return;
+    }
+
+    this.lastChannelByUser.set(userId, message.channel.id);
     const isDM = message.channel.type === ChannelType.DM;
     const isThread = message.channel.isThread();
     const isConfiguredChannel = this.channelId ? message.channel.id === this.channelId : false;
@@ -348,7 +463,7 @@ export class DiscordBridge {
     this.eventBus.emit({
       type: 'discord_message',
       code: 'DISCORD_MESSAGE',
-      message: `User ${userId}: ${message.content ?? '(attachment)'}`,
+      message: `User ${userId} len=${(message.content ?? '').length}`,
       recoverable: true,
     });
 
@@ -427,6 +542,7 @@ export class DiscordBridge {
     let agent: Agent;
     if (this.agentFactory) {
       agent = await this.agentFactory(userId);
+      this.wireAgentPermissions(agent, userId);
     } else if (this.agent) {
       agent = this.agent;
     } else {
@@ -454,7 +570,7 @@ export class DiscordBridge {
       throw new Error(`HTTP ${res.status}`);
     }
     const arrayBuffer = await res.arrayBuffer();
-    writeFileSync(savedPath, Buffer.from(arrayBuffer));
+    await writeFile(savedPath, Buffer.from(arrayBuffer));
     return savedPath;
   }
 

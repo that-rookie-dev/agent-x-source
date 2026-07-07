@@ -24,3 +24,5 @@ export * from './deep-search.js';
 export * from './integrations.js';
 export * from './automation.js';
 export * from './channels.js';
+export * from './voice.js';
+export * from './client-situation.js';

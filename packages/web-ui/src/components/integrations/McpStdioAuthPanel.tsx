@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import type { IntegrationConnection, IntegrationProvider } from '../../api';
 import { integrations } from '../../api';
+import { useOAuthFlowPoll } from './useOAuthFlowPoll';
+import { usesNativeMcpStdioBrowserOAuth } from './integration-ui';
 import { settingsTheme, settingsMonoSx } from '../../styles/settings-theme';
 
 export interface McpStdioAuthPanelProps {
@@ -26,8 +28,19 @@ export function McpStdioAuthPanel({
   onAutoStartConsumed,
   onSignedIn,
 }: McpStdioAuthPanelProps) {
+  const nativeBrowser = usesNativeMcpStdioBrowserOAuth(provider);
   const [status, setStatus] = useState<PanelStatus>('checking');
   const [message, setMessage] = useState('');
+  const [oauthState, setOauthState] = useState<string | null>(null);
+  const [redirectUri, setRedirectUri] = useState('');
+  const oauthFinishedRef = useRef(false);
+
+  useEffect(() => {
+    if (!nativeBrowser) return;
+    void integrations.mcpAuthRedirectUri(provider.id)
+      .then((r) => setRedirectUri(r.redirectUri))
+      .catch(() => { /* optional hint */ });
+  }, [nativeBrowser, provider.id]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -52,7 +65,49 @@ export function McpStdioAuthPanel({
     void refreshStatus();
   }, [refreshStatus]);
 
-  const runAuth = useCallback(async () => {
+  const finishSuccess = useCallback(() => {
+    if (oauthFinishedRef.current) return;
+    oauthFinishedRef.current = true;
+    setStatus('signed_in');
+    setMessage('');
+    setOauthState(null);
+    onSignedIn?.();
+  }, [onSignedIn]);
+
+  const finishFailure = useCallback((errorMessage: string) => {
+    setStatus('failed');
+    setMessage(errorMessage);
+    setOauthState(null);
+  }, []);
+
+  useOAuthFlowPoll({
+    enabled: nativeBrowser && status === 'running' && Boolean(oauthState),
+    state: oauthState,
+    poll: integrations.mcpAuthResult,
+    onComplete: finishSuccess,
+    onFailed: finishFailure,
+  });
+
+  const runNativeBrowserAuth = useCallback(async () => {
+    setStatus('running');
+    setMessage('Opening Google sign-in in your browser…');
+    oauthFinishedRef.current = false;
+    try {
+      const { authUrl, state } = await integrations.startMcpAuth(connection.id);
+      setOauthState(state);
+      const desktop = typeof window !== 'undefined' ? window.agentx : undefined;
+      if (desktop?.openExternal) {
+        await desktop.openExternal(authUrl);
+      } else {
+        window.open(authUrl, '_blank');
+      }
+    } catch (e) {
+      setStatus('failed');
+      setMessage(e instanceof Error ? e.message : 'Google sign-in failed');
+    }
+  }, [connection.id]);
+
+  const runCliAuth = useCallback(async () => {
     setStatus('running');
     setMessage('Opening Google sign-in in your browser…');
     try {
@@ -71,6 +126,8 @@ export function McpStdioAuthPanel({
     }
   }, [connection.id, onSignedIn]);
 
+  const runAuth = nativeBrowser ? runNativeBrowserAuth : runCliAuth;
+
   useEffect(() => {
     if (!autoStart || status !== 'signed_out') return;
     onAutoStartConsumed?.();
@@ -80,9 +137,15 @@ export function McpStdioAuthPanel({
   return (
     <Box>
       <Typography sx={{ fontSize: '0.68rem', color: settingsTheme.text.secondary, mb: 1.5, lineHeight: 1.5 }}>
-        {provider.name} uses Google&apos;s Desktop OAuth flow. Agent-X launches the official MCP auth helper —
-        complete sign-in in the browser window that opens. No redirect URI registration is required.
+        {nativeBrowser
+          ? `${provider.name} uses Google Web OAuth through Agent-X. Complete sign-in in the browser window that opens. Register the callback URL below in Google Cloud Console if you have not already.`
+          : `${provider.name} uses Google's Desktop OAuth flow. Agent-X launches the official MCP auth helper — complete sign-in in the browser window that opens.`}
       </Typography>
+      {nativeBrowser && redirectUri && (
+        <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.dim, mb: 1.5, ...settingsMonoSx, wordBreak: 'break-all' }}>
+          Callback URL: {redirectUri}
+        </Typography>
+      )}
       <Button
         fullWidth
         variant="outlined"

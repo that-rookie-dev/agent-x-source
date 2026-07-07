@@ -16,6 +16,7 @@ interface MentionInputProps {
   onKeyDown: (e: React.KeyboardEvent) => void;
   onMentionQuery: (query: string | null) => void;
   onTextChange?: (text: string) => void;
+  onFocusChange?: (focused: boolean) => void;
   placeholder: string;
   crewList?: Crew[];
   disabled?: boolean;
@@ -76,7 +77,7 @@ function buildHtmlFromPlain(text: string, crewList: Crew[]): string {
 }
 
 const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputProps>(function MentionInput(
-  { onKeyDown, onMentionQuery, onTextChange, placeholder, crewList = [], disabled },
+  { onKeyDown, onMentionQuery, onTextChange, onFocusChange, placeholder, crewList = [], disabled },
   ref,
 ) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -226,6 +227,8 @@ const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputP
         suppressContentEditableWarning
         onInput={handleInput}
         onKeyDown={handleKeyDown}
+        onFocus={() => onFocusChange?.(true)}
+        onBlur={() => onFocusChange?.(false)}
         onCompositionStart={() => { isComposing.current = true; }}
         onCompositionEnd={() => { isComposing.current = false; handleInput(); }}
         onPaste={(e) => {

@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('agentx', {
   totalMemoryGB: ipcRenderer.sendSync('system:totalMemoryGB'),
   localModelSupported: ipcRenderer.sendSync('system:localModelSupported'),
   neuralBrainSupported: ipcRenderer.sendSync('system:neuralBrainSupported'),
+  styleTtsSupported: ipcRenderer.sendSync('system:styleTtsSupported'),
+  voiceWarmupSupported: ipcRenderer.sendSync('system:voiceWarmupSupported'),
   minimize: () => ipcRenderer.send('window:minimize'),
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),
@@ -27,4 +29,12 @@ contextBridge.exposeInMainWorld('agentx', {
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   openInternalWindow: (url: string) => ipcRenderer.invoke('window:openInternal', url),
+  /** IANA timezone from the desktop shell — geolocation still comes from the renderer. */
+  getTimezone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+  checkMicrophoneAccess: () =>
+    ipcRenderer.invoke('permissions:checkMicrophone') as Promise<{ granted: boolean; state: string }>,
+  requestMicrophoneAccess: () =>
+    ipcRenderer.invoke('permissions:requestMicrophone') as Promise<{ granted: boolean }>,
+  openMicrophoneSettings: () =>
+    ipcRenderer.invoke('permissions:openMicrophoneSettings') as Promise<void>,
 });

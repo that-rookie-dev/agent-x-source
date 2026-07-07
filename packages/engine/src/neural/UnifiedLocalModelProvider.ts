@@ -7,6 +7,7 @@
 import { pipeline, type FeatureExtractionPipeline, type TextGenerationPipeline } from '@huggingface/transformers';
 import type { EmbeddingProvider } from '@agentx/shared';
 import path from 'path';
+import { getOnnxThreadConfig } from '../runtime/onnx-thread-config.js';
 
 export interface UnifiedModelConfig {
   modelName: string;
@@ -63,8 +64,8 @@ export class UnifiedLocalModelProvider implements EmbeddingProvider {
     if (this.generatorPending) return this.generatorPending;
     
     const sessionOptions = {
-      intraOpNumThreads: 1,
-      interOpNumThreads: 1,
+      intraOpNumThreads: getOnnxThreadConfig().intraOpNumThreads,
+      interOpNumThreads: getOnnxThreadConfig().interOpNumThreads,
       enableCpuMemArena: false,
       enableMemPattern: false,
     };
@@ -85,8 +86,8 @@ export class UnifiedLocalModelProvider implements EmbeddingProvider {
     if (this.embedderPending) return this.embedderPending;
 
     const sessionOptions = {
-      intraOpNumThreads: 1,
-      interOpNumThreads: 1,
+      intraOpNumThreads: getOnnxThreadConfig().intraOpNumThreads,
+      interOpNumThreads: getOnnxThreadConfig().interOpNumThreads,
       enableCpuMemArena: false,
       enableMemPattern: false,
     };

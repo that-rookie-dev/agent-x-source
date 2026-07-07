@@ -1,24 +1,30 @@
 import { useEffect } from 'react';
 import { integrations } from '../../api';
 
+type OAuthPollResult = {
+  status: 'pending' | 'completed' | 'failed' | 'expired';
+  message?: string;
+};
+
 /** Poll the server for OAuth completion — required when sign-in opens in the system browser (desktop). */
 export function useOAuthFlowPoll(options: {
   enabled: boolean;
   state: string | null;
   onComplete: () => void;
   onFailed: (message: string) => void;
+  poll?: (state: string) => Promise<{ result: OAuthPollResult }>;
 }) {
-  const { enabled, state, onComplete, onFailed } = options;
+  const { enabled, state, onComplete, onFailed, poll = integrations.oauthResult } = options;
 
   useEffect(() => {
     if (!enabled || !state) return;
 
     let cancelled = false;
     let settled = false;
-    const poll = async () => {
+    const tick = async () => {
       if (settled) return;
       try {
-        const { result } = await integrations.oauthResult(state);
+        const { result } = await poll(state);
         if (cancelled || settled) return;
         if (result.status === 'completed') {
           settled = true;
@@ -32,11 +38,11 @@ export function useOAuthFlowPoll(options: {
       }
     };
 
-    void poll();
-    const id = window.setInterval(poll, 2000);
+    void tick();
+    const id = window.setInterval(tick, 2000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [enabled, state, onComplete, onFailed]);
+  }, [enabled, state, onComplete, onFailed, poll]);
 }

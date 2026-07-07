@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
+import MicIcon from '@mui/icons-material/Mic';
 import { colors } from '../theme';
 import { health, config as configApi } from '../api';
-import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
+import { useNeuralBrainSupported, useCapabilitiesReady } from '../hooks/useSystemCapabilities';
+import { useVoiceOptional } from './voice/VoiceProvider';
 
 const NEURON_URL = (import.meta.env.VITE_NEURON_URL as string) || '/neuron';
 
@@ -22,16 +24,43 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const [version, setVersion] = useState('');
   const [zoomHint] = useState(getZoomShortcutHint);
   const neuralBrainSupported = useNeuralBrainSupported();
-  const [neuralBrainDisabled, setNeuralBrainDisabled] = useState(false);
+  const capabilitiesReady = useCapabilitiesReady();
+  const [neuralBrainDisabled, setNeuralBrainDisabled] = useState(true);
+  const voice = useVoiceOptional();
+  const showFooterMic = Boolean(voice?.voiceReady && !voice.wakeWordEnabled);
+  const showWakeIndicator = Boolean(voice?.voiceReady && voice.wakeWordEnabled);
+
+  const footerMicColor = !voice
+    ? colors.text.dim
+    : voice.warmupPhase === 'ready'
+      ? colors.accent.green
+      : voice.warmupPhase === 'booting'
+        ? colors.accent.orange
+        : voice.warmupPhase === 'failed'
+          ? colors.accent.red
+          : colors.text.dim;
+
+  const footerMicTitle = !voice
+    ? 'Voice unavailable'
+    : voice.warmupPhase === 'failed'
+      ? voice.warmupError ?? 'Voice engine offline — check Settings → Voice'
+      : voice.warmupPhase === 'booting'
+        ? 'Warming voice engine…'
+        : voice.warmupPhase === 'ready'
+          ? 'Voice engine ready'
+          : 'Voice idle';
 
   useEffect(() => {
     health.check().then((h) => setVersion(h.version)).catch(() => {});
+    if (!capabilitiesReady) return;
     if (!neuralBrainSupported) {
       setNeuralBrainDisabled(true);
       return;
     }
-    configApi.get().then((cfg) => setNeuralBrainDisabled(cfg.neuralBrain === false)).catch(() => {});
-  }, [neuralBrainSupported]);
+    configApi.get().then((cfg) => setNeuralBrainDisabled(cfg.neuralBrain === false)).catch(() => {
+      setNeuralBrainDisabled(false);
+    });
+  }, [neuralBrainSupported, capabilitiesReady]);
 
   const handleBrainClick = () => {
     const agentx = (window as unknown as { agentx?: { openInternalWindow?: (url: string) => Promise<boolean> } }).agentx;
@@ -49,7 +78,7 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
       fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim,
     }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, ml: -0.5 }}>
-        {!neuralBrainDisabled && (
+        {capabilitiesReady && !neuralBrainDisabled && (
           <>
             <Box
               component="span"
@@ -87,6 +116,76 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
         </span>
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        {showWakeIndicator && voice && (
+          <>
+            <Box
+              component="span"
+              title={`Wake word active — say "${voice.wakePhrase}" in chat voice mode`}
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.5,
+                color: colors.accent.green,
+                letterSpacing: '0.04em',
+                userSelect: 'none',
+              }}
+            >
+              <Box
+                component="span"
+                sx={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  bgcolor: colors.accent.green,
+                  boxShadow: `0 0 6px ${colors.accent.green}`,
+                  animation: 'agentx-wake-pulse 2s ease-in-out infinite',
+                  '@keyframes agentx-wake-pulse': {
+                    '0%, 100%': { opacity: 0.45, transform: 'scale(0.85)' },
+                    '50%': { opacity: 1, transform: 'scale(1)' },
+                  },
+                }}
+              />
+              <span>wake · {voice.wakePhrase}</span>
+            </Box>
+            <span style={{ color: colors.border.default }}>/</span>
+          </>
+        )}
+        {showFooterMic && voice && (
+          <>
+            <Box
+              component="span"
+              title={footerMicTitle}
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.5,
+                color: footerMicColor,
+                letterSpacing: '0.04em',
+                userSelect: 'none',
+              }}
+            >
+              <Box
+                component="span"
+                sx={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  bgcolor: footerMicColor,
+                  boxShadow: voice.warmupPhase === 'ready' ? `0 0 6px ${colors.accent.green}` : 'none',
+                  animation: voice.warmupPhase === 'booting'
+                    ? 'agentx-voice-warm-pulse 1.4s ease-in-out infinite'
+                    : 'none',
+                  '@keyframes agentx-voice-warm-pulse': {
+                    '0%, 100%': { opacity: 0.35 },
+                    '50%': { opacity: 1 },
+                  },
+                }}
+              />
+              <MicIcon sx={{ fontSize: 13 }} />
+            </Box>
+            <span style={{ color: colors.border.default }}>/</span>
+          </>
+        )}
         {onToggleLogs && (
           <>
             <Box

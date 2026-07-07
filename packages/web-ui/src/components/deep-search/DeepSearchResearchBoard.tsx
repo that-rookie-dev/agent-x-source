@@ -10,6 +10,7 @@ import type { DeepSearchResultBundle } from '@agentx/shared/browser';
 import { colors } from '../../theme';
 import { DeepSearchResultCard } from './DeepSearchResultCard';
 import { searchResultsRowSx, deepSearchShellSx } from './card-utils';
+import { formatSearchProvidersList } from './provider-labels';
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -45,6 +46,7 @@ export function DeepSearchResearchBoard({
   open: boolean;
   onClose: () => void;
 }) {
+  const providersLabel = formatSearchProvidersList(bundle);
   return (
     <Dialog
       open={open}
@@ -133,6 +135,9 @@ export function DeepSearchResearchBoard({
         <Stat label="Time" value={`${(bundle.stats.ms / 1000).toFixed(1)}s`} />
         {bundle.plan.intent.length > 0 && (
           <Stat label="Intent" value={bundle.plan.intent.join(', ')} />
+        )}
+        {providersLabel && (
+          <Stat label="Providers" value={providersLabel} />
         )}
       </Box>
 

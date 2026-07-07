@@ -35,8 +35,11 @@ import {
   MemoryFabric,
   setLocalModelConfig,
   IntegrationHub,
+  configureBackgroundTaskPool,
+  setOnnxThreadConfig,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
+import { resolveRuntimeSettings } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
 import { join } from 'node:path';
@@ -96,6 +99,12 @@ function applyLowRamFeatureDefaults(configManager: ConfigManager): void {
   } catch { /* config not ready yet */ }
 }
 
+export function applyRuntimeSettings(config: AgentXConfig | null): void {
+  const resolved = resolveRuntimeSettings(config?.runtime);
+  configureBackgroundTaskPool(resolved.backgroundConcurrency);
+  setOnnxThreadConfig(resolved.onnxIntraOpThreads, resolved.onnxInterOpThreads);
+}
+
 export function syncLocalModelConfig(configManager: ConfigManager): void {
   try {
     const cfg = configManager.load();
@@ -129,6 +138,7 @@ export function getEngine(): EngineState {
   }
 
   syncLocalModelConfig(configManager);
+  applyRuntimeSettings(loadedConfig);
 
   applyLowRamFeatureDefaults(configManager);
 
@@ -138,13 +148,8 @@ export function getEngine(): EngineState {
     getDek: () => state?.dek ?? null,
   });
 
-  // Initialize log collector — hooks into the shared logger to capture all logs
   initLogCollector();
 
-  // PostgreSQL is the only supported storage backend.
-  // When the Agent-X desktop app is used, it starts embedded PostgreSQL on port 3335
-  // and sets AGENTX_POSTGRES_CONNECTION_STRING. If nothing is configured, fall back to
-  // the same embedded PostgreSQL defaults so local development/tests can connect.
   const embeddedPgDefault = 'postgresql://agentx:agentx@127.0.0.1:3335/agentx';
   const pgConnectionString =
     process.env['AGENTX_POSTGRES_CONNECTION_STRING'] ??
@@ -158,9 +163,11 @@ export function getEngine(): EngineState {
     );
   }
 
+  const lazyHydrate = loadedConfig?.runtime?.lazyStorageCache !== false;
   const pgAdapter = new PostgresStorageAdapter({
     connectionString: pgConnectionString,
     max: ((loadedConfig as any)?.postgres?.poolSize as number) ?? 5,
+    lazyHydrate,
   } as any);
   const sessionManager = new SessionManager({ storageAdapter: pgAdapter });
 
@@ -250,21 +257,25 @@ export async function awaitEngineStorageReady(): Promise<void> {
 }
 
 export function setEngineDEK(dek: Buffer | null): void {
+  const normalized = dek && dek.length === 32 ? dek : null;
   if (state) {
-    state.dek = dek;
-    state.configManager.setDEK(dek);
-    state.integrationHub.setDek(dek);
-    if (!dek) {
+    state.dek = normalized;
+    state.configManager.setDEK(normalized);
+    state.integrationHub.setDek(normalized);
+    if (!normalized) {
       channelsBootstrappedAfterAuth = false;
     }
     // Update the configured flag now that the DEK is available —
     // encrypted configs become readable after auth.
     state.configured = state.configManager.isConfigured();
     try {
-      applyWebSearchConfigFromAgentConfig(state.configManager.load());
+      if (normalized) {
+        applyWebSearchConfigFromAgentConfig(state.configManager.load());
+        applyRuntimeSettings(state.configManager.load());
+      }
     } catch { /* not configured yet */ }
 
-    if (dek && !channelsBootstrappedAfterAuth) {
+    if (normalized && !channelsBootstrappedAfterAuth) {
       void state.storageReady
         .then(async () => {
           if (!state?.dek) return;
@@ -351,6 +362,7 @@ export function createAgent(
 
   const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
   const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
+  const isAgentXCore = (session.contextKind ?? 'agent_x') === 'agent_x_core';
   const isAutomationRun = (session.contextKind ?? 'agent_x') === 'automation'
     || session.id.startsWith('automation:');
   const hostCrewId = session.hostCrewId;
@@ -370,12 +382,13 @@ export function createAgent(
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
     prepareIntegrationTools: async (userText) => {
-      const { promptHint } = await eng.integrationHub.prepareForAgentTurn(
+      const { promptHint, accessPolicy } = await eng.integrationHub.prepareForAgentTurn(
         eng.toolkit.registry,
         eng.toolkit.executor,
         userText,
       );
-      return promptHint;
+      if (!promptHint && !accessPolicy) return undefined;
+      return { hint: promptHint, policy: accessPolicy };
     },
     onPart,
     persona: crewPrivateHost ? null : persona,
@@ -385,6 +398,7 @@ export function createAgent(
     channelSession: isChannelSessionId(session.id),
     automationRun: isAutomationRun,
     delegatedWorker: isAutomationRun,
+    contextKind: session.contextKind ?? 'agent_x',
   });
 
   // Apply session mode immediately so the agent starts in the correct mode
@@ -395,8 +409,13 @@ export function createAgent(
         eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false } as never);
       } catch { /* best-effort */ }
     }
-  } else if (session.mode === 'plan') {
+  } else if (isAgentXCore || session.mode === 'plan') {
     agent.setPlanMode(true);
+    if (isAgentXCore && session.mode !== 'plan') {
+      try {
+        eng.sessionManager.updateSession({ mode: 'plan', hyperdrive: false } as never);
+      } catch { /* best-effort */ }
+    }
   } else {
     agent.setPlanMode(false);
   }
@@ -530,8 +549,7 @@ export function createAgent(
     if (store?.getMessages) {
       const msgs = store.getMessages(session.id) as Array<{ role: string; content: string; parts?: unknown }>;
       const restorable = msgs.filter((m) =>
-        m.role === 'user' || m.role === 'assistant' ||
-        (m.role === 'system' && m.content?.includes('[TURN TOOL LEDGER]')),
+        m.role === 'user' || m.role === 'assistant',
       );
       const recent = restorable.slice(-24);
       const historyEntries = hydrateMessageHistoryEntries(recent);

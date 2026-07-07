@@ -1,0 +1,26 @@
+[project]
+name = "agentx-voice-sidecar"
+version = "0.1.0"
+description = "Local voice sidecar for Agent-X STT/TTS/VAD"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+voice = [
+  "faster-whisper",
+  "huggingface-hub",
+  "kokoro",
+  "silero-vad",
+  "numpy",
+  "soundfile",
+]
+styletts2 = [
+  "styletts2",
+]
+dev = [
+  "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentx_voice*"]

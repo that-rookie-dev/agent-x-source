@@ -22,8 +22,8 @@ function log(line) {
   try { appendFileSync(LOG_FILE, stamped + '\n'); } catch {}
 }
 
-// Start embedded PostgreSQL via PostgresLifecycleManager (TS source via tsx)
-const { PostgresLifecycleManager } = await import('./packages/desktop/src/PostgresLifecycleManager.ts');
+// Start embedded PostgreSQL via PostgresLifecycleManager
+const { PostgresLifecycleManager } = await import('./packages/runtime/src/PostgresLifecycleManager.ts');
 
 const pg = new PostgresLifecycleManager({
   dataDir: join(homedir(), '.local', 'share', 'agentx', 'pg-data'),

@@ -13,8 +13,9 @@ import type {
   QuestionnairePayload,
   ClarificationSource,
   QuestionnaireRecord,
+  ClientSituation,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { Mutex } from '../concurrency/Mutex.js';
 import { join, resolve, normalize } from 'node:path';
@@ -37,6 +38,10 @@ import { buildCrewRosterHintBlock } from '../crew/crew-roster-hint.js';
 import { createCrewKeywordExpander } from '../crew/crew-keyword-expander.js';
 import { getCrewSuggestionService } from '../crew/get-crew-store.js';
 import { ensureCrewMembersOnRoster, type CrewCatalogRecruitStore } from '../crew/crew-mission-deploy.js';
+import {
+  buildCrewDeploymentIntakeQuestionnaire,
+  needsCrewDeploymentIntake,
+} from '../crew/crew-deployment-intake.js';
 import { buildCrewSuggestionSearchQuery } from './crew-auto-compose.js';
 import { scoreMatchCandidates, type RawMatchRow } from '../crew/CrewMatchService.js';
 import { setToolRegistryInstance } from '../commands/builtin/tools.js';
@@ -45,11 +50,13 @@ import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ExperienceEngine } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
-import { MemoryFabric, type MemoryNode } from '../neural/MemoryFabric.js';
-import { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
+import { MemoryFabric, type MemoryNode, setMemoryFabricInstance, getMemoryFabricInstance } from '../neural/MemoryFabric.js';
+import { OnnxEmbeddingProvider, setEmbedderInstance, getEmbedderInstance } from '../neural/OnnxEmbeddingProvider.js';
 import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
+import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
+import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createThirdPartyServicesSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
 import {
   buildCompletionMessages,
@@ -126,6 +133,8 @@ import {
   shouldUseInteractivePlanGates,
 } from './plan-mode-utils.js';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
+import { reconcileIntegrationHintWithActiveTools } from '../integrations/integration-tool-availability.js';
+import type { ThirdPartyTurnPolicy } from '../integrations/third-party-access.js';
 import { buildGoogleAiSdkProviderOptions, buildProviderConnectivityProbeUrl } from '../providers/google/gemini-metadata.js';
 import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
 import type { PartPersistFn } from './AiSdkStreamHandler.js';
@@ -145,6 +154,40 @@ import { BUILTIN_AGENTS } from './agent-configs.js';
 function getLoadingSteps(_intent: string): Array<{ id: string; label: string; status: 'active' | 'completed' | 'pending' }> {
   const labels: string[] = ['Thinking…', 'Working…', 'Processing…', 'One moment…'];
   return [{ id: 'load', label: labels[Math.floor(Math.random() * labels.length)]!, status: 'active' as const }];
+}
+
+/**
+ * Build a human/voice-friendly preview of what a tool wants to do, for permission prompts.
+ * `commandPreview` is a raw string (e.g. shell command); `argsSummary` is a short spoken phrase.
+ */
+function summarizePermissionArgs(
+  args?: Record<string, unknown>,
+): { commandPreview?: string; argsSummary?: string } {
+  if (!args) return {};
+  const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
+
+  const cmd = str(args['command'] ?? args['cmd']);
+  if (cmd) {
+    const trimmed = cmd.trim().slice(0, 400);
+    return { commandPreview: trimmed, argsSummary: `run the command ${trimmed.slice(0, 160)}` };
+  }
+
+  const url = str(args['url']);
+  if (url) {
+    return { commandPreview: url, argsSummary: `access ${url.slice(0, 160)}` };
+  }
+
+  const path = str(args['path'] ?? args['file'] ?? args['filePath'] ?? args['target'] ?? args['to']);
+  if (path) {
+    return { commandPreview: path, argsSummary: `use the path ${path.slice(0, 160)}` };
+  }
+
+  const query = str(args['query']);
+  if (query) {
+    return { commandPreview: query, argsSummary: `search for ${query.slice(0, 160)}` };
+  }
+
+  return {};
 }
 
 export interface AgentOptions {
@@ -177,8 +220,12 @@ export interface AgentOptions {
   channelSession?: boolean;
   /** Parent session ID — for crew workers to access the host conversation's neural brain memory. */
   parentSessionId?: string;
-  /** Refresh MCP integration tools and return an optional turn hint before completion. */
-  prepareIntegrationTools?: (userText: string) => Promise<string | undefined>;
+  /** Session context kind — drives super-session memory ingestion and mode defaults. */
+  contextKind?: import('@agentx/shared').SessionContextKind;
+  /** Refresh MCP integration tools; return optional turn hint and access policy before completion. */
+  prepareIntegrationTools?: (userText: string) => Promise<
+    string | { hint?: string; policy?: import('../integrations/third-party-access.js').ThirdPartyTurnPolicy } | undefined
+  >;
 }
 
 export class Agent {
@@ -188,6 +235,7 @@ export class Agent {
   private messages: CompletionMessage[] = [];
   private config: AgentXConfig;
   private persona: AgentPersonaConfig | null = null;
+  private clientSituation: ClientSituation | null = null;
   private sessionId: string;
   private scopePath: string;
   /** Public accessor for session ID — needed by SmartSubAgent to pass parentSessionId to crew workers. */
@@ -197,6 +245,7 @@ export class Agent {
   private scope: Scope | null = null;
   private _abortSignalController: AbortController | null = null;
   private pendingInstruction: string | null = null;
+  private pendingVoiceMerge: { messageId: string; prefixContent: string } | null = null;
   private pendingDelegateCrewIds: string[] | null = null;
   private turnWebSearchPolicy: WebSearchTurnPolicy = 'off';
   private forcedWebSearchToolName: 'deep_web_search' | 'web_search' | null = null;
@@ -206,6 +255,8 @@ export class Agent {
   private _secretSauce: SecretSauceManager | null = null;
   private get secretSauce(): SecretSauceManager { if (!this._secretSauce) { this._secretSauce = new SecretSauceManager(); } return this._secretSauce; }
   private memoryExtractor: MemoryExtractor | null = null;
+  private userChatMemoryIngester: UserChatMemoryIngester | null = null;
+  private chatTurnMemoryIngester: ChatTurnMemoryIngester | null = null;
   private errorShield: ErrorShield;
   private toolExecutor?: EnhancedToolExecutor;
   private toolRegistry?: ToolRegistry;
@@ -307,6 +358,8 @@ export class Agent {
   private pendingStepApproval: ((stepId: string, approved: boolean, description?: string) => void) | null = null;
   private pendingModeEscalation: ((accepted: boolean) => void) | null = null;
   private pendingStepCap: ((continueRun: boolean) => void) | null = null;
+  /** Set when the user hits Stop — stream/tools must halt immediately. */
+  private userCancelledTurn = false;
   private turnState = new TurnStateManager();
   private toolLedger = new ToolLedger();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -525,6 +578,11 @@ export class Agent {
   }
 
   private async waitForQuestionnaireResponse(questionnaire: QuestionnairePayload): Promise<string> {
+    if (this.userCancelledTurn) {
+      const err = new Error('Turn aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
     // Messaging channels have no UI questionnaire modal — waiting would hang forever.
     if (this.options.channelSession) {
       getLogger().info('CHANNEL', 'Auto-proceeding past questionnaire on messaging channel');
@@ -902,13 +960,14 @@ export class Agent {
     });
 
     // Reset permissions for each new session — automation runs reuse the shared executor snapshot.
-    if (this.toolExecutor && !this.options.automationRun) {
-      this.toolExecutor.getPermissionManager().resetForNewSession(this.sessionId);
+    if (this.toolExecutor) {
+      if (!this.options.automationRun) {
+        this.toolExecutor.getPermissionManager().resetForNewSession(this.sessionId);
+      }
+      this.toolExecutor.setSessionContextKind(this.options.contextKind);
       if (this.options.channelSession) {
         this.toolExecutor.setAlwaysPromptPermissions(true);
       }
-    } else if (this.toolExecutor && this.options.channelSession) {
-      this.toolExecutor.setAlwaysPromptPermissions(true);
     }
 
     // Load user-configured permission overrides from config
@@ -1120,14 +1179,20 @@ export class Agent {
 
   private get memoryFabric(): MemoryFabric | null {
     if (!this._memoryFabric && this._pgPool) {
-      this._memoryFabric = new MemoryFabric(this._pgPool);
+      this._memoryFabric = getMemoryFabricInstance() ?? new MemoryFabric(this._pgPool);
+      if (!getMemoryFabricInstance()) {
+        setMemoryFabricInstance(this._memoryFabric);
+      }
     }
     return this._memoryFabric;
   }
 
   private get memoryEmbedder(): EmbeddingProvider | null {
     if (!this._memoryEmbedder) {
-      this._memoryEmbedder = new OnnxEmbeddingProvider();
+      this._memoryEmbedder = getEmbedderInstance() ?? new OnnxEmbeddingProvider();
+      if (!getEmbedderInstance()) {
+        setEmbedderInstance(this._memoryEmbedder as OnnxEmbeddingProvider);
+      }
     }
     return this._memoryEmbedder;
   }
@@ -1184,15 +1249,16 @@ export class Agent {
       // Query reformulation — rewrite follow-up messages into standalone search queries.
       const query = await this.reformulateQuery(rawQuery);
 
-      // Use parent session ID for crew workers so they can access the host conversation's memory.
-      const sessionId = this.options.parentSessionId ?? this.sessionId;
+      const memorySessionId = this.sessionId;
+      const isSuper = isMemoryFabricSuperSession(memorySessionId, this.options.contextKind);
       const result = await retriever.retrieve(query, {
-        sessionId,
+        sessionId: memorySessionId,
+        isSuperSession: isSuper,
         agentId: this.config.user?.callsign,
-        globalLimit: 3,
-        localLimit: 15,
+        globalLimit: isSuper ? 3 : 0,
+        localLimit: isSuper ? 15 : 8,
         vectorLimit: 8,
-        graphDepth: 2,
+        graphDepth: isSuper ? 2 : 1,
         minRelevance: 0.35,
       });
 
@@ -1205,7 +1271,11 @@ export class Agent {
       if (fabric && embedder) {
         try {
           const chunkEmbedding = await embedder.embed(query);
-          chunkNodes = await fabric.vectorSearch(chunkEmbedding, { limit: 5, category: 'source_doc' });
+          chunkNodes = await fabric.vectorSearch(chunkEmbedding, {
+            limit: 5,
+            category: 'source_doc',
+            ...(isSuper ? {} : { sessionId: memorySessionId }),
+          });
           // Filter by a lower threshold for chunks (0.25 — chunks are noisier).
           chunkNodes = chunkNodes.filter((n) => {
             const distance = (n as unknown as { distance?: number }).distance;
@@ -1243,18 +1313,19 @@ export class Agent {
         : undefined;
       const communityChars = communityText?.length ?? 0;
       const remainingAfterCommunity = Math.max(0, MAX_CHARS - communityChars);
-      // Split remaining budget: 40% episodic, 30% semantic (incl. chunks), 30% graph.
-      const episodicText = fmt(result.episodic, Math.floor(remainingAfterCommunity * 0.4));
-      const semanticText = fmt(result.vector, Math.floor(remainingAfterCommunity * 0.3));
-      const graphText = fmt([...result.local, ...result.graph], Math.floor(remainingAfterCommunity * 0.3));
+      // Split remaining budget: 35% user profile, 25% episodic, 25% semantic, 15% graph.
+      const userProfileText = fmt(result.userProfile, Math.floor(remainingAfterCommunity * 0.35));
+      const episodicText = fmt(result.episodic, Math.floor(remainingAfterCommunity * 0.25));
+      const semanticText = fmt(result.vector, Math.floor(remainingAfterCommunity * 0.25));
+      const graphText = fmt([...result.local, ...result.graph], Math.floor(remainingAfterCommunity * 0.15));
 
-      if (semanticText || communityText || episodicText || graphText) {
-        getLogger().info('AGENT', `buildMemoryContext: ${result.all.length} nodes (community=${result.global.length}, episodic=${result.episodic.length}, semantic=${result.vector.length}, graph=${result.local.length + result.graph.length}, chunks=${chunkNodes.length})`);
+      if (semanticText || communityText || episodicText || graphText || userProfileText) {
+        getLogger().info('AGENT', `buildMemoryContext: ${result.all.length} nodes (community=${result.global.length}, userProfile=${result.userProfile.length}, episodic=${result.episodic.length}, semantic=${result.vector.length}, graph=${result.local.length + result.graph.length}, chunks=${chunkNodes.length})`);
       }
 
       return {
         community: communityText,
-        episodic: episodicText,
+        episodic: [userProfileText, episodicText].filter(Boolean).join('\n'),
         semantic: semanticText,
         graph: graphText,
       };
@@ -1385,13 +1456,17 @@ Rules:
         return text;
       };
       const service = new MemoryService(this._pgPool as any, embedder, generate);
+      const storageSessionId = resolveMemoryFabricWriteSessionId(
+        this.options.parentSessionId ?? this.sessionId,
+        this.options.contextKind,
+      );
       await service.ingest({
         text: content,
         label,
         category: 'source_doc',
         extract: true,
         embed: true,
-        sessionId: this.options.parentSessionId ?? this.sessionId,
+        sessionId: storageSessionId,
       });
       getLogger().info('WEB_INGEST', `Ingested ${toolId} result (${output.length} chars) into neural brain`);
     } catch (e) {
@@ -1426,24 +1501,62 @@ Rules:
   }
 
   /**
-   * Cancel an in-progress completion. Aborts the active stream and tool executions.
+   * Cancel an in-progress completion. Aborts the active stream, pending UI waits, and tool executions.
    */
   cancel(): void {
+    this.userCancelledTurn = true;
+    this.toolExecutor?.setTurnAborted(true);
+    this.toolExecutor?.setThirdPartyTurnPolicy(null);
+    this.abortAllPendingTurnWaits();
     this.abortClarificationWait();
+    this._abortSignalController?.abort();
     this.runStateMgr.cancel(this.sessionId);
     this.commandQueue.cancelSession(this.sessionId);
     this.stopTurnHeartbeat();
     this.turnState.cancel();
     this.emitTurnState('cancelled');
+    this.emit({ type: 'task_aborted', reason: 'Stopped by user' });
     this.emit({ type: 'loading_end' });
     if (this.scope) {
       this.scope.dispose();
       this.scope = null;
-      this._abortSignalController = null;
     }
-    this.lifecycle.transition('idle');
+    this._abortSignalController = null;
+    this.lifecycle.forceTransition('idle');
     this.subAgents.cancelAll();
     this.sessionRunner.interrupt();
+  }
+
+  /** True while a user-initiated stop is tearing down the active turn. */
+  isUserCancelled(): boolean {
+    return this.userCancelledTurn;
+  }
+
+  /** Resolve or reject every human-in-the-loop wait so nothing blocks after Stop. */
+  private abortAllPendingTurnWaits(): void {
+    for (const [requestId, entry] of this.pendingPermissions) {
+      try {
+        entry.resolve('deny');
+      } catch { /* ignore */ }
+      this.pendingPermissions.delete(requestId);
+    }
+
+    if (this.pendingModeEscalation) {
+      const resolve = this.pendingModeEscalation;
+      this.pendingModeEscalation = null;
+      resolve(false);
+    }
+
+    if (this.pendingStepCap) {
+      const resolve = this.pendingStepCap;
+      this.pendingStepCap = null;
+      resolve(false);
+    }
+
+    if (this.pendingStepApproval) {
+      this.pendingStepApproval('cancelled', false);
+      this.pendingStepApproval = null;
+    }
   }
 
   get agents(): SubAgentManager {
@@ -1654,7 +1767,13 @@ Rules:
   private waitForModeEscalation(toolId: string, _reason: string): Promise<boolean> {
     this.turnState.setPhase('awaiting_mode', `blocked:${toolId}`);
     return new Promise((resolve) => {
-      this.pendingModeEscalation = resolve;
+      this.pendingModeEscalation = (accepted) => {
+        if (this.userCancelledTurn) {
+          resolve(false);
+          return;
+        }
+        resolve(accepted);
+      };
     });
   }
 
@@ -1667,6 +1786,10 @@ Rules:
     this.emit({ type: 'step_cap_reached', currentSteps, maxSteps: this.completionStepBudget() });
     return new Promise((resolve) => {
       this.pendingStepCap = (cont) => {
+        if (this.userCancelledTurn) {
+          resolve(false);
+          return;
+        }
         if (cont) this.stepCapExtra++;
         resolve(cont);
       };
@@ -1749,7 +1872,7 @@ Rules:
     return trimmed;
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string } }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string }; clientSituation?: ClientSituation | null }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1763,6 +1886,8 @@ Rules:
     this.lifecycle.transition('receiving');
     this.scope = new Scope();
     this.clarificationStale = false;
+    this.userCancelledTurn = false;
+    this.toolExecutor?.setTurnAborted(false);
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
     try {
@@ -1820,7 +1945,11 @@ Rules:
 
     // Store the per-message instruction for injection during completion (not in history)
     this.pendingInstruction = options?.instruction || null;
+    this.pendingVoiceMerge = options?.voiceMergeIntoMessage ?? null;
     this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
+    if (options?.clientSituation) {
+      this.clientSituation = options.clientSituation;
+    }
 
     const searchStatus = isWebSearchAvailableForChat(this.config);
     if (this.options.channelSession) {
@@ -1892,7 +2021,7 @@ Rules:
     }
 
     // Add user message (clean, without instruction)
-    if (!options?.retry) {
+    if (!options?.retry && !options?.voiceContinuation) {
       const turnBoundary = this.messages.length > 0
         ? `\n[TURN ${this.currentTurnId} — treat prior messages as context only unless the user references them]`
         : '';
@@ -1900,7 +2029,9 @@ Rules:
     }
 
     // Record in context tracker
-    this.contextTracker.record('user', cleanContent);
+    if (!options?.voiceContinuation) {
+      this.contextTracker.record('user', cleanContent);
+    }
 
     const userMessage: Message = {
       id: generateMessageId(),
@@ -1912,8 +2043,10 @@ Rules:
       tokenCount: 0,
     };
 
-    if (!options?.retry) {
-      this.emit({ type: 'message_sent', message: userMessage });
+    if (!options?.retry && !options?.voiceContinuation) {
+      if (!options?.userMessagePersisted) {
+        this.emit({ type: 'message_sent', message: userMessage });
+      }
       const userTokens = estimateTokens(cleanContent);
       this.tokenTracker.addTokenUsage(userTokens, 0);
       const ctxWindow = this.getContextWindow();
@@ -2015,7 +2148,27 @@ Rules:
         delegateIds.includes(m.crew.id) && m.crew.enabled !== false,
       );
     if (delegatedMembers.length > 0) {
-        return await this.executeCrewMission(delegatedMembers, cleanContent, startTime, classificationContext);
+        let missionTask = cleanContent;
+        if (options?.crewIntakeFromPicker && needsCrewDeploymentIntake(cleanContent)) {
+          const primary = delegatedMembers.find((m) => m.crew.id === options.primaryCrewId) ?? delegatedMembers[0];
+          this.activeClarificationResume = {
+            kind: 'crew_intake',
+            questionnaireMessageId: '',
+            userText: cleanContent,
+            delegateCrewIds: delegateIds,
+            primaryCrewId: options.primaryCrewId,
+            crewIntakeFromPicker: true,
+          };
+          const questionnaire = buildCrewDeploymentIntakeQuestionnaire(
+            cleanContent,
+            primary?.crew.name,
+          );
+          const intakeAnswer = await this.waitForQuestionnaireResponse(questionnaire);
+          if (intakeAnswer && intakeAnswer !== '(skipped)') {
+            missionTask = `${cleanContent}\n\n[User provided planning details]\n${intakeAnswer.trim()}`;
+          }
+        }
+        return await this.executeCrewMission(delegatedMembers, missionTask, startTime, classificationContext);
       }
       getLogger().warn('AGENT', `Crew deploy failed: no enabled members for ids ${delegateIds.join(', ')}`);
       this.emit({
@@ -2282,8 +2435,11 @@ Rules:
       const classified = this.errorClassifier.classify(error);
       this.telemetry.markError(`turn-${startTime}`, classified.reason, classified.providerMessage ?? '');
 
-      // If cancelled by user, emit a soft cancellation event (not an error)
+      // If cancelled by user, propagate abort so the turn registry/UI finalize as cancelled.
       if (error instanceof Error && error.name === 'AbortError') {
+        if (this.userCancelledTurn) {
+          throw error;
+        }
         const cancelledMessage: Message = {
           id: generateMessageId(),
           sessionId: this.sessionId,
@@ -2346,6 +2502,10 @@ Rules:
     } finally {
       this.turnWebSearchPolicy = 'off';
       this.forcedWebSearchToolName = null;
+      this.pendingVoiceMerge = null;
+      this.toolExecutor?.setTurnAborted(false);
+      this.toolExecutor?.setThirdPartyTurnPolicy(null);
+      this.userCancelledTurn = false;
       this.completeTurnTelemetry(startTime);
       this.lifecycle.forceTransition('idle');
       this.scope = null;
@@ -2395,9 +2555,17 @@ Rules:
       ? lastUserMsg.content.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim()
       : '';
     let integrationHint: string | undefined;
+    let integrationAccessPolicy: ThirdPartyTurnPolicy | undefined;
     if (this.options.prepareIntegrationTools && lastUserText) {
       try {
-        integrationHint = await this.options.prepareIntegrationTools(lastUserText);
+        const prep = await this.options.prepareIntegrationTools(lastUserText);
+        if (typeof prep === 'string') {
+          integrationHint = prep;
+        } else if (prep) {
+          integrationHint = prep.hint;
+          integrationAccessPolicy = prep.policy;
+          this.toolExecutor?.setThirdPartyTurnPolicy(prep.policy ?? null);
+        }
       } catch (error) {
         getLogger().warn('AGENT', `Integration pre-turn sync failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -2452,6 +2620,17 @@ Rules:
       }
     }
 
+    if (integrationHint !== undefined || integrationAccessPolicy !== undefined) {
+      const reconciled = reconcileIntegrationHintWithActiveTools(
+        integrationHint,
+        integrationAccessPolicy,
+        Object.keys(tools),
+      );
+      integrationHint = reconciled.hint;
+      integrationAccessPolicy = reconciled.policy;
+      this.toolExecutor?.setThirdPartyTurnPolicy(reconciled.policy ?? null);
+    }
+
     const model = createAiSdkModel(this.config, this.getApiKey());
 
     const aiMessages = buildCompletionMessages(
@@ -2484,6 +2663,15 @@ Rules:
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
       if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
         aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
+      }
+    }
+
+    if (this.clientSituation) {
+      const situationBlock = formatClientSituationBlock(this.clientSituation);
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[CLIENT_SITUATION]')) {
+        aiMessages[userIdx] = { role: 'user', content: `${situationBlock}\n\n${userMsg.content}` };
       }
     }
 
@@ -2520,6 +2708,7 @@ Rules:
       aiMessages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0),
       this.tokenTracker.inputTokenCount,
       this.tokenTracker.outputTokenCount,
+      this.pendingVoiceMerge ?? undefined,
     );
     this.activeStreamHandler = streamHandler;
 
@@ -2603,6 +2792,11 @@ Rules:
 
       const text = streamHandler.getState().accumulatedContent || '';
       let content = text.trim();
+      if (this.pendingVoiceMerge) {
+        const phase2Body = content.replace(/⟨voice⟩[\s\S]*?⟨\/voice⟩\s*/gi, '').trim();
+        const prefix = this.pendingVoiceMerge.prefixContent.trim();
+        content = phase2Body ? `${prefix}\n\n${phase2Body}` : prefix;
+      }
       
       // ─── CRITICAL FIX: Populate tool execution log from stream handler ───
       const streamToolExecs = streamHandler.getState().toolExecutions;
@@ -2663,17 +2857,13 @@ Rules:
       });
 
       // Stream handler already emitted message_received in its finish case.
-      // Only push to local state and compact — no second emit needed.
-      const ledgerNote = this.toolLedger.formatForHistory();
-      if (ledgerNote) {
-        this.messages.push({ role: 'system', content: ledgerNote });
-      }
+      // Only push assistant content — tool ledger is persisted via persistToolLedger (not in agent history).
       this.messages.push({ role: 'assistant', content });
       await this.compactContext();
       await this.reinforceMemoryContext();
 
       return this.tagCrewPrivateAssistant({
-        id: generateMessageId(),
+        id: this.pendingVoiceMerge?.messageId ?? generateMessageId(),
         sessionId: this.sessionId,
         role: 'assistant' as const,
         content,
@@ -2739,6 +2929,7 @@ Rules:
       throw error;
     } finally {
       this.activeStreamHandler = null;
+      this.toolExecutor?.setThirdPartyTurnPolicy(null);
     }
   }
 
@@ -2761,6 +2952,40 @@ Rules:
       }
     }).catch(() => {
       // Silent failure — memory extraction is best-effort
+    });
+
+    const fabric = this.memoryFabric;
+    const embedder = this.memoryEmbedder;
+    if (fabric && embedder && this.config.neuralBrain !== false) {
+      if (!this.chatTurnMemoryIngester) {
+        this.chatTurnMemoryIngester = new ChatTurnMemoryIngester(fabric, embedder);
+      }
+      const storageSessionId = resolveMemoryFabricWriteSessionId(this.sessionId, this.options.contextKind);
+      void this.chatTurnMemoryIngester.ingestTurn(
+        userMessage,
+        assistantResponse,
+        this.sessionId,
+        storageSessionId,
+      ).catch(() => {
+        // Silent failure — chat turn embedding is best-effort
+      });
+    }
+
+    // Super-session: persist user-profile facts to global vector memory (shared across all sessions).
+    if (!isMemoryFabricSuperSession(this.sessionId, this.options.contextKind)) return;
+    if (!fabric || !embedder || this.config.neuralBrain === false) return;
+
+    if (!this.userChatMemoryIngester) {
+      this.userChatMemoryIngester = new UserChatMemoryIngester(
+        fabric,
+        embedder,
+        this.provider,
+        this.config.provider.activeModel,
+      );
+    }
+
+    void this.userChatMemoryIngester.ingestTurn(userMessage, assistantResponse, this.sessionId).catch(() => {
+      // Silent failure — vector memory ingestion is best-effort
     });
   }
 
@@ -2808,10 +3033,24 @@ Rules:
       lines.push('', identity.evolutionLog);
     }
 
-    // No hardcoded role — the description above defines who the agent is
-    lines.push('', 'Your job is to EXECUTE, not just describe. Take action. Deliver complete results.');
+    // Role guidance — crew workers execute; Agent-X tone comes from [PERSONA TONE]
+    if (this.options.promptProfile === 'crew_worker') {
+      lines.push('', 'Your job is to EXECUTE, not just describe. Take action. Deliver complete results.');
+    }
 
     return lines.join('\n');
+  }
+
+  setClientSituation(situation: ClientSituation | null): void {
+    this.clientSituation = situation;
+  }
+
+  applyPersona(persona: AgentPersonaConfig | null): void {
+    this.persona = persona;
+    if (persona) {
+      this.secretSauce.identity.seedFromPersona(persona);
+    }
+    this.rebuildSystemPrompt();
   }
 
   private createSectionContext(): SectionContext {
@@ -2844,6 +3083,8 @@ Rules:
       growthEngine: { getGrowthContext: () => this.growthEngine.getGrowthContext() },
       turnFeedbackService: { buildPromptContext: () => this.turnFeedbackService.buildPromptContext(this.sessionId) },
       memoryContext: { getContext: () => this.buildMemoryContext() },
+      getPersona: () => this.persona,
+      getClientSituation: () => this.clientSituation,
     };
   }
 
@@ -2851,7 +3092,7 @@ Rules:
     if (this.options.promptProfile === 'crew_worker') {
       const ctx = this.createSectionContext();
       this.promptAssembly
-        .register(createRulesSection())
+        .register(createRulesSection({ technicalExecutor: true }))
         .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx))
@@ -2901,10 +3142,12 @@ Rules:
       this.promptAssembly
         .register(createProviderPromptSection(ctx))
         .register(createIdentitySection(ctx))
+        .register(createPersonaToneSection(ctx))
         .register(createWorkingDirectorySection(ctx))
         .register(createCompactRulesSection())
         .register(createChannelSuperSessionSection())
         .register(createChannelMessagingSection())
+        .register(createThirdPartyServicesSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx))
         .register(createSchedulingSection())
@@ -2929,6 +3172,7 @@ Rules:
       this.promptAssembly
         .register(createProviderPromptSection(ctx))
         .register(createIdentitySection(ctx))
+        .register(createPersonaToneSection(ctx))
         .register(createLocalPersonaGuardSection())
         .register(createWorkingDirectorySection(ctx))
         .register(createCompactRulesSection())
@@ -2940,8 +3184,10 @@ Rules:
       this.promptAssembly
         .register(createProviderPromptSection(ctx))
         .register(createIdentitySection(ctx))
+        .register(createPersonaToneSection(ctx))
         .register(createWorkingDirectorySection(ctx))
         .register(createRulesSection())
+        .register(createThirdPartyServicesSection())
         .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
         .register(createCurrentTimeSection(ctx))
@@ -3175,8 +3421,11 @@ Rules:
     if (!this.toolExecutor || this.options.automationRun) return;
     this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel, context) => {
       if (isPermissionExemptTool(toolId)) return 'allow_once';
+      if (this.userCancelledTurn || this.toolExecutor?.isTurnAborted()) return 'deny';
       if (this.isDelegatedWorker || this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
       const requestId = randomUUID();
+      const { commandPreview, argsSummary } = summarizePermissionArgs(context?.args);
+      if (this.userCancelledTurn) return 'deny';
       return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
         this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
         this.emit({
@@ -3186,6 +3435,8 @@ Rules:
           path,
           riskLevel,
           integrationPreview: context?.integrationPreview,
+          ...(commandPreview ? { commandPreview } : {}),
+          ...(argsSummary ? { argsSummary } : {}),
         });
       });
     });
@@ -3808,7 +4059,7 @@ Only include specialists that are actually needed for this task.`;
    * Get the user's timezone from config, falling back to system timezone.
    */
   private getUserTimezone(): string {
-    return this.config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return resolveClientTimezone(this.clientSituation, this.config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
   }
 
   /**

@@ -63,6 +63,8 @@ export interface DeepSearchStats {
   fetched: number;
   kept: number;
   ms: number;
+  /** Search providers queried for this run (e.g. duckduckgo, brave). */
+  providers?: string[];
 }
 
 export interface DeepSearchProgress {

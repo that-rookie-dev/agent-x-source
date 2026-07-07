@@ -11,6 +11,7 @@ interface VectorRecord {
 export class MemoryVectorStore implements VectorStore {
   readonly name = 'memory';
   readonly dimensions: number;
+  private static readonly MAX_RECORDS = 2_000;
   private records: Map<string, VectorRecord> = new Map();
   private keywordIndex: Map<string, Set<string>> = new Map();
   private persistencePath: string | null = null;
@@ -51,6 +52,14 @@ export class MemoryVectorStore implements VectorStore {
       });
       this.indexKeywords(doc.id, content);
     }
+    this.evictOverflow();
+  }
+
+  private evictOverflow(): void {
+    if (this.records.size <= MemoryVectorStore.MAX_RECORDS) return;
+    const excess = this.records.size - MemoryVectorStore.MAX_RECORDS;
+    const victims = [...this.records.keys()].slice(0, excess);
+    void this.delete(victims);
   }
 
   async search(query: number[], topK = 10, keywordQuery?: string): Promise<Document[]> {

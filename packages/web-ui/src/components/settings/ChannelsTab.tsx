@@ -131,6 +131,29 @@ function channelStatusLabel(id: keyof NotificationChannelsConfig, section: Recor
   return 'SETUP';
 }
 
+function AllowedUserIdsField({
+  section,
+  value,
+  onChange,
+}: {
+  section: keyof NotificationChannelsConfig;
+  value: NotificationChannelsConfig;
+  onChange: (next: NotificationChannelsConfig) => void;
+}) {
+  return (
+    <TextField
+      size="small"
+      fullWidth
+      label="Allowed user IDs"
+      placeholder="123456789, 987654321 (comma-separated)"
+      helperText="In server mode, inbound messaging requires at least one allowed user ID per channel."
+      value={getField(value, section, 'allowedUserIds')}
+      onChange={(e) => onChange(setField(value, section, 'allowedUserIds', e.target.value))}
+      sx={{ ...settingsTextFieldSx, gridColumn: '1 / -1' }}
+    />
+  );
+}
+
 function TelegramFields({
   value,
   onChange,
@@ -241,6 +264,7 @@ function TelegramFields({
         onChange={(e) => onChange(setField(value, 'telegram', 'botToken', e.target.value))}
         sx={settingsTextFieldSx}
       />
+      <AllowedUserIdsField section="telegram" value={value} onChange={onChange} />
       <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button size="small" onClick={() => { void handleVerify(); }} disabled={verifying} sx={settingsBtnGhostSx}>
           {verifying ? <CircularProgress size={12} sx={{ mr: 0.75 }} /> : null}
@@ -367,6 +391,7 @@ function ChannelCard({
               value={getField(value, 'slack', 'webhookUrl')}
               onChange={(e) => onChange(setField(value, 'slack', 'webhookUrl', e.target.value))}
               sx={{ ...settingsTextFieldSx, gridColumn: '1 / -1' }} />
+            <AllowedUserIdsField section="slack" value={value} onChange={onChange} />
           </>
         )}
 
@@ -384,6 +409,7 @@ function ChannelCard({
               value={getField(value, 'discord', 'webhookUrl')}
               onChange={(e) => onChange(setField(value, 'discord', 'webhookUrl', e.target.value))}
               sx={{ ...settingsTextFieldSx, gridColumn: '1 / -1' }} />
+            <AllowedUserIdsField section="discord" value={value} onChange={onChange} />
           </>
         )}
 

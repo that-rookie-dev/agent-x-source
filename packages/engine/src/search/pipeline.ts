@@ -8,7 +8,7 @@ import type {
 } from '@agentx/shared';
 import { depthBudget, planSearchQueries } from './planner.js';
 import { runWebSearch, type SerpHit } from './providers/index.js';
-import { hasActiveWebSearchProviders, webSearchProvidersUnavailableMessage } from './search-config.js';
+import { hasActiveWebSearchProviders, listActiveWebSearchProviders, webSearchProvidersUnavailableMessage } from './search-config.js';
 import { fetchAndExtractPage, inferTypeFromPage, pageExtractToDeepSearchExtracted } from './extract.js';
 import { preScoreSerpHit, scoreSearchResult } from './score.js';
 import { extractDomain, faviconUrlForDomain, isUrlSafeForFetch, markdownSourceLink } from './url-utils.js';
@@ -31,6 +31,7 @@ export async function runDeepSearchPipeline(
   const budget = depthBudget(depth);
   const maxResults = Math.min(request.maxResults ?? budget.maxResults, budget.maxResults);
   const query = request.query.trim();
+  const providers = listActiveWebSearchProviders();
 
   const emit = (progress: DeepSearchProgress) => onProgress?.(progress);
 
@@ -41,7 +42,7 @@ export async function runDeepSearchPipeline(
       query,
       depth,
       plan: { subQueries: [query], intent: [] },
-      stats: { searched: 0, fetched: 0, kept: 0, ms: Date.now() - started },
+      stats: { searched: 0, fetched: 0, kept: 0, ms: Date.now() - started, providers },
       results: [],
       summary: message,
     };
@@ -54,8 +55,16 @@ export async function runDeepSearchPipeline(
   const serpBatches = await Promise.all(
     plan.subQueries.map((q) => runWebSearch(q, budget.serpPerQuery)),
   );
-  const merged = dedupeSerp(serpBatches.flat());
-  const searched = merged.length;
+  let merged = dedupeSerp(serpBatches.flat());
+  let searched = merged.length;
+
+  if (searched === 0) {
+    const retryHits = await runWebSearch(query, budget.serpPerQuery);
+    if (retryHits.length > 0) {
+      merged = dedupeSerp([...merged, ...retryHits]);
+      searched = merged.length;
+    }
+  }
 
   const preRanked = merged
     .map((hit) => ({ hit, pre: preScoreSerpHit(query, hit) }))
@@ -128,6 +137,39 @@ export async function runDeepSearchPipeline(
     .sort((a, b) => b.scores.final - a.scores.final)
     .slice(0, maxResults);
 
+  // If fetch/scoring produced nothing but we had SERP hits, return top snippets without page fetch.
+  if (results.length === 0 && merged.length > 0) {
+    for (const hit of merged.slice(0, maxResults)) {
+      const scores = scoreSearchResult({
+        query,
+        hit,
+        page: null,
+        contentType: inferTypeFromPage(hit.url, null),
+        intent: plan.intent,
+      });
+      const domain = hit.domain || extractDomain(hit.url);
+      results.push({
+        id: generateId(),
+        url: hit.url,
+        title: hit.title,
+        snippet: hit.snippet,
+        domain,
+        faviconUrl: faviconUrlForDomain(domain),
+        contentType: inferTypeFromPage(hit.url, null),
+        scores,
+        extracted: pageExtractToDeepSearchExtracted({
+          title: hit.title,
+          description: hit.snippet,
+          excerpt: hit.snippet,
+        }),
+        source: {
+          provider: hit.provider,
+          fetchedAt: new Date().toISOString(),
+        },
+      });
+    }
+  }
+
   const summary = buildSummary(query, results);
   const ms = Date.now() - started;
 
@@ -137,7 +179,7 @@ export async function runDeepSearchPipeline(
     query,
     depth,
     plan,
-    stats: { searched, fetched: fetchedCount, kept: results.length, ms },
+    stats: { searched, fetched: fetchedCount, kept: results.length, ms, providers },
     results,
     summary,
   };

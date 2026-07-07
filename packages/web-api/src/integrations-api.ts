@@ -181,6 +181,29 @@ router.post('/integrations/:connectionId/mcp-auth', async (req: Request, res: Re
   }
 });
 
+router.post('/integrations/:connectionId/mcp-auth/start', async (req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    const connectionId = req.params.connectionId!;
+    const result = await eng.integrationHub.startMcpStdioBrowserOAuth(connectionId);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.get('/integrations/mcp-auth/result', (req: Request, res: Response) => {
+  const state = String(req.query.state ?? '');
+  const eng = getEngine();
+  res.json({ result: eng.integrationHub.getMcpStdioOAuthResult(state) });
+});
+
+router.get('/integrations/mcp-auth/redirect-uri', (req: Request, res: Response) => {
+  const providerId = String(req.query.providerId ?? 'gmail');
+  const eng = getEngine();
+  res.json({ redirectUri: eng.integrationHub.getMcpStdioOAuthRedirectUri(providerId) });
+});
+
 router.get('/integrations/:connectionId/mcp-auth/status', (req: Request, res: Response) => {
   const eng = getEngine();
   const connectionId = req.params.connectionId!;
@@ -273,3 +296,56 @@ function escapeHtml(value: string): string {
 }
 
 export { router as integrationsRouter };
+
+/** Google Gmail MCP OAuth callback — must match redirect URI registered in Google Cloud Console. */
+export async function handleMcpStdioOAuthCallback(req: Request, res: Response): Promise<void> {
+  const state = String(req.query.state ?? '');
+  const code = String(req.query.code ?? '');
+  const errorParam = String(req.query.error ?? '');
+  const acceptsHtml = (req.headers.accept ?? '').includes('text/html');
+
+  if (errorParam) {
+    const message = errorParam === 'access_denied'
+      ? 'Google sign-in denied: access was not granted.'
+      : /redirect_uri/i.test(errorParam)
+        ? `OAuth redirect URI mismatch (${errorParam}). Add the callback URL shown in the Gmail setup wizard to Google Cloud Console.`
+        : `Google sign-in denied: ${errorParam}`;
+    if (state) getEngine().integrationHub.recordMcpStdioOAuthFailure(state, message);
+    if (acceptsHtml) {
+      res.status(400).send(oauthResultPage(false, message));
+      return;
+    }
+    res.status(400).json({ error: message });
+    return;
+  }
+
+  if (!state || !code) {
+    const message = 'Missing state or authorization code';
+    if (state) getEngine().integrationHub.recordMcpStdioOAuthFailure(state, message);
+    if (acceptsHtml) {
+      res.status(400).send(oauthResultPage(false, message));
+      return;
+    }
+    res.status(400).json({ error: message });
+    return;
+  }
+
+  try {
+    const eng = getEngine();
+    const connection = await eng.integrationHub.completeMcpStdioBrowserOAuth(state, code);
+    syncIntegrationTools();
+    if (acceptsHtml) {
+      res.send(oauthResultPage(true, `Signed in to ${connection.displayName}`));
+      return;
+    }
+    res.json({ connection });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    getEngine().integrationHub.recordMcpStdioOAuthFailure(state, message);
+    if (acceptsHtml) {
+      res.status(400).send(oauthResultPage(false, message));
+      return;
+    }
+    res.status(400).json({ error: message });
+  }
+}

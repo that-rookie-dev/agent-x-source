@@ -3,6 +3,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import Tooltip from '@mui/material/Tooltip';
+import { copyToClipboard } from '../utils/clipboard';
 
 const BASE = '/api';
 
@@ -130,7 +131,7 @@ export function ErrorBandProvider({ children }: { children: ReactNode }) {
                   const logDir = '~/.local/share/agentx/debug-logs/';
                   const ts = new Date().toISOString();
                   const text = `[Agent-X Error @ ${ts}]\n${error}\n\nDebug logs: ${logDir}`;
-                  navigator.clipboard.writeText(text).catch(() => {});
+                  void copyToClipboard(text);
                 }}
                 sx={{
                   minWidth: 20,

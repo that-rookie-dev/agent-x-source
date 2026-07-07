@@ -230,6 +230,16 @@ describe('AuthManager', () => {
     expect(session).toBeNull();
   });
 
+  it('validateSession rejects sessions without an unlocked DEK (post-restart restore)', async () => {
+    await authManager.createRootUser('admin', 'StrongP@ssw0rd!');
+    const token = await authManager.login('admin', 'StrongP@ssw0rd!');
+    const session = authManager.validateSession(token);
+    expect(session).not.toBeNull();
+    session!.dek = Buffer.alloc(0);
+    expect(authManager.validateSession(token)).toBeNull();
+    expect(authManager.getAuthState(token).isAuthenticated).toBe(false);
+  });
+
   it('logout destroys session', async () => {
     await authManager.createRootUser('admin', 'StrongP@ssw0rd!');
     const token = await authManager.login('admin', 'StrongP@ssw0rd!');

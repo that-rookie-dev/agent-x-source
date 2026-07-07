@@ -1,8 +1,10 @@
+import type { ReactNode } from 'react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Divider from '@mui/material/Divider';
 import ChatIcon from '@mui/icons-material/Chat';
+import { IconSparkles, tablerNavProps } from '../icons/tabler';
 // Hidden until wired — see source/MILESTONE.md
 // import ExtensionIcon from '@mui/icons-material/Extension';
 import ExtensionIcon from '@mui/icons-material/Extension';
@@ -29,14 +31,15 @@ interface Props {
   unreadNotificationCount?: number;
 }
 
-const NAV_ITEMS: { id: PanelId; icon: typeof ChatIcon; label: string }[] = [
-  { id: 'chat', icon: ChatIcon, label: 'Chat' },
-  { id: 'notifications', icon: NotificationsNoneIcon, label: 'Notifications' },
-  { id: 'automation', icon: ScheduleIcon, label: 'Automation' },
-  { id: 'crews', icon: GroupsIcon, label: 'Crews' },
-  { id: 'rag-studio', icon: StorageIcon, label: 'RAG Studio' },
-  { id: 'mcp-store', icon: ExtensionIcon, label: 'MCP Store' },
-  { id: 'settings', icon: SettingsIcon, label: 'Settings' },
+const NAV_ITEMS: { id: PanelId; icon: ReactNode; label: string }[] = [
+  { id: 'agent-x', icon: <IconSparkles {...tablerNavProps} />, label: 'Agent-X' },
+  { id: 'chat', icon: <ChatIcon sx={{ fontSize: 16 }} />, label: 'Chat' },
+  { id: 'notifications', icon: <NotificationsNoneIcon sx={{ fontSize: 16 }} />, label: 'Notifications' },
+  { id: 'automation', icon: <ScheduleIcon sx={{ fontSize: 16 }} />, label: 'Automation' },
+  { id: 'crews', icon: <GroupsIcon sx={{ fontSize: 16 }} />, label: 'Crews' },
+  { id: 'rag-studio', icon: <StorageIcon sx={{ fontSize: 16 }} />, label: 'RAG Studio' },
+  { id: 'mcp-store', icon: <ExtensionIcon sx={{ fontSize: 16 }} />, label: 'MCP Store' },
+  { id: 'settings', icon: <SettingsIcon sx={{ fontSize: 16 }} />, label: 'Settings' },
   // Hidden until wired — see source/MILESTONE.md
   // { id: 'soul', icon: AutoAwesomeIcon, label: 'Soul' },
   // { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
@@ -98,10 +101,10 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
                   },
                 }}
               >
-                <item.icon sx={{ fontSize: 16 }} />
+                {item.icon}
               </Badge>
             ) : (
-              <item.icon sx={{ fontSize: 16 }} />
+              item.icon
             )}
           </IconButton>
         </Tooltip>

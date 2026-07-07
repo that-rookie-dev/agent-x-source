@@ -2,6 +2,8 @@ import { App, LogLevel } from '@slack/bolt';
 import type { Agent } from '../agent/Agent.js';
 import { EventEmitter } from 'node:events';
 import type { EngineEvent } from '@agentx/shared';
+import { isChannelUserAllowed } from '@agentx/shared';
+import { randomUUID } from 'node:crypto';
 
 export interface SlackConfig {
   botToken: string;
@@ -45,10 +47,82 @@ export class SlackBridge extends EventEmitter {
   private config: SlackConfig;
   private messageCount = 0;
   private unsubscribers = new Map<string, () => void>();
+  private allowedUserIds: string[] = [];
+  private lastChannelByUser = new Map<string, string>();
+  private pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
+  private permRequesters = new Map<string, string>();
+  private wiredAgents = new WeakSet<Agent>();
 
   constructor(config: SlackConfig) {
     super();
     this.config = config;
+  }
+
+  setAllowedUserIds(ids: string[]): void {
+    this.allowedUserIds = ids;
+  }
+
+  private isUserAllowed(userId: string): boolean {
+    return isChannelUserAllowed(userId, this.allowedUserIds);
+  }
+
+  wireAgentPermissions(agent: Agent, userId: string): void {
+    if (this.wiredAgents.has(agent)) return;
+    this.wiredAgents.add(agent);
+    const toolExecutor = agent.getToolExecutor?.();
+    if (!toolExecutor?.setChannelPermissionRequestHandler) return;
+
+    toolExecutor.setChannelPermissionRequestHandler(
+      async (toolId: string, path: string, riskLevel: string) => {
+        const channel = this.lastChannelByUser.get(userId);
+        if (!channel || !this.app) return 'deny' as const;
+
+        const permId = randomUUID();
+        this.permRequesters.set(permId, userId);
+        const riskEmoji = riskLevel === 'high' ? ':red_circle:' : riskLevel === 'medium' ? ':large_yellow_circle:' : ':large_green_circle:';
+
+        try {
+          await this.app.client.chat.postMessage({
+            channel,
+            text: `${riskEmoji} Permission request: ${toolId}`,
+            blocks: [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: `${riskEmoji} *Permission Request*\n\nTool: \`${toolId}\`\nPath: \`${path}\`\nRisk: ${riskLevel}`,
+                },
+              },
+              {
+                type: 'actions',
+                block_id: `perm_${permId}`,
+                elements: [
+                  { type: 'button', text: { type: 'plain_text', text: 'Allow Once' }, action_id: `perm_${permId}_allow_once`, style: 'primary' },
+                  { type: 'button', text: { type: 'plain_text', text: 'Always Allow' }, action_id: `perm_${permId}_allow_always` },
+                  { type: 'button', text: { type: 'plain_text', text: 'Deny' }, action_id: `perm_${permId}_deny`, style: 'danger' },
+                ],
+              },
+            ],
+          });
+        } catch {
+          return 'deny' as const;
+        }
+
+        return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
+          const timeout = setTimeout(() => {
+            this.pendingPermissions.delete(permId);
+            this.permRequesters.delete(permId);
+            resolve('deny');
+          }, 120_000);
+          this.pendingPermissions.set(permId, (choice) => {
+            clearTimeout(timeout);
+            this.pendingPermissions.delete(permId);
+            this.permRequesters.delete(permId);
+            resolve(choice);
+          });
+        });
+      },
+    );
   }
 
   setAgentFactory(factory: (userId: string) => Agent): void {
@@ -127,6 +201,31 @@ export class SlackBridge extends EventEmitter {
       this.emit('slack_error', error);
     });
 
+    this.app.action(/^perm_[a-f0-9-]+_(allow_once|allow_always|deny)$/, async ({ action, ack, body, client }) => {
+      await ack();
+      const actionId = (action as { action_id?: string }).action_id ?? '';
+      const match = actionId.match(/^perm_([a-f0-9-]+)_(allow_once|allow_always|deny)$/);
+      if (!match) return;
+      const permId = match[1]!;
+      const choice = match[2] as 'allow_once' | 'allow_always' | 'deny';
+      const userId = (body as { user?: { id?: string } }).user?.id;
+      const expectedRequester = this.permRequesters.get(permId);
+      if (expectedRequester && userId && userId !== expectedRequester) return;
+
+      const resolver = this.pendingPermissions.get(permId);
+      if (!resolver) return;
+      resolver(choice);
+
+      const channel = (body as { channel?: { id?: string } }).channel?.id;
+      const messageTs = (body as { message?: { ts?: string } }).message?.ts;
+      if (channel && messageTs) {
+        const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';
+        try {
+          await client.chat.update({ channel, ts: messageTs, text: label, blocks: [] });
+        } catch { /* best effort */ }
+      }
+    });
+
     await this.app.start();
     this.connected = true;
 
@@ -191,6 +290,16 @@ export class SlackBridge extends EventEmitter {
   }
 
   private async handleMessage(event: SlackMessageEvent, client: InstanceType<typeof App>['client']): Promise<void> {
+    if (!this.isUserAllowed(event.userId)) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: '⚠️ Unauthorized. Configure allowed user IDs in Settings → Channels.',
+        thread_ts: event.threadTs ?? event.messageTs,
+      });
+      return;
+    }
+
+    this.lastChannelByUser.set(event.userId, event.channel);
     this.messageCount++;
     this.emit('slack_message', event);
 
@@ -202,6 +311,7 @@ export class SlackBridge extends EventEmitter {
     let agent = this.userAgents.get(event.userId);
     if (!agent && this.agentFactory) {
       agent = this.agentFactory(event.userId);
+      this.wireAgentPermissions(agent, event.userId);
       this.userAgents.set(event.userId, agent);
       this.attachToolStatusListener(event.userId, agent, event.channel, event.threadTs ?? event.messageTs);
     }
@@ -275,11 +385,11 @@ export class SlackBridge extends EventEmitter {
   }
 
   private async downloadFiles(files: SlackFile[]): Promise<string[]> {
-    const { writeFileSync, mkdirSync } = await import('node:fs');
+    const { writeFile, mkdir } = await import('node:fs/promises');
     const { join } = await import('node:path');
     const { getDataDir } = await import('../config/paths.js');
     const filesDir = join(getDataDir(), 'slack-files');
-    mkdirSync(filesDir, { recursive: true });
+    await mkdir(filesDir, { recursive: true });
 
     const results: string[] = [];
     for (const file of files) {
@@ -287,7 +397,7 @@ export class SlackBridge extends EventEmitter {
         const buffer = await this.downloadSlackFile(file.url_private);
         const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
         const filePath = join(filesDir, safeName);
-        writeFileSync(filePath, buffer);
+        await writeFile(filePath, buffer);
         results.push(`File: ${file.name} (${file.mimetype}) saved at ${filePath}`);
       } catch {
         results.push(`File: ${file.name} - failed to download`);

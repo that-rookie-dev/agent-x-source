@@ -19,6 +19,7 @@ import { useOAuthFlowPoll } from '../useOAuthFlowPoll';
 import type { ConnectIntegrationRequest, IntegrationConnection, IntegrationProvider } from '../../../api';
 import { integrations } from '../../../api';
 import { settingsTheme, settingsMonoSx, settingsTextFieldSx } from '../../../styles/settings-theme';
+import { copyToClipboard } from '../../../utils/clipboard';
 
 export interface ProviderSetupWizardProps {
   provider: IntegrationProvider;
@@ -386,7 +387,7 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
                     <Button
                       size="small"
                       onClick={() => {
-                        void navigator.clipboard.writeText(oauthRedirectUri);
+                        void copyToClipboard(oauthRedirectUri);
                         setRedirectUriCopied(true);
                         setTimeout(() => setRedirectUriCopied(false), 2000);
                       }}

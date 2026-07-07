@@ -2,6 +2,8 @@
 export * from './types/index.js';
 export * from './constants/index.js';
 export * from './utils/index.js';
+export * from './runtime-settings.js';
+export * from './channel-acl.js';
 export * from './platform.js';
 export { Logger, getLogger, closeLogger } from './logger.js';
 export type { LogEntry } from './logger.js';

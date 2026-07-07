@@ -36,6 +36,9 @@ export interface ChatInputBarProps {
   onSteer: (text: string) => void;
   /** Increment to clear input from parent (e.g. after clarification submit). */
   clearSignal?: number;
+  /** Optional voice mic control rendered beside send button. */
+  voiceSlot?: React.ReactNode;
+  onComposerStateChange?: (state: { focused: boolean; empty: boolean }) => void;
 }
 
 const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar({
@@ -53,6 +56,8 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
   onAddToQueue,
   onSteer,
   clearSignal,
+  voiceSlot,
+  onComposerStateChange,
 }, ref) {
   const mentionInputRef = useRef<MentionInputHandle>(null);
   const mentionActiveRef = useRef(false);
@@ -60,6 +65,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
   const [showCrewMention, setShowCrewMention] = useState(false);
   const [sendMenuAnchor, setSendMenuAnchor] = useState<null | HTMLElement>(null);
   const [hasText, setHasText] = useState(false);
+  const composerFocusedRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
     clear: () => {
@@ -91,8 +97,15 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
   }, [disableMentions]);
 
   const handleTextChange = useCallback((text: string) => {
-    setHasText(text.trim().length > 0);
-  }, []);
+    const empty = text.trim().length === 0;
+    setHasText(!empty);
+    onComposerStateChange?.({ focused: composerFocusedRef.current, empty });
+  }, [onComposerStateChange]);
+
+  const handleFocusChange = useCallback((focused: boolean) => {
+    composerFocusedRef.current = focused;
+    onComposerStateChange?.({ focused, empty: !hasText });
+  }, [hasText, onComposerStateChange]);
 
   const handleMentionSelect = useCallback((crew: Crew) => {
     mentionActiveRef.current = false;
@@ -146,6 +159,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
           onKeyDown={handleKeyDown}
           onMentionQuery={handleMentionQuery}
           onTextChange={handleTextChange}
+          onFocusChange={handleFocusChange}
           placeholder={placeholder}
           crewList={disableMentions ? [] : crewList}
           disabled={inputDisabled}
@@ -163,7 +177,9 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
             )}
           </Box>
         ) : (
-          <Tooltip title={sendBlocked && sendBlockedReason ? sendBlockedReason : ''} arrow disableHoverListener={!sendBlocked || !sendBlockedReason}>
+          <>
+            {voiceSlot}
+            <Tooltip title={sendBlocked && sendBlockedReason ? sendBlockedReason : ''} arrow disableHoverListener={!sendBlocked || !sendBlockedReason}>
             <span>
               <IconButton
                 size="small"
@@ -175,6 +191,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
               </IconButton>
             </span>
           </Tooltip>
+          </>
         )}
 
         <Menu anchorEl={sendMenuAnchor} open={Boolean(sendMenuAnchor)} onClose={() => setSendMenuAnchor(null)}

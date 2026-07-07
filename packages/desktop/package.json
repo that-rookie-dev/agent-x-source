@@ -8,23 +8,25 @@
   "main": "./dist/main.js",
   "scripts": {
     "prebuild": "node ../../scripts/sync-version.mjs && node scripts/generate-icon.mjs",
-    "setup:pgvector": "node scripts/setup-pgvector.mjs",
-    "setup:age": "node scripts/setup-age.mjs",
-    "setup:extensions": "node scripts/setup-pgvector.mjs && node scripts/setup-age.mjs",
-    "build": "tsup",
-    "build:deps": "pnpm --filter @agentx/web-api run build && pnpm --filter @agentx/web-ui run build",
+    "setup:pgvector": "node ../runtime/scripts/setup-pgvector.mjs",
+    "setup:age": "node ../runtime/scripts/setup-age.mjs",
+    "setup:extensions": "node ../runtime/scripts/setup-pgvector.mjs && node ../runtime/scripts/setup-age.mjs",
+    "build": "pnpm --filter @agentx/runtime run build && tsup",
+    "build:deps": "pnpm --filter @agentx/runtime run build && pnpm --filter @agentx/web-api run build && pnpm --filter @agentx/web-ui run build",
     "dev": "echo 'Use ../../scripts/dev-desktop.sh — raw electron dist/main.js fails in monorepos (npm electron shadows builtin).'",
     "dev:run": "bash ../../scripts/dev-desktop.sh",
     "dev:sync": "bash ../../scripts/sync-desktop.sh",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "pack": "electron-builder --dir",
+    "materialize:pack-deps": "node scripts/materialize-pack-deps.mjs",
     "dist": "electron-builder",
-    "dist:mac": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
-    "dist:mac:arm64": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --mac --arm64 && node scripts/bundle-pg-deps.mjs",
-    "dist:mac:x64": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --mac --x64 && node scripts/bundle-pg-deps.mjs",
-    "dist:linux": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --linux",
-    "dist:win": "pnpm run build:deps && npm run build && pnpm run setup:extensions && electron-builder --win"
+    "setup:bundled-voice": "pnpm --filter @agentx/voice-sidecar run setup:bundled",
+    "dist:mac": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
+    "dist:mac:arm64": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && electron-builder --mac --arm64 && node scripts/bundle-pg-deps.mjs",
+    "dist:mac:x64": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && electron-builder --mac --x64 && node scripts/bundle-pg-deps.mjs",
+    "dist:linux": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && electron-builder --linux",
+    "dist:win": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && electron-builder --win"
   },
   "build": {
     "appId": "com.agentx.desktop",
@@ -81,6 +83,17 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "../voice-sidecar",
+        "to": "voice-sidecar",
+        "filter": [
+          "pyproject.toml",
+          "README.md",
+          "voice-models.manifest.json",
+          "agentx_voice/**/*.py",
+          "bundled/**/*"
+        ]
       }
     ],
     "mac": {
@@ -92,7 +105,11 @@
       "icon": "build/icon.icns",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Agent-X uses your microphone for voice commands and speech-to-text.",
+        "NSLocationWhenInUseUsageDescription": "Agent-X uses your location for local weather, maps, and recommendations."
+      }
     },
     "dmg": {
       "icon": "build/icon.icns",
@@ -146,6 +163,7 @@
     }
   },
   "dependencies": {
+    "@agentx/runtime": "workspace:*",
     "electron-updater": "^6.0.0",
     "embedded-postgres": "17.5.0-beta.15",
     "pg": "^8.21.0"

@@ -1,6 +1,6 @@
 /** Client-side text helpers (mirrors @agentx/shared). */
 
-import { attachDeepSearchPartsFromTools, normalizeMessageForUi, type MessagePart } from '@agentx/shared/browser';
+import { attachDeepSearchPartsFromTools, normalizeMessageForUi, normalizeVoiceAssistantContent, type MessagePart } from '@agentx/shared/browser';
 
 /** Apply tool_complete metadata only to the matching tool call (parallel same-name tools). */
 export function applyToolCompleteMetadata<T extends {
@@ -89,13 +89,30 @@ function partsTextLead(message: { parts?: Array<{ type: string; content?: string
 }
 
 /** When parts[] exist, only show text from parts — not the combined content field. */
+const VOICE_BLOCK_RE = /⟨voice⟩\s*([\s\S]*?)\s*⟨\/voice⟩\s*/gi;
+const VOICE_BLOCK_PARTIAL_RE = /⟨voice⟩[\s\S]*$/i;
+
+export function extractVoiceChannelBlock(content: string): string {
+  if (!content) return '';
+  const blocks = [...content.matchAll(VOICE_BLOCK_RE)]
+    .map((match) => repairStreamTextGlitches(stripToolNoise(match[1] || '')))
+    .filter(Boolean);
+  return blocks.join('\n\n').trim();
+}
+
+export function stripVoiceChannelBlock(content: string): string {
+  return content.replace(VOICE_BLOCK_RE, '').replace(VOICE_BLOCK_PARTIAL_RE, '').trim();
+}
+
 export function displayContent(message: { content?: string; parts?: Array<{ type: string; content?: string }> }): string {
-  const contentText = repairStreamTextGlitches(stripToolNoise(message.content || ''));
+  const contentText = stripVoiceChannelBlock(
+    repairStreamTextGlitches(stripToolNoise(normalizeVoiceAssistantContent(message.content || ''))),
+  );
   if (!message.parts?.length) return contentText;
 
   const raw = message.parts
     .filter((p) => p.type === 'text' && p.content)
-    .map((p) => p.content!)
+    .map((p) => stripVoiceChannelBlock(p.content!))
     .join('');
   const partsText = repairStreamTextGlitches(stripToolNoise(raw));
 

@@ -14,10 +14,12 @@ export class BackgroundQueue {
   private tasks: Map<string, BackgroundTask> = new Map();
   private queue: string[] = [];
   private maxConcurrent: number;
+  private readonly maxRetainedTasks: number;
   private onCompleteCallback: ((task: BackgroundTask) => void) | null = null;
 
-  constructor(maxConcurrent = 2) {
+  constructor(maxConcurrent = 2, maxRetainedTasks = 100) {
     this.maxConcurrent = maxConcurrent;
+    this.maxRetainedTasks = maxRetainedTasks;
   }
 
   onComplete(cb: (task: BackgroundTask) => void): void {
@@ -79,6 +81,7 @@ export class BackgroundQueue {
     task.completedAt = Date.now();
     task.progress = success ? 'Completed.' : 'Failed.';
     this.onCompleteCallback?.(task);
+    this.pruneFinishedTasks();
     this.processQueue();
   }
 
@@ -102,8 +105,19 @@ export class BackgroundQueue {
         task.progress = success ? 'Completed.' : 'Failed.';
         this.onCompleteCallback?.(task);
       }
+      this.pruneFinishedTasks();
       this.processQueue();
     });
+  }
+
+  private pruneFinishedTasks(): void {
+    const finished = Array.from(this.tasks.values())
+      .filter((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled')
+      .sort((a, b) => (b.completedAt ?? b.createdAt) - (a.completedAt ?? a.createdAt));
+    if (finished.length <= this.maxRetainedTasks) return;
+    for (const task of finished.slice(this.maxRetainedTasks)) {
+      this.tasks.delete(task.id);
+    }
   }
 
   private processQueue(): void {

@@ -24,18 +24,37 @@ export function validate(schema: z.ZodSchema) {
 
 // ─── Chat schemas ─────────────────────────────────────────────
 
+const MAX_CHAT_TEXT_LEN = 100_000;
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_CONTENT_LEN = 512_000;
+
+export const clientSituationSchema = z.object({
+  clientNow: z.string().min(1).max(64),
+  timezone: z.string().min(1).max(128),
+  locationLabel: z.string().max(256).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  accuracyMeters: z.number().min(0).max(1_000_000).optional(),
+  source: z.enum(['browser', 'desktop', 'server']),
+  locationMethod: z.enum(['gps', 'ip', 'timezone_only']).optional(),
+  locationConfidence: z.enum(['high', 'low', 'unknown']).optional(),
+  vpnSuspected: z.boolean().optional(),
+}).optional();
+
 export const chatMessageSchema = z.object({
-  text: z.string().min(1, 'text is required'),
+  text: z.string().min(1, 'text is required').max(MAX_CHAT_TEXT_LEN),
   attachments: z.array(z.object({
-    name: z.string(),
-    content: z.string(),
-  })).optional(),
+    name: z.string().max(256),
+    content: z.string().max(MAX_ATTACHMENT_CONTENT_LEN),
+  })).max(MAX_ATTACHMENTS).optional(),
   retry: z.boolean().optional(),
   delegateCrewIds: z.array(z.string()).optional(),
   /** Set after user skips/deploys from CrewSuggestionModal — prevents server re-prompt. */
   crewSuggestionResolved: z.boolean().optional(),
   /** After in-chat crew roster picker — lead crew asks intake question first. */
   crewIntakeFromPicker: z.boolean().optional(),
+  /** User turn already persisted (e.g. crew roster picker) — skip message_sent persistence. */
+  userMessagePersisted: z.boolean().optional(),
   primaryCrewId: z.string().optional(),
   priorUserMessages: z.array(z.string()).optional(),
   /** Globe toggle in chat — force web search on this turn. */
@@ -46,6 +65,7 @@ export const chatMessageSchema = z.object({
     delegateCrewIds: z.array(z.string()),
     primaryCrewId: z.string().optional(),
   }).optional(),
+  clientSituation: clientSituationSchema,
 });
 
 export const crewSuggestionEvaluateSchema = z.object({
@@ -111,6 +131,7 @@ export const chatSteerSchema = z.object({
   crewSuggestionResolved: z.boolean().optional(),
   crewIntakeFromPicker: z.boolean().optional(),
   primaryCrewId: z.string().optional(),
+  clientSituation: clientSituationSchema,
 });
 
 export const clarificationRespondSchema = z.object({
@@ -129,6 +150,7 @@ export const crewRosterPickerOfferSchema = z.object({
     reasons: z.array(z.string()),
   }),
   attachments: z.array(z.object({ name: z.string() })).optional(),
+  userMessageId: z.string().min(1).optional(),
 });
 
 export const crewRosterPickerUpdateSchema = z.object({

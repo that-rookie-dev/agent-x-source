@@ -35,19 +35,32 @@ import PublicIcon from '@mui/icons-material/Public';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BoltIcon from '@mui/icons-material/Bolt';
 import HomeIcon from '@mui/icons-material/Home';
-import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { providers as provApi, models as modelsApi, config, settings } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
-import { colors } from '../theme';
 import { LocalModelStep } from '../components/LocalModelStep';
 import { EmbeddingModelDownload } from '../components/EmbeddingModelDownload';
 import type { ActiveDownload } from '../components/DownloadIndicator';
 import type { ProviderInfo, ModelInfo, AgentXConfig, BenchmarkRunResult } from '../api';
 import { useLocalModelSupported, useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 import { ModelBenchmarkRunner, gradeAllowsAgentX } from '../components/settings/ModelBenchmarkRunner';
+import { WizardVoiceStep } from '../components/setup/WizardVoiceStep';
+import { WizardTelegramStep } from '../components/setup/WizardTelegramStep';
+import { WizardCheckMark, WizardHintTag, WizardStepHeader } from '../components/setup/wizard-ui';
+import {
+  wizardBackBtnSx,
+  wizardPanelSx,
+  wizardPrimaryBtnSx,
+  wizardSelectCardSx,
+  wizardSkipBtnSx,
+  wizardStepperSx,
+  wizardTextFieldSlotProps,
+  wizardTheme,
+  wizardTileSx,
+  WIZARD_MONO,
+} from '../components/setup/wizard-theme';
 
-const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Benchmark', 'Neural Core', 'Callsign', 'Complete'];
+const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Benchmark', 'Neural Core', 'Callsign', 'Voice Comms', 'Telegram Relay', 'Complete'];
 const STORAGE_KEY = 'agentx_wizard_progress';
 
 interface WizardProgress {
@@ -58,6 +71,8 @@ interface WizardProgress {
   selectedBackend: string;
   selectedLocalModel?: string | null;
   skipLocalModel?: boolean;
+  voiceCalibrated?: boolean;
+  telegramLinked?: boolean;
 }
 
 function saveProgress(data: WizardProgress) {
@@ -108,6 +123,16 @@ export function SetupWizard() {
       setStep((s) => moveStep(s, 1));
     }
   }, [step, isStepSupported, moveStep]);
+
+  useEffect(() => {
+    void config.getSetupStatus().then((status) => {
+      if (status.setupComplete) {
+        clearProgress();
+        setAuthState('authenticated');
+        void navigate('/', { replace: true });
+      }
+    }).catch(() => {});
+  }, [navigate, setAuthState]);
   const { showError, clearError } = useGlobalError();
   const [loading, setLoading] = useState(false);
   const [showBackWarning, setShowBackWarning] = useState(false);
@@ -151,6 +176,8 @@ export function SetupWizard() {
   const [skipLocalModel, setSkipLocalModel] = useState(false);
   const [installedLocalModels, setInstalledLocalModels] = useState<Array<{ modelId: string; isActive: boolean }>>([]);
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
+  const [voiceCalibrated, setVoiceCalibrated] = useState(false);
+  const [telegramLinked, setTelegramLinked] = useState(false);
 
   const buildPgConnStr = () => {
     if (pgMode === 'string') return pgConnStr;
@@ -175,6 +202,8 @@ export function SetupWizard() {
       setSelectedBackend('embedded-postgres');
       if (saved.selectedLocalModel) setSelectedLocalModel(saved.selectedLocalModel);
       if (saved.skipLocalModel) setSkipLocalModel(saved.skipLocalModel);
+      if (saved.voiceCalibrated) setVoiceCalibrated(saved.voiceCalibrated);
+      if (saved.telegramLinked) setTelegramLinked(saved.telegramLinked);
       if (saved.selectedProvider) {
         setModelsLoading(true);
         provApi.models(saved.selectedProvider).then(m => {
@@ -199,8 +228,20 @@ export function SetupWizard() {
   }, []);
 
   const persistProgress = useCallback(() => {
-    if (step >= 1) saveProgress({ step, selectedProvider, selectedModel, callsign, selectedBackend, selectedLocalModel, skipLocalModel });
-  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, selectedLocalModel, skipLocalModel]);
+    if (step >= 1) {
+      saveProgress({
+        step,
+        selectedProvider,
+        selectedModel,
+        callsign,
+        selectedBackend,
+        selectedLocalModel,
+        skipLocalModel,
+        voiceCalibrated,
+        telegramLinked,
+      });
+    }
+  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, selectedLocalModel, skipLocalModel, voiceCalibrated, telegramLinked]);
   useEffect(() => { persistProgress(); }, [persistProgress]);
 
   const next = () => {
@@ -337,8 +378,8 @@ export function SetupWizard() {
       if (!neuralBrainSupported) {
         setupPatch.neuralBrain = false;
       }
-      const r = await config.update(setupPatch);
-      if (!r.ok) { showError('Failed to save setup.'); setLoading(false); return; }
+      await config.completeSetup(callsign.trim());
+      await config.update(setupPatch);
       clearProgress();
       setAuthState('authenticated');
       setView('docking');
@@ -349,14 +390,14 @@ export function SetupWizard() {
   };
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: '#000' }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: wizardTheme.bg }}>
       <Box sx={{ flexShrink: 0, textAlign: 'center', pt: 4, px: 2, pb: 2 }}>
-        <Typography variant="h2" sx={{ mb: 1 }}>SETUP WIZARD</Typography>
-        <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 3 }}>Configure your Agent-X instance</Typography>
-        <Stepper activeStep={steps.indexOf(ALL_STEPS[step] ?? '')} alternativeLabel sx={{ width: '100%', maxWidth: 880, mx: 'auto' }}>
+        <Typography variant="h2" sx={{ mb: 0.5, fontFamily: WIZARD_MONO, letterSpacing: '0.12em', fontSize: '1.1rem' }}>SETUP WIZARD</Typography>
+        <Typography variant="body2" sx={{ color: wizardTheme.textDim, mb: 3, fontFamily: WIZARD_MONO, fontSize: '0.62rem' }}>Configure your Agent-X instance</Typography>
+        <Stepper activeStep={steps.indexOf(ALL_STEPS[step] ?? '')} alternativeLabel sx={wizardStepperSx}>
           {steps.map((label) => (
             <Step key={label}>
-              <StepLabel sx={{ '& .MuiStepLabel-label': { color: colors.text.dim, fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace" } }}>{label}</StepLabel>
+              <StepLabel>{label}</StepLabel>
             </Step>
           ))}
         </Stepper>
@@ -369,28 +410,24 @@ export function SetupWizard() {
           {/* ─── Step 0: Storage (or Relay Config) ─── */}
           {step === 0 && !showRelayConfig && (
             <Box>
-              <Box sx={{ textAlign: 'center', mb: 3 }}>
-                <Typography variant="h6" sx={{ fontWeight: 800, fontSize: '1.1rem' }}>Power Your Agent</Typography>
-                <Typography variant="body2" sx={{ color: colors.text.dim, fontSize: '0.62rem', maxWidth: 480, mx: 'auto', mt: 0.5 }}>
-                  Every memory, message, and crew identity lives here. Credentials stay encrypted on this machine — always.
-                </Typography>
-              </Box>
+              <WizardStepHeader
+                codename="MODULE · STORAGE"
+                title="Power Your Agent"
+                subtitle="Every memory, message, and crew identity lives here. Credentials stay encrypted on this machine — always."
+              />
 
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
                 <Box onClick={() => { setSelectedBackend('embedded-postgres'); setPgTestResult(null); }}
-                  sx={{ p: 2.5, border: `2px solid ${selectedBackend === 'embedded-postgres' ? colors.accent.green : colors.border.default}`, borderRadius: 2, cursor: 'pointer',
-                    bgcolor: selectedBackend === 'embedded-postgres' ? `${colors.accent.green}05` : colors.bg.secondary,
-                    boxShadow: selectedBackend === 'embedded-postgres' ? `0 0 20px ${colors.accent.green}10` : 'none', display: 'flex', flexDirection: 'column',
-                    transition: 'all 0.2s', '&:hover': { borderColor: selectedBackend === 'embedded-postgres' ? colors.accent.green : colors.border.strong } }}>
+                  sx={{ ...wizardSelectCardSx(selectedBackend === 'embedded-postgres'), gap: 0 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: `${colors.accent.green}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${colors.accent.green}20`, flexShrink: 0 }}>
-                      <StorageIcon sx={{ fontSize: 18, color: colors.accent.green }} />
+                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
+                      <StorageIcon sx={{ fontSize: 18, color: wizardTheme.textSecondary }} />
                     </Box>
                     <Box>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: colors.text.primary }}>Onboard Core</Typography>
-                      <Typography sx={{ fontSize: '0.52rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.green, letterSpacing: '1.5px' }}>EMBEDDED POSTGRESQL</Typography>
+                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: wizardTheme.text }}>Onboard Core</Typography>
+                      <WizardHintTag tone="ok">Embedded PostgreSQL</WizardHintTag>
                     </Box>
-                    {selectedBackend === 'embedded-postgres' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.green, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
+                    {selectedBackend === 'embedded-postgres' && <Box sx={{ ml: 'auto' }}><WizardCheckMark /></Box>}
                   </Box>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
                     <Punch text="Everything runs on your Mac — no cloud account or database setup needed." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
@@ -401,27 +438,24 @@ export function SetupWizard() {
                     <Punch text="Best for personal use, solo work, and getting started fast." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
                     <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
                   </Box>
-                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: `${colors.accent.green}06`, border: `1px solid ${colors.accent.green}10`, mt: 'auto' }}>
-                    <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.green, textAlign: 'center', fontWeight: 600 }}>
+                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.02)', border: `1px solid ${wizardTheme.panelBorder}`, mt: 'auto' }}>
+                    <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk, textAlign: 'center', fontWeight: 600 }}>
                       Recommended. No external database needed.
                     </Typography>
                   </Box>
                 </Box>
 
                 <Box onClick={() => { setSelectedBackend('postgres'); setPgTestResult(null); }}
-                  sx={{ p: 2.5, border: `2px solid ${selectedBackend === 'postgres' ? colors.accent.blue : colors.border.default}`, borderRadius: 2, cursor: 'pointer',
-                    bgcolor: selectedBackend === 'postgres' ? `${colors.accent.blue}05` : colors.bg.secondary,
-                    boxShadow: selectedBackend === 'postgres' ? `0 0 20px ${colors.accent.blue}10` : 'none', display: 'flex', flexDirection: 'column',
-                    transition: 'all 0.2s', '&:hover': { borderColor: selectedBackend === 'postgres' ? colors.accent.blue : colors.border.strong } }}>
+                  sx={{ ...wizardSelectCardSx(selectedBackend === 'postgres'), gap: 0 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: `${colors.accent.blue}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${colors.accent.blue}20`, flexShrink: 0 }}>
-                      <CloudIcon sx={{ fontSize: 18, color: colors.accent.blue }} />
+                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
+                      <CloudIcon sx={{ fontSize: 18, color: wizardTheme.textSecondary }} />
                     </Box>
                     <Box>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: colors.text.primary }}>Starfleet Relay</Typography>
-                      <Typography sx={{ fontSize: '0.52rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.blue, letterSpacing: '1.5px' }}>YOUR POSTGRESQL</Typography>
+                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: wizardTheme.text }}>Starfleet Relay</Typography>
+                      <WizardHintTag>Your PostgreSQL</WizardHintTag>
                     </Box>
-                    {selectedBackend === 'postgres' && <Box sx={{ ml: 'auto', width: 18, height: 18, borderRadius: '50%', bgcolor: colors.accent.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Typography sx={{ fontSize: '0.6rem', color: '#000', fontWeight: 900 }}>✓</Typography></Box>}
+                    {selectedBackend === 'postgres' && <Box sx={{ ml: 'auto' }}><WizardCheckMark /></Box>}
                   </Box>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
                     <Punch text="Connect your own PostgreSQL database — cloud or self-hosted." icon={<CloudIcon sx={{ fontSize: 13 }} />} />
@@ -432,8 +466,8 @@ export function SetupWizard() {
                     <Punch text="Schema and tables are created automatically on first connect." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
                     <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
                   </Box>
-                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: `${colors.accent.blue}06`, border: `1px solid ${colors.accent.blue}10`, mt: 'auto' }}>
-                    <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.accent.blue, textAlign: 'center', fontWeight: 600 }}>
+                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.02)', border: `1px solid ${wizardTheme.panelBorder}`, mt: 'auto' }}>
+                    <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, textAlign: 'center', fontWeight: 600 }}>
                       For multi-machine setups, teams, and cloud DBs.
                     </Typography>
                   </Box>
@@ -445,26 +479,22 @@ export function SetupWizard() {
           {/* ─── Step 0b: Relay Config ─── */}
           {step === 0 && showRelayConfig && (
             <Box sx={{ maxWidth: 600, mx: 'auto' }}>
-              <Box sx={{ textAlign: 'center', mb: 3 }}>
-                <Box sx={{ width: 48, height: 48, borderRadius: 1.5, bgcolor: `${colors.accent.blue}15`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${colors.accent.blue}25`, mb: 1.5 }}>
-                  <RocketLaunchIcon sx={{ fontSize: 24, color: colors.accent.blue }} />
-                </Box>
-                <Typography variant="h6" sx={{ fontWeight: 800, fontSize: '1.1rem' }}>Configure Your Relay</Typography>
-                <Typography variant="body2" sx={{ color: colors.text.dim, fontSize: '0.62rem', mt: 0.5 }}>
-                  Connect your PostgreSQL instance. Agent-X auto-provisions the schema on first contact.
-                </Typography>
-              </Box>
+              <WizardStepHeader
+                codename="MODULE · RELAY CONFIG"
+                title="Configure Your Relay"
+                subtitle="Connect your PostgreSQL instance. Agent-X auto-provisions the schema on first contact."
+              />
 
-              <Box sx={{ p: 3, border: `1px solid ${colors.accent.blue}25`, borderRadius: 2, bgcolor: colors.bg.secondary }}>
+              <Box sx={{ ...wizardPanelSx, p: 3 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                  <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: colors.text.primary }}>Connection</Typography>
+                  <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: wizardTheme.text }}>Connection</Typography>
                   <Box sx={{ display: 'flex', gap: 0.5 }}>
                     <Button size="small" onClick={() => setPgMode('string')}
-                      sx={{ fontSize: '0.58rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', py: 0, px: 1, color: pgMode === 'string' ? colors.accent.blue : colors.text.dim, minWidth: 0, borderBottom: pgMode === 'string' ? `1px solid ${colors.accent.blue}` : '1px solid transparent', borderRadius: 0 }}>
+                      sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, textTransform: 'none', py: 0, px: 1, color: pgMode === 'string' ? wizardTheme.text : wizardTheme.textDim, minWidth: 0, borderBottom: pgMode === 'string' ? `1px solid ${wizardTheme.text}` : '1px solid transparent', borderRadius: 0 }}>
                       Connection String
                     </Button>
                     <Button size="small" onClick={() => setPgMode('fields')}
-                      sx={{ fontSize: '0.58rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', py: 0, px: 1, color: pgMode === 'fields' ? colors.accent.blue : colors.text.dim, minWidth: 0, borderBottom: pgMode === 'fields' ? `1px solid ${colors.accent.blue}` : '1px solid transparent', borderRadius: 0 }}>
+                      sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, textTransform: 'none', py: 0, px: 1, color: pgMode === 'fields' ? wizardTheme.text : wizardTheme.textDim, minWidth: 0, borderBottom: pgMode === 'fields' ? `1px solid ${wizardTheme.text}` : '1px solid transparent', borderRadius: 0 }}>
                       Individual Fields
                     </Button>
                   </Box>
@@ -473,59 +503,59 @@ export function SetupWizard() {
                 {pgMode === 'string' ? (
                   <TextField size="small" fullWidth placeholder="postgresql://user:pass@host:5432/agentx?sslmode=no-verify"
                     value={pgConnStr} onChange={e => { setPgConnStr(e.target.value); setPgTestResult(null); }} sx={{ mb: 2 }}
-                    slotProps={{ input: { sx: { fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace" } } }} />
+                    slotProps={wizardTextFieldSlotProps} />
                 ) : (
                   <>
                     <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1 }}>
-                      <TextField size="small" label="Host" value={pgHost} onChange={e => setPgHost(e.target.value)} placeholder="db.example.com" slotProps={{ input: { sx: { fontSize: '0.7rem' } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
-                      <TextField size="small" label="Port" value={pgPort} onChange={e => setPgPort(e.target.value)} placeholder="5432" slotProps={{ input: { sx: { fontSize: '0.7rem' } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
-                      <TextField size="small" label="User" value={pgUser} onChange={e => setPgUser(e.target.value)} placeholder="agentx" slotProps={{ input: { sx: { fontSize: '0.7rem' } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
-                      <TextField size="small" label="Password" type="password" value={pgPassword} onChange={e => setPgPassword(e.target.value)} placeholder="••••" slotProps={{ input: { sx: { fontSize: '0.7rem' } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
-                      <TextField size="small" label="Database" value={pgDatabase} onChange={e => setPgDatabase(e.target.value)} sx={{ gridColumn: '1 / -1' }} placeholder="agentx" slotProps={{ input: { sx: { fontSize: '0.7rem' } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
+                      <TextField size="small" label="Host" value={pgHost} onChange={e => setPgHost(e.target.value)} placeholder="db.example.com" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="Port" value={pgPort} onChange={e => setPgPort(e.target.value)} placeholder="5432" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="User" value={pgUser} onChange={e => setPgUser(e.target.value)} placeholder="agentx" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="Password" type="password" value={pgPassword} onChange={e => setPgPassword(e.target.value)} placeholder="••••" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="Database" value={pgDatabase} onChange={e => setPgDatabase(e.target.value)} sx={{ gridColumn: '1 / -1' }} placeholder="agentx" slotProps={wizardTextFieldSlotProps} />
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                      <Box onClick={() => setPgSsl(!pgSsl)} sx={{ width: 14, height: 14, borderRadius: '3px', border: `1.5px solid ${pgSsl ? colors.accent.green : colors.border.strong}`, bgcolor: pgSsl ? colors.accent.green : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        {pgSsl && <Typography sx={{ fontSize: '0.5rem', color: '#000', fontWeight: 900 }}>✓</Typography>}
+                      <Box onClick={() => setPgSsl(!pgSsl)} sx={{ width: 14, height: 14, borderRadius: '3px', border: `1.5px solid ${pgSsl ? wizardTheme.text : wizardTheme.panelBorderStrong}`, bgcolor: pgSsl ? wizardTheme.text : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        {pgSsl && <Typography sx={{ fontSize: '0.5rem', color: wizardTheme.bg, fontWeight: 900 }}>✓</Typography>}
                       </Box>
-                      <Typography sx={{ fontSize: '0.62rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace" }}>SSL ({pgSsl ? 'no-verify' : 'off'})</Typography>
+                      <Typography sx={{ fontSize: '0.62rem', color: wizardTheme.textSecondary, fontFamily: WIZARD_MONO }}>SSL ({pgSsl ? 'no-verify' : 'off'})</Typography>
                     </Box>
                   </>
                 )}
 
                 {/* SSH Tunnel */}
-                <Box sx={{ pt: 1.5, borderTop: `1px solid ${colors.border.default}` }}>
+                <Box sx={{ pt: 1.5, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: sshEnabled ? 1.5 : 0, cursor: 'pointer' }} onClick={() => setSshEnabled(!sshEnabled)}>
-                    <Box onClick={e => { e.stopPropagation(); setSshEnabled(!sshEnabled); }} sx={{ width: 14, height: 14, borderRadius: '3px', border: `1.5px solid ${sshEnabled ? colors.accent.blue : colors.border.strong}`, bgcolor: sshEnabled ? colors.accent.blue : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      {sshEnabled && <Typography sx={{ fontSize: '0.5rem', color: '#000', fontWeight: 900 }}>✓</Typography>}
+                    <Box onClick={e => { e.stopPropagation(); setSshEnabled(!sshEnabled); }} sx={{ width: 14, height: 14, borderRadius: '3px', border: `1.5px solid ${sshEnabled ? wizardTheme.text : wizardTheme.panelBorderStrong}`, bgcolor: sshEnabled ? wizardTheme.text : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {sshEnabled && <Typography sx={{ fontSize: '0.5rem', color: wizardTheme.bg, fontWeight: 900 }}>✓</Typography>}
                     </Box>
-                    <Typography sx={{ fontSize: '0.62rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace" }}>SSH Tunnel {sshEnabled ? '· bastion / jump host' : '(optional)'}</Typography>
+                    <Typography sx={{ fontSize: '0.62rem', color: wizardTheme.textSecondary, fontFamily: WIZARD_MONO }}>SSH Tunnel {sshEnabled ? '· bastion / jump host' : '(optional)'}</Typography>
                   </Box>
                   {sshEnabled && (
                     <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1 }}>
-                      <TextField size="small" label="SSH Host" value={sshHost} onChange={e => setSshHost(e.target.value)} placeholder="bastion.example.com" slotProps={{ input: { sx: { fontSize: '0.7rem' } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
-                      <TextField size="small" label="SSH Port" value={sshPort} onChange={e => setSshPort(e.target.value)} placeholder="22" slotProps={{ input: { sx: { fontSize: '0.7rem' } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
-                      <TextField size="small" label="SSH User" value={sshUser} onChange={e => setSshUser(e.target.value)} sx={{ gridColumn: '1 / -1' }} placeholder="ubuntu" slotProps={{ input: { sx: { fontSize: '0.7rem' } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
+                      <TextField size="small" label="SSH Host" value={sshHost} onChange={e => setSshHost(e.target.value)} placeholder="bastion.example.com" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="SSH Port" value={sshPort} onChange={e => setSshPort(e.target.value)} placeholder="22" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="SSH User" value={sshUser} onChange={e => setSshUser(e.target.value)} sx={{ gridColumn: '1 / -1' }} placeholder="ubuntu" slotProps={wizardTextFieldSlotProps} />
                       <Box sx={{ gridColumn: '1 / -1', display: 'flex', gap: 0.5 }}>
-                        <Button size="small" onClick={() => setSshAuthMode('password')} sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', py: 0, px: 1, color: sshAuthMode === 'password' ? colors.accent.blue : colors.text.dim, minWidth: 0, borderBottom: sshAuthMode === 'password' ? `1px solid ${colors.accent.blue}` : '1px solid transparent', borderRadius: 0 }}>Password</Button>
-                        <Button size="small" onClick={() => setSshAuthMode('key')} sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', py: 0, px: 1, color: sshAuthMode === 'key' ? colors.accent.blue : colors.text.dim, minWidth: 0, borderBottom: sshAuthMode === 'key' ? `1px solid ${colors.accent.blue}` : '1px solid transparent', borderRadius: 0 }}>Private Key</Button>
+                        <Button size="small" onClick={() => setSshAuthMode('password')} sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, textTransform: 'none', py: 0, px: 1, color: sshAuthMode === 'password' ? wizardTheme.text : wizardTheme.textDim, minWidth: 0, borderBottom: sshAuthMode === 'password' ? `1px solid ${wizardTheme.text}` : '1px solid transparent', borderRadius: 0 }}>Password</Button>
+                        <Button size="small" onClick={() => setSshAuthMode('key')} sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, textTransform: 'none', py: 0, px: 1, color: sshAuthMode === 'key' ? wizardTheme.text : wizardTheme.textDim, minWidth: 0, borderBottom: sshAuthMode === 'key' ? `1px solid ${wizardTheme.text}` : '1px solid transparent', borderRadius: 0 }}>Private Key</Button>
                       </Box>
                       {sshAuthMode === 'password'
-                        ? <TextField size="small" label="SSH Password" type="password" value={sshPassword} onChange={e => setSshPassword(e.target.value)} sx={{ gridColumn: '1 / -1' }} placeholder="••••" slotProps={{ input: { sx: { fontSize: '0.7rem' } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
+                        ? <TextField size="small" label="SSH Password" type="password" value={sshPassword} onChange={e => setSshPassword(e.target.value)} sx={{ gridColumn: '1 / -1' }} placeholder="••••" slotProps={wizardTextFieldSlotProps} />
                         : (
                           <Box sx={{ gridColumn: '1 / -1' }}>
                             <TextField size="small" label="Private Key" multiline rows={3} value={sshKey} onChange={e => setSshKey(e.target.value)}
                               fullWidth placeholder="Paste your key or upload a file..."
-                              slotProps={{ input: { sx: { fontSize: '0.58rem', fontFamily: "'JetBrains Mono', monospace" } }, inputLabel: { sx: { fontSize: '0.6rem' } } }} />
+                              slotProps={wizardTextFieldSlotProps} />
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75 }}>
                               <Button component="label" size="small"
-                                sx={{ fontSize: '0.58rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', color: colors.text.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 0.5, px: 1.5, py: 0.25, '&:hover': { borderColor: colors.border.strong } }}>
+                                sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, textTransform: 'none', color: wizardTheme.textSecondary, border: `1px solid ${wizardTheme.panelBorder}`, borderRadius: 0.5, px: 1.5, py: 0.25, '&:hover': { borderColor: wizardTheme.panelBorderStrong } }}>
                                 Upload Key File
                                 <input type="file" hidden onChange={e => {
                                   const file = e.target.files?.[0];
                                   if (file) { const r = new FileReader(); r.onload = () => setSshKey(r.result as string); r.readAsText(file); }
                                 }} />
                               </Button>
-                              <Typography sx={{ fontSize: '0.52rem', color: colors.text.dim }}>~/.ssh/id_rsa, .pem, or any OpenSSH key</Typography>
+                              <Typography sx={{ fontSize: '0.52rem', color: wizardTheme.textDim }}>~/.ssh/id_rsa, .pem, or any OpenSSH key</Typography>
                             </Box>
                           </Box>
                         )
@@ -535,15 +565,15 @@ export function SetupWizard() {
                 </Box>
 
                 {pgTestResult && (
-                  <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: pgTestResult.ok ? `${colors.accent.green}08` : `${colors.accent.red}08`, border: `1px solid ${pgTestResult.ok ? `${colors.accent.green}25` : `${colors.accent.red}25`}` }}>
-                    <Typography sx={{ fontSize: '0.62rem', fontFamily: "'JetBrains Mono', monospace", color: pgTestResult.ok ? colors.accent.green : colors.accent.red, fontWeight: 600 }}>
+                  <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.02)', border: `1px solid ${pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr}` }}>
+                    <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr, fontWeight: 600 }}>
                       {pgTestResult.ok ? 'RELAY ONLINE' : 'CONNECTION FAILED'}
                     </Typography>
-                    <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: pgTestResult.ok ? `${colors.accent.green}aa` : `${colors.accent.red}aa`, mt: 0.25 }}>
+                    <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.25 }}>
                       {pgTestResult.ok ? `${pgTestResult.version || 'PostgreSQL'} · ${pgTestResult.tablesCreated ? `${pgTestResult.tablesCreated} tables created` : 'Schema verified'}` : pgTestResult.error}
                     </Typography>
                     {pgTestResult.ok && (
-                      <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: pgTestResult.ageAvailable ? `${colors.accent.green}aa` : colors.accent.orange, mt: 0.25 }}>
+                      <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: pgTestResult.ageAvailable ? wizardTheme.accentOk : wizardTheme.accentWarn, mt: 0.25 }}>
                         {pgTestResult.ageAvailable ? 'Apache AGE: available' : `Apache AGE: unavailable${pgTestResult.ageError ? ` — ${pgTestResult.ageError}` : ''}`}
                       </Typography>
                     )}
@@ -558,54 +588,51 @@ export function SetupWizard() {
             <Box>
               {step === 1 && (
                 <Box>
-                  <Typography variant="h6" sx={{ mb: 0.5, textAlign: 'center' }}>Choose AI Provider</Typography>
-                  <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: colors.text.dim, mb: 2, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px' }}>CLOUD</Typography>
+                  <WizardStepHeader codename="MODULE · PROVIDER" title="Choose AI Provider" />
+                  <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: wizardTheme.textDim, mb: 2, fontFamily: WIZARD_MONO, letterSpacing: '1px' }}>CLOUD</Typography>
                   <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 1.5, mb: 2 }}>
                     {availableProviders.filter(Boolean).filter(p => p.type === 'cloud').map(p => (
-                      <Box key={p.id} onClick={() => setSelectedProvider(p.id)}
-                        sx={{ p: 1.5, border: `1px solid ${selectedProvider === p.id ? colors.accent.blue : colors.border.default}`, borderRadius: 1, cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s', bgcolor: selectedProvider === p.id ? colors.accent.blue : 'transparent', boxShadow: selectedProvider === p.id ? `0 0 12px ${colors.accent.blue}40` : 'none', '&:hover': selectedProvider === p.id ? {} : { borderColor: colors.border.strong, bgcolor: colors.bg.tertiary } }}>
-                        <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: selectedProvider === p.id ? '#000' : colors.text.primary }}>{p.name}</Typography>
+                      <Box key={p.id} onClick={() => setSelectedProvider(p.id)} sx={wizardTileSx(selectedProvider === p.id)}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: wizardTheme.text }}>{p.name}</Typography>
                       </Box>
                     ))}
                   </Box>
-                  <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: colors.text.dim, mb: 1.5, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px' }}>LOCAL</Typography>
+                  <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: wizardTheme.textDim, mb: 1.5, fontFamily: WIZARD_MONO, letterSpacing: '1px' }}>LOCAL</Typography>
                   <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 1.5 }}>
                     {availableProviders.filter(Boolean).filter(p => p.type === 'local').map(p => (
-                      <Box key={p.id} onClick={() => setSelectedProvider(p.id)}
-                        sx={{ p: 1.5, border: `1px solid ${selectedProvider === p.id ? colors.accent.green : colors.border.default}`, borderRadius: 1, cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s', bgcolor: selectedProvider === p.id ? colors.accent.green : 'transparent', boxShadow: selectedProvider === p.id ? `0 0 12px ${colors.accent.green}40` : 'none', '&:hover': selectedProvider === p.id ? {} : { borderColor: colors.border.strong, bgcolor: colors.bg.tertiary } }}>
-                        <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: selectedProvider === p.id ? '#000' : colors.text.primary }}>{p.name}</Typography>
+                      <Box key={p.id} onClick={() => setSelectedProvider(p.id)} sx={wizardTileSx(selectedProvider === p.id)}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: wizardTheme.text }}>{p.name}</Typography>
                       </Box>
                     ))}
                   </Box>
-                  {availableProviders.length === 0 && <Typography variant="body2" sx={{ color: colors.text.dim, textAlign: 'center', mt: 2 }}>Loading providers...</Typography>}
+                  {availableProviders.length === 0 && <Typography variant="body2" sx={{ color: wizardTheme.textDim, textAlign: 'center', mt: 2 }}>Loading providers...</Typography>}
                 </Box>
               )}
 
               {step === 2 && (
-                <Box>
-                  <Typography variant="h6" sx={{ mb: 1, fontSize: '1.1rem' }}>
-                    {isLocal ? 'Name Your Local Profile' : isAzure ? 'Azure Profile' : 'Configure Profile'}
-                  </Typography>
-                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2, fontSize: '0.78rem' }}>
-                    {isLocal ? `Connecting to ${selectedProviderInfo?.name ?? 'local provider'}. No API key needed.` : isAzure ? 'Enter your Azure endpoint and API key' : `Set up your ${selectedProviderInfo?.name ?? ''} connection`}
-                  </Typography>
+                <Box sx={{ maxWidth: 520, mx: 'auto' }}>
+                  <WizardStepHeader
+                    codename="MODULE · PROFILE"
+                    title={isLocal ? 'Name Your Local Profile' : isAzure ? 'Azure Profile' : 'Configure Profile'}
+                    subtitle={isLocal ? `Connecting to ${selectedProviderInfo?.name ?? 'local provider'}. No API key needed.` : isAzure ? 'Enter your Azure endpoint and API key' : `Set up your ${selectedProviderInfo?.name ?? ''} connection`}
+                  />
 
                   <TextField label="Profile Name" value={profileName} onChange={e => setProfileName(e.target.value)} fullWidth
                     placeholder='e.g. "My OpenAI Key" or "Work Account"'
                     sx={{ mb: !isLocal ? 2 : 1.5 }}
-                    slotProps={{ input: { sx: { fontSize: '0.8rem' } }, inputLabel: { sx: { fontSize: '0.75rem' } } }} />
+                    slotProps={wizardTextFieldSlotProps} />
 
                   {!isLocal && (
                     <TextField label="API Key" value={apiKey} onChange={e => setApiKey(e.target.value)} fullWidth type="password"
                       sx={{ mb: 2 }}
-                      slotProps={{ input: { sx: { fontSize: '0.8rem' } }, inputLabel: { sx: { fontSize: '0.75rem' } } }} />
+                      slotProps={wizardTextFieldSlotProps} />
                   )}
 
                   {isLocal && (
                     <>
                       <Button size="small" onClick={() => setShowCustomConfig(!showCustomConfig)}
-                        sx={{ fontSize: '0.65rem', fontFamily: "'JetBrains Mono', monospace", textTransform: 'none', color: colors.text.dim, px: 0, minWidth: 0, mb: 1.5,
-                          '&:hover': { color: colors.text.secondary, bgcolor: 'transparent' } }}>
+                        sx={{ fontSize: '0.65rem', fontFamily: WIZARD_MONO, textTransform: 'none', color: wizardTheme.textDim, px: 0, minWidth: 0, mb: 1.5,
+                          '&:hover': { color: wizardTheme.textSecondary, bgcolor: 'transparent' } }}>
                         {showCustomConfig ? '− Hide Custom Configuration' : '+ Custom Configuration'}
                       </Button>
 
@@ -616,16 +643,16 @@ export function SetupWizard() {
                         transition: 'max-height 0.25s ease, opacity 0.2s ease, margin 0.25s ease',
                         mb: showCustomConfig ? 2 : 0,
                       }}>
-                        <Box sx={{ p: 2, borderRadius: 1, border: `1px solid ${colors.border.default}`, bgcolor: colors.bg.secondary }}>
-                          <Typography sx={{ fontSize: '0.62rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, mb: 1.5, letterSpacing: '0.5px' }}>
+                        <Box sx={{ ...wizardPanelSx, p: 2 }}>
+                          <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mb: 1.5, letterSpacing: '0.5px' }}>
                             ADVANCED CONNECTION SETTINGS
                           </Typography>
                           <TextField label="Base URL" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} fullWidth
                             placeholder={selectedProviderInfo?.defaultBaseUrl ?? 'https://api.example.com/v1'}
                             sx={{ mb: 1.5 }}
-                            slotProps={{ input: { sx: { fontSize: '0.8rem' } }, inputLabel: { sx: { fontSize: '0.75rem' } } }} />
+                            slotProps={wizardTextFieldSlotProps} />
                           <TextField label="Port (optional)" value={pgPort} onChange={e => setPgPort(e.target.value)} fullWidth placeholder="11434"
-                            slotProps={{ input: { sx: { fontSize: '0.8rem' } }, inputLabel: { sx: { fontSize: '0.75rem' } } }} />
+                            slotProps={wizardTextFieldSlotProps} />
                         </Box>
                       </Box>
                     </>
@@ -649,21 +676,23 @@ export function SetupWizard() {
 
               {step === 4 && (
                 <Box>
-                  <Typography variant="h6" sx={{ mb: 0.5 }}>Select Model</Typography>
-                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>{availableModels.length} model{availableModels.length !== 1 ? 's' : ''} available from {selectedProviderInfo?.name ?? selectedProvider}</Typography>
+                  <WizardStepHeader
+                    codename="MODULE · MODEL"
+                    title="Select Model"
+                    subtitle={`${availableModels.length} model${availableModels.length !== 1 ? 's' : ''} available from ${selectedProviderInfo?.name ?? selectedProvider}`}
+                  />
                   {modelsLoading ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, py: 4 }}><CircularProgress size={16} /><Typography variant="body2" sx={{ color: colors.text.dim }}>Loading models...</Typography></Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, py: 4 }}><CircularProgress size={16} sx={{ color: wizardTheme.text }} /><Typography variant="body2" sx={{ color: wizardTheme.textDim }}>Loading models...</Typography></Box>
                   ) : (
                     <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 1.5 }}>
                       {availableModels.filter(Boolean).map(m => (
-                        <Box key={m.id} onClick={() => handleWizardModelSelect(m)}
-                          sx={{ p: 1.5, border: `1px solid ${selectedModel === m.id ? colors.accent.blue : colors.border.default}`, borderRadius: 1, cursor: 'pointer', transition: 'all 0.2s', bgcolor: selectedModel === m.id ? colors.accent.blue : 'transparent', boxShadow: selectedModel === m.id ? `0 0 12px ${colors.accent.blue}40` : 'none', '&:hover': selectedModel === m.id ? {} : { borderColor: colors.border.strong, bgcolor: colors.bg.tertiary } }}>
-                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: selectedModel === m.id ? '#000' : colors.text.primary, mb: 0.5, wordBreak: 'break-word' }}>{m.name}</Typography>
+                        <Box key={m.id} onClick={() => handleWizardModelSelect(m)} sx={wizardTileSx(selectedModel === m.id)}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: wizardTheme.text, mb: 0.5, wordBreak: 'break-word' }}>{m.name}</Typography>
                           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                            {m.contextWindow && <Typography variant="caption" sx={{ fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace", color: selectedModel === m.id ? '#000000aa' : colors.text.dim }}>{m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(1)}M` : `${Math.round(m.contextWindow / 1000)}K`} ctx</Typography>}
-                            {m.capabilities?.filter(c => c !== 'text' && c !== 'streaming' && c !== 'reasoning').map(cap => <Typography key={cap} variant="caption" sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: selectedModel === m.id ? '#000000aa' : colors.accent.cyan, textTransform: 'uppercase' }}>{cap}</Typography>)}
+                            {m.contextWindow && <Typography variant="caption" sx={{ fontSize: '0.6rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim }}>{m.contextWindow >= 1000000 ? `${(m.contextWindow / 1000000).toFixed(1)}M` : `${Math.round(m.contextWindow / 1000)}K`} ctx</Typography>}
+                            {m.capabilities?.filter(c => c !== 'text' && c !== 'streaming' && c !== 'reasoning').map(cap => <Typography key={cap} variant="caption" sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentSignal, textTransform: 'uppercase' }}>{cap}</Typography>)}
                             {m.reasoning?.supported && m.reasoning.defaultEffort && (
-                              <Typography variant="caption" sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: selectedModel === m.id ? '#000000aa' : colors.accent.blue, textTransform: 'uppercase' }}>
+                              <Typography variant="caption" sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, textTransform: 'uppercase' }}>
                                 think:{m.reasoning.defaultEffort}
                               </Typography>
                             )}
@@ -675,27 +704,27 @@ export function SetupWizard() {
                   {selectedModel && !modelsLoading && (
                     <Box sx={{
                       mt: 2, p: 1.5, borderRadius: 1,
-                      border: `1px solid ${colors.border.strong}`,
-                      bgcolor: colors.bg.tertiary,
+                      border: `1px solid ${wizardTheme.panelBorderStrong}`,
+                      bgcolor: 'rgba(255,255,255,0.02)',
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap',
                     }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
                         <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="caption" sx={{ display: 'block', fontSize: '0.55rem', color: colors.text.dim, textTransform: 'uppercase', letterSpacing: '0.08em', mb: 0.25 }}>
+                          <Typography variant="caption" sx={{ display: 'block', fontSize: '0.55rem', color: wizardTheme.textDim, textTransform: 'uppercase', letterSpacing: '0.08em', mb: 0.25, fontFamily: WIZARD_MONO }}>
                             Selected model
                           </Typography>
-                          <Typography variant="body2" sx={{ fontWeight: 700, fontSize: '0.8rem', color: colors.text.primary }}>
+                          <Typography variant="body2" sx={{ fontWeight: 700, fontSize: '0.8rem', color: wizardTheme.text }}>
                             {selectedModelInfo?.name || selectedModel}
                           </Typography>
                         </Box>
                         {(selectedModelInfo?.reasoning?.effortLevels?.length ?? 0) > 0 && (
                           <FormControl size="small" sx={{ minWidth: 140, maxWidth: 200, flexShrink: 0 }}>
-                            <InputLabel sx={{ fontSize: '0.7rem' }}>Reasoning effort</InputLabel>
+                            <InputLabel sx={{ fontSize: '0.7rem', fontFamily: WIZARD_MONO }}>Reasoning effort</InputLabel>
                             <Select
                               value={selectedReasoningEffort}
                               label="Reasoning effort"
                               onChange={(e) => setSelectedReasoningEffort(e.target.value)}
-                              sx={{ fontSize: '0.75rem', height: 36 }}
+                              sx={{ fontSize: '0.75rem', height: 36, fontFamily: WIZARD_MONO }}
                             >
                               {(selectedModelInfo?.reasoning?.effortLevels ?? []).map((level) => (
                                 <MenuItem key={level} value={level} sx={{ fontSize: '0.75rem' }}>
@@ -713,10 +742,11 @@ export function SetupWizard() {
 
               {step === 5 && (
                 <Box>
-                  <Typography variant="h6" sx={{ mb: 0.5 }}>Agentic Clearance Scan</Typography>
-                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>
-                    Mandatory clearance scan for <strong>{selectedModelInfo?.name || selectedModel}</strong> — verifies this model can handle Agent-X workloads.
-                  </Typography>
+                  <WizardStepHeader
+                    codename="MODULE · CLEARANCE"
+                    title="Agentic Clearance Scan"
+                    subtitle={`Mandatory clearance scan for ${selectedModelInfo?.name || selectedModel} — verifies this model can handle Agent-X workloads.`}
+                  />
                   <ModelBenchmarkRunner
                     key={`${selectedProvider}-${selectedModel}`}
                     embedded
@@ -737,11 +767,11 @@ export function SetupWizard() {
                           size="small"
                           checked={limitedOverride}
                           onChange={(e) => setLimitedOverride(e.target.checked)}
-                          sx={{ color: colors.accent.orange, '&.Mui-checked': { color: colors.accent.orange } }}
+                          sx={{ color: wizardTheme.accentWarn, '&.Mui-checked': { color: wizardTheme.accentWarn } }}
                         />
                       }
                       label={
-                        <Typography sx={{ fontSize: '0.72rem', color: colors.text.secondary }}>
+                        <Typography sx={{ fontSize: '0.72rem', color: wizardTheme.textSecondary }}>
                           Acknowledge LIMITED clearance — proceed with constraints
                         </Typography>
                       }
@@ -757,49 +787,58 @@ export function SetupWizard() {
 
               {step === 6 && (
                 <Box>
-                  <Typography variant="h6" sx={{ mb: 0.5 }}>Neural Core Initialization</Typography>
-                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>
-                    Downloading local embedding models for the neural brain. This enables offline semantic search and GraphRAG.
-                  </Typography>
+                  <WizardStepHeader
+                    codename="MODULE · NEURAL CORE"
+                    title="Neural Core Initialization"
+                    subtitle="Downloading local embedding models for the neural brain. This enables offline semantic search and GraphRAG."
+                  />
                   <EmbeddingModelDownload onComplete={next} />
                 </Box>
               )}
 
               {step === 7 && (
-                <Box>
-                  <Typography variant="h6" sx={{ mb: 1 }}>Your Callsign</Typography>
-                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 2 }}>How should Agent-X address you?</Typography>
+                <Box sx={{ maxWidth: 520, mx: 'auto' }}>
+                  <WizardStepHeader codename="MODULE · CALLSIGN" title="Your Callsign" subtitle="How should Agent-X address you?" />
                   <TextField label="Callsign" value={callsign} onChange={e => setCallsign(e.target.value)} fullWidth placeholder="e.g. Commander"
-                    slotProps={{ input: { sx: { fontSize: '0.8rem' } }, inputLabel: { sx: { fontSize: '0.75rem' } } }} />
-                  <Box sx={{ mt: 4, p: 2.5, border: `1px solid ${colors.border.default}`, borderRadius: 1, bgcolor: colors.bg.secondary }}>
+                    slotProps={wizardTextFieldSlotProps} />
+                  <Box sx={{ ...wizardPanelSx, mt: 4 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5 }}>
-                      <BadgeIcon sx={{ fontSize: 20, color: colors.accent.blue }} />
-                      <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px', fontSize: '0.75rem' }}>WHAT IS A CALLSIGN?</Typography>
+                      <BadgeIcon sx={{ fontSize: 20, color: wizardTheme.textSecondary }} />
+                      <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: WIZARD_MONO, letterSpacing: '1px', fontSize: '0.75rem' }}>WHAT IS A CALLSIGN?</Typography>
                     </Box>
-                    <Typography variant="body2" sx={{ color: colors.text.secondary, fontSize: '0.8rem', lineHeight: 1.6 }}>Your unique identity within Agent-X. Used in conversations, logs, and notifications.</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.65rem' }}>Examples: Commander, Captain, Architect, Operator</Typography>
+                    <Typography variant="body2" sx={{ color: wizardTheme.textSecondary, fontSize: '0.8rem', lineHeight: 1.6 }}>Your unique identity within Agent-X. Used in conversations, logs, and notifications.</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: wizardTheme.textDim, fontFamily: WIZARD_MONO, fontSize: '0.65rem' }}>Examples: Commander, Captain, Architect, Operator</Typography>
                   </Box>
                 </Box>
               )}
 
               {step === 8 && (
-                <Box sx={{ textAlign: 'center' }}>
-                  <CheckCircle size={64} color={colors.accent.green} sx={{ mb: 2 }} />
-                  <Typography variant="h5" sx={{ mb: 1 }}>Setup Complete!</Typography>
-                  <Typography variant="body2" sx={{ color: colors.text.tertiary, mb: 3 }}>Your Agent-X instance is ready.</Typography>
-                  <Box sx={{ textAlign: 'left', p: 2, border: `1px solid ${colors.border.default}`, borderRadius: 1, mb: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem' }}>
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Storage: {selectedBackend === 'embedded-postgres' ? 'Embedded PostgreSQL (port 3335)' : 'Starfleet Relay (PostgreSQL)'}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Provider: {selectedProvider}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Model: {selectedModel}</Typography>
+                <WizardVoiceStep onReadyChange={setVoiceCalibrated} />
+              )}
+
+              {step === 9 && (
+                <WizardTelegramStep onLinkedChange={setTelegramLinked} />
+              )}
+
+              {step === 10 && (
+                <Box sx={{ textAlign: 'center', maxWidth: 520, mx: 'auto' }}>
+                  <CheckCircle size={64} color={wizardTheme.accentOk} sx={{ mb: 2 }} />
+                  <WizardStepHeader codename="MODULE · COMPLETE" title="Setup Complete" subtitle="Your Agent-X instance is ready." />
+                  <Box sx={{ textAlign: 'left', ...wizardPanelSx, mb: 3, fontFamily: WIZARD_MONO, fontSize: '0.75rem' }}>
+                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Storage: {selectedBackend === 'embedded-postgres' ? 'Embedded PostgreSQL (port 3335)' : 'Starfleet Relay (PostgreSQL)'}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Provider: {selectedProvider}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Model: {selectedModel}</Typography>
                     {localModelSupported && (
-                      <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
+                      <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
                     )}
                     {neuralBrainSupported ? (
-                      <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Neural Core: Embedding models downloaded</Typography>
+                      <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Neural Core: Embedding models downloaded</Typography>
                     ) : (
-                      <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Neural Core: Disabled (requires 16GB+ RAM)</Typography>
+                      <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Neural Core: Disabled (requires 16GB+ RAM)</Typography>
                     )}
-                    <Typography variant="caption" sx={{ display: 'block', color: colors.text.dim }}>Callsign: {callsign || '(not set)'}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: voiceCalibrated ? wizardTheme.accentOk : wizardTheme.textDim }}>Voice Comms: {voiceCalibrated ? 'Calibrated' : 'Skipped'}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: telegramLinked ? wizardTheme.accentOk : wizardTheme.textDim }}>Telegram Relay: {telegramLinked ? 'Linked' : 'Skipped'}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Callsign: {callsign || '(not set)'}</Typography>
                   </Box>
                 </Box>
               )}
@@ -810,28 +849,30 @@ export function SetupWizard() {
       </Box>
 
       {/* Bottom Nav */}
-      <Box sx={{ flexShrink: 0, borderTop: `1px solid ${colors.border.default}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
-        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 8 ? 'center' : 'space-between', alignItems: 'center' }}>
-          {step === 1 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 2 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 3 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 4 && <Button onClick={localModelSupported ? handleBackToCredentials : back} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 5 && <Button onClick={handleBenchmarkBack} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 6 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
-          {step === 7 && <Button onClick={back} sx={{ color: colors.text.secondary }}>Back</Button>}
+      <Box sx={{ flexShrink: 0, borderTop: `1px solid ${wizardTheme.panelBorder}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
+        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 10 ? 'center' : 'space-between', alignItems: 'center' }}>
+          {step === 1 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 2 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 3 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 4 && <Button onClick={localModelSupported ? handleBackToCredentials : back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 5 && <Button onClick={handleBenchmarkBack} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 6 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 7 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 8 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 9 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 0 && !showRelayConfig && (
-            <Button variant="contained" onClick={handleStorageNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>
+            <Button variant="contained" onClick={handleStorageNext} disabled={loading} sx={{ ...wizardPrimaryBtnSx, px: 4 }}>
               {loading ? 'Starting...' : selectedBackend === 'embedded-postgres' ? 'Start Embedded PostgreSQL →' : 'Configure Relay →'}
             </Button>
           )}
           {step === 0 && showRelayConfig && (
             <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-              <Button onClick={() => { setShowRelayConfig(false); }} sx={{ color: colors.text.secondary }}>← Back</Button>
-              <Button variant="contained" onClick={handleRelayNext} disabled={pgTesting} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, px: 4 }}>{pgTesting ? 'Testing...' : 'Connect & Next →'}</Button>
+              <Button onClick={() => { setShowRelayConfig(false); }} sx={wizardBackBtnSx}>← Back</Button>
+              <Button variant="contained" onClick={handleRelayNext} disabled={pgTesting} sx={{ ...wizardPrimaryBtnSx, px: 4 }}>{pgTesting ? 'Testing...' : 'Connect & Next →'}</Button>
             </Box>
           )}
-          {step === 1 && <Button variant="contained" onClick={handleProviderNext} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
-          {step === 2 && <Button variant="contained" onClick={handleProfileNext} disabled={loading} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>{loading ? 'Validating...' : 'Validate & Next'}</Button>}
+          {step === 1 && <Button variant="contained" onClick={handleProviderNext} sx={wizardPrimaryBtnSx}>Next</Button>}
+          {step === 2 && <Button variant="contained" onClick={handleProfileNext} disabled={loading} sx={wizardPrimaryBtnSx}>{loading ? 'Validating...' : 'Validate & Next'}</Button>}
           {step === 3 && (
             <Button
               variant="contained"
@@ -841,36 +882,58 @@ export function SetupWizard() {
                 !installedLocalModels.some(m => m.modelId === selectedLocalModel) &&
                 !activeDownloads.some(d => d.modelId === selectedLocalModel && (d.status === 'downloading' || d.status === 'complete'))
               }
-              sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}
+              sx={wizardPrimaryBtnSx}
             >
               Next
             </Button>
           )}
-          {step === 4 && <Button variant="contained" onClick={handleModelNext} disabled={!selectedModel} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
+          {step === 4 && <Button variant="contained" onClick={handleModelNext} disabled={!selectedModel} sx={wizardPrimaryBtnSx}>Next</Button>}
           {step === 5 && (
             <Button
               variant="contained"
               onClick={next}
               disabled={!canProceedBenchmark}
-              sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}
+              sx={wizardPrimaryBtnSx}
             >
               {benchmarkRunning ? 'Scanning…' : 'Next'}
             </Button>
           )}
-          {/* Neural Core step (6) — no Back/Next buttons; the EmbeddingModelDownload
-              component handles its own navigation via onComplete/onBack callbacks. */}
-          {step === 7 && <Button variant="contained" onClick={handleCallsignNext} disabled={!callsign.trim()} sx={{ bgcolor: colors.text.primary, color: colors.bg.primary }}>Next</Button>}
-          {step === 8 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ px: 5, py: 1.2, bgcolor: colors.text.primary, color: colors.bg.primary, fontWeight: 700 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
+          {step === 7 && <Button variant="contained" onClick={handleCallsignNext} disabled={!callsign.trim()} sx={wizardPrimaryBtnSx}>Next</Button>}
+          {step === 8 && (
+            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', justifyContent: voiceCalibrated ? 'flex-end' : 'space-between', width: '100%' }}>
+              {!voiceCalibrated && (
+                <Button onClick={next} sx={wizardSkipBtnSx}>
+                  Skip for now
+                </Button>
+              )}
+              <Button variant="contained" onClick={next} sx={wizardPrimaryBtnSx}>
+                {voiceCalibrated ? 'Continue →' : 'Skip →'}
+              </Button>
+            </Box>
+          )}
+          {step === 9 && (
+            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', justifyContent: telegramLinked ? 'flex-end' : 'space-between', width: '100%' }}>
+              {!telegramLinked && (
+                <Button onClick={next} sx={wizardSkipBtnSx}>
+                  Skip for now
+                </Button>
+              )}
+              <Button variant="contained" onClick={next} sx={wizardPrimaryBtnSx}>
+                {telegramLinked ? 'Continue →' : 'Skip →'}
+              </Button>
+            </Box>
+          )}
+          {step === 10 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ ...wizardPrimaryBtnSx, px: 5, py: 1.2 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
         </Box>
       </Box>
 
       <Dialog open={showBackWarning} onClose={() => setShowBackWarning(false)}
-        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxWidth: 400 } }}>
-        <DialogTitle sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 700, pb: 1 }}>RE-ENTER CREDENTIALS?</DialogTitle>
-        <DialogContent><Typography variant="body2" sx={{ color: colors.text.secondary, fontSize: '0.8rem', lineHeight: 1.6 }}>Going back will clear your API key for security. You will need to re-enter and validate them.</Typography></DialogContent>
+        PaperProps={{ sx: { bgcolor: wizardTheme.panel, border: `1px solid ${wizardTheme.panelBorder}`, borderRadius: 1, maxWidth: 400 } }}>
+        <DialogTitle sx={{ fontFamily: WIZARD_MONO, fontSize: '0.85rem', fontWeight: 700, pb: 1 }}>RE-ENTER CREDENTIALS?</DialogTitle>
+        <DialogContent><Typography variant="body2" sx={{ color: wizardTheme.textSecondary, fontSize: '0.8rem', lineHeight: 1.6 }}>Going back will clear your API key for security. You will need to re-enter and validate them.</Typography></DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setShowBackWarning(false)} sx={{ color: colors.text.dim }}>Cancel</Button>
-          <Button onClick={confirmBackToCredentials} variant="contained" sx={{ bgcolor: colors.accent.red, color: '#fff' }}>Clear & Go Back</Button>
+          <Button onClick={() => setShowBackWarning(false)} sx={wizardSkipBtnSx}>Cancel</Button>
+          <Button onClick={confirmBackToCredentials} variant="contained" sx={{ bgcolor: wizardTheme.accentErr, color: '#fff', fontFamily: WIZARD_MONO, fontSize: '0.65rem', textTransform: 'none' }}>Clear & Go Back</Button>
         </DialogActions>
       </Dialog>
 
@@ -890,11 +953,11 @@ function Punch({ icon, text }: { icon: React.ReactNode; text: string }) {
       px: 1.5, py: 1,
       borderRadius: 1,
       bgcolor: 'rgba(255,255,255,0.015)',
-      border: '1px solid rgba(255,255,255,0.03)',
+      border: `1px solid ${wizardTheme.panelBorder}`,
       transition: 'all 0.15s',
     }}>
-      <Box sx={{ color: colors.text.dim, flexShrink: 0, display: 'flex', opacity: 0.6 }}>{icon}</Box>
-      <Typography sx={{ fontSize: '0.64rem', color: colors.text.secondary, lineHeight: 1.45, fontWeight: 500 }}>{text}</Typography>
+      <Box sx={{ color: wizardTheme.textDim, flexShrink: 0, display: 'flex', opacity: 0.6 }}>{icon}</Box>
+      <Typography sx={{ fontSize: '0.64rem', color: wizardTheme.textSecondary, lineHeight: 1.45, fontWeight: 500 }}>{text}</Typography>
     </Box>
   );
 }

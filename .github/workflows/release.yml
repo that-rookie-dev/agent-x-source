@@ -99,7 +99,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install
 
-      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api run build
+      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/runtime run build
 
       - uses: actions/download-artifact@v4
         with:
@@ -110,12 +110,12 @@ jobs:
       # pgvector is compiled as a universal binary (both arm64 + x86_64) on macOS,
       # so a single setup:extensions run covers both matrix architectures.
       - name: Build PostgreSQL extensions
-        run: pnpm --filter @agentx/desktop run setup:extensions
+        run: pnpm --filter @agentx/runtime run setup:extensions
         timeout-minutes: 60
 
       # --- Desktop ---
       - name: Setup bundled Python
-        run: node packages/desktop/scripts/setup-python.mjs
+        run: node packages/runtime/scripts/setup-python.mjs
 
       - uses: actions/cache@v4
         with:
@@ -192,7 +192,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install
 
-      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api run build
+      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/runtime run build
 
       - uses: actions/download-artifact@v4
         with:
@@ -201,12 +201,12 @@ jobs:
 
       # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
       - name: Build PostgreSQL extensions
-        run: pnpm --filter @agentx/desktop run setup:extensions
+        run: pnpm --filter @agentx/runtime run setup:extensions
         timeout-minutes: 60
 
       # --- Desktop ---
       - name: Setup bundled Python
-        run: node packages/desktop/scripts/setup-python.mjs
+        run: node packages/runtime/scripts/setup-python.mjs
 
       - uses: actions/cache@v4
         with:
@@ -270,7 +270,7 @@ jobs:
         env:
           npm_config_msvs_version: 2022
 
-      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api run build
+      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/runtime run build
 
       - uses: actions/download-artifact@v4
         with:
@@ -288,12 +288,12 @@ jobs:
 
       - name: Build PostgreSQL extensions
         shell: bash
-        run: pnpm --filter @agentx/desktop run setup:extensions
+        run: pnpm --filter @agentx/runtime run setup:extensions
         timeout-minutes: 60
 
       # --- Desktop ---
       - name: Setup bundled Python
-        run: node packages/desktop/scripts/setup-python.mjs
+        run: node packages/runtime/scripts/setup-python.mjs
 
       - uses: actions/cache@v4
         with:
@@ -332,8 +332,65 @@ jobs:
             packages/desktop/release/*.blockmap
             packages/desktop/release/latest.yml
 
+  build-server:
+    needs: [check-version, build-webui]
+    if: needs.check-version.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-x64
+          - os: ubuntu-24.04-arm
+            suffix: linux-arm64
+          - os: macos-14
+            suffix: darwin-arm64
+          - os: macos-14
+            suffix: darwin-x64
+          - os: windows-latest
+            suffix: win-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential curl bison flex
+
+      - name: Install VS 2022 C++ Build Tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install visualstudio2022buildtools -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --wait"
+
+      - run: pnpm install --frozen-lockfile || pnpm install
+        env:
+          npm_config_msvs_version: 2022
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: packages/web-ui/dist
+
+      - name: Build server tarball
+        shell: bash
+        run: pnpm --filter @agentx/server run pack:server
+        timeout-minutes: 90
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-server-${{ matrix.suffix }}
+          path: packages/server/release/agentx-*-server.tar.gz
+
   publish:
-    needs: [check-version, build-macos, build-linux, build-windows]
+    needs: [check-version, build-macos, build-linux, build-windows, build-server]
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -347,11 +404,12 @@ jobs:
       - name: Copy install scripts to release
         run: |
           cp install-desktop.sh artifacts/ || true
+          cp install-server.sh artifacts/ || true
 
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum *.dmg *.AppImage *.deb *.exe install-desktop.sh 2>/dev/null > checksums.sha256 || true
+          sha256sum *.dmg *.AppImage *.deb *.exe *.tar.gz install-desktop.sh install-server.sh 2>/dev/null > checksums.sha256 || true
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -374,6 +432,19 @@ jobs:
             | Linux (x64) | [agentx_${{ needs.check-version.outputs.version }}_amd64.deb](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx_${{ needs.check-version.outputs.version }}_amd64.deb) |
             | Linux (ARM64) | [Agent-X-${{ needs.check-version.outputs.version }}-arm64.AppImage](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X-${{ needs.check-version.outputs.version }}-arm64.AppImage) |
             | Windows (x64) | [Agent-X Setup ${{ needs.check-version.outputs.version }}.exe](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/Agent-X%20Setup%20${{ needs.check-version.outputs.version }}.exe) |
+
+            ### Server (headless Web UI)
+            Install: `curl -fsSL https://raw.githubusercontent.com/${{ env.PUBLIC_REPO }}/main/install-server.sh | bash`
+
+            | Platform | Download |
+            |---|---|
+            | Linux (x64) | [agentx-linux-x64-server.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-linux-x64-server.tar.gz) |
+            | Linux (ARM64) | [agentx-linux-arm64-server.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-linux-arm64-server.tar.gz) |
+            | macOS (Apple Silicon) | [agentx-darwin-arm64-server.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-darwin-arm64-server.tar.gz) |
+            | macOS (Intel) | [agentx-darwin-x64-server.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-darwin-x64-server.tar.gz) |
+            | Windows (x64) | [agentx-win-x64-server.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-win-x64-server.tar.gz) |
+
+            After install: `agentx start` · `agentx status` · `agentx stop`
 
             ### Checksums
             See `checksums.sha256` in assets.

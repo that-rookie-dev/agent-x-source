@@ -3,24 +3,23 @@ export type NotificationChannelId = 'telegram' | 'slack' | 'email' | 'discord';
 
 export interface TelegramChannelConfig {
   enabled?: boolean;
-  /** Receive tasks from this channel (default true when enabled). */
   inbound?: boolean;
-  /** Send automation summaries / alerts (default true when enabled). */
   outbound?: boolean;
   botToken?: string;
-  /** Outbound notification target — auto-detected from bot updates. */
   chatId?: string;
+  /** Comma-separated Telegram user IDs allowed to use inbound bot (required in server mode). */
+  allowedUserIds?: string;
 }
 
 export interface SlackChannelConfig {
   enabled?: boolean;
   inbound?: boolean;
   outbound?: boolean;
-  /** Outbound: incoming webhook URL. */
   webhookUrl?: string;
-  /** Inbound: Socket Mode tokens. */
   botToken?: string;
   appToken?: string;
+  /** Comma-separated Slack user IDs allowed for inbound DMs/mentions (required in server mode). */
+  allowedUserIds?: string;
 }
 
 export interface EmailChannelConfig {
@@ -40,11 +39,11 @@ export interface DiscordChannelConfig {
   enabled?: boolean;
   inbound?: boolean;
   outbound?: boolean;
-  /** Outbound: channel webhook URL. */
   webhookUrl?: string;
-  /** Inbound: bot token (+ optional channel filter). */
   botToken?: string;
   channelId?: string;
+  /** Comma-separated Discord user IDs allowed for inbound DMs/mentions (required in server mode). */
+  allowedUserIds?: string;
 }
 
 export interface NotificationChannelsConfig {

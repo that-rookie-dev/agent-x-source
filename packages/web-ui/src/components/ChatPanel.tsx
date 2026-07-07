@@ -35,7 +35,10 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import HistoryIcon from '@mui/icons-material/History';
 import ForumIcon from '@mui/icons-material/Forum';
 import DownloadIcon from '@mui/icons-material/Download';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import GroupsIcon from '@mui/icons-material/Groups';
+import MicIcon from '@mui/icons-material/Mic';
+import KeyboardIcon from '@mui/icons-material/Keyboard';
 
 import {
   ConnectionHealthDot,
@@ -46,16 +49,19 @@ import {
   type PaletteAction,
 } from './ChatEnhancements';
 import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
+import { collectClientSituation } from '../client-situation.js';
 import { eventBelongsToViewSession } from '../chat/session-stream-filter';
 import { ActionPreviewCard } from './integrations/ActionPreviewCard';
 import { colors } from '../theme';
 import ModeEscalationModal from './ModeEscalationModal';
 import StepCapModal from './StepCapModal';
 import ModeSuggestionModal, { DISMISS_KEY, shouldSuggestMode } from './ModeSuggestionModal';
-import CrewSuggestionModal from './crew/CrewSuggestionModal';
 import { CrewProfileDialog } from './crew/CrewProfileDialog';
 import type { PrebuiltCrew } from './crew/CrewHubDialog';
 import { ChatInputBar, type ChatInputBarHandle } from './ChatInputBar';
+import { ChatVoicePanel } from './voice/ChatVoicePanel';
+import type { VoiceTurnTimings } from '../voice/VoiceSessionClient';
+import { useVoiceOptional } from './voice/VoiceProvider';
 import { WebSearchGlobeToggle, readWebSearchForcePreference, writeWebSearchForcePreference } from './WebSearchGlobeToggle';
 import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatMessageList } from '../chat/ChatMessageList';
@@ -64,10 +70,11 @@ import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildS
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
 import { crewTheme } from '../styles/crew-theme';
 import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingChatInteraction, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard, mergeIncomingMessageParts, applyToolCompleteMetadata, reconcileStreamingMessageParts } from '../chat/utils';
-import { CHAT_INITIAL_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
+import { CHAT_INITIAL_MESSAGES_PER_ROLE, CORE_SESSION_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
 import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
-import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer, explicitCrewRequest } from '@agentx/shared/browser';
+import { createCrewSuggestionEvalMessage, shouldOfferCrewRosterPicker } from '../chat/crew-suggestion-flow';
+import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
 import {
   upsertDeepSearchPart,
@@ -83,6 +90,7 @@ import type { CrewWorkerState } from './CrewWorkerPanel';
 import { SessionGridCard } from './SessionGridCard';
 import { FolderPickerModal } from './FolderPickerModal';
 import { resolveDefaultWorkspace } from '../utils/default-workspace';
+import { copyToClipboard } from '../utils/clipboard';
 
 // ─── CSS Keyframes (injected once) ───
 const styleId = 'agentx-chat-keyframes';
@@ -135,10 +143,22 @@ const panelHeaderRowSx = {
   flexShrink: 0,
 };
 
-const sidebarSectionHeaderSx = {
+const sidebarSectionHeaderSx = (expanded: boolean) => ({
   ...panelHeaderRowSx,
+  borderBottom: expanded ? `1px solid ${colors.border.default}` : 'none',
   cursor: 'pointer',
   '&:hover': { bgcolor: colors.bg.tertiary + '40' },
+});
+
+const sidebarSectionHeaderWithDividerSx = (expanded: boolean) => ({
+  ...sidebarSectionHeaderSx(expanded),
+  borderTop: `1px solid ${colors.border.default}`,
+});
+
+const sidebarSectionContentSx = {
+  px: 1.5,
+  pt: 1,
+  pb: 1.5,
 };
 
 interface UIMessage extends ChatMessage {
@@ -153,6 +173,8 @@ interface UIMessage extends ChatMessage {
   attachments?: { name: string }[];
   turnTokens?: number;
   turnCostUsd?: number;
+  voiceInput?: boolean;
+  voiceTextOnly?: boolean;
 
   crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
   parts?: PartEntry[];
@@ -209,11 +231,15 @@ type SessionListTab = 'agent_x' | 'crew_private';
 
 interface ChatPanelProps {
   sessionId?: string;
+  coreSession?: boolean;
 }
 
-export function ChatPanel({ sessionId }: ChatPanelProps) {
+export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const voiceCtx = useVoiceOptional();
+  const [composerMode, setComposerMode] = useState<'text' | 'voice'>('text');
+  const [voiceAutoStart, setVoiceAutoStart] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionListTab: SessionListTab = searchParams.get('tab') === 'crew' ? 'crew_private' : 'agent_x';
   const setSessionListTab = useCallback((tab: SessionListTab) => {
@@ -399,7 +425,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         }
       }).catch(() => { /* full restore follows */ });
 
-      sessions.restore(sessionId, { perRole: CHAT_INITIAL_MESSAGES_PER_ROLE }).then(async ({ messages: historyMsgs, session, scopePath, turnFeedback, messagesMeta }) => {
+      sessions.restore(sessionId, {
+        perRole: coreSession ? CORE_SESSION_MESSAGES_PER_ROLE : CHAT_INITIAL_MESSAGES_PER_ROLE,
+      }).then(async ({ messages: historyMsgs, session, scopePath, turnFeedback, messagesMeta }) => {
         if (currentSessionIdRef.current !== sessionId) return;
         if (session.parentId) {
           setSessionRestoring(false);
@@ -459,7 +487,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           generateTitle(sessionId, visible);
         }
 
-        if (!shell.crewPrivate) {
+        if (!shell.crewPrivate && !coreSession) {
           void (async () => {
             try {
               let roster = crewList;
@@ -566,15 +594,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const [crewList, setCrewList] = useState<Crew[]>([]);
 
 
-  // Agent mode
-  const [agentMode, setAgentMode] = useState<AgentMode>('agent');
+  // Agent mode — plan is default (especially for Agent-X super-session)
+  const [agentMode, setAgentMode] = useState<AgentMode>('plan');
 
   // Hyperdrive — full autonomous mode
   const [hyperdriveMode, setHyperdriveMode] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   const hyperdrivePromptShownRef = useRef(false);   // show disclaimer once per session
   const lastShiftRef = useRef(0);                    // double-Shift detection
-  const prevModeBeforeHyperdrive = useRef<AgentMode>('agent'); // restore on exit
+  const prevModeBeforeHyperdrive = useRef<AgentMode>('plan'); // restore on exit
 
   // Hyperdrive shimmer — random interval flash sweep across the chip
   const [hyperdriveShimmer, setHyperdriveShimmer] = useState(false);
@@ -641,17 +669,136 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const beginTurnUi = useCallback(() => {
     turnActiveRef.current = true;
+    isInitialLoadRef.current = false;
     setStreaming(true);
+    setTurnActivity(null);
+    setLoadingSteps(null);
     setPendingFeedbackMessageId(null);
   }, []);
+
+  const voicePendingUserIdRef = useRef<string | null>(null);
+
+  const appendVoiceUserTurn = useCallback((text: string, messageId?: string) => {
+    const trimmed = sanitizeForJson(text.trim());
+    if (!trimmed) return;
+    setMessages((prev) => {
+      for (let i = Math.max(0, prev.length - 8); i < prev.length; i += 1) {
+        const m = prev[i];
+        if (m?.role === 'user' && m.content === trimmed) {
+          if (m.voiceInput) return prev;
+          return prev.map((msg, idx) => (
+            idx === i
+              ? { ...msg, voiceInput: true, id: messageId ?? msg.id }
+              : msg
+          ));
+        }
+      }
+      return [
+        ...prev,
+        { id: messageId ?? crypto.randomUUID(), role: 'user', content: trimmed, streaming: false, voiceInput: true },
+      ];
+    });
+  }, []);
+
+  const handleVoiceUserPending = useCallback(() => {
+    if (voicePendingUserIdRef.current) return;
+    const id = crypto.randomUUID();
+    voicePendingUserIdRef.current = id;
+    appendVoiceUserTurn('…', id);
+    requestAnimationFrame(() => scrollAfterVoiceUserRef.current());
+  }, [appendVoiceUserTurn]);
+
+  const handleVoiceUserDiscarded = useCallback(() => {
+    const pendingId = voicePendingUserIdRef.current;
+    voicePendingUserIdRef.current = null;
+    if (!pendingId) return;
+    setMessages((prev) => prev.filter((m) => m.id !== pendingId));
+  }, []);
+
+  const beginVoiceAgentTurn = useCallback(() => {
+    beginTurnUi();
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.role === 'assistant' && last.streaming) return prev;
+      if (last?.role === 'user') {
+        return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
+      }
+      return prev;
+    });
+  }, [beginTurnUi]);
+
+  const scrollAfterVoiceUserRef = useRef<() => void>(() => {});
+
+  const handleVoiceTranscript = useCallback((text: string, empty: boolean) => {
+    if (empty) {
+      handleVoiceUserDiscarded();
+      return;
+    }
+    const trimmed = sanitizeForJson(text.trim());
+    if (!trimmed) {
+      handleVoiceUserDiscarded();
+      return;
+    }
+    const pendingId = voicePendingUserIdRef.current;
+    voicePendingUserIdRef.current = null;
+    if (pendingId) {
+      setMessages((prev) => prev.map((m) => (
+        m.id === pendingId ? { ...m, content: trimmed, voiceInput: true } : m
+      )));
+    } else {
+      appendVoiceUserTurn(trimmed);
+    }
+    beginVoiceAgentTurn();
+    requestAnimationFrame(() => scrollAfterVoiceUserRef.current());
+  }, [appendVoiceUserTurn, beginVoiceAgentTurn, handleVoiceUserDiscarded]);
+
+  const handleVoiceTiming = useCallback((timings: VoiceTurnTimings) => {
+    setMessages((prev) => {
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        const msg = prev[i];
+        if (msg?.role !== 'assistant') continue;
+        return [...prev.slice(0, i), { ...msg, voiceTimings: timings }, ...prev.slice(i + 1)];
+      }
+      return prev;
+    });
+  }, []);
+
+  useEffect(() => {
+    voiceCtx?.registerChatSession(currentSessionId);
+    return () => voiceCtx?.registerChatSession(null);
+  }, [currentSessionId, voiceCtx]);
+
+  useEffect(() => {
+    if (!voiceCtx) return;
+    voiceCtx.registerInlineVoiceHandler((autoStart) => {
+      setComposerMode('voice');
+      requestAnimationFrame(() => {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+      });
+      if (autoStart) setVoiceAutoStart(true);
+    });
+    voiceCtx.registerVoiceChatBridge({
+      onVoiceUserPending: handleVoiceUserPending,
+      onVoiceUserDiscarded: handleVoiceUserDiscarded,
+      onTranscriptFinal: handleVoiceTranscript,
+      onAgentRunning: () => {},
+    });
+    return () => {
+      voiceCtx.registerInlineVoiceHandler(null);
+      voiceCtx.registerVoiceChatBridge(null);
+    };
+  }, [voiceCtx, handleVoiceUserPending, handleVoiceUserDiscarded, handleVoiceTranscript]);
   const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
-  const [crewSuggestOpen, setCrewSuggestOpen] = useState(false);
-  const [crewEvaluation, setCrewEvaluation] = useState<CrewSuggestionEvaluation | null>(null);
   const [crewDossierOpen, setCrewDossierOpen] = useState(false);
   const [crewDossierCrew, setCrewDossierCrew] = useState<PrebuiltCrew | null>(null);
   const pendingSendTextRef = useRef<string | null>(null);
-  const pendingCrewCandidatesRef = useRef<CrewMatchCandidate[]>([]);
   const crewSuggestionHandledRef = useRef(false);
+  const crewGateInFlightRef = useRef(false);
+  const attachCrewRosterPickerRef = useRef<(
+    text: string,
+    evaluation: CrewSuggestionEvaluation,
+    opts?: { userMessageId?: string; evalAssistantMessageId?: string },
+  ) => Promise<boolean>>(async () => false);
 
   const handleTurnFeedback = useCallback(async (messageId: string, rating: TurnFeedbackRating) => {
     const sessionId = currentSessionIdRef.current;
@@ -700,14 +847,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }
   }, [messages]);
 
-  const openCrewSuggestionFromEvaluation = useCallback((evaluation: CrewSuggestionEvaluation, text: string) => {
-    if (!evaluation.shouldSuggest || evaluation.candidates.length === 0) return;
-    pendingSendTextRef.current = text;
-    pendingCrewCandidatesRef.current = evaluation.candidates;
-    setCrewEvaluation(evaluation);
-    setCrewSuggestOpen(true);
-  }, []);
-
   // Smart auto-scroll state
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef<boolean>(true);
@@ -740,6 +879,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       el.scrollTop = el.scrollHeight;
     }
   }, []);
+
+  scrollAfterVoiceUserRef.current = () => scrollMessagesToBottom('smooth');
 
   const loadOlderMessages = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
@@ -1237,6 +1378,28 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       lastActivityRef.current = Date.now();
       setLastEventAt(Date.now());
 
+      if (ev.type === 'message_sent') {
+        if (isInitialLoadRef.current) return;
+        const msg = ev.message as { id?: string; content?: string; role?: string } | undefined;
+        const text = typeof msg?.content === 'string' ? msg.content.trim() : '';
+        if (!text || msg?.role !== 'user') return;
+        // Text chat already added the user bubble locally — only sync voice-only turns.
+        setMessages((prev) => {
+          if (prev.some((m) => m.role === 'user' && m.content === text)) return prev;
+          return [
+            ...prev,
+            {
+              id: msg?.id ?? crypto.randomUUID(),
+              role: 'user',
+              content: text,
+              streaming: false,
+              voiceInput: true,
+            },
+          ];
+        });
+        return;
+      }
+
       // RAF-batch high-frequency tool events to prevent render storm on long-running tasks
       if (ev.type === 'tool_executing' || ev.type === 'tool_output' || ev.type === 'tool_complete') {
         // Ignore stale tool events replayed from telemetry buffer on page load
@@ -1696,29 +1859,16 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             // Do not auto-switch — ModeEscalationModal handles user choice
             return prev;
 
-          case 'crew_suggestion': {
-            // Ignore stale crew_suggestion replayed from telemetry buffer on page load / SSE reconnect
-            if (isInitialLoadRef.current) return prev;
-            if (crewSuggestionHandledRef.current || crewSuggestOpen) return prev;
-            const evaluation = (ev as { evaluation?: CrewSuggestionEvaluation }).evaluation;
-            const message = (ev as { message?: string }).message;
-            if (evaluation?.shouldSuggest && message) {
-              crewSuggestionHandledRef.current = true;
-              openCrewSuggestionFromEvaluation(evaluation, message);
-            }
-            return prev;
-          }
-
+          case 'crew_suggestion':
           case 'crew_suggestion_required': {
-            if (isCrewPrivateRef.current) return prev;
-            if (crewSuggestionHandledRef.current || crewSuggestOpen) return prev;
+            if (isInitialLoadRef.current) return prev;
+            if (isCrewPrivateRef.current || crewSuggestionHandledRef.current) return prev;
             const evaluation = (ev as { evaluation?: CrewSuggestionEvaluation }).evaluation;
             const message = (ev as { message?: string }).message;
-            if (evaluation?.shouldSuggest && message) {
-              setStreaming(false);
-              crewSuggestionHandledRef.current = true;
-              openCrewSuggestionFromEvaluation(evaluation, message);
-            }
+            if (!evaluation || !message || !shouldOfferCrewRosterPicker(evaluation)) return prev;
+            if (ev.type === 'crew_suggestion_required') setStreaming(false);
+            crewSuggestionHandledRef.current = true;
+            void attachCrewRosterPickerRef.current(message, evaluation);
             return prev;
           }
 
@@ -1774,9 +1924,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               setStreaming(false);
             } else if (phase === 'done' || phase === 'cancelled' || phase === 'idle') {
               stopTurnIndicator();
+              setPermissionPrompt(null);
+              setPendingPermissionCount(0);
             }
             return prev;
           }
+
+          case 'task_aborted':
+            setPermissionPrompt(null);
+            setPendingPermissionCount(0);
+            stopTurnIndicator();
+            return prev;
 
           case 'operation_file_edited':
           case 'operation_file_created':
@@ -2148,97 +2306,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     return null;
   }, [navigate, ensureDefaultCwd]);
 
-  const maybeOfferCrewSuggestion = useCallback(async (text: string): Promise<boolean> => {
-    if (isCrewPrivateSession) return false;
-    const hasMention = /(?<!\w)@([\w][\w.-]*)/.test(text);
-    if (hasMention) return false;
-    const sessionId = await ensureSession();
-    if (!sessionId) return false;
-    try {
-      const priorUserMessages = messages
-        .filter((m) => m.role === 'user')
-        .map((m) => m.content)
-        .slice(-3);
-      const evaluation = await crewSuggestions.evaluate(text, sessionId, priorUserMessages);
-      if (evaluation.reasons.includes('catalog-unavailable')) {
-        setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
-      }
-      if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
-        crewSuggestionHandledRef.current = true;
-        openCrewSuggestionFromEvaluation(evaluation, text);
-        return true;
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Crew suggestion check failed';
-      if (import.meta.env.DEV) {
-        setWarnings((prev) => replaceWarning(prev, `Crew suggestion: ${msg}`));
-      }
-    }
-    return false;
-  }, [messages, ensureSession, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
-
-  const evaluateCrewForMessage = useCallback(async (text: string) => {
-    const sessionId = await ensureSession();
-    if (!sessionId) return null;
-    const priorUserMessages = messages
-      .filter((m) => m.role === 'user')
-      .map((m) => m.content)
-      .slice(-3);
-    return crewSuggestions.evaluate(text, sessionId, priorUserMessages);
-  }, [messages, ensureSession]);
-
-  const offerInlineCrewRoster = useCallback(async (text: string, evaluation: CrewSuggestionEvaluation): Promise<boolean> => {
-    if (isCrewPrivateSession) return false;
-    if (evaluation.candidates.length === 0) return false;
-    // High-confidence matches use the modal — never duplicate with in-chat picker cards.
-    if (evaluation.shouldSuggest) return false;
-
-    const trimmed = sanitizeForJson(text.trim());
-    if (!trimmed) return false;
-    const sessionId = await ensureSession();
-    if (!sessionId) return false;
-
-    try {
-      const persisted = await crewSuggestions.offerRosterPicker(sessionId, {
-        userText: trimmed,
-        evaluation,
-        attachments: attachments.map((a) => ({ name: a.name })),
-      });
-
-      const pickerRecord = {
-        id: persisted.pickerPartId,
-        status: 'pending' as const,
-        evaluation,
-        pendingUserText: trimmed,
-      };
-      const userMsg: UIMessage = {
-        id: persisted.userMessageId,
-        role: 'user',
-        content: trimmed,
-        streaming: false,
-        attachments: attachments.map((a) => ({ name: a.name })),
-      };
-      const pickerMsg: UIMessage = {
-        id: persisted.pickerMessageId,
-        role: 'assistant',
-        content: '',
-        streaming: false,
-        parts: [{
-          type: 'crew_roster_picker',
-          id: persisted.pickerPartId,
-          crewRosterPicker: pickerRecord,
-        }],
-      };
-      setMessages((prev) => [...prev, userMsg, pickerMsg]);
-      inputBarRef.current?.clear();
-      setAttachments([]);
-      return true;
-    } catch (err) {
-      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to offer crew roster'));
-      return false;
-    }
-  }, [attachments, isCrewPrivateSession, ensureSession, replaceWarning]);
-
   const handleViewCrewDossier = useCallback(async (candidate: CrewMatchCandidate) => {
     if (candidate.onRoster || candidate.origin === 'custom' || candidate.origin === 'hub_roster') {
       const roster = crewList.find((c) => c.id === candidate.id);
@@ -2277,6 +2344,98 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }
   }, [crewList]);
 
+  const attachCrewRosterPicker = useCallback(async (
+    text: string,
+    evaluation: CrewSuggestionEvaluation,
+    opts?: { userMessageId?: string; evalAssistantMessageId?: string },
+  ): Promise<boolean> => {
+    if (isCrewPrivateSession) return false;
+    if (!shouldOfferCrewRosterPicker(evaluation)) return false;
+
+    const trimmed = sanitizeForJson(text.trim());
+    if (!trimmed) return false;
+    const sessionId = await ensureSession();
+    if (!sessionId) return false;
+
+    const alreadyPending = messages.some((m) =>
+      m.parts?.some((p) =>
+        p.type === 'crew_roster_picker'
+        && p.crewRosterPicker?.status === 'pending'
+        && p.crewRosterPicker.pendingUserText === trimmed,
+      ),
+    );
+    if (alreadyPending) return true;
+
+    try {
+      const persisted = await crewSuggestions.offerRosterPicker(sessionId, {
+        userText: trimmed,
+        evaluation,
+        attachments: attachments.map((a) => ({ name: a.name })),
+        userMessageId: opts?.userMessageId,
+      });
+
+      const pickerRecord = {
+        id: persisted.pickerPartId,
+        status: 'pending' as const,
+        evaluation,
+        pendingUserText: trimmed,
+      };
+      const pickerMsg: UIMessage = {
+        id: persisted.pickerMessageId,
+        role: 'assistant',
+        content: '',
+        streaming: false,
+        parts: [{
+          type: 'crew_roster_picker',
+          id: persisted.pickerPartId,
+          crewRosterPicker: pickerRecord,
+        }],
+      };
+
+      setMessages((prev) => {
+        if (opts?.userMessageId && opts?.evalAssistantMessageId) {
+          return prev.map((m) => {
+            if (m.id === opts.userMessageId) {
+              return {
+                ...m,
+                id: persisted.userMessageId,
+                content: trimmed,
+              };
+            }
+            if (m.id === opts.evalAssistantMessageId) return pickerMsg;
+            return m;
+          });
+        }
+
+        if (opts?.userMessageId) {
+          return [
+            ...prev.map((m) => (m.id === opts.userMessageId ? { ...m, id: persisted.userMessageId } : m)),
+            pickerMsg,
+          ];
+        }
+
+        const userMsg: UIMessage = {
+          id: persisted.userMessageId,
+          role: 'user',
+          content: trimmed,
+          streaming: false,
+          attachments: attachments.map((a) => ({ name: a.name })),
+        };
+        return [...prev, userMsg, pickerMsg];
+      });
+      inputBarRef.current?.clear();
+      setAttachments([]);
+      return true;
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to offer crew roster'));
+      return false;
+    }
+  }, [attachments, isCrewPrivateSession, ensureSession, replaceWarning, messages]);
+
+  useEffect(() => {
+    attachCrewRosterPickerRef.current = attachCrewRosterPicker;
+  }, [attachCrewRosterPicker]);
+
   const executeSend = useCallback(async (
     text: string,
     delegateCrewIds?: string[],
@@ -2285,6 +2444,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       crewIntakeFromPicker?: boolean;
       primaryCrewId?: string;
       skipUserMessage?: boolean;
+      userMessagePersisted?: boolean;
     },
   ) => {
     const trimmed = sanitizeForJson(text.trim());
@@ -2307,7 +2467,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         streaming: false,
         attachments: attachments.map((a) => ({ name: a.name })),
       };
-      setMessages((prev) => [...prev, userMsg]);
+      setMessages((prev) => [
+        ...prev,
+        userMsg,
+        { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true },
+      ]);
       inputBarRef.current?.clear();
     }
 
@@ -2317,6 +2481,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     const crewResolved = options?.crewSuggestionResolved ?? Boolean(delegateCrewIds?.length);
 
     try {
+      const clientSituation = await collectClientSituation();
       const result = await chat.send(
         trimmed,
         fileRefs,
@@ -2327,16 +2492,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         options?.crewIntakeFromPicker,
         options?.primaryCrewId,
         webSearchAvailable && webSearchForce,
+        options?.userMessagePersisted ?? options?.skipUserMessage,
+        clientSituation,
       );
       if (result?.crewSuggestionRequired && result.evaluation) {
         endTurnUi();
+        let existingUserId: string | undefined;
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (last?.role === 'user' && last.content === trimmed) return prev.slice(0, -1);
-          return prev;
+          const next = last?.role === 'assistant' && last.streaming ? prev.slice(0, -1) : prev;
+          existingUserId = next.find((m) => m.role === 'user' && m.content === trimmed)?.id;
+          return next;
         });
         crewSuggestionHandledRef.current = true;
-        openCrewSuggestionFromEvaluation(result.evaluation, trimmed);
+        await attachCrewRosterPicker(trimmed, result.evaluation, existingUserId
+          ? { userMessageId: existingUserId }
+          : undefined);
         return;
       }
       if (result?.turnId) activeTurnIdRef.current = result.turnId;
@@ -2372,16 +2543,83 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       });
       endTurnUi();
     }
-  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, openCrewSuggestionFromEvaluation, beginTurnUi, endTurnUi, webSearchAvailable, webSearchForce]);
+  }, [attachments, currentProvider, currentModel, agentMode, ensureSession, messages, attachCrewRosterPicker, beginTurnUi, endTurnUi, webSearchAvailable, webSearchForce]);
+
+  const runCrewSuggestionGate = useCallback(async (trimmed: string): Promise<boolean> => {
+    if (isCrewPrivateSession || coreSession) return false;
+    if (/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) return false;
+    if (crewGateInFlightRef.current) return false;
+
+    const sessionId = await ensureSession();
+    if (!sessionId) return false;
+
+    crewGateInFlightRef.current = true;
+    try {
+    const userMessageId = crypto.randomUUID();
+    const evalAssistant = createCrewSuggestionEvalMessage();
+    const userMsg: UIMessage = {
+      id: userMessageId,
+      role: 'user',
+      content: sanitizeForJson(trimmed),
+      streaming: false,
+      attachments: attachments.map((a) => ({ name: a.name })),
+    };
+
+    setMessages((prev) => [...prev, userMsg, evalAssistant]);
+    inputBarRef.current?.clear();
+    setAttachments([]);
+
+    const priorUserMessages = [
+      ...messages.filter((m) => m.role === 'user').map((m) => m.content),
+      trimmed,
+    ].slice(-3);
+
+    try {
+      const evaluation = await crewSuggestions.evaluate(trimmed, sessionId, priorUserMessages);
+      if (evaluation?.reasons.includes('catalog-unavailable')) {
+        setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
+      }
+
+      if (evaluation && shouldOfferCrewRosterPicker(evaluation)) {
+        crewSuggestionHandledRef.current = true;
+        const attached = await attachCrewRosterPicker(trimmed, evaluation, {
+          userMessageId,
+          evalAssistantMessageId: evalAssistant.id,
+        });
+        if (attached) return true;
+      }
+    } catch (err) {
+      if (import.meta.env.DEV) {
+        const msg = err instanceof Error ? err.message : 'Crew suggestion check failed';
+        setWarnings((prev) => replaceWarning(prev, `Crew suggestion: ${msg}`));
+      }
+    }
+
+    setMessages((prev) => prev.filter((m) => m.id !== evalAssistant.id));
+    await executeSend(trimmed, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+    return true;
+    } finally {
+      crewGateInFlightRef.current = false;
+    }
+  }, [
+    attachments,
+    attachCrewRosterPicker,
+    coreSession,
+    ensureSession,
+    executeSend,
+    isCrewPrivateSession,
+    messages,
+    replaceWarning,
+  ]);
 
   const sendAfterModeChoice = useCallback(async (text: string, switchToAgent: boolean) => {
     if (switchToAgent) {
       setAgentMode('agent');
       await sessionSettings.setMode('agent').catch(() => {});
     }
-    if (await maybeOfferCrewSuggestion(text)) return;
+    if (await runCrewSuggestionGate(text)) return;
     await executeSend(text, undefined, { crewSuggestionResolved: true });
-  }, [maybeOfferCrewSuggestion, executeSend]);
+  }, [runCrewSuggestionGate, executeSend]);
 
   const handleSend = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -2393,35 +2631,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       return;
     }
 
-    if (!isCrewPrivateSession && !/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) {
-      try {
-        const evaluation = await evaluateCrewForMessage(trimmed);
-        if (evaluation) {
-          if (evaluation.reasons.includes('catalog-unavailable')) {
-            setWarnings((prev) => replaceWarning(prev, 'Crew catalog unavailable — continuing with Agent-X only.'));
-          }
-          // Modal first for high-confidence specialist matches — one UI surface only.
-          if (evaluation.shouldSuggest && evaluation.candidates.length > 0) {
-            crewSuggestionHandledRef.current = true;
-            openCrewSuggestionFromEvaluation(evaluation, trimmed);
-            return;
-          }
-          const workforceIntent = explicitCrewRequest(trimmed);
-          if (workforceIntent && evaluation.candidates.length > 0) {
-            crewSuggestionHandledRef.current = true;
-            if (await offerInlineCrewRoster(trimmed, evaluation)) return;
-          }
-          if (await offerInlineCrewRoster(trimmed, evaluation)) return;
-        }
-      } catch {
-        if (await maybeOfferCrewSuggestion(trimmed)) return;
-      }
-    } else if (await maybeOfferCrewSuggestion(trimmed)) {
-      return;
-    }
-
+    if (await runCrewSuggestionGate(trimmed)) return;
     await executeSend(trimmed);
-  }, [attachments.length, agentMode, executeSend, maybeOfferCrewSuggestion, evaluateCrewForMessage, offerInlineCrewRoster, openCrewSuggestionFromEvaluation, isCrewPrivateSession]);
+  }, [attachments.length, agentMode, executeSend, runCrewSuggestionGate]);
 
   // Retry last user message — re-sends without duplicating the user message,
   // replaces the existing assistant response on success.
@@ -2429,7 +2641,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     if (!text || streaming || !currentProvider || !currentModel) return;
     if (!(await ensureSession())) return;
 
+    try { await chat.cancel(); } catch { /* ignore */ }
     resendInProgressRef.current = true;
+    setTurnActivity(null);
+    setLoadingSteps(null);
     beginTurnUi();
 
     // Remove the old assistant response — SSE will update the placeholder
@@ -2439,7 +2654,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     });
 
     try {
-      const result = await chat.send(sanitizeForJson(text), undefined, true);
+      const clientSituation = await collectClientSituation();
+      const result = await chat.send(sanitizeForJson(text), undefined, true, undefined, undefined, undefined, undefined, undefined, undefined, undefined, clientSituation);
       if (result?.turnId) activeTurnIdRef.current = result.turnId;
       if (result?.async) return;
       setMessages(prev => {
@@ -2554,7 +2770,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           pickerPartId,
         });
         markCrewRosterPickerResolved(messageId, 'skipped');
-        await executeSend(text, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+        await executeSend(text, undefined, { crewSuggestionResolved: true, skipUserMessage: true, userMessagePersisted: true });
         return;
       }
       const primaryCrewId = result.deployedPrimaryCrewId
@@ -2572,6 +2788,8 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         crewSuggestionResolved: true,
         primaryCrewId,
         skipUserMessage: true,
+        userMessagePersisted: true,
+        crewIntakeFromPicker: true,
       });
     } catch (err) {
       revertCrewRosterPickerPending(messageId);
@@ -2579,7 +2797,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     }
   }, [messages, markCrewRosterPickerResolved, revertCrewRosterPickerPending, ensureSession, executeSend, replaceWarning]);
 
-  const handleCrewRosterPickerSkip = useCallback(async (messageId: string) => {
+  const handleCrewRosterPickerSkip = useCallback(async (messageId: string, dismissForSession = false) => {
     const pickerMsg = messages.find((m) => m.id === messageId);
     const pickerPart = pickerMsg?.parts?.find((p) => p.type === 'crew_roster_picker');
     const record = pickerPart?.crewRosterPicker;
@@ -2590,6 +2808,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     try {
       const sessionId = await ensureSession();
       if (sessionId) {
+        await crewSuggestions.resolve({
+          sessionId,
+          action: dismissForSession ? 'dismiss' : 'skip',
+          dismissForSession,
+        });
         await crewSuggestions.updateRosterPicker(sessionId, {
           pickerMessageId: messageId,
           status: 'skipped',
@@ -2598,7 +2821,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           pickerPartId: pickerPart?.id,
         });
       }
-      await executeSend(record.pendingUserText, undefined, { crewSuggestionResolved: true, skipUserMessage: true });
+      await executeSend(record.pendingUserText, undefined, {
+        crewSuggestionResolved: true,
+        skipUserMessage: true,
+        userMessagePersisted: true,
+      });
     } catch (err) {
       revertCrewRosterPickerPending(messageId);
       setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to skip crew picker'));
@@ -2725,16 +2952,15 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   }, []);
 
   useEffect(() => {
-    setCrewSuggestOpen(false);
-    setCrewEvaluation(null);
     pendingSendTextRef.current = null;
-    pendingCrewCandidatesRef.current = [];
     crewSuggestionHandledRef.current = false;
   }, [currentSessionId]);
   useEffect(() => { resetCrewMissionState(); }, [currentSessionId, resetCrewMissionState]);
 
   const handleCancel = useCallback(async () => {
     endTurnUi();
+    setPermissionPrompt(null);
+    setPendingPermissionCount(0);
     try { await chat.cancel(); } catch { /* ignore */ }
   }, [endTurnUi]);
 
@@ -3120,6 +3346,30 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     void startNewSession(folder);
   };
 
+  // Clear session view: soft-archives messages (kept in DB + memory), two-step confirm
+  const [clearArmed, setClearArmed] = useState(false);
+  const clearArmTimerRef = useRef<number | null>(null);
+  const handleClearSession = async () => {
+    const sid = currentSessionIdRef.current;
+    if (!sid) return;
+    if (!clearArmed) {
+      setClearArmed(true);
+      if (clearArmTimerRef.current) window.clearTimeout(clearArmTimerRef.current);
+      clearArmTimerRef.current = window.setTimeout(() => setClearArmed(false), 4000);
+      return;
+    }
+    if (clearArmTimerRef.current) { window.clearTimeout(clearArmTimerRef.current); clearArmTimerRef.current = null; }
+    setClearArmed(false);
+    try {
+      await sessions.archiveMessages(sid);
+      setMessages([]);
+      setHasOlderMessages(false);
+      setPendingFeedbackMessageId(null);
+    } catch (e) {
+      setWarnings([`Failed to clear session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
+    }
+  };
+
   const startNewSession = async (folder: string) => {
     setWarnings([]);
     setStreaming(false);
@@ -3393,9 +3643,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           zIndex: 1,
           transition: 'border-color 0.6s ease',
         }}>
-          <IconButton size="small" onClick={handleShowSessions} sx={{ color: colors.text.dim, p: 0.5 }}>
-            <ArrowBackIcon sx={{ fontSize: 16 }} />
-          </IconButton>
+          {!coreSession && (
+            <IconButton size="small" onClick={handleShowSessions} sx={{ color: colors.text.dim, p: 0.5 }}>
+              <ArrowBackIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          )}
           {parentSessionId && (
             <Chip size="small"
               icon={<ArrowBackIcon sx={{ fontSize: 10 }} />}
@@ -3436,15 +3688,34 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               <DownloadIcon sx={{ fontSize: 14 }} />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Command palette (⌘K)" arrow>
-            <IconButton size="small" onClick={() => setPaletteOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.purple } }}>
-              <BoltIcon sx={{ fontSize: 14 }} />
-            </IconButton>
-          </Tooltip>
-          <Button size="small" startIcon={<AddIcon sx={{ fontSize: 12 }} />} onClick={() => handleNewSession()}
-            sx={{ color: colors.accent.green, fontSize: '0.55rem', textTransform: 'none', minWidth: 'auto' }}>
-            New
-          </Button>
+          {coreSession && (
+            <Tooltip title={clearArmed ? 'Click again to confirm clear' : 'Clear session view (archives messages; DB & memory untouched)'} arrow>
+              <IconButton
+                size="small"
+                onClick={() => { void handleClearSession(); }}
+                sx={{
+                  color: clearArmed ? colors.accent.red : colors.text.dim,
+                  p: 0.5,
+                  '&:hover': { color: colors.accent.red },
+                }}
+              >
+                <DeleteSweepIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {!coreSession && (
+            <Tooltip title="Command palette (⌘K)" arrow>
+              <IconButton size="small" onClick={() => setPaletteOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.purple } }}>
+                <BoltIcon sx={{ fontSize: 14 }} />
+              </IconButton>
+            </Tooltip>
+          )}
+          {!coreSession && (
+            <Button size="small" startIcon={<AddIcon sx={{ fontSize: 12 }} />} onClick={() => handleNewSession()}
+              sx={{ color: colors.accent.green, fontSize: '0.55rem', textTransform: 'none', minWidth: 'auto' }}>
+              New
+            </Button>
+          )}
         </Box>
 
         {showMedicalSessionDisclaimer && <MedicalDisclaimerChatSessionStrip />}
@@ -3615,15 +3886,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             pointerEvents: questionnairePending || sessionRestoring ? 'none' : 'auto',
             '&:focus-within': questionnairePending ? {} : { borderColor: hyperdriveMode ? '#ff00ff90' : agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
           }}>
-            {streaming && (
-              <Box sx={{ px: 1.25, pt: 0.75, pb: 0.25 }}>
-                <ExecutionStatusChip
-                  stage={turnActivity?.stage}
-                  step={turnActivity?.step}
-                  elapsedMs={turnActivity?.elapsedMs}
-                />
-              </Box>
-            )}
             {/* Permission banner above input */}
             {permissionPrompt && (
               <Box sx={{ px: 1.25, pt: 1.25, pb: 0.5 }}>
@@ -3647,6 +3909,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </Box>
             )}
             <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
+            {composerMode === 'text' ? (
             <ChatInputBar
               ref={inputBarRef}
               streaming={streaming}
@@ -3655,11 +3918,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               sendBlockedReason={sendBlockedReason}
               hasAttachments={attachments.length > 0}
               crewList={crewList}
-              disableMentions={isCrewPrivateSession}
+              disableMentions={isCrewPrivateSession || coreSession}
               placeholder={
-                isCrewPrivateSession && crewPrivateHost
-                  ? `Message ${crewPrivateHost.name}...`
-                  : undefined
+                coreSession
+                  ? 'Talk to Agent-X — your lifelong wingman…'
+                  : isCrewPrivateSession && crewPrivateHost
+                    ? `Message ${crewPrivateHost.name}...`
+                    : undefined
               }
               onSend={handleSend}
               onCancel={handleCancel}
@@ -3668,13 +3933,24 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               onSteer={handleSteer}
               clearSignal={inputClearSignal}
             />
+            ) : (
+              <ChatVoicePanel
+                chatSessionId={currentSessionId}
+                onVoiceUserPending={handleVoiceUserPending}
+                onVoiceUserDiscarded={handleVoiceUserDiscarded}
+                onTranscriptFinal={handleVoiceTranscript}
+                onVoiceTiming={handleVoiceTiming}
+                autoStart={voiceAutoStart}
+                onAutoStartConsumed={() => setVoiceAutoStart(false)}
+              />
+            )}
 
             {/* Toolbar row */}
             <Box sx={{
               display: 'flex', alignItems: 'center', gap: 0.5, px: 1.25, py: 0.5,
               borderTop: `1px solid ${colors.border.default}20`,
             }}>
-              {/* Plus button for file attach */}
+            {/* Plus button for file attach */}
               <Tooltip title="Attach files" arrow>
                 <IconButton size="small" onClick={() => fileInputRef.current?.click()} sx={{ color: colors.text.dim, p: 0.25, '&:hover': { color: colors.text.secondary } }}>
                   <AddIcon sx={{ fontSize: 16 }} />
@@ -3858,20 +4134,42 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               {/* Spacer */}
               <Box sx={{ flex: 1 }} />
 
-              {/* CWD — click to copy */}
-              {cwd && (
-                <Tooltip title={cwd} arrow>
-                  <Typography
-                    onClick={() => { navigator.clipboard.writeText(cwd).catch(() => {}); }}
-                    sx={{
-                      fontSize: '0.45rem', color: colors.text.dim,
-                      fontFamily: "'JetBrains Mono', monospace",
-                      maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                      cursor: 'pointer', '&:hover': { color: colors.text.secondary },
+              {streaming && (
+                <ExecutionStatusChip
+                  stage={turnActivity?.stage}
+                  step={turnActivity?.step}
+                  elapsedMs={turnActivity?.elapsedMs}
+                />
+              )}
+
+              {/* Text / Voice composer toggle */}
+              {voiceCtx?.voiceReady && (
+                <Tooltip title={composerMode === 'text' ? 'Switch to voice' : 'Switch to text'} arrow>
+                  <Chip
+                    size="small"
+                    icon={composerMode === 'text' ? <MicIcon sx={{ fontSize: '14px !important' }} /> : <KeyboardIcon sx={{ fontSize: '14px !important' }} />}
+                    label={composerMode === 'text' ? 'Voice' : 'Text'}
+                    onClick={() => {
+                      setComposerMode((m) => {
+                        const next = m === 'text' ? 'voice' : 'text';
+                        if (next === 'voice') {
+                          requestAnimationFrame(() => {
+                            (document.activeElement as HTMLElement | null)?.blur?.();
+                          });
+                        }
+                        return next;
+                      });
                     }}
-                  >
-                    {cwd.split('/').slice(-2).join('/')}
-                  </Typography>
+                    sx={{
+                      fontSize: '0.55rem', height: 20, cursor: 'pointer',
+                      bgcolor: composerMode === 'voice' ? colors.accent.green + '18' : colors.bg.tertiary,
+                      border: `1px solid ${composerMode === 'voice' ? colors.accent.green + '40' : colors.border.default}`,
+                      borderRadius: '10px',
+                      color: composerMode === 'voice' ? colors.accent.green : colors.text.secondary,
+                      '& .MuiChip-icon': { color: 'inherit' },
+                      '&:hover': { bgcolor: composerMode === 'voice' ? colors.accent.green + '28' : colors.bg.primary },
+                    }}
+                  />
                 </Tooltip>
               )}
             </Box>
@@ -3896,7 +4194,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         <Box>
           <Box
             onClick={() => setContextExpanded(!contextExpanded)}
-            sx={sidebarSectionHeaderSx}
+            sx={sidebarSectionHeaderSx(contextExpanded)}
           >
             <ArticleIcon sx={{ fontSize: 12, color: '#00bcd4' }} />
               <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -3915,7 +4213,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               </IconButton>
           </Box>
           {contextExpanded && (
-            <Box sx={{ px: 1.5, pb: 1.5 }}>
+            <Box sx={sidebarSectionContentSx}>
               {contextData ? (
                 <Box sx={{ bgcolor: colors.bg.tertiary, borderRadius: 0.75, p: 1, maxHeight: 300, overflow: 'auto' }}>
                   <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, whiteSpace: 'pre-wrap', lineHeight: 1.5, wordBreak: 'break-word' }}>
@@ -3933,7 +4231,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         <Box>
           <Box
             onClick={() => setTokenExpanded(!tokenExpanded)}
-            sx={sidebarSectionHeaderSx}
+            sx={sidebarSectionHeaderWithDividerSx(tokenExpanded)}
           >
             <AutoGraphIcon sx={{ fontSize: 12, color: '#4caf50' }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -3947,7 +4245,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             </Typography>
           </Box>
           {tokenExpanded && (
-          <Box sx={{ px: 1.5, pb: 1.5 }}>
+          <Box sx={sidebarSectionContentSx}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
             <Typography sx={{ fontSize: '0.65rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.primary }}>
               {tokenUsed.toLocaleString()}
@@ -4023,7 +4321,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 </Typography>
                 <Tooltip title="Copy session ID">
                   <Box onClick={() => {
-                    navigator.clipboard.writeText(currentSessionId).catch(() => {});
+                    void copyToClipboard(currentSessionId);
                     setCopiedSessionId(true);
                     setTimeout(() => setCopiedSessionId(false), 2000);
                   }} sx={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: copiedSessionId ? colors.accent.green : colors.text.dim, '&:hover': { color: copiedSessionId ? colors.accent.green : colors.text.primary } }}>
@@ -4041,12 +4339,12 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           )}
         </Box>
 
-        {/* ─── Crew Mission ─── */}
-        {!isCrewPrivateSession && currentSessionId && (
+        {/* ─── Crew Mission (not shown for Agent-X super-session) ─── */}
+        {!isCrewPrivateSession && !coreSession && currentSessionId && (
         <Box>
           <Box
             onClick={() => setMissionExpanded(!missionExpanded)}
-            sx={sidebarSectionHeaderSx}
+            sx={sidebarSectionHeaderWithDividerSx(missionExpanded)}
           >
             <GroupsIcon sx={{ fontSize: 12, color: crewTheme.accent.tactical }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -4070,7 +4368,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           </Box>
 
           {missionExpanded && (
-          <Box sx={{ px: 1.5, pb: 1.5 }}>
+          <Box sx={sidebarSectionContentSx}>
             {/* Manual add-crew search */}
             {crewAddOpen && (
               <Box sx={{ mb: 1, position: 'relative' }}>
@@ -4155,7 +4453,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         <Box sx={{ flex: 1, overflow: 'auto' }}>
           <Box
             onClick={() => setTasksExpanded(!tasksExpanded)}
-            sx={sidebarSectionHeaderSx}
+            sx={sidebarSectionHeaderWithDividerSx(tasksExpanded)}
           >
             <ChecklistIcon sx={{ fontSize: 12, color: colors.accent.blue }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
@@ -4166,7 +4464,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             )}
           </Box>
           {tasksExpanded && (
-          <Box sx={{ px: 1.5, pb: 1.5 }}>
+          <Box sx={sidebarSectionContentSx}>
 
           {todoItems.map((item) => (
             <Box key={item.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.3 }}>
@@ -4245,82 +4543,6 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           setStreaming(false);
         }}
       />
-      {!isCrewPrivateSession && (
-      <CrewSuggestionModal
-        open={crewSuggestOpen}
-        evaluation={crewEvaluation}
-        planMode={agentMode === 'plan'}
-        onViewDossier={(candidate) => { void handleViewCrewDossier(candidate); }}
-        onReenableSuggestions={() => {
-          const sessionId = currentSessionIdRef.current;
-          if (!sessionId) return;
-          void crewSuggestions.clearDismiss(sessionId).then(() => {
-            setWarnings((prev) => replaceWarning(prev, 'Crew suggestions re-enabled for this session.'));
-          }).catch(() => {
-            setWarnings((prev) => replaceWarning(prev, 'Failed to re-enable crew suggestions.'));
-          });
-        }}
-        onDeploy={async (selected, dismissForSession) => {
-          setCrewSuggestOpen(false);
-          const text = pendingSendTextRef.current;
-          const candidates = pendingCrewCandidatesRef.current;
-          const sessionId = currentSessionIdRef.current;
-          pendingSendTextRef.current = null;
-          pendingCrewCandidatesRef.current = [];
-          setCrewEvaluation(null);
-          if (!text || !sessionId) return;
-          try {
-            const result = await crewSuggestions.resolve({
-              sessionId,
-              action: 'deploy',
-              dismissForSession,
-              selectedCandidateIds: selected.map((c) => c.id),
-              candidates,
-            });
-            if (!result.deployedCrewIds?.length) {
-              setWarnings((prev) => replaceWarning(prev, 'Crew deploy failed — no specialists were attached. Continuing with Agent-X.'));
-              await executeSend(text, undefined, { crewSuggestionResolved: true });
-              return;
-            }
-            const primaryCrewId = result.deployedPrimaryCrewId ?? result.deployedCrewIds[0];
-            crews.list().then((list) => setCrewList(list)).catch(() => {});
-            await executeSend(text, result.deployedCrewIds, {
-              crewSuggestionResolved: true,
-              primaryCrewId,
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Crew deploy failed';
-            setWarnings((prev) => replaceWarning(prev, msg.includes('crew-deploy') ? 'Crew deploy failed — continuing with Agent-X only.' : msg));
-            await executeSend(text, undefined, { crewSuggestionResolved: true });
-          }
-        }}
-        onSkip={async (dismissForSession) => {
-          setCrewSuggestOpen(false);
-          const text = pendingSendTextRef.current;
-          const sessionId = currentSessionIdRef.current;
-          pendingSendTextRef.current = null;
-          pendingCrewCandidatesRef.current = [];
-          setCrewEvaluation(null);
-          if (sessionId) {
-            try {
-              await crewSuggestions.resolve({
-                sessionId,
-                action: dismissForSession ? 'dismiss' : 'skip',
-                dismissForSession,
-              });
-            } catch { /* best-effort */ }
-          }
-          if (text) await executeSend(text, undefined, { crewSuggestionResolved: true });
-        }}
-        onClose={() => {
-          setCrewSuggestOpen(false);
-          setCrewEvaluation(null);
-          pendingSendTextRef.current = null;
-          pendingCrewCandidatesRef.current = [];
-          crewSuggestionHandledRef.current = false;
-        }}
-      />
-      )}
       <CrewProfileDialog
         open={crewDossierOpen}
         crew={crewDossierCrew}

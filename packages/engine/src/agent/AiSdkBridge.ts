@@ -201,7 +201,7 @@ export function convertToJsonSchema(schema: unknown): Record<string, unknown> {
 
 export function createAiSdkTools(
   toolRegistry: ToolRegistry,
-  toolExecutor: { execute: (toolId: string, args: Record<string, unknown>, sessionId: string) => Promise<ToolResult>; setToolOutputHandler?: (handler: (output: string) => void) => void },
+  toolExecutor: { execute: (toolId: string, args: Record<string, unknown>, sessionId: string) => Promise<ToolResult>; setToolOutputHandler?: (handler: (output: string) => void) => void; isTurnAborted: () => boolean },
   sessionId: string,
   emit: (event: EngineEvent) => void,
   waitForClarification: (questionnaire: QuestionnairePayload) => Promise<string>,
@@ -308,6 +308,11 @@ export function createAiSdkTools(
       description: toolDef.modelDescription,
       inputSchema: jsonSchema(schema),
         async execute(args, options) {
+           if (toolExecutor.isTurnAborted()) {
+             const err = new Error('Turn aborted');
+             err.name = 'AbortError';
+             throw err;
+           }
            const startTime = Date.now();
            const callId = options?.toolCallId || `tc-${toolDef.id}-${startTime}`;
            activeOutputCalls.set(callId, toolDef.id);

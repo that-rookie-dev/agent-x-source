@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
+import TextFieldsIcon from '@mui/icons-material/TextFields';
 import { colors } from '../theme';
 import { ReasoningBlock } from '../components/ChatEnhancements';
 import { InlineToolCall } from '../components/InlineToolCall';
@@ -16,6 +18,8 @@ import { CrewRosterPickerMessage } from '../components/crew/CrewRosterPickerMess
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { TurnFeedbackBar } from './TurnFeedbackBar';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
+import { formatVoiceTimingMs } from '../voice/timing';
+import { extractVoiceChannelBlock, stripVoiceChannelBlock } from './utils';
 
 function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   const [expanded, setExpanded] = useState(false);
@@ -37,14 +41,95 @@ function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   );
 }
 
+function VoiceSummaryCard({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <Box sx={{
+      mb: 1.25,
+      borderRadius: 1,
+      overflow: 'hidden',
+      border: `1px solid ${colors.border.strong}70`,
+      bgcolor: '#050607',
+    }}>
+      <Box
+        onClick={() => setExpanded((open) => !open)}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.75,
+          px: 1,
+          py: 0.75,
+          cursor: 'pointer',
+          '&:hover': { bgcolor: `${colors.text.primary}06` },
+        }}
+      >
+        <Typography sx={{
+          fontSize: '0.65rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          color: colors.accent.green,
+          lineHeight: 1,
+        }}>
+          ◌
+        </Typography>
+        <Typography sx={{
+          fontSize: '0.6rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          fontWeight: 600,
+          color: colors.text.primary,
+          flexShrink: 0,
+        }}>
+          Voice summary
+        </Typography>
+        <Typography sx={{
+          fontSize: '0.55rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          color: colors.text.dim,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          minWidth: 0,
+          flex: 1,
+        }}>
+          {expanded ? 'spoken response' : text}
+        </Typography>
+        <Typography sx={{
+          fontSize: '0.55rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          color: colors.text.dim,
+          flexShrink: 0,
+          transition: 'transform 0.15s',
+          transform: expanded ? 'rotate(180deg)' : 'none',
+        }}>
+          ▾
+        </Typography>
+      </Box>
+      {expanded && (
+        <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.border.strong}55` }}>
+          <Typography sx={{
+            fontSize: '0.62rem',
+            color: colors.text.secondary,
+            fontFamily: "'JetBrains Mono', monospace",
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            lineHeight: 1.55,
+          }}>
+            {text}
+          </Typography>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 function renderParts(
   parts: PartEntry[],
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void,
   onQuestionnaireRespond?: (messageId: string, response: string) => void,
   messageId?: string,
   onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void,
-  onCrewRosterPickerSkip?: (messageId: string) => void,
+  onCrewRosterPickerSkip?: (messageId: string, dismissForSession?: boolean) => void,
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void,
+  voiceSummary?: string | null,
 ) {
   const filtered = parts.filter((p) => {
     if (p.type === 'deep_search') {
@@ -61,12 +146,26 @@ function renderParts(
   const ordered = orderPartsForChatRender(filtered);
   const webSources = collectWebSourceUrls(ordered);
 
+  const firstDeepIdx = ordered.findIndex((p) => p.type === 'deep_search');
+  const lastDeepIdx = ordered.reduce((acc, p, i) => (p.type === 'deep_search' ? i : acc), -1);
+  const hasDeepSearch = firstDeepIdx >= 0;
+
+  const renderDeepSearchPart = (part: PartEntry, afterTool: boolean) => (
+    <Box key={part.id} sx={{ mb: 0.25, mt: afterTool ? -0.625 : 0 }}>
+      <DeepSearchMessageBlock
+        bundle={part.deepSearch!.bundle}
+        progress={part.deepSearch!.progress}
+        running={part.deepSearch!.running}
+      />
+    </Box>
+  );
+
   const renderMainPart = (part: PartEntry, compactTop = false) => {
     switch (part.type) {
       case 'text':
-        return part.content
-          ? <CrewAwareMarkdown key={part.id} content={part.content} webSources={webSources} />
-          : null;
+        if (!part.content) return null;
+        const textContent = stripVoiceChannelBlock(part.content);
+        return textContent ? <CrewAwareMarkdown key={part.id} content={textContent} webSources={webSources} /> : null;
       case 'questionnaire':
         if (!part.questionnaire) return null;
         return (
@@ -93,7 +192,7 @@ function renderParts(
             }
             onSkip={
               part.crewRosterPicker.status === 'pending' && onCrewRosterPickerSkip && messageId
-                ? () => onCrewRosterPickerSkip(messageId)
+                ? (dismissForSession) => onCrewRosterPickerSkip(messageId, dismissForSession)
                 : undefined
             }
             onViewDossier={onViewCrewDossier}
@@ -134,27 +233,71 @@ function renderParts(
     }
   };
 
+  if (hasDeepSearch) {
+    const before = ordered.slice(0, firstDeepIdx);
+    const deepParts = ordered.filter((p) => p.type === 'deep_search');
+    const after = ordered.slice(lastDeepIdx + 1);
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {before.map((part, i) => {
+          const prev = before[i - 1];
+          const compactTop = part.type === 'tool' && prev?.type === 'tool';
+          return renderMainPart(part, compactTop);
+        })}
+        {deepParts.map((part, i) => {
+          const prev = i === 0 ? before[before.length - 1] : deepParts[i - 1];
+          const afterTool = prev?.type === 'tool';
+          return renderDeepSearchPart(part, afterTool);
+        })}
+        {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
+        {after.map((part, i) => {
+          const prev = after[i - 1];
+          const compactTop = part.type === 'tool' && prev?.type === 'tool';
+          return renderMainPart(part, compactTop);
+        })}
+      </Box>
+    );
+  }
+
+  const firstTextIdx = ordered.findIndex((p) => p.type === 'text');
+  if (firstTextIdx >= 0) {
+    const beforeText = ordered.slice(0, firstTextIdx);
+    const textAndAfter = ordered.slice(firstTextIdx);
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {beforeText.map((part, i) => {
+          const prev = beforeText[i - 1];
+          const compactTop = part.type === 'tool' && prev?.type === 'tool';
+          if (part.type === 'deep_search' && part.deepSearch) {
+            return renderDeepSearchPart(part, prev?.type === 'tool');
+          }
+          return renderMainPart(part, compactTop);
+        })}
+        {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
+        {textAndAfter.map((part, i) => {
+          const prev = textAndAfter[i - 1];
+          const compactTop = part.type === 'tool' && prev?.type === 'tool';
+          return renderMainPart(part, compactTop);
+        })}
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       {ordered.map((part, i) => {
         const prev = ordered[i - 1];
         const compactTop = part.type === 'tool' && prev?.type === 'tool';
-        const afterTool = part.type === 'deep_search' && prev?.type === 'tool';
 
         if (part.type === 'deep_search' && part.deepSearch) {
-          return (
-            <Box key={part.id} sx={{ mb: 0.25, mt: afterTool ? -0.625 : 0 }}>
-              <DeepSearchMessageBlock
-                bundle={part.deepSearch.bundle}
-                progress={part.deepSearch.progress}
-                running={part.deepSearch.running}
-              />
-            </Box>
-          );
+          const afterTool = prev?.type === 'tool';
+          return renderDeepSearchPart(part, afterTool);
         }
 
         return renderMainPart(part, compactTop);
       })}
+      {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
     </Box>
   );
 }
@@ -165,7 +308,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void;
   onQuestionnaireRespond?: (messageId: string, response: string) => void;
   onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void;
-  onCrewRosterPickerSkip?: (messageId: string) => void;
+  onCrewRosterPickerSkip?: (messageId: string, dismissForSession?: boolean) => void;
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
   showFeedback?: boolean;
   onTurnFeedback?: (messageId: string, rating: TurnFeedbackRating) => void;
@@ -193,6 +336,8 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     })),
   };
   const cleanContent = displayContent(displayMessage);
+  const voiceSummary = extractVoiceChannelBlock(displayMessage.content || '')
+    || extractVoiceChannelBlock(displayMessage.parts?.filter((p) => p.type === 'text' && p.content).map((p) => p.content).join('') || '');
   const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
   const webSources = collectWebSourceUrls(displayMessage.parts);
   const hasQuestionnaire = !!(displayMessage.parts?.some((p) => p.type === 'questionnaire'));
@@ -204,12 +349,14 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     onCrewRosterPickerSubmit,
     onCrewRosterPickerSkip,
     onViewCrewDossier,
+    voiceSummary,
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {cleanContent && <CrewAwareMarkdown content={cleanContent} webSources={webSources} />}
       {displayMessage.toolCalls?.map((t, i) => (
         <InlineToolCall key={t.id} tool={t} compactTop={i > 0} />
       ))}
+      {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
+      {cleanContent && <CrewAwareMarkdown content={cleanContent} webSources={webSources} />}
     </Box>
   );
 
@@ -228,6 +375,14 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
           <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", opacity: 0.7 }}>
             @{crewInfo.callsign}
           </Typography>
+        )}
+        {message.voiceTextOnly && (
+          <Chip
+            size="small"
+            icon={<TextFieldsIcon sx={{ fontSize: '12px !important' }} />}
+            label="Text only"
+            sx={{ fontSize: '0.5rem', height: 18, bgcolor: `${colors.text.dim}12`, border: `1px solid ${colors.text.dim}30` }}
+          />
         )}
         {crewInfo && (crewInfo.confidence || crewInfo.reasons) && (
           <Typography component="span" onClick={() => setWhyOpen(!whyOpen)} sx={{ fontSize: '0.5rem', cursor: 'pointer', color: colors.text.dim, opacity: 0.5 }}>Why?</Typography>
@@ -293,6 +448,17 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
                 {message.turnTokens.toLocaleString()} tok
               </Typography>
             )}
+            {message.voiceTimings && (
+              <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
+                STT {formatVoiceTimingMs(message.voiceTimings.sttMs)}
+                {' · '}
+                Think {formatVoiceTimingMs(message.voiceTimings.thinkingMs)}
+                {' · '}
+                TTS {formatVoiceTimingMs(message.voiceTimings.ttsMs)}
+                {' · '}
+                Total {formatVoiceTimingMs(message.voiceTimings.totalMs)}
+              </Typography>
+            )}
         </Box>
       )}
     </Box>
@@ -317,6 +483,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   if (pm.crew?.crewId !== nm.crew?.crewId || pm.crew?.name !== nm.crew?.name) return false;
   if (pm.subAgents !== nm.subAgents) return false;
   if (pm.turnFeedback?.rating !== nm.turnFeedback?.rating) return false;
+  if (pm.voiceTimings?.totalMs !== nm.voiceTimings?.totalMs) return false;
   const prevDeep = pm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
   const nextDeep = nm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
   if (prevDeep !== nextDeep) return false;
@@ -326,6 +493,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
     for (let i = 0; i < prevParts.length; i++) {
       const pp = prevParts[i]!;
       const np = nextParts[i]!;
+      if (pp.type === 'text' && np.type === 'text' && pp.content !== np.content) return false;
       if (pp.type === 'questionnaire' && np.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
       if (pp.type === 'tool' && np.type === 'tool') {
         if (pp.id !== np.id) return false;

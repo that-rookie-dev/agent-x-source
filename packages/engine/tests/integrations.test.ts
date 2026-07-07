@@ -165,6 +165,16 @@ describe('hub browser oauth', () => {
     expect(canUseHubBrowserOAuth(gdrive)).toBe(false);
   });
 
+  it('uses MCP stdio auth for gmail instead of hub OAuth', () => {
+    const gmail = getIntegrationProvider('gmail')!;
+    expect(gmail.catalogStatus).toBe('active');
+    expect(gmail.auth.mcpStdioAuth?.authArg).toBe('auth');
+    expect(gmail.auth.mcpStdioAuth?.oauthPathEnv).toBe('GMAIL_OAUTH_PATH');
+    expect(gmail.auth.mcpStdioAuth?.credentialsFileName).toBe('credentials.json');
+    expect(gmail.auth.mcpStdioAuth?.oauthKeysFormat).toBe('web');
+    expect(canUseHubBrowserOAuth(gmail)).toBe(false);
+  });
+
   it('registers Google Drive bridge tools for read/list', () => {
     const gdrive = getIntegrationProvider('google-drive')!;
     const bridges = createGoogleDriveBridgeTools(gdrive);

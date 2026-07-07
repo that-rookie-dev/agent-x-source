@@ -1,12 +1,21 @@
 import type { Agent } from '@agentx/engine';
 import { applyWebSearchConfigFromAgentConfig, isWebSearchAvailableForChat } from '@agentx/engine';
-import type { AgentXConfig } from '@agentx/shared';
+import type { AgentPersonaConfig, AgentXConfig, ClientSituation } from '@agentx/shared';
+import { normalizeClientSituation } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import { getLogger, sanitizeForJson, generateId } from '@agentx/shared';
 
 export const TURN_TIMEOUT_MS = 600_000;
+/**
+ * Idle cap for voice comms turns: if the agent produces NO activity
+ * (tool/step/heartbeat/stream) for this long, the turn is aborted. Activity
+ * resets the clock so tool-heavy hands-free turns aren't killed mid-work.
+ */
+export const VOICE_TURN_TIMEOUT_MS = 90_000;
+/** Hard ceiling for a single voice turn regardless of ongoing activity. */
+export const VOICE_TURN_MAX_MS = 300_000;
 
 export function getForceWebSearchError(cfg: AgentXConfig, forceWebSearch?: boolean): string | null {
   if (!forceWebSearch) return null;
@@ -100,6 +109,26 @@ YOUR RESPONSIBILITIES:
 - Trust the auto-healing system; do not retry failed operations yourself`;
 }
 
+export function refreshAgentPersona(agent: Agent): void {
+  try {
+    const eng = getEngine();
+    const store = (eng.sessionManager as unknown as { store?: { getPersona?: () => AgentPersonaConfig | null } })?.store;
+    if (!store?.getPersona) return;
+    const persona = store.getPersona();
+    const current = (agent as unknown as { persona?: AgentPersonaConfig | null }).persona;
+    if (JSON.stringify(persona) === JSON.stringify(current)) return;
+    agent.applyPersona(persona);
+  } catch { /* best-effort */ }
+}
+
+export function applyClientSituation(agent: Agent, situation: unknown): ClientSituation | null {
+  const normalized = normalizeClientSituation(situation);
+  if (normalized) {
+    agent.setClientSituation(normalized);
+  }
+  return normalized;
+}
+
 export function buildInstructionForMode(
   mode: 'agent' | 'plan',
   opts?: { crewPrivate?: boolean },
@@ -119,18 +148,39 @@ export function persistToolLedger(agent: Agent, sessionId: string): void {
   } catch { /* best-effort */ }
 }
 
-const TURN_ACTIVITY_EVENTS = new Set([
+export const TURN_ACTIVITY_EVENTS = new Set([
   'turn_heartbeat',
   'tool_executing',
   'tool_complete',
   'tool_called',
   'tool_result',
   'stream_chunk',
-  'message_received',
   'step_start',
   'step_finish',
   'operation_file_edited',
 ]);
+
+const activeTurnBySession = new Map<string, string>();
+
+export function registerActiveTurn(sessionId: string, turnId: string): void {
+  activeTurnBySession.set(sessionId, turnId);
+}
+
+export function clearActiveTurn(sessionId: string, turnId?: string): void {
+  if (!turnId || activeTurnBySession.get(sessionId) === turnId) {
+    activeTurnBySession.delete(sessionId);
+  }
+}
+
+/** Cancel the in-flight turn for a session (Stop button). Returns the turn id if one was active. */
+export function cancelActiveSessionTurn(sessionId: string): string | undefined {
+  const turnId = activeTurnBySession.get(sessionId);
+  if (turnId) {
+    turnRegistry.cancel(turnId);
+    activeTurnBySession.delete(sessionId);
+  }
+  return turnId;
+}
 
 export function runAgentTurnAsync(
   agent: Agent,
@@ -147,16 +197,44 @@ export function runAgentTurnAsync(
   primaryCrewId?: string,
   extra?: {
     forceWebSearch?: boolean;
+    voiceTurn?: boolean;
+    turnTimeoutMs?: number;
+    fixedTurnTimeout?: boolean;
+    /** Hard ceiling (ms) that fires even while activity keeps resetting the idle clock. */
+    maxTurnMs?: number;
+    userMessagePersisted?: boolean;
+    voiceContinuation?: boolean;
+    voiceMergeIntoMessage?: { messageId: string; prefixContent: string };
     resumeCrewIntake?: {
       originalUserText: string;
       intakeAnswer: string;
       delegateCrewIds: string[];
       primaryCrewId?: string;
     };
+    clientSituation?: ClientSituation | null;
   },
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let maxTurnTimer: ReturnType<typeof setTimeout> | undefined;
   let timeoutPaused = false;
+  const turnTimeoutMs = extra?.turnTimeoutMs ?? TURN_TIMEOUT_MS;
+  const fixedTurnTimeout = extra?.fixedTurnTimeout ?? false;
+  const maxTurnMs = extra?.maxTurnMs;
+
+  if (extra?.voiceTurn) {
+    try {
+      agent.getToolExecutor()?.setVoiceTurnActive?.(true);
+    } catch { /* best-effort */ }
+  }
+
+  registerActiveTurn(sessionId, turnId);
+
+  const clearVoiceTurn = () => {
+    if (!extra?.voiceTurn) return;
+    try {
+      agent.getToolExecutor()?.setVoiceTurnActive?.(false);
+    } catch { /* best-effort */ }
+  };
 
   const pauseTimeout = () => {
     timeoutPaused = true;
@@ -164,14 +242,33 @@ export function runAgentTurnAsync(
       clearTimeout(timeoutId);
       timeoutId = undefined;
     }
+    // Human-in-the-loop (clarification/permission) shouldn't burn the hard ceiling.
+    if (maxTurnTimer) {
+      clearTimeout(maxTurnTimer);
+      maxTurnTimer = undefined;
+    }
   };
 
+  let turnCompleted = false;
+  const clearTimers = () => {
+    if (timeoutId) { clearTimeout(timeoutId); timeoutId = undefined; }
+    if (maxTurnTimer) { clearTimeout(maxTurnTimer); maxTurnTimer = undefined; }
+  };
+  const finalizeTurn = () => {
+    clearActiveTurn(sessionId, turnId);
+    clearTimers();
+    unsubActivity();
+    clearVoiceTurn();
+  };
   const onTimeout = () => {
+    if (turnCompleted) return;
     try {
       if (agent.isAwaitingClarification?.()) {
         agent.abortClarificationWait?.();
       }
       agent.cancel();
+      turnCompleted = true;
+      finalizeTurn();
       const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, 'The operation was aborted due to timeout', partial);
       if (partial) {
@@ -181,13 +278,14 @@ export function runAgentTurnAsync(
     } catch { /* best-effort */ }
   };
   const scheduleTimeout = () => {
-    if (timeoutPaused) return;
+    if (timeoutPaused || fixedTurnTimeout) return;
     if (timeoutId) clearTimeout(timeoutId);
-    timeoutId = setTimeout(onTimeout, TURN_TIMEOUT_MS);
+    timeoutId = setTimeout(onTimeout, turnTimeoutMs);
   };
   const unsubActivity = agent.events.on((event) => {
     const type = event.type as string;
-    if (type === 'clarification_required') {
+    if (type === 'clarification_required' || type === 'permission_required') {
+      // Human-in-the-loop: stop the clock until they respond (voice or UI).
       pauseTimeout();
       return;
     }
@@ -199,11 +297,35 @@ export function runAgentTurnAsync(
       }
       return;
     }
-    if (TURN_ACTIVITY_EVENTS.has(type)) {
+    if (timeoutPaused && TURN_ACTIVITY_EVENTS.has(type)) {
+      // A permission/clarification was resolved and work resumed — restart the clock.
+      timeoutPaused = false;
+      if (fixedTurnTimeout) {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(onTimeout, turnTimeoutMs);
+      } else {
+        scheduleTimeout();
+      }
+      if (maxTurnMs && maxTurnMs > 0 && !maxTurnTimer) {
+        maxTurnTimer = setTimeout(onTimeout, maxTurnMs);
+      }
+      return;
+    }
+    if (!fixedTurnTimeout && TURN_ACTIVITY_EVENTS.has(type)) {
       scheduleTimeout();
     }
   });
-  scheduleTimeout();
+  timeoutId = setTimeout(onTimeout, turnTimeoutMs);
+  if (maxTurnMs && maxTurnMs > 0) {
+    // Hard ceiling: fires regardless of activity or idle-clock resets.
+    maxTurnTimer = setTimeout(onTimeout, maxTurnMs);
+  }
+
+  refreshAgentPersona(agent);
+  const clientSituation = extra?.clientSituation ?? null;
+  if (clientSituation) {
+    agent.setClientSituation(clientSituation);
+  }
 
   void agent.sendMessage(fullText, {
     ...(instruction ? { instruction } : {}),
@@ -213,11 +335,16 @@ export function runAgentTurnAsync(
     ...(crewIntakeFromPicker ? { crewIntakeFromPicker: true } : {}),
     ...(primaryCrewId ? { primaryCrewId } : {}),
     ...(extra?.forceWebSearch ? { forceWebSearch: true } : {}),
+    ...(extra?.voiceTurn ? { voiceTurn: true } : {}),
+    ...(extra?.userMessagePersisted ? { userMessagePersisted: true } : {}),
+    ...(extra?.voiceContinuation ? { voiceContinuation: true } : {}),
+    ...(extra?.voiceMergeIntoMessage ? { voiceMergeIntoMessage: extra.voiceMergeIntoMessage } : {}),
     ...(extra?.resumeCrewIntake ? { resumeCrewIntake: extra.resumeCrewIntake } : {}),
+    ...(clientSituation ? { clientSituation } : {}),
   })
     .then((message) => {
-      if (timeoutId) clearTimeout(timeoutId);
-      unsubActivity();
+      turnCompleted = true;
+      finalizeTurn();
       persistToolLedger(agent, sessionId);
       if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
         turnRegistry.complete(turnId, message as any);
@@ -229,8 +356,16 @@ export function runAgentTurnAsync(
       onComplete?.(message);
     })
     .catch((e: unknown) => {
-      if (timeoutId) clearTimeout(timeoutId);
-      unsubActivity();
+      turnCompleted = true;
+      finalizeTurn();
+      const isAbort = e instanceof Error && (e.name === 'AbortError' || /aborted/i.test(e.message));
+      if (isAbort) {
+        const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
+        turnRegistry.cancel(turnId);
+        persistToolLedger(agent, sessionId);
+        onError?.('Cancelled', partial);
+        return;
+      }
       const errMsg = e instanceof Error ? e.message : 'chat-failed';
       const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, errMsg, partial);
@@ -274,6 +409,10 @@ export async function loadSessionMessagesPage(
 ): Promise<{ messages: Array<Record<string, unknown>>; total: number; hasMore: boolean }> {
   const store = getMessageStore();
   if (!store) return { messages: [], total: 0, hasMore: false };
+
+  if ('ensureSessionHydrated' in store && typeof (store as { ensureSessionHydrated?: (id: string) => Promise<void> }).ensureSessionHydrated === 'function') {
+    await (store as { ensureSessionHydrated: (id: string) => Promise<void> }).ensureSessionHydrated(sessionId);
+  }
 
   if (store.getMessagesPage) {
     return await store.getMessagesPage(sessionId, opts);

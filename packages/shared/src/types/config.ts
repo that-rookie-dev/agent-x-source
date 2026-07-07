@@ -2,6 +2,7 @@ import type { ProviderId, ReasoningEffortLevel } from './provider.js';
 import type { RAGConfig } from './rag.js';
 import type { PermissionRule } from './permission.js';
 import type { NotificationChannelsConfig } from './channels.js';
+import type { VoiceConfig } from './voice.js';
 
 export type { NotificationChannelsConfig, NotificationChannelId, NotificationChannelStatus } from './channels.js';
 
@@ -41,11 +42,17 @@ export interface ToolsConfig {
   webSearch?: WebSearchToolsConfig;
 }
 
+import type { RuntimeSettings } from '../runtime-settings.js';
+
+export type { RuntimeSettings } from '../runtime-settings.js';
+
 export interface AgentXConfig {
   provider: ProviderSettings;
   ui: UISettings;
   organization: OrganizationConfig | null;
   telemetry: boolean;
+  /** CPU, caching, and background worker tuning. Changes require restart. */
+  runtime?: RuntimeSettings;
   timezone?: string; // IANA timezone (e.g. 'Asia/Kolkata'). Auto-detected if not set.
   user?: UserConfig;
   setupComplete?: boolean; // true after Mission Control wizard finishes
@@ -53,6 +60,8 @@ export interface AgentXConfig {
   tools?: ToolsConfig;
   /** Outbound notification channels (Telegram, Slack, Email, Discord). */
   channels?: NotificationChannelsConfig;
+  /** Optional strictly-local voice subsystem. Disabled unless configured. */
+  voice?: VoiceConfig;
   localModel?: LocalModelConfig;
   featureRouting?: FeatureRoutingConfig;
   maxSubAgents?: number; // Maximum number of concurrent sub-agents (default: 5, max: 20)

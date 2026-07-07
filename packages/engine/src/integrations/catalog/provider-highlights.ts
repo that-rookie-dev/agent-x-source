@@ -30,7 +30,7 @@ const HIGHLIGHTS: Record<string, string[]> = {
   trello: ['Boards and cards', 'Checklists'],
   obsidian: ['Search vault notes', 'Read note content'],
   telegram: ['Read chats', 'Send messages (confirmed)'],
-  gmail: ['Read inbox', 'Draft messages'],
+  gmail: ['Search and read inbox messages', 'Send email with attachments (confirmed)', 'Manage labels and folders'],
   twilio: ['Send SMS', 'Voice call metadata'],
   zoom: ['Meetings list', 'Schedule meetings'],
   zendesk: ['Tickets', 'Help center articles'],

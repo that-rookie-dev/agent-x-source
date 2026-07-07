@@ -1,5 +1,8 @@
 // Centralized API client for all web-api endpoints
 
+import type { ClientSituation } from '@agentx/shared';
+import { notifyVoiceConfigUpdated } from './voice/support';
+
 const BASE = '/api';
 
 // Auth token management — avoids cookie dependency since Electron's cookie
@@ -20,6 +23,24 @@ export function getAuthToken(): string | null {
   return authToken;
 }
 
+/** Refresh in-memory token from the active session cookie (needed for WebSocket ?token= auth). */
+export async function syncAuthTokenFromSession(): Promise<string | null> {
+  try {
+    const status = await auth.status();
+    if (status.sessionToken) {
+      setAuthToken(status.sessionToken);
+      return status.sessionToken;
+    }
+    if (!status.isAuthenticated) {
+      setAuthToken(null);
+      return null;
+    }
+  } catch {
+    /* fall through */
+  }
+  return getAuthToken();
+}
+
 export function setOnUnauthorized(cb: (() => void) | null): void {
   onUnauthorized = cb;
 }
@@ -37,7 +58,7 @@ async function writeDebugLog(entry: Record<string, unknown>): Promise<void> {
   } catch { /* best effort */ }
 }
 
-async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, opts: RequestInit = {}, timeoutMs = 60_000): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(opts.headers as Record<string, string> ?? {}),
@@ -49,6 +70,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     credentials: 'include',
     headers,
     ...opts,
+    signal: opts.signal ?? AbortSignal.timeout(timeoutMs),
   });
   if (res.status === 401) {
     onUnauthorized?.();
@@ -96,7 +118,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
 // ─── Auth ───
 export const auth = {
   check: () => request<{ hasRootUser: boolean }>('/auth/check'),
-  status: () => request<{ isAuthenticated: boolean; username?: string | null }>('/auth/status'),
+  status: () => request<{ isAuthenticated: boolean; username?: string | null; sessionToken?: string }>('/auth/status'),
   setup: (username: string, password: string) => request<{ ok: boolean; username: string; token: string }>('/auth/setup', { method: 'POST', body: JSON.stringify({ username, password }) }),
   login: (username: string, password: string) => request<{ ok: boolean; username: string; token: string }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
@@ -105,6 +127,11 @@ export const auth = {
 // ─── Setup & Config ───
 export const config = {
   getSetupStatus: () => request<{ setupComplete: boolean; configured: boolean }>('/setup/status'),
+  completeSetup: (callsign?: string) =>
+    request<{ ok: boolean; setupComplete: boolean }>('/setup/complete', {
+      method: 'POST',
+      body: JSON.stringify({ callsign }),
+    }),
   get: () => request<AgentXConfig>('/config'),
   update: (data: Partial<AgentXConfig>) => request<{ ok: boolean }>('/config', { method: 'PUT', body: JSON.stringify(data) }),
 };
@@ -174,7 +201,7 @@ export interface CrewChatCrewInfo {
 export interface CrewChatSessionInfo {
   id: string;
   title?: string;
-  contextKind?: 'agent_x' | 'crew_private' | 'automation';
+  contextKind?: 'agent_x' | 'agent_x_core' | 'crew_private' | 'automation';
   hostCrewId?: string;
   crewId?: string;
   crewName?: string;
@@ -240,6 +267,7 @@ export const crewSuggestions = {
     userText: string;
     evaluation: CrewSuggestionEvaluation;
     attachments?: Array<{ name: string }>;
+    userMessageId?: string;
   }) => request<{ ok: boolean; userMessageId: string; pickerMessageId: string; pickerPartId: string }>(
     `/sessions/${sessionId}/crew-roster-picker`,
     { method: 'POST', body: JSON.stringify(body) },
@@ -297,6 +325,8 @@ export const chat = {
     crewIntakeFromPicker?: boolean,
     primaryCrewId?: string,
     forceWebSearch?: boolean,
+    userMessagePersisted?: boolean,
+    clientSituation?: ClientSituation,
   ) =>
     postChatAsync('/chat/message', {
       text,
@@ -308,6 +338,8 @@ export const chat = {
       crewIntakeFromPicker,
       primaryCrewId,
       forceWebSearch,
+      userMessagePersisted,
+      clientSituation,
     }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
@@ -322,6 +354,7 @@ export const chat = {
     crewSuggestionResolved?: boolean,
     crewIntakeFromPicker?: boolean,
     primaryCrewId?: string,
+    clientSituation?: ClientSituation,
   ): Promise<{ ok: boolean; message?: ChatMessage; clarification?: boolean; error?: string }> => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -335,7 +368,7 @@ export const chat = {
         method: 'POST',
         credentials: 'include',
         headers,
-        body: JSON.stringify({ text, attachments, retry, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId }),
+        body: JSON.stringify({ text, attachments, retry, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation }),
       });
 
       if (response.status === 401) {
@@ -439,6 +472,8 @@ export const sessions = {
   create: (scopePath?: string) => request<{ sessionId: string }>('/sessions', { method: 'POST', body: scopePath ? JSON.stringify({ scopePath }) : undefined }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
+  // Soft-archive: hides messages from the UI without deleting DB rows or memory embeddings
+  archiveMessages: (id: string) => request<{ ok: boolean }>(`/sessions/${id}/archive-messages`, { method: 'POST' }),
   restore: (id: string, opts?: { perRole?: number }) =>
     request<{
       session: SessionInfo;
@@ -1040,6 +1075,11 @@ export interface AgentXConfig {
   };
   /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
   neuralBrain?: boolean;
+  runtime?: {
+    cpuBudgetPercent?: number;
+    lazyStorageCache?: boolean;
+    backgroundConcurrency?: number;
+  };
   channels?: {
     telegram?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; botToken?: string; chatId?: string };
     slack?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; webhookUrl?: string; botToken?: string; appToken?: string };
@@ -1056,6 +1096,129 @@ export interface AgentXConfig {
       useTls?: boolean;
     };
     discord?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; webhookUrl?: string; botToken?: string; channelId?: string };
+  };
+  voice?: VoiceConfig;
+}
+
+export type TtsEngine = 'kokoro' | 'styletts2';
+
+export interface VoiceConfig {
+  enabled?: boolean;
+  mode?: {
+    web?: 'off' | 'push-to-talk' | 'duplex';
+    channels?: 'off' | 'voice-notes';
+  };
+  stt?: {
+    engine?: 'faster-whisper';
+    modelId?: string;
+    computeType?: 'auto' | 'int8' | 'int8_float16' | 'float16' | 'float32';
+    device?: 'auto' | 'cpu' | 'cuda';
+  };
+  tts?: {
+    engine?: TtsEngine;
+    voiceId?: string;
+    style?: {
+      emotion?: string;
+      expressiveness?: number;
+    };
+    fillerEngine?: 'kokoro';
+  };
+  sidecar?: { autoStart?: boolean; idleUnloadMinutes?: number };
+  fillers?: { enabled?: boolean; speakToolProgress?: boolean };
+  wakeWord?: {
+    enabled?: boolean;
+    phrase?: string;
+  };
+  downloadedAssets?: VoiceDownloadedAsset[];
+}
+
+export type VoiceTtsStyleConfig = NonNullable<NonNullable<VoiceConfig['tts']>['style']>;
+
+export interface VoiceDownloadedAsset {
+  assetId: string;
+  kind: string;
+  engine?: string;
+  version?: string;
+  installedAt: string;
+  sizeBytes?: number;
+  sha256?: string;
+}
+
+export interface VoiceAssetCatalogEntry {
+  id: string;
+  kind: string;
+  engine?: string;
+  displayName: string;
+  description: string;
+  sizeMB: number;
+  platform?: string;
+  architecture?: string;
+  downloadUrl?: string;
+  sha256?: string;
+  license?: string;
+  recommended?: boolean;
+}
+
+export interface VoiceCapabilityStatus {
+  os: string;
+  arch: string;
+  pythonAvailable: boolean;
+  ffmpegAvailable: boolean;
+  sidecar: { state: string; version?: string; error?: string };
+  stt: { engine: 'faster-whisper'; selectedModelId?: string; selectedModelInstalled: boolean };
+  tts: {
+    selectedEngine: TtsEngine;
+    selectedVoiceId?: string;
+    selectedVoiceInstalled: boolean;
+    kokoroInstalled: boolean;
+    styleTts2Installed: boolean;
+  };
+  vadInstalled: boolean;
+  gpuAvailable?: boolean;
+  canRunWeb: boolean;
+  canRunChannels: boolean;
+}
+
+export interface VoiceSetupStatus {
+  phase: 'idle' | 'runtime' | 'download' | 'complete' | 'error';
+  message: string;
+  progress: number;
+  step?: string;
+  stepIndex?: number;
+  totalSteps?: number;
+  detail?: string;
+  currentAsset?: string;
+  currentAssetName?: string;
+  assetIndex?: number;
+  totalAssets?: number;
+  assetProgress?: number;
+  error?: string;
+}
+
+export interface VoiceSidecarHealth {
+  ok: boolean;
+  state: 'starting' | 'ready' | 'error';
+  version?: string;
+  models?: {
+    sttLoaded?: boolean;
+    ttsEngine?: TtsEngine;
+    ttsLoaded?: boolean;
+    vadLoaded?: boolean;
+  };
+  device?: string;
+  error?: string;
+}
+
+export interface VoiceSidecarStatusResponse {
+  ok?: boolean;
+  error?: string;
+  sidecar: {
+    state: string;
+    baseUrl?: string;
+    pid?: number;
+    version?: string;
+    error?: string;
+    health?: VoiceSidecarHealth;
   };
 }
 
@@ -1250,7 +1413,7 @@ export interface SessionInfo {
   provider: string;
   model: string;
   crewId?: string;
-  contextKind?: 'agent_x' | 'crew_private' | 'automation';
+  contextKind?: 'agent_x' | 'agent_x_core' | 'crew_private' | 'automation';
   hostCrewId?: string;
   hostCrewName?: string;
   hostCrewCallsign?: string;
@@ -1517,6 +1680,62 @@ export const localModel = {
     ),
 };
 
+export const voice = {
+  getConfig: () =>
+    request<{ voice?: VoiceConfig }>('/config').then((cfg) => cfg.voice ?? {}),
+  capabilities: () =>
+    request<{ capabilities: VoiceCapabilityStatus }>('/voice/capabilities'),
+  catalog: () =>
+    request<{ catalog: VoiceAssetCatalogEntry[]; installed: VoiceDownloadedAsset[]; recommended: Record<string, string> }>('/voice/assets'),
+  installedAssets: () =>
+    request<{ assets: VoiceDownloadedAsset[] }>('/voice/assets/installed'),
+  downloadAsset: (assetId: string) =>
+    request<{ ok: boolean; assetId: string }>('/voice/assets/download', {
+      method: 'POST',
+      body: JSON.stringify({ assetId }),
+    }),
+  downloadStatus: (assetId: string) =>
+    request<{ status: string; progress?: number; error?: string }>(`/voice/assets/download-status/${assetId}`),
+  cancelDownload: (assetId: string) =>
+    request<{ ok: boolean }>(`/voice/assets/download/${assetId}/cancel`, { method: 'POST' }),
+  deleteAsset: (assetId: string) =>
+    request<{ ok: boolean }>(`/voice/assets/${assetId}`, { method: 'DELETE' }),
+  installSidecar: () =>
+    request<{ ok: boolean }>('/voice/install-sidecar', { method: 'POST' }),
+  installStyleTts: () =>
+    request<{ ok: boolean }>('/voice/install-styletts', { method: 'POST' }, 35 * 60_000),
+  setup: () =>
+    request<{ ok: boolean; status: VoiceSetupStatus }>('/voice/setup', { method: 'POST' }),
+  setupStatus: () =>
+    request<{ status: VoiceSetupStatus }>('/voice/setup/status'),
+  sidecarStatus: () =>
+    request<{ sidecar: VoiceSidecarStatusResponse['sidecar'] }>('/voice/sidecar/status'),
+  ensureSidecar: () =>
+    request<VoiceSidecarStatusResponse>('/voice/sidecar/ensure', { method: 'POST' }, 5 * 60_000),
+  releaseSidecar: () =>
+    request<{ ok: boolean; skipped?: string; scheduled?: boolean }>('/voice/sidecar/release', { method: 'POST' }),
+  preview: (text: string, engine: TtsEngine, voiceId?: string, style?: VoiceTtsStyleConfig) =>
+    request<{ audioBase64: string; mimeType: string; durationMs?: number }>(
+      '/voice/preview',
+      {
+        method: 'POST',
+        body: JSON.stringify({ text, engine, voiceId, style }),
+      },
+      engine === 'styletts2' ? 10 * 60_000 : 60_000,
+    ),
+  updateConfig: async (patch: VoiceConfig) => {
+    // downloadedAssets is server-managed; sending a stale copy would wipe
+    // assets registered during deployment.
+    const { downloadedAssets: _ignored, ...safePatch } = patch;
+    const result = await request<{ ok: boolean }>('/config', {
+      method: 'PUT',
+      body: JSON.stringify({ voice: safePatch }),
+    });
+    notifyVoiceConfigUpdated(patch);
+    return result;
+  },
+};
+
 export interface EmbeddingModelStatus {
   id: string;
   displayName: string;
@@ -1709,10 +1928,10 @@ export const settings = {
         tools: { deep_web_search: boolean; web_search: boolean };
         forcedTool: 'deep_web_search' | 'web_search' | null;
       }>('/settings/web-search/status'),
-    test: (provider: 'brave' | 'exa' | 'tavily', apiKey: string) =>
+    test: (provider: 'brave' | 'exa' | 'tavily', apiKey?: string) =>
       request<{ ok: boolean; provider: string; latencyMs?: number; error?: string }>(
         '/settings/web-search/test',
-        { method: 'POST', body: JSON.stringify({ provider, apiKey }) },
+        { method: 'POST', body: JSON.stringify({ provider, apiKey: apiKey ?? '' }) },
       ),
   },
 };
@@ -1760,6 +1979,9 @@ export interface IntegrationProvider {
       authArg: string;
       oauthPathEnv: string;
       credentialsPathEnv: string;
+      credentialsFileName?: string;
+      oauthKeysFormat?: 'installed' | 'web';
+      webRedirectUris?: string[];
       clientIdField: string;
       clientSecretField: string;
       clientIdEnv?: string;
@@ -1903,6 +2125,14 @@ export const integrations = {
     request<{ redirectUri: string }>('/integrations/oauth/redirect-uri'),
   runMcpAuth: (connectionId: string) =>
     request<{ success: boolean; output: string }>(`/integrations/${connectionId}/mcp-auth`, { method: 'POST' }),
+  startMcpAuth: (connectionId: string) =>
+    request<{ authUrl: string; state: string; redirectUri: string }>(`/integrations/${connectionId}/mcp-auth/start`, { method: 'POST' }),
+  mcpAuthResult: (state: string) =>
+    request<{ result: { status: 'pending' | 'completed' | 'failed' | 'expired'; message?: string } }>(
+      `/integrations/mcp-auth/result?state=${encodeURIComponent(state)}`,
+    ),
+  mcpAuthRedirectUri: (providerId = 'gmail') =>
+    request<{ redirectUri: string }>(`/integrations/mcp-auth/redirect-uri?providerId=${encodeURIComponent(providerId)}`),
   mcpAuthStatus: (connectionId: string) =>
     request<{ signedIn: boolean; message?: string }>(`/integrations/${connectionId}/mcp-auth/status`),
   oauthResult: (state: string) =>

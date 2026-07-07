@@ -6,9 +6,12 @@ DESKTOP_DIR="$ROOT_DIR/packages/desktop"
 
 echo "=== Clean Install: Agent-X ==="
 
-# 1. Kill running app
+# 1. Kill running app / server daemon
 echo ">>> Killing Agent-X if running..."
 pkill -9 -f "Agent-X" 2>/dev/null || true
+pkill -9 -f "@agentx/server" 2>/dev/null || true
+pkill -9 -f "packages/server/dist" 2>/dev/null || true
+pkill -9 -f "$HOME/.agentx/index.js" 2>/dev/null || true
 sleep 1
 
 # 2. Remove from /Applications
@@ -34,28 +37,35 @@ rm -rf node_modules packages/*/node_modules
 pnpm install --no-frozen-lockfile
 
 # 5. Clean previous build artifacts
-echo ">>> Cleaning previous desktop build artifacts..."
+echo ">>> Cleaning previous build artifacts..."
 cd "$DESKTOP_DIR"
 rm -rf dist release
+cd "$ROOT_DIR"
+for pkg in runtime server; do
+  rm -rf "packages/$pkg/dist" 2>/dev/null || true
+done
+rm -rf packages/server/release packages/server/.pack-staging packages/runtime/python 2>/dev/null || true
 
 # 6. Build dependencies
 echo ">>> Building shared, engine, web-api, web-ui, and web-neuron..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
 pnpm --filter @agentx/engine run build
+pnpm --filter @agentx/runtime run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
 pnpm --filter @agentx/web-neuron run build
 
 # 7. Build PostgreSQL extensions (pgvector + Apache AGE) for the embedded binaries
 echo ">>> Building PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL..."
-cd "$DESKTOP_DIR"
-pnpm run setup:extensions
+pnpm --filter @agentx/runtime run setup:extensions
 
 # 8. Build desktop app (unpacked .app)
 echo ">>> Building desktop app..."
 cd "$DESKTOP_DIR"
+node scripts/materialize-pack-deps.mjs
 pnpm run build
+pnpm --filter @agentx/runtime run setup:voice-bundled
 pnpm exec electron-builder --mac --dir
 
 # 9. Install to /Applications + strip Gatekeeper quarantine in a SINGLE privileged call.
