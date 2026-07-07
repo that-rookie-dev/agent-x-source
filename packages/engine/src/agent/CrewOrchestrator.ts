@@ -384,6 +384,7 @@ export class CrewOrchestrator {
           baseExecutor.setSessionRules(prevSessionRules);
         }
       },
+      isTurnAborted: () => baseExecutor.isTurnAborted(),
     } : baseExecutor;
 
     const tools = createAiSdkTools(

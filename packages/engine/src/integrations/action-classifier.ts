@@ -13,30 +13,16 @@ const EDIT_DELETE_TOKENS = [
 
 export function isIntegrationEditOrDeleteTool(
   toolName: string,
-  provider?: IntegrationProvider,
+  _provider?: IntegrationProvider,
 ): boolean {
   const normalized = toolName.toLowerCase();
 
-  if (EDIT_DELETE_TOKENS.some((token) =>
+  return EDIT_DELETE_TOKENS.some((token) =>
     normalized === token
     || normalized.startsWith(`${token}_`)
     || normalized.endsWith(`_${token}`)
     || normalized.includes(`_${token}_`),
-  )) {
-    return true;
-  }
-
-  if (provider?.tools?.alwaysConfirm?.some((name) => {
-    const n = name.toLowerCase();
-    return normalized === n
-      || normalized.startsWith(`${n}_`)
-      || normalized.endsWith(`_${n}`)
-      || normalized.includes(`_${n}_`);
-  })) {
-    return true;
-  }
-
-  return false;
+  );
 }
 
 export function isReadOnlyIntegrationTool(
