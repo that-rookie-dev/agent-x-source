@@ -13,6 +13,8 @@ coverage/
 
 # Desktop app build output
 packages/desktop/release/
+packages/server/release/
+packages/server/.pack-staging/
 packages/desktop/renderer/xterm/
 packages/desktop/build/Tray.png
 packages/desktop/build/TrayWin.png
