@@ -20,9 +20,9 @@ import { copyVoiceSidecarResources } from '../../voice-sidecar/scripts/copy-voic
 import {
   assertNativePostgres,
   assertPgVectorExtension,
-  findInPnpmStore,
   packageForSuffix,
-  resolveDarwinArm64DonorNative,
+  resolveBuiltEmbeddedPkgRoot,
+  resolveExtensionDonorNative,
   resolvePackSuffix,
   syncEmbeddedExtensions,
 } from '../../desktop/scripts/embedded-postgres-pack.mjs';
@@ -69,37 +69,24 @@ function copyPgDeps(webApiNodeModules) {
 function syncServerExtensions(suffix, stagingNodeModules, packPlatform) {
   const pkgName = packageForSuffix(suffix);
   const stagingNative = join(stagingNodeModules, ...pkgName.split('/'), 'native');
+  const donorNative = resolveExtensionDonorNative(workspaceRoot, storeDir, suffix, packPlatform);
 
-  if (suffix === 'darwin-x64') {
-    const donorNative = resolveDarwinArm64DonorNative(workspaceRoot, storeDir);
-    if (!donorNative) {
-      throw new Error(
-        'Could not find pgvector artifacts in @embedded-postgres/darwin-arm64. '
-        + 'On macOS server packs, run pnpm --filter @agentx/runtime run setup:extensions '
-        + 'before pack:server (extensions are built universal on the arm64 tree).',
-      );
-    }
-    syncEmbeddedExtensions(donorNative, stagingNative);
-    console.log(`Synced macOS extension artifacts from ${donorNative} into server darwin-x64 tree`);
+  if (!donorNative) {
+    throw new Error(
+      `Could not find pgvector artifacts for ${suffix}. `
+      + 'Run pnpm --filter @agentx/runtime run setup:extensions before pack:server.',
+    );
   }
+
+  syncEmbeddedExtensions(donorNative, stagingNative, packPlatform);
+  console.log(`Synced extension artifacts from ${donorNative} into server ${suffix} tree`);
 
   assertPgVectorExtension(stagingNative, packPlatform);
   console.log(`Verified pgvector extension in ${stagingNative}`);
 }
 
-function resolveEmbeddedPkgSource(embeddedPkg) {
-  const fromStore = findInPnpmStore(storeDir, embeddedPkg);
-  if (fromStore) return fromStore;
-
-  const candidates = [
-    join(workspaceRoot, 'node_modules', ...embeddedPkg.split('/')),
-    join(workspaceRoot, 'packages', 'runtime', 'node_modules', ...embeddedPkg.split('/')),
-    join(workspaceRoot, 'packages', 'desktop', 'node_modules', ...embeddedPkg.split('/')),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, 'package.json'))) return candidate;
-  }
-  return null;
+function resolveEmbeddedPkgSource(embeddedPkg, packPlatform) {
+  return resolveBuiltEmbeddedPkgRoot(workspaceRoot, storeDir, embeddedPkg, packPlatform);
 }
 
 function materializeWorkspacePkg(stagingNodeModules, pkgName, srcRoot) {
@@ -123,7 +110,7 @@ function materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform) {
   const dest = join(stagingNodeModules, ...embeddedPkg.split('/'));
   if (existsSync(join(dest, 'package.json'))) return;
 
-  const src = resolveEmbeddedPkgSource(embeddedPkg);
+  const src = resolveEmbeddedPkgSource(embeddedPkg, packPlatform);
   if (!src) {
     throw new Error(
       `Could not resolve ${embeddedPkg} for server pack. `
