@@ -148,12 +148,18 @@ function detectSystemTheme(): 'dark' | 'light' | 'unknown' {
 
     // Linux/other: try gsettings (GNOME) or fall back
     try {
-      const out = execSync('gsettings get org.gnome.desktop.interface color-scheme', { encoding: 'utf-8' }).trim();
+      const out = execSync('gsettings get org.gnome.desktop.interface color-scheme', {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
       if (/dark/i.test(out)) return 'dark';
       if (/light/i.test(out)) return 'light';
     } catch {
       try {
-        const out2 = execSync('gsettings get org.gnome.desktop.interface gtk-theme', { encoding: 'utf-8' }).trim();
+        const out2 = execSync('gsettings get org.gnome.desktop.interface gtk-theme', {
+          encoding: 'utf-8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
         if (/dark/i.test(out2)) return 'dark';
         return 'light';
       } catch { /* fallthrough */ }

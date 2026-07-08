@@ -13,6 +13,25 @@ INDEX_JS="${INSTALL_DIR}/index.js"
 
 mkdir -p "$LOG_DIR"
 
+set_embedded_pg_lib_path() {
+  if [ "$(uname -s)" != "Linux" ]; then
+    return 0
+  fi
+
+  local arch pkg lib_dir
+  arch="$(uname -m)"
+  case "$arch" in
+    aarch64|arm64) pkg="linux-arm64" ;;
+    x86_64|amd64) pkg="linux-x64" ;;
+    *) return 0 ;;
+  esac
+
+  lib_dir="${INSTALL_DIR}/node_modules/@embedded-postgres/${pkg}/native/lib"
+  if [ -d "$lib_dir" ]; then
+    export LD_LIBRARY_PATH="${lib_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+  fi
+}
+
 log() {
   printf '[%s] %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$1"
 }
@@ -43,6 +62,7 @@ cmd_start() {
 
   export AGENTX_INSTALL_DIR="$INSTALL_DIR"
   export AGENTX_DATA_DIR="$DATA_DIR"
+  set_embedded_pg_lib_path
 
   log "Starting Agent-X server..."
   nohup node "$INDEX_JS" >> "${LOG_DIR}/agentx.log" 2>&1 &
