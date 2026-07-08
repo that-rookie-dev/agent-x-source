@@ -12,6 +12,8 @@ import {
   extractVoiceSpeakable,
   isVoiceSummaryOnlyMessage,
   userWantsVoiceChatReport,
+  isAffirmativeReply,
+  voiceOfferedChatReport,
 } from './voice-speakable.js';
 import { validateVoiceWebSocketConnection } from './auth.js';
 import { ensureSubscribed } from './ws.js';
@@ -782,13 +784,21 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
 
     try {
       const priorAssistant = getLastAssistantInSession(sid);
+      const priorContent = priorAssistant?.content ?? '';
       const pendingVoiceSummary = priorAssistant != null
-        && isVoiceSummaryOnlyMessage(priorAssistant.content);
-      const wantsChatReport = userWantsVoiceChatReport(text);
+        && isVoiceSummaryOnlyMessage(priorContent);
+      // A prior voice-block turn means we're mid voice conversation — use the
+      // follow-up phase even if that turn (incorrectly) included a chat body,
+      // so short follow-ups aren't treated as brand-new phase-1 queries.
+      const priorHasVoiceBlock = priorAssistant != null
+        && extractVoiceSpeakable(priorContent).voice.trim().length > 0;
+      // "yes please" after the assistant offered the chat report counts as asking for it.
+      const wantsChatReport = userWantsVoiceChatReport(text)
+        || (isAffirmativeReply(text) && voiceOfferedChatReport(priorContent));
 
       const turnInstruction = pendingVoiceSummary && wantsChatReport
         ? buildVoiceChatReportPhaseInstruction()
-        : pendingVoiceSummary
+        : priorHasVoiceBlock
           ? buildVoiceFollowUpPhaseInstruction()
           : buildVoiceSummaryPhaseInstruction();
 

@@ -2077,7 +2077,11 @@ Rules:
 
     // ─── DECISION ENGINE (heuristic — zero LLM calls) ───
     const conversationLen = this.messages.filter(m => m.role === 'user').length;
-    const decision = this.decisionEngine.classify(cleanContent, conversationLen);
+    const lastAssistantEntry = [...this.messages].reverse().find((m) => m.role === 'assistant');
+    const decision = this.decisionEngine.classify(cleanContent, conversationLen, {
+      lastAssistantMessage: typeof lastAssistantEntry?.content === 'string' ? lastAssistantEntry.content : undefined,
+      voiceTurn: options?.voiceTurn === true,
+    });
 
     // ─── MODEL CAPABILITY CHECK: warn if model lacks function calling for task intents ───
     const isTaskIntent = decision.messageClass === 'task';
@@ -2199,7 +2203,8 @@ Rules:
     }
 
     // ─── Fast-reply → minimal LLM call, no tools (greetings / thanks / small talk) ───
-    if (decision.executionPath === 'fast_reply') {
+    // Never on voice turns: fast-reply bypasses the per-turn voice [INSTRUCTION] block.
+    if (decision.executionPath === 'fast_reply' && !options?.voiceTurn) {
       const crewHost = this.options.promptProfile === 'crew_private' ? this.options.crewPrivateHost : undefined;
       const useAgentFastReply = !crewHost && this.options.promptProfile !== 'crew_worker';
       if (crewHost || useAgentFastReply) {
@@ -2214,9 +2219,16 @@ Rules:
           const callsign = this.config.user?.callsign;
           userNote = callsign ? `\nThe user's name is "${callsign}".` : '';
         }
+        // The current user message was already pushed to history above — drop it
+        // from the recent window so it isn't sent twice.
+        const recentHistory = this.messages.slice(-4).filter(m => m.role !== 'system');
+        const lastRecent = recentHistory[recentHistory.length - 1];
+        if (lastRecent?.role === 'user' && typeof lastRecent.content === 'string' && lastRecent.content.startsWith(cleanContent)) {
+          recentHistory.pop();
+        }
         const fastMessages = [
           { role: 'system' as const, content: fastPrompt + userNote },
-          ...this.messages.slice(-3).filter(m => m.role !== 'system'),
+          ...recentHistory,
           { role: 'user' as const, content: cleanContent },
         ];
         try {

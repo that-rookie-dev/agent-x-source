@@ -51,4 +51,31 @@ describe('DecisionEngine', () => {
     expect(engine.classify('task', 1).skipTools).toBe(false);
     expect(engine.classify('task', 1).skipRag).toBe(false);
   });
+
+  it('ack after a pending assistant question routes standard (contextual follow-up)', () => {
+    const r = engine.classify('yes please', 5, {
+      lastAssistantMessage: 'Would you like hotel recommendations or a budget breakdown for this itinerary?',
+    });
+    expect(r.executionPath).toBe('standard');
+    expect(r.messageClass).toBe('task');
+  });
+
+  it('ack after a pending question inside a voice block routes standard', () => {
+    const r = engine.classify('sure', 5, {
+      lastAssistantMessage: '⟨voice⟩Should I put the full report in the chat for you?⟨/voice⟩',
+    });
+    expect(r.executionPath).toBe('standard');
+  });
+
+  it('ack after a plain statement still fast-replies', () => {
+    const r = engine.classify('okay got it', 5, {
+      lastAssistantMessage: 'Done — I saved the note to your workspace.',
+    });
+    expect(r.executionPath).toBe('fast_reply');
+  });
+
+  it('voice turns always route standard, even greetings', () => {
+    const r = engine.classify('Hi there!', 1, { voiceTurn: true });
+    expect(r.executionPath).toBe('standard');
+  });
 });
