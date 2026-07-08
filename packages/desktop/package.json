@@ -22,11 +22,11 @@
     "materialize:pack-deps": "node scripts/materialize-pack-deps.mjs",
     "dist": "electron-builder",
     "setup:bundled-voice": "pnpm --filter @agentx/voice-sidecar run setup:bundled",
-    "dist:mac": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && node scripts/materialize-pack-deps.mjs && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
-    "dist:mac:arm64": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && TARGET_ARCH=arm64 node scripts/materialize-pack-deps.mjs && electron-builder --mac --arm64 && node scripts/bundle-pg-deps.mjs",
-    "dist:mac:x64": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && TARGET_ARCH=x64 node scripts/materialize-pack-deps.mjs && electron-builder --mac --x64 && node scripts/bundle-pg-deps.mjs",
-    "dist:linux": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && TARGET_PLATFORM=linux node scripts/materialize-pack-deps.mjs && electron-builder --linux",
-    "dist:win": "pnpm run build:deps && npm run build && pnpm run setup:extensions && pnpm --filter @agentx/runtime run setup:voice-bundled && node scripts/materialize-pack-deps.mjs && electron-builder --win"
+    "dist:mac": "pnpm run build:deps && npm run build && pnpm --filter @agentx/runtime run setup:extensions:if-needed && pnpm --filter @agentx/runtime run setup:voice-bundled && node scripts/materialize-pack-deps.mjs && electron-builder --mac && node scripts/bundle-pg-deps.mjs",
+    "dist:mac:arm64": "pnpm run build:deps && npm run build && pnpm --filter @agentx/runtime run setup:extensions:if-needed && pnpm --filter @agentx/runtime run setup:voice-bundled && TARGET_ARCH=arm64 node scripts/materialize-pack-deps.mjs && electron-builder --mac --arm64 && node scripts/bundle-pg-deps.mjs",
+    "dist:mac:x64": "pnpm run build:deps && npm run build && pnpm --filter @agentx/runtime run setup:extensions:if-needed && pnpm --filter @agentx/runtime run setup:voice-bundled && TARGET_ARCH=x64 node scripts/materialize-pack-deps.mjs && electron-builder --mac --x64 && node scripts/bundle-pg-deps.mjs",
+    "dist:linux": "pnpm run build:deps && npm run build && pnpm --filter @agentx/runtime run setup:extensions:if-needed && pnpm --filter @agentx/runtime run setup:voice-bundled && TARGET_PLATFORM=linux node scripts/materialize-pack-deps.mjs && electron-builder --linux",
+    "dist:win": "pnpm run build:deps && npm run build && pnpm --filter @agentx/runtime run setup:extensions:if-needed && pnpm --filter @agentx/runtime run setup:voice-bundled && node scripts/materialize-pack-deps.mjs && electron-builder --win"
   },
   "build": {
     "appId": "com.agentx.desktop",

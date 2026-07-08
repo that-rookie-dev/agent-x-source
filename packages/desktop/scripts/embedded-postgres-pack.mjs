@@ -112,13 +112,18 @@ export function assertNativePostgres(nodeModulesRoot, pkgName, platform) {
 }
 
 /** Copy extension + shared-library artifacts between two native trees. */
-export function syncEmbeddedExtensions(fromNative, toNative) {
+export function syncEmbeddedExtensions(fromNative, toNative, packPlatform = 'unix') {
   if (!existsSync(fromNative) || !existsSync(toNative)) return;
 
-  const pairs = [
-    ['share/postgresql/extension', () => true],
-    ['lib/postgresql', (name) => name.endsWith('.dylib') || name.endsWith('.so')],
-  ];
+  const pairs = packPlatform === 'win32'
+    ? [
+      ['share/extension', () => true],
+      ['lib', (name) => /^vector/i.test(name) && name.endsWith('.dll')],
+    ]
+    : [
+      ['share/postgresql/extension', () => true],
+      ['lib/postgresql', (name) => name.endsWith('.dylib') || name.endsWith('.so')],
+    ];
 
   for (const [sub, include] of pairs) {
     const fromDir = join(fromNative, sub);
@@ -175,6 +180,43 @@ export function resolveDarwinArm64DonorNative(workspaceRoot, storeDir) {
     }
   }
   return null;
+}
+
+export function embeddedPkgCandidates(workspaceRoot, embeddedPkg) {
+  return [
+    join(workspaceRoot, 'node_modules', ...embeddedPkg.split('/')),
+    join(workspaceRoot, 'packages', 'runtime', 'node_modules', ...embeddedPkg.split('/')),
+    join(workspaceRoot, 'packages', 'desktop', 'node_modules', ...embeddedPkg.split('/')),
+  ];
+}
+
+/** Prefer workspace trees that already have pgvector built by setup:extensions. */
+export function resolveBuiltEmbeddedPkgRoot(workspaceRoot, storeDir, embeddedPkg, packPlatform = 'unix') {
+  for (const candidate of embeddedPkgCandidates(workspaceRoot, embeddedPkg)) {
+    if (existsSync(pgVectorControlPath(join(candidate, 'native'), packPlatform))) {
+      return candidate;
+    }
+  }
+
+  const fromStore = findInPnpmStore(storeDir, embeddedPkg);
+  if (fromStore) return fromStore;
+
+  for (const candidate of embeddedPkgCandidates(workspaceRoot, embeddedPkg)) {
+    if (existsSync(join(candidate, 'package.json'))) return candidate;
+  }
+  return null;
+}
+
+export function resolveExtensionDonorNative(workspaceRoot, storeDir, suffix, packPlatform = 'unix') {
+  if (suffix === 'darwin-x64') {
+    return resolveDarwinArm64DonorNative(workspaceRoot, storeDir);
+  }
+
+  const embeddedPkg = packageForSuffix(suffix);
+  if (!embeddedPkg) return null;
+
+  const builtRoot = resolveBuiltEmbeddedPkgRoot(workspaceRoot, storeDir, embeddedPkg, packPlatform);
+  return builtRoot ? join(builtRoot, 'native') : null;
 }
 
 export function requiredEmbeddedPackages(platform, arch) {

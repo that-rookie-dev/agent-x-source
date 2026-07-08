@@ -13,6 +13,7 @@ permissions:
 
 env:
   PUBLIC_REPO: SlashpanOrg/agent-x
+  AGENTX_SKIP_EXTENSIONS: "1"
 
 jobs:
   check-version:
@@ -72,14 +73,17 @@ jobs:
     if: needs.check-version.outputs.should_release == 'true'
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - arch: arm64
             suffix: mac-arm64
             dist_script: dist:mac:arm64
+            build_extensions: true
           - arch: x64
             suffix: mac-x64
             dist_script: dist:mac:x64
+            build_extensions: false
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -111,8 +115,17 @@ jobs:
 
       # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
       # pgvector is compiled as a universal binary (both arm64 + x86_64) on macOS,
-      # so a single setup:extensions run covers both matrix architectures.
+      # so a single setup:extensions run on arm64 covers both matrix legs (x64 restores cache).
+      - name: Cache PostgreSQL extension build
+        uses: actions/cache@v4
+        with:
+          path: packages/runtime/.pgvector-build
+          key: pg-ext-${{ runner.os }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs', 'packages/runtime/scripts/setup-age.mjs') }}
+          restore-keys: |
+            pg-ext-${{ runner.os }}-
+
       - name: Build PostgreSQL extensions
+        if: matrix.build_extensions
         run: pnpm --filter @agentx/runtime run setup:extensions
         timeout-minutes: 60
 
@@ -200,6 +213,14 @@ jobs:
           path: packages/web-ui/dist
 
       # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
+      - name: Cache PostgreSQL extension build
+        uses: actions/cache@v4
+        with:
+          path: packages/runtime/.pgvector-build
+          key: pg-ext-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs', 'packages/runtime/scripts/setup-age.mjs') }}
+          restore-keys: |
+            pg-ext-${{ runner.os }}-${{ matrix.arch }}-
+
       - name: Build PostgreSQL extensions
         run: pnpm --filter @agentx/runtime run setup:extensions
         timeout-minutes: 60
@@ -280,13 +301,15 @@ jobs:
           path: packages/web-ui/dist
 
       # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
-      # Cache the downloaded PostgreSQL Windows binaries to avoid EDB CDN 403s on repeat runs.
-      - name: Cache PostgreSQL Windows binaries
+      - name: Cache PostgreSQL extension build
         uses: actions/cache@v4
         with:
-          path: packages/desktop/.pgvector-build/pg-install
-          key: pg-win-binaries-${{ hashFiles('packages/desktop/package.json') }}
-        continue-on-error: true
+          path: |
+            packages/runtime/.pgvector-build
+            packages/desktop/.pgvector-build/pg-install
+          key: pg-ext-win-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs', 'packages/desktop/package.json') }}
+          restore-keys: |
+            pg-ext-win-
 
       - name: Build PostgreSQL extensions
         shell: bash
@@ -381,6 +404,16 @@ jobs:
       - name: Install cross-arch embedded PostgreSQL binaries (macOS x64)
         if: matrix.suffix == 'darwin-x64'
         run: pnpm install --config.supportedArchitectures.cpu=arm64,x64 --config.supportedArchitectures.os=darwin
+
+      - name: Cache PostgreSQL extension build
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/runtime/.pgvector-build
+            packages/desktop/.pgvector-build/pg-install
+          key: pg-ext-srv-${{ matrix.suffix }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs') }}
+          restore-keys: |
+            pg-ext-srv-${{ matrix.suffix }}-
 
       - name: Build PostgreSQL extensions for server pack
         shell: bash
