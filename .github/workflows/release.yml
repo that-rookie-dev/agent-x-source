@@ -378,6 +378,10 @@ jobs:
         env:
           npm_config_msvs_version: 2022
 
+      - name: Install cross-arch embedded PostgreSQL binaries (macOS x64)
+        if: matrix.suffix == 'darwin-x64'
+        run: pnpm install --config.supportedArchitectures.cpu=arm64,x64 --config.supportedArchitectures.os=darwin
+
       - uses: actions/download-artifact@v4
         with:
           name: webui-dist
@@ -409,13 +413,15 @@ jobs:
 
       - name: Copy install scripts to release
         run: |
+          cp install.sh artifacts/ || true
+          cp install.ps1 artifacts/ || true
           cp install-desktop.sh artifacts/ || true
           cp install-server.sh artifacts/ || true
 
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum *.dmg *.AppImage *.deb *.exe *.tar.gz install-desktop.sh install-server.sh 2>/dev/null > checksums.sha256 || true
+          sha256sum *.dmg *.AppImage *.deb *.exe *.tar.gz install.sh install.ps1 install-desktop.sh install-server.sh 2>/dev/null > checksums.sha256 || true
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
