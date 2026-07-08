@@ -19,8 +19,10 @@ import { platform, arch } from 'node:os';
 import { copyVoiceSidecarResources } from '../../voice-sidecar/scripts/copy-voice-resources.mjs';
 import {
   assertNativePostgres,
+  assertPgVectorExtension,
   findInPnpmStore,
   packageForSuffix,
+  resolveDarwinArm64DonorNative,
   resolvePackSuffix,
   syncEmbeddedExtensions,
 } from '../../desktop/scripts/embedded-postgres-pack.mjs';
@@ -64,13 +66,25 @@ function copyPgDeps(webApiNodeModules) {
   }
 }
 
-function syncServerExtensions(suffix, stagingNodeModules) {
-  if (suffix !== 'darwin-x64') return;
+function syncServerExtensions(suffix, stagingNodeModules, packPlatform) {
+  const pkgName = packageForSuffix(suffix);
+  const stagingNative = join(stagingNodeModules, ...pkgName.split('/'), 'native');
 
-  const workspaceArm64 = join(workspaceRoot, 'node_modules', '@embedded-postgres', 'darwin-arm64', 'native');
-  const stagingX64 = join(stagingNodeModules, '@embedded-postgres', 'darwin-x64', 'native');
-  syncEmbeddedExtensions(workspaceArm64, stagingX64);
-  console.log('Synced macOS extension artifacts into server darwin-x64 tree');
+  if (suffix === 'darwin-x64') {
+    const donorNative = resolveDarwinArm64DonorNative(workspaceRoot, storeDir);
+    if (!donorNative) {
+      throw new Error(
+        'Could not find pgvector artifacts in @embedded-postgres/darwin-arm64. '
+        + 'On macOS server packs, run pnpm --filter @agentx/runtime run setup:extensions '
+        + 'before pack:server (extensions are built universal on the arm64 tree).',
+      );
+    }
+    syncEmbeddedExtensions(donorNative, stagingNative);
+    console.log(`Synced macOS extension artifacts from ${donorNative} into server darwin-x64 tree`);
+  }
+
+  assertPgVectorExtension(stagingNative, packPlatform);
+  console.log(`Verified pgvector extension in ${stagingNative}`);
 }
 
 function resolveEmbeddedPkgSource(embeddedPkg) {
@@ -205,7 +219,7 @@ execSync('npm install --omit=dev --ignore-scripts', { cwd: staging, stdio: 'inhe
 const stagingNodeModules = join(staging, 'node_modules');
 materializeWorkspacePkg(stagingNodeModules, '@agentx/runtime', join(workspaceRoot, 'packages', 'runtime'));
 materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform);
-syncServerExtensions(suffix, stagingNodeModules);
+syncServerExtensions(suffix, stagingNodeModules, packPlatform);
 
 copyPgDeps(join(resourcesDir, 'web-api', 'node_modules'));
 

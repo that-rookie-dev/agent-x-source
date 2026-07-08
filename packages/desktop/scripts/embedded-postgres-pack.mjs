@@ -140,6 +140,43 @@ export function syncDarwinEmbeddedExtensions(desktopNodeModules) {
   );
 }
 
+export function pgVectorControlPath(nativeDir, packPlatform = 'unix') {
+  if (packPlatform === 'win32') {
+    return join(nativeDir, 'share', 'extension', 'vector.control');
+  }
+  return join(nativeDir, 'share', 'postgresql', 'extension', 'vector.control');
+}
+
+export function assertPgVectorExtension(nativeDir, packPlatform = 'unix') {
+  const control = pgVectorControlPath(nativeDir, packPlatform);
+  if (!existsSync(control)) {
+    throw new Error(
+      `Missing pgvector extension in server pack (expected ${control}). `
+      + 'Run pnpm --filter @agentx/runtime run setup:extensions before packing.',
+    );
+  }
+}
+
+export function resolveDarwinArm64DonorNative(workspaceRoot, storeDir) {
+  const candidates = [
+    join(workspaceRoot, 'node_modules', '@embedded-postgres', 'darwin-arm64', 'native'),
+    join(workspaceRoot, 'packages', 'runtime', 'node_modules', '@embedded-postgres', 'darwin-arm64', 'native'),
+    join(workspaceRoot, 'packages', 'desktop', 'node_modules', '@embedded-postgres', 'darwin-arm64', 'native'),
+  ];
+
+  const fromStore = findInPnpmStore(storeDir, '@embedded-postgres/darwin-arm64');
+  if (fromStore) {
+    candidates.push(join(fromStore, 'native'));
+  }
+
+  for (const nativeDir of candidates) {
+    if (existsSync(pgVectorControlPath(nativeDir))) {
+      return nativeDir;
+    }
+  }
+  return null;
+}
+
 export function requiredEmbeddedPackages(platform, arch) {
   if (platform === 'darwin') return [...EMBEDDED_MAC_PACKAGES];
   if (platform === 'linux') {

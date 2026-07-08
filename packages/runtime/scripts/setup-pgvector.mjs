@@ -31,9 +31,9 @@ function getPackageName() {
   const currentArch = arch();
   switch (currentPlatform) {
     case 'darwin':
-      if (currentArch === 'arm64') return '@embedded-postgres/darwin-arm64';
-      if (currentArch === 'x64') return '@embedded-postgres/darwin-x64';
-      return null;
+      // pgvector is built as a universal binary on macOS and installed into the arm64
+      // embedded tree; darwin-x64 server packs sync from that tree during pack-server.
+      return '@embedded-postgres/darwin-arm64';
     case 'linux':
       return currentArch === 'arm64' ? '@embedded-postgres/linux-arm64' : currentArch === 'x64' ? '@embedded-postgres/linux-x64' : null;
     case 'win32':

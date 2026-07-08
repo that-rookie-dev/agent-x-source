@@ -124,6 +124,26 @@ export class PostgresLifecycleManager {
     }
   }
 
+  private getProcessEnv(binaryDir: string): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env, LC_MESSAGES: 'C' };
+
+    if (platform() !== 'linux') return env;
+
+    const libDirs = [
+      join(binaryDir, '..', 'lib'),
+      join(binaryDir, '..', 'lib', 'postgresql'),
+    ].filter((dir) => existsSync(dir));
+
+    if (libDirs.length === 0) return env;
+
+    const paths = [...libDirs];
+    if (process.env['LD_LIBRARY_PATH']) {
+      paths.push(process.env['LD_LIBRARY_PATH']);
+    }
+    env['LD_LIBRARY_PATH'] = paths.join(':');
+    return env;
+  }
+
   private runInitdb(bin: PostgresBinaries): void {
     if (existsSync(join(this.options.dataDir, 'PG_VERSION'))) {
       this.options.onLog('PostgreSQL data directory already initialized');
@@ -148,6 +168,7 @@ export class PostgresLifecycleManager {
       ], {
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 60000,
+        env: this.getProcessEnv(dirname(bin.initdb)),
       });
     } catch (e) {
       const stderr = e instanceof Error && 'stderr' in e ? String((e as { stderr?: unknown }).stderr) : '';
@@ -189,7 +210,7 @@ export class PostgresLifecycleManager {
 
     const child = spawn(bin.postgres, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, LC_MESSAGES: 'C' },
+      env: this.getProcessEnv(binaryDir),
       detached: false,
     });
 
