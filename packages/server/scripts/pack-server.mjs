@@ -19,7 +19,7 @@ import { platform, arch } from 'node:os';
 import { copyVoiceSidecarResources } from '../../voice-sidecar/scripts/copy-voice-resources.mjs';
 import {
   assertNativePostgres,
-  EMBEDDED_POSTGRES_VERSION,
+  findInPnpmStore,
   packageForSuffix,
   resolvePackSuffix,
   syncEmbeddedExtensions,
@@ -71,6 +71,41 @@ function syncServerExtensions(suffix, stagingNodeModules) {
   const stagingX64 = join(stagingNodeModules, '@embedded-postgres', 'darwin-x64', 'native');
   syncEmbeddedExtensions(workspaceArm64, stagingX64);
   console.log('Synced macOS extension artifacts into server darwin-x64 tree');
+}
+
+function resolveEmbeddedPkgSource(embeddedPkg) {
+  const fromStore = findInPnpmStore(storeDir, embeddedPkg);
+  if (fromStore) return fromStore;
+
+  const candidates = [
+    join(workspaceRoot, 'node_modules', ...embeddedPkg.split('/')),
+    join(workspaceRoot, 'packages', 'runtime', 'node_modules', ...embeddedPkg.split('/')),
+    join(workspaceRoot, 'packages', 'desktop', 'node_modules', ...embeddedPkg.split('/')),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, 'package.json'))) return candidate;
+  }
+  return null;
+}
+
+function materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform) {
+  const dest = join(stagingNodeModules, ...embeddedPkg.split('/'));
+  if (existsSync(join(dest, 'package.json'))) return;
+
+  const src = resolveEmbeddedPkgSource(embeddedPkg);
+  if (!src) {
+    throw new Error(
+      `Could not resolve ${embeddedPkg} for server pack. `
+      + 'On macOS arm64 runners packing darwin-x64, run pnpm install with '
+      + '--config.supportedArchitectures.cpu=arm64,x64 --config.supportedArchitectures.os=darwin first.',
+    );
+  }
+
+  mkdirSync(dirname(dest), { recursive: true });
+  cpSync(src, dest, { recursive: true, force: true });
+  console.log(`Materialized ${embeddedPkg} from ${src}`);
+
+  assertNativePostgres(stagingNodeModules, embeddedPkg, packPlatform);
 }
 
 const suffix = resolvePackSuffix(platform(), arch());
@@ -143,24 +178,16 @@ writeFileSync(join(staging, 'package.json'), JSON.stringify({
   type: 'commonjs',
   dependencies: {
     'embedded-postgres': runtimePkg.dependencies['embedded-postgres'],
-    [embeddedPkg]: EMBEDDED_POSTGRES_VERSION,
     pg: runtimePkg.dependencies.pg,
   },
 }, null, 2));
 
 console.log('Installing production dependencies into staging...');
-// The staging package depends directly on the target platform's @embedded-postgres
-// binary package (e.g. @embedded-postgres/darwin-x64). When packing for a different
-// platform/arch than the host (notably darwin-x64 on an arm64 macOS runner), npm
-// aborts with EBADPLATFORM. Pin npm's target platform/arch to the pack target so the
-// cross-platform dependency is accepted and downloaded (scripts are already skipped).
-const npmOs = packPlatform;
-const npmCpu = suffix.split('-')[1];
-execSync(`npm install --omit=dev --ignore-scripts --os=${npmOs} --cpu=${npmCpu}`, { cwd: staging, stdio: 'inherit' });
+execSync('npm install --omit=dev --ignore-scripts', { cwd: staging, stdio: 'inherit' });
 
 const stagingNodeModules = join(staging, 'node_modules');
+materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform);
 syncServerExtensions(suffix, stagingNodeModules);
-assertNativePostgres(stagingNodeModules, embeddedPkg, packPlatform);
 
 copyPgDeps(join(resourcesDir, 'web-api', 'node_modules'));
 
