@@ -3,7 +3,7 @@ import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import TextFieldsIcon from '@mui/icons-material/TextFields';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import { ReasoningBlock } from '../components/ChatEnhancements';
 import { InlineToolCall } from '../components/InlineToolCall';
 import { normalizeMessageForUi, orderPartsForChatRender } from '@agentx/shared/browser';
@@ -27,7 +27,7 @@ function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
     <>
       <Box onClick={() => setExpanded((e) => !e)} sx={{
         display: 'inline-flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.35,
-        borderRadius: 1, border: `1px solid ${colors.accent.purple}30`, bgcolor: colors.accent.purple + '08',
+        borderRadius: 1, border: `1px solid ${alphaColor(colors.accent.purple, '30')}`, bgcolor: alphaColor(colors.accent.purple, '08'),
         cursor: 'pointer', fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace",
       }}>
         {agent.status === 'running' ? '◌' : agent.status === 'error' ? '✕' : '✓'} {agent.name}
@@ -48,8 +48,8 @@ function VoiceSummaryCard({ text }: { text: string }) {
       mb: 1.25,
       borderRadius: 1,
       overflow: 'hidden',
-      border: `1px solid ${colors.border.strong}70`,
-      bgcolor: '#050607',
+      border: `1px solid ${alphaColor(colors.border.strong, '70')}`,
+      bgcolor: colors.bg.secondary,
     }}>
       <Box
         onClick={() => setExpanded((open) => !open)}
@@ -60,7 +60,7 @@ function VoiceSummaryCard({ text }: { text: string }) {
           px: 1,
           py: 0.75,
           cursor: 'pointer',
-          '&:hover': { bgcolor: `${colors.text.primary}06` },
+          '&:hover': { bgcolor: `${alphaColor(colors.text.primary, '06')}` },
         }}
       >
         <Typography sx={{
@@ -104,7 +104,7 @@ function VoiceSummaryCard({ text }: { text: string }) {
         </Typography>
       </Box>
       {expanded && (
-        <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.border.strong}55` }}>
+        <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.border.strong, '55')}` }}>
           <Typography sx={{
             fontSize: '0.62rem',
             color: colors.text.secondary,
@@ -367,7 +367,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   return (
     <Box sx={{ mb: 3, animation: 'agentx-fadeIn 0.25s ease-out' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
-        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: displayColor, boxShadow: crewInfo ? `0 0 6px ${displayColor}80` : 'none', flexShrink: 0 }} />
+        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: displayColor, boxShadow: crewInfo ? `0 0 6px ${alphaColor(displayColor, '80')}` : 'none', flexShrink: 0 }} />
         <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: displayColor, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.5px' }}>
           {crewInfo ? crewInfo.name : 'Agent-X'}
         </Typography>
@@ -381,7 +381,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
             size="small"
             icon={<TextFieldsIcon sx={{ fontSize: '12px !important' }} />}
             label="Text only"
-            sx={{ fontSize: '0.5rem', height: 18, bgcolor: `${colors.text.dim}12`, border: `1px solid ${colors.text.dim}30` }}
+            sx={{ fontSize: '0.5rem', height: 18, bgcolor: `${alphaColor(colors.text.dim, '12')}`, border: `1px solid ${alphaColor(colors.text.dim, '30')}` }}
           />
         )}
         {crewInfo && (crewInfo.confidence || crewInfo.reasons) && (

@@ -5,6 +5,7 @@ import Button from '@mui/material/Button';
 import type { IntegrationConnection, IntegrationProvider } from '../../api';
 import { settingsTheme, settingsMonoSx } from '../../styles/settings-theme';
 
+import { alphaColor } from '../../theme';
 const CATEGORY_LABELS: Record<string, string> = {
   travel: 'Travel',
   productivity: 'Productivity',
@@ -40,7 +41,7 @@ export function ProviderCard({ provider, connection, onConnect, onDisconnect, on
     <Box sx={{
       borderRadius: '6px',
       bgcolor: settingsTheme.bg.inset,
-      border: `1px solid ${connected ? `${settingsTheme.accent.signal}44` : settingsTheme.border.default}`,
+      border: `1px solid ${connected ? `${alphaColor(settingsTheme.accent.signal, '44')}` : settingsTheme.border.default}`,
       p: 2,
       display: 'flex',
       flexDirection: 'column',
@@ -64,9 +65,9 @@ export function ProviderCard({ provider, connection, onConnect, onDisconnect, on
               height: 20,
               fontSize: '0.55rem',
               textTransform: 'uppercase',
-              bgcolor: `${TRUST_COLORS[provider.trust] ?? settingsTheme.text.dim}18`,
+              bgcolor: `${alphaColor(TRUST_COLORS[provider.trust] ?? settingsTheme.text.dim, '18')}`,
               color: TRUST_COLORS[provider.trust] ?? settingsTheme.text.dim,
-              border: `1px solid ${TRUST_COLORS[provider.trust] ?? settingsTheme.text.dim}33`,
+              border: `1px solid ${alphaColor(TRUST_COLORS[provider.trust] ?? settingsTheme.text.dim, '33')}`,
               ...settingsMonoSx,
             }}
           />
@@ -77,7 +78,7 @@ export function ProviderCard({ provider, connection, onConnect, onDisconnect, on
               sx={{
                 height: 20,
                 fontSize: '0.55rem',
-                bgcolor: `${settingsTheme.accent.amber}18`,
+                bgcolor: `${alphaColor(settingsTheme.accent.amber, '18')}`,
                 color: settingsTheme.accent.amber,
                 ...settingsMonoSx,
               }}
@@ -98,7 +99,7 @@ export function ProviderCard({ provider, connection, onConnect, onDisconnect, on
             sx={{
               height: 20,
               fontSize: '0.55rem',
-              bgcolor: errored ? `${settingsTheme.accent.alert}18` : `${settingsTheme.accent.signal}18`,
+              bgcolor: errored ? `${alphaColor(settingsTheme.accent.alert, '18')}` : `${alphaColor(settingsTheme.accent.signal, '18')}`,
               color: errored ? settingsTheme.accent.alert : settingsTheme.accent.signal,
               ...settingsMonoSx,
             }}

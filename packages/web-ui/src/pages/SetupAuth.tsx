@@ -7,7 +7,15 @@ import LinearProgress from '@mui/material/LinearProgress';
 import { auth, setAuthToken } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
-import { colors } from '../theme';
+import { colors, alphaColor, resolveColor } from '../theme';
+
+/** Convert a resolved hex color to "r, g, b" channels for canvas rgba() templates. */
+function hexToRgbChannels(hex: string): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full, 16);
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+}
 
 function getPasswordStrength(pw: string): { score: number; label: string; color: string } {
   if (!pw) return { score: 0, label: '', color: colors.text.dim };
@@ -46,13 +54,14 @@ export function SetupAuth() {
     if (!ctx) return;
 
     let animId: number;
+    const starRgb = hexToRgbChannels(resolveColor(colors.ink));
     const stars: { x: number; y: number; r: number; speed: number; opacity: number }[] = [];
 
     const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
     resize();
     window.addEventListener('resize', resize);
 
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 90; i++) {
       stars.push({
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
@@ -63,11 +72,15 @@ export function SetupAuth() {
     }
 
     const animate = () => {
+      if (document.visibilityState !== 'visible') {
+        animId = requestAnimationFrame(animate);
+        return;
+      }
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       for (const star of stars) {
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255, 255, 255, ${star.opacity * (0.5 + 0.5 * Math.sin(Date.now() * star.speed * 0.003))})`;
+        ctx.fillStyle = `rgba(${starRgb}, ${star.opacity * (0.5 + 0.5 * Math.sin(Date.now() * star.speed * 0.003))})`;
         ctx.fill();
         star.y += star.speed;
         if (star.y > canvas.height) { star.y = 0; star.x = Math.random() * canvas.width; }
@@ -112,7 +125,7 @@ export function SetupAuth() {
   return (
     <Box sx={{
       height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      bgcolor: '#000', position: 'relative', overflow: 'hidden',
+      bgcolor: colors.bg.primary, position: 'relative', overflow: 'hidden',
     }}>
       {/* Starfield canvas */}
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, zIndex: 0 }} />
@@ -120,7 +133,7 @@ export function SetupAuth() {
       {/* Scanline overlay */}
       <Box sx={{
         position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none', opacity: 0.03,
-        backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(255,255,255,0.03) 1px, rgba(255,255,255,0.03) 2px)',
+        backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 1px, ${alphaColor(colors.ink, 0.03)} 1px, ${alphaColor(colors.ink, 0.03)} 2px)`,
       }} />
 
       {/* Main content */}
@@ -129,8 +142,8 @@ export function SetupAuth() {
         <Box sx={{ textAlign: 'center', mb: 4 }}>
           <Box sx={{
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.5rem', lineHeight: 1,
-            color: '#ffffff', whiteSpace: 'pre', letterSpacing: '-0.5px',
-            textShadow: `0 0 10px rgba(255,255,255,0.1)`,
+            color: colors.text.primary, whiteSpace: 'pre', letterSpacing: '-0.5px',
+            textShadow: `0 0 10px ${alphaColor(colors.ink, 0.1)}`,
             mb: 2,
           }}>
 {` █████╗  ██████╗ ███████╗███╗   ██╗████████╗    ██╗  ██╗
@@ -202,7 +215,7 @@ export function SetupAuth() {
                 fontFamily: "'JetBrains Mono', monospace",
                 fontSize: '0.75rem',
                 outline: 'none',
-                '&:focus': { borderColor: colors.accent.blue + '80' },
+                '&:focus': { borderColor: alphaColor(colors.accent.blue, '80') },
                 '&::placeholder': { color: colors.text.dim },
               }}
               placeholder="admin"
@@ -232,7 +245,7 @@ export function SetupAuth() {
                 fontFamily: "'JetBrains Mono', monospace",
                 fontSize: '0.75rem',
                 outline: 'none',
-                '&:focus': { borderColor: colors.accent.blue + '80' },
+                '&:focus': { borderColor: alphaColor(colors.accent.blue, '80') },
                 '&::placeholder': { color: colors.text.dim },
               }}
               placeholder="••••••••"
@@ -294,7 +307,7 @@ export function SetupAuth() {
                 fontFamily: "'JetBrains Mono', monospace",
                 fontSize: '0.75rem',
                 outline: 'none',
-                '&:focus': { borderColor: colors.accent.blue + '80' },
+                '&:focus': { borderColor: alphaColor(colors.accent.blue, '80') },
                 '&::placeholder': { color: colors.text.dim },
               }}
               placeholder="••••••••"
@@ -315,7 +328,7 @@ export function SetupAuth() {
               fontSize: '0.7rem',
               letterSpacing: '2px',
               borderRadius: '3px',
-              '&:hover': { bgcolor: '#ddd' },
+              '&:hover': { bgcolor: alphaColor(colors.text.primary, 0.85) },
               '&:disabled': { bgcolor: colors.border.strong, color: colors.text.dim },
             }}
           >

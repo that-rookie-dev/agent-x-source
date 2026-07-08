@@ -1,13 +1,13 @@
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 
 export const COMMS_MONO = "'JetBrains Mono', monospace";
 
 export const commsTheme = {
-  bg: '#000000',
-  panel: '#080808',
-  panelActive: '#0e0e0e',
-  border: 'rgba(255,255,255,0.1)',
-  borderActive: 'rgba(255,255,255,0.55)',
+  bg: colors.bg.primary,
+  panel: colors.bg.secondary,
+  panelActive: colors.bg.tertiary,
+  border: alphaColor(colors.ink, 0.1),
+  borderActive: alphaColor(colors.ink, 0.55),
   text: colors.text.primary,
   textSecondary: colors.text.secondary,
   textDim: colors.text.dim,
@@ -15,8 +15,8 @@ export const commsTheme = {
   agent: colors.accent.green,
   relay: colors.text.primary,
   relayReady: colors.accent.green,
-  relayReadyBg: 'rgba(34, 197, 94, 0.08)',
-  relayReadyBorder: 'rgba(34, 197, 94, 0.45)',
+  relayReadyBg: alphaColor(colors.accent.green, 0.08),
+  relayReadyBorder: alphaColor(colors.accent.green, 0.45),
   error: colors.accent.red,
   warn: colors.accent.orange,
 };

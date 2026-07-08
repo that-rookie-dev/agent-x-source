@@ -1,7 +1,7 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 export interface ChildSessionCardProps {
   childSessionId: string;
@@ -31,7 +31,7 @@ export function ChildSessionInlineCard({
     <Box
       onClick={onExpand}
       sx={{
-        border: `1px solid ${accent}35`,
+        border: `1px solid ${alphaColor(accent, '35')}`,
         borderLeft: `3px solid ${statusColor}`,
         borderRadius: '8px',
         bgcolor: colors.bg.secondary,
@@ -40,8 +40,8 @@ export function ChildSessionInlineCard({
         cursor: 'pointer',
         transition: 'border-color 0.2s, box-shadow 0.2s',
         '&:hover': {
-          borderColor: `${accent}70`,
-          boxShadow: `0 4px 16px ${accent}15`,
+          borderColor: `${alphaColor(accent, '70')}`,
+          boxShadow: `0 4px 16px ${alphaColor(accent, '15')}`,
         },
       }}
     >

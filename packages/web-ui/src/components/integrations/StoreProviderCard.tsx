@@ -9,6 +9,7 @@ import { CATEGORY_LABELS, isInstalledConnection, providerPackageSignIn } from '.
 import { usePackageSignInStatus } from './usePackageSignInStatus';
 import { useMcpStdioAuthStatus } from './useMcpStdioAuthStatus';
 
+import { alphaColor } from '../../theme';
 export interface StoreProviderCardProps {
   provider: IntegrationProvider;
   connection?: IntegrationConnection;
@@ -111,9 +112,9 @@ export function StoreProviderCard({ provider, connection, onOpen, onConnect, onS
             height: 22,
             fontSize: '0.62rem',
             fontWeight: 600,
-            bgcolor: `${settingsTheme.accent.signal}22`,
+            bgcolor: `${alphaColor(settingsTheme.accent.signal, '22')}`,
             color: settingsTheme.accent.signal,
-            border: `1px solid ${settingsTheme.accent.signal}55`,
+            border: `1px solid ${alphaColor(settingsTheme.accent.signal, '55')}`,
             ...settingsMonoSx,
           }}
         />
@@ -138,9 +139,9 @@ export function StoreProviderCard({ provider, connection, onOpen, onConnect, onS
             height: 22,
             fontSize: '0.62rem',
             fontWeight: 600,
-            bgcolor: `${settingsTheme.accent.signal}22`,
+            bgcolor: `${alphaColor(settingsTheme.accent.signal, '22')}`,
             color: settingsTheme.accent.signal,
-            border: `1px solid ${settingsTheme.accent.signal}55`,
+            border: `1px solid ${alphaColor(settingsTheme.accent.signal, '55')}`,
             ...settingsMonoSx,
           }}
         />

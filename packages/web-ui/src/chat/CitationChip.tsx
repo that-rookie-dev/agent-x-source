@@ -1,5 +1,5 @@
 import Box from '@mui/material/Box';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import { openSearchResultUrl } from '../components/deep-search/card-utils';
 import { chipLabelForSource } from './source-chip-utils';
 
@@ -32,25 +32,25 @@ export function CitationChip({ href, label }: { href: string; label: string }) {
         letterSpacing: '0.04em',
         lineHeight: 1.3,
         color: colors.accent.cyan,
-        background: `linear-gradient(145deg, ${colors.accent.cyan}16 0%, ${colors.bg.tertiary} 55%, ${colors.accent.blue}0c 100%)`,
-        border: `1px solid ${colors.accent.cyan}35`,
+        background: `linear-gradient(145deg, ${alphaColor(colors.accent.cyan, '16')} 0%, ${colors.bg.tertiary} 55%, ${alphaColor(colors.accent.blue, '0c')} 100%)`,
+        border: `1px solid ${alphaColor(colors.accent.cyan, '35')}`,
         textDecoration: 'none',
         verticalAlign: 'middle',
         whiteSpace: 'nowrap',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         transition: 'color 0.14s ease, border-color 0.14s ease, background 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease',
-        boxShadow: `inset 0 1px 0 ${colors.accent.cyan}18`,
+        boxShadow: `inset 0 1px 0 ${alphaColor(colors.accent.cyan, '18')}`,
         '&:hover': {
           color: colors.text.primary,
-          borderColor: `${colors.accent.cyan}65`,
-          background: `linear-gradient(145deg, ${colors.accent.cyan}28 0%, ${colors.bg.secondary} 50%, ${colors.accent.blue}16 100%)`,
+          borderColor: `${alphaColor(colors.accent.cyan, '65')}`,
+          background: `linear-gradient(145deg, ${alphaColor(colors.accent.cyan, '28')} 0%, ${colors.bg.secondary} 50%, ${alphaColor(colors.accent.blue, '16')} 100%)`,
           transform: 'translateY(-1px)',
-          boxShadow: `0 4px 14px ${colors.accent.cyan}22, inset 0 1px 0 ${colors.accent.cyan}28`,
+          boxShadow: `0 4px 14px ${alphaColor(colors.accent.cyan, '22')}, inset 0 1px 0 ${alphaColor(colors.accent.cyan, '28')}`,
         },
         '&:active': {
           transform: 'translateY(0)',
-          boxShadow: `inset 0 1px 0 ${colors.accent.cyan}18`,
+          boxShadow: `inset 0 1px 0 ${alphaColor(colors.accent.cyan, '18')}`,
         },
       }}
     >

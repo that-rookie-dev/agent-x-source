@@ -5,7 +5,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 interface ModeEscalationModalProps {
   open: boolean;
@@ -41,7 +41,7 @@ export default function ModeEscalationModal({ open, tool, reason, onSwitch, onSk
           Stay in Plan
         </Button>
         <Button size="small" variant="contained" onClick={onSwitch}
-          sx={{ fontSize: '0.65rem', textTransform: 'none', bgcolor: colors.accent.orange, '&:hover': { bgcolor: colors.accent.orange + 'cc' } }}>
+          sx={{ fontSize: '0.65rem', textTransform: 'none', bgcolor: colors.accent.orange, '&:hover': { bgcolor: alphaColor(colors.accent.orange, 'cc') } }}>
           Switch &amp; continue
         </Button>
       </DialogActions>

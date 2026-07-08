@@ -1,5 +1,5 @@
 import type { SxProps, Theme } from '@mui/material/styles';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 /** Command-center palette — black/white/grey primary, subtle accents only */
 export const crewTheme = {
@@ -16,8 +16,8 @@ export const crewTheme = {
     subtle: colors.border.subtle,
     default: colors.border.default,
     strong: colors.border.strong,
-    amber: 'rgba(210, 153, 34, 0.45)',
-    danger: 'rgba(248, 81, 73, 0.45)',
+    amber: alphaColor(colors.accent.orange, 0.45),
+    danger: alphaColor(colors.accent.red, 0.45),
   },
   accent: {
     tactical: colors.text.secondary,
@@ -46,8 +46,8 @@ const FALLBACK_PALETTE = [
   colors.accent.purple,
   colors.accent.green,
   colors.accent.orange,
-  '#8b8b8b',
-  '#aaaaaa',
+  colors.text.tertiary,
+  colors.text.secondary,
 ];
 
 export function getCrewAccent(color?: string, callsign?: string): string {
@@ -73,7 +73,7 @@ export function crewCardSx(_accent: string, enabled: boolean): SxProps<Theme> {
       bgcolor: crewTheme.bg.cardHover,
       borderColor: enabled ? colors.text.secondary : crewTheme.border.strong,
       transform: 'translateY(-1px)',
-      boxShadow: '0 4px 20px rgba(0,0,0,0.45)',
+      boxShadow: `0 4px 20px ${colors.shadow.heavy}`,
     },
   };
 }
@@ -83,7 +83,7 @@ export const crewDialogPaperSx: SxProps<Theme> = {
   backgroundImage: `linear-gradient(180deg, ${crewTheme.bg.elevated} 0%, ${crewTheme.bg.panel} 100%)`,
   border: `1px solid ${crewTheme.border.default}`,
   borderRadius: '8px',
-  boxShadow: '0 24px 80px rgba(0,0,0,0.75)',
+  boxShadow: `0 24px 80px ${colors.shadow.heavy}`,
   overflow: 'hidden',
 };
 
@@ -101,5 +101,5 @@ export const crewHubScanlineSx: SxProps<Theme> = {
   inset: 0,
   pointerEvents: 'none',
   opacity: 0.025,
-  backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.08) 2px, rgba(255,255,255,0.08) 3px)',
+  backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 2px, ${alphaColor(colors.ink, 0.08)} 2px, ${alphaColor(colors.ink, 0.08)} 3px)`,
 };

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
+import { colors, resolveColor } from '../../theme';
 import { commsTheme } from './voice-comms-theme';
 
 export interface VoiceWaveformProps {
@@ -38,6 +39,9 @@ export function VoiceWaveform({
 
     let frame = 0;
     let raf = 0;
+    // Canvas can't parse var()/color-mix tokens — resolve once per mount.
+    const accentColor = resolveColor(accent);
+    const idleColor = resolveColor(colors.ink);
 
     const draw = () => {
       frame += 1;
@@ -56,8 +60,8 @@ export function VoiceWaveform({
           ? Math.max(3, (wobble + lvl * 0.85) * height * (0.35 + (i % 5) * 0.04))
           : 2;
         const x = i * (barW + gap);
-        ctx.fillStyle = on ? accent : commsTheme.border;
-        ctx.globalAlpha = on ? 0.35 + lvl * 0.55 : 0.25;
+        ctx.fillStyle = on ? accentColor : idleColor;
+        ctx.globalAlpha = on ? 0.35 + lvl * 0.55 : 0.03;
         ctx.fillRect(x, mid - h / 2, barW, h);
       }
       ctx.globalAlpha = 1;

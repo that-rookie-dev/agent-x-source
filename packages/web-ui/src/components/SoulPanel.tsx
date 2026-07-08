@@ -12,7 +12,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { PanelHeader } from './PanelHeader';
 import { secretSauce, type SecretSauceFile } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 const FILES: { key: SecretSauceFile; label: string; description: string }[] = [
   { key: 'SOUL', label: 'Soul', description: 'Core personality, values, and behavioral DNA of the agent.' },
@@ -113,7 +113,7 @@ export function SoulPanel() {
 
       <Typography sx={{ fontSize: '0.65rem', color: colors.text.tertiary, mb: 1 }}>{active.description}</Typography>
 
-      {error && <Alert severity="error" sx={{ mb: 1, bgcolor: '#1a0000', fontSize: '0.75rem' }} onClose={() => setError('')}>{error}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 1, bgcolor: alphaColor(colors.accent.red, 0.12), fontSize: '0.75rem' }} onClose={() => setError('')}>{error}</Alert>}
 
       <TextField
         multiline
@@ -155,8 +155,8 @@ export function SoulPanel() {
         >
           Reload
         </Button>
-        {dirty && <Chip size="small" label="Unsaved changes" sx={{ height: 18, fontSize: '0.55rem', color: colors.accent.orange, borderColor: colors.accent.orange + '60' }} variant="outlined" />}
-        {!dirty && savedAt && <Chip size="small" label={`Saved · ${new Date(savedAt).toLocaleTimeString()}`} sx={{ height: 18, fontSize: '0.55rem', color: colors.accent.green, borderColor: colors.accent.green + '60' }} variant="outlined" />}
+        {dirty && <Chip size="small" label="Unsaved changes" sx={{ height: 18, fontSize: '0.55rem', color: colors.accent.orange, borderColor: alphaColor(colors.accent.orange, '60') }} variant="outlined" />}
+        {!dirty && savedAt && <Chip size="small" label={`Saved · ${new Date(savedAt).toLocaleTimeString()}`} sx={{ height: 18, fontSize: '0.55rem', color: colors.accent.green, borderColor: alphaColor(colors.accent.green, '60') }} variant="outlined" />}
         <Box sx={{ flex: 1 }} />
         <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
           {content.length} chars · {content.split('\n').length} lines

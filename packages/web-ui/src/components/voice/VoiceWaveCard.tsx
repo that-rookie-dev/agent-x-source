@@ -1,6 +1,6 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 import { VoiceWaveform } from './VoiceWaveform';
 import { CommsEllipsis, CommsSpinner } from './CommsSpinner';
 import type { CommsPhase } from './voice-comms-phase';
@@ -87,7 +87,7 @@ export function VoiceWaveCard({
       py: 0.5,
       borderRadius: 1,
       bgcolor: colors.bg.secondary,
-      border: `1px solid ${showWave ? `${waveAccent}44` : colors.border.default}`,
+      border: `1px solid ${showWave ? `${alphaColor(waveAccent, '44')}` : colors.border.default}`,
       transition: 'border-color 0.25s',
       minHeight: height,
       display: 'flex',

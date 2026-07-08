@@ -99,6 +99,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install
 
+      - name: Install embedded PostgreSQL platform binaries (macOS)
+        run: pnpm install --filter @agentx/desktop --config.supportedArchitectures.cpu=arm64,x64 --config.supportedArchitectures.os=darwin
+
       - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/runtime run build
 
       - uses: actions/download-artifact@v4
@@ -147,6 +150,8 @@ jobs:
           retry npm run ${{ matrix.dist_script }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_PLATFORM: darwin
 
       - uses: actions/upload-artifact@v4
         with:
@@ -231,6 +236,8 @@ jobs:
           retry npx electron-builder --linux ${{ matrix.desktop_targets }}
         env:
           ARCH: ${{ matrix.arch }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_PLATFORM: linux
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/upload-artifact@v4
@@ -318,6 +325,8 @@ jobs:
           retry npm run dist:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_ARCH: x64
+          TARGET_PLATFORM: win32
 
       - uses: actions/upload-artifact@v4
         with:
@@ -377,6 +386,8 @@ jobs:
       - name: Build server tarball
         shell: bash
         run: pnpm --filter @agentx/server run pack:server
+        env:
+          AGENTX_PACK_SUFFIX: ${{ matrix.suffix }}
         timeout-minutes: 90
 
       - uses: actions/upload-artifact@v4

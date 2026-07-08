@@ -7,7 +7,7 @@ import StopIcon from '@mui/icons-material/Stop';
 import MicIcon from '@mui/icons-material/Mic';
 import MicOffIcon from '@mui/icons-material/MicOff';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import type { VoiceClientState } from '../voice/VoiceSessionClient';
 import { VOICE_MAX_TURN_SECONDS } from '../voice/constants';
 
@@ -67,7 +67,7 @@ export function VoiceSessionBar({
         gap: 1,
         px: 1.25,
         py: 0.75,
-        borderTop: `1px solid ${colors.border.default}20`,
+        borderTop: `1px solid ${alphaColor(colors.border.default, '20')}`,
         flexWrap: 'wrap',
       }}
     >
@@ -89,7 +89,7 @@ export function VoiceSessionBar({
           width: 72,
           height: 8,
           borderRadius: 1,
-          bgcolor: `${colors.border.default}30`,
+          bgcolor: `${alphaColor(colors.border.default, '30')}`,
           overflow: 'hidden',
           display: 'flex',
           alignItems: 'flex-end',

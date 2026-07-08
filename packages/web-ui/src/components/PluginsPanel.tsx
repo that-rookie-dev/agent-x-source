@@ -14,7 +14,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import ExtensionIcon from '@mui/icons-material/Extension';
 import { PanelHeader } from './PanelHeader';
 import { plugins, type PluginInfo } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 export function PluginsPanel() {
   const [available, setAvailable] = useState<PluginInfo[]>([]);
@@ -116,7 +116,7 @@ export function PluginsPanel() {
               onClick={() => setCategoryFilter(cat)}
               sx={{
                 fontSize: '0.55rem', height: 22, cursor: 'pointer',
-                bgcolor: categoryFilter === cat ? colors.accent.blue + '30' : 'transparent',
+                bgcolor: categoryFilter === cat ? alphaColor(colors.accent.blue, '30') : 'transparent',
                 border: `1px solid ${categoryFilter === cat ? colors.accent.blue : colors.border.default}`,
                 color: categoryFilter === cat ? colors.text.primary : colors.text.dim,
               }}
@@ -139,7 +139,7 @@ export function PluginsPanel() {
         return (
           <Box key={p.id} sx={{
             p: 1.5, mb: 1, borderRadius: 1, bgcolor: colors.bg.tertiary,
-            border: `1px solid ${isActive ? colors.accent.green + '40' : colors.border.default}`,
+            border: `1px solid ${isActive ? alphaColor(colors.accent.green, '40') : colors.border.default}`,
           }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Box sx={{ flex: 1 }}>
@@ -149,7 +149,7 @@ export function PluginsPanel() {
                   <Chip size="small" label={isActive ? 'Active' : isInstalled ? 'Disabled' : 'Available'} sx={{
                     height: 18, fontSize: '0.5rem',
                     color: isActive ? colors.accent.green : isInstalled ? colors.accent.orange : colors.text.dim,
-                    borderColor: isActive ? colors.accent.green + '40' : isInstalled ? colors.accent.orange + '40' : colors.border.default,
+                    borderColor: isActive ? alphaColor(colors.accent.green, '40') : isInstalled ? alphaColor(colors.accent.orange, '40') : colors.border.default,
                   }} variant="outlined" />
                 </Box>
                 <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, mt: 0.25 }}>{p.description}</Typography>

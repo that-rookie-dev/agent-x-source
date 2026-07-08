@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-ax-scheme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,11 +7,23 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+    <script>
+      // Pre-paint scheme resolution — avoids a flash of the wrong theme.
+      (function () {
+        try {
+          var mode = localStorage.getItem('agentx-theme-mode') || 'dark';
+          var scheme = mode === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+            : (mode === 'light' ? 'light' : 'dark');
+          document.documentElement.setAttribute('data-ax-scheme', scheme);
+        } catch (e) { /* default stays dark */ }
+      })();
+    </script>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body, #root { height: 100%; width: 100%; overflow: hidden; }
-      body { background: #000; color: #fff; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; -webkit-font-smoothing: antialiased; }
-      ::selection { background: #fff; color: #000; }
+      body { background: #030308; color: #f2f3f7; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; -webkit-font-smoothing: antialiased; }
+      [data-ax-scheme="light"] body { background: #f0f2f5; color: #0f1117; }
     </style>
   </head>
   <body>

@@ -6,6 +6,7 @@ import Chip from '@mui/material/Chip';
 import { integrations } from '../../api';
 import { settingsTheme, settingsMonoSx } from '../../styles/settings-theme';
 
+import { colors, alphaColor } from '../../theme';
 interface AuditEntry {
   id: string;
   timestamp: string;
@@ -57,7 +58,7 @@ export function IntegrationAuditPanel() {
               key={entry.id}
               sx={{
                 py: 0.75,
-                borderBottom: `1px solid ${settingsTheme.border.default}40`,
+                borderBottom: `1px solid ${alphaColor(settingsTheme.border.default, '40')}`,
                 display: 'flex',
                 flexWrap: 'wrap',
                 gap: 0.5,
@@ -70,8 +71,8 @@ export function IntegrationAuditPanel() {
                 sx={{
                   height: 16,
                   fontSize: '0.45rem',
-                  bgcolor: entry.success ? '#22c55e22' : '#ef444422',
-                  color: entry.success ? '#22c55e' : '#ef4444',
+                  bgcolor: entry.success ? alphaColor(colors.accent.green, '22') : alphaColor(colors.accent.red, '22'),
+                  color: entry.success ? colors.accent.green : colors.accent.red,
                 }}
               />
               <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: settingsTheme.text.primary }}>
@@ -86,7 +87,7 @@ export function IntegrationAuditPanel() {
                 </Typography>
               )}
               {entry.error && (
-                <Typography sx={{ fontSize: '0.5rem', color: '#ef4444', width: '100%', ...settingsMonoSx }}>
+                <Typography sx={{ fontSize: '0.5rem', color: colors.accent.red, width: '100%', ...settingsMonoSx }}>
                   {entry.error}
                 </Typography>
               )}

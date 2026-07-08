@@ -1,57 +1,249 @@
-import { createTheme, type ThemeOptions } from '@mui/material/styles';
+import { createTheme, type CssVarsThemeOptions } from '@mui/material/styles';
 
-// Agent-X Space Theme — derived from landing page palette
-const themeOptions: ThemeOptions = {
-  palette: {
-    mode: 'dark',
-    primary: { main: '#ffffff', dark: '#cccccc', contrastText: '#000000' },
-    secondary: { main: '#58a6ff' },
-    error: { main: '#f85149' },
-    warning: { main: '#d29922' },
-    success: { main: '#3fb950' },
-    info: { main: '#58a6ff' },
-    background: { default: '#000000', paper: '#0a0a0a' },
-    text: { primary: '#ffffff', secondary: '#aaaaaa', disabled: '#656565' },
-    divider: '#2a2a2a',
+/**
+ * Agent-X design tokens — dual-scheme (dark/light) via CSS variables.
+ *
+ * Components consume `colors.*` (stable var() references) so switching the
+ * `data-ax-scheme` attribute restyles the whole app without a React re-render.
+ * Use `alphaColor(token, alpha)` instead of hex-suffix concatenation.
+ */
+
+export const MONO = "'JetBrains Mono', monospace" as const;
+
+/** Raw channel values per scheme. Single source of truth. */
+const SCHEMES = {
+  dark: {
+    'bg-primary': '#030308',
+    'bg-secondary': '#0a0a12',
+    'bg-tertiary': '#12121c',
+    'bg-hover': '#1c1c28',
+    'border-subtle': '#181822',
+    'border-default': '#242432',
+    'border-strong': '#343448',
+    'border-accent': '#484860',
+    'text-primary': '#f2f3f7',
+    'text-secondary': '#b4b8c4',
+    'text-tertiary': '#8b90a0',
+    'text-dim': '#656878',
+    'text-muted': '#757a8a',
+    'accent-blue': '#7dd3fc',
+    'accent-green': '#4ade80',
+    'accent-orange': '#fbbf24',
+    'accent-red': '#f87171',
+    'accent-purple': '#c4b5fd',
+    'accent-cyan': '#67e8f9',
+    ink: '#ffffff',
+    'shadow-heavy': 'rgba(0, 0, 0, 0.78)',
+    'scrollbar-thumb': '#343448',
+    'scrollbar-thumb-hover': '#656878',
+  },
+  light: {
+    'bg-primary': '#f0f2f5',
+    'bg-secondary': '#ffffff',
+    'bg-tertiary': '#e8eaef',
+    'bg-hover': '#dfe2e8',
+    'border-subtle': '#e4e7ec',
+    'border-default': '#d4d8e0',
+    'border-strong': '#bcc2cc',
+    'border-accent': '#a2aab6',
+    'text-primary': '#0f1117',
+    'text-secondary': '#3d4450',
+    'text-tertiary': '#565e6c',
+    'text-dim': '#7a828e',
+    'text-muted': '#6c737f',
+    'accent-blue': '#0969da',
+    'accent-green': '#1a7f37',
+    'accent-orange': '#9a6700',
+    'accent-red': '#cf222e',
+    'accent-purple': '#8250df',
+    'accent-cyan': '#1b7c83',
+    ink: '#0f1117',
+    'shadow-heavy': 'rgba(15, 20, 30, 0.16)',
+    'scrollbar-thumb': '#c4cad1',
+    'scrollbar-thumb-hover': '#9aa1ab',
+  },
+} as const;
+
+type TokenName = keyof typeof SCHEMES.dark;
+
+const v = (name: TokenName) => `var(--ax-${name})`;
+
+function schemeVars(scheme: keyof typeof SCHEMES): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(SCHEMES[scheme])) out[`--ax-${key}`] = value;
+  return out;
+}
+
+/**
+ * Color tokens for direct use in sx/styles. Values are CSS var() references —
+ * they resolve per active scheme with zero JS cost on switch.
+ */
+export const colors = {
+  bg: {
+    primary: v('bg-primary'),
+    secondary: v('bg-secondary'),
+    tertiary: v('bg-tertiary'),
+    elevated: v('bg-tertiary'),
+    surface: v('bg-secondary'),
+    hover: v('bg-hover'),
+  },
+  border: {
+    subtle: v('border-subtle'),
+    default: v('border-default'),
+    strong: v('border-strong'),
+    accent: v('border-accent'),
+  },
+  text: {
+    primary: v('text-primary'),
+    secondary: v('text-secondary'),
+    tertiary: v('text-tertiary'),
+    dim: v('text-dim'),
+    muted: v('text-muted'),
+  },
+  accent: {
+    blue: v('accent-blue'),
+    green: v('accent-green'),
+    orange: v('accent-orange'),
+    red: v('accent-red'),
+    purple: v('accent-purple'),
+    cyan: v('accent-cyan'),
+  },
+  /** Neutral foreground channel — use for tints that must flip with the scheme. */
+  ink: v('ink'),
+  shadow: { heavy: v('shadow-heavy') },
+} as const;
+
+/**
+ * Scheme-aware replacement for hex-alpha concatenation.
+ * alphaColor(colors.accent.blue, 0.13) ≈ old `${blue}22`.
+ * Accepts 0–1 numbers or legacy 2-char hex suffixes ('22', '66', ...).
+ */
+export function alphaColor(color: string, alpha: number | string): string {
+  const ratio = typeof alpha === 'number' ? alpha : parseInt(alpha, 16) / 255;
+  const pct = Math.round(Math.min(Math.max(ratio, 0), 1) * 100);
+  return `color-mix(in srgb, ${color} ${pct}%, transparent)`;
+}
+
+/**
+ * Resolve a `var(--ax-*)` token to its current raw value (hex/rgba string).
+ * Needed for canvas 2D contexts, which cannot parse CSS var() references.
+ */
+export function resolveColor(color: string): string {
+  const m = /^var\((--[\w-]+)\)$/.exec(color.trim());
+  if (!m) return color;
+  return getComputedStyle(document.documentElement).getPropertyValue(m[1]!).trim() || color;
+}
+
+const themeOptions: CssVarsThemeOptions & Parameters<typeof createTheme>[0] = {
+  cssVariables: { colorSchemeSelector: 'data-ax-scheme' },
+  colorSchemes: {
+    dark: {
+      palette: {
+        primary: { main: '#f2f3f7', dark: '#cccccc', contrastText: '#030308' },
+        secondary: { main: '#7dd3fc' },
+        background: { default: '#030308', paper: '#0a0a12' },
+        text: { primary: '#f2f3f7', secondary: '#b4b8c4', disabled: '#656878' },
+        divider: '#242432',
+        error: { main: '#f87171' },
+        warning: { main: '#fbbf24' },
+        success: { main: '#4ade80' },
+        info: { main: '#7dd3fc' },
+      },
+    },
+    light: {
+      palette: {
+        primary: { main: '#0f1117', dark: '#000000', contrastText: '#ffffff' },
+        secondary: { main: '#0969da' },
+        background: { default: '#f0f2f5', paper: '#ffffff' },
+        text: { primary: '#0f1117', secondary: '#3d4450', disabled: '#9aa1ab' },
+        divider: '#d4d8e0',
+        error: { main: '#cf222e' },
+        warning: { main: '#9a6700' },
+        success: { main: '#1a7f37' },
+        info: { main: '#0969da' },
+      },
+    },
   },
   typography: {
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    fontSize: 13,
-    h1: { fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, letterSpacing: '8px', fontSize: 'clamp(2.5rem, 8vw, 4rem)' },
-    h2: { fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, letterSpacing: '3px', fontSize: '1.5rem' },
-    h3: { fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: '1.1rem', letterSpacing: '2px' },
-    h4: { fontSize: '1rem', fontWeight: 600 },
-    h5: { fontSize: '0.9rem', fontWeight: 600 },
-    h6: { fontSize: '0.82rem', fontWeight: 500 },
-    body1: { fontSize: '0.875rem', lineHeight: 1.6 },
-    body2: { fontSize: '0.8125rem', lineHeight: 1.5, color: '#8b8b8b' },
-    caption: { fontSize: '0.72rem', color: '#656565' },
-    overline: { fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', letterSpacing: '3px', textTransform: 'uppercase' as const, color: '#656565' },
+    fontSize: 12,
+    h1: { fontFamily: MONO, fontWeight: 700, letterSpacing: '6px', fontSize: 'clamp(2rem, 6vw, 3.2rem)' },
+    h2: { fontFamily: MONO, fontWeight: 700, letterSpacing: '2px', fontSize: '1.25rem' },
+    h3: { fontFamily: MONO, fontWeight: 700, fontSize: '1rem', letterSpacing: '1.5px' },
+    h4: { fontSize: '0.92rem', fontWeight: 600 },
+    h5: { fontSize: '0.85rem', fontWeight: 600 },
+    h6: { fontSize: '0.78rem', fontWeight: 500 },
+    body1: { fontSize: '0.8125rem', lineHeight: 1.55 },
+    body2: { fontSize: '0.75rem', lineHeight: 1.45, color: v('text-tertiary') },
+    caption: { fontSize: '0.68rem', color: v('text-dim') },
+    overline: { fontFamily: MONO, fontSize: '0.68rem', letterSpacing: '2.5px', textTransform: 'uppercase' as const, color: v('text-dim') },
   },
-  shape: { borderRadius: 8 },
+  shape: { borderRadius: 6 },
+  spacing: 7,
   components: {
     MuiCssBaseline: {
       styleOverrides: {
+        ':root': schemeVars('dark'),
+        '[data-ax-scheme="light"]': schemeVars('light'),
         'html, body, #root': { height: '100%', width: '100%', overflow: 'hidden' },
-        body: { backgroundColor: '#000000', WebkitFontSmoothing: 'antialiased' },
-        '::selection': { background: '#fff', color: '#000' },
+        body: {
+          backgroundColor: v('bg-primary'),
+          color: v('text-primary'),
+          WebkitFontSmoothing: 'antialiased',
+        },
+        '::selection': { background: v('ink'), color: v('bg-primary') },
         '::-webkit-scrollbar': { width: '6px', height: '6px' },
         '::-webkit-scrollbar-track': { background: 'transparent' },
-        '::-webkit-scrollbar-thumb': { background: '#3a3a3a', borderRadius: '3px' },
-        '::-webkit-scrollbar-thumb:hover': { background: '#656565' },
+        '::-webkit-scrollbar-thumb': { background: v('scrollbar-thumb'), borderRadius: '3px' },
+        '::-webkit-scrollbar-thumb:hover': { background: v('scrollbar-thumb-hover') },
         '.MuiDialogContent-root::-webkit-scrollbar': { display: 'none' },
         '.MuiModal-root *::-webkit-scrollbar': { display: 'none' },
       },
     },
     MuiButton: {
-      styleOverrides: { root: { textTransform: 'none', fontFamily: "'JetBrains Mono', monospace", fontWeight: 500, borderRadius: 6, fontSize: '0.85rem', letterSpacing: '0.5px' } },
+      defaultProps: { size: 'small' },
+      styleOverrides: {
+        root: {
+          textTransform: 'none', fontFamily: MONO, fontWeight: 500, borderRadius: 5,
+          fontSize: '0.78rem', letterSpacing: '0.4px', minHeight: 28, padding: '4px 12px',
+        },
+        sizeMedium: { minHeight: 32, padding: '6px 14px', fontSize: '0.8125rem' },
+      },
+    },
+    MuiIconButton: {
+      defaultProps: { size: 'small' },
+      styleOverrides: { root: { padding: 6 } },
     },
     MuiPaper: {
       styleOverrides: { root: { backgroundImage: 'none' } },
     },
+    MuiMenuItem: {
+      styleOverrides: { root: { fontSize: '0.78rem', minHeight: 32, paddingTop: 4, paddingBottom: 4 } },
+    },
+    MuiListItemButton: {
+      styleOverrides: { root: { paddingTop: 6, paddingBottom: 6 } },
+    },
+    MuiDialogTitle: {
+      styleOverrides: { root: { fontSize: '0.85rem', fontWeight: 600, padding: '12px 16px' } },
+    },
+    MuiDialogContent: {
+      styleOverrides: { root: { padding: '8px 16px 16px' } },
+    },
+    MuiTabs: {
+      styleOverrides: { root: { minHeight: 36 }, indicator: { height: 2 } },
+    },
+    MuiTab: {
+      styleOverrides: { root: { minHeight: 36, padding: '6px 12px', fontSize: '0.75rem', textTransform: 'none' } },
+    },
     MuiTooltip: {
       styleOverrides: {
-        tooltip: { backgroundColor: '#242424', border: '1px solid #3a3a3a', fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace" },
+        tooltip: {
+          backgroundColor: v('bg-hover'),
+          color: v('text-primary'),
+          border: `1px solid ${v('border-strong')}`,
+          fontSize: '0.72rem',
+          fontFamily: MONO,
+        },
       },
     },
     MuiTextField: {
@@ -59,25 +251,20 @@ const themeOptions: ThemeOptions = {
       styleOverrides: {
         root: {
           '& .MuiOutlinedInput-root': {
-            '& fieldset': { borderColor: '#3a3a3a' },
-            '&:hover fieldset': { borderColor: '#4a4a4a' },
-            '&.Mui-focused fieldset': { borderColor: '#58a6ff' },
+            '& fieldset': { borderColor: v('border-strong') },
+            '&:hover fieldset': { borderColor: v('border-accent') },
+            '&.Mui-focused fieldset': { borderColor: v('accent-blue') },
           },
         },
       },
     },
     MuiChip: {
-      styleOverrides: { root: { height: 24, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace" } },
+      styleOverrides: { root: { height: 24, fontSize: '0.7rem', fontFamily: MONO } },
     },
   },
 };
 
 export const theme = createTheme(themeOptions);
 
-// Exported color tokens for direct use
-export const colors = {
-  bg: { primary: '#000000', secondary: '#0a0a0a', tertiary: '#1a1a1a', elevated: '#1a1a1a', surface: '#0a0a0a', hover: '#242424' },
-  border: { subtle: '#202020', default: '#2a2a2a', strong: '#3a3a3a', accent: '#484848' },
-  text: { primary: '#ffffff', secondary: '#aaaaaa', tertiary: '#8b8b8b', dim: '#656565', muted: '#757575' },
-  accent: { blue: '#58a6ff', green: '#3fb950', orange: '#d29922', red: '#f85149', purple: '#bc8cff', cyan: '#39d353' },
-} as const;
+/** localStorage key for the user's mode preference ('light' | 'dark' | 'system'). */
+export const THEME_MODE_STORAGE_KEY = 'agentx-theme-mode';

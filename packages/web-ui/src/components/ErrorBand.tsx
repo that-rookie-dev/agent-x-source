@@ -4,6 +4,7 @@ import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import Tooltip from '@mui/material/Tooltip';
 import { copyToClipboard } from '../utils/clipboard';
+import { colors, alphaColor } from '../theme';
 
 const BASE = '/api';
 
@@ -73,8 +74,8 @@ export function ErrorBandProvider({ children }: { children: ReactNode }) {
             left: 0,
             right: 0,
             zIndex: 9999,
-            bgcolor: '#1a0000',
-            borderBottom: '1px solid #440000',
+            bgcolor: `color-mix(in srgb, ${colors.accent.red} 10%, ${colors.bg.primary})`,
+            borderBottom: `1px solid ${alphaColor(colors.accent.red, 0.3)}`,
             cursor: isOverflowing ? 'pointer' : 'default',
           }}
         >
@@ -96,7 +97,7 @@ export function ErrorBandProvider({ children }: { children: ReactNode }) {
               <Typography
                 ref={textRef}
                 sx={{
-                  color: '#ff4444',
+                  color: colors.accent.red,
                   fontSize: '0.72rem',
                   fontFamily: "'JetBrains Mono', monospace",
                   textAlign: 'left',
@@ -112,7 +113,7 @@ export function ErrorBandProvider({ children }: { children: ReactNode }) {
             {isOverflowing && (
               <Typography
                 sx={{
-                  color: '#ff6666',
+                  color: alphaColor(colors.accent.red, 0.8),
                   fontSize: '0.6rem',
                   ml: 1,
                   flexShrink: 0,
@@ -138,11 +139,11 @@ export function ErrorBandProvider({ children }: { children: ReactNode }) {
                   height: 20,
                   p: 0,
                   ml: 0.5,
-                  color: '#ff6666',
+                  color: alphaColor(colors.accent.red, 0.8),
                   fontSize: '0.65rem',
                   flexShrink: 0,
                   lineHeight: 1,
-                  '&:hover': { color: '#ff8888', bgcolor: 'transparent' },
+                  '&:hover': { color: colors.accent.red, bgcolor: 'transparent' },
                 }}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -159,11 +160,11 @@ export function ErrorBandProvider({ children }: { children: ReactNode }) {
                 height: 20,
                 p: 0,
                 ml: 0.5,
-                color: '#ff6666',
+                color: alphaColor(colors.accent.red, 0.8),
                 fontSize: '0.65rem',
                 flexShrink: 0,
                 lineHeight: 1,
-                '&:hover': { color: '#ff8888', bgcolor: 'transparent' },
+                '&:hover': { color: colors.accent.red, bgcolor: 'transparent' },
               }}
             >
               ✕

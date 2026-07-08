@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
-import { colors } from '../../theme';
+import { colors, resolveColor } from '../../theme';
+import { usePageVisible } from '../../hooks/usePageVisible';
 
 type OrbPhase = 'idle' | 'listening' | 'processing' | 'speaking';
 
@@ -14,6 +15,7 @@ const NODES = 12;
 export function VoiceOrbVisualizer({ phase, level = 0 }: VoiceOrbVisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
+  const pageVisible = usePageVisible();
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -21,7 +23,7 @@ export function VoiceOrbVisualizer({ phase, level = 0 }: VoiceOrbVisualizerProps
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const size = 160;
     canvas.width = size * dpr;
     canvas.height = size * dpr;
@@ -30,15 +32,28 @@ export function VoiceOrbVisualizer({ phase, level = 0 }: VoiceOrbVisualizerProps
     ctx.scale(dpr, dpr);
 
     let t = 0;
-    const accent = phase === 'speaking'
+    let frameSkip = 0;
+    const accent = resolveColor(phase === 'speaking'
       ? colors.accent.green
       : phase === 'listening'
         ? colors.accent.cyan
         : phase === 'processing'
           ? colors.accent.orange
-          : colors.accent.blue;
+          : colors.accent.blue);
 
     const draw = () => {
+      if (document.visibilityState !== 'visible') {
+        frameRef.current = requestAnimationFrame(draw);
+        return;
+      }
+      // Idle orb needs less motion — draw every other frame (~30fps).
+      if (phase === 'idle') {
+        frameSkip += 1;
+        if (frameSkip % 2 !== 0) {
+          frameRef.current = requestAnimationFrame(draw);
+          return;
+        }
+      }
       t += 0.04;
       ctx.clearRect(0, 0, size, size);
       const cx = size / 2;
@@ -86,7 +101,7 @@ export function VoiceOrbVisualizer({ phase, level = 0 }: VoiceOrbVisualizerProps
     return () => {
       if (frameRef.current) cancelAnimationFrame(frameRef.current);
     };
-  }, [phase, level]);
+  }, [phase, level, pageVisible]);
 
   return (
     <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>

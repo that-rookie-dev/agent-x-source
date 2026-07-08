@@ -4,8 +4,10 @@ import Typography from '@mui/material/Typography';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { colors } from '../theme';
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useColorScheme } from '@mui/material/styles';
+import { colors, alphaColor } from '../theme';
+import { crewPalette } from '../styles/brands';
 import { StyledTableWrapper, StyledUl, StyledOl, StyledLi } from '../components/StructuredViews';
 import { splitMarkdownSections, isPlainTextMarkdown, PLAIN_TEXT_BUBBLE_MAX_WIDTH } from './markdown-normalize';
 import { expandCollapsedTreeLine, isTreeDiagramContent } from './tree-diagram';
@@ -26,7 +28,7 @@ const MARKDOWN_BASE_SX = {
   '& a': { color: colors.accent.blue, textDecoration: 'none', '&:hover': { textDecoration: 'underline' } },
 };
 
-const CREW_PALETTE = ['#4FC3F7', '#81C784', '#FFB74D', '#F06292', '#BA68C8', '#4DB6AC', '#FF8A65', '#A1887F'];
+const CREW_PALETTE = [...crewPalette];
 
 export function getWebCrewColor(callsign: string): string {
   let hash = 0;
@@ -34,17 +36,24 @@ export function getWebCrewColor(callsign: string): string {
   return CREW_PALETTE[Math.abs(hash) % CREW_PALETTE.length]!;
 }
 
-const CODE_BLOCK_THEME = Object.fromEntries(
-  Object.entries(oneDark).map(([key, value]) => [
-    key,
-    {
-      ...(value as Record<string, string>),
-      background: 'transparent',
-      textShadow: 'none',
-      boxShadow: 'none',
-    },
-  ]),
-) as typeof oneDark;
+function flattenSyntaxTheme(base: typeof oneDark): typeof oneDark {
+  return Object.fromEntries(
+    Object.entries(base).map(([key, value]) => [
+      key,
+      {
+        ...(value as Record<string, string>),
+        background: 'transparent',
+        textShadow: 'none',
+        boxShadow: 'none',
+      },
+    ]),
+  ) as typeof oneDark;
+}
+
+const CODE_BLOCK_THEMES = {
+  dark: flattenSyntaxTheme(oneDark),
+  light: flattenSyntaxTheme(oneLight),
+} as const;
 
 const CODE_BLOCK_SX = {
   '& .token': {
@@ -61,7 +70,7 @@ const CODE_BLOCK_SX = {
     textShadow: 'none !important',
   },
   '& ::selection': {
-    background: `${colors.accent.blue}40`,
+    background: `${alphaColor(colors.accent.blue, '40')}`,
     color: 'inherit',
   },
 } as const;
@@ -123,13 +132,16 @@ function CodeBlockWithCopy({ code, language }: { code: string; language?: string
 }
 
 function SyntaxCodeBlock({ code, language }: { code: string; language: string }) {
+  const { mode, systemMode } = useColorScheme();
+  const resolved = (mode === 'system' ? systemMode : mode) ?? 'dark';
+  const syntaxTheme = resolved === 'light' ? CODE_BLOCK_THEMES.light : CODE_BLOCK_THEMES.dark;
   const displayLang = language === 'bash' || language === 'sh' || language === 'shell' ? 'bash' : language;
   return (
     <CodeBlockChrome title={formatBlockTitle(displayLang)} copyText={code}>
       <CodeBlockBody>
         <Box sx={CODE_BLOCK_SX}>
           <SyntaxHighlighter
-            style={CODE_BLOCK_THEME}
+            style={syntaxTheme}
             language={displayLang}
             PreTag="div"
             wrapLongLines
@@ -213,7 +225,7 @@ function createMarkdownComponents(isFirstSection: boolean) {
         <Box sx={{
           my: 1, px: 1.5, py: 1, borderRadius: 1,
           borderLeft: `3px solid ${colors.accent.blue}`,
-          bgcolor: `${colors.accent.blue}08`,
+          bgcolor: `${alphaColor(colors.accent.blue, '08')}`,
         }}>
           <Box sx={{ '& p': { mb: 0.5, fontSize: '0.78rem', color: colors.text.secondary } }}>{children}</Box>
         </Box>

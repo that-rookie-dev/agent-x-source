@@ -2,7 +2,7 @@ import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import MicIcon from '@mui/icons-material/Mic';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import type { UIMessage } from './types';
 import { UserMentionText } from './ChatMarkdown';
 
@@ -15,14 +15,14 @@ export function ChatUserMessage({ message }: { message: UIMessage }) {
             size="small"
             icon={<MicIcon sx={{ fontSize: '12px !important' }} />}
             label="Voice"
-            sx={{ fontSize: '0.5rem', height: 18, mb: 0.5, bgcolor: `${colors.accent.red}12`, border: `1px solid ${colors.accent.red}30` }}
+            sx={{ fontSize: '0.5rem', height: 18, mb: 0.5, bgcolor: `${alphaColor(colors.accent.red, '12')}`, border: `1px solid ${alphaColor(colors.accent.red, '30')}` }}
           />
         )}
         {message.attachments && message.attachments.length > 0 && (
           <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
             {message.attachments.map((a, i) => (
               <Chip key={i} size="small" icon={<InsertDriveFileIcon sx={{ fontSize: '11px !important' }} />} label={a.name}
-                sx={{ fontSize: '0.5rem', height: 18, bgcolor: colors.accent.blue + '08', border: `1px solid ${colors.accent.blue}20` }} />
+                sx={{ fontSize: '0.5rem', height: 18, bgcolor: alphaColor(colors.accent.blue, '08'), border: `1px solid ${alphaColor(colors.accent.blue, '20')}` }} />
             ))}
           </Box>
         )}

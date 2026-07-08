@@ -8,7 +8,7 @@ import DialogActions from '@mui/material/DialogActions';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 const ACTION_KEYWORDS = [
   'generate', 'create', 'build', 'write', 'fix', 'deploy', 'implement',
@@ -109,7 +109,7 @@ export default function ModeSuggestionModal({ open, onSwitch, onStay, onClose }:
           Stay in Plan
         </Button>
         <Button size="small" variant="contained" onClick={handleSwitch}
-          sx={{ fontSize: '0.65rem', textTransform: 'none', bgcolor: colors.accent.orange, '&:hover': { bgcolor: colors.accent.orange + 'cc' } }}>
+          sx={{ fontSize: '0.65rem', textTransform: 'none', bgcolor: colors.accent.orange, '&:hover': { bgcolor: alphaColor(colors.accent.orange, 'cc') } }}>
           Switch to Agent
         </Button>
       </DialogActions>

@@ -1,5 +1,5 @@
 import type { SxProps, Theme } from '@mui/material/styles';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 /** Military / spy / space command palette for Settings */
 export const settingsTheme = {
@@ -8,15 +8,15 @@ export const settingsTheme = {
     panel: colors.bg.secondary,
     inset: colors.bg.primary,
     elevated: colors.bg.tertiary,
-    hud: 'rgba(88, 166, 255, 0.04)',
+    hud: alphaColor(colors.accent.blue, 0.04),
   },
   border: {
     subtle: colors.border.subtle,
     default: colors.border.default,
     strong: colors.border.strong,
-    hud: 'rgba(88, 166, 255, 0.35)',
-    signal: 'rgba(63, 185, 80, 0.45)',
-    alert: 'rgba(248, 81, 73, 0.45)',
+    hud: alphaColor(colors.accent.blue, 0.35),
+    signal: alphaColor(colors.accent.green, 0.45),
+    alert: alphaColor(colors.accent.red, 0.45),
   },
   accent: {
     hud: colors.accent.blue,
@@ -53,19 +53,19 @@ export const settingsScanlineSx: SxProps<Theme> = {
   pointerEvents: 'none',
   opacity: 0.03,
   backgroundImage:
-    'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(88,166,255,0.12) 2px, rgba(88,166,255,0.12) 3px)',
+    `repeating-linear-gradient(0deg, transparent, transparent 2px, ${alphaColor(colors.accent.blue, 0.12)} 2px, ${alphaColor(colors.accent.blue, 0.12)} 3px)`,
 };
 
 export const settingsGridBgSx: SxProps<Theme> = {
   backgroundImage: `
-    linear-gradient(rgba(88,166,255,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(88,166,255,0.03) 1px, transparent 1px)
+    linear-gradient(${alphaColor(colors.accent.blue, 0.03)} 1px, transparent 1px),
+    linear-gradient(90deg, ${alphaColor(colors.accent.blue, 0.03)} 1px, transparent 1px)
   `,
   backgroundSize: '24px 24px',
 };
 
 export function settingsCardSx(accent?: string, active?: boolean): SxProps<Theme> {
-  const borderColor = active && accent ? `${accent}66` : settingsTheme.border.default;
+  const borderColor = active && accent ? `${alphaColor(accent, '66')}` : settingsTheme.border.default;
   return {
     position: 'relative',
     bgcolor: settingsTheme.bg.inset,
@@ -74,7 +74,7 @@ export function settingsCardSx(accent?: string, active?: boolean): SxProps<Theme
     p: 2.5,
     mb: 1.5,
     overflow: 'hidden',
-    boxShadow: active && accent ? `0 0 20px ${accent}12, inset 0 1px 0 ${accent}18` : 'none',
+    boxShadow: active && accent ? `0 0 20px ${alphaColor(accent, '12')}, inset 0 1px 0 ${alphaColor(accent, '18')}` : 'none',
     transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
   };
 }
@@ -83,7 +83,7 @@ export function settingsDangerCardSx(): SxProps<Theme> {
   return {
     ...settingsCardSx(settingsTheme.accent.alert),
     border: `1px solid ${settingsTheme.border.alert}`,
-    bgcolor: `${settingsTheme.accent.alert}08`,
+    bgcolor: `${alphaColor(settingsTheme.accent.alert, '08')}`,
   };
 }
 
@@ -112,7 +112,7 @@ export const settingsDialogPaperSx: SxProps<Theme> = {
   bgcolor: settingsTheme.bg.void,
   border: `1px solid ${settingsTheme.border.default}`,
   borderRadius: '6px',
-  boxShadow: '0 24px 80px rgba(0,0,0,0.85)',
+  boxShadow: `0 24px 80px ${colors.shadow.heavy}`,
   overflow: 'hidden',
 };
 
@@ -178,12 +178,12 @@ export const settingsBtnPrimarySx: SxProps<Theme> = {
   letterSpacing: '1px',
   textTransform: 'uppercase',
   bgcolor: settingsTheme.accent.hud,
-  color: '#000',
+  color: colors.bg.primary,
   px: 2,
   py: 0.6,
   minHeight: 28,
-  boxShadow: `0 0 12px ${settingsTheme.accent.hud}40`,
-  '&:hover': { bgcolor: '#4a9eff', boxShadow: `0 0 16px ${settingsTheme.accent.hud}55` },
+  boxShadow: `0 0 12px ${alphaColor(settingsTheme.accent.hud, '40')}`,
+  '&:hover': { bgcolor: settingsTheme.accent.hud, boxShadow: `0 0 16px ${alphaColor(settingsTheme.accent.hud, '55')}` },
   '&:disabled': { bgcolor: settingsTheme.border.default, color: settingsTheme.text.dim, boxShadow: 'none' },
 };
 
@@ -193,26 +193,26 @@ export const settingsBtnGhostSx: SxProps<Theme> = {
   fontWeight: 600,
   letterSpacing: '0.5px',
   textTransform: 'uppercase',
-  borderColor: `${settingsTheme.accent.hud}55`,
+  borderColor: `${alphaColor(settingsTheme.accent.hud, '55')}`,
   color: settingsTheme.accent.hud,
   px: 1.5,
   py: 0.5,
   minHeight: 28,
-  '&:hover': { borderColor: settingsTheme.accent.hud, bgcolor: `${settingsTheme.accent.hud}12` },
+  '&:hover': { borderColor: settingsTheme.accent.hud, bgcolor: `${alphaColor(settingsTheme.accent.hud, '12')}` },
 };
 
 export const settingsBtnDangerSx: SxProps<Theme> = {
   ...settingsBtnGhostSx,
-  borderColor: `${settingsTheme.accent.alert}55`,
+  borderColor: `${alphaColor(settingsTheme.accent.alert, '55')}`,
   color: settingsTheme.accent.alert,
-  '&:hover': { borderColor: settingsTheme.accent.alert, bgcolor: `${settingsTheme.accent.alert}12` },
+  '&:hover': { borderColor: settingsTheme.accent.alert, bgcolor: `${alphaColor(settingsTheme.accent.alert, '12')}` },
 };
 
 export const settingsBtnSignalSx: SxProps<Theme> = {
   ...settingsBtnPrimarySx,
   bgcolor: settingsTheme.accent.signal,
-  boxShadow: `0 0 12px ${settingsTheme.accent.signal}40`,
-  '&:hover': { bgcolor: '#4fd068', boxShadow: `0 0 16px ${settingsTheme.accent.signal}55` },
+  boxShadow: `0 0 12px ${alphaColor(settingsTheme.accent.signal, '40')}`,
+  '&:hover': { bgcolor: settingsTheme.accent.signal, boxShadow: `0 0 16px ${alphaColor(settingsTheme.accent.signal, '55')}` },
 };
 
 export function settingsStatusBadgeSx(state: 'active' | 'idle' | 'warn'): SxProps<Theme> {
@@ -227,9 +227,9 @@ export function settingsStatusBadgeSx(state: 'active' | 'idle' | 'warn'): SxProp
     color,
     px: 0.75,
     py: 0.2,
-    border: `1px solid ${color}44`,
+    border: `1px solid ${alphaColor(color, '44')}`,
     borderRadius: '3px',
-    bgcolor: `${color}10`,
+    bgcolor: `${alphaColor(color, '10')}`,
   };
 }
 

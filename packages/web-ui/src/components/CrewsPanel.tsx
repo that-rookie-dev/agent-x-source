@@ -25,6 +25,7 @@ import { CrewProfileDialog } from './crew/CrewProfileDialog';
 import { crewTheme, getCrewAccent } from '../styles/crew-theme';
 import { loadHubCategoryIndex, ensureHubCategoryCrews, prefetchHubCatalog } from '../data/crew-hub/loadHubCatalog';
 
+import { colors, alphaColor } from '../theme';
 const EMOTIONS = ['professional', 'friendly', 'witty', 'kind', 'funny', 'sarcastic', 'arrogant', 'flirty', 'happy', 'sad'] as const;
 
 const SYSTEM_PROMPT_PLACEHOLDER = `You are a [role] specializing in [domain].
@@ -380,7 +381,7 @@ export function CrewsPanel() {
           }}>
             <Box sx={{
               position: 'absolute', inset: 0, opacity: 0.03,
-              backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(94,234,212,0.2) 3px, rgba(94,234,212,0.2) 4px)',
+              backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 3px, ${alphaColor(colors.ink, 0.2)} 3px, ${alphaColor(colors.ink, 0.2)} 4px)`,
             }} />
             <GroupsIcon sx={{ fontSize: 40, color: crewTheme.text.dim, mb: 1.5 }} />
             <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: crewTheme.text.secondary, mb: 0.5, letterSpacing: '1px' }}>
@@ -518,7 +519,7 @@ export function CrewsPanel() {
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
               {EMOTIONS.map((t) => (
                 <Chip key={t} size="small" label={t} onClick={() => setForm({ ...form, tone: t })}
-                  sx={{ fontSize: '0.6rem', cursor: 'pointer', bgcolor: form.tone === t ? crewTheme.accent.purple + '30' : 'transparent', border: `1px solid ${form.tone === t ? crewTheme.accent.purple : crewTheme.border.default}`, color: form.tone === t ? crewTheme.accent.purple : crewTheme.text.secondary, '&:hover': { borderColor: crewTheme.accent.purple + '60', bgcolor: crewTheme.accent.purple + '15' } }} />
+                  sx={{ fontSize: '0.6rem', cursor: 'pointer', bgcolor: form.tone === t ? alphaColor(crewTheme.accent.purple, '30') : 'transparent', border: `1px solid ${form.tone === t ? crewTheme.accent.purple : crewTheme.border.default}`, color: form.tone === t ? crewTheme.accent.purple : crewTheme.text.secondary, '&:hover': { borderColor: alphaColor(crewTheme.accent.purple, '60'), bgcolor: alphaColor(crewTheme.accent.purple, '15') } }} />
               ))}
             </Box>
           </Box>
@@ -546,7 +547,7 @@ export function CrewsPanel() {
             <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1 }}>
               {form.expertise.map((exp) => (
                 <Chip key={exp} size="small" label={exp} onDelete={() => setForm({ ...form, expertise: form.expertise.filter((e) => e !== exp) })}
-                  sx={{ height: 20, fontSize: '0.55rem', bgcolor: crewTheme.accent.hud + '15', color: crewTheme.accent.hud }} />
+                  sx={{ height: 20, fontSize: '0.55rem', bgcolor: alphaColor(crewTheme.accent.hud, '15'), color: crewTheme.accent.hud }} />
               ))}
             </Box>
             <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -562,7 +563,7 @@ export function CrewsPanel() {
                 sx={{ flex: 1, '& .MuiInputBase-root': { height: 28, fontSize: '0.65rem' } }} />
               <Button size="small" variant="outlined" disabled={!expertiseInput.trim()}
                 onClick={() => { setForm({ ...form, expertise: [...form.expertise, expertiseInput.trim()] }); setExpertiseInput(''); }}
-                sx={{ minWidth: 'auto', px: 1, fontSize: '0.6rem', textTransform: 'none', borderColor: crewTheme.accent.hud + '50', color: crewTheme.accent.hud, height: 28 }}>
+                sx={{ minWidth: 'auto', px: 1, fontSize: '0.6rem', textTransform: 'none', borderColor: alphaColor(crewTheme.accent.hud, '50'), color: crewTheme.accent.hud, height: 28 }}>
                 Add
               </Button>
             </Box>
@@ -574,7 +575,7 @@ export function CrewsPanel() {
             <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1 }}>
               {form.traits.map((t) => (
                 <Chip key={t} size="small" label={t} onDelete={() => setForm({ ...form, traits: form.traits.filter((tr) => tr !== t) })}
-                  sx={{ height: 20, fontSize: '0.55rem', bgcolor: crewTheme.accent.purple + '10', color: crewTheme.accent.purple }} />
+                  sx={{ height: 20, fontSize: '0.55rem', bgcolor: alphaColor(crewTheme.accent.purple, '10'), color: crewTheme.accent.purple }} />
               ))}
             </Box>
             <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -590,7 +591,7 @@ export function CrewsPanel() {
                 sx={{ flex: 1, '& .MuiInputBase-root': { height: 28, fontSize: '0.65rem' } }} />
               <Button size="small" variant="outlined" disabled={!traitInput.trim()}
                 onClick={() => { setForm({ ...form, traits: [...form.traits, traitInput.trim()] }); setTraitInput(''); }}
-                sx={{ minWidth: 'auto', px: 1, fontSize: '0.6rem', textTransform: 'none', borderColor: crewTheme.accent.purple + '50', color: crewTheme.accent.purple, height: 28 }}>
+                sx={{ minWidth: 'auto', px: 1, fontSize: '0.6rem', textTransform: 'none', borderColor: alphaColor(crewTheme.accent.purple, '50'), color: crewTheme.accent.purple, height: 28 }}>
                 Add
               </Button>
             </Box>
@@ -599,7 +600,7 @@ export function CrewsPanel() {
         <DialogActions sx={{ px: 2.5, pb: 2, borderTop: `1px solid ${crewTheme.border.subtle}` }}>
           <Button onClick={() => setDialogOpen(false)} sx={{ color: crewTheme.text.dim, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace" }}>CANCEL</Button>
           <Button onClick={handleSave} disabled={busy} variant="contained"
-            sx={{ bgcolor: crewTheme.accent.tactical, color: crewTheme.bg.void, fontSize: '0.7rem', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", px: 2.5, '&:hover': { bgcolor: '#3dbdb5' } }}>
+            sx={{ bgcolor: crewTheme.accent.tactical, color: crewTheme.bg.void, fontSize: '0.7rem', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", px: 2.5, '&:hover': { bgcolor: alphaColor(crewTheme.accent.tactical, 0.85) } }}>
             {busy ? <CircularProgress size={14} sx={{ mr: 1 }} /> : null}
             {isEditing ? 'SAVE' : 'DEPLOY'}
           </Button>
@@ -655,7 +656,7 @@ export function CrewsPanel() {
         <DialogActions sx={{ px: 2.5, pb: 2 }}>
           <Button onClick={() => setDeleteConfirmId(null)} sx={{ color: crewTheme.text.dim, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace" }}>CANCEL</Button>
           <Button onClick={() => deleteConfirmId && handleDelete(deleteConfirmId)} variant="contained" disabled={busy}
-            sx={{ bgcolor: crewTheme.accent.alert, color: '#fff', fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", px: 2.5, '&:hover': { bgcolor: '#e55a3a' } }}>
+            sx={{ bgcolor: crewTheme.accent.alert, color: colors.text.primary, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", px: 2.5, '&:hover': { bgcolor: alphaColor(crewTheme.accent.alert, 0.85) } }}>
             {busy ? <CircularProgress size={14} sx={{ mr: 1 }} /> : null}
             CONFIRM
           </Button>

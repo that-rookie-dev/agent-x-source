@@ -12,7 +12,7 @@ import QueueIcon from '@mui/icons-material/PlaylistAdd';
 import RouteIcon from '@mui/icons-material/Route';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
 import { CrewMentionMenu } from './ChatEnhancements';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import type { Crew } from '../api';
 
 export interface ChatInputBarHandle {
@@ -185,7 +185,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
                 size="small"
                 onClick={handleSendClick}
                 disabled={!canSend}
-                sx={{ color: sendBlocked ? colors.accent.red : colors.accent.blue, p: 0.5, '&.Mui-disabled': { color: sendBlocked ? colors.accent.red + '80' : colors.text.dim } }}
+                sx={{ color: sendBlocked ? colors.accent.red : colors.accent.blue, p: 0.5, '&.Mui-disabled': { color: sendBlocked ? alphaColor(colors.accent.red, '80') : colors.text.dim } }}
               >
                 <SendIcon sx={{ fontSize: 20 }} />
               </IconButton>

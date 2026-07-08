@@ -43,6 +43,7 @@ import {
 import { SettingsSectionHeader } from './settings/SettingsSectionHeader';
 import { ModelBenchmarkRunner, ModelBenchmarkScanner, gradeAllowsAgentX } from './settings/ModelBenchmarkRunner';
 
+import { colors, alphaColor } from '../theme';
 interface ProfileEntry {
   id: string;
   label: string;
@@ -94,16 +95,16 @@ function ProfileDossier({
       bgcolor: settingsTheme.bg.inset,
       border: `1px solid ${isActive ? settingsTheme.border.signal : settingsTheme.border.default}`,
       overflow: 'hidden',
-      boxShadow: isActive ? `0 0 24px ${settingsTheme.accent.signal}15, inset 0 1px 0 ${settingsTheme.accent.signal}22` : 'none',
+      boxShadow: isActive ? `0 0 24px ${alphaColor(settingsTheme.accent.signal, '15')}, inset 0 1px 0 ${alphaColor(settingsTheme.accent.signal, '22')}` : 'none',
       transition: 'border-color 0.2s, box-shadow 0.2s',
       '&:hover': { borderColor: isActive ? settingsTheme.border.signal : settingsTheme.border.hud },
     }}>
       <Box sx={settingsScanlineSx} />
       {/* Corner brackets */}
-      <Box sx={{ position: 'absolute', top: 6, left: 6, width: 8, height: 8, borderTop: `1px solid ${accent}66`, borderLeft: `1px solid ${accent}66`, zIndex: 2 }} />
-      <Box sx={{ position: 'absolute', top: 6, right: 6, width: 8, height: 8, borderTop: `1px solid ${accent}66`, borderRight: `1px solid ${accent}66`, zIndex: 2 }} />
-      <Box sx={{ position: 'absolute', bottom: 6, left: 6, width: 8, height: 8, borderBottom: `1px solid ${accent}44`, borderLeft: `1px solid ${accent}44`, zIndex: 2 }} />
-      <Box sx={{ position: 'absolute', bottom: 6, right: 6, width: 8, height: 8, borderBottom: `1px solid ${accent}44`, borderRight: `1px solid ${accent}44`, zIndex: 2 }} />
+      <Box sx={{ position: 'absolute', top: 6, left: 6, width: 8, height: 8, borderTop: `1px solid ${alphaColor(accent, '66')}`, borderLeft: `1px solid ${alphaColor(accent, '66')}`, zIndex: 2 }} />
+      <Box sx={{ position: 'absolute', top: 6, right: 6, width: 8, height: 8, borderTop: `1px solid ${alphaColor(accent, '66')}`, borderRight: `1px solid ${alphaColor(accent, '66')}`, zIndex: 2 }} />
+      <Box sx={{ position: 'absolute', bottom: 6, left: 6, width: 8, height: 8, borderBottom: `1px solid ${alphaColor(accent, '44')}`, borderLeft: `1px solid ${alphaColor(accent, '44')}`, zIndex: 2 }} />
+      <Box sx={{ position: 'absolute', bottom: 6, right: 6, width: 8, height: 8, borderBottom: `1px solid ${alphaColor(accent, '44')}`, borderRight: `1px solid ${alphaColor(accent, '44')}`, zIndex: 2 }} />
 
       <Box sx={{ p: 2, position: 'relative', zIndex: 1 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 1.25, gap: 1 }}>
@@ -179,7 +180,7 @@ function ProfileDossier({
           sx={{
             ...settingsBtnGhostSx,
             width: '100%',
-            ...(isActive ? {} : { borderColor: `${settingsTheme.accent.signal}44`, color: settingsTheme.accent.signal }),
+            ...(isActive ? {} : { borderColor: `${alphaColor(settingsTheme.accent.signal, '44')}`, color: settingsTheme.accent.signal }),
           }}
         >
           {!isActive && switching ? <CircularProgress size={11} sx={{ mr: 0.75, color: settingsTheme.accent.signal }} /> : null}
@@ -458,7 +459,7 @@ export function ProvidersPanel() {
 
       {error && (
         <Alert severity="error" onClose={() => setError('')}
-          sx={{ mb: 1.5, bgcolor: `${settingsTheme.accent.alert}12`, border: `1px solid ${settingsTheme.accent.alert}33`, fontSize: '0.7rem', ...settingsMonoSx }}>
+          sx={{ mb: 1.5, bgcolor: `${alphaColor(settingsTheme.accent.alert, '12')}`, border: `1px solid ${alphaColor(settingsTheme.accent.alert, '33')}`, fontSize: '0.7rem', ...settingsMonoSx }}>
           {error}
         </Alert>
       )}
@@ -576,7 +577,7 @@ export function ProvidersPanel() {
             Cancel
           </Button>
           <Button onClick={handleAddProfile} variant="contained" disabled={saving} sx={settingsBtnPrimarySx}>
-            {saving ? <CircularProgress size={12} sx={{ mr: 0.75, color: '#000' }} /> : null}
+            {saving ? <CircularProgress size={12} sx={{ mr: 0.75, color: colors.bg.primary }} /> : null}
             Add
           </Button>
         </DialogActions>
@@ -607,7 +608,7 @@ export function ProvidersPanel() {
               </Typography>
             </Box>
           ) : pickerError ? (
-            <Alert severity="error" sx={{ bgcolor: `${settingsTheme.accent.alert}12`, fontSize: '0.7rem', ...settingsMonoSx }}>{pickerError}</Alert>
+            <Alert severity="error" sx={{ bgcolor: `${alphaColor(settingsTheme.accent.alert, '12')}`, fontSize: '0.7rem', ...settingsMonoSx }}>{pickerError}</Alert>
           ) : pickerModels.length === 0 ? (
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.text.dim, py: 2 }}>
               No models available for this provider.
@@ -627,8 +628,8 @@ export function ProvidersPanel() {
                       cursor: 'pointer',
                       overflow: 'hidden',
                       border: `1px solid ${selected ? settingsTheme.accent.hud : settingsTheme.border.default}`,
-                      bgcolor: selected ? `${settingsTheme.accent.hud}18` : settingsTheme.bg.inset,
-                      boxShadow: selected ? `0 0 16px ${settingsTheme.accent.hud}25` : 'none',
+                      bgcolor: selected ? `${alphaColor(settingsTheme.accent.hud, '18')}` : settingsTheme.bg.inset,
+                      boxShadow: selected ? `0 0 16px ${alphaColor(settingsTheme.accent.hud, '25')}` : 'none',
                       transition: 'all 0.15s ease',
                       '&:hover': selected ? {} : { borderColor: settingsTheme.border.hud, bgcolor: settingsTheme.bg.hud },
                     }}
@@ -741,7 +742,7 @@ export function ProvidersPanel() {
                 />
               )}
               {benchmarkResult?.grade === 'STANDBY' && !benchmarkRunning && (
-                <Alert severity="error" sx={{ mt: 1.5, bgcolor: `${settingsTheme.accent.alert}12`, fontSize: '0.65rem', ...settingsMonoSx }}>
+                <Alert severity="error" sx={{ mt: 1.5, bgcolor: `${alphaColor(settingsTheme.accent.alert, '12')}`, fontSize: '0.65rem', ...settingsMonoSx }}>
                   Model not cleared for agentic workloads. Select a different model or re-scan after switching providers.
                 </Alert>
               )}
@@ -766,7 +767,7 @@ export function ProvidersPanel() {
             disabled={!canConfirmModel || switching !== null}
             sx={settingsBtnPrimarySx}
           >
-            {switching ? <CircularProgress size={12} sx={{ mr: 0.75, color: '#000' }} /> : null}
+            {switching ? <CircularProgress size={12} sx={{ mr: 0.75, color: colors.bg.primary }} /> : null}
             Save Model
           </Button>
           )}

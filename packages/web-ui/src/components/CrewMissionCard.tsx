@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { crewTheme } from '../styles/crew-theme';
 import { CrewWorkerPanel, type CrewWorkerState } from './CrewWorkerPanel';
 
+import { alphaColor } from '../theme';
 export interface CrewInterMessage {
   id: string;
   from: string;
@@ -94,7 +95,7 @@ export function CrewMissionCard({
       borderRadius: standalone ? '14px' : '6px',
       bgcolor: crewTheme.bg.card,
       overflow: 'hidden',
-      boxShadow: missionActive ? `0 0 20px ${crewTheme.accent.tactical}10` : 'none',
+      boxShadow: missionActive ? `0 0 20px ${alphaColor(crewTheme.accent.tactical, '10')}` : 'none',
     }}>
       <Box sx={{
         display: 'flex', alignItems: 'center', gap: 0.5,

@@ -8,6 +8,7 @@ import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import CloseIcon from '@mui/icons-material/Close';
 import { crewTheme } from '../styles/crew-theme';
 
+import { alphaColor } from '../theme';
 export interface CrewWorkerState {
   workerId: string;
   crewId: string;
@@ -84,7 +85,7 @@ export function CrewWorkerPanel({ workers, missionActive, embedded, onViewWorker
               )}
               <Box sx={{
                 width: 5, height: 5, borderRadius: '50%', bgcolor: c, flexShrink: 0,
-                boxShadow: isRunning ? `0 0 6px ${c}80` : 'none',
+                boxShadow: isRunning ? `0 0 6px ${alphaColor(c, '80')}` : 'none',
               }} />
               <Typography sx={{
                 fontSize: '0.58rem', fontFamily: "'JetBrains Mono', monospace",

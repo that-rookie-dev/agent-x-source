@@ -8,7 +8,7 @@ import Chip from '@mui/material/Chip';
 import Tooltip from '@mui/material/Tooltip';
 import { PanelHeader } from './PanelHeader';
 import { ragStudio, type IngestionJob, type IngestStreamEvent } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import LinkIcon from '@mui/icons-material/Link';
@@ -90,11 +90,11 @@ interface TrackedJob {
 const ACCEPTED_EXTS = '.pdf,.txt,.md,.markdown,.json,.html,.htm';
 
 const KIND_COLOR: Record<string, string> = {
-  pdf: '#f85149',
-  text: '#58a6ff',
-  markdown: '#d29922',
-  json: '#3fb950',
-  web: '#bc8cff',
+  pdf: colors.accent.red,
+  text: colors.accent.blue,
+  markdown: colors.accent.orange,
+  json: colors.accent.green,
+  web: colors.accent.purple,
 };
 
 // ─── Main Panel ───
@@ -114,7 +114,9 @@ export function RagStudioPanel() {
 
   // 1Hz clock to drive ETA / elapsed readouts
   useEffect(() => {
-    const t = setInterval(() => setClock(Date.now()), 1000);
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') setClock(Date.now());
+    }, 1000);
     return () => clearInterval(t);
   }, []);
 
@@ -373,7 +375,7 @@ export function RagStudioPanel() {
         action={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             {activeCount > 0 && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.25, border: `1px solid ${colors.accent.blue}40`, borderRadius: 0.5, bgcolor: colors.accent.blue + '08' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.25, border: `1px solid ${alphaColor(colors.accent.blue, '40')}`, borderRadius: 0.5, bgcolor: alphaColor(colors.accent.blue, '08') }}>
                 <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: colors.accent.blue, animation: 'ragPulse 1s ease-in-out infinite' }} />
                 <Typography sx={{ fontSize: '0.6rem', color: colors.accent.blue, fontFamily: "'JetBrains Mono', monospace", letterSpacing: 1 }}>
                   {activeCount} ACTIVE
@@ -468,7 +470,7 @@ export function RagStudioPanel() {
             />
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
               <Button size="small" variant="contained" onClick={handleIngestText} disabled={!textInput.trim()}
-                sx={{ bgcolor: colors.accent.blue, fontSize: '0.6rem', textTransform: 'none', fontFamily: "'JetBrains Mono', monospace", '&:hover': { bgcolor: colors.accent.blue + 'cc' } }}>
+                sx={{ bgcolor: colors.accent.blue, fontSize: '0.6rem', textTransform: 'none', fontFamily: "'JetBrains Mono', monospace", '&:hover': { bgcolor: alphaColor(colors.accent.blue, 'cc') } }}>
                 INGEST TEXT
               </Button>
             </Box>
@@ -540,9 +542,9 @@ function TacticalDropZone({ dragOver, onClick }: { dragOver: boolean; onClick: (
         textAlign: 'center',
         cursor: 'pointer',
         transition: 'all 0.2s ease',
-        bgcolor: dragOver ? colors.accent.blue + '08' : colors.bg.tertiary,
+        bgcolor: dragOver ? alphaColor(colors.accent.blue, '08') : colors.bg.tertiary,
         overflow: 'hidden',
-        '&:hover': { borderColor: colors.accent.blue + '80', bgcolor: colors.accent.blue + '04' },
+        '&:hover': { borderColor: alphaColor(colors.accent.blue, '80'), bgcolor: alphaColor(colors.accent.blue, '04') },
       }}
     >
       {/* Corner brackets */}
@@ -555,7 +557,7 @@ function TacticalDropZone({ dragOver, onClick }: { dragOver: boolean; onClick: (
       {dragOver && (
         <Box sx={{
           position: 'absolute', left: 0, right: 0, top: 0, height: '40%',
-          background: `linear-gradient(180deg, ${colors.accent.blue}15, transparent)`,
+          background: `linear-gradient(180deg, ${alphaColor(colors.accent.blue, '15')}, transparent)`,
           animation: 'ragScan 1.4s linear infinite', pointerEvents: 'none',
         }} />
       )}
@@ -630,7 +632,7 @@ function IngestionMonitor({ job, clock, onClose, onCancel, onDelete }: { job: Tr
   return (
     <Box sx={{
       position: 'relative',
-      border: `1px solid ${statusColor}40`,
+      border: `1px solid ${alphaColor(statusColor, '40')}`,
       borderRadius: 0.5,
       bgcolor: colors.bg.secondary,
       overflow: 'hidden',
@@ -654,12 +656,12 @@ function IngestionMonitor({ job, clock, onClose, onCancel, onDelete }: { job: Tr
         <Chip
           size="small"
           label={job.kind.toUpperCase()}
-          sx={{ fontSize: '0.5rem', height: 16, fontFamily: "'JetBrains Mono', monospace", color: KIND_COLOR[job.kind] ?? colors.text.dim, bgcolor: (KIND_COLOR[job.kind] ?? colors.text.dim) + '15', border: `1px solid ${(KIND_COLOR[job.kind] ?? colors.text.dim)}30` }}
+          sx={{ fontSize: '0.5rem', height: 16, fontFamily: "'JetBrains Mono', monospace", color: KIND_COLOR[job.kind] ?? colors.text.dim, bgcolor: alphaColor((KIND_COLOR[job.kind] ?? colors.text.dim), '15'), border: `1px solid ${alphaColor((KIND_COLOR[job.kind] ?? colors.text.dim), '30')}` }}
         />
         <Chip
           size="small"
           label={job.status.toUpperCase()}
-          sx={{ fontSize: '0.5rem', height: 16, fontFamily: "'JetBrains Mono', monospace", color: statusColor, bgcolor: statusColor + '15', border: `1px solid ${statusColor}30` }}
+          sx={{ fontSize: '0.5rem', height: 16, fontFamily: "'JetBrains Mono', monospace", color: statusColor, bgcolor: alphaColor(statusColor, '15'), border: `1px solid ${alphaColor(statusColor, '30')}` }}
         />
         {isActive && (
           <Tooltip title="Cancel job">
@@ -709,7 +711,7 @@ function IngestionMonitor({ job, clock, onClose, onCancel, onDelete }: { job: Tr
               height: '100%', width: `${job.progress}%`, bgcolor: statusColor,
               transition: 'width 0.4s ease',
               ...(isActive ? {
-                backgroundImage: `repeating-linear-gradient(45deg, ${statusColor} 0 8px, ${statusColor}cc 8px 16px)`,
+                backgroundImage: `repeating-linear-gradient(45deg, ${statusColor} 0 8px, ${alphaColor(statusColor, 'cc')} 8px 16px)`,
                 backgroundSize: '16px 16px',
                 animation: 'ragMarch 0.6s linear infinite',
               } : {}),
@@ -781,15 +783,15 @@ function StagePipeline({ job, currentKey, statusColor }: { job: TrackedJob; curr
           <Box key={stage.key} sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <Box sx={{
               position: 'relative',
-              border: `1px solid ${isCurrent || isComplete ? color + '60' : colors.border.default}`,
+              border: `1px solid ${isCurrent || isComplete ? alphaColor(color, '60') : colors.border.default}`,
               borderRadius: 0.5,
               p: 0.75,
               minHeight: 62,
               display: 'flex',
               flexDirection: 'column',
-              bgcolor: isCurrent ? color + '0a' : isComplete ? color + '06' : colors.bg.tertiary,
+              bgcolor: isCurrent ? alphaColor(color, '0a') : isComplete ? alphaColor(color, '06') : colors.bg.tertiary,
               transition: 'all 0.25s ease',
-              ...(isCurrent ? { boxShadow: `0 0 12px ${color}30, inset 0 0 8px ${color}10` } : {}),
+              ...(isCurrent ? { boxShadow: `0 0 12px ${alphaColor(color, '30')}, inset 0 0 8px ${alphaColor(color, '10')}` } : {}),
             }}>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.25 }}>
                 <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
@@ -861,7 +863,7 @@ function LogStream({ job }: { job: TrackedJob }) {
     return (
       <Box sx={{
         height: 120, overflow: 'auto', p: 1, borderRadius: 0.5,
-        border: `1px solid ${colors.border.default}`, bgcolor: '#000',
+        border: `1px solid ${colors.border.default}`, bgcolor: colors.bg.primary,
         fontFamily: "'JetBrains Mono', monospace",
       }}>
         <Typography sx={{ fontSize: '0.58rem', color: colors.text.dim }}>
@@ -874,7 +876,7 @@ function LogStream({ job }: { job: TrackedJob }) {
   return (
     <Box sx={{
       height: 120, overflow: 'auto', p: 1, borderRadius: 0.5,
-      border: `1px solid ${colors.border.default}`, bgcolor: '#000',
+      border: `1px solid ${colors.border.default}`, bgcolor: colors.bg.primary,
       fontFamily: "'JetBrains Mono', monospace",
     }}>
       {job.log.map((entry, i) => {
@@ -908,8 +910,8 @@ function JobRow({ job, selected, onSelect, onCancel, onDelete }: { job: TrackedJ
       onClick={onSelect}
       sx={{
         p: 1, borderRadius: 0.5, cursor: 'pointer',
-        border: `1px solid ${selected ? statusColor + '60' : colors.border.default}`,
-        bgcolor: selected ? statusColor + '06' : colors.bg.tertiary,
+        border: `1px solid ${selected ? alphaColor(statusColor, '60') : colors.border.default}`,
+        bgcolor: selected ? alphaColor(statusColor, '06') : colors.bg.tertiary,
         transition: 'all 0.15s',
         '&:hover': { borderColor: colors.border.strong },
       }}

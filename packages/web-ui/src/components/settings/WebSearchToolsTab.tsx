@@ -27,6 +27,7 @@ import {
 import { SettingsSectionHeader } from './SettingsSectionHeader';
 import { SettingsCard } from './SettingsCard';
 
+import { alphaColor } from '../../theme';
 export interface WebSearchToolsTabProps {
   value: WebSearchToolsConfig;
   onChange: (next: WebSearchToolsConfig) => void;
@@ -256,7 +257,7 @@ function SearchProviderCard({
                 size="small"
                 disabled={testing}
                 onClick={onTest}
-                sx={{ ...settingsBtnGhostSx, borderColor: `${meta.accent}55`, color: meta.accent }}
+                sx={{ ...settingsBtnGhostSx, borderColor: `${alphaColor(meta.accent, '55')}`, color: meta.accent }}
                 variant="outlined"
               >
                 {testing ? <CircularProgress size={14} /> : 'Test key'}
@@ -289,7 +290,7 @@ function SearchProviderCard({
                   size="small"
                   disabled={!draftKey.trim()}
                   onClick={saveDraftKey}
-                  sx={{ ...settingsBtnGhostSx, borderColor: `${meta.accent}55`, color: meta.accent }}
+                  sx={{ ...settingsBtnGhostSx, borderColor: `${alphaColor(meta.accent, '55')}`, color: meta.accent }}
                   variant="outlined"
                 >
                   Save key
@@ -352,8 +353,8 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
       {!hasSearchProvider && (
         <Box sx={{
           mb: 1.5, p: 1.5, borderRadius: '6px',
-          border: `1px dashed ${settingsTheme.accent.alert}55`,
-          bgcolor: `${settingsTheme.accent.alert}08`,
+          border: `1px dashed ${alphaColor(settingsTheme.accent.alert, '55')}`,
+          bgcolor: `${alphaColor(settingsTheme.accent.alert, '08')}`,
         }}>
           <Typography sx={{ fontSize: '0.65rem', color: settingsTheme.accent.alert, ...settingsMonoSx }}>
             No search providers active. Enable DuckDuckGo or configure a paid provider below.

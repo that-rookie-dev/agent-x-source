@@ -21,6 +21,7 @@ import { integrations } from '../../../api';
 import { settingsTheme, settingsMonoSx, settingsTextFieldSx } from '../../../styles/settings-theme';
 import { copyToClipboard } from '../../../utils/clipboard';
 
+import { alphaColor } from '../../../theme';
 export interface ProviderSetupWizardProps {
   provider: IntegrationProvider;
   onConnect: (request: ConnectIntegrationRequest) => Promise<IntegrationConnection>;
@@ -371,7 +372,7 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
                 </Box>
               ))}
               {oauthRedirectUri && (
-                <Box sx={{ mb: 1.5, p: 1, borderRadius: 1, border: `1px solid ${settingsTheme.accent.hud}33`, bgcolor: `${settingsTheme.accent.hud}0a` }}>
+                <Box sx={{ mb: 1.5, p: 1, borderRadius: 1, border: `1px solid ${alphaColor(settingsTheme.accent.hud, '33')}`, bgcolor: `${alphaColor(settingsTheme.accent.hud, '0a')}` }}>
                   <Typography sx={{ fontSize: '0.68rem', fontWeight: 600, color: settingsTheme.text.primary, mb: 0.5 }}>
                     Authorized redirect URI
                   </Typography>

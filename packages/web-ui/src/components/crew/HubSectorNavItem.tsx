@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import { keyframes } from '@mui/material/styles';
 import { crewTheme } from '../../styles/crew-theme';
+import { alphaColor } from '../../theme';
 
 interface HubSectorNavItemProps {
   label: string;
@@ -58,7 +59,7 @@ export function HubSectorNavItem({ label, icon, selected, onClick }: HubSectorNa
         color: selected ? crewTheme.bg.void : crewTheme.text.secondary,
         bgcolor: selected ? crewTheme.text.primary : 'transparent',
         '&:hover': {
-          bgcolor: selected ? '#e0e0e0' : crewTheme.bg.cardHover,
+          bgcolor: selected ? alphaColor(crewTheme.text.primary, 0.85) : crewTheme.bg.cardHover,
         },
       }}
     >

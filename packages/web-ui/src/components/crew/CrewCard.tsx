@@ -14,6 +14,7 @@ import { SkillChips } from './SkillChips';
 import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
 import { crewDisplayFields } from '../../utils/crew-display';
 
+import { alphaColor } from '../../theme';
 interface CrewCardProps {
   crew: Crew;
   regenerating: boolean;
@@ -138,7 +139,7 @@ export function CrewCard({
                 size="small"
                 disabled={privateChatLoading}
                 onClick={(e) => { e.stopPropagation(); onPrivateChat(crew); }}
-                sx={{ p: 0.35, color: accent, '&:hover': { color: crewTheme.text.primary, bgcolor: accent + '15' } }}
+                sx={{ p: 0.35, color: accent, '&:hover': { color: crewTheme.text.primary, bgcolor: alphaColor(accent, '15') } }}
               >
                 {privateChatLoading ? <CircularProgress size={12} /> : <ForumIcon sx={{ fontSize: 14 }} />}
               </IconButton>

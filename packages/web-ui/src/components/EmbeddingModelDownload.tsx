@@ -12,8 +12,16 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import { embeddingModels, config as configApi } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor, resolveColor } from '../theme';
 import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
+
+/** Convert a resolved hex color to "r, g, b" channels for canvas rgba() templates. */
+function hexToRgbChannels(hex: string): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full, 16);
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+}
 
 // ── Sci-fi status messages (rotate every 3% progress, non-repeating) ────────
 const STATUS_MESSAGES = [
@@ -95,6 +103,8 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
     if (!ctx) return;
 
     let raf = 0;
+    const starRgb = hexToRgbChannels(resolveColor(colors.accent.blue));
+    const fadeRgb = hexToRgbChannels(resolveColor(colors.bg.primary));
     const stars: Array<{ x: number; y: number; z: number; size: number; speed: number; opacity: number }> = [];
     const STAR_COUNT = 120;
 
@@ -117,7 +127,7 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
     }
 
     const animate = () => {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+      ctx.fillStyle = `rgba(${fadeRgb}, 0.15)`;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       for (const star of stars) {
@@ -127,7 +137,7 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
           star.x = Math.random() * canvas.width;
         }
         const twinkle = 0.7 + 0.3 * Math.sin(Date.now() * 0.001 + star.x);
-        ctx.fillStyle = `rgba(88, 166, 255, ${star.opacity * twinkle})`;
+        ctx.fillStyle = `rgba(${starRgb}, ${star.opacity * twinkle})`;
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
         ctx.fill();
@@ -245,14 +255,14 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
   }
 
   return (
-    <Box sx={{ position: 'relative', width: '100%', minHeight: 420, overflow: 'hidden', borderRadius: 1, bgcolor: '#000', border: `1px solid ${colors.border.default}` }}>
+    <Box sx={{ position: 'relative', width: '100%', minHeight: 420, overflow: 'hidden', borderRadius: 1, bgcolor: colors.bg.primary, border: `1px solid ${colors.border.default}` }}>
       {/* Starfield canvas background */}
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.6 }} />
 
       {/* Grid overlay */}
       <Box sx={{
         position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 1,
-        backgroundImage: `linear-gradient(rgba(88,166,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(88,166,255,0.03) 1px, transparent 1px)`,
+        backgroundImage: `linear-gradient(${alphaColor(colors.accent.blue, 0.03)} 1px, transparent 1px), linear-gradient(90deg, ${alphaColor(colors.accent.blue, 0.03)} 1px, transparent 1px)`,
         backgroundSize: '40px 40px',
       }} />
 
@@ -283,7 +293,7 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
             fontSize: '2.5rem',
             fontWeight: 700,
             color: allComplete ? colors.accent.green : hasError ? colors.accent.red : colors.accent.blue,
-            textShadow: allComplete ? `0 0 20px ${colors.accent.green}80` : hasError ? `0 0 20px ${colors.accent.red}80` : `0 0 20px ${colors.accent.blue}80`,
+            textShadow: allComplete ? `0 0 20px ${alphaColor(colors.accent.green, '80')}` : hasError ? `0 0 20px ${alphaColor(colors.accent.red, '80')}` : `0 0 20px ${alphaColor(colors.accent.blue, '80')}`,
             transition: 'all 0.3s',
             lineHeight: 1,
           }}>
@@ -355,7 +365,7 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
             disabled={!allComplete || hasError}
             sx={{
               bgcolor: allComplete ? colors.accent.green : colors.bg.tertiary,
-              color: allComplete ? '#000' : colors.text.dim,
+              color: allComplete ? colors.bg.primary : colors.text.dim,
               fontWeight: 700,
               px: 4,
               py: 1,
@@ -364,11 +374,11 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
               letterSpacing: 1,
               textTransform: 'uppercase',
               borderRadius: 1,
-              boxShadow: allComplete ? `0 0 20px ${colors.accent.green}40` : 'none',
+              boxShadow: allComplete ? `0 0 20px ${alphaColor(colors.accent.green, '40')}` : 'none',
               transition: 'all 0.3s',
               '&:hover': allComplete ? {
                 bgcolor: colors.accent.green,
-                boxShadow: `0 0 30px ${colors.accent.green}60`,
+                boxShadow: `0 0 30px ${alphaColor(colors.accent.green, '60')}`,
               } : {},
             }}
           >
@@ -420,7 +430,7 @@ function ModelProgressBar({ model }: { model: ModelProgressState }) {
       <Box sx={{
         position: 'relative',
         height: 8,
-        bgcolor: 'rgba(255,255,255,0.05)',
+        bgcolor: alphaColor(colors.ink, 0.05),
         borderRadius: 1,
         overflow: 'hidden',
         border: `1px solid ${colors.border.subtle}`,
@@ -428,10 +438,10 @@ function ModelProgressBar({ model }: { model: ModelProgressState }) {
         <Box sx={{
           height: '100%',
           width: `${model.percentage}%`,
-          background: `linear-gradient(90deg, ${barColor}40, ${barColor})`,
+          background: `linear-gradient(90deg, ${alphaColor(barColor, '40')}, ${barColor})`,
           borderRadius: 1,
           transition: 'width 0.5s ease-out',
-          boxShadow: isDownloading ? `0 0 12px ${barColor}60` : 'none',
+          boxShadow: isDownloading ? `0 0 12px ${alphaColor(barColor, '60')}` : 'none',
         }} />
         {/* Animated shimmer overlay while downloading */}
         {isDownloading && (
@@ -441,7 +451,7 @@ function ModelProgressBar({ model }: { model: ModelProgressState }) {
             left: 0,
             height: '100%',
             width: '30%',
-            background: `linear-gradient(90deg, transparent, ${barColor}30, transparent)`,
+            background: `linear-gradient(90deg, transparent, ${alphaColor(barColor, '30')}, transparent)`,
             animation: 'shimmer 1.5s infinite linear',
             '@keyframes shimmer': {
               '0%': { transform: 'translateX(-100%)' },

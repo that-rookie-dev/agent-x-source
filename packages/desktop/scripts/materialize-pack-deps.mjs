@@ -5,6 +5,14 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  assertNativePostgres,
+  findInPnpmStore,
+  requiredEmbeddedPackages,
+  resolveTargetArch,
+  resolveTargetPlatform,
+  syncDarwinEmbeddedExtensions,
+} from './embedded-postgres-pack.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = join(scriptDir, '..');
@@ -44,23 +52,6 @@ function removeExtensionStaging(workDir) {
   }
 }
 
-function storeEntryPrefix(pkgName) {
-  return pkgName.startsWith('@') ? `${pkgName.replace('/', '+')}@` : `${pkgName}@`;
-}
-
-function findInPnpmStore(pkgName) {
-  if (!existsSync(pnpmStoreDir)) return null;
-  const prefix = storeEntryPrefix(pkgName);
-  for (const entry of readdirSync(pnpmStoreDir)) {
-    if (!entry.startsWith(prefix)) continue;
-    const src = pkgName.startsWith('@')
-      ? join(pnpmStoreDir, entry, 'node_modules', ...pkgName.split('/'))
-      : join(pnpmStoreDir, entry, 'node_modules', pkgName);
-    if (existsSync(src)) return src;
-  }
-  return null;
-}
-
 function materializePath(destPath, sourcePath) {
   if (!existsSync(sourcePath)) return;
   const resolved = realpathSync(sourcePath);
@@ -82,10 +73,12 @@ function materializeDistPackage(scopeDir, pkgName, sourceRoot) {
   log(`materialized @agentx/${pkgName} (dist only)`);
 }
 
-function materializePackageFromStore(pkgName) {
-  const src = findInPnpmStore(pkgName);
+function materializePackageFromStore(pkgName, { required = false } = {}) {
+  const src = findInPnpmStore(pnpmStoreDir, pkgName);
   if (!src) {
-    log(`warn: could not find ${pkgName} in pnpm store`);
+    const message = `could not find ${pkgName} in pnpm store`;
+    if (required) throw new Error(`materialize-pack-deps: ${message}`);
+    log(`warn: ${message}`);
     return;
   }
   const dest = pkgName.startsWith('@')
@@ -115,6 +108,39 @@ function materializeSymlinksIn(dir) {
   }
 }
 
+function materializeEmbeddedPostgres() {
+  const platform = resolveTargetPlatform();
+  const arch = resolveTargetArch();
+  const packages = requiredEmbeddedPackages(platform, arch);
+  log(`target ${platform}/${arch} — materializing ${packages.join(', ') || '(none)'}`);
+
+  for (const pkg of packages) {
+    materializePackageFromStore(pkg, { required: true });
+  }
+
+  const embeddedScope = join(desktopNodeModules, '@embedded-postgres');
+  if (existsSync(embeddedScope)) {
+    for (const entry of readdirSync(embeddedScope)) {
+      materializePath(join(embeddedScope, entry), join(embeddedScope, entry));
+    }
+  }
+
+  materializePath(
+    join(desktopNodeModules, 'embedded-postgres'),
+    join(desktopNodeModules, 'embedded-postgres'),
+  );
+
+  if (platform === 'darwin') {
+    syncDarwinEmbeddedExtensions(desktopNodeModules);
+    log('synced macOS extension artifacts into darwin-x64 tree');
+  }
+
+  for (const pkg of packages) {
+    assertNativePostgres(desktopNodeModules, pkg, platform === 'win32' ? 'win32' : platform);
+  }
+  log(`verified embedded PostgreSQL binaries for ${packages.join(', ')}`);
+}
+
 function main() {
   removeExtensionStaging(join(runtimeDir, '.pgvector-build'));
   removeExtensionStaging(join(desktopDir, '.pgvector-build'));
@@ -130,15 +156,7 @@ function main() {
     log('removed stale @agentx/shared (bundled in @agentx/runtime dist)');
   }
   materializePgTree();
-
-  const embeddedScope = join(desktopNodeModules, '@embedded-postgres');
-  if (existsSync(embeddedScope)) {
-    for (const entry of readdirSync(embeddedScope)) {
-      materializePath(join(embeddedScope, entry), join(embeddedScope, entry));
-    }
-  }
-
-  materializePath(join(desktopNodeModules, 'embedded-postgres'), join(desktopNodeModules, 'embedded-postgres'));
+  materializeEmbeddedPostgres();
   materializePackageFromStore('electron-updater');
   materializeSymlinksIn(desktopNodeModules);
   log('done');

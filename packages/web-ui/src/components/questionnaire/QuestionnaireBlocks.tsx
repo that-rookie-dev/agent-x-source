@@ -1,6 +1,6 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 import type {
   QuestionnaireQuestion,
   QuestionnaireResponseState,
@@ -43,7 +43,7 @@ function CheckMark({ checked }: { checked: boolean }) {
       height: 14,
       borderRadius: 3,
       border: `1.5px solid ${checked ? colors.accent.blue : colors.border.default}`,
-      bgcolor: checked ? `${colors.accent.blue}22` : 'transparent',
+      bgcolor: checked ? `${alphaColor(colors.accent.blue, '22')}` : 'transparent',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -155,8 +155,8 @@ function ChoiceList({
               borderRadius: '8px',
               cursor: isDisabled ? 'not-allowed' : 'pointer',
               opacity: isDisabled ? 0.45 : 1,
-              bgcolor: focused || checked ? `${colors.accent.blue}10` : 'transparent',
-              border: `1px solid ${focused && !isDisabled ? colors.accent.blue + '50' : 'transparent'}`,
+              bgcolor: focused || checked ? `${alphaColor(colors.accent.blue, '10')}` : 'transparent',
+              border: `1px solid ${focused && !isDisabled ? alphaColor(colors.accent.blue, '50') : 'transparent'}`,
             }}
           >
             {mode === 'single' ? <RadioMark checked={checked} /> : <CheckMark checked={checked} />}

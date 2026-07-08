@@ -9,7 +9,7 @@ import FolderIcon from '@mui/icons-material/Folder';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import HomeIcon from '@mui/icons-material/Home';
 import { system } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 interface Props {
   open: boolean;
@@ -72,7 +72,7 @@ export function FolderPickerModal({ open, onSelect, onCancel }: Props) {
             ) : (
               dirs.map((d) => (
                 <ListItemButton key={d.path} onClick={() => loadDirs(d.path)} sx={{ borderRadius: 1, mb: 0.25 }}>
-                  <FolderIcon sx={{ fontSize: 16, mr: 1, color: colors.accent.blue + '80' }} />
+                  <FolderIcon sx={{ fontSize: 16, mr: 1, color: alphaColor(colors.accent.blue, '80') }} />
                   <Typography sx={{ fontSize: '0.7rem', color: colors.text.primary }}>{d.name}</Typography>
                 </ListItemButton>
               ))
@@ -83,7 +83,7 @@ export function FolderPickerModal({ open, onSelect, onCancel }: Props) {
         <Box sx={{ px: 2, py: 1, borderTop: `1px solid ${colors.border.default}`, display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
           <Button size="small" onClick={onCancel} sx={{ fontSize: '0.65rem', color: colors.text.dim, textTransform: 'none' }}>Cancel</Button>
           <Button size="small" variant="contained" onClick={() => onSelect(currentPath)}
-            sx={{ fontSize: '0.65rem', textTransform: 'none', bgcolor: colors.accent.blue, '&:hover': { bgcolor: colors.accent.blue + 'cc' } }}>
+            sx={{ fontSize: '0.65rem', textTransform: 'none', bgcolor: colors.accent.blue, '&:hover': { bgcolor: alphaColor(colors.accent.blue, 'cc') } }}>
             Select Folder
           </Button>
         </Box>

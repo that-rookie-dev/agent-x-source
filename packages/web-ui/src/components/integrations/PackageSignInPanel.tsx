@@ -8,6 +8,7 @@ import type { IntegrationConnection, IntegrationProvider } from '../../api';
 import { integrations } from '../../api';
 import { settingsTheme, settingsMonoSx } from '../../styles/settings-theme';
 import { providerPackageSignIn } from './integration-ui';
+import { alphaColor } from '../../theme';
 import {
   checkPackageSignInStatus,
   isNotConnectedResult,
@@ -206,9 +207,9 @@ export function PackageSignInPanel({
               height: 22,
               fontSize: '0.62rem',
               fontWeight: 600,
-              bgcolor: `${settingsTheme.accent.signal}22`,
+              bgcolor: `${alphaColor(settingsTheme.accent.signal, '22')}`,
               color: settingsTheme.accent.signal,
-              border: `1px solid ${settingsTheme.accent.signal}55`,
+              border: `1px solid ${alphaColor(settingsTheme.accent.signal, '55')}`,
               ...settingsMonoSx,
             }}
           />

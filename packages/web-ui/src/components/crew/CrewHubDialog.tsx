@@ -26,6 +26,7 @@ import { HubSectorNavItem } from './HubSectorNavItem';
 import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
 import { crewCallsignsMatch, crewDisplayFields } from '../../utils/crew-display';
 
+import { alphaColor } from '../../theme';
 export interface PrebuiltCrew {
   catalogId?: string;
   categoryId?: string;
@@ -211,9 +212,9 @@ export function CrewHubDialog({
   const chatIconButtonSx = (accentColor: string) => ({
     width: 28, height: 28, flexShrink: 0,
     borderRadius: '6px',
-    border: `1px solid ${accentColor}50`,
+    border: `1px solid ${alphaColor(accentColor, '50')}`,
     color: accentColor,
-    '&:hover': { borderColor: accentColor, bgcolor: `${accentColor}12` },
+    '&:hover': { borderColor: accentColor, bgcolor: `${alphaColor(accentColor, '12')}` },
   });
 
   const handleClose = () => {
@@ -546,7 +547,7 @@ export function CrewHubDialog({
                         fontSize: '0.62rem', fontFamily: "'JetBrains Mono', monospace",
                         letterSpacing: '0.5px', py: 0.4, minHeight: 28,
                         borderColor: crewTheme.border.danger, color: crewTheme.accent.alert,
-                        '&:hover': { borderColor: crewTheme.accent.alert, bgcolor: 'rgba(248,81,73,0.08)' },
+                        '&:hover': { borderColor: crewTheme.accent.alert, bgcolor: alphaColor(crewTheme.accent.alert, 0.08) },
                       }}>
                       DEACTIVATE
                     </Button>

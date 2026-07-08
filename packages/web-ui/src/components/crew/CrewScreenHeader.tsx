@@ -4,6 +4,7 @@ import HubIcon from '@mui/icons-material/Hub';
 import AddIcon from '@mui/icons-material/Add';
 import GroupsIcon from '@mui/icons-material/Groups';
 import { crewTheme } from '../../styles/crew-theme';
+import { alphaColor } from '../../theme';
 import { PanelHeader } from '../PanelHeader';
 
 interface CrewScreenHeaderProps {
@@ -51,7 +52,7 @@ export function CrewScreenHeader({ crewCount, activeCount, onOpenHub, onCreate }
               letterSpacing: '0.5px',
               fontWeight: 700,
               px: 1.25, py: 0.5, minHeight: 30,
-              '&:hover': { bgcolor: '#e0e0e0' },
+              '&:hover': { bgcolor: alphaColor(crewTheme.text.primary, 0.85) },
             }}
           >
             RECRUIT

@@ -26,6 +26,7 @@ import BugReportIcon from '@mui/icons-material/BugReport';
 import CodeIcon from '@mui/icons-material/Code';
 import { settingsTheme } from '../../styles/settings-theme';
 
+import { alphaColor } from '../../theme';
 const ICON_MAP: Record<string, typeof HubIcon> = {
   hub: HubIcon,
   github: CodeIcon,
@@ -87,8 +88,8 @@ export function ProviderIcon({ icon, size = 40, accent }: ProviderIconProps) {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      bgcolor: `${color}18`,
-      border: `1px solid ${color}33`,
+      bgcolor: `${alphaColor(color, '18')}`,
+      border: `1px solid ${alphaColor(color, '33')}`,
       flexShrink: 0,
     }}>
       <Icon sx={{ fontSize: size * 0.5, color }} />

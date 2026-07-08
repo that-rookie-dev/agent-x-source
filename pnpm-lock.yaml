@@ -57,16 +57,6 @@ importers:
       '@agentx/runtime':
         specifier: workspace:*
         version: link:../runtime
-      electron-updater:
-        specifier: ^6.0.0
-        version: 6.8.3
-      embedded-postgres:
-        specifier: 17.5.0-beta.15
-        version: 17.5.0-beta.15
-      pg:
-        specifier: ^8.21.0
-        version: 8.21.0
-    optionalDependencies:
       '@embedded-postgres/darwin-arm64':
         specifier: 17.5.0-beta.15
         version: 17.5.0-beta.15
@@ -82,6 +72,15 @@ importers:
       '@embedded-postgres/windows-x64':
         specifier: 17.5.0-beta.15
         version: 17.5.0-beta.15
+      electron-updater:
+        specifier: ^6.0.0
+        version: 6.8.3
+      embedded-postgres:
+        specifier: 17.5.0-beta.15
+        version: 17.5.0-beta.15
+      pg:
+        specifier: ^8.21.0
+        version: 8.21.0
     devDependencies:
       '@electron/rebuild':
         specifier: ^4.0.4
@@ -222,13 +221,6 @@ importers:
       '@agentx/shared':
         specifier: workspace:*
         version: link:../shared
-      embedded-postgres:
-        specifier: 17.5.0-beta.15
-        version: 17.5.0-beta.15
-      pg:
-        specifier: ^8.21.0
-        version: 8.21.0
-    optionalDependencies:
       '@embedded-postgres/darwin-arm64':
         specifier: 17.5.0-beta.15
         version: 17.5.0-beta.15
@@ -244,6 +236,12 @@ importers:
       '@embedded-postgres/windows-x64':
         specifier: 17.5.0-beta.15
         version: 17.5.0-beta.15
+      embedded-postgres:
+        specifier: 17.5.0-beta.15
+        version: 17.5.0-beta.15
+      pg:
+        specifier: ^8.21.0
+        version: 8.21.0
     devDependencies:
       '@types/node':
         specifier: ^25.9.1
@@ -697,19 +695,16 @@ packages:
   '@embedded-postgres/darwin-arm64@17.5.0-beta.15':
     resolution: {integrity: sha512-pTtVdnRHKhrBIDpAvaPwFSRymUKFvPRdTfZwAPLxnTsdA6T//vCTTmgq87Cwqs1ET/LVaggpSChAeabtgAXzew==}
     engines: {node: '>=16'}
-    cpu: [arm64]
     os: [darwin]
 
   '@embedded-postgres/darwin-x64@17.5.0-beta.15':
     resolution: {integrity: sha512-GNQPnpfzQlrrABH6f15+GY32A6ucKxxUXqJjLqpDd6cUekJqytNdjLbkLF3OjXGgmFk7dg6eqw1yb5ZVP0zwcQ==}
     engines: {node: '>=16'}
-    cpu: [x64]
     os: [darwin]
 
   '@embedded-postgres/linux-arm64@17.5.0-beta.15':
     resolution: {integrity: sha512-ikakI9rBRl8xt85xgk38OTB3fCrsI7lJy4ZQLITTkrjNI7Fv75hTLPP9xTpVJ20Mbd0WDytPtRD4Tz0e4449tQ==}
     engines: {node: '>=16'}
-    cpu: [arm64]
     os: [linux]
 
   '@embedded-postgres/linux-arm@17.5.0-beta.15':
@@ -733,13 +728,11 @@ packages:
   '@embedded-postgres/linux-x64@17.5.0-beta.15':
     resolution: {integrity: sha512-Kf5yATvzPLcNlb8ZBtS/aEaTWeM682rCnPBJW5T11b2iKzEO6qpOzfA2UuZhffEansYzxIoSyHk7jFp+q7rHYA==}
     engines: {node: '>=16'}
-    cpu: [x64]
     os: [linux]
 
   '@embedded-postgres/windows-x64@17.5.0-beta.15':
     resolution: {integrity: sha512-R+tJFzc1K7Ua3LCh25IgdH09pe+wa0saR+ysny2l7dmFXfGYAhHN9atTEgHsP9V3Mp4lI5WB5sN58XtsLKc3gA==}
     engines: {node: '>=16'}
-    cpu: [x64]
     os: [win32]
 
   '@emnapi/core@1.10.0':
@@ -5926,14 +5919,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@embedded-postgres/darwin-arm64@17.5.0-beta.15':
-    optional: true
+  '@embedded-postgres/darwin-arm64@17.5.0-beta.15': {}
 
-  '@embedded-postgres/darwin-x64@17.5.0-beta.15':
-    optional: true
+  '@embedded-postgres/darwin-x64@17.5.0-beta.15': {}
 
-  '@embedded-postgres/linux-arm64@17.5.0-beta.15':
-    optional: true
+  '@embedded-postgres/linux-arm64@17.5.0-beta.15': {}
 
   '@embedded-postgres/linux-arm@17.5.0-beta.15':
     optional: true
@@ -5944,11 +5934,9 @@ snapshots:
   '@embedded-postgres/linux-ppc64@17.5.0-beta.15':
     optional: true
 
-  '@embedded-postgres/linux-x64@17.5.0-beta.15':
-    optional: true
+  '@embedded-postgres/linux-x64@17.5.0-beta.15': {}
 
-  '@embedded-postgres/windows-x64@17.5.0-beta.15':
-    optional: true
+  '@embedded-postgres/windows-x64@17.5.0-beta.15': {}
 
   '@emnapi/core@1.10.0':
     dependencies:

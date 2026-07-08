@@ -7,7 +7,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { CapabilityIcon } from './CapabilityIcon';
 import { DownloadIndicator, type ActiveDownload } from './DownloadIndicator';
 import { localModel } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 interface ModelOption {
   id: string;
@@ -110,8 +110,8 @@ const baseStyles: Record<string, React.CSSProperties> = {
   systemCard: {
     padding: '10px 0',
     borderRadius: 8,
-    border: '1px solid #2a2a2a',
-    backgroundColor: 'rgba(255,255,255,0.02)',
+    border: `1px solid ${colors.border.default}`,
+    backgroundColor: alphaColor(colors.ink, 0.02),
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -128,11 +128,11 @@ const baseStyles: Record<string, React.CSSProperties> = {
   systemSpecDivider: {
     width: 1,
     height: 24,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: alphaColor(colors.ink, 0.1),
   },
   specLabel: {
     fontSize: '0.55rem',
-    color: '#888',
+    color: colors.text.tertiary,
     fontFamily: '"JetBrains Mono", monospace',
   },
   specValue: {
@@ -142,7 +142,7 @@ const baseStyles: Record<string, React.CSSProperties> = {
   },
   divider: {
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: alphaColor(colors.ink, 0.08),
     margin: '4px 0',
   },
   modelRow: {
@@ -153,8 +153,8 @@ const baseStyles: Record<string, React.CSSProperties> = {
   skipCard: {
     padding: 8,
     borderRadius: 6,
-    border: '1px solid #2a2a2a',
-    backgroundColor: 'rgba(255,255,255,0.02)',
+    border: `1px solid ${colors.border.default}`,
+    backgroundColor: alphaColor(colors.ink, 0.02),
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
@@ -164,7 +164,7 @@ const baseStyles: Record<string, React.CSSProperties> = {
     width: 14,
     height: 14,
     borderRadius: '3px',
-    border: '1.5px solid #555',
+    border: `1.5px solid ${colors.border.accent}`,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -177,7 +177,7 @@ const baseStyles: Record<string, React.CSSProperties> = {
   },
   skipSub: {
     fontSize: '0.58rem',
-    color: '#666',
+    color: colors.text.dim,
   },
   loadingBox: {
     display: 'flex',
@@ -195,8 +195,8 @@ function getModelCardStyle(isSelected: boolean, canRun: boolean): React.CSSPrope
     cursor: canRun ? 'pointer' : 'not-allowed',
     opacity: canRun ? 1 : 0.55,
     transition: 'all 0.15s ease',
-    border: isSelected ? '1.5px solid #4da6ff' : '1px solid #2a2a2a',
-    backgroundColor: isSelected ? 'rgba(77, 166, 255, 0.08)' : 'rgba(255,255,255,0.02)',
+    border: isSelected ? `1.5px solid ${colors.accent.blue}` : `1px solid ${colors.border.default}`,
+    backgroundColor: isSelected ? alphaColor(colors.accent.blue, 0.08) : alphaColor(colors.ink, 0.02),
     display: 'flex',
     flexDirection: 'column',
     gap: 6,
@@ -204,12 +204,12 @@ function getModelCardStyle(isSelected: boolean, canRun: boolean): React.CSSPrope
 }
 
 function getProgressFillStyle(progress: number): React.CSSProperties {
-  return { height: '100%', backgroundColor: '#4da6ff', width: `${progress}%`, transition: 'width 0.3s' };
+  return { height: '100%', backgroundColor: colors.accent.blue, width: `${progress}%`, transition: 'width 0.3s' };
 }
 
 function getCheckboxStyle(checked: boolean): React.CSSProperties {
   return {
-    backgroundColor: checked ? '#4da6ff' : 'transparent',
+    backgroundColor: checked ? colors.accent.blue : 'transparent',
   };
 }
 
@@ -318,8 +318,8 @@ export function LocalModelStep({
 
   if (error) {
     return (
-      <Box sx={{ p: 2, borderRadius: 1, border: '1px solid rgba(255,77,77,0.3)', bgcolor: 'rgba(255,77,77,0.1)' }}>
-        <Typography sx={{ color: '#ff4d4d', fontSize: '0.75rem' }}>{error}</Typography>
+      <Box sx={{ p: 2, borderRadius: 1, border: `1px solid ${alphaColor(colors.accent.red, 0.3)}`, bgcolor: alphaColor(colors.accent.red, 0.1) }}>
+        <Typography sx={{ color: colors.accent.red, fontSize: '0.75rem' }}>{error}</Typography>
       </Box>
     );
   }
@@ -400,8 +400,8 @@ export function LocalModelStep({
                           fontWeight: 700,
                           px: 0.6,
                           py: 0.2,
-                          bgcolor: '#4dff88',
-                          color: '#000',
+                          bgcolor: colors.accent.green,
+                          color: colors.bg.primary,
                           borderRadius: '3px',
                         }}>
                           INSTALLED
@@ -413,8 +413,8 @@ export function LocalModelStep({
                           fontWeight: 700,
                           px: 0.6,
                           py: 0.2,
-                          bgcolor: '#4da6ff',
-                          color: '#000',
+                          bgcolor: colors.accent.blue,
+                          color: colors.bg.primary,
                           borderRadius: '3px',
                         }}>
                           BEST
@@ -427,7 +427,7 @@ export function LocalModelStep({
                     {model.capabilities.embedding && (
                       <Box sx={{
                         display: 'flex', alignItems: 'center', gap: 0.4,
-                        px: 0.6, py: 0.2, bgcolor: 'rgba(255,255,255,0.05)', borderRadius: '3px',
+                        px: 0.6, py: 0.2, bgcolor: alphaColor(colors.ink, 0.05), borderRadius: '3px',
                       }}>
                         <CapabilityIcon capability={model.capabilities.quality} size={10} />
                         <Typography sx={{ fontSize: '0.52rem', fontFamily: '"JetBrains Mono", monospace' }}>Embed</Typography>
@@ -436,7 +436,7 @@ export function LocalModelStep({
                     {model.capabilities.generation && (
                       <Box sx={{
                         display: 'flex', alignItems: 'center', gap: 0.4,
-                        px: 0.6, py: 0.2, bgcolor: 'rgba(255,255,255,0.05)', borderRadius: '3px',
+                        px: 0.6, py: 0.2, bgcolor: alphaColor(colors.ink, 0.05), borderRadius: '3px',
                       }}>
                         <CapabilityIcon capability={model.capabilities.quality} size={10} />
                         <Typography sx={{ fontSize: '0.52rem', fontFamily: '"JetBrains Mono", monospace' }}>Gen</Typography>
@@ -445,7 +445,7 @@ export function LocalModelStep({
                     {model.capabilities.multilingual && (
                       <Box sx={{
                         display: 'flex', alignItems: 'center', gap: 0.4,
-                        px: 0.6, py: 0.2, bgcolor: 'rgba(255,255,255,0.05)', borderRadius: '3px',
+                        px: 0.6, py: 0.2, bgcolor: alphaColor(colors.ink, 0.05), borderRadius: '3px',
                       }}>
                         <Typography sx={{ fontSize: '0.6rem' }}>🌍</Typography>
                         <Typography sx={{ fontSize: '0.52rem', fontFamily: '"JetBrains Mono", monospace' }}>Multi</Typography>
@@ -453,7 +453,7 @@ export function LocalModelStep({
                     )}
                   </Box>
 
-                  <Box sx={{ display: 'flex', gap: 1, fontSize: '0.58rem', color: '#888', fontFamily: '"JetBrains Mono", monospace' }}>
+                  <Box sx={{ display: 'flex', gap: 1, fontSize: '0.58rem', color: colors.text.tertiary, fontFamily: '"JetBrains Mono", monospace' }}>
                     <span>{model.sizeGB} GB</span>
                     <span>·</span>
                     <span>{model.ramRequirementGB} GB RAM</span>
@@ -467,9 +467,9 @@ export function LocalModelStep({
 
                   {!canRun && (
                     <Box sx={{
-                      p: 0.6, borderRadius: '3px', bgcolor: 'rgba(255,77,77,0.08)', border: '1px solid rgba(255,77,77,0.2)',
+                      p: 0.6, borderRadius: '3px', bgcolor: alphaColor(colors.accent.red, 0.08), border: `1px solid ${alphaColor(colors.accent.red, 0.2)}`,
                     }}>
-                      <Typography sx={{ fontSize: '0.55rem', color: '#ff6b6b', fontFamily: '"JetBrains Mono", monospace' }}>
+                      <Typography sx={{ fontSize: '0.55rem', color: colors.accent.red, fontFamily: '"JetBrains Mono", monospace' }}>
                         Needs {model.ramRequirementGB}GB RAM / {model.minCpuCores} cores
                       </Typography>
                     </Box>
@@ -479,22 +479,22 @@ export function LocalModelStep({
                     <Box sx={{ mt: 'auto' }}>
                       {status === 'downloading' && (
                         <Box>
-                          <Box sx={{ height: 3, bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 1, mb: 0.5, overflow: 'hidden' }}>
+                          <Box sx={{ height: 3, bgcolor: alphaColor(colors.ink, 0.1), borderRadius: 1, mb: 0.5, overflow: 'hidden' }}>
                             <Box style={getProgressFillStyle(progress)} />
                           </Box>
-                          <Typography sx={{ fontSize: '0.55rem', color: '#888', textAlign: 'center', fontFamily: '"JetBrains Mono", monospace' }}>
+                          <Typography sx={{ fontSize: '0.55rem', color: colors.text.tertiary, textAlign: 'center', fontFamily: '"JetBrains Mono", monospace' }}>
                             {progress}%
                           </Typography>
                         </Box>
                       )}
                       {status === 'complete' && (
-                        <Typography sx={{ fontSize: '0.62rem', color: '#4dff88', textAlign: 'center', fontWeight: 600 }}>
+                        <Typography sx={{ fontSize: '0.62rem', color: colors.accent.green, textAlign: 'center', fontWeight: 600 }}>
                           ✓ Downloaded
                         </Typography>
                       )}
                       {status === 'error' && (
                         <Box>
-                          <Typography sx={{ fontSize: '0.58rem', color: '#ff4d4d', mb: 0.3, textAlign: 'center' }}>
+                          <Typography sx={{ fontSize: '0.58rem', color: colors.accent.red, mb: 0.3, textAlign: 'center' }}>
                             Failed
                           </Typography>
                           <Button
@@ -505,8 +505,8 @@ export function LocalModelStep({
                               fontSize: '0.55rem',
                               fontFamily: '"JetBrains Mono", monospace',
                               textTransform: 'none',
-                              color: '#ff4d4d',
-                              border: '1px solid #ff4d4d',
+                              color: colors.accent.red,
+                              border: `1px solid ${colors.accent.red}`,
                               borderRadius: '3px',
                               py: 0.3,
                               minHeight: 24,
@@ -530,8 +530,8 @@ export function LocalModelStep({
                                 fontSize: '0.6rem',
                                 fontFamily: '"JetBrains Mono", monospace',
                                 textTransform: 'none',
-                                color: '#ff6b6b',
-                                border: '1px solid #ff6b6b',
+                                color: colors.accent.red,
+                                border: `1px solid ${colors.accent.red}`,
                                 py: 0.5,
                                 minHeight: 28,
                               }}
@@ -548,8 +548,8 @@ export function LocalModelStep({
                                 fontSize: '0.6rem',
                                 fontFamily: '"JetBrains Mono", monospace',
                                 textTransform: 'none',
-                                bgcolor: '#4da6ff',
-                                color: '#000',
+                                bgcolor: colors.accent.blue,
+                                color: colors.bg.primary,
                                 py: 0.5,
                                 minHeight: 28,
                               }}
@@ -574,7 +574,7 @@ export function LocalModelStep({
         }}
       >
         <Box style={{ ...baseStyles.checkbox, ...getCheckboxStyle(skipLocalModel) }}>
-          {skipLocalModel && <Typography sx={{ fontSize: '0.45rem', color: '#000', fontWeight: 900 }}>✓</Typography>}
+          {skipLocalModel && <Typography sx={{ fontSize: '0.45rem', color: colors.bg.primary, fontWeight: 900 }}>✓</Typography>}
         </Box>
         <Box>
           <Typography style={baseStyles.skipText}>Skip local model</Typography>

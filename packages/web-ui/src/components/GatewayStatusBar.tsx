@@ -6,6 +6,7 @@ import PublicIcon from '@mui/icons-material/Public';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import { colors } from '../theme';
 import { gateway } from '../api';
+import { usePageVisible } from '../hooks/usePageVisible';
 
 const FOCUS_CHANNELS = [
   { id: 'web', label: 'Web-UI', icon: PublicIcon },
@@ -16,6 +17,7 @@ export function GatewayStatusBar() {
   const [focus, setFocus] = useState<string | null>(null);
   const [telegramConnected, setTelegramConnected] = useState(false);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const pageVisible = usePageVisible();
 
   const poll = useCallback(async () => {
     try {
@@ -35,10 +37,11 @@ export function GatewayStatusBar() {
   }, []);
 
   useEffect(() => {
+    if (!pageVisible) return;
     poll();
     const interval = setInterval(poll, 30000);
     return () => clearInterval(interval);
-  }, [poll]);
+  }, [poll, pageVisible]);
 
   const handleFocusClick = (e: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(e.currentTarget);
@@ -98,10 +101,10 @@ export function GatewayStatusBar() {
           return (
             <MenuItem key={ch.id} onClick={() => handleFocusSelect(ch.id)} selected={focus === ch.id}>
               <ListItemIcon sx={{ minWidth: 28 }}>
-                <Icon sx={{ fontSize: 16, color: focus === ch.id ? '#4FC3F7' : colors.text.tertiary }} />
+                <Icon sx={{ fontSize: 16, color: focus === ch.id ? colors.accent.cyan : colors.text.tertiary }} />
               </ListItemIcon>
               <ListItemText primary={ch.label} primaryTypographyProps={{ fontSize: 12 }} />
-              {focus === ch.id && <CircleIcon sx={{ fontSize: 8, color: '#4FC3F7', ml: 1 }} />}
+              {focus === ch.id && <CircleIcon sx={{ fontSize: 8, color: colors.accent.cyan, ml: 1 }} />}
             </MenuItem>
           );
         })}

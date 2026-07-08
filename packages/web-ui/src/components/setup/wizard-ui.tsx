@@ -6,6 +6,7 @@ import {
   wizardSectionSubtitleSx,
   wizardSectionTitleSx,
 } from './wizard-theme';
+import { colors, alphaColor } from '../../theme';
 
 export function WizardStepHeader({
   codename,
@@ -35,19 +36,19 @@ export function WizardCheckMark() {
       width: 18,
       height: 18,
       borderRadius: '50%',
-      border: '1px solid rgba(255,255,255,0.85)',
+      border: `1px solid ${alphaColor(colors.ink, 0.85)}`,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       flexShrink: 0,
     }}>
-      <Typography sx={{ fontSize: '0.55rem', color: '#fff', fontWeight: 900, lineHeight: 1 }}>✓</Typography>
+      <Typography sx={{ fontSize: '0.55rem', color: colors.text.primary, fontWeight: 900, lineHeight: 1 }}>✓</Typography>
     </Box>
   );
 }
 
 export function WizardHintTag({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'ok' | 'signal' | 'neutral' }) {
-  const color = tone === 'ok' ? 'rgba(76,175,80,0.85)' : tone === 'signal' ? 'rgba(0,200,255,0.75)' : 'rgba(255,255,255,0.45)';
+  const color = tone === 'ok' ? alphaColor(colors.accent.green, 0.85) : tone === 'signal' ? alphaColor(colors.accent.blue, 0.75) : alphaColor(colors.ink, 0.45);
   return (
     <Typography sx={{
       fontSize: '0.52rem',

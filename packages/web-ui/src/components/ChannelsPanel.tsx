@@ -26,7 +26,8 @@ import CircleIcon from '@mui/icons-material/Circle';
 import ChatIcon from '@mui/icons-material/Chat';
 import { PanelHeader } from './PanelHeader';
 import { bridges, gateway, type BridgeStatus } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
+import { brands } from '../styles/brands';
 
 interface ChannelDef {
   id: string;
@@ -47,9 +48,9 @@ const EMPTY_FORM: ChannelFormState = { botToken: '', chatId: '', appToken: '', c
 
 function ChannelIcon({ id }: { id: string }) {
   switch (id) {
-    case 'telegram': return <TelegramIcon sx={{ fontSize: 28, color: '#0088cc' }} />;
-    case 'discord': return <HeadphonesIcon sx={{ fontSize: 28, color: '#5865f2' }} />;
-    case 'slack': return <SlackIcon sx={{ fontSize: 28, color: '#ecb22e' }} />;
+    case 'telegram': return <TelegramIcon sx={{ fontSize: 28, color: brands.telegram }} />;
+    case 'discord': return <HeadphonesIcon sx={{ fontSize: 28, color: brands.discord }} />;
+    case 'slack': return <SlackIcon sx={{ fontSize: 28, color: brands.slack }} />;
     case 'email': return <EmailIcon sx={{ fontSize: 28, color: colors.accent.cyan }} />;
     default: return <SettingsIcon sx={{ fontSize: 28, color: colors.text.dim }} />;
   }
@@ -300,10 +301,10 @@ export function ChannelsPanel() {
                 return (
                   <MenuItem key={ch.id} onClick={() => handleFocusSelect(ch.id)} selected={focus === ch.id}>
                     <ListItemIcon sx={{ minWidth: 28 }}>
-                      <Icon sx={{ fontSize: 16, color: focus === ch.id ? '#4FC3F7' : colors.text.tertiary }} />
+                      <Icon sx={{ fontSize: 16, color: focus === ch.id ? colors.accent.blue : colors.text.tertiary }} />
                     </ListItemIcon>
                     <ListItemText primary={ch.label} primaryTypographyProps={{ fontSize: 12 }} />
-                    {focus === ch.id && <CircleIcon sx={{ fontSize: 8, color: '#4FC3F7', ml: 1 }} />}
+                    {focus === ch.id && <CircleIcon sx={{ fontSize: 8, color: colors.accent.blue, ml: 1 }} />}
                   </MenuItem>
                 );
               })}
@@ -314,7 +315,7 @@ export function ChannelsPanel() {
 
       {error && (
         <Box sx={{ px: 3, pb: 1 }}>
-          <Alert severity="error" sx={{ bgcolor: '#1a0000', fontSize: '0.75rem' }} onClose={() => setError('')}>{error}</Alert>
+          <Alert severity="error" sx={{ bgcolor: alphaColor(colors.accent.red, 0.12), fontSize: '0.75rem' }} onClose={() => setError('')}>{error}</Alert>
         </Box>
       )}
 
@@ -329,7 +330,7 @@ export function ChannelsPanel() {
               <Box
                 key={ch.id}
                 sx={{
-                  border: `1px solid ${isConnected ? colors.accent.green + '50' : colors.border.default}`,
+                  border: `1px solid ${isConnected ? alphaColor(colors.accent.green, '50') : colors.border.default}`,
                   borderRadius: 1.5,
                   bgcolor: colors.bg.secondary,
                   transition: 'all 0.2s ease',
@@ -350,7 +351,7 @@ export function ChannelsPanel() {
                     sx={{
                       fontSize: '0.55rem', height: 20,
                       color: isConnected ? colors.accent.green : isConfigured ? colors.accent.orange : colors.text.dim,
-                      border: `1px solid ${isConnected ? colors.accent.green + '40' : isConfigured ? colors.accent.orange + '40' : colors.border.default}`,
+                      border: `1px solid ${isConnected ? alphaColor(colors.accent.green, '40') : isConfigured ? alphaColor(colors.accent.orange, '40') : colors.border.default}`,
                     }}
                   />
                   <Switch
@@ -360,7 +361,7 @@ export function ChannelsPanel() {
                     size="small"
                     sx={{
                       '& .MuiSwitch-thumb': { bgcolor: isConnected ? colors.accent.green : colors.text.dim },
-                      '& .MuiSwitch-track': { bgcolor: isConnected ? colors.accent.green + '40' : colors.border.default },
+                      '& .MuiSwitch-track': { bgcolor: isConnected ? alphaColor(colors.accent.green, '40') : colors.border.default },
                     }}
                   />
                 </Box>

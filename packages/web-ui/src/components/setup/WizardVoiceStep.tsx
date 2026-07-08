@@ -12,6 +12,7 @@ import { hasSeenMicPreprompt, markMicPrepromptSeen } from '../../utils/microphon
 import { VoicePermissionDialog } from '../VoicePermissionDialog';
 import { WizardStatusLine, WizardStepShell } from './wizard-step-shell';
 import { wizardPrimaryBtnSx, wizardTheme, WIZARD_MONO } from './wizard-theme';
+import { colors, alphaColor } from '../../theme';
 
 export interface WizardVoiceStepProps {
   onReadyChange?: (ready: boolean) => void;
@@ -237,7 +238,7 @@ export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
               sx={{
                 height: 3,
                 borderRadius: 1,
-                bgcolor: 'rgba(255,255,255,0.06)',
+                bgcolor: alphaColor(colors.ink, 0.06),
                 '& .MuiLinearProgress-bar': { bgcolor: wizardTheme.text },
               }}
             />
@@ -245,7 +246,7 @@ export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
         )}
 
         {complete && !deploying && (
-          <Box sx={{ mt: 2, p: 1.25, borderRadius: 1, border: `1px solid ${wizardTheme.panelBorder}`, bgcolor: 'rgba(255,255,255,0.02)' }}>
+          <Box sx={{ mt: 2, p: 1.25, borderRadius: 1, border: `1px solid ${wizardTheme.panelBorder}`, bgcolor: alphaColor(colors.ink, 0.02) }}>
             <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk }}>
               COMMS ARRAY ONLINE
             </Typography>
@@ -282,7 +283,7 @@ export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
                   fontSize: '0.62rem',
                   color: wizardTheme.textSecondary,
                   borderColor: wizardTheme.panelBorder,
-                  '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: 'rgba(255,255,255,0.03)' },
+                  '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
                 }}
               >
                 {testingMic ? 'Listening…' : mic.state === 'granted' ? 'Test microphone' : 'Grant & test mic'}
@@ -302,7 +303,7 @@ export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
                   fontSize: '0.62rem',
                   color: wizardTheme.textSecondary,
                   borderColor: wizardTheme.panelBorder,
-                  '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: 'rgba(255,255,255,0.03)' },
+                  '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
                 }}
               >
                 {previewing ? 'Transmitting…' : 'Test speaker'}
@@ -318,7 +319,7 @@ export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
                     mb: 1,
                     height: 3,
                     borderRadius: 1,
-                    bgcolor: 'rgba(255,255,255,0.06)',
+                    bgcolor: alphaColor(colors.ink, 0.06),
                     '& .MuiLinearProgress-bar': { bgcolor: wizardTheme.accentSignal },
                   }}
                 />

@@ -23,6 +23,7 @@ import {
 import { SettingsCard } from './SettingsCard';
 import { DownloadIndicator, type ActiveDownload } from '../DownloadIndicator';
 
+import { colors, alphaColor } from '../../theme';
 interface ModelOption {
   id: string;
   name: string;
@@ -236,7 +237,7 @@ export function LocalModelTab() {
   if (error) {
     return (
       <SettingsCard title="Error">
-        <Alert severity="error" sx={{ bgcolor: `${settingsTheme.accent.alert}12`, fontSize: '0.75rem', ...settingsMonoSx }}>
+        <Alert severity="error" sx={{ bgcolor: `${alphaColor(settingsTheme.accent.alert, '12')}`, fontSize: '0.75rem', ...settingsMonoSx }}>
           {error}
         </Alert>
       </SettingsCard>
@@ -252,8 +253,8 @@ export function LocalModelTab() {
         <Alert
           severity="info"
           sx={{
-            bgcolor: `${settingsTheme.accent.hud}12`,
-            border: `1px solid ${settingsTheme.accent.hud}30`,
+            bgcolor: `${alphaColor(settingsTheme.accent.hud, '12')}`,
+            border: `1px solid ${alphaColor(settingsTheme.accent.hud, '30')}`,
             color: settingsTheme.text.secondary,
             fontSize: '0.7rem',
             ...settingsMonoSx,
@@ -273,8 +274,8 @@ export function LocalModelTab() {
           severity="warning"
           sx={{
             mb: 2,
-            bgcolor: `${settingsTheme.accent.amber}12`,
-            border: `1px solid ${settingsTheme.accent.amber}30`,
+            bgcolor: `${alphaColor(settingsTheme.accent.amber, '12')}`,
+            border: `1px solid ${alphaColor(settingsTheme.accent.amber, '30')}`,
             color: settingsTheme.text.secondary,
             fontSize: '0.7rem',
             ...settingsMonoSx,
@@ -356,7 +357,7 @@ export function LocalModelTab() {
                       {isActive && <Box sx={settingsStatusBadgeSx('active')}>ACTIVE</Box>}
                       {isInstalled && !isActive && <Box sx={settingsStatusBadgeSx('idle')}>READY</Box>}
                       {isRecommended && !isInstalled && (
-                        <Box sx={{ ...settingsStatusBadgeSx('active'), bgcolor: `${settingsTheme.accent.hud}22`, color: settingsTheme.accent.hud, borderColor: `${settingsTheme.accent.hud}44` }}>
+                        <Box sx={{ ...settingsStatusBadgeSx('active'), bgcolor: `${alphaColor(settingsTheme.accent.hud, '22')}`, color: settingsTheme.accent.hud, borderColor: `${alphaColor(settingsTheme.accent.hud, '44')}` }}>
                           PICK
                         </Box>
                       )}
@@ -384,7 +385,7 @@ export function LocalModelTab() {
                     <Box sx={{ display: 'flex', gap: 1, mt: 1.25, flexWrap: 'wrap' }}>
                       {activeDownload ? (
                         <Box sx={{ flex: 1 }}>
-                          <Box sx={{ height: 3, bgcolor: 'rgba(255,255,255,0.08)', borderRadius: 1, mb: 0.5, overflow: 'hidden' }}>
+                          <Box sx={{ height: 3, bgcolor: alphaColor(colors.ink, 0.08), borderRadius: 1, mb: 0.5, overflow: 'hidden' }}>
                             <Box sx={{ height: '100%', bgcolor: settingsTheme.accent.hud, width: `${activeDownload.progress}%`, transition: 'width 0.3s' }} />
                           </Box>
                           <Typography sx={{ ...settingsMonoSx, fontSize: '0.52rem', color: settingsTheme.text.dim, textAlign: 'center' }}>
@@ -400,7 +401,7 @@ export function LocalModelTab() {
                           </Button>
                           {!isActive && (
                             <Button variant="contained" size="small"
-                              startIcon={saving ? <CircularProgress size={12} sx={{ color: '#000' }} /> : <SaveIcon />}
+                              startIcon={saving ? <CircularProgress size={12} sx={{ color: colors.bg.primary }} /> : <SaveIcon />}
                               onClick={() => handleActivate(model.id)} disabled={saving}
                               sx={settingsBtnSignalSx}>
                               {saving ? 'Deploying…' : 'Deploy'}
@@ -408,7 +409,7 @@ export function LocalModelTab() {
                           )}
                           {isActive && (
                             <Button variant="outlined" size="small" startIcon={<CheckCircleIcon />} disabled
-                              sx={{ ...settingsBtnGhostSx, borderColor: `${settingsTheme.accent.signal}55`, color: settingsTheme.accent.signal }}>
+                              sx={{ ...settingsBtnGhostSx, borderColor: `${alphaColor(settingsTheme.accent.signal, '55')}`, color: settingsTheme.accent.signal }}>
                               Active
                             </Button>
                           )}
