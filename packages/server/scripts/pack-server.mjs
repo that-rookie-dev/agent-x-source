@@ -88,6 +88,23 @@ function resolveEmbeddedPkgSource(embeddedPkg) {
   return null;
 }
 
+function materializeWorkspacePkg(stagingNodeModules, pkgName, srcRoot) {
+  const dest = join(stagingNodeModules, ...pkgName.split('/'));
+  if (existsSync(join(dest, 'package.json'))) return;
+
+  const pkgJson = join(srcRoot, 'package.json');
+  const distDir = join(srcRoot, 'dist');
+  if (!existsSync(pkgJson) || !existsSync(distDir)) {
+    throw new Error(`Missing built package at ${srcRoot}. Run pnpm run build:deps first.`);
+  }
+
+  mkdirSync(dirname(dest), { recursive: true });
+  mkdirSync(dest, { recursive: true });
+  cpSync(pkgJson, join(dest, 'package.json'));
+  cpSync(distDir, join(dest, 'dist'), { recursive: true });
+  console.log(`Materialized ${pkgName} into server pack`);
+}
+
 function materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform) {
   const dest = join(stagingNodeModules, ...embeddedPkg.split('/'));
   if (existsSync(join(dest, 'package.json'))) return;
@@ -186,6 +203,7 @@ console.log('Installing production dependencies into staging...');
 execSync('npm install --omit=dev --ignore-scripts', { cwd: staging, stdio: 'inherit' });
 
 const stagingNodeModules = join(staging, 'node_modules');
+materializeWorkspacePkg(stagingNodeModules, '@agentx/runtime', join(workspaceRoot, 'packages', 'runtime'));
 materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform);
 syncServerExtensions(suffix, stagingNodeModules);
 
