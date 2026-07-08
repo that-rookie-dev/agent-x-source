@@ -17,27 +17,19 @@ import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { platform, arch } from 'node:os';
 import { copyVoiceSidecarResources } from '../../voice-sidecar/scripts/copy-voice-resources.mjs';
+import {
+  assertNativePostgres,
+  EMBEDDED_POSTGRES_VERSION,
+  packageForSuffix,
+  resolvePackSuffix,
+  syncEmbeddedExtensions,
+} from '../../desktop/scripts/embedded-postgres-pack.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const serverRoot = join(__dirname, '..');
 const workspaceRoot = join(serverRoot, '..', '..');
 const storeDir = join(workspaceRoot, 'node_modules', '.pnpm');
 const IS_WIN = platform() === 'win32';
-
-function getPlatformSuffix() {
-  const os = platform();
-  const cpu = arch();
-  if (os === 'darwin') {
-    return cpu === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
-  }
-  if (os === 'linux') {
-    return cpu === 'arm64' ? 'linux-arm64' : 'linux-x64';
-  }
-  if (os === 'win32') {
-    return 'win-x64';
-  }
-  throw new Error(`Unsupported pack platform: ${os}/${cpu}`);
-}
 
 function copyPgDeps(webApiNodeModules) {
   if (!existsSync(storeDir)) {
@@ -72,12 +64,27 @@ function copyPgDeps(webApiNodeModules) {
   }
 }
 
-const suffix = getPlatformSuffix();
+function syncServerExtensions(suffix, stagingNodeModules) {
+  if (suffix !== 'darwin-x64') return;
+
+  const workspaceArm64 = join(workspaceRoot, 'node_modules', '@embedded-postgres', 'darwin-arm64', 'native');
+  const stagingX64 = join(stagingNodeModules, '@embedded-postgres', 'darwin-x64', 'native');
+  syncEmbeddedExtensions(workspaceArm64, stagingX64);
+  console.log('Synced macOS extension artifacts into server darwin-x64 tree');
+}
+
+const suffix = resolvePackSuffix(platform(), arch());
+const embeddedPkg = packageForSuffix(suffix);
+if (!embeddedPkg) {
+  throw new Error(`No embedded PostgreSQL package mapped for suffix ${suffix}`);
+}
+
+const packPlatform = suffix.startsWith('win') ? 'win32' : suffix.split('-')[0];
 const staging = join(serverRoot, '.pack-staging');
 const releaseDir = join(serverRoot, 'release');
 const tarball = join(releaseDir, `agentx-${suffix}-server.tar.gz`);
 
-console.log(`Packing Agent-X server for ${suffix}...`);
+console.log(`Packing Agent-X server for ${suffix} (${embeddedPkg})...`);
 
 rmSync(staging, { recursive: true, force: true });
 mkdirSync(staging, { recursive: true });
@@ -136,18 +143,21 @@ writeFileSync(join(staging, 'package.json'), JSON.stringify({
   type: 'commonjs',
   dependencies: {
     'embedded-postgres': runtimePkg.dependencies['embedded-postgres'],
+    [embeddedPkg]: EMBEDDED_POSTGRES_VERSION,
     pg: runtimePkg.dependencies.pg,
   },
-  optionalDependencies: runtimePkg.optionalDependencies,
 }, null, 2));
 
 console.log('Installing production dependencies into staging...');
 execSync('npm install --omit=dev --ignore-scripts', { cwd: staging, stdio: 'inherit' });
 
+const stagingNodeModules = join(staging, 'node_modules');
+syncServerExtensions(suffix, stagingNodeModules);
+assertNativePostgres(stagingNodeModules, embeddedPkg, packPlatform);
+
 copyPgDeps(join(resourcesDir, 'web-api', 'node_modules'));
 
 console.log(`Creating ${tarball}...`);
-// Use paths relative to staging — Git Bash tar on Windows treats D:/... as a remote host.
 const tarballName = `agentx-${suffix}-server.tar.gz`;
 execSync(`tar -czf "../release/${tarballName}" .`, { cwd: staging, stdio: 'inherit' });
 

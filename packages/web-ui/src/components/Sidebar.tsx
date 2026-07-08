@@ -16,11 +16,16 @@ import GroupsIcon from '@mui/icons-material/Groups';
 // import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LogoutIcon from '@mui/icons-material/Logout';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
+import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
+import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
+import ContrastIcon from '@mui/icons-material/Contrast';
 import Badge from '@mui/material/Badge';
+import { useColorScheme } from '@mui/material/styles';
 import { useNavigate } from 'react-router-dom';
 import { auth, setAuthToken } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
+import { layout } from '../styles/layout';
 import type { PanelId } from '../pages/Console';
 import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 
@@ -47,10 +52,25 @@ const NAV_ITEMS: { id: PanelId; icon: ReactNode; label: string }[] = [
   // { id: 'channels', icon: CellTowerIcon, label: 'Channels' },
 ];
 
+const MODE_CYCLE = ['dark', 'light', 'system'] as const;
+
 export function Sidebar({ active, onNavigate, highlightCrews, unreadNotificationCount = 0 }: Props) {
   const { setAuthenticated } = useApp();
   const navigate = useNavigate();
   const neuralBrainSupported = useNeuralBrainSupported();
+  const { mode, setMode } = useColorScheme();
+
+  const currentMode = mode ?? 'dark';
+  const cycleMode = () => {
+    const next = MODE_CYCLE[(MODE_CYCLE.indexOf(currentMode as typeof MODE_CYCLE[number]) + 1) % MODE_CYCLE.length]!;
+    setMode(next);
+  };
+  const modeIcon = currentMode === 'light'
+    ? <LightModeOutlinedIcon sx={{ fontSize: 14 }} />
+    : currentMode === 'system'
+      ? <ContrastIcon sx={{ fontSize: 14 }} />
+      : <DarkModeOutlinedIcon sx={{ fontSize: 14 }} />;
+  const modeLabel = `Theme: ${currentMode}`;
 
   const navItems = NAV_ITEMS.filter((item) =>
     item.id !== 'rag-studio' || neuralBrainSupported,
@@ -65,14 +85,14 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
 
   return (
     <Box sx={{
-      width: 48, minWidth: 48, height: '100%', display: 'flex', flexDirection: 'column',
-      alignItems: 'center', py: 1.5, borderRight: `1px solid ${colors.border.default}`,
+      width: layout.sidebarWidth, minWidth: layout.sidebarWidth, height: '100%', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', py: 1, borderRight: `1px solid ${colors.border.default}`,
       bgcolor: colors.bg.secondary,
     }}>
       {/* Brand mark */}
       <Tooltip title="@agentx" placement="right">
-        <Box sx={{ mb: 2, cursor: 'default' }}>
-          <img src="/logo.png" alt="Agent-X" style={{ width: 24, height: 24, objectFit: 'contain' }} />
+        <Box sx={{ mb: 1.5, cursor: 'default' }}>
+          <img src="/logo.png" alt="Agent-X" style={{ width: 22, height: 22, objectFit: 'contain' }} />
         </Box>
       </Tooltip>
 
@@ -82,7 +102,7 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
           <IconButton
             onClick={() => onNavigate(item.id)}
             sx={{
-              mb: 0.5, width: 34, height: 34, borderRadius: 1,
+              mb: 0.25, width: 32, height: 32, borderRadius: 1,
               color: (active === item.id || (highlightCrews && item.id === 'crews')) ? colors.text.primary : colors.text.dim,
               bgcolor: (active === item.id || (highlightCrews && item.id === 'crews')) ? colors.border.default : 'transparent',
               '&:hover': { bgcolor: colors.border.default, color: colors.text.primary },
@@ -112,6 +132,12 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
 
       <Box sx={{ flex: 1 }} />
       <Divider sx={{ width: 26, mb: 1, borderColor: colors.border.default }} />
+
+      <Tooltip title={modeLabel} placement="right">
+        <IconButton onClick={cycleMode} sx={{ mb: 0.5, color: colors.text.dim, '&:hover': { color: colors.text.primary } }}>
+          {modeIcon}
+        </IconButton>
+      </Tooltip>
 
       <Tooltip title="Logout" placement="right">
         <IconButton onClick={handleLogout} sx={{ color: colors.text.dim, '&:hover': { color: colors.accent.red } }}>

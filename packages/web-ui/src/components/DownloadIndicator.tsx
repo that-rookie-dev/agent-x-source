@@ -7,7 +7,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import CloseIcon from '@mui/icons-material/Close';
 import IconButton from '@mui/material/IconButton';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 export interface ActiveDownload {
   modelId: string;
@@ -69,7 +69,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   progressBar: {
     height: 4,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: alphaColor(colors.ink, 0.1),
     borderRadius: 2,
     marginBottom: 4,
     overflow: 'hidden',
@@ -81,12 +81,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   errorText: {
     fontSize: '0.7rem',
-    color: '#ff4d4d',
+    color: colors.accent.red,
     marginBottom: 4,
   },
   successText: {
     fontSize: '0.7rem',
-    color: '#4dff88',
+    color: colors.accent.green,
   },
   clearButton: {
     fontSize: '0.6rem',
@@ -137,7 +137,7 @@ function DownloadTooltip({ downloads, onClear }: DownloadIndicatorProps) {
             {dl.status === 'downloading' && (
               <>
                 <Box style={styles.progressBar}>
-                  <Box style={getProgressFillStyle(dl.progress, '#4da6ff')} />
+                  <Box style={getProgressFillStyle(dl.progress, colors.accent.blue)} />
                 </Box>
                 <Typography style={styles.progressText}>
                   {downloadedGB.toFixed(2)} / {dl.sizeGB} GB ({dl.progress}%)
@@ -174,7 +174,7 @@ export function DownloadIndicator({ downloads, onClear }: DownloadIndicatorProps
     ? Math.round(activeDownloads.reduce((sum, d) => sum + d.progress, 0) / activeDownloads.length)
     : 0;
 
-  const iconColor = status === 'downloading' ? '#4da6ff' : status === 'error' ? '#ff4d4d' : '#4dff88';
+  const iconColor = status === 'downloading' ? colors.accent.blue : status === 'error' ? colors.accent.red : colors.accent.green;
   const Icon = status === 'downloading' ? DownloadIcon : status === 'error' ? ErrorIcon : CheckCircleIcon;
 
   return (

@@ -4,7 +4,8 @@ import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import MovieFilterIcon from '@mui/icons-material/MovieFilter';
 import InstagramIcon from '@mui/icons-material/Instagram';
 import type { DeepSearchResult } from '@agentx/shared/browser';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
+import { brands } from '../../styles/brands';
 import { ScoreBadge } from './shared';
 import { HasImageChip, searchCardSx, OpenLinkHint } from './card-utils';
 import { detectPlatform } from './platform-detect';
@@ -35,9 +36,9 @@ function YouTubeBody({ result, compact }: { result: DeepSearchResult; compact?: 
             />
             <Box sx={{
               position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              bgcolor: 'rgba(0,0,0,0.25)', borderRadius: '8px',
+              bgcolor: alphaColor(colors.bg.primary, 0.35), borderRadius: '8px',
             }}>
-              <PlayCircleOutlineIcon sx={{ fontSize: 40, color: '#fff' }} />
+              <PlayCircleOutlineIcon sx={{ fontSize: 40, color: colors.ink }} />
             </Box>
           </Box>
         )}
@@ -48,7 +49,7 @@ function YouTubeBody({ result, compact }: { result: DeepSearchResult; compact?: 
   return (
     <>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.15 }}>
-        <PlayCircleOutlineIcon sx={{ fontSize: 11, color: '#ff0000' }} />
+        <PlayCircleOutlineIcon sx={{ fontSize: 11, color: brands.youtube }} />
         <Typography sx={{ fontSize: '0.52rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
           YOUTUBE {videoId ? `· ${videoId}` : ''}
         </Typography>
@@ -78,14 +79,14 @@ function IMDbBody({ result, compact }: { result: DeepSearchResult; compact?: boo
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.15 }}>
-      <MovieFilterIcon sx={{ fontSize: 11, color: '#f5c518' }} />
-      <Typography sx={{ fontSize: '0.52rem', color: '#f5c518', fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
+      <MovieFilterIcon sx={{ fontSize: 11, color: brands.imdb }} />
+      <Typography sx={{ fontSize: '0.52rem', color: brands.imdb, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>
         IMDb
       </Typography>
       {result.extracted.rating && (
         <Typography sx={{
           fontSize: '0.52rem', color: colors.text.primary, fontWeight: 700,
-          bgcolor: '#f5c51822', px: 0.45, borderRadius: '4px',
+          bgcolor: alphaColor(brands.imdb, '22'), px: 0.45, borderRadius: '4px',
         }}>
           ★ {result.extracted.rating}
         </Typography>
@@ -114,8 +115,8 @@ function InstagramBody({ result, compact }: { result: DeepSearchResult; compact?
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.15 }}>
-      <InstagramIcon sx={{ fontSize: 11, color: '#E1306C' }} />
-      <Typography sx={{ fontSize: '0.52rem', color: '#E1306C', fontFamily: "'JetBrains Mono', monospace" }}>
+      <InstagramIcon sx={{ fontSize: 11, color: brands.instagram }} />
+      <Typography sx={{ fontSize: '0.52rem', color: brands.instagram, fontFamily: "'JetBrains Mono', monospace" }}>
         INSTAGRAM · {isProfile ? 'PROFILE' : 'POST'}
       </Typography>
     </Box>

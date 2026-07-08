@@ -38,6 +38,7 @@ import { SettingsSectionHeader } from './SettingsSectionHeader';
 import { VoiceMicTestPanel } from '../VoiceMicTestPanel';
 import { useVoiceOptional } from '../voice/VoiceProvider';
 
+import { colors, alphaColor } from '../../theme';
 export { mergeVoiceConfig } from '../../voice/voice-config';
 
 interface VoiceTabProps {
@@ -340,7 +341,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
               disabled={deploying || Boolean(missingRuntime)}
               sx={settingsBtnPrimarySx}
             >
-              {deploying ? <CircularProgress size={12} sx={{ mr: 0.75, color: '#000' }} /> : null}
+              {deploying ? <CircularProgress size={12} sx={{ mr: 0.75, color: colors.bg.primary }} /> : null}
               {deploying ? 'Deploying…' : 'Initiate deployment'}
             </Button>
           )}
@@ -355,7 +356,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
             p: 1.5,
             borderRadius: 1,
             border: `1px solid ${settingsTheme.border.default}`,
-            bgcolor: `${settingsTheme.accent.hud}08`,
+            bgcolor: `${alphaColor(settingsTheme.accent.hud, '08')}`,
           }}>
             <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 1, mb: 1 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>

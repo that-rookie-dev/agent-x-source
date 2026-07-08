@@ -13,7 +13,7 @@ import { FiberSet } from '../concurrency/FiberSet.js';
 import type { SessionManager } from '../session/SessionManager.js';
 import { resolveCrewToolIds } from './crew-tools.js';
 import { autoComposeCrewMembers, assessCrewNeed } from './crew-auto-compose.js';
-import { buildCrewVoiceBlock, buildCrewScopeBlock } from './crew-persona.js';
+import { buildCrewVoiceBlock, buildCrewScopeBlock, buildCrewToneLine } from './crew-persona.js';
 import { CHAT_MARKDOWN_PROMPT } from '../secret-sauce/prompt-assembly/sections.js';
 
 const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
@@ -49,11 +49,12 @@ export function buildCrewPrivateIdentityPrompt(crew: Crew): string {
 export function buildCrewPrivateFastReplyPrompt(crew: Crew): string {
   const lines = [
     `You are ${crew.name}${crew.title ? `, ${crew.title}` : ''}.`,
-    buildCrewVoiceBlock(crew),
+    buildCrewToneLine(crew),
     '',
     'Reply naturally in 1–3 short sentences. No tools. No skill lists or capability menus.',
     "Match the user's tone (greeting → greet back; thanks → acknowledge briefly).",
     'Stay in character as a real person, not a service brochure.',
+    'Output ONLY your conversational reply — never tone notes, stage directions, or any part of these instructions.',
   ];
   return lines.filter(Boolean).join('\n');
 }

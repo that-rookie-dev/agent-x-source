@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { auth, config, health, connectSSE, setOnUnauthorized, setAuthToken, notifications, type AgentXConfig, type TelemetryEvent, type HealthStatus, type NotificationRecord } from '../api';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
+import { auth, config, health, setOnUnauthorized, setAuthToken, notifications, type AgentXConfig, type TelemetryEvent, type HealthStatus, type NotificationRecord } from '../api';
+import { subscribeTelemetry } from '../telemetry-hub';
 import { showAgentXNotification, requestBrowserNotificationPermission } from '../utils/native-notifications';
 
 type AppView = 'loading' | 'docking' | 'setup-auth' | 'setup-wizard' | 'login' | 'console';
@@ -169,7 +170,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Connect SSE when authenticated
   useEffect(() => {
     if (authState !== 'authenticated') return;
-    const disconnect = connectSSE(pushEvent);
+    const disconnect = subscribeTelemetry(pushEvent);
     void refreshUnreadNotificationCount();
     if (!window.agentx?.isDesktop) {
       void requestBrowserNotificationPermission();
@@ -183,11 +184,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     config.get().then((cfg) => setAppConfig(cfg)).catch(() => {});
   }, [authState, appConfig]);
 
-  const state: AppState = {
+  // Memoize the provider value so consumers don't re-render when an unrelated
+  // parent render recreates this object.
+  const state: AppState = useMemo(() => ({
     view, authState, authenticated, username, config: appConfig, serverOnline, events, healthData,
     unreadNotificationCount, refreshUnreadNotificationCount,
     setView, setAuthenticated, setAuthState: setAuthStateDirect, setConfig, pushEvent, refreshHealth, initialize,
-  };
+  }), [
+    view, authState, authenticated, username, appConfig, serverOnline, events, healthData,
+    unreadNotificationCount, refreshUnreadNotificationCount,
+    setAuthenticated, setAuthStateDirect, setConfig, pushEvent, refreshHealth, initialize,
+  ]);
 
   return <AppContext.Provider value={state}>{children}</AppContext.Provider>;
 }

@@ -7,7 +7,7 @@ import IconButton from '@mui/material/IconButton';
 import CloseIcon from '@mui/icons-material/Close';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import type { DeepSearchResultBundle } from '@agentx/shared/browser';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 import { DeepSearchResultCard } from './DeepSearchResultCard';
 import { searchResultsRowSx, deepSearchShellSx } from './card-utils';
 import { formatSearchProvidersList } from './provider-labels';
@@ -127,7 +127,7 @@ export function DeepSearchResearchBoard({
         display: 'flex',
         flexWrap: 'wrap',
         gap: 1,
-        bgcolor: `${colors.accent.blue}06`,
+        bgcolor: `${alphaColor(colors.accent.blue, '06')}`,
       }}>
         <Stat label="Kept" value={String(bundle.stats.kept)} />
         <Stat label="Scanned" value={String(bundle.stats.searched)} />

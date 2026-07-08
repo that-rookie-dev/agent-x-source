@@ -5,6 +5,7 @@ import Typography from '@mui/material/Typography';
 import { COMMS_MONO, commsTheme } from './voice-comms-theme';
 import type { VoicePermissionPrompt, VoicePermissionChoice } from '../../voice/VoiceSessionClient';
 
+import { colors, alphaColor } from '../../theme';
 export interface VoicePermissionCardProps {
   prompt: VoicePermissionPrompt;
   onRespond: (choice: VoicePermissionChoice) => void;
@@ -40,7 +41,7 @@ export function VoicePermissionCard({ prompt, onRespond }: VoicePermissionCardPr
       borderRadius: 1,
       border: `1px solid ${commsTheme.borderActive}`,
       bgcolor: commsTheme.panelActive,
-      boxShadow: `0 0 18px ${riskColor(prompt.riskLevel)}22`,
+      boxShadow: `0 0 18px ${alphaColor(riskColor(prompt.riskLevel), '22')}`,
     }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', mb: 0.75 }}>
         <Typography sx={{ fontFamily: COMMS_MONO, fontSize: '0.5rem', letterSpacing: '2px', color: commsTheme.textDim }}>
@@ -71,7 +72,7 @@ export function VoicePermissionCard({ prompt, onRespond }: VoicePermissionCardPr
           fontFamily: COMMS_MONO,
           fontSize: '0.54rem',
           color: commsTheme.textSecondary,
-          bgcolor: 'rgba(0,0,0,0.4)',
+          bgcolor: alphaColor(colors.bg.primary, 0.4),
           border: `1px solid ${commsTheme.border}`,
           borderRadius: 0.5,
           px: 1,
@@ -113,7 +114,7 @@ function PermButton({ label, color, onClick }: { label: string; color: string; o
         border: `1px solid ${color}`,
         borderRadius: 0.75,
         py: 0.5,
-        '&:hover': { bgcolor: `${color}18`, borderColor: color },
+        '&:hover': { bgcolor: `${alphaColor(color, '18')}`, borderColor: color },
       }}
     >
       {label}

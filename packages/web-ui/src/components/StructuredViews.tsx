@@ -1,5 +1,5 @@
 import Box from '@mui/material/Box';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 // ─── Table ───
 
@@ -80,7 +80,7 @@ const tableInnerSx = {
     borderBottom: 'none',
   },
   '& tr:hover td': {
-    bgcolor: `${colors.accent.blue}04`,
+    bgcolor: `${alphaColor(colors.accent.blue, '04')}`,
   },
   '& td:first-of-type': {
     fontWeight: 500,
@@ -167,7 +167,7 @@ const olSx = {
       alignItems: 'center',
       justifyContent: 'center',
       borderRadius: '50%',
-      bgcolor: `${colors.accent.blue}18`,
+      bgcolor: `${alphaColor(colors.accent.blue, '18')}`,
       color: colors.accent.blue,
       fontSize: '0.4375rem',
       fontWeight: 700,

@@ -2,7 +2,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Chip from '@mui/material/Chip';
 import type { IntegrationActionPreview } from '../../api';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 
 export interface ActionPreviewCardProps {
   preview: IntegrationActionPreview;
@@ -31,7 +31,7 @@ export function ActionPreviewCard({
 }: ActionPreviewCardProps) {
   const isCritical = preview.riskLevel === 'critical';
   const isHigh = preview.riskLevel === 'high';
-  const borderColor = isCritical ? colors.accent.red + '50' : isHigh ? colors.accent.orange + '40' : colors.accent.blue + '35';
+  const borderColor = isCritical ? alphaColor(colors.accent.red, '50') : isHigh ? alphaColor(colors.accent.orange, '40') : alphaColor(colors.accent.blue, '35');
   const resultLabel = RESULT_LABELS[preview.resultType ?? 'generic'];
 
   return (
@@ -43,7 +43,7 @@ export function ActionPreviewCard({
         <Chip size="small" label={preview.providerName} sx={{ height: 18, fontSize: '0.5rem' }} />
         <Chip size="small" label={preview.riskLevel.toUpperCase()} sx={{
           height: 18, fontSize: '0.45rem', fontWeight: 600,
-          bgcolor: isCritical ? colors.accent.red + '20' : isHigh ? colors.accent.orange + '20' : colors.accent.blue + '15',
+          bgcolor: isCritical ? alphaColor(colors.accent.red, '20') : isHigh ? alphaColor(colors.accent.orange, '20') : alphaColor(colors.accent.blue, '15'),
           color: isCritical ? colors.accent.red : isHigh ? colors.accent.orange : colors.accent.blue,
         }} />
         {pendingCount > 1 && onApproveAll && (
@@ -51,7 +51,7 @@ export function ActionPreviewCard({
             size="small"
             label={`Approve all (${pendingCount})`}
             onClick={onApproveAll}
-            sx={{ cursor: 'pointer', height: 18, fontSize: '0.45rem', bgcolor: colors.accent.green + '20', color: colors.accent.green }}
+            sx={{ cursor: 'pointer', height: 18, fontSize: '0.45rem', bgcolor: alphaColor(colors.accent.green, '20'), color: colors.accent.green }}
           />
         )}
       </Box>
@@ -79,9 +79,9 @@ export function ActionPreviewCard({
       )}
 
       <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
-        <Chip size="small" label="Allow once" onClick={onAllowOnce} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.green + '15', color: colors.accent.green }} />
-        <Chip size="small" label="Always allow" onClick={onAllowAlways} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.blue + '15', color: colors.accent.blue }} />
-        <Chip size="small" label="Deny" onClick={onDeny} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.red + '15', color: colors.accent.red }} />
+        <Chip size="small" label="Allow once" onClick={onAllowOnce} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.green, '15'), color: colors.accent.green }} />
+        <Chip size="small" label="Always allow" onClick={onAllowAlways} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.blue, '15'), color: colors.accent.blue }} />
+        <Chip size="small" label="Deny" onClick={onDeny} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.red, '15'), color: colors.accent.red }} />
       </Box>
     </Box>
   );

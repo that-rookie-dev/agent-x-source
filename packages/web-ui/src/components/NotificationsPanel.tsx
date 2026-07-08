@@ -20,14 +20,14 @@ import { colors } from '../theme';
 type Filter = 'all' | 'unread';
 
 const bw = {
-  bg: '#000000',
-  panel: '#0a0a0a',
-  card: '#111111',
-  cardUnread: '#141414',
-  border: '#2a2a2a',
-  text: '#ffffff',
-  muted: '#a0a0a0',
-  dim: '#666666',
+  bg: colors.bg.primary,
+  panel: colors.bg.secondary,
+  card: colors.bg.tertiary,
+  cardUnread: colors.bg.hover,
+  border: colors.border.default,
+  text: colors.text.primary,
+  muted: colors.text.secondary,
+  dim: colors.text.dim,
 };
 
 function formatWhen(iso: string): string {

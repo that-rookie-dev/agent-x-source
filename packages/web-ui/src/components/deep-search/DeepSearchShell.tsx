@@ -1,7 +1,7 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import type { DeepSearchProgress, DeepSearchResultBundle } from '@agentx/shared/browser';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 import { DeepSearchResultCard } from './DeepSearchResultCard';
 import { ResearchBoardTrigger } from './DeepSearchResearchBoard';
 import { searchResultsRowSx, deepSearchShellSx } from './card-utils';
@@ -16,7 +16,7 @@ function ProgressStrip({ progress, running }: { progress?: DeepSearchProgress; r
       px: 1,
       py: 0.45,
       borderBottom: `1px solid ${colors.border.subtle}`,
-      bgcolor: `${colors.accent.blue}08`,
+      bgcolor: `${alphaColor(colors.accent.blue, '08')}`,
     }}>
       <Typography sx={{ fontSize: '0.54rem', color: colors.accent.blue, fontFamily: "'JetBrains Mono', monospace" }}>
         {phase.toUpperCase()} · {message}

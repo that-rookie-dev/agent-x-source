@@ -2,7 +2,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import ImageOutlinedIcon from '@mui/icons-material/ImageOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 
 export function openSearchResultUrl(url: string) {
   if (!url) return;
@@ -23,8 +23,8 @@ export function HasImageChip() {
       px: 0.45,
       py: 0.1,
       borderRadius: '4px',
-      bgcolor: `${colors.accent.purple}14`,
-      border: `1px solid ${colors.accent.purple}30`,
+      bgcolor: `${alphaColor(colors.accent.purple, '14')}`,
+      border: `1px solid ${alphaColor(colors.accent.purple, '30')}`,
     }}>
       <ImageOutlinedIcon sx={{ fontSize: 10, color: colors.accent.purple }} />
       <Typography sx={{
@@ -52,7 +52,7 @@ export const deepSearchShellSx = {
 
 export const searchCardSx = {
   borderRadius: deepSearchCardRadius,
-  bgcolor: `${colors.accent.cyan}06`,
+  bgcolor: `${alphaColor(colors.accent.cyan, '06')}`,
   overflow: 'hidden',
   display: 'flex',
   flexDirection: 'column',
@@ -62,8 +62,8 @@ export const searchCardSx = {
   transition: 'border-color 0.15s, background-color 0.15s',
   boxShadow: 'none',
   '&:hover': {
-    bgcolor: `${colors.accent.cyan}08`,
-    borderColor: `${colors.accent.cyan}30`,
+    bgcolor: `${alphaColor(colors.accent.cyan, '08')}`,
+    borderColor: `${alphaColor(colors.accent.cyan, '30')}`,
   },
 } as const;
 

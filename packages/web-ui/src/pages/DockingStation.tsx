@@ -8,10 +8,11 @@ import LinearProgress from '@mui/material/LinearProgress';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { useApp } from '../store/AppContext';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import { Footer } from '../components/Footer';
 import { useVoiceOptional } from '../components/voice/VoiceProvider';
 import { useLocationPermission } from '../hooks/useLocationPermission';
+import { usePageVisible } from '../hooks/usePageVisible';
 import { webuiActive, agent, crewCatalog, crews, type AgentVitals, type CatalogSeedStatusResponse, type Crew } from '../api';
 import type { HealthStatus } from '../api';
 
@@ -62,8 +63,8 @@ function buildTerminalLines(
     { type: 'success', text: `  \u2713 Crew         ${crewLine}` },
     { type: 'blank', text: '' },
     { type: 'heading', text: '  CAPABILITIES' },
-    { type: 'dim', text: '  183 tools \u00B7 16 providers' },
-    { type: 'dim', text: '  6 channels \u00B7 Multi-agent mesh \u00B7 Persistent memory' },
+    { type: 'dim', text: '  218 tools \u00B7 18 providers' },
+    { type: 'dim', text: '  4 channels \u00B7 Multi-agent mesh \u00B7 Persistent memory' },
     { type: 'dim', text: '  AES-256-GCM encrypted storage \u00B7 Self-destruct tamper protection' },
     { type: 'blank', text: '' },
     { type: 'info', text: '  Ready to launch. All systems nominal.' },
@@ -83,8 +84,10 @@ export function DockingStation() {
   const [rosterCrews, setRosterCrews] = useState<Crew[]>([]);
   const introStartedRef = useRef(false);
   const introPlayedRef = useRef(false);
+  const pageVisible = usePageVisible();
 
   useEffect(() => {
+    if (!pageVisible) return;
     let intervalId: ReturnType<typeof setInterval>;
 
     const register = async () => {
@@ -100,7 +103,7 @@ export function DockingStation() {
       clearInterval(intervalId);
       webuiActive.unregister().catch(() => {});
     };
-  }, []);
+  }, [pageVisible]);
 
   const recheckServer = useCallback(async () => {
     setChecking(true);
@@ -123,7 +126,7 @@ export function DockingStation() {
   }, [serverOnline]);
 
   useEffect(() => {
-    if (!serverOnline) return;
+    if (!serverOnline || !pageVisible) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -141,13 +144,14 @@ export function DockingStation() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [serverOnline, catalogSeed?.status]);
+  }, [serverOnline, catalogSeed?.status, pageVisible]);
 
   useEffect(() => {
+    if (!pageVisible) return;
     agent.vitals().then(setVitals).catch(() => {});
     const interval = setInterval(() => { agent.vitals().then(setVitals).catch(() => {}); }, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [pageVisible]);
 
   useEffect(() => {
     const built = buildTerminalLines(healthData, catalogSeed, rosterCrews);
@@ -218,9 +222,10 @@ export function DockingStation() {
     <Box sx={{
       height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column',
       overflow: 'hidden', bgcolor: colors.bg.primary,
+      backgroundImage: `radial-gradient(ellipse 80% 50% at 50% -10%, ${alphaColor(colors.accent.blue, '08')}, transparent)`,
     }}>
       <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
-        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 3, overflow: 'hidden' }}>
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 2, overflow: 'hidden' }}>
           <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <img src="/logo.png" alt="Agent-X" style={{ width: 28, height: 28, objectFit: 'contain' }} />
             <Typography sx={{ fontSize: '1.3rem', fontWeight: 700, fontFamily: "'Inter', sans-serif", color: colors.text.primary }}>
@@ -287,8 +292,8 @@ export function DockingStation() {
       </Box>
 
       <Box sx={{
-        width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column',
-        borderLeft: `1px solid ${colors.border.default}`, p: 3,
+        width: 248, flexShrink: 0, display: 'flex', flexDirection: 'column',
+        borderLeft: `1px solid ${colors.border.default}`, p: 2,
         justifyContent: 'space-between',
       }}>
         <Box>
@@ -387,7 +392,7 @@ export function DockingStation() {
                 color: canLaunch ? colors.bg.primary : colors.text.dim,
                 fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
                 fontSize: '0.7rem', letterSpacing: '2px', borderRadius: '3px',
-                '&:hover': { bgcolor: canLaunch ? '#ddd' : colors.bg.tertiary },
+                '&:hover': { bgcolor: canLaunch ? alphaColor(colors.text.primary, 0.85) : colors.bg.tertiary },
                 '&.Mui-disabled': {
                   bgcolor: colors.bg.tertiary,
                   color: colors.text.dim,

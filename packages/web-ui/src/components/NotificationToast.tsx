@@ -3,6 +3,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import CloseIcon from '@mui/icons-material/Close';
+import { colors } from '../theme';
 
 interface Toast {
   id: number;
@@ -41,11 +42,11 @@ export function NotificationToast() {
   if (toasts.length === 0) return null;
 
   const colorMap: Record<Toast['type'], string> = {
-    error: '#ff6b6b',
-    warning: '#e0e0e0',
-    escalation: '#ff6b6b',
-    checkpoint: '#e0e0e0',
-    automation: '#ffffff',
+    error: colors.accent.red,
+    warning: colors.text.primary,
+    escalation: colors.accent.red,
+    checkpoint: colors.text.primary,
+    automation: colors.text.primary,
   };
 
   const labelMap: Record<Toast['type'], string> = {
@@ -66,9 +67,9 @@ export function NotificationToast() {
       {toasts.map(t => (
         <Box key={t.id} sx={{
           p: 1.5, borderRadius: 1,
-          bgcolor: '#0d0d0d',
-          border: '1px solid #2a2a2a',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.9)',
+          bgcolor: colors.bg.secondary,
+          border: `1px solid ${colors.border.default}`,
+          boxShadow: `0 8px 32px ${colors.shadow.heavy}`,
           display: 'flex', alignItems: 'flex-start', gap: 1,
           animation: 'slideIn 0.3s ease',
           '@keyframes slideIn': { from: { opacity: 0, transform: 'translateY(10px)' }, to: { opacity: 1, transform: 'translateY(0)' } },
@@ -77,12 +78,12 @@ export function NotificationToast() {
             <Typography sx={{ color: colorMap[t.type], fontSize: '0.58rem', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", mb: 0.3, letterSpacing: '0.08em' }}>
               {labelMap[t.type]}
             </Typography>
-            <Typography sx={{ color: '#e8e8e8', fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.45, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+            <Typography sx={{ color: colors.text.primary, fontSize: '0.7rem', fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.45, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
               {t.message}
             </Typography>
           </Box>
           <IconButton size="small" onClick={() => dismiss(t.id)}
-            sx={{ color: '#666', p: 0, '&:hover': { color: '#fff' } }}>
+            sx={{ color: colors.text.dim, p: 0, '&:hover': { color: colors.text.primary } }}>
             <CloseIcon sx={{ fontSize: 14 }} />
           </IconButton>
         </Box>

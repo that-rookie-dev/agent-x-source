@@ -3,6 +3,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { COMMS_MONO, commsTheme } from './voice-comms-theme';
 import type { OpsLogEntry } from '../../telemetry/ops-log';
+import { colors, alphaColor } from '../../theme';
 
 const LOG_HEIGHT = 140;
 
@@ -29,7 +30,7 @@ export function VoiceActivityLog({ entries, visible }: { entries: OpsLogEntry[];
     <Box sx={{
       border: `1px solid ${commsTheme.border}`,
       borderRadius: 1,
-      bgcolor: 'rgba(0,0,0,0.35)',
+      bgcolor: alphaColor(colors.bg.primary, 0.35),
       overflow: 'hidden',
       minHeight: LOG_HEIGHT + 28,
     }}>

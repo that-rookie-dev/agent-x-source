@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, memo, startTransition } from 'rea
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { isIntegrationToolId } from '@agentx/shared/browser';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import { getToolDisplay } from './tool-display';
 import { ShellRender, ReadRender, EditRender, GlobRender, GrepRender, TaskRender } from './tool-renders';
 import { IntegrationResultRender, type IntegrationStructuredResult } from './integrations/IntegrationResultRender';
@@ -33,7 +33,7 @@ function IntegrationToolRender({ tool }: { tool: InlineToolData }) {
   }
   const result = tool.result;
   return (
-    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.blue}15` }}>
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.accent.blue, '15')}` }}>
       {result ? (
         <Typography sx={{ fontSize: '0.55rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {result.slice(0, 4000)}
@@ -84,7 +84,9 @@ function InlineToolCallComponent({ tool, compactTop }: { tool: InlineToolData; c
   useEffect(() => {
     if (tool.status !== 'running') { setLiveElapsed(0); return; }
     const start = Date.now();
-    const timer = setInterval(() => setLiveElapsed(Date.now() - start), 200);
+    // 1 Hz is enough for an elapsed-time display; several concurrent tools at
+    // 5 Hz each caused a steady re-render drip during long agent turns.
+    const timer = setInterval(() => setLiveElapsed(Date.now() - start), 1000);
     return () => clearInterval(timer);
   }, [tool.status, tool.id]);
 
@@ -101,8 +103,8 @@ function InlineToolCallComponent({ tool, compactTop }: { tool: InlineToolData; c
       mb: 0.25,
       mt: compactTop ? -0.625 : 0,
       borderRadius: 1, overflow: 'hidden',
-      border: `1px solid ${cc}20`,
-      bgcolor: `${cc}04`,
+      border: `1px solid ${alphaColor(cc, '20')}`,
+      bgcolor: `${alphaColor(cc, '04')}`,
       transition: 'border-color 0.15s',
     }}>
       <Box
@@ -115,7 +117,7 @@ function InlineToolCallComponent({ tool, compactTop }: { tool: InlineToolData; c
           display: 'flex', alignItems: 'center', gap: 0.625, py: 0.75, px: 1,
           opacity: tool.status === 'running' ? 0.7 : 1,
           cursor: isDeepSearchTool ? 'default' : (tool.status === 'running' ? 'default' : 'pointer'),
-          '&:hover': !isDeepSearchTool && tool.status !== 'running' ? { bgcolor: `${cc}08` } : {},
+          '&:hover': !isDeepSearchTool && tool.status !== 'running' ? { bgcolor: `${alphaColor(cc, '08')}` } : {},
         }}
       >
         <Typography sx={{
@@ -181,7 +183,7 @@ function DefaultDetailsPanel({ tool, cc }: { tool: InlineToolData; cc: string })
   const resultText = useMemo(() => formatResult(tool), [tool.result, tool.status, tool.name]);
 
   return (
-    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${cc}15` }}>
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(cc, '15')}` }}>
       {argsRaw && (
         <>
           <Label>Args</Label>
@@ -237,7 +239,7 @@ function Label({ children }: { children: string }) {
 function Pre({ children }: { children: string }) {
   return (
     <Box sx={{
-      bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75,
+      bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75,
       fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
       color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
       maxHeight: 300, overflow: 'auto', wordBreak: 'break-word',

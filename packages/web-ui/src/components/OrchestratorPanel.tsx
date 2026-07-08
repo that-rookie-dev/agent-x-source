@@ -13,7 +13,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import { PanelHeader } from './PanelHeader';
 import { orchestrator, type OrchestratorPlan, type OrchestratorStep } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 export function OrchestratorPanel() {
   const [goal, setGoal] = useState('');
@@ -66,7 +66,7 @@ export function OrchestratorPanel() {
         icon={<AccountTreeIcon sx={{ fontSize: 20 }} />}
       />
       <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-      {error && <Alert severity="error" sx={{ mb: 2, bgcolor: '#1a0000' }}>{error}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 2, bgcolor: alphaColor(colors.accent.red, 0.12) }}>{error}</Alert>}
 
       {/* Goal input */}
       <Box sx={{ mb: 3, p: 2, border: `1px solid ${colors.border.default}`, borderRadius: 1 }}>

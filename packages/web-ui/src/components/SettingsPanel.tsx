@@ -33,13 +33,15 @@ import { PersonaConfigPanel } from './settings/PersonaConfigPanel';
 import { WebSearchToolsTab, mergeWebSearchConfig } from './settings/WebSearchToolsTab';
 import { ChannelsTab, mergeChannelsConfig } from './settings/ChannelsTab';
 import { LocalModelTab } from './settings/LocalModelTab';
+import PaletteOutlinedIcon from '@mui/icons-material/PaletteOutlined';
+import { AppearanceTab } from './settings/AppearanceTab';
 import { RuntimeTab } from './settings/RuntimeTab';
 import { VoiceTab, mergeVoiceConfig } from './settings/VoiceTab';
 import { notifyVoiceConfigUpdated } from '../voice/support';
 import { ProvidersPanel } from './ProvidersPanel';
 import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 
-type SettingsTab = 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'channels' | 'runtime' | 'voice';
+type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'channels' | 'runtime' | 'voice';
 
 const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 14 }} /> },
@@ -51,6 +53,7 @@ const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }>
   { id: 'channels', label: 'Channels', icon: <NotificationsIcon sx={{ fontSize: 14 }} /> },
   { id: 'tools', label: 'Search', icon: <BuildIcon sx={{ fontSize: 14 }} /> },
   { id: 'persistence', label: 'Storage', icon: <StorageIcon sx={{ fontSize: 14 }} /> },
+  { id: 'appearance', label: 'Theme', icon: <PaletteOutlinedIcon sx={{ fontSize: 14 }} /> },
 ];
 
 export function SettingsPanel() {
@@ -150,6 +153,7 @@ export function SettingsPanel() {
       </Box>
 
       <Box sx={{ flex: 1, overflow: 'auto', px: 3, pt: 2, pb: 10 }}>
+        {activeTab === 'appearance' && <AppearanceTab />}
         {activeTab === 'general' && (
           <Box>
             <SettingsSectionHeader

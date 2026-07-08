@@ -24,6 +24,7 @@ import {
 } from '../../styles/settings-theme';
 import { SettingsSectionHeader } from './SettingsSectionHeader';
 import { SettingsCard } from './SettingsCard';
+import { brands } from '../../styles/brands';
 
 export interface ChannelsTabProps {
   value: NotificationChannelsConfig;
@@ -44,8 +45,8 @@ const CHANNELS: ChannelMeta[] = [
     id: 'telegram',
     name: 'Telegram',
     tagline: 'Chat with Agent-X via your bot',
-    accent: '#0088cc',
-    icon: <TelegramIcon sx={{ fontSize: 16, color: '#0088cc' }} />,
+    accent: brands.telegram,
+    icon: <TelegramIcon sx={{ fontSize: 16, color: brands.telegram }} />,
     instructions: [
       'Create a bot with @BotFather and paste the token below.',
       'Send any message to your bot in Telegram, then click Verify token.',
@@ -55,8 +56,8 @@ const CHANNELS: ChannelMeta[] = [
     id: 'slack',
     name: 'Slack',
     tagline: 'Receive tasks and send alerts',
-    accent: settingsTheme.accent.amber,
-    icon: <ForumIcon sx={{ fontSize: 16, color: settingsTheme.accent.amber }} />,
+    accent: brands.slack,
+    icon: <ForumIcon sx={{ fontSize: 16, color: brands.slack }} />,
     instructions: [
       'Create a Slack app with Socket Mode enabled (bot + app tokens).',
       'Add an Incoming Webhook for automation alerts.',
@@ -66,8 +67,8 @@ const CHANNELS: ChannelMeta[] = [
     id: 'discord',
     name: 'Discord',
     tagline: 'Receive tasks and send alerts',
-    accent: '#5865f2',
-    icon: <HeadphonesIcon sx={{ fontSize: 16, color: '#5865f2' }} />,
+    accent: brands.discord,
+    icon: <HeadphonesIcon sx={{ fontSize: 16, color: brands.discord }} />,
     instructions: [
       'Discord Developer Portal → create a bot and copy the token.',
       'Server Integrations → Webhook URL for alerts.',

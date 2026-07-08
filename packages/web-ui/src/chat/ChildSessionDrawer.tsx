@@ -8,7 +8,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import { sessions, type ChatMessage } from '../api';
 import { CrewAwareMarkdown } from './ChatMarkdown';
 import { stripToolNoise } from './utils';
@@ -66,7 +66,7 @@ export function ChildSessionDrawer({ open, state, parentSessionTitle, onClose }:
         sx={{
           position: 'absolute',
           inset: 0,
-          bgcolor: 'rgba(0,0,0,0.45)',
+          bgcolor: alphaColor(colors.bg.primary, 0.55),
           zIndex: 20,
         }}
       />
@@ -79,9 +79,9 @@ export function ChildSessionDrawer({ open, state, parentSessionTitle, onClose }:
           maxHeight: 'min(58vh, 520px)',
           zIndex: 21,
           borderRadius: '14px',
-          border: `1px solid ${accent}40`,
+          border: `1px solid ${alphaColor(accent, '40')}`,
           bgcolor: colors.bg.primary,
-          boxShadow: `0 12px 40px rgba(0,0,0,0.45), 0 0 0 1px ${accent}15 inset`,
+          boxShadow: `0 12px 40px ${colors.shadow.heavy}, 0 0 0 1px ${alphaColor(accent, '15')} inset`,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',

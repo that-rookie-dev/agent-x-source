@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 /** Tick every second between server heartbeats; resync anchor on each heartbeat. */
 function useSmoothElapsedSec(elapsedMs?: number): number | undefined {
@@ -60,8 +60,8 @@ export function ExecutionStatusChip({
         height: 20,
         px: 1,
         borderRadius: '10px',
-        bgcolor: `${chipColor}10`,
-        border: `1px solid ${chipColor}28`,
+        bgcolor: `${alphaColor(chipColor, '10')}`,
+        border: `1px solid ${alphaColor(chipColor, '28')}`,
         animation: 'agentx-fadeIn 0.25s ease-out',
       }}
     >
@@ -73,7 +73,7 @@ export function ExecutionStatusChip({
           fontWeight: 500,
           letterSpacing: '0.02em',
           lineHeight: 1,
-          background: `linear-gradient(90deg, ${chipColor}99 0%, ${chipColor} 38%, #ffffff 50%, ${chipColor} 62%, ${chipColor}99 100%)`,
+          background: `linear-gradient(90deg, ${alphaColor(chipColor, '99')} 0%, ${chipColor} 38%, ${colors.ink} 50%, ${chipColor} 62%, ${alphaColor(chipColor, '99')} 100%)`,
           backgroundSize: '200% 100%',
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',

@@ -7,7 +7,7 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GroupsIcon from '@mui/icons-material/Groups';
 import ForumIcon from '@mui/icons-material/Forum';
 import type { SessionInfo } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import { getCrewAccent } from '../styles/crew-theme';
 import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './crew/MedicalDisclaimerBanner';
 import { sessionHostCrewDisplay } from '../utils/crew-display';
@@ -84,7 +84,7 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
       sx={{
         position: 'relative',
         borderRadius: '10px',
-        border: `1px solid ${isCrewPrivate ? crewAccent + '35' : isActive ? colors.accent.green + '35' : colors.border.subtle}`,
+        border: `1px solid ${isCrewPrivate ? alphaColor(crewAccent, '35') : isActive ? alphaColor(colors.accent.green, '35') : colors.border.subtle}`,
         bgcolor: colors.bg.secondary,
         overflow: 'hidden',
         cursor: 'pointer',
@@ -93,9 +93,9 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         minHeight: 148,
         transition: 'border-color 0.15s, transform 0.15s, box-shadow 0.15s',
         '&:hover': {
-          borderColor: (isCrewPrivate ? crewAccent : colors.accent.blue) + '50',
+          borderColor: alphaColor((isCrewPrivate ? crewAccent : colors.accent.blue), '50'),
           transform: 'translateY(-1px)',
-          boxShadow: `0 6px 20px ${(isCrewPrivate ? crewAccent : colors.accent.blue)}12`,
+          boxShadow: `0 6px 20px ${alphaColor((isCrewPrivate ? crewAccent : colors.accent.blue), '12')}`,
         },
       }}
     >
@@ -121,8 +121,8 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
           height: 28,
           borderRadius: '6px',
           flexShrink: 0,
-          bgcolor: isCrewPrivate ? crewAccent + '12' : colors.bg.tertiary,
-          border: `1px solid ${isCrewPrivate ? crewAccent + '30' : colors.border.default}`,
+          bgcolor: isCrewPrivate ? alphaColor(crewAccent, '12') : colors.bg.tertiary,
+          border: `1px solid ${isCrewPrivate ? alphaColor(crewAccent, '30') : colors.border.default}`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -181,8 +181,8 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
           <Box sx={{
             px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
             fontFamily: "'JetBrains Mono', monospace", fontWeight: 700,
-            bgcolor: colors.accent.green + '15', color: colors.accent.green,
-            border: `1px solid ${colors.accent.green}30`,
+            bgcolor: alphaColor(colors.accent.green, '15'), color: colors.accent.green,
+            border: `1px solid ${alphaColor(colors.accent.green, '30')}`,
           }}>
             LIVE
           </Box>
@@ -190,9 +190,9 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         <Box sx={{
           px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
           fontFamily: "'JetBrains Mono', monospace",
-          bgcolor: mode === 'agent' ? colors.accent.orange + '12' : colors.accent.blue + '10',
+          bgcolor: mode === 'agent' ? alphaColor(colors.accent.orange, '12') : alphaColor(colors.accent.blue, '10'),
           color: mode === 'agent' ? colors.accent.orange : colors.accent.blue,
-          border: `1px solid ${mode === 'agent' ? colors.accent.orange + '25' : colors.accent.blue + '25'}`,
+          border: `1px solid ${mode === 'agent' ? alphaColor(colors.accent.orange, '25') : alphaColor(colors.accent.blue, '25')}`,
         }}>
           {mode.toUpperCase()}
         </Box>
@@ -200,7 +200,7 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
           <Box sx={{
             px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
             fontFamily: "'JetBrains Mono', monospace",
-            bgcolor: '#ff00ff12', color: '#ff00ff',
+            bgcolor: alphaColor(colors.accent.purple, '12'), color: colors.accent.purple,
           }}>
             HYPER
           </Box>

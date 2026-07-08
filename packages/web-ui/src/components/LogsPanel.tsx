@@ -9,7 +9,7 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import ViewColumnIcon from '@mui/icons-material/ViewColumn';
 import ViewStreamIcon from '@mui/icons-material/ViewStream';
 import { PanelHeader } from './PanelHeader';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import { getAuthToken } from '../api';
 import { copyToClipboard } from '../utils/clipboard';
 
@@ -31,9 +31,9 @@ const LEVEL_COLORS: Record<string, string> = {
 };
 
 const LEVEL_BG: Record<string, string> = {
-  error: 'rgba(248,81,73,0.12)',
-  warn: 'rgba(210,153,34,0.12)',
-  info: 'rgba(88,166,255,0.12)',
+  error: alphaColor(colors.accent.red, 0.12),
+  warn: alphaColor(colors.accent.orange, 0.12),
+  info: alphaColor(colors.accent.blue, 0.12),
 };
 
 export interface LogsPanelProps {

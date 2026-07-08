@@ -1,7 +1,7 @@
 import { type ReactNode } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import type { InlineToolData } from './InlineToolCall';
 
 // ─── Specialized renderers for specific tool types ───
@@ -14,12 +14,12 @@ export function ShellRender({ tool }: { tool: InlineToolData }) {
   const liveStdout = tool.metadata?.stdout as string | undefined;
   const liveStderr = tool.metadata?.stderr as string | undefined;
   return (
-    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.green}15` }}>
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.accent.green, '15')}` }}>
       {command && (
         <>
           <Label>Command</Label>
           <Box sx={{
-            bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75, mb: 0.5,
+            bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75, mb: 0.5,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
             color: colors.accent.green, lineHeight: 1.5, whiteSpace: 'pre-wrap',
             wordBreak: 'break-all',
@@ -32,7 +32,7 @@ export function ShellRender({ tool }: { tool: InlineToolData }) {
         <>
           <Label>{liveStderr && !liveStdout ? 'Stderr' : 'Output'}</Label>
           <Box sx={{
-            bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75,
+            bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
             color: liveStderr && !liveStdout ? colors.accent.purple : colors.text.secondary,
             lineHeight: 1.5, whiteSpace: 'pre-wrap',
@@ -54,11 +54,11 @@ export function ReadRender({ tool }: { tool: InlineToolData }) {
   const preview = tool.metadata?.content as string | undefined;
   const result = preview || cleanResult(tool.result);
   return (
-    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.blue}15` }}>
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.accent.blue, '15')}` }}>
       {path && <Label>File</Label>}
       {path && (
         <Box sx={{
-          bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75, mb: result ? 0.5 : 0,
+          bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75, mb: result ? 0.5 : 0,
           fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
           color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
           wordBreak: 'break-all',
@@ -70,7 +70,7 @@ export function ReadRender({ tool }: { tool: InlineToolData }) {
         <>
           <Label>Content</Label>
           <Box sx={{
-            bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75,
+            bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
             color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
             maxHeight: 300, overflow: 'auto', wordBreak: 'break-word',
@@ -94,11 +94,11 @@ export function EditRender({ tool }: { tool: InlineToolData }) {
   const isDiff = !!diffText;
 
   return (
-    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.orange}15` }}>
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.accent.orange, '15')}` }}>
       {path && <Label>File</Label>}
       {path && (
         <Box sx={{
-          bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75, mb: diffText || result ? 0.5 : 0,
+          bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75, mb: diffText || result ? 0.5 : 0,
           fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
           color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
         }}>
@@ -109,7 +109,7 @@ export function EditRender({ tool }: { tool: InlineToolData }) {
         <>
           <Label>Diff</Label>
           <Box sx={{
-            bgcolor: '#1a0a00', borderRadius: 0.5, p: 0.75,
+            bgcolor: alphaColor(colors.accent.orange, '12'), borderRadius: 0.5, p: 0.75,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
             color: colors.accent.orange, lineHeight: 1.5, whiteSpace: 'pre-wrap',
             maxHeight: 400, overflow: 'auto', wordBreak: 'break-word',
@@ -122,7 +122,7 @@ export function EditRender({ tool }: { tool: InlineToolData }) {
         <>
           <Label>Result</Label>
           <Box sx={{
-            bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75,
+            bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
             color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
             maxHeight: 300, overflow: 'auto', wordBreak: 'break-word',
@@ -146,11 +146,11 @@ export function GlobRender({ tool }: { tool: InlineToolData }) {
     ? metaMatches.map((m) => String(m))
     : result ? result.split('\n').filter(Boolean) : [];
   return (
-    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.purple}15` }}>
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.accent.purple, '15')}` }}>
       {pattern && <Label>Pattern</Label>}
       {pattern && (
         <Box sx={{
-          bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75, mb: result ? 0.5 : 0,
+          bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75, mb: result ? 0.5 : 0,
           fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
           color: colors.accent.purple, lineHeight: 1.5, whiteSpace: 'pre-wrap',
           wordBreak: 'break-all',
@@ -162,7 +162,7 @@ export function GlobRender({ tool }: { tool: InlineToolData }) {
         <>
           <Label>Files ({files.length})</Label>
           <Box sx={{
-            bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75,
+            bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
             color: colors.text.secondary, lineHeight: 1.5,
             maxHeight: 300, overflow: 'auto',
@@ -195,11 +195,11 @@ export function GrepRender({ tool }: { tool: InlineToolData }) {
     ? metaMatches.map((m) => String(m))
     : result ? result.split('\n').filter(Boolean) : [];
   return (
-    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.cyan}15` }}>
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.accent.cyan, '15')}` }}>
       {pattern && <Label>Pattern</Label>}
       {pattern && (
         <Box sx={{
-          bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75, mb: result ? 0.5 : 0,
+          bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75, mb: result ? 0.5 : 0,
           fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
           color: colors.accent.cyan, lineHeight: 1.5, whiteSpace: 'pre-wrap',
           wordBreak: 'break-all',
@@ -211,7 +211,7 @@ export function GrepRender({ tool }: { tool: InlineToolData }) {
         <>
           <Label>Matches ({lines.length})</Label>
           <Box sx={{
-            bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75,
+            bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
             color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
             maxHeight: 300, overflow: 'auto',
@@ -232,12 +232,12 @@ export function GrepRender({ tool }: { tool: InlineToolData }) {
 export function TaskRender({ tool }: { tool: InlineToolData }) {
   const result = cleanResult(tool.result);
   return (
-    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${colors.accent.purple}15` }}>
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.accent.purple, '15')}` }}>
       {result && (
         <>
           <Label>Result</Label>
           <Box sx={{
-            bgcolor: '#0a0a0a', borderRadius: 0.5, p: 0.75,
+            bgcolor: colors.bg.secondary, borderRadius: 0.5, p: 0.75,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem',
             color: colors.text.secondary, lineHeight: 1.5, whiteSpace: 'pre-wrap',
             maxHeight: 300, overflow: 'auto', wordBreak: 'break-word',

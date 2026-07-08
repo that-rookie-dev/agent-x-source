@@ -1,7 +1,7 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Chip from '@mui/material/Chip';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 
 export interface IntegrationStructuredResult {
   resultType: 'generic' | 'issue' | 'calendar' | 'hotel' | 'message';
@@ -31,7 +31,7 @@ const TYPE_COLORS: Record<IntegrationStructuredResult['resultType'], string> = {
 export function IntegrationResultRender({ result }: { result: IntegrationStructuredResult }) {
   const accent = TYPE_COLORS[result.resultType] ?? colors.accent.blue;
   return (
-    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${accent}25` }}>
+    <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(accent, '25')}` }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.75, flexWrap: 'wrap' }}>
         <Typography sx={{ fontSize: '0.55rem', fontWeight: 700, color: accent, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
           {TYPE_LABELS[result.resultType]}

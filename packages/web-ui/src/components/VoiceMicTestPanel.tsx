@@ -7,6 +7,7 @@ import Typography from '@mui/material/Typography';
 import { useMicrophonePermission } from '../hooks/useMicrophonePermission';
 import { hasSeenMicPreprompt, markMicPrepromptSeen } from '../utils/microphone-permission';
 import { VoicePermissionDialog } from './VoicePermissionDialog';
+import { alphaColor } from '../theme';
 import {
   settingsBtnGhostSx,
   settingsHelperSx,
@@ -118,7 +119,7 @@ export function VoiceMicTestPanel({ compact = false }: VoiceMicTestPanelProps) {
             mb: 1,
             height: 4,
             borderRadius: 1,
-            bgcolor: `${settingsTheme.accent.hud}18`,
+            bgcolor: `${alphaColor(settingsTheme.accent.hud, '18')}`,
             '& .MuiLinearProgress-bar': { bgcolor: settingsTheme.accent.signal },
           }}
         />

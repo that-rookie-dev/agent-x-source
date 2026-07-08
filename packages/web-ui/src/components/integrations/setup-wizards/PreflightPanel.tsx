@@ -17,6 +17,7 @@ import { integrations } from '../../../api';
 import { settingsTheme, settingsMonoSx, settingsTextFieldSx } from '../../../styles/settings-theme';
 import { copyToClipboard } from '../../../utils/clipboard';
 
+import { alphaColor } from '../../../theme';
 const CREDENTIAL_ONLY_CHECKS = new Set(['postgres_reachable', 'redis_reachable']);
 
 export interface PreflightPanelProps {
@@ -225,7 +226,7 @@ export function PreflightPanel({
             mb: 1,
             p: 1,
             borderRadius: '6px',
-            border: `1px solid ${result.ok ? settingsTheme.border.default : settingsTheme.accent.alert + '44'}`,
+            border: `1px solid ${result.ok ? settingsTheme.border.default : alphaColor(settingsTheme.accent.alert, '44')}`,
             bgcolor: settingsTheme.bg.elevated,
           }}
         >

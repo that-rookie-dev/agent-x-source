@@ -32,7 +32,7 @@ import FlagIcon from '@mui/icons-material/Flag';
 import GroupIcon from '@mui/icons-material/Group';
 import { sessions, type ConnectionState, type Checkpoint } from '../api';
 import type { Crew } from '../api';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ export function ConnectionHealthDot({
           sx={{
             width: 7, height: 7, borderRadius: '50%',
             bgcolor: color,
-            boxShadow: state === 'open' ? `0 0 6px ${color}80` : 'none',
+            boxShadow: state === 'open' ? `0 0 6px ${alphaColor(color, '80')}` : 'none',
             animation: state === 'reconnecting' ? 'agentx-pulse 1s ease-in-out infinite' : 'none',
           }}
         />
@@ -214,9 +214,9 @@ export function SlashCommandMenu({
         left: 0,
         right: 0,
         bgcolor: colors.bg.secondary,
-        border: `1px solid ${colors.accent.purple}40`,
+        border: `1px solid ${alphaColor(colors.accent.purple, '40')}`,
         borderRadius: '10px',
-        boxShadow: `0 8px 24px rgba(0,0,0,0.4)`,
+        boxShadow: `0 8px 24px ${colors.shadow.heavy}`,
         maxHeight: 280,
         overflowY: 'auto',
         zIndex: 100,
@@ -240,7 +240,7 @@ export function SlashCommandMenu({
             px: 1.25, py: 0.6,
             display: 'flex', alignItems: 'center', gap: 0.75,
             cursor: 'pointer',
-            bgcolor: i === active ? colors.accent.purple + '15' : 'transparent',
+            bgcolor: i === active ? alphaColor(colors.accent.purple, '15') : 'transparent',
             borderLeft: i === active ? `2px solid ${colors.accent.purple}` : '2px solid transparent',
           }}
         >
@@ -323,9 +323,9 @@ export function CrewMentionMenu({
         left: 0,
         right: 0,
         bgcolor: colors.bg.secondary,
-        border: `1px solid ${colors.accent.blue}40`,
+        border: `1px solid ${alphaColor(colors.accent.blue, '40')}`,
         borderRadius: '10px',
-        boxShadow: `0 8px 24px rgba(0,0,0,0.4)`,
+        boxShadow: `0 8px 24px ${colors.shadow.heavy}`,
         maxHeight: 280,
         overflowY: 'auto',
         zIndex: 100,
@@ -351,7 +351,7 @@ export function CrewMentionMenu({
               px: 1.25, py: 0.6,
               display: 'flex', alignItems: 'center', gap: 0.75,
               cursor: 'pointer',
-              bgcolor: i === active ? colors.accent.blue + '15' : 'transparent',
+              bgcolor: i === active ? alphaColor(colors.accent.blue, '15') : 'transparent',
               borderLeft: i === active ? `2px solid ${colors.accent.blue}` : '2px solid transparent',
             }}
           >
@@ -365,7 +365,7 @@ export function CrewMentionMenu({
                   categoryId: crew.categoryId,
                   requiresMedicalDisclaimer: crew.requiresMedicalDisclaimer,
                 }) && (
-                  <Typography sx={{ fontSize: '0.45rem', color: '#f4c430', fontWeight: 800 }}>⚠ MED</Typography>
+                  <Typography sx={{ fontSize: '0.45rem', color: colors.accent.orange, fontWeight: 800 }}>⚠ MED</Typography>
                 )}
                 {crew.title && (
                   <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim }}>
@@ -442,9 +442,9 @@ export function CommandPalette({
       PaperProps={{
         sx: {
           bgcolor: colors.bg.secondary,
-          border: `1px solid ${colors.accent.purple}40`,
+          border: `1px solid ${alphaColor(colors.accent.purple, '40')}`,
           borderRadius: '14px',
-          boxShadow: `0 20px 60px rgba(0,0,0,0.6)`,
+          boxShadow: `0 20px 60px ${colors.shadow.heavy}`,
         },
       }}
     >
@@ -478,7 +478,7 @@ export function CommandPalette({
               onMouseEnter={() => setActive(i)}
               sx={{
                 px: 2, py: 1, display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer',
-                bgcolor: i === active ? colors.accent.purple + '15' : 'transparent',
+                bgcolor: i === active ? alphaColor(colors.accent.purple, '15') : 'transparent',
                 borderLeft: i === active ? `3px solid ${colors.accent.purple}` : '3px solid transparent',
               }}
             >
@@ -537,7 +537,7 @@ export function SessionSearchModal({
       PaperProps={{
         sx: {
           bgcolor: colors.bg.secondary,
-          border: `1px solid ${colors.accent.blue}40`,
+          border: `1px solid ${alphaColor(colors.accent.blue, '40')}`,
           borderRadius: '14px',
         },
       }}
@@ -580,7 +580,7 @@ export function SessionSearchModal({
                 p: 1.25, mb: 0.5, borderRadius: 1,
                 border: `1px solid ${colors.border.default}`,
                 cursor: 'pointer',
-                '&:hover': { borderColor: colors.accent.blue + '60', bgcolor: colors.accent.blue + '05' },
+                '&:hover': { borderColor: alphaColor(colors.accent.blue, '60'), bgcolor: alphaColor(colors.accent.blue, '05') },
               }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5 }}>
@@ -621,7 +621,7 @@ function highlight(text: string, q: string): string {
   if (!q) return escapeHtml(text);
   const safe = escapeHtml(text);
   const re = new RegExp(escapeRegex(q), 'gi');
-  return safe.replace(re, (m) => `<span style="background:${colors.accent.blue}40;color:${colors.accent.blue};">${m}</span>`);
+  return safe.replace(re, (m) => `<span style="background:${alphaColor(colors.accent.blue, '40')};color:${colors.accent.blue};">${m}</span>`);
 }
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
@@ -650,8 +650,8 @@ export function DoomLoopWarning({
       sx={{
         p: 1.25, mb: 1.5,
         borderRadius: 1.5,
-        bgcolor: colors.accent.orange + '12',
-        border: `1px solid ${colors.accent.orange}40`,
+        bgcolor: alphaColor(colors.accent.orange, '12'),
+        border: `1px solid ${alphaColor(colors.accent.orange, '40')}`,
         animation: 'agentx-fadeIn 0.3s ease-out',
       }}
     >
@@ -667,9 +667,9 @@ export function DoomLoopWarning({
       </Typography>
       <Box sx={{ display: 'flex', gap: 0.5 }}>
         <Chip size="small" label="Stop" onClick={onStop}
-          sx={{ height: 22, fontSize: '0.55rem', bgcolor: colors.accent.red + '15', color: colors.accent.red, cursor: 'pointer', '&:hover': { bgcolor: colors.accent.red + '28' } }} />
+          sx={{ height: 22, fontSize: '0.55rem', bgcolor: alphaColor(colors.accent.red, '15'), color: colors.accent.red, cursor: 'pointer', '&:hover': { bgcolor: alphaColor(colors.accent.red, '28') } }} />
         <Chip size="small" label="Continue" onClick={onContinue}
-          sx={{ height: 22, fontSize: '0.55rem', bgcolor: colors.accent.green + '15', color: colors.accent.green, cursor: 'pointer', '&:hover': { bgcolor: colors.accent.green + '28' } }} />
+          sx={{ height: 22, fontSize: '0.55rem', bgcolor: alphaColor(colors.accent.green, '15'), color: colors.accent.green, cursor: 'pointer', '&:hover': { bgcolor: alphaColor(colors.accent.green, '28') } }} />
       </Box>
     </Box>
   );
@@ -691,10 +691,10 @@ export function ReasoningBlock({ text, streaming, durationMs }: { text: string; 
           display: 'inline-flex', alignItems: 'center', gap: 0.5,
           px: 0.85, py: 0.35,
           borderRadius: '8px',
-          bgcolor: colors.accent.purple + '08',
-          border: `1px dashed ${colors.accent.purple}30`,
+          bgcolor: alphaColor(colors.accent.purple, '08'),
+          border: `1px dashed ${alphaColor(colors.accent.purple, '30')}`,
           cursor: 'pointer',
-          '&:hover': { bgcolor: colors.accent.purple + '15', borderStyle: 'solid' },
+          '&:hover': { bgcolor: alphaColor(colors.accent.purple, '15'), borderStyle: 'solid' },
         }}
       >
         <PsychologyIcon sx={{ fontSize: 12, color: colors.accent.purple, ...(streaming ? { animation: 'agentx-pulse 1.4s ease-in-out infinite' } : {}) }} />
@@ -708,8 +708,8 @@ export function ReasoningBlock({ text, streaming, durationMs }: { text: string; 
           sx={{
             mt: 0.5, p: 1,
             borderRadius: 1,
-            bgcolor: colors.accent.purple + '06',
-            borderLeft: `2px solid ${colors.accent.purple}60`,
+            bgcolor: alphaColor(colors.accent.purple, '06'),
+            borderLeft: `2px solid ${alphaColor(colors.accent.purple, '60')}`,
             fontSize: '0.65rem',
             color: colors.text.secondary,
             fontStyle: 'italic',
@@ -774,7 +774,7 @@ export function CheckpointDrawer({
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
       PaperProps={{
-        sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.accent.blue}40`, borderRadius: '14px' },
+        sx: { bgcolor: colors.bg.secondary, border: `1px solid ${alphaColor(colors.accent.blue, '40')}`, borderRadius: '14px' },
       }}
     >
       <DialogContent sx={{ p: 0 }}>
@@ -801,7 +801,7 @@ export function CheckpointDrawer({
                 p: 1.25, mb: 0.5, borderRadius: 1,
                 border: `1px solid ${colors.border.default}`,
                 display: 'flex', alignItems: 'center', gap: 1,
-                '&:hover': { borderColor: colors.accent.blue + '60', bgcolor: colors.accent.blue + '05' },
+                '&:hover': { borderColor: alphaColor(colors.accent.blue, '60'), bgcolor: alphaColor(colors.accent.blue, '05') },
               }}
             >
               <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -813,7 +813,7 @@ export function CheckpointDrawer({
                 </Typography>
               </Box>
               <Chip size="small" label={restoring === c.id ? 'Restoring…' : 'Restore'} onClick={() => handleRestore(c.id)}
-                sx={{ height: 22, fontSize: '0.55rem', bgcolor: colors.accent.green + '15', color: colors.accent.green, cursor: 'pointer', '&:hover': { bgcolor: colors.accent.green + '28' } }} />
+                sx={{ height: 22, fontSize: '0.55rem', bgcolor: alphaColor(colors.accent.green, '15'), color: colors.accent.green, cursor: 'pointer', '&:hover': { bgcolor: alphaColor(colors.accent.green, '28') } }} />
               <IconButton size="small" onClick={() => handleDelete(c.id)} sx={{ color: colors.text.dim, '&:hover': { color: colors.accent.red } }}>
                 <CloseIcon sx={{ fontSize: 12 }} />
               </IconButton>

@@ -4,6 +4,7 @@ import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import LinearProgress from '@mui/material/LinearProgress';
 import RadarIcon from '@mui/icons-material/Radar';
+import { colors, alphaColor } from '../../theme';
 import {
   modelBenchmark,
   providers as provApi,
@@ -24,10 +25,10 @@ import {
 } from '../../styles/settings-theme';
 
 const GRADE_META: Record<BenchmarkGrade, { label: string; subtitle: string; color: string }> = {
-  ELITE: { label: 'ELITE', subtitle: 'Full agentic clearance — deploy without reservation', color: '#58a6ff' },
-  CLEARED: { label: 'CLEARED', subtitle: 'Recommended for Agent-X autonomous workloads', color: '#3fb950' },
-  LIMITED: { label: 'LIMITED', subtitle: 'Usable with constraints — review failed probes', color: '#d29922' },
-  STANDBY: { label: 'STANDBY', subtitle: 'Not cleared for agentic deployment', color: '#f85149' },
+  ELITE: { label: 'ELITE', subtitle: 'Full agentic clearance — deploy without reservation', color: colors.accent.blue },
+  CLEARED: { label: 'CLEARED', subtitle: 'Recommended for Agent-X autonomous workloads', color: colors.accent.green },
+  LIMITED: { label: 'LIMITED', subtitle: 'Usable with constraints — review failed probes', color: colors.accent.orange },
+  STANDBY: { label: 'STANDBY', subtitle: 'Not cleared for agentic deployment', color: colors.accent.red },
 };
 
 function gradeAllowsUse(grade: BenchmarkGrade): boolean {
@@ -192,7 +193,7 @@ export function ModelBenchmarkRunner({
       border: `1px solid ${running ? settingsTheme.border.hud : settingsTheme.border.default}`,
       bgcolor: settingsTheme.bg.inset,
       overflow: 'hidden',
-      boxShadow: running ? `0 0 40px ${settingsTheme.accent.hud}22, inset 0 0 60px ${settingsTheme.accent.hud}08` : 'none',
+      boxShadow: running ? `0 0 40px ${alphaColor(settingsTheme.accent.hud, '22')}, inset 0 0 60px ${alphaColor(settingsTheme.accent.hud, '08')}` : 'none',
       transition: 'box-shadow 0.3s, border-color 0.3s',
     }}>
       <style>{radarSpin}</style>
@@ -211,7 +212,7 @@ export function ModelBenchmarkRunner({
             border: `1px solid ${running ? settingsTheme.accent.hud : settingsTheme.border.hud}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             animation: running ? 'radarSpin 3s linear infinite' : 'none',
-            boxShadow: running ? `0 0 20px ${settingsTheme.accent.hud}44` : 'none',
+            boxShadow: running ? `0 0 20px ${alphaColor(settingsTheme.accent.hud, '44')}` : 'none',
           }}>
             <RadarIcon sx={{ fontSize: 18, color: running ? settingsTheme.accent.hud : settingsTheme.text.dim }} />
           </Box>
@@ -246,8 +247,8 @@ export function ModelBenchmarkRunner({
         {fromCache && result && !running && (
           <Box sx={{
             mb: 1.5, px: 1.5, py: 1, borderRadius: '4px',
-            border: `1px solid ${settingsTheme.accent.cyan}44`,
-            bgcolor: `${settingsTheme.accent.cyan}0a`,
+            border: `1px solid ${alphaColor(settingsTheme.accent.cyan, '44')}`,
+            bgcolor: `${alphaColor(settingsTheme.accent.cyan, '0a')}`,
           }}>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.52rem', color: settingsTheme.accent.cyan }}>
               ARCHIVE :: Loaded saved benchmark — scan not re-run
@@ -306,13 +307,13 @@ export function ModelBenchmarkRunner({
         {result && gradeMeta && (
           <Box sx={{
             mb: 2.5, p: 2, borderRadius: '6px', textAlign: 'center',
-            border: `1px solid ${gradeMeta.color}55`,
-            bgcolor: `${gradeMeta.color}0d`,
-            boxShadow: `0 0 30px ${gradeMeta.color}22, inset 0 0 40px ${gradeMeta.color}08`,
+            border: `1px solid ${alphaColor(gradeMeta.color, '55')}`,
+            bgcolor: `${alphaColor(gradeMeta.color, '0d')}`,
+            boxShadow: `0 0 30px ${alphaColor(gradeMeta.color, '22')}, inset 0 0 40px ${alphaColor(gradeMeta.color, '08')}`,
           }}>
             <Typography sx={{
               ...settingsMonoSx, fontSize: embedded ? '1.4rem' : '2rem', fontWeight: 800,
-              color: gradeMeta.color, letterSpacing: '6px', textShadow: `0 0 20px ${gradeMeta.color}88`,
+              color: gradeMeta.color, letterSpacing: '6px', textShadow: `0 0 20px ${alphaColor(gradeMeta.color, '88')}`,
             }}>
               {gradeMeta.label}
             </Typography>
@@ -372,7 +373,7 @@ function TestRow({ test }: { test: BenchmarkTestResult }) {
     <Box sx={{
       px: 1, py: 0.75, borderRadius: '3px',
       bgcolor: settingsTheme.bg.hud,
-      border: `1px solid ${isPartial ? `${settingsTheme.accent.amber}44` : settingsTheme.border.subtle}`,
+      border: `1px solid ${isPartial ? `${alphaColor(settingsTheme.accent.amber, '44')}` : settingsTheme.border.subtle}`,
     }}>
       <Box sx={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 0.5, alignItems: 'start' }}>
         <Box sx={{ minWidth: 0 }}>
@@ -447,8 +448,8 @@ function ModalityChip({ probe }: { probe: ModalityProbeResult }) {
 
   return (
     <Box sx={{
-      p: 1, borderRadius: '4px', border: `1px solid ${color}33`,
-      bgcolor: detected ? `${settingsTheme.accent.cyan}0a` : settingsTheme.bg.inset,
+      p: 1, borderRadius: '4px', border: `1px solid ${alphaColor(color, '33')}`,
+      bgcolor: detected ? `${alphaColor(settingsTheme.accent.cyan, '0a')}` : settingsTheme.bg.inset,
     }}>
       <Typography sx={{ ...settingsMonoSx, fontSize: '0.5rem', color, fontWeight: 700, textTransform: 'uppercase' }}>
         {detected ? '● SUPPORTED' : '○ NOT SUPPORTED'}

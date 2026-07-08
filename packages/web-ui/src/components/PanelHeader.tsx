@@ -1,8 +1,9 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { colors } from '../theme';
+import { layout } from '../styles/layout';
 
-export const PANEL_HEADER_HEIGHT = 56;
+export const PANEL_HEADER_HEIGHT = layout.panelHeaderHeight;
 
 interface PanelHeaderProps {
   title: string;
@@ -18,7 +19,7 @@ export function PanelHeader({ title, subtitle, icon, action, inline }: PanelHead
     <Box sx={{
       flexShrink: 0,
       height: PANEL_HEADER_HEIGHT,
-      px: 3,
+      px: 2,
       boxSizing: 'border-box',
       borderBottom: `1px solid ${colors.border.default}`,
       display: 'flex',
@@ -34,7 +35,7 @@ export function PanelHeader({ title, subtitle, icon, action, inline }: PanelHead
         )}
         {inline && subtitle ? (
           <Typography sx={{
-            fontSize: '0.8rem',
+            fontSize: '0.75rem',
             fontWeight: 500,
             color: colors.text.primary,
             lineHeight: 1.2,
@@ -48,11 +49,11 @@ export function PanelHeader({ title, subtitle, icon, action, inline }: PanelHead
           </Typography>
         ) : (
           <Box sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontSize: '0.95rem', fontWeight: 600, color: colors.text.primary, lineHeight: 1.2 }}>
+            <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, color: colors.text.primary, lineHeight: 1.2 }}>
               {title}
             </Typography>
             {subtitle && (
-              <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim, lineHeight: 1.3 }}>
+              <Typography sx={{ fontSize: '0.65rem', color: colors.text.dim, lineHeight: 1.3 }}>
                 {subtitle}
               </Typography>
             )}

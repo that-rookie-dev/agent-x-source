@@ -1,14 +1,14 @@
 import type { SxProps, Theme } from '@mui/material/styles';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 
 export const WIZARD_MONO = "'JetBrains Mono', monospace";
 
-/** Black/white base with green/cyan reserved for status accents only. */
+/** Neutral base with green/cyan reserved for status accents only. */
 export const wizardTheme = {
-  bg: '#000000',
-  panel: '#0a0a0a',
-  panelBorder: 'rgba(255,255,255,0.12)',
-  panelBorderStrong: 'rgba(255,255,255,0.22)',
+  bg: colors.bg.primary,
+  panel: colors.bg.secondary,
+  panelBorder: alphaColor(colors.ink, 0.12),
+  panelBorderStrong: alphaColor(colors.ink, 0.22),
   text: colors.text.primary,
   textSecondary: colors.text.secondary,
   textDim: colors.text.dim,
@@ -23,11 +23,11 @@ export const wizardStepperSx: SxProps<Theme> = {
   maxWidth: 880,
   mx: 'auto',
   '& .MuiStepIcon-root': {
-    color: 'rgba(255,255,255,0.18)',
+    color: alphaColor(colors.ink, 0.18),
     '&.Mui-active': { color: wizardTheme.text },
     '&.Mui-completed': { color: wizardTheme.accentOk },
   },
-  '& .MuiStepConnector-line': { borderColor: 'rgba(255,255,255,0.08)' },
+  '& .MuiStepConnector-line': { borderColor: alphaColor(colors.ink, 0.08) },
   '& .MuiStepLabel-label': {
     color: wizardTheme.textDim,
     fontSize: '0.58rem',
@@ -47,8 +47,8 @@ export const wizardPrimaryBtnSx: SxProps<Theme> = {
   fontWeight: 700,
   textTransform: 'none',
   boxShadow: 'none',
-  '&:hover': { bgcolor: 'rgba(255,255,255,0.88)', boxShadow: 'none' },
-  '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.18)', color: 'rgba(255,255,255,0.35)' },
+  '&:hover': { bgcolor: alphaColor(colors.ink, 0.88), boxShadow: 'none' },
+  '&.Mui-disabled': { bgcolor: alphaColor(colors.ink, 0.18), color: alphaColor(colors.ink, 0.35) },
 };
 
 export const wizardBackBtnSx: SxProps<Theme> = {
@@ -80,14 +80,14 @@ export const wizardTextFieldSlotProps = {
 export function wizardTileSx(selected: boolean): SxProps<Theme> {
   return {
     p: 1.5,
-    border: `1px solid ${selected ? 'rgba(255,255,255,0.82)' : wizardTheme.panelBorder}`,
+    border: `1px solid ${selected ? alphaColor(colors.ink, 0.82) : wizardTheme.panelBorder}`,
     borderRadius: 1,
     cursor: 'pointer',
     textAlign: 'center',
     transition: 'all 0.18s',
-    bgcolor: selected ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)',
+    bgcolor: selected ? alphaColor(colors.ink, 0.05) : alphaColor(colors.ink, 0.02),
     '&:hover': {
-      borderColor: selected ? 'rgba(255,255,255,0.82)' : wizardTheme.panelBorderStrong,
+      borderColor: selected ? alphaColor(colors.ink, 0.82) : wizardTheme.panelBorderStrong,
     },
   };
 }
@@ -99,7 +99,7 @@ export function wizardSelectCardSx(selected: boolean, hint?: 'ok' | 'signal'): S
     border: `1px solid ${selected ? hintColor : wizardTheme.panelBorder}`,
     borderRadius: 1.5,
     cursor: 'pointer',
-    bgcolor: selected ? 'rgba(255,255,255,0.04)' : wizardTheme.panel,
+    bgcolor: selected ? alphaColor(colors.ink, 0.04) : wizardTheme.panel,
     display: 'flex',
     flexDirection: 'column',
     transition: 'all 0.18s',

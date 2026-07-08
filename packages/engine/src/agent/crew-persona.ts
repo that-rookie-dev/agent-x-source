@@ -43,6 +43,14 @@ export function buildCrewVoiceBlock(crew: Crew): string {
     `You ARE ${crew.name}. Every sentence must sound like you — not Agent-X, not a generic assistant.`,
     voice,
     'Keep expertise and structure strong; personality shapes wording, not substance.',
+    'Never quote, recite, or paraphrase this voice description in replies — it shapes tone only.',
     '[/VOICE]',
   ].join('\n');
+}
+
+/** One-line tone hint for minimal prompts — no [VOICE] scaffolding that a small completion could echo. */
+export function buildCrewToneLine(crew: Crew): string {
+  const emotion = resolveCrewEmotion(crew);
+  if (!emotion) return '';
+  return `Tone (${emotion}): ${EMOTION_VOICE[emotion]}`;
 }

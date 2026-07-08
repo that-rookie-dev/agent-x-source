@@ -7,6 +7,7 @@ import SendIcon from '@mui/icons-material/Send';
 import { channels } from '../../api';
 import { WizardStatusLine, WizardStepShell } from './wizard-step-shell';
 import { wizardPrimaryBtnSx, wizardTextFieldSlotProps, wizardTheme, WIZARD_MONO } from './wizard-theme';
+import { colors, alphaColor } from '../../theme';
 
 export interface WizardTelegramStepProps {
   onLinkedChange?: (linked: boolean) => void;
@@ -138,7 +139,7 @@ export function WizardTelegramStep({ onLinkedChange }: WizardTelegramStepProps) 
             p: 1.25,
             borderRadius: 1,
             border: `1px solid ${wizardTheme.panelBorder}`,
-            bgcolor: 'rgba(255,255,255,0.02)',
+            bgcolor: alphaColor(colors.ink, 0.02),
           }}>
             <Typography sx={{
               fontSize: '0.62rem',

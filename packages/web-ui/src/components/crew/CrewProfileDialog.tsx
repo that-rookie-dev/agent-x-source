@@ -18,6 +18,7 @@ import { crewDialogPaperSx, crewHubScanlineSx, crewOverlineSx, crewTheme, getCre
 import { MedicalDisclaimerSectorCard, MedicalProfileIdentityFrame, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
 import { crewDisplayFields } from '../../utils/crew-display';
 
+import { colors, alphaColor } from '../../theme';
 export interface RosterProfileActions {
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
@@ -82,7 +83,7 @@ function IdentityBlockContent({ crew, accent }: { crew: PrebuiltCrew; accent: st
         inset: 0,
         pointerEvents: 'none',
         opacity: 0.06,
-        backgroundImage: 'repeating-linear-gradient(-24deg, transparent, transparent 8px, #fff 8px, #fff 9px)',
+        backgroundImage: `repeating-linear-gradient(-24deg, transparent, transparent 8px, ${colors.ink} 8px, ${colors.ink} 9px)`,
       }} />
       <Typography sx={{
         position: 'absolute',
@@ -243,9 +244,9 @@ export function CrewProfileDialog({
         </Box>
         <Box sx={{
           px: 0.75, py: 0.2,
-          border: `1px solid ${crewTheme.accent.alert}55`,
+          border: `1px solid ${alphaColor(crewTheme.accent.alert, '55')}`,
           borderRadius: '4px',
-          bgcolor: 'rgba(248,81,73,0.08)',
+          bgcolor: alphaColor(crewTheme.accent.alert, 0.08),
         }}>
           <Typography sx={{
             fontSize: '0.5rem',
@@ -322,9 +323,9 @@ export function CrewProfileDialog({
                   height: 22,
                   fontSize: '0.58rem',
                   fontFamily: "'JetBrains Mono', monospace",
-                  bgcolor: `${accent}12`,
+                  bgcolor: `${alphaColor(accent, '12')}`,
                   color: accent,
-                  border: `1px solid ${accent}35`,
+                  border: `1px solid ${alphaColor(accent, '35')}`,
                   borderRadius: '4px',
                   '& .MuiChip-label': { px: 0.85 },
                 }}
@@ -441,7 +442,7 @@ export function CrewProfileDialog({
                     letterSpacing: '0.5px',
                     py: 0.6,
                     bgcolor: accent,
-                    color: '#0d1117',
+                    color: colors.bg.primary,
                     '&:hover': { bgcolor: accent, filter: 'brightness(1.08)' },
                   }}
                 >
@@ -521,7 +522,7 @@ export function CrewProfileDialog({
                   py: 0.6,
                   borderColor: crewTheme.border.danger,
                   color: crewTheme.accent.alert,
-                  '&:hover': { borderColor: crewTheme.accent.alert, bgcolor: 'rgba(248,81,73,0.08)' },
+                  '&:hover': { borderColor: crewTheme.accent.alert, bgcolor: alphaColor(crewTheme.accent.alert, 0.08) },
                 }}
               >
                 PURGE
@@ -543,7 +544,7 @@ export function CrewProfileDialog({
                     letterSpacing: '0.5px',
                     py: 0.6,
                     bgcolor: accent,
-                    color: '#0d1117',
+                    color: colors.bg.primary,
                     '&:hover': { bgcolor: accent, filter: 'brightness(1.08)' },
                   }}
                 >
@@ -562,7 +563,7 @@ export function CrewProfileDialog({
                 py: 0.6,
                 borderColor: crewTheme.border.danger,
                 color: crewTheme.accent.alert,
-                '&:hover': { borderColor: crewTheme.accent.alert, bgcolor: 'rgba(248,81,73,0.08)' },
+                '&:hover': { borderColor: crewTheme.accent.alert, bgcolor: alphaColor(crewTheme.accent.alert, 0.08) },
               }}
             >
               DEACTIVATE OPERATIVE
@@ -604,7 +605,7 @@ export function CrewProfileDialog({
                       letterSpacing: '0.5px',
                       py: 0.6,
                       bgcolor: accent,
-                      color: '#0d1117',
+                      color: colors.bg.primary,
                       '&:hover': { bgcolor: accent, filter: 'brightness(1.08)' },
                     }}
                   >

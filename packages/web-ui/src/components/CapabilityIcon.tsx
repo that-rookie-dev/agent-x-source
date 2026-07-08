@@ -1,10 +1,5 @@
-/**
- * Capability icon component for displaying model quality/speed tiers.
- *
- * Uses fire SVG icons with different intensities to represent
- * capability levels (basic/standard/advanced).
- */
 import React from 'react';
+import { colors } from '../theme';
 
 interface CapabilityIconProps {
   capability: 'fast' | 'medium' | 'slow' | 'basic' | 'standard' | 'advanced';
@@ -16,15 +11,15 @@ export const CapabilityIcon: React.FC<CapabilityIconProps> = ({ capability, size
     switch (capability) {
       case 'fast':
       case 'basic':
-        return '#4da6ff'; // Blue
+        return colors.accent.blue;
       case 'medium':
       case 'standard':
-        return '#ffd24d'; // Yellow
+        return colors.accent.orange;
       case 'slow':
       case 'advanced':
-        return '#ff4d4d'; // Red
+        return colors.accent.red;
       default:
-        return '#888888';
+        return colors.text.dim;
     }
   };
   

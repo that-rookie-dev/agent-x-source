@@ -74,8 +74,8 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   return (
     <Box sx={{
       flexShrink: 0, borderTop: `1px solid ${colors.border.default}`,
-      px: 3, py: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim,
+      px: 2, py: 0.5, minHeight: 28, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      fontFamily: "'JetBrains Mono', monospace", fontSize: '0.52rem', color: colors.text.dim,
     }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, ml: -0.5 }}>
         {capabilitiesReady && !neuralBrainDisabled && (

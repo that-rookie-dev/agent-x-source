@@ -1,4 +1,4 @@
-import { Component, type ReactNode, useState, useCallback, useRef, useEffect } from 'react';
+import { Component, type ReactNode, lazy, Suspense, useState, useCallback, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -7,19 +7,22 @@ import { Footer } from '../components/Footer';
 import { LogsPanel } from '../components/LogsPanel';
 import { ChatPanel } from '../components/ChatPanel';
 import { AgentXCoreChat } from './AgentXCoreChat';
-import { ToolsPanel } from '../components/ToolsPanel';
-import { PluginsPanel } from '../components/PluginsPanel';
-import { ChannelsPanel } from '../components/ChannelsPanel';
-import { SettingsPanel } from '../components/SettingsPanel';
-import { AutomationPanel } from '../components/AutomationPanel';
-import { RagStudioPanel } from '../components/RagStudioPanel';
-import { OrchestratorPanel } from '../components/OrchestratorPanel';
-import { CrewsPanel } from '../components/CrewsPanel';
-import { SoulPanel } from '../components/SoulPanel';
-import { McpStorePage } from '../components/integrations/McpStorePage';
-import { NotificationsPanel } from '../components/NotificationsPanel';
 import { NotificationToast } from '../components/NotificationToast';
-import { colors } from '../theme';
+
+// Secondary panels are code-split so the initial chunk only carries the chat
+// surface — they load on first navigation and stay cached afterwards.
+const ToolsPanel = lazy(() => import('../components/ToolsPanel').then(m => ({ default: m.ToolsPanel })));
+const PluginsPanel = lazy(() => import('../components/PluginsPanel').then(m => ({ default: m.PluginsPanel })));
+const ChannelsPanel = lazy(() => import('../components/ChannelsPanel').then(m => ({ default: m.ChannelsPanel })));
+const SettingsPanel = lazy(() => import('../components/SettingsPanel').then(m => ({ default: m.SettingsPanel })));
+const AutomationPanel = lazy(() => import('../components/AutomationPanel').then(m => ({ default: m.AutomationPanel })));
+const RagStudioPanel = lazy(() => import('../components/RagStudioPanel').then(m => ({ default: m.RagStudioPanel })));
+const OrchestratorPanel = lazy(() => import('../components/OrchestratorPanel').then(m => ({ default: m.OrchestratorPanel })));
+const CrewsPanel = lazy(() => import('../components/CrewsPanel').then(m => ({ default: m.CrewsPanel })));
+const SoulPanel = lazy(() => import('../components/SoulPanel').then(m => ({ default: m.SoulPanel })));
+const McpStorePage = lazy(() => import('../components/integrations/McpStorePage').then(m => ({ default: m.McpStorePage })));
+const NotificationsPanel = lazy(() => import('../components/NotificationsPanel').then(m => ({ default: m.NotificationsPanel })));
+import { colors, alphaColor } from '../theme';
 import { useApp } from '../store/AppContext';
 import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 
@@ -136,7 +139,7 @@ export function Console() {
             : { top: -3, left: 0, right: 0, height: 6, cursor: 'row-resize' }
           ),
           zIndex: 10,
-          '&:hover': { bgcolor: colors.accent.blue + '30' },
+          '&:hover': { bgcolor: alphaColor(colors.accent.blue, '30') },
           transition: 'background-color 0.15s',
         }}
       />
@@ -152,19 +155,21 @@ export function Console() {
         <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', flexDirection: isVertical ? 'row' : 'column' }}>
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
             <PanelErrorBoundary key={activePanel}>
-              {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
-              {activePanel === 'agent-x' && <AgentXCoreChat />}
-              {activePanel === 'tools' && <ToolsPanel />}
-              {activePanel === 'plugins' && <PluginsPanel />}
-              {activePanel === 'channels' && <ChannelsPanel />}
-              {activePanel === 'settings' && <SettingsPanel />}
-              {activePanel === 'automation' && <AutomationPanel />}
-              {activePanel === 'rag-studio' && <RagStudioPanel />}
-              {activePanel === 'orchestrator' && <OrchestratorPanel />}
-              {activePanel === 'crews' && <CrewsPanel />}
-              {activePanel === 'soul' && <SoulPanel />}
-              {activePanel === 'mcp-store' && <McpStorePage />}
-              {activePanel === 'notifications' && <NotificationsPanel />}
+              <Suspense fallback={null}>
+                {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
+                {activePanel === 'agent-x' && <AgentXCoreChat />}
+                {activePanel === 'tools' && <ToolsPanel />}
+                {activePanel === 'plugins' && <PluginsPanel />}
+                {activePanel === 'channels' && <ChannelsPanel />}
+                {activePanel === 'settings' && <SettingsPanel />}
+                {activePanel === 'automation' && <AutomationPanel />}
+                {activePanel === 'rag-studio' && <RagStudioPanel />}
+                {activePanel === 'orchestrator' && <OrchestratorPanel />}
+                {activePanel === 'crews' && <CrewsPanel />}
+                {activePanel === 'soul' && <SoulPanel />}
+                {activePanel === 'mcp-store' && <McpStorePage />}
+                {activePanel === 'notifications' && <NotificationsPanel />}
+              </Suspense>
             </PanelErrorBoundary>
           </Box>
           {isVertical && logsContent}

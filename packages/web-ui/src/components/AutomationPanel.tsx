@@ -12,20 +12,22 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import { PanelHeader } from './PanelHeader';
 import { automation, type AutomationTaskRecord, type TelemetryEvent } from '../api';
+import { usePageVisible } from '../hooks/usePageVisible';
 import { automationRunSessionId } from '@agentx/shared/browser';
 import { useApp } from '../store/AppContext';
+import { colors } from '../theme';
 
 /** Minimal black & white palette for this panel only */
 const bw = {
-  bg: '#000000',
-  panel: '#0a0a0a',
-  card: '#111111',
-  cardSelected: '#161616',
-  border: '#2a2a2a',
-  borderStrong: '#444444',
-  text: '#ffffff',
-  muted: '#a0a0a0',
-  dim: '#666666',
+  bg: colors.bg.primary,
+  panel: colors.bg.secondary,
+  card: colors.bg.tertiary,
+  cardSelected: colors.bg.hover,
+  border: colors.border.default,
+  borderStrong: colors.border.accent,
+  text: colors.text.primary,
+  muted: colors.text.secondary,
+  dim: colors.text.dim,
 };
 
 interface OpsLogEntry {
@@ -278,6 +280,7 @@ function TaskCard({
 
 export function AutomationPanel() {
   const { events } = useApp();
+  const pageVisible = usePageVisible();
   const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
@@ -297,10 +300,11 @@ export function AutomationPanel() {
   }, []);
 
   useEffect(() => {
+    if (!pageVisible) return;
     void load();
-    const t = setInterval(() => { void load(); }, 60_000);
+    const t = setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 60_000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, pageVisible]);
 
   const selectedTask = useMemo(
     () => tasks.find((t) => t.id === selectedId) ?? null,
@@ -341,10 +345,12 @@ export function AutomationPanel() {
   }, [selectedId, loadLogs]);
 
   useEffect(() => {
-    if (!selectedId || !selectedRunning) return;
-    const t = setInterval(() => { void loadLogs(selectedId); }, 2500);
+    if (!selectedId || !selectedRunning || !pageVisible) return;
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') void loadLogs(selectedId);
+    }, 2500);
     return () => clearInterval(t);
-  }, [selectedId, selectedRunning, loadLogs]);
+  }, [selectedId, selectedRunning, loadLogs, pageVisible]);
 
   useEffect(() => {
     if (!selectedId) return;

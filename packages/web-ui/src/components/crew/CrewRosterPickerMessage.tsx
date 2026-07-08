@@ -8,6 +8,7 @@ import GroupsIcon from '@mui/icons-material/Groups';
 import type { CrewMatchCandidate, CrewSuggestionEvaluation } from '@agentx/shared/browser';
 import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 import { crewTheme } from '../../styles/crew-theme';
+import { colors, alphaColor } from '../../theme';
 import { CrewRecruitCard } from './CrewRecruitCard';
 import { PlanModeContext } from '../../chat/PlanModeContext';
 
@@ -43,7 +44,7 @@ function CompactCrewRow({
       py: 0.45,
       px: 0.65,
       borderRadius: '4px',
-      bgcolor: selected ? 'rgba(255,255,255,0.04)' : 'transparent',
+      bgcolor: selected ? alphaColor(colors.ink, 0.04) : 'transparent',
       opacity: dimmed ? 0.42 : 0.9,
       border: selected ? `1px solid ${crewTheme.border.default}` : '1px solid transparent',
     }}>
@@ -184,7 +185,7 @@ export function CrewRosterPickerMessage({
       borderRadius: 1,
       overflow: 'hidden',
       border: `1px solid ${crewTheme.border.default}`,
-      bgcolor: '#050607',
+      bgcolor: crewTheme.bg.inset,
     }}>
       <Box sx={{
         display: 'flex',
@@ -308,7 +309,7 @@ export function CrewRosterPickerMessage({
               textTransform: 'none',
               bgcolor: crewTheme.text.primary,
               color: crewTheme.bg.void,
-              '&:hover': { bgcolor: '#e0e0e0' },
+              '&:hover': { bgcolor: alphaColor(crewTheme.text.primary, 0.85) },
               '&.Mui-disabled': { opacity: 0.4 },
             }}
           >

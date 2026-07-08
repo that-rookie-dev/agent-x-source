@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 import { QuestionBlockRenderer } from './QuestionnaireBlocks';
 import {
   canSubmitQuestionnaire,
@@ -76,7 +76,7 @@ export function QuestionnaireMessage({ record, onRespond }: QuestionnaireMessage
   return (
     <Box sx={{
       borderRadius: '10px',
-      border: `1px solid ${isPending ? colors.accent.blue + '35' : colors.border.default}`,
+      border: `1px solid ${isPending ? alphaColor(colors.accent.blue, '35') : colors.border.default}`,
       bgcolor: colors.bg.secondary,
       overflow: 'hidden',
       maxWidth: 520,
@@ -164,7 +164,7 @@ export function QuestionnaireMessage({ record, onRespond }: QuestionnaireMessage
             <Button size="small" disabled={!canSubmit} onClick={handleSubmit} sx={{
               minWidth: 0, px: 1, fontSize: '0.55rem', textTransform: 'none',
               bgcolor: colors.accent.blue, color: colors.bg.primary,
-              '&:hover': { bgcolor: '#58a6ffcc' },
+              '&:hover': { bgcolor: alphaColor(colors.accent.blue, 'cc') },
               '&.Mui-disabled': { bgcolor: colors.bg.hover, color: colors.text.dim },
             }}>
               {payload.submitLabel ?? 'Submit'}

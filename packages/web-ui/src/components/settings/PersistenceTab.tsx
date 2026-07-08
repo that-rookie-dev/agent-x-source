@@ -38,6 +38,7 @@ import {
 import { SettingsCard } from './SettingsCard';
 import { SettingsSectionHeader } from './SettingsSectionHeader';
 
+import { colors, alphaColor } from '../../theme';
 export function PersistenceTab() {
   const { initialize } = useApp();
   const neuralBrainSupported = useNeuralBrainSupported();
@@ -195,7 +196,7 @@ export function PersistenceTab() {
         </Box>
 
         {provisionMode === 'cloud' && !provisionStatus.ageAvailable && !provisionStatus.loading && (
-          <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mt: 1.5, fontSize: '0.65rem', bgcolor: `${settingsTheme.accent.amber}12`, border: `1px solid ${settingsTheme.accent.amber}33`, ...settingsMonoSx }}>
+          <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mt: 1.5, fontSize: '0.65rem', bgcolor: `${alphaColor(settingsTheme.accent.amber, '12')}`, border: `1px solid ${alphaColor(settingsTheme.accent.amber, '33')}`, ...settingsMonoSx }}>
             Cloud PostgreSQL lacks Apache AGE. Graph walks use recursive-CTE fallback.
           </Alert>
         )}
@@ -264,7 +265,7 @@ export function PersistenceTab() {
           Clears domain data — sessions, messages, memories, crews, plugins. Credentials and provider config remain intact.
         </Typography>
         <Button variant="outlined" startIcon={<RestartAltIcon />} onClick={handleSoftReset} disabled={clearing}
-          sx={{ ...settingsBtnGhostSx, borderColor: `${settingsTheme.accent.amber}55`, color: settingsTheme.accent.amber }}>
+          sx={{ ...settingsBtnGhostSx, borderColor: `${alphaColor(settingsTheme.accent.amber, '55')}`, color: settingsTheme.accent.amber }}>
           {clearing ? 'Clearing…' : 'Soft Reset'}
         </Button>
       </SettingsCard>
@@ -425,13 +426,13 @@ function RagStudioStorageCard() {
       )}
 
       {confirmOpen && (
-        <Box sx={{ mt: 1.5, p: 1.5, borderRadius: '4px', bgcolor: `${settingsTheme.accent.alert}08`, border: `1px solid ${settingsTheme.accent.alert}33` }}>
+        <Box sx={{ mt: 1.5, p: 1.5, borderRadius: '4px', bgcolor: `${alphaColor(settingsTheme.accent.alert, '08')}`, border: `1px solid ${alphaColor(settingsTheme.accent.alert, '33')}` }}>
           <Typography sx={{ ...settingsHelperSx, mb: 1.25 }}>
             Delete all original file copies? Knowledge entries remain in the brain.
           </Typography>
           <Box sx={{ display: 'flex', gap: 1 }}>
             <Button size="small" onClick={() => setConfirmOpen(false)} sx={{ ...settingsMonoSx, fontSize: '0.6rem', color: settingsTheme.text.dim }}>Cancel</Button>
-            <Button size="small" variant="contained" onClick={handleClear} disabled={clearing} sx={{ ...settingsBtnDangerSx, bgcolor: settingsTheme.accent.alert, color: '#fff', border: 'none' }}>
+            <Button size="small" variant="contained" onClick={handleClear} disabled={clearing} sx={{ ...settingsBtnDangerSx, bgcolor: settingsTheme.accent.alert, color: colors.text.primary, border: 'none' }}>
               {clearing ? 'Clearing…' : 'Delete Files'}
             </Button>
           </Box>

@@ -2,6 +2,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import type { ReactNode } from 'react';
 import { wizardTheme, WIZARD_MONO } from './wizard-theme';
+import { colors, alphaColor } from '../../theme';
 
 export interface WizardStepShellProps {
   codename: string;
@@ -20,17 +21,17 @@ export function WizardStepShell({
 }: WizardStepShellProps) {
   return (
     <Box sx={{ maxWidth: 560, mx: 'auto' }}>
-      <Box sx={{ textAlign: 'center', mb: 3 }}>
+      <Box sx={{ textAlign: 'center', mb: 2 }}>
         <Box sx={{
-          width: 52,
-          height: 52,
+          width: 48,
+          height: 48,
           borderRadius: 1.5,
           mx: 'auto',
-          mb: 1.5,
+          mb: 1.25,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          bgcolor: 'rgba(255,255,255,0.03)',
+          bgcolor: alphaColor(colors.ink, 0.03),
           border: `1px solid ${wizardTheme.panelBorder}`,
           color: wizardTheme.textSecondary,
         }}>
@@ -55,7 +56,7 @@ export function WizardStepShell({
 
       <Box sx={{
         position: 'relative',
-        p: 2.5,
+        p: 2,
         borderRadius: 1.5,
         border: `1px solid ${wizardTheme.panelBorder}`,
         bgcolor: wizardTheme.panel,
@@ -64,7 +65,7 @@ export function WizardStepShell({
           content: '""',
           position: 'absolute',
           inset: 0,
-          background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.015) 2px, rgba(255,255,255,0.015) 4px)',
+          background: `repeating-linear-gradient(0deg, transparent, transparent 2px, ${alphaColor(colors.ink, 0.015)} 2px, ${alphaColor(colors.ink, 0.015)} 4px)`,
           pointerEvents: 'none',
         },
       }}>

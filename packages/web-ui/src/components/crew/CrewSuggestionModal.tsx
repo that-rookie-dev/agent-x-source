@@ -13,6 +13,7 @@ import Alert from '@mui/material/Alert';
 import CloseIcon from '@mui/icons-material/Close';
 import type { CrewMatchCandidate, CrewSuggestionEvaluation } from '@agentx/shared/browser';
 import { crewTheme, crewDialogPaperSx } from '../../styles/crew-theme';
+import { alphaColor } from '../../theme';
 import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 import { CrewRecruitCard } from './CrewRecruitCard';
 
@@ -196,7 +197,7 @@ export default function CrewSuggestionModal({
             textTransform: 'none',
             bgcolor: crewTheme.text.primary,
             color: crewTheme.bg.void,
-            '&:hover': { bgcolor: '#e0e0e0' },
+            '&:hover': { bgcolor: alphaColor(crewTheme.text.primary, 0.85) },
             '&.Mui-disabled': { opacity: 0.4 },
           }}
         >

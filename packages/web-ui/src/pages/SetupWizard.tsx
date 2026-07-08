@@ -59,6 +59,7 @@ import {
   wizardTileSx,
   WIZARD_MONO,
 } from '../components/setup/wizard-theme';
+import { colors, alphaColor } from '../theme';
 
 const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Benchmark', 'Neural Core', 'Callsign', 'Voice Comms', 'Telegram Relay', 'Complete'];
 const STORAGE_KEY = 'agentx_wizard_progress';
@@ -420,7 +421,7 @@ export function SetupWizard() {
                 <Box onClick={() => { setSelectedBackend('embedded-postgres'); setPgTestResult(null); }}
                   sx={{ ...wizardSelectCardSx(selectedBackend === 'embedded-postgres'), gap: 0 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
+                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.04), display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
                       <StorageIcon sx={{ fontSize: 18, color: wizardTheme.textSecondary }} />
                     </Box>
                     <Box>
@@ -438,7 +439,7 @@ export function SetupWizard() {
                     <Punch text="Best for personal use, solo work, and getting started fast." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
                     <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
                   </Box>
-                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.02)', border: `1px solid ${wizardTheme.panelBorder}`, mt: 'auto' }}>
+                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.02), border: `1px solid ${wizardTheme.panelBorder}`, mt: 'auto' }}>
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk, textAlign: 'center', fontWeight: 600 }}>
                       Recommended. No external database needed.
                     </Typography>
@@ -448,7 +449,7 @@ export function SetupWizard() {
                 <Box onClick={() => { setSelectedBackend('postgres'); setPgTestResult(null); }}
                   sx={{ ...wizardSelectCardSx(selectedBackend === 'postgres'), gap: 0 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
+                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.04), display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
                       <CloudIcon sx={{ fontSize: 18, color: wizardTheme.textSecondary }} />
                     </Box>
                     <Box>
@@ -466,7 +467,7 @@ export function SetupWizard() {
                     <Punch text="Schema and tables are created automatically on first connect." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
                     <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
                   </Box>
-                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.02)', border: `1px solid ${wizardTheme.panelBorder}`, mt: 'auto' }}>
+                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.02), border: `1px solid ${wizardTheme.panelBorder}`, mt: 'auto' }}>
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, textAlign: 'center', fontWeight: 600 }}>
                       For multi-machine setups, teams, and cloud DBs.
                     </Typography>
@@ -565,7 +566,7 @@ export function SetupWizard() {
                 </Box>
 
                 {pgTestResult && (
-                  <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.02)', border: `1px solid ${pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr}` }}>
+                  <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.02), border: `1px solid ${pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr}` }}>
                     <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr, fontWeight: 600 }}>
                       {pgTestResult.ok ? 'RELAY ONLINE' : 'CONNECTION FAILED'}
                     </Typography>
@@ -705,7 +706,7 @@ export function SetupWizard() {
                     <Box sx={{
                       mt: 2, p: 1.5, borderRadius: 1,
                       border: `1px solid ${wizardTheme.panelBorderStrong}`,
-                      bgcolor: 'rgba(255,255,255,0.02)',
+                      bgcolor: alphaColor(colors.ink, 0.02),
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap',
                     }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, minWidth: 0, flexWrap: 'wrap' }}>
@@ -933,13 +934,13 @@ export function SetupWizard() {
         <DialogContent><Typography variant="body2" sx={{ color: wizardTheme.textSecondary, fontSize: '0.8rem', lineHeight: 1.6 }}>Going back will clear your API key for security. You will need to re-enter and validate them.</Typography></DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setShowBackWarning(false)} sx={wizardSkipBtnSx}>Cancel</Button>
-          <Button onClick={confirmBackToCredentials} variant="contained" sx={{ bgcolor: wizardTheme.accentErr, color: '#fff', fontFamily: WIZARD_MONO, fontSize: '0.65rem', textTransform: 'none' }}>Clear & Go Back</Button>
+          <Button onClick={confirmBackToCredentials} variant="contained" sx={{ bgcolor: wizardTheme.accentErr, color: colors.bg.primary, fontFamily: WIZARD_MONO, fontSize: '0.65rem', textTransform: 'none' }}>Clear & Go Back</Button>
         </DialogActions>
       </Dialog>
 
       {loading && (
-        <Box sx={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}>
-          <CircularProgress size={40} sx={{ color: '#fff' }} />
+        <Box sx={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: colors.shadow.heavy, backdropFilter: 'blur(2px)' }}>
+          <CircularProgress size={40} sx={{ color: colors.text.primary }} />
         </Box>
       )}
     </Box>
@@ -952,7 +953,7 @@ function Punch({ icon, text }: { icon: React.ReactNode; text: string }) {
       display: 'flex', alignItems: 'center', gap: 1.25,
       px: 1.5, py: 1,
       borderRadius: 1,
-      bgcolor: 'rgba(255,255,255,0.015)',
+      bgcolor: alphaColor(colors.ink, 0.015),
       border: `1px solid ${wizardTheme.panelBorder}`,
       transition: 'all 0.15s',
     }}>

@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback, useImperativeHandle } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
+import { crewPalette } from '../styles/brands';
 import type { Crew } from '../api';
 
 export interface MentionInputHandle {
@@ -31,7 +32,7 @@ function hashCallsign(callsign: string): number {
   return Math.abs(hash);
 }
 
-const FALLBACK_PALETTE = ['#4FC3F7', '#FF8A65', '#81C784', '#BA68C8', '#F06292', '#AED581', '#7986CB', '#4DD0E1'];
+const FALLBACK_PALETTE = [...crewPalette];
 
 function getCrewColor(callsign: string, crewList: Crew[]): string {
   const crew = crewList.find((c) => c.callsign.toLowerCase() === callsign.toLowerCase());
@@ -70,7 +71,7 @@ function buildHtmlFromPlain(text: string, crewList: Crew[]): string {
     if (part.startsWith('@') && part.length > 1) {
       const callsign = part.slice(1);
       const color = getCrewColor(callsign, crewList);
-      return `<span data-mention="${escapeHtml(callsign)}" contenteditable="false" style="display:inline-flex;align-items:center;padding:1px 6px;margin:0 1px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;font-weight:600;color:${color};background:${color}18;border:1px solid ${color}30;user-select:none;white-space:nowrap;line-height:1.5">@${escapeHtml(callsign)}</span>`;
+      return `<span data-mention="${escapeHtml(callsign)}" contenteditable="false" style="display:inline-flex;align-items:center;padding:1px 6px;margin:0 1px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;font-weight:600;color:${color};background:${alphaColor(color, '18')};border:1px solid ${alphaColor(color, '30')};user-select:none;white-space:nowrap;line-height:1.5">@${escapeHtml(callsign)}</span>`;
     }
     return escapeHtml(part).replace(/\n/g, '<br>');
   }).join('');

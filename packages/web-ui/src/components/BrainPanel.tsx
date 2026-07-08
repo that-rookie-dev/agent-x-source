@@ -2,7 +2,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import { useEffect, useState } from 'react';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 import { settings } from '../api';
 
 const NEURON_URL = (import.meta.env.VITE_NEURON_URL as string) || '/neuron';
@@ -64,7 +64,7 @@ export function BrainPanel() {
           textTransform: 'none',
           color: colors.accent.blue,
           borderColor: colors.accent.blue,
-          '&:hover': { borderColor: colors.accent.blue, bgcolor: colors.accent.blue + '10' },
+          '&:hover': { borderColor: colors.accent.blue, bgcolor: alphaColor(colors.accent.blue, '10') },
         }}
       >
         Open Brain Visualization

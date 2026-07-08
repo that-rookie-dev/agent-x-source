@@ -6,6 +6,7 @@ import Chip from '@mui/material/Chip';
 import LinearProgress from '@mui/material/LinearProgress';
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { crewTheme } from '../../styles/crew-theme';
+import { colors, alphaColor } from '../../theme';
 import { MedicalCrewCardStripe } from './MedicalDisclaimerBanner';
 
 function originLabel(origin: CrewMatchCandidate['origin']): string {
@@ -54,7 +55,7 @@ export function CrewRecruitCard({
         borderRadius: '8px',
         overflow: 'hidden',
         cursor: 'pointer',
-        bgcolor: selected ? 'rgba(255,255,255,0.04)' : crewTheme.bg.card,
+        bgcolor: selected ? alphaColor(colors.ink, 0.04) : crewTheme.bg.card,
         transition: 'border-color 0.15s, background-color 0.15s',
         '&:hover': { borderColor: crewTheme.border.strong, bgcolor: crewTheme.bg.cardHover },
       }}

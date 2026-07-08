@@ -34,7 +34,8 @@ CRITICAL RULES:
 - Do NOT say the full report is already in chat — it is not until they ask.
 - After ${VOICE_BLOCK_CLOSE} write NOTHING else.
 - Keep the voice block under 90 words.
-- Prefer web_search for live facts. Avoid shell_exec unless absolutely necessary (max ~20s).`;
+- Prefer web_search for live facts. Avoid shell_exec unless absolutely necessary (max ~20s).
+- THIS TURN OVERRIDES conflicting system-prompt rules: ignore [CHAT_MARKDOWN] formatting and the "deliver plans as markdown in chat" conduct. Ask conversational follow-ups as plain spoken sentences inside the voice block — do NOT call ask_clarification on this voice turn.`;
 }
 
 /** Follow-up voice turn after a summary — address the request, still voice-only. */
@@ -43,6 +44,8 @@ export function buildVoiceFollowUpPhaseInstruction(): string {
 
 The user already heard your spoken summary on this topic. Respond to their follow-up request.
 
+If the user replied with a short affirmative ("yes please", "sure", "go ahead"), it accepts the offer or question in YOUR previous reply — deliver that now. If you offered several options, cover the most useful one briefly and ask which other they want.
+
 Output ONLY a brief spoken reply inside:
 
 ${VOICE_BLOCK_OPEN}
@@ -50,7 +53,9 @@ ${VOICE_BLOCK_OPEN}
 If they did not ask for the chat report, do NOT mention putting anything in chat.
 ${VOICE_BLOCK_CLOSE}
 
-CRITICAL: After ${VOICE_BLOCK_CLOSE} write NOTHING else — no markdown body unless they explicitly asked for the full report in chat.`;
+CRITICAL:
+- After ${VOICE_BLOCK_CLOSE} write NOTHING else — no markdown body unless they explicitly asked for the full report in chat.
+- THIS TURN OVERRIDES conflicting system-prompt rules: ignore [CHAT_MARKDOWN] formatting and the "deliver plans as markdown in chat" conduct. Ask conversational follow-ups as plain spoken sentences inside the voice block — do NOT call ask_clarification on this voice turn.`;
 }
 
 /** User asked for the full written report in chat — produce markdown body only. */
@@ -74,6 +79,22 @@ export function isVoiceSummaryOnlyMessage(content: string): boolean {
   const { voice, chat } = extractVoiceSpeakable(content);
   if (!voice.trim()) return false;
   return chat.length < 80;
+}
+
+/** Short affirmative that accepts the assistant's previous offer ("yes please", "sure, go ahead"). */
+export function isAffirmativeReply(text: string): boolean {
+  const t = text.toLowerCase().trim().replace(/[.!,\s]+$/, '');
+  if (!t || t.split(/\s+/).length > 5) return false;
+  return /^(yes|yeah|yep|yup|sure|ok|okay|absolutely|definitely|please do|do it|go ahead|sounds good|that would be great)([,]?\s+(please|thanks|thank you|do that|go ahead))?$/.test(t)
+    || /^yes[,]?\s+please$/.test(t);
+}
+
+/** True when the assistant's spoken block offered to put the full report/answer in chat. */
+export function voiceOfferedChatReport(content: string): boolean {
+  const { voice } = extractVoiceSpeakable(content);
+  if (!voice) return false;
+  return /\bin (the )?chat\b/i.test(voice)
+    && /\b(report|answer|details?|itinerary|version|breakdown|write|put)\b/i.test(voice);
 }
 
 /** Heuristic: user wants the full markdown report posted to chat. */

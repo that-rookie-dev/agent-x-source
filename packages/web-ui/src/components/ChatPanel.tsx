@@ -48,11 +48,13 @@ import {
   CheckpointDrawer,
   type PaletteAction,
 } from './ChatEnhancements';
-import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, connectSSE, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
+import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
+import { subscribeTelemetry } from '../telemetry-hub';
 import { collectClientSituation } from '../client-situation.js';
 import { eventBelongsToViewSession } from '../chat/session-stream-filter';
 import { ActionPreviewCard } from './integrations/ActionPreviewCard';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
+import { hyperdrive } from '../styles/brands';
 import ModeEscalationModal from './ModeEscalationModal';
 import StepCapModal from './StepCapModal';
 import ModeSuggestionModal, { DISMISS_KEY, shouldSuggestMode } from './ModeSuggestionModal';
@@ -115,10 +117,10 @@ if (!document.getElementById(styleId)) {
       90% { opacity: 0.3; }
     }
     @keyframes agentx-hyperdrive-glow {
-      0%, 100% { box-shadow: 0 0 5px #ff00ff40; border-color: #ff00ff30; }
-      25% { box-shadow: 0 0 12px #ff00ff60, 0 0 20px #ff00ff20; border-color: #ff00ff50; }
-      50% { box-shadow: 0 0 8px #ff00ff40, 0 0 15px #00ffff20; border-color: #ff00ff30; }
-      75% { box-shadow: 0 0 14px #ff00ff50, 0 0 25px #ff00ff30; border-color: #ff00ff60; }
+      0%, 100% { box-shadow: 0 0 5px ${alphaColor(hyperdrive.magenta, '40')}; border-color: ${alphaColor(hyperdrive.magenta, '30')}; }
+      25% { box-shadow: 0 0 12px ${alphaColor(hyperdrive.magenta, '60')}, 0 0 20px ${alphaColor(hyperdrive.magenta, '20')}; border-color: ${alphaColor(hyperdrive.magenta, '50')}; }
+      50% { box-shadow: 0 0 8px ${alphaColor(hyperdrive.magenta, '40')}, 0 0 15px ${alphaColor(hyperdrive.cyan, '20')}; border-color: ${alphaColor(hyperdrive.magenta, '30')}; }
+      75% { box-shadow: 0 0 14px ${alphaColor(hyperdrive.magenta, '50')}, 0 0 25px ${alphaColor(hyperdrive.magenta, '30')}; border-color: ${alphaColor(hyperdrive.magenta, '60')}; }
     }
     @keyframes agentx-spin {
       from { transform: rotate(0deg); }
@@ -147,7 +149,7 @@ const sidebarSectionHeaderSx = (expanded: boolean) => ({
   ...panelHeaderRowSx,
   borderBottom: expanded ? `1px solid ${colors.border.default}` : 'none',
   cursor: 'pointer',
-  '&:hover': { bgcolor: colors.bg.tertiary + '40' },
+  '&:hover': { bgcolor: alphaColor(colors.bg.tertiary, '40') },
 });
 
 const sidebarSectionHeaderWithDividerSx = (expanded: boolean) => ({
@@ -327,6 +329,9 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const skipRestoreRef = useRef(false);
   const streamChunkRAFRef = useRef<number | null>(null);
   const streamChunkPendingRef = useRef<string | null>(null);
+  // Batch thinking/reasoning deltas — same coalescing strategy as stream_chunk
+  const thinkingPendingRef = useRef<string>('');
+  const thinkingFlushRef = useRef<number | null>(null);
   const isInitialLoadRef = useRef(true);
 
   // Loading step indicator state
@@ -634,6 +639,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   // ─── Enhancements: connection health, palette, slash, search, checkpoints ───
   const [connState, setConnState] = useState<ConnectionState>('connecting');
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const lastEventAtWrittenRef = useRef(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [checkpointsOpen, setCheckpointsOpen] = useState(false);
@@ -1375,8 +1381,15 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       if (!eventBelongsToViewSession(ev, viewSessionIdRef.current)) return;
 
       // Reset activity timer on every event from the agent
-      lastActivityRef.current = Date.now();
-      setLastEventAt(Date.now());
+      const now = Date.now();
+      lastActivityRef.current = now;
+      // Throttle the state write — lastEventAt only feeds the connection-health
+      // dot, so refreshing it at most every 2s avoids re-rendering the whole
+      // panel on every telemetry event.
+      if (now - lastEventAtWrittenRef.current > 2000) {
+        lastEventAtWrittenRef.current = now;
+        setLastEventAt(now);
+      }
 
       if (ev.type === 'message_sent') {
         if (isInitialLoadRef.current) return;
@@ -1440,8 +1453,13 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             if (!turnActiveRef.current) return prev;
             streamChunkPendingRef.current = null;
             if (streamChunkRAFRef.current !== null) {
-              cancelAnimationFrame(streamChunkRAFRef.current);
+              clearTimeout(streamChunkRAFRef.current);
               streamChunkRAFRef.current = null;
+            }
+            thinkingPendingRef.current = '';
+            if (thinkingFlushRef.current !== null) {
+              clearTimeout(thinkingFlushRef.current);
+              thinkingFlushRef.current = null;
             }
             setLoadingSteps(null);
             const loadingStage = (ev as { stage?: string }).stage;
@@ -1534,7 +1552,10 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             if (last?.role === 'assistant') {
               streamChunkPendingRef.current = rawFull || null;
               if (streamChunkRAFRef.current === null) {
-                streamChunkRAFRef.current = requestAnimationFrame(() => {
+                // ~12 fps flush: markdown re-parses the full message on every
+                // update, so a modest interval slashes CPU vs per-frame flushes
+                // with no perceptible loss of streaming smoothness.
+                streamChunkRAFRef.current = window.setTimeout(() => {
                   streamChunkRAFRef.current = null;
                   const fullContent = streamChunkPendingRef.current ?? '';
                   streamChunkPendingRef.current = null;
@@ -1561,7 +1582,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                   const streamingEst = Math.ceil(fullContent.length / 4);
                   setTokenStreaming(streamingEst);
                   setTokenUsed(tokenInputRef.current + tokenOutputRef.current + streamingEst + tokenReservedRef.current);
-                });
+                }, 80);
               }
               return prev;
             }
@@ -1768,10 +1789,26 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
           case 'thinking_delta': {
             if (last?.role !== 'assistant') return prev;
             const delta = (ev.content as string) ?? (ev.text as string) ?? '';
-            return updateLastMessage(prev, {
-              thinking: (last.thinking ?? '') + delta,
-              thinkingStartedAt: last.thinkingStartedAt ?? Date.now(),
-            });
+            // Coalesce reasoning tokens — flushing per-delta causes a render
+            // storm on reasoning-heavy models.
+            thinkingPendingRef.current += delta;
+            if (thinkingFlushRef.current === null) {
+              thinkingFlushRef.current = window.setTimeout(() => {
+                thinkingFlushRef.current = null;
+                const pending = thinkingPendingRef.current;
+                thinkingPendingRef.current = '';
+                if (!pending) return;
+                setMessages(p => {
+                  const l = p[p.length - 1];
+                  if (l?.role !== 'assistant') return p;
+                  return updateLastMessage(p, {
+                    thinking: (l.thinking ?? '') + pending,
+                    thinkingStartedAt: l.thinkingStartedAt ?? Date.now(),
+                  });
+                });
+              }, 120);
+            }
+            return prev;
           }
 
           case 'reasoning_end':
@@ -2123,9 +2160,9 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       });
     };
 
-    disconnectRef.current = connectSSE({
-      onEvent: handleEvent,
-      onState: (state) => {
+    disconnectRef.current = subscribeTelemetry(
+      handleEvent,
+      (state) => {
         setConnState(state);
         if (state === 'open') {
           setLastEventAt(Date.now());
@@ -2149,7 +2186,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             .catch(() => {});
         }
       },
-    });
+    );
     return () => {
       disconnectRef.current?.();
     };
@@ -3067,7 +3104,9 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   useEffect(() => {
     if (!currentSessionId) return;
     refreshContext();
-    const interval = setInterval(refreshContext, 30000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') refreshContext();
+    }, 30000);
     return () => clearInterval(interval);
   }, [currentSessionId, refreshContext]);
 
@@ -3436,11 +3475,13 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       return true;
     });
     
-    // Pre-compute isLastUser flag for each message to avoid O(n²) slice/every on render
-    return visible.map((msg, idx) => ({
-      msg,
-      isLastUser: msg.role === 'user' && visible.slice(idx + 1).every(m => m.role !== 'user'),
-    }));
+    // Pre-compute isLastUser in a single O(n) pass: only the final user
+    // message gets the flag.
+    let lastUserIdx = -1;
+    for (let i = visible.length - 1; i >= 0; i--) {
+      if (visible[i]!.role === 'user') { lastUserIdx = i; break; }
+    }
+    return visible.map((msg, idx) => ({ msg, isLastUser: idx === lastUserIdx }));
   }, [messages]);
   
   const visibleMessages = visibleMessagesWithFlags.map(item => item.msg);
@@ -3458,12 +3499,12 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
 
           {/* Header — HUD style */}
           <Box sx={{
-            px: 3, py: 2, borderBottom: `1px solid ${colors.accent.blue}20`,
+            px: 3, py: 2, borderBottom: `1px solid ${alphaColor(colors.accent.blue, '20')}`,
             display: 'flex', alignItems: 'center', gap: 1.5, position: 'relative', zIndex: 1,
-            background: `linear-gradient(180deg, ${colors.accent.blue}05 0%, transparent 100%)`,
+            background: `linear-gradient(180deg, ${alphaColor(colors.accent.blue, '05')} 0%, transparent 100%)`,
           }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.accent.green, boxShadow: `0 0 8px ${colors.accent.green}80` }} />
+              <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.accent.green, boxShadow: `0 0 8px ${alphaColor(colors.accent.green, '80')}` }} />
               <Typography sx={{
                 fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', fontWeight: 700,
                 color: colors.accent.green, letterSpacing: '3px',
@@ -3488,10 +3529,10 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                     fontFamily: "'JetBrains Mono', monospace",
                     letterSpacing: '1px',
                     color: sessionListTab === tab.id ? colors.accent.blue : colors.text.dim,
-                    bgcolor: sessionListTab === tab.id ? colors.accent.blue + '12' : 'transparent',
-                    border: `1px solid ${sessionListTab === tab.id ? colors.accent.blue + '40' : colors.border.subtle}`,
+                    bgcolor: sessionListTab === tab.id ? alphaColor(colors.accent.blue, '12') : 'transparent',
+                    border: `1px solid ${sessionListTab === tab.id ? alphaColor(colors.accent.blue, '40') : colors.border.subtle}`,
                     borderRadius: '4px',
-                    '&:hover': { bgcolor: colors.accent.blue + '18', borderColor: colors.accent.blue + '50' },
+                    '&:hover': { bgcolor: alphaColor(colors.accent.blue, '18'), borderColor: alphaColor(colors.accent.blue, '50') },
                   }}
                 >
                   {tab.label}
@@ -3510,8 +3551,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               onClick={() => handleNewSession()}
               sx={{
                 color: colors.accent.blue, fontSize: '0.6rem', textTransform: 'none', fontFamily: "'JetBrains Mono', monospace",
-                border: `1px solid ${colors.accent.blue}30`, px: 1.5, py: 0.4, borderRadius: '4px',
-                '&:hover': { bgcolor: colors.accent.blue + '15', borderColor: colors.accent.blue + '60' },
+                border: `1px solid ${alphaColor(colors.accent.blue, '30')}`, px: 1.5, py: 0.4, borderRadius: '4px',
+                '&:hover': { bgcolor: alphaColor(colors.accent.blue, '15'), borderColor: alphaColor(colors.accent.blue, '60') },
               }}
             >
               NEW SESSION
@@ -3524,8 +3565,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               onClick={() => navigate('/console/crews')}
               sx={{
                 color: colors.accent.blue, fontSize: '0.6rem', textTransform: 'none', fontFamily: "'JetBrains Mono', monospace",
-                border: `1px solid ${colors.accent.blue}30`, px: 1.5, py: 0.4, borderRadius: '4px',
-                '&:hover': { bgcolor: colors.accent.blue + '15', borderColor: colors.accent.blue + '60' },
+                border: `1px solid ${alphaColor(colors.accent.blue, '30')}`, px: 1.5, py: 0.4, borderRadius: '4px',
+                '&:hover': { bgcolor: alphaColor(colors.accent.blue, '15'), borderColor: alphaColor(colors.accent.blue, '60') },
               }}
             >
               OPEN CREWS
@@ -3539,7 +3580,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 2 }}>
                 <Box sx={{
                   width: 64, height: 64, borderRadius: '50%',
-                  border: `1px solid ${colors.border.strong}30`,
+                  border: `1px solid ${alphaColor(colors.border.strong, '30')}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   bgcolor: colors.bg.tertiary,
                 }}>
@@ -3626,7 +3667,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               <Box key={i} sx={{
                 position: 'absolute',
                 width: 1 + Math.random() * 2, height: 1 + Math.random() * 2,
-                bgcolor: i % 3 === 0 ? '#ff00ff' : i % 3 === 1 ? '#00ffff' : '#ffffff',
+                bgcolor: i % 3 === 0 ? hyperdrive.magenta : i % 3 === 1 ? hyperdrive.cyan : colors.ink,
                 borderRadius: '50%',
                 left: `${Math.random() * 100}%`, top: `${Math.random() * 100}%`,
                 opacity: 0.3 + Math.random() * 0.7,
@@ -3638,7 +3679,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         {/* Header */}
         <Box sx={{
           ...panelHeaderRowSx,
-          borderBottom: `1px solid ${hyperdriveMode ? '#ff00ff20' : colors.border.default}`,
+          borderBottom: `1px solid ${hyperdriveMode ? alphaColor(hyperdrive.magenta, '20') : colors.border.default}`,
           position: 'relative',
           zIndex: 1,
           transition: 'border-color 0.6s ease',
@@ -3655,8 +3696,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               onClick={() => navigate(`/console/chat/${parentSessionId}`)}
               sx={{
                 fontSize: '0.50rem', fontFamily: "'JetBrains Mono', monospace", height: 18,
-                bgcolor: colors.accent.blue + '10',
-                border: `1px solid ${colors.accent.blue}20`,
+                bgcolor: alphaColor(colors.accent.blue, '10'),
+                border: `1px solid ${alphaColor(colors.accent.blue, '20')}`,
                 color: colors.accent.blue,
                 cursor: 'pointer',
                 '&:hover': { filter: 'brightness(1.2)' },
@@ -3820,8 +3861,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             mb: hasWarnings ? '-20px' : 0,
           }}>
     <Box sx={{
-      bgcolor: colors.accent.orange + '18',
-      border: `1px solid ${colors.accent.orange}30`,
+      bgcolor: alphaColor(colors.accent.orange, '18'),
+      border: `1px solid ${alphaColor(colors.accent.orange, '30')}`,
       borderBottom: 'none',
       borderRadius: '14px 14px 0 0',
       px: 1.5, pt: 1, pb: 1.5,
@@ -3846,7 +3887,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               <IconButton
                 size="small"
                 onClick={() => setWarnings([])}
-                sx={{ color: colors.accent.orange + 'cc', p: 0, minWidth: 0, '&:hover': { bgcolor: colors.accent.orange + '20' } }}
+                sx={{ color: alphaColor(colors.accent.orange, 'cc'), p: 0, minWidth: 0, '&:hover': { bgcolor: alphaColor(colors.accent.orange, '20') } }}
               >
                 <CloseIcon sx={{ fontSize: 11 }} />
               </IconButton>
@@ -3877,14 +3918,14 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
           <Box sx={{
             position: 'relative',
             zIndex: 1,
-            border: `1px solid ${hyperdriveMode ? '#ff00ff60' : agentMode === 'agent' ? colors.accent.orange + '60' : colors.border.default}`,
+            border: `1px solid ${hyperdriveMode ? alphaColor(hyperdrive.magenta, '60') : agentMode === 'agent' ? alphaColor(colors.accent.orange, '60') : colors.border.default}`,
             borderRadius: '14px',
             bgcolor: colors.bg.tertiary,
-            backgroundImage: hyperdriveMode ? 'linear-gradient(#ff00ff08, #ff00ff08)' : agentMode === 'agent' ? `linear-gradient(${colors.accent.orange}08, ${colors.accent.orange}08)` : 'none',
+            backgroundImage: hyperdriveMode ? `linear-gradient(${alphaColor(hyperdrive.magenta, '08')}, ${alphaColor(hyperdrive.magenta, '08')})` : agentMode === 'agent' ? `linear-gradient(${alphaColor(colors.accent.orange, '08')}, ${alphaColor(colors.accent.orange, '08')})` : 'none',
             transition: 'border-color 0.2s, background-color 0.2s, opacity 0.2s ease',
             opacity: questionnairePending || sessionRestoring ? 0.42 : 1,
             pointerEvents: questionnairePending || sessionRestoring ? 'none' : 'auto',
-            '&:focus-within': questionnairePending ? {} : { borderColor: hyperdriveMode ? '#ff00ff90' : agentMode === 'agent' ? colors.accent.orange + '90' : colors.border.strong },
+            '&:focus-within': questionnairePending ? {} : { borderColor: hyperdriveMode ? alphaColor(hyperdrive.magenta, '90') : agentMode === 'agent' ? alphaColor(colors.accent.orange, '90') : colors.border.strong },
           }}>
             {/* Permission banner above input */}
             {permissionPrompt && (
@@ -3948,7 +3989,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             {/* Toolbar row */}
             <Box sx={{
               display: 'flex', alignItems: 'center', gap: 0.5, px: 1.25, py: 0.5,
-              borderTop: `1px solid ${colors.border.default}20`,
+              borderTop: `1px solid ${alphaColor(colors.border.default, '20')}`,
             }}>
             {/* Plus button for file attach */}
               <Tooltip title="Attach files" arrow>
@@ -3972,10 +4013,10 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                   onClick={handleHyperdriveToggle}
                   sx={{
                     fontSize: '0.55rem', height: 20, cursor: 'pointer',
-                    bgcolor: hyperdriveMode ? '#ff00ff12' : colors.bg.tertiary,
-                    border: `1px solid ${hyperdriveMode ? '#ff00ff30' : colors.border.default}`,
+                    bgcolor: hyperdriveMode ? alphaColor(hyperdrive.magenta, '12') : colors.bg.tertiary,
+                    border: `1px solid ${hyperdriveMode ? alphaColor(hyperdrive.magenta, '30') : colors.border.default}`,
                     borderRadius: '10px',
-                    color: hyperdriveMode ? '#ff00ff' : colors.text.secondary,
+                    color: hyperdriveMode ? hyperdrive.magenta : colors.text.secondary,
                     position: 'relative', overflow: 'hidden',
                     ...(hyperdriveShimmer ? {
                       '&::after': {
@@ -3988,7 +4029,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                         pointerEvents: 'none',
                       },
                     } : {}),
-                    '&:hover': { bgcolor: hyperdriveMode ? '#ff00ff20' : colors.bg.primary },
+                    '&:hover': { bgcolor: hyperdriveMode ? alphaColor(hyperdrive.magenta, '20') : colors.bg.primary },
                   }}
                 />
               </Tooltip>
@@ -4003,11 +4044,11 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                   onClick={(e) => setModeMenuAnchor(e.currentTarget)}
                   sx={{
                     fontSize: '0.55rem', height: 20, cursor: 'pointer',
-                    bgcolor: agentMode === 'agent' ? colors.accent.orange + '12' : colors.bg.tertiary,
-                    border: `1px solid ${agentMode === 'agent' ? colors.accent.orange + '30' : colors.border.default}`,
+                    bgcolor: agentMode === 'agent' ? alphaColor(colors.accent.orange, '12') : colors.bg.tertiary,
+                    border: `1px solid ${agentMode === 'agent' ? alphaColor(colors.accent.orange, '30') : colors.border.default}`,
                     borderRadius: '10px',
                     color: agentMode === 'agent' ? colors.accent.orange : colors.text.secondary,
-                    '&:hover': { bgcolor: agentMode === 'agent' ? colors.accent.orange + '20' : colors.bg.primary },
+                    '&:hover': { bgcolor: agentMode === 'agent' ? alphaColor(colors.accent.orange, '20') : colors.bg.primary },
                   }}
                 />
               </Tooltip>
@@ -4119,10 +4160,10 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                       <Box sx={{ width: '100%' }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                           <Typography sx={{ fontSize: '0.65rem', fontWeight: m.id === currentModel ? 600 : 400 }}>{m.name || m.id}</Typography>
-                          {hasFC && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.blue, bgcolor: '#58a6ff18', px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>FC</Typography>}
-                          {hasVision && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.green, bgcolor: '#3fb95018', px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>V</Typography>}
-                          {hasReasoning && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.purple, bgcolor: '#bc8cff18', px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>R</Typography>}
-                          {hasJson && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.cyan, bgcolor: '#39d35318', px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>JSON</Typography>}
+                          {hasFC && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.blue, bgcolor: alphaColor(colors.accent.blue, '18'), px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>FC</Typography>}
+                          {hasVision && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.green, bgcolor: alphaColor(colors.accent.green, '18'), px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>V</Typography>}
+                          {hasReasoning && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.purple, bgcolor: alphaColor(colors.accent.purple, '18'), px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>R</Typography>}
+                          {hasJson && <Typography sx={{ fontSize: '0.45rem', color: colors.accent.cyan, bgcolor: alphaColor(colors.accent.cyan, '18'), px: 0.4, py: 0.05, borderRadius: 0.5, fontWeight: 600 }}>JSON</Typography>}
                         </Box>
                         {m.contextWindow && <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>{(m.contextWindow / 1000).toFixed(0)}k context</Typography>}
                       </Box>
@@ -4162,12 +4203,12 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                     }}
                     sx={{
                       fontSize: '0.55rem', height: 20, cursor: 'pointer',
-                      bgcolor: composerMode === 'voice' ? colors.accent.green + '18' : colors.bg.tertiary,
-                      border: `1px solid ${composerMode === 'voice' ? colors.accent.green + '40' : colors.border.default}`,
+                      bgcolor: composerMode === 'voice' ? alphaColor(colors.accent.green, '18') : colors.bg.tertiary,
+                      border: `1px solid ${composerMode === 'voice' ? alphaColor(colors.accent.green, '40') : colors.border.default}`,
                       borderRadius: '10px',
                       color: composerMode === 'voice' ? colors.accent.green : colors.text.secondary,
                       '& .MuiChip-icon': { color: 'inherit' },
-                      '&:hover': { bgcolor: composerMode === 'voice' ? colors.accent.green + '28' : colors.bg.primary },
+                      '&:hover': { bgcolor: composerMode === 'voice' ? alphaColor(colors.accent.green, '28') : colors.bg.primary },
                     }}
                   />
                 </Tooltip>
@@ -4196,7 +4237,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             onClick={() => setContextExpanded(!contextExpanded)}
             sx={sidebarSectionHeaderSx(contextExpanded)}
           >
-            <ArticleIcon sx={{ fontSize: 12, color: '#00bcd4' }} />
+            <ArticleIcon sx={{ fontSize: 12, color: colors.accent.cyan }} />
               <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
                 {contextExpanded ? '▾' : '▸'} CONTEXT
               </Typography>
@@ -4207,7 +4248,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                 size="small"
                 onClick={(e) => { e.stopPropagation(); handleRebuildContext(); }}
                 disabled={rebuildingContext}
-                sx={{ p: 0.25, width: 20, height: 20, color: rebuildingContext ? colors.accent.blue : colors.text.dim, '&:hover': { color: '#00bcd4' } }}
+                sx={{ p: 0.25, width: 20, height: 20, color: rebuildingContext ? colors.accent.blue : colors.text.dim, '&:hover': { color: colors.accent.cyan } }}
               >
                 <ReplayIcon sx={{ fontSize: 12, animation: rebuildingContext ? 'agentx-spin 1s linear infinite' : 'none' }} />
               </IconButton>
@@ -4233,7 +4274,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             onClick={() => setTokenExpanded(!tokenExpanded)}
             sx={sidebarSectionHeaderWithDividerSx(tokenExpanded)}
           >
-            <AutoGraphIcon sx={{ fontSize: 12, color: '#4caf50' }} />
+            <AutoGraphIcon sx={{ fontSize: 12, color: colors.accent.green }} />
             <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
               {tokenExpanded ? '▾' : '▸'} TOKEN USAGE
             </Typography>
@@ -4589,43 +4630,43 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       <Dialog
         open={showDisclaimer}
         onClose={() => setShowDisclaimer(false)}
-        PaperProps={{ sx: { bgcolor: '#0a0010', border: '1px solid #ff00ff60', borderRadius: 1, maxWidth: 520, width: '90%', boxShadow: '0 0 40px #ff00ff20, 0 0 80px #00ffff10' } }}
+        PaperProps={{ sx: { bgcolor: hyperdrive.bg, border: `1px solid ${alphaColor(hyperdrive.magenta, '60')}`, borderRadius: 1, maxWidth: 520, width: '90%', boxShadow: `0 0 40px ${alphaColor(hyperdrive.magenta, '20')}, 0 0 80px ${alphaColor(hyperdrive.cyan, '10')}` } }}
       >
-        <DialogTitle sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 700, letterSpacing: '2px', color: '#ff00ff', display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#ff00ff', boxShadow: '0 0 8px #ff00ff', animation: 'agentx-pulse 1s ease-in-out infinite' }} />
+        <DialogTitle sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 700, letterSpacing: '2px', color: hyperdrive.magenta, display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: hyperdrive.magenta, boxShadow: `0 0 8px ${hyperdrive.magenta}`, animation: 'agentx-pulse 1s ease-in-out infinite' }} />
           HYPERDRIVE
         </DialogTitle>
         <DialogContent>
-          <Typography sx={{ color: '#cccccc', fontSize: '0.7rem', lineHeight: 1.8, mb: 1.5 }}>
-            You are about to engage <strong style={{ color: '#ff00ff' }}>Hyperdrive</strong> — full autonomous execution mode.
+          <Typography sx={{ color: colors.text.secondary, fontSize: '0.7rem', lineHeight: 1.8, mb: 1.5 }}>
+            You are about to engage <strong style={{ color: hyperdrive.magenta }}>Hyperdrive</strong> — full autonomous execution mode.
           </Typography>
-          <Box sx={{ bgcolor: '#1a0020', border: '1px solid #ff00ff30', borderRadius: 1, p: 1.5, mb: 1.5 }}>
-            <Typography sx={{ color: '#ff00ff', fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace", mb: 0.5, fontWeight: 600 }}>
+          <Box sx={{ bgcolor: hyperdrive.panel, border: `1px solid ${alphaColor(hyperdrive.magenta, '30')}`, borderRadius: 1, p: 1.5, mb: 1.5 }}>
+            <Typography sx={{ color: hyperdrive.magenta, fontSize: '0.6rem', fontFamily: "'JetBrains Mono', monospace", mb: 0.5, fontWeight: 600 }}>
               ⚠ WHAT THIS MEANS
             </Typography>
-            <Typography sx={{ color: '#aaaaaa', fontSize: '0.6rem', lineHeight: 1.7 }}>
-              • All permission prompts are <strong style={{ color: '#ff00ff' }}>bypassed</strong><br />
-              • The agent can execute <strong style={{ color: '#ff00ff' }}>any tool</strong> without asking<br />
-              • File writes, shell commands, deletions — <strong style={{ color: '#ff00ff' }}>no questions asked</strong><br />
-              • The agent operates at <strong style={{ color: '#ff00ff' }}>maximum autonomy</strong>
+            <Typography sx={{ color: colors.text.dim, fontSize: '0.6rem', lineHeight: 1.7 }}>
+              • All permission prompts are <strong style={{ color: hyperdrive.magenta }}>bypassed</strong><br />
+              • The agent can execute <strong style={{ color: hyperdrive.magenta }}>any tool</strong> without asking<br />
+              • File writes, shell commands, deletions — <strong style={{ color: hyperdrive.magenta }}>no questions asked</strong><br />
+              • The agent operates at <strong style={{ color: hyperdrive.magenta }}>maximum autonomy</strong>
             </Typography>
           </Box>
-          <Typography sx={{ color: '#ff4444', fontSize: '0.6rem', fontWeight: 600, lineHeight: 1.6, mb: 1 }}>
+          <Typography sx={{ color: hyperdrive.warning, fontSize: '0.6rem', fontWeight: 600, lineHeight: 1.6, mb: 1 }}>
             WARNING: Mistakes cannot be undone. Review the agent's task carefully. You are granting unrestricted access to your filesystem and shell.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
-          <Button onClick={() => setShowDisclaimer(false)} size="small" sx={{ color: '#888', textTransform: 'none', fontSize: '0.65rem', fontFamily: "'JetBrains Mono', monospace" }}>
+          <Button onClick={() => setShowDisclaimer(false)} size="small" sx={{ color: colors.text.dim, textTransform: 'none', fontSize: '0.65rem', fontFamily: "'JetBrains Mono', monospace" }}>
             Cancel
           </Button>
           <Button
             onClick={confirmHyperdrive}
             size="small"
             sx={{
-              color: '#0a0010', bgcolor: '#ff00ff', textTransform: 'none', fontSize: '0.65rem',
+              color: hyperdrive.bg, bgcolor: hyperdrive.magenta, textTransform: 'none', fontSize: '0.65rem',
               fontFamily: "'JetBrains Mono', monospace", fontWeight: 700,
-              '&:hover': { bgcolor: '#ff40ff' },
-              boxShadow: '0 0 12px #ff00ff40',
+              '&:hover': { bgcolor: hyperdrive.hover },
+              boxShadow: `0 0 12px ${alphaColor(hyperdrive.magenta, '40')}`,
             }}
           >
             ENGAGE HYPERDRIVE
@@ -4667,8 +4708,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         </DialogActions>
       </Dialog>
       {folderPickerLoading && (
-        <Box sx={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(2px)' }}>
-          <CircularProgress size={40} sx={{ color: '#fff' }} />
+        <Box sx={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: alphaColor(colors.bg.primary, 0.65), backdropFilter: 'blur(2px)' }}>
+          <CircularProgress size={40} sx={{ color: colors.text.primary }} />
         </Box>
       )}
 
@@ -4700,7 +4741,7 @@ function ThinkingIndicator({ label }: { label?: string }) {
     <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', mb: 2, animation: 'agentx-fadeIn 0.3s ease-out' }}>
       <Box sx={{
         width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        bgcolor: colors.accent.purple + '15', mt: 0.5, flexShrink: 0,
+        bgcolor: alphaColor(colors.accent.purple, '15'), mt: 0.5, flexShrink: 0,
       }}>
         <SmartToyIcon sx={{ fontSize: 15, color: colors.accent.purple }} />
       </Box>
@@ -4748,7 +4789,7 @@ function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: Per
 
   const isCritical = prompt.riskLevel === 'critical';
   const isHigh = prompt.riskLevel === 'high';
-  const borderColor = isCritical ? colors.accent.red + '50' : isHigh ? colors.accent.orange + '40' : colors.accent.orange + '30';
+  const borderColor = isCritical ? alphaColor(colors.accent.red, '50') : isHigh ? alphaColor(colors.accent.orange, '40') : alphaColor(colors.accent.orange, '30');
 
   return (
     <Box sx={{ p: 1.5, borderRadius: 1.5, border: `1px solid ${borderColor}`, bgcolor: colors.bg.secondary, animation: 'agentx-fadeIn 0.3s ease-out' }}>
@@ -4758,7 +4799,7 @@ function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: Per
         </Typography>
         <Chip size="small" label={prompt.riskLevel.toUpperCase()} sx={{
           fontSize: '0.45rem', height: 15, fontWeight: 600,
-          bgcolor: isCritical ? colors.accent.red + '20' : isHigh ? colors.accent.orange + '20' : colors.accent.blue + '15',
+          bgcolor: isCritical ? alphaColor(colors.accent.red, '20') : isHigh ? alphaColor(colors.accent.orange, '20') : alphaColor(colors.accent.blue, '15'),
           color: isCritical ? colors.accent.red : isHigh ? colors.accent.orange : colors.accent.blue,
         }} />
         {pendingCount > 1 && (
@@ -4766,7 +4807,7 @@ function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: Per
             size="small"
             label={`Approve All (${pendingCount})`}
             onClick={() => handleApproveAll('allow_once')}
-            sx={{ cursor: 'pointer', height: 15, fontSize: '0.45rem', bgcolor: colors.accent.green + '20', color: colors.accent.green, '&:hover': { bgcolor: colors.accent.green + '35' } }}
+            sx={{ cursor: 'pointer', height: 15, fontSize: '0.45rem', bgcolor: alphaColor(colors.accent.green, '20'), color: colors.accent.green, '&:hover': { bgcolor: alphaColor(colors.accent.green, '35') } }}
           />
         )}
       </Box>
@@ -4795,10 +4836,10 @@ function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: Per
       )}
       <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
         {!prompt.forAutomation && (
-          <Chip size="small" label="Allow Once" onClick={() => handleRespond('allow_once')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.green + '15', color: colors.accent.green, '&:hover': { bgcolor: colors.accent.green + '30' } }} />
+          <Chip size="small" label="Allow Once" onClick={() => handleRespond('allow_once')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.green, '15'), color: colors.accent.green, '&:hover': { bgcolor: alphaColor(colors.accent.green, '30') } }} />
         )}
-        <Chip size="small" label={prompt.forAutomation ? 'Allow for automations' : 'Always'} onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.blue + '15', color: colors.accent.blue, '&:hover': { bgcolor: colors.accent.blue + '30' } }} />
-        <Chip size="small" label="Deny" onClick={() => handleRespond('deny')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.red + '15', color: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + '30' } }} />
+        <Chip size="small" label={prompt.forAutomation ? 'Allow for automations' : 'Always'} onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.blue, '15'), color: colors.accent.blue, '&:hover': { bgcolor: alphaColor(colors.accent.blue, '30') } }} />
+        <Chip size="small" label="Deny" onClick={() => handleRespond('deny')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.red, '15'), color: colors.accent.red, '&:hover': { bgcolor: alphaColor(colors.accent.red, '30') } }} />
       </Box>
     </Box>
   );
@@ -4813,14 +4854,14 @@ function ToolEnableBanner({ toolId, toolName, onRespond }: { toolId: string; too
   };
 
   return (
-    <Box sx={{ p: 1.5, mb: 2, borderRadius: 1, border: `1px solid ${colors.accent.purple}30`, bgcolor: colors.accent.purple + '05', animation: 'agentx-fadeIn 0.3s ease-out' }}>
+    <Box sx={{ p: 1.5, mb: 2, borderRadius: 1, border: `1px solid ${alphaColor(colors.accent.purple, '30')}`, bgcolor: alphaColor(colors.accent.purple, '05'), animation: 'agentx-fadeIn 0.3s ease-out' }}>
       <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: colors.accent.purple, mb: 0.5 }}>Tool Disabled</Typography>
       <Typography sx={{ fontSize: '0.6rem', mb: 1, color: colors.text.secondary }}>
         The agent needs <strong>{toolName}</strong> but it&apos;s disabled.
       </Typography>
       <Box sx={{ display: 'flex', gap: 0.75 }}>
-        <Chip size="small" label="Enable" onClick={handleEnable} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.green + '12', color: colors.accent.green, '&:hover': { bgcolor: colors.accent.green + '25' } }} />
-        <Chip size="small" label="Keep Disabled" onClick={onRespond} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: colors.accent.red + '12', color: colors.accent.red, '&:hover': { bgcolor: colors.accent.red + '25' } }} />
+        <Chip size="small" label="Enable" onClick={handleEnable} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.green, '12'), color: colors.accent.green, '&:hover': { bgcolor: alphaColor(colors.accent.green, '25') } }} />
+        <Chip size="small" label="Keep Disabled" onClick={onRespond} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.red, '12'), color: colors.accent.red, '&:hover': { bgcolor: alphaColor(colors.accent.red, '25') } }} />
       </Box>
     </Box>
   );

@@ -1,7 +1,8 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import type { DeepSearchResult } from '@agentx/shared/browser';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
+import { brands } from '../../styles/brands';
 import { ScoreBadge, TypeBadge } from './shared';
 import { HasImageChip, searchCardSx, searchCardItemSx, OpenLinkHint, openSearchResultUrl } from './card-utils';
 import { detectPlatform, resultHasPreviewImage } from './platform-detect';
@@ -9,9 +10,9 @@ import { PlatformResultBody, PlatformCardChrome } from './PlatformResultCard';
 import { formatSearchProviderLabel } from './provider-labels';
 
 const PLATFORM_ACCENTS: Record<string, string> = {
-  youtube: '#ff000044',
-  imdb: '#f5c51844',
-  instagram: '#E1306C44',
+  youtube: alphaColor(brands.youtube, '44'),
+  imdb: alphaColor(brands.imdb, '44'),
+  instagram: alphaColor(brands.instagram, '44'),
 };
 
 function openOnActivate(

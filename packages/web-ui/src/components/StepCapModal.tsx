@@ -5,7 +5,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import SpeedIcon from '@mui/icons-material/Speed';
-import { colors } from '../theme';
+import { colors, alphaColor } from '../theme';
 
 interface StepCapModalProps {
   open: boolean;
@@ -35,7 +35,7 @@ export default function StepCapModal({ open, currentSteps, maxSteps, onContinue,
           Stop
         </Button>
         <Button size="small" variant="contained" onClick={onContinue}
-          sx={{ fontSize: '0.65rem', textTransform: 'none', bgcolor: colors.accent.orange, '&:hover': { bgcolor: colors.accent.orange + 'cc' } }}>
+          sx={{ fontSize: '0.65rem', textTransform: 'none', bgcolor: colors.accent.orange, '&:hover': { bgcolor: alphaColor(colors.accent.orange, 'cc') } }}>
           Continue
         </Button>
       </DialogActions>
