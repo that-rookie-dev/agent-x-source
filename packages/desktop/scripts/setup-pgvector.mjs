@@ -16,6 +16,14 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// GNU Make's built-in implicit C rule embeds $(TARGET_ARCH) into every compile
+// command (COMPILE.c = $(CC) $(CFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c). The release
+// workflow exports TARGET_ARCH=x64|arm64 for electron-builder, which would otherwise
+// leak into the PostgreSQL/pgvector source builds as a bogus bare compiler argument
+// ("clang: error: no such file or directory: 'x64'"). Scrub it before invoking make;
+// this script derives the target arch from os.arch() and never needs TARGET_ARCH.
+delete process.env.TARGET_ARCH;
+
 const PGVECTOR_VERSION = process.env.PGVECTOR_VERSION || 'v0.8.3';
 
 function getPackageName() {

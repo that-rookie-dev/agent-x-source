@@ -149,7 +149,14 @@ writeFileSync(join(staging, 'package.json'), JSON.stringify({
 }, null, 2));
 
 console.log('Installing production dependencies into staging...');
-execSync('npm install --omit=dev --ignore-scripts', { cwd: staging, stdio: 'inherit' });
+// The staging package depends directly on the target platform's @embedded-postgres
+// binary package (e.g. @embedded-postgres/darwin-x64). When packing for a different
+// platform/arch than the host (notably darwin-x64 on an arm64 macOS runner), npm
+// aborts with EBADPLATFORM. Pin npm's target platform/arch to the pack target so the
+// cross-platform dependency is accepted and downloaded (scripts are already skipped).
+const npmOs = packPlatform;
+const npmCpu = suffix.split('-')[1];
+execSync(`npm install --omit=dev --ignore-scripts --os=${npmOs} --cpu=${npmCpu}`, { cwd: staging, stdio: 'inherit' });
 
 const stagingNodeModules = join(staging, 'node_modules');
 syncServerExtensions(suffix, stagingNodeModules);
