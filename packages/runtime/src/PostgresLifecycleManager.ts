@@ -126,8 +126,8 @@ export class PostgresLifecycleManager {
 
   private getProcessEnv(binaryDir: string): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...process.env, LC_MESSAGES: 'C' };
-
-    if (platform() !== 'linux') return env;
+    const currentPlatform = platform();
+    if (currentPlatform !== 'linux' && currentPlatform !== 'darwin') return env;
 
     const libDirs = [
       join(binaryDir, '..', 'lib'),
@@ -137,10 +137,12 @@ export class PostgresLifecycleManager {
     if (libDirs.length === 0) return env;
 
     const paths = [...libDirs];
-    if (process.env['LD_LIBRARY_PATH']) {
-      paths.push(process.env['LD_LIBRARY_PATH']);
+    const libPathKey = currentPlatform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
+    const existing = process.env[libPathKey];
+    if (existing) {
+      paths.push(existing);
     }
-    env['LD_LIBRARY_PATH'] = paths.join(':');
+    env[libPathKey] = paths.join(':');
     return env;
   }
 

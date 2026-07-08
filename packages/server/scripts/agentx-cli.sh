@@ -14,22 +14,38 @@ INDEX_JS="${INSTALL_DIR}/index.js"
 mkdir -p "$LOG_DIR"
 
 set_embedded_pg_lib_path() {
-  if [ "$(uname -s)" != "Linux" ]; then
-    return 0
-  fi
-
-  local arch pkg lib_dir
+  local os arch pkg lib_dir pg_lib
+  os="$(uname -s)"
   arch="$(uname -m)"
-  case "$arch" in
-    aarch64|arm64) pkg="linux-arm64" ;;
-    x86_64|amd64) pkg="linux-x64" ;;
-    *) return 0 ;;
-  esac
 
-  lib_dir="${INSTALL_DIR}/node_modules/@embedded-postgres/${pkg}/native/lib"
-  if [ -d "$lib_dir" ]; then
-    export LD_LIBRARY_PATH="${lib_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-  fi
+  case "$os" in
+    Linux)
+      case "$arch" in
+        aarch64|arm64) pkg="linux-arm64" ;;
+        x86_64|amd64) pkg="linux-x64" ;;
+        *) return 0 ;;
+      esac
+      lib_dir="${INSTALL_DIR}/node_modules/@embedded-postgres/${pkg}/native/lib"
+      if [ -d "$lib_dir" ]; then
+        export LD_LIBRARY_PATH="${lib_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+      fi
+      ;;
+    Darwin)
+      case "$arch" in
+        arm64) pkg="darwin-arm64" ;;
+        x86_64) pkg="darwin-x64" ;;
+        *) return 0 ;;
+      esac
+      lib_dir="${INSTALL_DIR}/node_modules/@embedded-postgres/${pkg}/native/lib"
+      pg_lib="${lib_dir}/postgresql"
+      if [ -d "$lib_dir" ]; then
+        export DYLD_LIBRARY_PATH="${lib_dir}${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}"
+      fi
+      if [ -d "$pg_lib" ]; then
+        export DYLD_LIBRARY_PATH="${pg_lib}:${DYLD_LIBRARY_PATH:-}"
+      fi
+      ;;
+  esac
 }
 
 log() {

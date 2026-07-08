@@ -111,6 +111,26 @@ export function assertNativePostgres(nodeModulesRoot, pkgName, platform) {
   }
 }
 
+/** initdb/postgres need shared libraries from native/lib at runtime (not just bin/). */
+export function assertPostgresSharedLibs(nodeModulesRoot, pkgName, packPlatform) {
+  const libDir = join(nodeModulesRoot, ...pkgName.split('/'), 'native', 'lib');
+  const required = packPlatform === 'linux'
+    ? ['libpq.so.5']
+    : packPlatform === 'darwin'
+      ? ['libicudata.68.dylib', 'libpq.5.dylib']
+      : [];
+
+  for (const name of required) {
+    const libPath = join(libDir, name);
+    if (!existsSync(libPath)) {
+      throw new Error(
+        `Missing PostgreSQL shared library for ${pkgName} (expected ${libPath}). `
+        + 'The server pack must copy the full @embedded-postgres platform tree from the local build, not npm registry stubs.',
+      );
+    }
+  }
+}
+
 /** Copy extension + shared-library artifacts between two native trees. */
 export function syncEmbeddedExtensions(fromNative, toNative, packPlatform = 'unix') {
   if (!existsSync(fromNative) || !existsSync(toNative)) return;
