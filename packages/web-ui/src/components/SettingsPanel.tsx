@@ -44,7 +44,6 @@ import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'channels' | 'runtime' | 'voice';
 
 const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
-  { id: 'appearance', label: 'Theme', icon: <PaletteOutlinedIcon sx={{ fontSize: 14 }} /> },
   { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 14 }} /> },
   { id: 'runtime', label: 'Runtime', icon: <SpeedIcon sx={{ fontSize: 14 }} /> },
   { id: 'general', label: 'Profile', icon: <PersonIcon sx={{ fontSize: 14 }} /> },
@@ -54,6 +53,7 @@ const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }>
   { id: 'channels', label: 'Channels', icon: <NotificationsIcon sx={{ fontSize: 14 }} /> },
   { id: 'tools', label: 'Search', icon: <BuildIcon sx={{ fontSize: 14 }} /> },
   { id: 'persistence', label: 'Storage', icon: <StorageIcon sx={{ fontSize: 14 }} /> },
+  { id: 'appearance', label: 'Theme', icon: <PaletteOutlinedIcon sx={{ fontSize: 14 }} /> },
 ];
 
 export function SettingsPanel() {
