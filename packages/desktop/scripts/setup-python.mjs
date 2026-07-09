@@ -1,5 +1,16 @@
-import { createWriteStream, existsSync, mkdirSync, rmSync, readdirSync, renameSync } from 'fs';
-import { join, dirname } from 'path';
+import {
+  createWriteStream,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+} from 'fs';
+import { join, dirname, basename, relative, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
 import { pipeline } from 'stream/promises';
 import { platform, arch } from 'os';
@@ -32,7 +43,37 @@ const pythonBin = IS_WIN
   ? join(OUT_DIR, 'python.exe')
   : join(OUT_DIR, 'bin', 'python3');
 
+/** Rewrite absolute bin/ symlinks to relative targets so packs survive CI → user machines. */
+function normalizeBinSymlinks(binDir) {
+  if (!existsSync(binDir)) return;
+  for (const name of readdirSync(binDir)) {
+    const linkPath = join(binDir, name);
+    let st;
+    try {
+      st = lstatSync(linkPath);
+    } catch {
+      continue;
+    }
+    if (!st.isSymbolicLink()) continue;
+    let target;
+    try {
+      target = readlinkSync(linkPath);
+    } catch {
+      continue;
+    }
+    if (!isAbsolute(target)) continue;
+    const resolved = existsSync(target) ? target : join(binDir, basename(target));
+    if (!existsSync(resolved)) continue;
+    const rel = relative(binDir, resolved) || basename(resolved);
+    unlinkSync(linkPath);
+    symlinkSync(rel, linkPath);
+  }
+}
+
 if (existsSync(pythonBin)) {
+  if (!IS_WIN) {
+    normalizeBinSymlinks(join(OUT_DIR, 'bin'));
+  }
   console.log(`Python ${PY_VER} already set up at ${OUT_DIR}`);
   process.exit(0);
 }
@@ -67,6 +108,10 @@ if (IS_WIN) {
 
 rmSync(TARBALL);
 
+if (!IS_WIN) {
+  normalizeBinSymlinks(join(OUT_DIR, 'bin'));
+}
+
 // Bootstrap pip (PBS ships ensurepip but not pre-installed pip)
 console.log('Bootstrapping pip...');
 execSync(`"${pythonBin}" -m ensurepip --upgrade`, { stdio: 'pipe' });
@@ -75,5 +120,9 @@ execSync(`"${pythonBin}" -m pip install --upgrade pip --quiet`, { stdio: 'pipe' 
 // Pre-install commonly needed packages for agent tasks
 console.log('Installing packages...');
 execSync(`"${pythonBin}" -m pip install --quiet pillow requests`, { stdio: 'inherit' });
+
+if (!IS_WIN) {
+  normalizeBinSymlinks(join(OUT_DIR, 'bin'));
+}
 
 console.log('Python setup complete.');

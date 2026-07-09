@@ -20,7 +20,7 @@ async function main(): Promise<void> {
 
   const options = createServerRuntimeOptions();
   runtime = new AgentRuntime(options);
-  runtime.setupPythonEnv();
+  // setupPythonEnv + staged startup logs happen inside runtime.start()
   await runtime.start();
 
   const port = runtime.getPort();

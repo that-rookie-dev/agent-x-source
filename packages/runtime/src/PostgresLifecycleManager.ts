@@ -250,8 +250,9 @@ export class PostgresLifecycleManager {
       connectionTimeoutMillis: 1000,
     });
 
-    const maxAttempts = 15;
-    const intervalMs = 250;
+    // Cold initdb + first start can take well over a few seconds on slower disks.
+    const maxAttempts = 120;
+    const intervalMs = 500;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {

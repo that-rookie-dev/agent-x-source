@@ -199,7 +199,19 @@ writeFileSync(join(resourcesDir, 'web-api', 'package.json'), JSON.stringify({
 }, null, 2));
 
 if (existsSync(pythonDir)) {
-  cpSync(pythonDir, join(resourcesDir, 'python'), { recursive: true });
+  // Dereference absolute CI/host symlinks (python3 -> /Users/runner/.../python3.12).
+  // Without this, end-user installs get a broken python3 and voice pip setup fails.
+  cpSync(pythonDir, join(resourcesDir, 'python'), { recursive: true, force: true, dereference: true });
+  const packedPy = process.platform === 'win32'
+    ? join(resourcesDir, 'python', 'python.exe')
+    : join(resourcesDir, 'python', 'bin', 'python3');
+  const packedPyAlt = process.platform === 'win32'
+    ? packedPy
+    : join(resourcesDir, 'python', 'bin', 'python3.12');
+  if (!existsSync(packedPy) && !existsSync(packedPyAlt)) {
+    throw new Error(`Python bundle copied but no usable interpreter at ${packedPy}`);
+  }
+  console.log('Bundled Python into server package');
 } else {
   console.warn('Python bundle not found; server will use system Python if available.');
 }

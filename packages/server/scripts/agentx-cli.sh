@@ -10,6 +10,9 @@ LOG_DIR="${DATA_DIR}/logs"
 PID_FILE="${DATA_DIR}/agentx.pid"
 PORT="${AGENTX_PORT:-3333}"
 INDEX_JS="${INSTALL_DIR}/index.js"
+HEALTH_URL="http://127.0.0.1:${PORT}/api/health"
+# Cold embedded Postgres init can take a while on first boot.
+START_TIMEOUT_SECS="${AGENTX_START_TIMEOUT_SECS:-180}"
 
 mkdir -p "$LOG_DIR"
 
@@ -64,10 +67,35 @@ is_running() {
   kill -0 "$pid" 2>/dev/null
 }
 
+health_ok() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -sf "$HEALTH_URL" >/dev/null 2>&1
+    return $?
+  fi
+  # Fallback when curl is unavailable: TCP connect to the listen port.
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1
+    return $?
+  fi
+  return 1
+}
+
+print_startup_log_tail() {
+  if [ -f "${LOG_DIR}/agentx.log" ]; then
+    # Show recent startup lines without drowning the terminal.
+    tail -n 8 "${LOG_DIR}/agentx.log" 2>/dev/null | sed 's/^/  | /' || true
+  fi
+}
+
 cmd_start() {
   if is_running; then
-    echo "Agent-X server is already running (pid $(cat "$PID_FILE"))."
-    echo "Web UI: http://127.0.0.1:${PORT}"
+    if health_ok; then
+      echo "Agent-X server is already running (pid $(cat "$PID_FILE"))."
+      echo "Agent is active at http://127.0.0.1:${PORT}"
+      exit 0
+    fi
+    echo "Agent-X process is alive but not healthy yet (pid $(cat "$PID_FILE"))."
+    echo "Logs: ${LOG_DIR}/agentx.log"
     exit 0
   fi
 
@@ -80,44 +108,69 @@ cmd_start() {
   export AGENTX_DATA_DIR="$DATA_DIR"
   set_embedded_pg_lib_path
 
-  log "Starting Agent-X server..."
+  # Truncate previous run noise so the live tail is useful.
+  : > "${LOG_DIR}/agentx.log"
+
+  log "Starting Agent-X server…"
+  echo "  install: ${INSTALL_DIR}"
+  echo "  data:    ${DATA_DIR}"
+  echo "  port:    ${PORT}"
+  echo "  logs:    ${LOG_DIR}/agentx.log"
+  echo
+
   nohup node "$INDEX_JS" >> "${LOG_DIR}/agentx.log" 2>&1 &
   echo $! > "$PID_FILE"
 
-  # Embedded Postgres initdb + extension setup often exceeds a couple of seconds.
-  # Keep the CLI up while the process is alive; fail as soon as it exits.
   local i=0
-  while [ "$i" -lt 90 ]; do
-    if is_running; then
-      # After a short grace period, report success — callers (smoke) wait on /api/health.
-      if [ "$i" -ge 2 ]; then
-        echo "Agent-X server started (pid $(cat "$PID_FILE"))."
-        echo "Web UI: http://127.0.0.1:${PORT}"
-        echo "Logs: ${LOG_DIR}/agentx.log"
-        return 0
-      fi
-    elif [ "$i" -ge 2 ]; then
+  local last_size=0
+  local size
+  while [ "$i" -lt "$START_TIMEOUT_SECS" ]; do
+    if ! is_running && [ "$i" -ge 2 ]; then
+      echo
       echo "Agent-X server failed to start. See ${LOG_DIR}/agentx.log" >&2
       echo "---- agentx.log ----" >&2
       cat "${LOG_DIR}/agentx.log" 2>/dev/null || true
       rm -f "$PID_FILE"
       exit 1
     fi
+
+    # Stream new log lines so the user sees PG / startup progress.
+    if [ -f "${LOG_DIR}/agentx.log" ]; then
+      size="$(wc -c < "${LOG_DIR}/agentx.log" | tr -d ' ')"
+      if [ "${size:-0}" -gt "$last_size" ]; then
+        tail -c +"$((last_size + 1))" "${LOG_DIR}/agentx.log" 2>/dev/null \
+          | sed -n 's/^/  | /p' || true
+        last_size="$size"
+      fi
+    fi
+
+    if health_ok; then
+      echo
+      echo "Agent-X server started (pid $(cat "$PID_FILE"))."
+      echo "Agent is active at http://127.0.0.1:${PORT}"
+      echo "Logs: ${LOG_DIR}/agentx.log"
+      return 0
+    fi
+
+    # Progress heartbeat when logs are quiet.
+    if [ $((i % 5)) -eq 0 ] && [ "$i" -gt 0 ]; then
+      printf '  … waiting for health (%ss / %ss)\n' "$i" "$START_TIMEOUT_SECS"
+    fi
+
     sleep 1
     i=$((i + 1))
   done
 
+  echo
+  echo "Agent-X server did not become healthy within ${START_TIMEOUT_SECS}s." >&2
+  echo "Process may still be starting — check ${LOG_DIR}/agentx.log" >&2
+  print_startup_log_tail
   if is_running; then
-    echo "Agent-X server started (pid $(cat "$PID_FILE"))."
-    echo "Web UI: http://127.0.0.1:${PORT}"
-    echo "Logs: ${LOG_DIR}/agentx.log"
-  else
-    echo "Agent-X server failed to start. See ${LOG_DIR}/agentx.log" >&2
-    echo "---- agentx.log ----" >&2
-    cat "${LOG_DIR}/agentx.log" 2>/dev/null || true
-    rm -f "$PID_FILE"
-    exit 1
+    echo "Web UI (when ready): http://127.0.0.1:${PORT}"
+    exit 0
   fi
+  rm -f "$PID_FILE"
+  exit 1
 }
 
 cmd_stop() {
@@ -154,28 +207,27 @@ cmd_status() {
   fi
 
   echo "Agent-X server: running (pid $(cat "$PID_FILE"))"
-  if command -v curl >/dev/null 2>&1; then
-    if curl -sf "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
-      echo "Health: ok (http://127.0.0.1:${PORT}/api/health)"
-    else
-      echo "Health: process alive but HTTP not responding yet"
-    fi
+  if health_ok; then
+    echo "Health: ok — agent is active at http://127.0.0.1:${PORT}"
+  else
+    echo "Health: process alive but HTTP not responding yet"
   fi
 }
 
 cmd_help() {
   cat <<EOF
 Agent-X server commands:
-  agentx start    Start headless server + Web UI
+  agentx start    Start headless server + Web UI (waits until healthy)
   agentx stop     Stop the server
   agentx status   Check server status
   agentx help     Show this help
 
 Environment:
-  AGENTX_DATA_DIR   Data directory (default: ~/.local/share/agentx)
-  AGENTX_PORT       HTTP port (default: 3333)
-  AGENTX_HOST       Bind address (default: 0.0.0.0 in server mode)
-  AGENTX_PUBLIC_URL Public URL for OAuth redirects
+  AGENTX_DATA_DIR            Data directory (default: ~/.local/share/agentx)
+  AGENTX_PORT                HTTP port (default: 3333)
+  AGENTX_HOST                Bind address (default: 127.0.0.1)
+  AGENTX_PUBLIC_URL          Public URL for OAuth redirects
+  AGENTX_START_TIMEOUT_SECS  Seconds to wait for /api/health (default: 180)
 EOF
 }
 
