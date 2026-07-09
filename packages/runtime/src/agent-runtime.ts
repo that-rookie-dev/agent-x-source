@@ -36,21 +36,35 @@ export interface AgentRuntimePaths {
   webNeuronDir: string;
   pythonPath: string;
   pythonDir: string;
+  ffmpegPath: string;
+  ffmpegDir: string;
   voiceSidecarDir: string;
   voiceBundleDir: string;
   voiceManifestPath: string;
+}
+
+function resolveBundledFfmpeg(resourcesPath: string): { ffmpegPath: string; ffmpegDir: string } {
+  const ffmpegDir = join(resourcesPath, 'ffmpeg', 'bin');
+  const ffmpegPath = process.platform === 'win32'
+    ? join(ffmpegDir, 'ffmpeg.exe')
+    : join(ffmpegDir, 'ffmpeg');
+  return { ffmpegPath, ffmpegDir };
 }
 
 export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimePaths {
   const resourcesPath = options.getResourcesPath();
   if (options.isDev) {
     const root = options.getDevMonorepoRoot?.() ?? join(__dirname, '..', '..', '..');
+    const devFfmpeg = resolveBundledFfmpeg(join(root, 'packages', 'runtime'));
     return {
       webApiPath: join(root, 'packages', 'web-api', 'dist', 'index.js'),
       webUiDir: join(root, 'packages', 'web-ui', 'dist'),
       webNeuronDir: join(root, 'packages', 'web-neuron', 'dist'),
       pythonPath: process.env['AGENTX_PYTHON_PATH'] || 'python3',
       pythonDir: '',
+      ffmpegPath: process.env['AGENTX_FFMPEG_PATH']
+        || (existsSync(devFfmpeg.ffmpegPath) ? devFfmpeg.ffmpegPath : 'ffmpeg'),
+      ffmpegDir: existsSync(devFfmpeg.ffmpegDir) ? devFfmpeg.ffmpegDir : '',
       voiceSidecarDir: join(root, 'packages', 'voice-sidecar'),
       voiceBundleDir: join(root, 'packages', 'voice-sidecar', 'bundled'),
       voiceManifestPath: join(root, 'packages', 'voice-sidecar', 'voice-models.manifest.json'),
@@ -63,6 +77,7 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
   const pythonDir = process.platform === 'win32'
     ? join(resourcesPath, 'python')
     : join(resourcesPath, 'python', 'bin');
+  const { ffmpegPath, ffmpegDir } = resolveBundledFfmpeg(resourcesPath);
 
   return {
     webApiPath: join(resourcesPath, 'web-api', 'index.js'),
@@ -70,6 +85,8 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
     webNeuronDir: join(resourcesPath, 'web-neuron'),
     pythonPath,
     pythonDir,
+    ffmpegPath,
+    ffmpegDir,
     voiceSidecarDir: join(resourcesPath, 'voice-sidecar'),
     voiceBundleDir: join(resourcesPath, 'voice-sidecar', 'bundled'),
     voiceManifestPath: join(resourcesPath, 'voice-sidecar', 'voice-models.manifest.json'),
@@ -108,6 +125,22 @@ export function setupPythonEnv(paths: AgentRuntimePaths, isDev: boolean): void {
     console.log('Development mode: using system Python');
   } else {
     console.warn('Bundled Python not found at', paths.pythonPath);
+  }
+
+  setupFfmpegEnv(paths, isDev);
+}
+
+export function setupFfmpegEnv(paths: AgentRuntimePaths, isDev: boolean): void {
+  if (existsSync(paths.ffmpegPath)) {
+    process.env['AGENTX_FFMPEG_PATH'] = paths.ffmpegPath;
+    if (paths.ffmpegDir) {
+      process.env['PATH'] = paths.ffmpegDir + (process.platform === 'win32' ? ';' : ':') + (process.env['PATH'] || '');
+    }
+    console.log(`Bundled ffmpeg: ${paths.ffmpegPath}`);
+  } else if (isDev) {
+    console.log('Development mode: using system ffmpeg (if available)');
+  } else {
+    console.warn('Bundled ffmpeg not found at', paths.ffmpegPath);
   }
 }
 

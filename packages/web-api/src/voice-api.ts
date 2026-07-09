@@ -172,6 +172,11 @@ function resolvePythonExecutable(): string {
   return process.env['AGENTX_PYTHON_PATH'] || 'python3';
 }
 
+/** Bundled ffmpeg from the runtime pack, or system ffmpeg on PATH. */
+function resolveFfmpegExecutable(): string {
+  return process.env['AGENTX_FFMPEG_PATH'] || 'ffmpeg';
+}
+
 /** Writable virtualenv for voice dependencies (kept out of the read-only app bundle). */
 function voiceVenvDir(): string {
   return resolve(voiceDataDir(), 'venv');
@@ -666,7 +671,7 @@ router.post('/voice/preview', async (req, res) => {
 async function buildVoiceCapabilities(config: VoiceConfig): Promise<VoiceCapabilityStatus> {
   const [pythonAvailable, ffmpegAvailable] = await Promise.all([
     commandAvailable(resolvePythonExecutable(), ['--version']),
-    commandAvailable('ffmpeg', ['-version']),
+    commandAvailable(resolveFfmpegExecutable(), ['-version']),
   ]);
 
   const selectedSttModelId = config.stt?.modelId;
@@ -895,13 +900,16 @@ async function runVoiceSetup(): Promise<void> {
   try {
     const [pythonAvailable, ffmpegAvailable] = await Promise.all([
       commandAvailable(resolvePythonExecutable(), ['--version']),
-      commandAvailable('ffmpeg', ['-version']),
+      commandAvailable(resolveFfmpegExecutable(), ['-version']),
     ]);
     if (!pythonAvailable) {
       throw new Error('Python 3 is required. Install Python 3.10+ and retry.');
     }
     if (!ffmpegAvailable) {
-      throw new Error('ffmpeg is required. Install ffmpeg (brew install ffmpeg) and retry.');
+      throw new Error(
+        'ffmpeg is required but was not found. Reinstall Agent-X (bundled ffmpeg missing), '
+        + 'or install a system ffmpeg and ensure it is on PATH, then retry.',
+      );
     }
 
     const bundleDir = resolveVoiceBundleDir();

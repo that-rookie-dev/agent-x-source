@@ -44,7 +44,7 @@ cd "$ROOT_DIR"
 for pkg in runtime server; do
   rm -rf "packages/$pkg/dist" 2>/dev/null || true
 done
-rm -rf packages/server/release packages/server/.pack-staging packages/runtime/python 2>/dev/null || true
+rm -rf packages/server/release packages/server/.pack-staging packages/runtime/python packages/runtime/ffmpeg packages/desktop/python packages/desktop/ffmpeg 2>/dev/null || true
 
 # 6. Build dependencies
 echo ">>> Building shared, engine, web-api, web-ui, and web-neuron..."

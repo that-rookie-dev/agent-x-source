@@ -176,6 +176,7 @@ const webApiDist = join(workspaceRoot, 'packages', 'web-api', 'dist');
 const webUiDist = join(workspaceRoot, 'packages', 'web-ui', 'dist');
 const webNeuronDist = join(workspaceRoot, 'packages', 'web-neuron', 'dist');
 const pythonDir = join(workspaceRoot, 'packages', 'runtime', 'python');
+const ffmpegDir = join(workspaceRoot, 'packages', 'runtime', 'ffmpeg');
 const daemonJs = join(serverRoot, 'dist', 'daemon.js');
 
 for (const [label, src, dest] of [
@@ -201,6 +202,13 @@ if (existsSync(pythonDir)) {
   cpSync(pythonDir, join(resourcesDir, 'python'), { recursive: true });
 } else {
   console.warn('Python bundle not found; server will use system Python if available.');
+}
+
+if (existsSync(ffmpegDir)) {
+  cpSync(ffmpegDir, join(resourcesDir, 'ffmpeg'), { recursive: true });
+  console.log('Bundled ffmpeg into server package');
+} else {
+  console.warn('ffmpeg bundle not found; voice setup will require a system ffmpeg.');
 }
 
 copyVoiceSidecarResources(resourcesDir, { requireBundled: true });

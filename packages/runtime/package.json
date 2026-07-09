@@ -21,6 +21,7 @@
     "setup:extensions": "node scripts/setup-pgvector.mjs && node scripts/setup-age.mjs",
     "setup:extensions:if-needed": "node scripts/setup-extensions-if-needed.mjs",
     "setup:python": "node scripts/setup-python.mjs",
+    "setup:ffmpeg": "node scripts/setup-ffmpeg.mjs",
     "setup:voice-bundled": "pnpm --filter @agentx/voice-sidecar run setup:bundled",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
