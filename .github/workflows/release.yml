@@ -431,12 +431,23 @@ jobs:
           AGENTX_PACK_SUFFIX: ${{ matrix.suffix }}
         timeout-minutes: 90
 
+      # Windows GHA runners are Administrators; embedded Postgres refuses to start
+      # under an admin account. Use the PowerShell smoke that runs as a temp non-admin user.
       - name: Smoke-test server install (start + health + Web UI)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           chmod +x packages/server/scripts/smoke-server-pack.sh
           tarball="$(ls packages/server/release/agentx-${{ matrix.suffix }}-server.tar.gz | head -1)"
           packages/server/scripts/smoke-server-pack.sh "$tarball" 3333
+        timeout-minutes: 10
+
+      - name: Smoke-test server install (Windows, non-admin user)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tarball = (Get-ChildItem packages/server/release/agentx-${{ matrix.suffix }}-server.tar.gz | Select-Object -First 1).FullName
+          & "$PWD/packages/server/scripts/smoke-server-pack.ps1" -Tarball $tarball -Port 3333
         timeout-minutes: 10
 
       - uses: actions/upload-artifact@v4
