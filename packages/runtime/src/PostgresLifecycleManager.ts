@@ -231,6 +231,12 @@ export class PostgresLifecycleManager {
     child.on('exit', (code, signal) => {
       if (!this.shuttingDown) {
         this.options.onError(`PostgreSQL process exited unexpectedly (code: ${code}, signal: ${signal})`);
+        if (platform() === 'win32') {
+          this.options.onError(
+            'On Windows, PostgreSQL refuses to start when the process runs as an Administrator. '
+            + 'Start Agent-X from a standard (non-admin) user account.',
+          );
+        }
       }
     });
 

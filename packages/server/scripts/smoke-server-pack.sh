@@ -108,6 +108,12 @@ if ! is_windows && [ -x "${INSTALL_DIR}/agentx" ]; then
   fi
 else
   # Windows pack ships agentx.cmd (node passthrough), not the bash CLI.
+  # Prefer smoke-server-pack.ps1 on CI: GitHub Actions runners are Administrators
+  # and embedded Postgres refuses to start under an admin account.
+  if is_windows; then
+    echo "Windows smoke via bash runs as the current user (must be non-admin)." >&2
+    echo "On GitHub Actions use packages/server/scripts/smoke-server-pack.ps1 instead." >&2
+  fi
   (
     cd "$INSTALL_DIR"
     nohup node index.js >> "$LOG_FILE" 2>&1 &
