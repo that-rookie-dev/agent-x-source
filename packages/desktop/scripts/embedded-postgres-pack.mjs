@@ -1,7 +1,7 @@
 /**
  * Helpers for bundling @embedded-postgres/* platform binaries into desktop/server packages.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { arch as hostArch } from 'node:os';
 
@@ -112,9 +112,43 @@ export function assertNativePostgres(nodeModulesRoot, pkgName, platform) {
   }
 }
 
+/**
+ * macOS ICU / libpq ship as versioned dylibs (e.g. libicudata.68.2.dylib). Loaders
+ * resolve @loader_path/../lib/libicudata.68.dylib — those shorter names must exist.
+ * Some pack/copy paths keep only the fully-versioned file; recreate the aliases.
+ */
+export function ensureDarwinDylibAliases(libDir) {
+  if (!existsSync(libDir)) return;
+
+  const aliasGroups = [
+    ['libicudata.68.2.dylib', ['libicudata.68.dylib', 'libicudata.dylib']],
+    ['libicuuc.68.2.dylib', ['libicuuc.68.dylib', 'libicuuc.dylib']],
+    ['libicui18n.68.2.dylib', ['libicui18n.68.dylib', 'libicui18n.dylib']],
+    ['libpq.5.dylib', ['libpq.dylib']],
+  ];
+
+  for (const [canonical, aliases] of aliasGroups) {
+    const canonicalPath = join(libDir, canonical);
+    if (!existsSync(canonicalPath)) continue;
+    for (const alias of aliases) {
+      const aliasPath = join(libDir, alias);
+      if (existsSync(aliasPath)) continue;
+      try {
+        symlinkSync(canonical, aliasPath);
+      } catch {
+        cpSync(canonicalPath, aliasPath, { force: true });
+      }
+    }
+  }
+}
+
 /** initdb/postgres need shared libraries from native/lib at runtime (not just bin/). */
 export function assertPostgresSharedLibs(nodeModulesRoot, pkgName, packPlatform) {
   const libDir = join(nodeModulesRoot, ...pkgName.split('/'), 'native', 'lib');
+  if (packPlatform === 'darwin') {
+    ensureDarwinDylibAliases(libDir);
+  }
+
   const required = packPlatform === 'linux'
     ? ['libpq.so.5']
     : packPlatform === 'darwin'

@@ -3,10 +3,11 @@
  * Local dev / default: runs setup:extensions as usual.
  */
 import { execSync } from 'node:child_process';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const runtimeRoot = join(__dirname, '..');
 
 if (process.env.AGENTX_SKIP_EXTENSIONS === '1') {
   console.log('Skipping setup:extensions (AGENTX_SKIP_EXTENSIONS=1)');
@@ -14,6 +15,6 @@ if (process.env.AGENTX_SKIP_EXTENSIONS === '1') {
 }
 
 execSync('node scripts/setup-pgvector.mjs && node scripts/setup-age.mjs', {
-  cwd: __dirname,
+  cwd: runtimeRoot,
   stdio: 'inherit',
 });

@@ -317,10 +317,14 @@ export function createServerRuntimeOptions(params?: {
   process.env['AGENTX_INSTALL_DIR'] = installDir;
   ensureEmbeddedPgLibPath(installDir);
 
+  const envPort = process.env['AGENTX_PORT'] ? Number(process.env['AGENTX_PORT']) : NaN;
+  const port = params?.port
+    ?? (Number.isFinite(envPort) && envPort > 0 ? envPort : DEFAULT_PORT);
+
   return {
     mode: 'server',
     isDev: false,
-    port: params?.port ?? DEFAULT_PORT,
+    port,
     getResourcesPath: () => join(installDir, 'resources'),
     getDataDir: () => dataDir,
     listenHost: params?.listenHost ?? process.env['AGENTX_HOST'] ?? '127.0.0.1',

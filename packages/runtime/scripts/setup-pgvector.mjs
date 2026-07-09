@@ -31,9 +31,11 @@ function getPackageName() {
   const currentArch = arch();
   switch (currentPlatform) {
     case 'darwin':
-      // pgvector is built as a universal binary on macOS and installed into the arm64
-      // embedded tree; darwin-x64 server packs sync from that tree during pack-server.
-      return '@embedded-postgres/darwin-arm64';
+      // Apple Silicon: build universal into darwin-arm64 (darwin-x64 packs sync from it).
+      // Native Intel runners (macos-15-intel): build host-arch into darwin-x64.
+      if (currentArch === 'arm64') return '@embedded-postgres/darwin-arm64';
+      if (currentArch === 'x64') return '@embedded-postgres/darwin-x64';
+      return null;
     case 'linux':
       return currentArch === 'arm64' ? '@embedded-postgres/linux-arm64' : currentArch === 'x64' ? '@embedded-postgres/linux-x64' : null;
     case 'win32':
@@ -218,16 +220,32 @@ function buildPgVectorMacUniversal(pgvectorDir, pgInstallDir, nativeDir) {
     '-arch arm64', '-arch x86_64',
   ].join(' ');
 
+  // pgvector's Makefile appends OPTFLAGS=-march=native, which clang rejects for
+  // multi-arch (-arch arm64 -arch x86_64) builds. Clear it explicitly.
   const env = {
     ...process.env,
     CFLAGS: universalCflags,
     LDFLAGS: '-arch arm64 -arch x86_64',
     PG_CFLAGS: universalCflags,
+    OPTFLAGS: '',
   };
 
   try { exec(`make clean PG_CONFIG=${pgConfig}`, { cwd: pgvectorDir, env }); } catch { /* ignore */ }
-  exec(`make PG_CONFIG=${pgConfig}`, { cwd: pgvectorDir, env });
-  exec(`make PG_CONFIG=${pgConfig} install DESTDIR=${join(dirname(pgvectorDir), 'pgvector-install')}`, { cwd: pgvectorDir, env });
+  exec(`make PG_CONFIG=${pgConfig} OPTFLAGS=`, { cwd: pgvectorDir, env });
+  exec(`make PG_CONFIG=${pgConfig} OPTFLAGS= install DESTDIR=${join(dirname(pgvectorDir), 'pgvector-install')}`, { cwd: pgvectorDir, env });
+}
+
+function buildPgVectorMacHost(pgvectorDir, pgInstallDir) {
+  // Native single-arch build (Intel runners). Still clear OPTFLAGS so -march=native
+  // cannot break clang on some Xcode/SDK combos.
+  const pgConfig = join(pgInstallDir, 'bin', 'pg_config');
+  const env = { ...process.env, OPTFLAGS: '' };
+  try { exec(`make clean PG_CONFIG=${pgConfig}`, { cwd: pgvectorDir, env }); } catch { /* ignore */ }
+  exec(`make -j${process.env.CI ? '4' : String(cpus().length)} PG_CONFIG=${pgConfig} OPTFLAGS=`, { cwd: pgvectorDir, env });
+  exec(
+    `make PG_CONFIG=${pgConfig} OPTFLAGS= install DESTDIR=${join(dirname(pgvectorDir), 'pgvector-install')}`,
+    { cwd: pgvectorDir, env },
+  );
 }
 
 function buildPgVectorWindows(pgvectorDir, pgInstallDir) {
@@ -316,7 +334,11 @@ function main() {
 
   console.log('Building pgvector...');
   if (platform() === 'darwin') {
-    buildPgVectorMacUniversal(pgvectorDir, pgInstallDir, nativeDir);
+    if (arch() === 'arm64') {
+      buildPgVectorMacUniversal(pgvectorDir, pgInstallDir, nativeDir);
+    } else {
+      buildPgVectorMacHost(pgvectorDir, pgInstallDir);
+    }
   } else if (platform() === 'win32') {
     buildPgVectorWindows(pgvectorDir, pgInstallDir);
   } else {

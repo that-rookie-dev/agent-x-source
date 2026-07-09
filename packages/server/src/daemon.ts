@@ -32,7 +32,12 @@ async function main(): Promise<void> {
 process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 process.on('SIGINT', () => { void shutdown('SIGINT'); });
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error('Agent-X server failed to start:', err);
+  try {
+    await runtime?.stop();
+  } catch {
+    /* ignore shutdown errors during failed start */
+  }
   process.exit(1);
 });
