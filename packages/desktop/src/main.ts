@@ -5,7 +5,7 @@ import { spawn, execFileSync } from 'child_process';
 import { tmpdir, totalmem } from 'os';
 import { AgentRuntime, createDesktopRuntimeOptions, DEFAULT_PORT } from '@agentx/runtime';
 
-const REPO = 'SlashpanOrg/agent-x';
+const REPO = 'that-rookie-dev/agent-x';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;

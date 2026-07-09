@@ -107,11 +107,9 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
         )}
         <span>🇮🇳 Made in India</span>
         <span style={{ color: colors.border.default }}>/</span>
-        <span>Powered by Slashpan Technologies Pvt Ltd</span>
-        <span style={{ color: colors.border.default }}>/</span>
         <span>
           Created by Sivaprakash Rajendran (
-          <a href="mailto:sr@slashpan.com" style={{ color: colors.accent.blue, textDecoration: 'none' }}>sr@slashpan.com</a>
+          <a href="mailto:sivaprakash.rajendran.316@gmail.com" style={{ color: colors.accent.blue, textDecoration: 'none' }}>sivaprakash.rajendran.316@gmail.com</a>
           )
         </span>
       </Box>

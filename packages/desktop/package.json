@@ -3,8 +3,8 @@
   "version": "0.8.10",
   "private": true,
   "description": "Agent-X — Your AI Wingman (Desktop)",
-  "homepage": "https://github.com/SlashpanOrg/agent-x",
-  "author": "SlashpanOrg <hello@slashpan.com>",
+  "homepage": "https://that-rookie-dev.github.io/agent-x/",
+  "author": "Sivaprakash Rajendran <sivaprakash.rajendran.316@gmail.com>",
   "main": "./dist/main.js",
   "scripts": {
     "prebuild": "node ../../scripts/sync-version.mjs && node scripts/generate-icon.mjs",
@@ -158,7 +158,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "SlashpanOrg",
+      "owner": "that-rookie-dev",
       "repo": "agent-x"
     }
   },
