@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 env:
-  PUBLIC_REPO: SlashpanOrg/agent-x
+  PUBLIC_REPO: that-rookie-dev/agent-x
   AGENTX_SKIP_EXTENSIONS: "1"
 
 jobs:
