@@ -51,11 +51,12 @@ function Ensure-SmokeUser {
   }
 
   $secure = ConvertTo-SecureString $SmokePasswordPlain -AsPlainText -Force
+  # Windows LocalUser.Description max length is 48 characters.
   New-LocalUser `
     -Name $SmokeUser `
     -Password $secure `
     -FullName 'Agent-X Smoke' `
-    -Description 'Temporary non-admin user for Agent-X server smoke tests' `
+    -Description 'Agent-X CI smoke (non-admin)' `
     -PasswordNeverExpires `
     -UserMayNotChangePassword | Out-Null
 
