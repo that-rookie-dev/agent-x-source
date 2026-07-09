@@ -19,9 +19,12 @@ packages/desktop/renderer/xterm/
 packages/desktop/build/Tray.png
 packages/desktop/build/TrayWin.png
 packages/desktop/python/
+packages/desktop/ffmpeg/
 packages/desktop/.pgvector-build/
 packages/desktop/web-api/
 packages/desktop/web-ui/
 packages/runtime/python/
+packages/runtime/ffmpeg/
+packages/runtime/.ffmpeg-download/
 .pgvector-build/
 graphify-out/

@@ -300,7 +300,9 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
 
       {missingRuntime && (
         <Alert severity="warning" sx={{ mb: 2, fontSize: '0.72rem' }}>
-          Install Python 3.10+ and ffmpeg before deploying voice ({!capabilities?.pythonAvailable ? 'Python missing' : 'ffmpeg missing'}).
+          {!capabilities?.pythonAvailable
+            ? 'Python 3.10+ is required before deploying voice. Reinstall Agent-X or install Python and retry.'
+            : 'Bundled ffmpeg is missing. Reinstall Agent-X (or install a system ffmpeg on PATH) and retry.'}
         </Alert>
       )}
 

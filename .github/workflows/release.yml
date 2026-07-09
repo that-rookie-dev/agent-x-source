@@ -133,6 +133,12 @@ jobs:
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
 
+      - name: Setup bundled ffmpeg
+        run: node packages/runtime/scripts/setup-ffmpeg.mjs
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_PLATFORM: darwin
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -229,6 +235,12 @@ jobs:
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
 
+      - name: Setup bundled ffmpeg
+        run: node packages/runtime/scripts/setup-ffmpeg.mjs
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_PLATFORM: linux
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -319,6 +331,12 @@ jobs:
       # --- Desktop ---
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
+
+      - name: Setup bundled ffmpeg
+        run: node packages/runtime/scripts/setup-ffmpeg.mjs
+        env:
+          TARGET_PLATFORM: win32
+          TARGET_ARCH: x64
 
       - uses: actions/cache@v4
         with:

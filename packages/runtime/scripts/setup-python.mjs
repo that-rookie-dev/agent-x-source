@@ -1,4 +1,4 @@
-import { createWriteStream, existsSync, mkdirSync, rmSync, readdirSync, renameSync } from 'fs';
+import { createWriteStream, existsSync, mkdirSync, rmSync, readdirSync, renameSync, cpSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { pipeline } from 'stream/promises';
@@ -7,6 +7,7 @@ import { execSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dirname, '..', 'python');
+const DESKTOP_OUT = join(__dirname, '..', '..', 'desktop', 'python');
 
 const PBS_RELEASE = '20260610';
 const PY_VER = '3.12.13';
@@ -76,5 +77,11 @@ execSync(`"${pythonBin}" -m pip install --upgrade pip --quiet`, { stdio: 'pipe' 
 // Pre-install commonly needed packages for agent tasks
 console.log('Installing packages...');
 execSync(`"${pythonBin}" -m pip install --quiet pillow requests`, { stdio: 'inherit' });
+
+// Mirror into packages/desktop/python for electron-builder extraResources.
+if (existsSync(dirname(DESKTOP_OUT))) {
+  cpSync(OUT_DIR, DESKTOP_OUT, { recursive: true, force: true });
+  console.log(`Mirrored Python into ${DESKTOP_OUT}`);
+}
 
 console.log('Python setup complete.');

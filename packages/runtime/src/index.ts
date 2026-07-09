@@ -13,6 +13,7 @@ export {
   createServerRuntimeOptions,
   resolveRuntimePaths,
   setupPythonEnv,
+  setupFfmpegEnv,
   resolvePublicUrl,
   resolveDefaultServerDataDir,
   DEFAULT_PORT,

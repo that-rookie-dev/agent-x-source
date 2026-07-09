@@ -67,8 +67,12 @@ function assertSafeAudioPath(filePath: string, voiceTempDir?: string): void {
   }
 }
 
+function defaultFfmpegPath(): string {
+  return process.env['AGENTX_FFMPEG_PATH'] || 'ffmpeg';
+}
+
 async function execFfmpeg(args: string[], options: FfmpegOptions): Promise<void> {
-  await execFileAsync(options.ffmpegPath ?? 'ffmpeg', args, {
+  await execFileAsync(options.ffmpegPath ?? defaultFfmpegPath(), args, {
     timeout: options.timeoutMs ?? 60_000,
   });
 }

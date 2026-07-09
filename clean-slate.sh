@@ -250,7 +250,7 @@ done
 
 # Server pack staging / release tarballs
 rm -rf packages/server/release packages/server/.pack-staging 2>/dev/null || true
-rm -rf packages/runtime/python 2>/dev/null || true
+rm -rf packages/runtime/python packages/runtime/ffmpeg packages/desktop/python packages/desktop/ffmpeg 2>/dev/null || true
 
 # Remove any leftover bundled web-api/web-ui directories inside the desktop package
 rm -rf "$DESKTOP_DIR/web-api" "$DESKTOP_DIR/web-ui" 2>/dev/null || true
