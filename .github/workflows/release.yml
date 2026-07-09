@@ -408,9 +408,11 @@ jobs:
           path: |
             packages/runtime/.pgvector-build
             packages/desktop/.pgvector-build/pg-install
-          key: pg-ext-srv-${{ matrix.suffix }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs') }}
+          # Include runner.arch so darwin-x64 on macos-15-intel never restores an ARM cache
+          # left over from when that suffix was packed on macos-14 (arm64).
+          key: pg-ext-srv-${{ matrix.suffix }}-${{ runner.arch }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs') }}
           restore-keys: |
-            pg-ext-srv-${{ matrix.suffix }}-
+            pg-ext-srv-${{ matrix.suffix }}-${{ runner.arch }}-
 
       - name: Build PostgreSQL extensions for server pack
         shell: bash
