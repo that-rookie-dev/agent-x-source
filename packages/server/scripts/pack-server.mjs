@@ -20,6 +20,7 @@ import { copyVoiceSidecarResources } from '../../voice-sidecar/scripts/copy-voic
 import {
   assertNativePostgres,
   assertPgVectorExtension,
+  assertPostgresSharedLibs,
   packageForSuffix,
   resolveBuiltEmbeddedPkgRoot,
   resolveExtensionDonorNative,
@@ -108,22 +109,28 @@ function materializeWorkspacePkg(stagingNodeModules, pkgName, srcRoot) {
 
 function materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform) {
   const dest = join(stagingNodeModules, ...embeddedPkg.split('/'));
-  if (existsSync(join(dest, 'package.json'))) return;
-
   const src = resolveEmbeddedPkgSource(embeddedPkg, packPlatform);
   if (!src) {
-    throw new Error(
-      `Could not resolve ${embeddedPkg} for server pack. `
-      + 'On macOS arm64 runners packing darwin-x64, run pnpm install with '
-      + '--config.supportedArchitectures.cpu=arm64,x64 --config.supportedArchitectures.os=darwin first.',
-    );
+    if (!existsSync(join(dest, 'package.json'))) {
+      throw new Error(
+        `Could not resolve ${embeddedPkg} for server pack. `
+        + 'On macOS arm64 runners packing darwin-x64, run pnpm install with '
+        + '--config.supportedArchitectures.cpu=arm64,x64 --config.supportedArchitectures.os=darwin first.',
+      );
+    }
+    console.warn(`Using npm-installed ${embeddedPkg}; local build tree not found`);
+    assertNativePostgres(stagingNodeModules, embeddedPkg, packPlatform);
+    assertPostgresSharedLibs(stagingNodeModules, embeddedPkg, packPlatform);
+    return;
   }
 
   mkdirSync(dirname(dest), { recursive: true });
+  rmSync(dest, { recursive: true, force: true });
   cpSync(src, dest, { recursive: true, force: true });
   console.log(`Materialized ${embeddedPkg} from ${src}`);
 
   assertNativePostgres(stagingNodeModules, embeddedPkg, packPlatform);
+  assertPostgresSharedLibs(stagingNodeModules, embeddedPkg, packPlatform);
 }
 
 const suffix = resolvePackSuffix(platform(), arch());

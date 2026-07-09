@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import { networkInterfaces } from 'node:os';
+import { arch, networkInterfaces } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import type { Server } from 'node:http';
@@ -74,6 +74,27 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
     voiceBundleDir: join(resourcesPath, 'voice-sidecar', 'bundled'),
     voiceManifestPath: join(resourcesPath, 'voice-sidecar', 'voice-models.manifest.json'),
   };
+}
+
+export function ensureEmbeddedPgLibPath(installDir: string): void {
+  const plat = process.platform;
+  if (plat !== 'linux' && plat !== 'darwin') return;
+
+  const pkg = plat === 'linux'
+    ? (arch() === 'arm64' ? '@embedded-postgres/linux-arm64' : '@embedded-postgres/linux-x64')
+    : (arch() === 'arm64' ? '@embedded-postgres/darwin-arm64' : '@embedded-postgres/darwin-x64');
+
+  const libDirs = [
+    join(installDir, 'node_modules', ...pkg.split('/'), 'native', 'lib'),
+    join(installDir, 'node_modules', ...pkg.split('/'), 'native', 'lib', 'postgresql'),
+  ].filter((dir) => existsSync(dir));
+
+  if (libDirs.length === 0) return;
+
+  const prefix = libDirs.join(':');
+  const libPathKey = plat === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
+  const existing = process.env[libPathKey];
+  process.env[libPathKey] = existing ? `${prefix}:${existing}` : prefix;
 }
 
 export function setupPythonEnv(paths: AgentRuntimePaths, isDev: boolean): void {
@@ -294,6 +315,7 @@ export function createServerRuntimeOptions(params?: {
     ?? join(process.env['XDG_DATA_HOME'] || join(process.env['HOME'] || '', '.local', 'share'), 'agentx');
 
   process.env['AGENTX_INSTALL_DIR'] = installDir;
+  ensureEmbeddedPgLibPath(installDir);
 
   return {
     mode: 'server',
