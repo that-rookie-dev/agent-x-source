@@ -375,8 +375,11 @@ jobs:
           # Native Intel Mac runner — pack + smoke without Rosetta/cross-arch.
           - os: macos-15-intel
             suffix: darwin-x64
-          - os: windows-latest
-            suffix: win-x64
+          # Windows server pack/smoke temporarily disabled: GHA runners are Administrators,
+          # so embedded Postgres refuses to start, and non-admin smoke user creation hits
+          # InvalidPasswordException / policy limits. Desktop Windows (build-windows) remains.
+          # - os: windows-latest
+          #   suffix: win-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -392,15 +395,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y build-essential curl bison flex
 
-      - name: Install VS 2022 C++ Build Tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install visualstudio2022buildtools -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --wait"
-
       - run: pnpm install --frozen-lockfile || pnpm install
-        env:
-          npm_config_msvs_version: 2022
 
       - name: Cache PostgreSQL extension build
         uses: actions/cache@v4
@@ -431,10 +426,7 @@ jobs:
           AGENTX_PACK_SUFFIX: ${{ matrix.suffix }}
         timeout-minutes: 90
 
-      # Windows GHA runners are Administrators; embedded Postgres refuses to start
-      # under an admin account. Use the PowerShell smoke that runs as a temp non-admin user.
       - name: Smoke-test server install (start + health + Web UI)
-        if: runner.os != 'Windows'
         shell: bash
         run: |
           chmod +x packages/server/scripts/smoke-server-pack.sh
@@ -442,20 +434,13 @@ jobs:
           packages/server/scripts/smoke-server-pack.sh "$tarball" 3333
         timeout-minutes: 10
 
-      - name: Smoke-test server install (Windows, non-admin user)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $tarball = (Get-ChildItem packages/server/release/agentx-${{ matrix.suffix }}-server.tar.gz | Select-Object -First 1).FullName
-          & "$PWD/packages/server/scripts/smoke-server-pack.ps1" -Tarball $tarball -Port 3333
-        timeout-minutes: 10
-
       - uses: actions/upload-artifact@v4
         with:
           name: agentx-server-${{ matrix.suffix }}
           path: packages/server/release/agentx-*-server.tar.gz
 
-  # Publish only after desktop builds AND all 5 server smoke tests succeed.
+  # Publish only after desktop builds AND server smoke tests succeed
+  # (linux-x64/arm64 + darwin-arm64/x64; Windows server pack deferred).
   publish:
     needs: [check-version, build-macos, build-linux, build-windows, build-server]
     if: |
@@ -508,7 +493,6 @@ jobs:
             | Linux (ARM64) | [agentx-linux-arm64-server.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-linux-arm64-server.tar.gz) |
             | macOS (Apple Silicon) | [agentx-darwin-arm64-server.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-darwin-arm64-server.tar.gz) |
             | macOS (Intel) | [agentx-darwin-x64-server.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-darwin-x64-server.tar.gz) |
-            | Windows (x64) | [agentx-win-x64-server.tar.gz](https://github.com/${{ env.PUBLIC_REPO }}/releases/latest/download/agentx-win-x64-server.tar.gz) |
 
             After install: `agentx start` · `agentx status` · `agentx stop`
 
