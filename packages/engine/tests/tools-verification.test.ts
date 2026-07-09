@@ -229,7 +229,7 @@ describe('Package manager detection', () => {
     // pip list may succeed or fail depending on pip availability — either is fine
     const result = await packageList({}, ctx());
     expect(result.success !== undefined).toBe(true);
-  });
+  }, 15000);
 
   it('detects Rust Cargo project', async () => {
     writeFileSync(join(tmpDir, 'Cargo.toml'), '[package]\nname = "test"');
@@ -237,7 +237,7 @@ describe('Package manager detection', () => {
     const result = await packageList({}, ctx());
     // cargo tree may fail without cargo installed — that's expected
     expect(result.success !== undefined).toBe(true);
-  });
+  }, 15000);
 
   it('detects Go project', async () => {
     writeFileSync(join(tmpDir, 'go.mod'), 'module test');
@@ -245,7 +245,7 @@ describe('Package manager detection', () => {
     const result = await packageList({}, ctx());
     // go list may fail without go installed — that's expected
     expect(result.success !== undefined).toBe(true);
-  });
+  }, 15000);
 });
 
 describe('Test framework detection', () => {

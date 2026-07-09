@@ -127,12 +127,13 @@ export async function packageList(_args: Record<string, unknown>, context: ToolE
     }
     case 'python': {
       const p = pm.python!;
-      if (p === 'poetry') return execCmd('poetry show --tree', cwd);
-      if (p === 'uv') return execCmd('uv pip list', cwd);
-      return execCmd('pip list', cwd);
+      // Keep list timeouts short — CI/unit tests must not hang on slow/missing toolchains.
+      if (p === 'poetry') return execCmd('poetry show --tree', cwd, 10000);
+      if (p === 'uv') return execCmd('uv pip list', cwd, 10000);
+      return execCmd('pip list', cwd, 10000);
     }
-    case 'rust': return execCmd('cargo tree --depth 1', cwd);
-    case 'go': return execCmd('go list -m all', cwd);
+    case 'rust': return execCmd('cargo tree --depth 1', cwd, 10000);
+    case 'go': return execCmd('go list -m all', cwd, 10000);
     default: return { success: true, output: '' };
   }
 }
