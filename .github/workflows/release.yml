@@ -372,7 +372,8 @@ jobs:
             suffix: linux-arm64
           - os: macos-14
             suffix: darwin-arm64
-          - os: macos-14
+          # Native Intel Mac runner — pack + smoke without Rosetta/cross-arch.
+          - os: macos-15-intel
             suffix: darwin-x64
           - os: windows-latest
             suffix: win-x64
@@ -401,10 +402,6 @@ jobs:
         env:
           npm_config_msvs_version: 2022
 
-      - name: Install cross-arch embedded PostgreSQL binaries (macOS x64)
-        if: matrix.suffix == 'darwin-x64'
-        run: pnpm install --config.supportedArchitectures.cpu=arm64,x64 --config.supportedArchitectures.os=darwin
-
       - name: Cache PostgreSQL extension build
         uses: actions/cache@v4
         with:
@@ -432,14 +429,29 @@ jobs:
           AGENTX_PACK_SUFFIX: ${{ matrix.suffix }}
         timeout-minutes: 90
 
+      - name: Smoke-test server install (start + health + Web UI)
+        shell: bash
+        run: |
+          chmod +x packages/server/scripts/smoke-server-pack.sh
+          tarball="$(ls packages/server/release/agentx-${{ matrix.suffix }}-server.tar.gz | head -1)"
+          packages/server/scripts/smoke-server-pack.sh "$tarball" 3333
+        timeout-minutes: 10
+
       - uses: actions/upload-artifact@v4
         with:
           name: agentx-server-${{ matrix.suffix }}
           path: packages/server/release/agentx-*-server.tar.gz
 
+  # Publish only after desktop builds AND all 5 server smoke tests succeed.
   publish:
     needs: [check-version, build-macos, build-linux, build-windows, build-server]
-    if: needs.check-version.outputs.should_release == 'true'
+    if: |
+      always() &&
+      needs.check-version.outputs.should_release == 'true' &&
+      needs.build-macos.result == 'success' &&
+      needs.build-linux.result == 'success' &&
+      needs.build-windows.result == 'success' &&
+      needs.build-server.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
