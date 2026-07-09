@@ -1,8 +1,9 @@
 /**
  * Helpers for bundling @embedded-postgres/* platform binaries into desktop/server packages.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { arch as hostArch } from 'node:os';
 
 export const EMBEDDED_POSTGRES_VERSION = '17.5.0-beta.15';
 
@@ -131,9 +132,19 @@ export function assertPostgresSharedLibs(nodeModulesRoot, pkgName, packPlatform)
   }
 }
 
+function samePath(a, b) {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+}
+
 /** Copy extension + shared-library artifacts between two native trees. */
 export function syncEmbeddedExtensions(fromNative, toNative, packPlatform = 'unix') {
   if (!existsSync(fromNative) || !existsSync(toNative)) return;
+  // Materialize already copied a tree that includes extensions — nothing to sync.
+  if (samePath(fromNative, toNative)) return;
 
   const pairs = packPlatform === 'win32'
     ? [
@@ -152,7 +163,10 @@ export function syncEmbeddedExtensions(fromNative, toNative, packPlatform = 'uni
     mkdirSync(toDir, { recursive: true });
     for (const name of readdirSync(fromDir)) {
       if (!include(name)) continue;
-      cpSync(join(fromDir, name), join(toDir, name), { force: true });
+      const src = join(fromDir, name);
+      const dest = join(toDir, name);
+      if (samePath(src, dest)) continue;
+      cpSync(src, dest, { force: true });
     }
   }
 }
@@ -228,7 +242,9 @@ export function resolveBuiltEmbeddedPkgRoot(workspaceRoot, storeDir, embeddedPkg
 }
 
 export function resolveExtensionDonorNative(workspaceRoot, storeDir, suffix, packPlatform = 'unix') {
-  if (suffix === 'darwin-x64') {
+  // Cross-arch only: packing Intel macOS on an Apple Silicon host borrows arm64-built extensions.
+  // On native Intel (macos-15-intel), use the local darwin-x64 tree instead.
+  if (suffix === 'darwin-x64' && hostArch() === 'arm64') {
     return resolveDarwinArm64DonorNative(workspaceRoot, storeDir);
   }
 

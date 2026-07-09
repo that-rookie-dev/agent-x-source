@@ -9,6 +9,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -79,8 +80,19 @@ function syncServerExtensions(suffix, stagingNodeModules, packPlatform) {
     );
   }
 
+  // When materialize copied a tree that already includes pgvector/AGE, donor === staging.
+  let sameTree = false;
+  try {
+    sameTree = realpathSync(donorNative) === realpathSync(stagingNative);
+  } catch {
+    sameTree = donorNative === stagingNative;
+  }
   syncEmbeddedExtensions(donorNative, stagingNative, packPlatform);
-  console.log(`Synced extension artifacts from ${donorNative} into server ${suffix} tree`);
+  if (sameTree) {
+    console.log(`Extensions already present in materialized ${suffix} tree`);
+  } else {
+    console.log(`Synced extension artifacts from ${donorNative} into server ${suffix} tree`);
+  }
 
   assertPgVectorExtension(stagingNative, packPlatform);
   console.log(`Verified pgvector extension in ${stagingNative}`);
