@@ -273,7 +273,7 @@ function createAgentRuntime(): AgentRuntime {
 
 async function startServer(): Promise<void> {
   agentRuntime = createAgentRuntime();
-  agentRuntime.setupPythonEnv();
+  // setupPythonEnv runs inside runtime.start() with the rest of the staged boot.
   await agentRuntime.start();
 }
 

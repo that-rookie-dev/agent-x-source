@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import { arch, networkInterfaces } from 'node:os';
+import { arch, homedir, networkInterfaces } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import type { Server } from 'node:http';
@@ -71,12 +71,19 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
     };
   }
 
-  const pythonPath = process.platform === 'win32'
-    ? join(resourcesPath, 'python', 'python.exe')
-    : join(resourcesPath, 'python', 'bin', 'python3');
   const pythonDir = process.platform === 'win32'
     ? join(resourcesPath, 'python')
     : join(resourcesPath, 'python', 'bin');
+  // Prefer python3, but fall back to versioned binaries when pack left a broken
+  // absolute symlink (common when CI copied PBS without dereference).
+  const pythonCandidates = process.platform === 'win32'
+    ? [join(pythonDir, 'python.exe')]
+    : [
+      join(pythonDir, 'python3'),
+      join(pythonDir, 'python3.12'),
+      join(pythonDir, 'python'),
+    ];
+  const pythonPath = pythonCandidates.find((p) => existsSync(p)) ?? pythonCandidates[0]!;
   const { ffmpegPath, ffmpegDir } = resolveBundledFfmpeg(resourcesPath);
 
   return {
@@ -128,6 +135,74 @@ export function setupPythonEnv(paths: AgentRuntimePaths, isDev: boolean): void {
   }
 
   setupFfmpegEnv(paths, isDev);
+}
+
+/** True when connection string points at the local embedded PG (127.0.0.1:3335 / agentx). */
+export function isEmbeddedPostgresConnectionString(connectionString: string): boolean {
+  try {
+    const u = new URL(connectionString);
+    const host = u.hostname;
+    const port = u.port || '5432';
+    const localHost = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+    return localHost && port === String(DEFAULT_EMBEDDED_PG_PORT);
+  } catch {
+    return /127\.0\.0\.1:3335|localhost:3335/i.test(connectionString);
+  }
+}
+
+function resolveConfigDirForDataDir(dataDir: string): string {
+  // Desktop Electron uses userData as dataDir and often stores config beside it.
+  const besideData = join(dataDir, 'config');
+  if (existsSync(join(besideData, 'plugin-registry.json')) || existsSync(join(besideData, 'config.json'))) {
+    return besideData;
+  }
+  if (process.env['XDG_CONFIG_HOME']) {
+    return join(process.env['XDG_CONFIG_HOME'], 'agentx');
+  }
+  return join(homedir(), '.config', 'agentx');
+}
+
+/**
+ * Read the user's chosen Postgres backend from plugin-registry.json (written by setup wizard).
+ * Returns null when unset / first-run (caller should start embedded PG).
+ */
+export function readConfiguredPostgresPreference(dataDir: string): {
+  backend: 'embedded-postgres' | 'postgres' | null;
+  connectionString: string | null;
+} {
+  const configDir = resolveConfigDirForDataDir(dataDir);
+  const registryPath = join(configDir, 'plugin-registry.json');
+  if (!existsSync(registryPath)) {
+    return { backend: null, connectionString: null };
+  }
+  try {
+    const raw = JSON.parse(readFileSync(registryPath, 'utf-8')) as Array<{
+      id?: string;
+      enabled?: boolean;
+      config?: Record<string, unknown>;
+    }>;
+    const pg = Array.isArray(raw) ? raw.find((p) => p?.id === 'postgresql') : undefined;
+    if (!pg?.enabled) {
+      return { backend: null, connectionString: null };
+    }
+    const cfg = pg.config ?? {};
+    const connectionString = typeof cfg['connectionString'] === 'string'
+      ? cfg['connectionString'].trim()
+      : null;
+    const backendRaw = cfg['backend'];
+    if (backendRaw === 'embedded-postgres' || backendRaw === 'postgres') {
+      return { backend: backendRaw, connectionString };
+    }
+    if (connectionString && !isEmbeddedPostgresConnectionString(connectionString)) {
+      return { backend: 'postgres', connectionString };
+    }
+    if (connectionString && isEmbeddedPostgresConnectionString(connectionString)) {
+      return { backend: 'embedded-postgres', connectionString };
+    }
+    return { backend: null, connectionString };
+  } catch {
+    return { backend: null, connectionString: null };
+  }
 }
 
 export function setupFfmpegEnv(paths: AgentRuntimePaths, isDev: boolean): void {
@@ -232,10 +307,21 @@ export class AgentRuntime {
   }
 
   async startEmbeddedPostgres(): Promise<string | null> {
+    // Explicit env always wins (CI smoke, operators, overrides).
     if (process.env['AGENTX_POSTGRES_CONNECTION_STRING']) {
+      console.log('[startup] Using AGENTX_POSTGRES_CONNECTION_STRING from environment');
       return process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
     }
 
+    const pref = readConfiguredPostgresPreference(this.options.getDataDir());
+    if (pref.backend === 'postgres' && pref.connectionString) {
+      console.log('[startup] Cloud/remote PostgreSQL configured — skipping embedded Postgres');
+      process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = pref.connectionString;
+      process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '0';
+      return pref.connectionString;
+    }
+
+    console.log('[startup] Starting embedded PostgreSQL…');
     const dataDir = join(this.options.getDataDir(), 'brain_db');
     this.pgManager = new PostgresLifecycleManager({
       dataDir,
@@ -272,8 +358,14 @@ export class AgentRuntime {
       throw new Error(`Web-API not found at ${paths.webApiPath}`);
     }
 
+    console.log('[startup] 1/4 Preparing runtime environment…');
     ensureLoginShellPath();
+    this.setupPythonEnv();
+
+    console.log('[startup] 2/4 Resolving database…');
     await this.startEmbeddedPostgres();
+
+    console.log('[startup] 3/4 Initializing vault key…');
     await initializeVaultKey(this.options.getDataDir(), this.options.vaultStorage);
 
     const listenHost = this.options.listenHost
@@ -301,8 +393,10 @@ export class AgentRuntime {
     process.env['AGENTX_PUBLIC_URL'] = publicUrl;
     process.env['NODE_ENV'] = 'production';
 
+    console.log(`[startup] 4/4 Starting web API on ${listenHost}:${this.port}…`);
     const mod = await import(pathToFileURL(paths.webApiPath).href);
     if (mod.server) this.httpServer = mod.server as Server;
+    console.log(`[startup] Agent-X is active at http://127.0.0.1:${this.port}`);
   }
 
   async stop(): Promise<void> {

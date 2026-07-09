@@ -2495,15 +2495,16 @@ app.post('/api/settings/web-search/test', async (req, res) => {
 app.put('/api/settings/db', async (req, res) => {
   try {
     const { backend, postgres } = req.body || {};
-    getLogger().info('SETTINGS_DB_UPDATE', `PostgreSQL connection update requested (backend=${backend ?? 'postgres'})`);
+    const resolvedBackend = backend === 'embedded-postgres' ? 'embedded-postgres' : 'postgres';
+    getLogger().info('SETTINGS_DB_UPDATE', `PostgreSQL connection update requested (backend=${resolvedBackend})`);
 
     let connectionString = postgres?.connectionString as string | undefined;
 
-    if (backend === 'embedded-postgres') {
-      // The desktop main process starts the bundled native PostgreSQL and sets this env var.
+    if (resolvedBackend === 'embedded-postgres') {
+      // Runtime starts the bundled native PostgreSQL and sets this env var.
       connectionString = process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
       if (!connectionString) {
-        res.status(400).json({ ok: false, error: 'Embedded PostgreSQL is not running. Start the Agent-X desktop app to use the bundled database.' });
+        res.status(400).json({ ok: false, error: 'Embedded PostgreSQL is not running. Start Agent-X to use the bundled database.' });
         return;
       }
     }
@@ -2526,7 +2527,9 @@ app.put('/api/settings/db', async (req, res) => {
       if (!eng.pluginRegistry.isEnabled('postgresql')) {
         eng.pluginRegistry.enable('postgresql');
       }
+      // Persist backend so the next process start can skip embedded PG for cloud setups.
       eng.pluginRegistry.updateConfig('postgresql', {
+        backend: resolvedBackend,
         connectionString,
         autoMigrate: true,
         poolSize: 5,
@@ -2535,7 +2538,7 @@ app.put('/api/settings/db', async (req, res) => {
       clearEngine();
     }
 
-    res.json({ ok: true, backend: 'postgres' });
+    res.json({ ok: true, backend: resolvedBackend });
   } catch (e: unknown) {
     getLogger().error('PUT_API_SETTINGS_DB', e instanceof Error ? e : String(e));
     res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-update-failed' });

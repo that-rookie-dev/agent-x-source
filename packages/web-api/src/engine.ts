@@ -151,8 +151,20 @@ export function getEngine(): EngineState {
   initLogCollector();
 
   const embeddedPgDefault = 'postgresql://agentx:agentx@127.0.0.1:3335/agentx';
+  const pluginPgConnection = (() => {
+    try {
+      const cfg = pluginRegistry.getConfig('postgresql');
+      const cs = cfg['connectionString'];
+      return typeof cs === 'string' && cs.trim() ? cs.trim() : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  // Prefer runtime-provided env (embedded start or cloud preference applied at boot),
+  // then the wizard/settings plugin config, then legacy config fields, then embedded default.
   const pgConnectionString =
     process.env['AGENTX_POSTGRES_CONNECTION_STRING'] ??
+    pluginPgConnection ??
     ((loadedConfig as any)?.postgres?.connectionString as string | undefined) ??
     (configManager as any).getPostgresConnectionString?.() ??
     embeddedPgDefault;

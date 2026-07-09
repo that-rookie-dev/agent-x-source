@@ -160,6 +160,13 @@ const BUILTIN_PLUGINS: PluginHubEntry[] = [
     tags: ['database', 'postgresql', 'scalable', 'production'],
     isBuiltin: true,
     config: {
+      backend: {
+        type: 'string',
+        label: 'Backend mode',
+        description: 'embedded-postgres (bundled local) or postgres (remote/cloud)',
+        required: false,
+        default: 'embedded-postgres',
+      },
       connectionString: {
         type: 'string',
         label: 'Connection String',
