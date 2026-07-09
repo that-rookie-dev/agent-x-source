@@ -22,5 +22,6 @@ packages/desktop/python/
 packages/desktop/.pgvector-build/
 packages/desktop/web-api/
 packages/desktop/web-ui/
+packages/runtime/python/
 .pgvector-build/
 graphify-out/

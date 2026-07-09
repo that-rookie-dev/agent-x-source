@@ -22,6 +22,7 @@ import {
   assertNativePostgres,
   assertPgVectorExtension,
   assertPostgresSharedLibs,
+  ensureDarwinDylibAliases,
   packageForSuffix,
   resolveBuiltEmbeddedPkgRoot,
   resolveExtensionDonorNative,
@@ -138,8 +139,14 @@ function materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform) {
 
   mkdirSync(dirname(dest), { recursive: true });
   rmSync(dest, { recursive: true, force: true });
-  cpSync(src, dest, { recursive: true, force: true });
+  // Dereference pnpm symlinks so the tarball contains real binaries/libs, not
+  // absolute host paths that break on CI runners and end-user installs.
+  cpSync(src, dest, { recursive: true, force: true, dereference: true });
   console.log(`Materialized ${embeddedPkg} from ${src}`);
+
+  if (packPlatform === 'darwin') {
+    ensureDarwinDylibAliases(join(dest, 'native', 'lib'));
+  }
 
   assertNativePostgres(stagingNodeModules, embeddedPkg, packPlatform);
   assertPostgresSharedLibs(stagingNodeModules, embeddedPkg, packPlatform);
@@ -181,6 +188,14 @@ for (const [label, src, dest] of [
   }
   cpSync(src, dest, { recursive: true });
 }
+
+// Staging root package.json is CommonJS (daemon entry). web-api dist is ESM —
+// give it its own package boundary so Node loads index.js as a module.
+writeFileSync(join(resourcesDir, 'web-api', 'package.json'), JSON.stringify({
+  name: 'agentx-web-api',
+  private: true,
+  type: 'module',
+}, null, 2));
 
 if (existsSync(pythonDir)) {
   cpSync(pythonDir, join(resourcesDir, 'python'), { recursive: true });

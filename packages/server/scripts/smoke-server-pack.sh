@@ -91,9 +91,21 @@ export AGENTX_DATA_DIR="$DATA_DIR"
 export AGENTX_PORT="$PORT"
 export AGENTX_HOST="127.0.0.1"
 
+dump_log() {
+  echo "---- agentx.log ----" >&2
+  if [ -f "$LOG_FILE" ]; then
+    cat "$LOG_FILE" >&2 || true
+  else
+    echo "(log file missing: $LOG_FILE)" >&2
+  fi
+}
+
 echo "==> Starting Agent-X server on port $PORT"
 if ! is_windows && [ -x "${INSTALL_DIR}/agentx" ]; then
-  "${INSTALL_DIR}/agentx" start
+  if ! "${INSTALL_DIR}/agentx" start; then
+    dump_log
+    exit 1
+  fi
 else
   # Windows pack ships agentx.cmd (node passthrough), not the bash CLI.
   (
@@ -104,7 +116,7 @@ else
   sleep 3
   if [ ! -f "$PID_FILE" ] || ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     echo "Server process failed to start" >&2
-    cat "$LOG_FILE" 2>/dev/null || true
+    dump_log
     exit 1
   fi
 fi
@@ -123,8 +135,7 @@ done
 
 if [ "$ok" != "1" ]; then
   echo "Health check failed after ~120s" >&2
-  echo "---- agentx.log ----" >&2
-  cat "$LOG_FILE" 2>/dev/null || true
+  dump_log
   exit 1
 fi
 echo "Health OK: $(tr -d '\n' </tmp/agentx-health.json | head -c 200)"

@@ -83,7 +83,29 @@ cmd_start() {
   log "Starting Agent-X server..."
   nohup node "$INDEX_JS" >> "${LOG_DIR}/agentx.log" 2>&1 &
   echo $! > "$PID_FILE"
-  sleep 2
+
+  # Embedded Postgres initdb + extension setup often exceeds a couple of seconds.
+  # Keep the CLI up while the process is alive; fail as soon as it exits.
+  local i=0
+  while [ "$i" -lt 90 ]; do
+    if is_running; then
+      # After a short grace period, report success — callers (smoke) wait on /api/health.
+      if [ "$i" -ge 2 ]; then
+        echo "Agent-X server started (pid $(cat "$PID_FILE"))."
+        echo "Web UI: http://127.0.0.1:${PORT}"
+        echo "Logs: ${LOG_DIR}/agentx.log"
+        return 0
+      fi
+    elif [ "$i" -ge 2 ]; then
+      echo "Agent-X server failed to start. See ${LOG_DIR}/agentx.log" >&2
+      echo "---- agentx.log ----" >&2
+      cat "${LOG_DIR}/agentx.log" 2>/dev/null || true
+      rm -f "$PID_FILE"
+      exit 1
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
 
   if is_running; then
     echo "Agent-X server started (pid $(cat "$PID_FILE"))."
@@ -91,6 +113,8 @@ cmd_start() {
     echo "Logs: ${LOG_DIR}/agentx.log"
   else
     echo "Agent-X server failed to start. See ${LOG_DIR}/agentx.log" >&2
+    echo "---- agentx.log ----" >&2
+    cat "${LOG_DIR}/agentx.log" 2>/dev/null || true
     rm -f "$PID_FILE"
     exit 1
   fi

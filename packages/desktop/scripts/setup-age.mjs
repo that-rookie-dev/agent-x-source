@@ -32,7 +32,9 @@ function getPackageName() {
   const currentArch = arch();
   switch (currentPlatform) {
     case 'darwin':
-      return currentArch === 'arm64' || currentArch === 'x64' ? '@embedded-postgres/darwin-arm64' : null;
+      if (currentArch === 'arm64') return '@embedded-postgres/darwin-arm64';
+      if (currentArch === 'x64') return '@embedded-postgres/darwin-x64';
+      return null;
     case 'linux':
       return currentArch === 'arm64' ? '@embedded-postgres/linux-arm64' : currentArch === 'x64' ? '@embedded-postgres/linux-x64' : null;
     case 'win32':
@@ -142,11 +144,26 @@ function buildAgeMacUniversal(ageDir, pgInstallDir, nativeDir) {
     CFLAGS: universalCflags,
     LDFLAGS: '-arch arm64 -arch x86_64',
     PG_CFLAGS: universalCflags,
+    OPTFLAGS: '',
   };
 
   try { exec(`make clean PG_CONFIG=${pgConfig}`, { cwd: ageDir, env }); } catch { /* ignore */ }
-  exec(`make PG_CONFIG=${pgConfig}`, { cwd: ageDir, env });
-  exec(`make PG_CONFIG=${pgConfig} install DESTDIR=${join(dirname(ageDir), 'age-install')}`, { cwd: ageDir, env });
+  exec(`make PG_CONFIG=${pgConfig} OPTFLAGS=`, { cwd: ageDir, env });
+  exec(`make PG_CONFIG=${pgConfig} OPTFLAGS= install DESTDIR=${join(dirname(ageDir), 'age-install')}`, { cwd: ageDir, env });
+}
+
+function buildAgeMacHost(ageDir, pgInstallDir) {
+  const pgConfig = join(pgInstallDir, 'bin', 'pg_config');
+  const env = { ...process.env, OPTFLAGS: '' };
+  try { exec(`make clean PG_CONFIG=${pgConfig}`, { cwd: ageDir, env }); } catch { /* ignore */ }
+  exec(
+    `make -j${process.env.CI ? '4' : String(cpus().length)} PG_CONFIG=${pgConfig} OPTFLAGS=`,
+    { cwd: ageDir, env },
+  );
+  exec(
+    `make PG_CONFIG=${pgConfig} OPTFLAGS= install DESTDIR=${join(dirname(ageDir), 'age-install')}`,
+    { cwd: ageDir, env },
+  );
 }
 
 function buildAgeWindows(ageDir, pgInstallDir) {
@@ -210,7 +227,11 @@ function main() {
   rmSync(join(workDir, 'age-install'), { recursive: true, force: true });
 
   if (platform() === 'darwin') {
-    buildAgeMacUniversal(ageDir, pgInstallDir, nativeDir);
+    if (arch() === 'arm64') {
+      buildAgeMacUniversal(ageDir, pgInstallDir, nativeDir);
+    } else {
+      buildAgeMacHost(ageDir, pgInstallDir);
+    }
   } else if (platform() === 'win32') {
     buildAgeWindows(ageDir, pgInstallDir);
   } else {
