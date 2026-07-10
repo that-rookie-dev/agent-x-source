@@ -13,7 +13,6 @@ permissions:
 
 env:
   PUBLIC_REPO: that-rookie-dev/agent-x
-  AGENTX_SKIP_EXTENSIONS: "1"
 
 jobs:
   check-version:
@@ -133,19 +132,26 @@ jobs:
             pg-ext-artifact-${{ matrix.suffix }}-
 
       - name: Build PostgreSQL extensions
+        working-directory: packages/runtime
         shell: bash
-        run: pnpm --filter @agentx/runtime run setup:extensions
+        run: pnpm run setup:extensions
         timeout-minutes: 60
+
+      - name: Stage pg extension artifact
+        run: node packages/runtime/scripts/pg-ext-artifact.mjs stage ${{ matrix.suffix }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: pg-ext-${{ matrix.suffix }}
-          path: packages/runtime/.pgvector-build
+          path: packages/runtime/.pg-ext-artifact
+          if-no-files-found: error
           retention-days: 1
 
   build-macos:
     needs: [check-version, build-core, build-pg-extensions]
     if: needs.check-version.outputs.should_release == 'true'
+    env:
+      AGENTX_SKIP_EXTENSIONS: "1"
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -194,7 +200,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-ext-${{ matrix.pg_ext }}
-          path: packages/runtime/.pgvector-build
+          path: packages/runtime/.pg-ext-download
+
+      - name: Install pg extension artifact
+        run: node packages/runtime/scripts/pg-ext-artifact.mjs install ${{ matrix.pg_ext }} packages/runtime/.pg-ext-download
 
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
@@ -250,6 +259,8 @@ jobs:
   build-linux:
     needs: [check-version, build-core, build-pg-extensions]
     if: needs.check-version.outputs.should_release == 'true'
+    env:
+      AGENTX_SKIP_EXTENSIONS: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -291,7 +302,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-ext-${{ matrix.pg_ext }}
-          path: packages/runtime/.pgvector-build
+          path: packages/runtime/.pg-ext-download
+
+      - name: Install pg extension artifact
+        run: node packages/runtime/scripts/pg-ext-artifact.mjs install ${{ matrix.pg_ext }} packages/runtime/.pg-ext-download
 
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
@@ -346,6 +360,8 @@ jobs:
   build-windows:
     needs: [check-version, build-core, build-pg-extensions]
     if: needs.check-version.outputs.should_release == 'true'
+    env:
+      AGENTX_SKIP_EXTENSIONS: "1"
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -378,7 +394,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-ext-windows-x64
-          path: packages/runtime/.pgvector-build
+          path: packages/runtime/.pg-ext-download
+
+      - name: Install pg extension artifact
+        run: node packages/runtime/scripts/pg-ext-artifact.mjs install windows-x64 packages/runtime/.pg-ext-download
 
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
@@ -431,6 +450,8 @@ jobs:
   build-server:
     needs: [check-version, build-core, build-pg-extensions]
     if: needs.check-version.outputs.should_release == 'true'
+    env:
+      AGENTX_SKIP_EXTENSIONS: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -476,7 +497,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-ext-${{ matrix.pg_ext }}
-          path: packages/runtime/.pgvector-build
+          path: packages/runtime/.pg-ext-download
+
+      - name: Install pg extension artifact
+        run: node packages/runtime/scripts/pg-ext-artifact.mjs install ${{ matrix.pg_ext }} packages/runtime/.pg-ext-download
 
       - name: Build server tarball
         shell: bash
