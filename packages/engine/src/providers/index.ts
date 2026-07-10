@@ -20,7 +20,7 @@ function getDefaultBaseUrl(providerId: ProviderId): string {
     case 'xai': return 'https://api.x.ai/v1';
     case 'fireworks': return 'https://api.fireworks.ai/inference/v1';
     case 'perplexity': return 'https://api.perplexity.ai';
-    case 'cohere': return 'https://api.cohere.ai/compatibility/v1';
+    case 'cohere': return 'https://api.cohere.com/v2';
     case 'commandcode': return 'https://api.commandcode.ai/provider/v1';
     case 'opencode': return 'https://opencode.ai/zen/go/v1';
     case 'opencode-zen': return 'https://opencode.ai/zen/v1';
@@ -60,7 +60,6 @@ export class ProviderFactory {
       case 'xai':
       case 'fireworks':
       case 'perplexity':
-      case 'cohere':
       case 'commandcode':
       case 'opencode':
       case 'opencode-zen':
@@ -69,6 +68,16 @@ export class ProviderFactory {
           providerDisplayName(providerId),
           apiKey ?? '',
           baseUrl ?? getDefaultBaseUrl(providerId),
+        );
+      case 'cohere':
+        // List/validate via Cohere OpenAI Compatibility API; chat uses native @ai-sdk/cohere.
+        return new OpenAICompatibleProvider(
+          'cohere',
+          'Cohere',
+          apiKey ?? '',
+          baseUrl?.includes('/compatibility/')
+            ? baseUrl
+            : 'https://api.cohere.ai/compatibility/v1',
         );
       case 'azure':
         if (!apiKey) throw new Error('Azure OpenAI requires an API key');

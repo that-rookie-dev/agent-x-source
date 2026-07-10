@@ -20,6 +20,7 @@
     "@agentx/shared": "workspace:*",
     "@ai-sdk/anthropic": "^3.0.84",
     "@ai-sdk/azure": "^3.0.74",
+    "@ai-sdk/cohere": "^3.0.38",
     "@ai-sdk/google": "^3.0.82",
     "@ai-sdk/groq": "^3.0.41",
     "@ai-sdk/mistral": "^3.0.39",

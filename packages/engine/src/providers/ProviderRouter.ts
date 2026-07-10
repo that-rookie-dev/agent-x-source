@@ -147,7 +147,7 @@ export class ProviderRouter {
       'xai': 'https://api.x.ai/v1',
       'fireworks': 'https://api.fireworks.ai/inference/v1',
       'perplexity': 'https://api.perplexity.ai',
-      'cohere': 'https://api.cohere.ai/compatibility/v1',
+      'cohere': 'https://api.cohere.com/v2',
       'moonshot': 'https://api.moonshot.ai/v1',
       'azure': 'https://YOUR_RESOURCE.openai.azure.com',
       'commandcode': 'https://api.commandcode.ai/provider/v1',

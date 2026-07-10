@@ -119,7 +119,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     type: 'cloud',
     apiKeyRequired: true,
     baseUrlConfigurable: true,
-    defaultBaseUrl: 'https://api.cohere.ai/compatibility/v1',
+    defaultBaseUrl: 'https://api.cohere.com/v2',
   },
   commandcode: {
     id: 'commandcode',
