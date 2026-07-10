@@ -174,6 +174,7 @@ export { filterSubstantiveMatches, hasSubstantiveKeywordMatch } from './crew/cre
 export { catalogEntryToSummary } from './crew/catalog-summary.js';
 export { getCrewSuggestionService, getCrewCatalogStoreFromEngine } from './crew/get-crew-store.js';
 export { startBackgroundCatalogSeed, getCatalogSeedStatus } from './crew/catalog-seed-runner.js';
+export { resetCatalogSeedInflight } from './crew/catalog-seed-state.js';
 export type { CatalogSeedSnapshot, CatalogSeedStatus } from './crew/catalog-seed-state.js';
 export {
   healDatabaseStore,

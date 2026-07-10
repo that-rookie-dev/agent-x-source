@@ -60,36 +60,13 @@ import {
   WIZARD_MONO,
 } from '../components/setup/wizard-theme';
 import { colors, alphaColor } from '../theme';
+import {
+  clearWizardProgress,
+  loadWizardProgress,
+  saveWizardProgress,
+} from '../utils/wizard-progress';
 
 const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Benchmark', 'Neural Core', 'Callsign', 'Voice Comms', 'Telegram Relay', 'Complete'];
-const STORAGE_KEY = 'agentx_wizard_progress';
-
-interface WizardProgress {
-  step: number;
-  selectedProvider: string;
-  selectedModel: string;
-  callsign: string;
-  selectedBackend: string;
-  selectedLocalModel?: string | null;
-  skipLocalModel?: boolean;
-  voiceCalibrated?: boolean;
-  telegramLinked?: boolean;
-}
-
-function saveProgress(data: WizardProgress) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
-}
-
-function loadProgress(): WizardProgress | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) as WizardProgress : null;
-  } catch { return null; }
-}
-
-function clearProgress() {
-  try { localStorage.removeItem(STORAGE_KEY); } catch {}
-}
 
 export function SetupWizard() {
   const { setConfig, setAuthState, setView } = useApp();
@@ -128,7 +105,7 @@ export function SetupWizard() {
   useEffect(() => {
     void config.getSetupStatus().then((status) => {
       if (status.setupComplete) {
-        clearProgress();
+        clearWizardProgress();
         setAuthState('authenticated');
         void navigate('/', { replace: true });
       }
@@ -208,7 +185,7 @@ export function SetupWizard() {
 
   // Progress restore — shift threshold since no relay step
   useEffect(() => {
-    const saved = loadProgress();
+    const saved = loadWizardProgress();
     if (saved && saved.step >= 1) {
       setStep(saved.step);
       setSelectedProvider(saved.selectedProvider);
@@ -248,7 +225,7 @@ export function SetupWizard() {
 
   const persistProgress = useCallback(() => {
     if (step >= 1) {
-      saveProgress({
+      saveWizardProgress({
         step,
         selectedProvider,
         selectedModel,
@@ -432,7 +409,7 @@ export function SetupWizard() {
 
   const handleBackToCredentials = () => { setShowBackWarning(true); };
   const confirmBackToCredentials = () => {
-    setShowBackWarning(false); setApiKey(''); setBaseUrl(''); setAvailableModels([]); setSelectedModel(''); clearProgress(); setStep(2);
+    setShowBackWarning(false); setApiKey(''); setBaseUrl(''); setAvailableModels([]); setSelectedModel(''); clearWizardProgress(); setStep(2);
   };
 
   const selectedProviderInfo = availableProviders.find(p => p.id === selectedProvider);
@@ -532,7 +509,7 @@ export function SetupWizard() {
       }
       await config.completeSetup(callsign.trim());
       await config.update(setupPatch);
-      clearProgress();
+        clearWizardProgress();
       setAuthState('authenticated');
       setView('docking');
       void navigate('/', { replace: true });

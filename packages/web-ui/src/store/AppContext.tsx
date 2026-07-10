@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useMemo, t
 import { auth, config, health, setOnUnauthorized, setAuthToken, notifications, type AgentXConfig, type TelemetryEvent, type HealthStatus, type NotificationRecord } from '../api';
 import { subscribeTelemetry } from '../telemetry-hub';
 import { showAgentXNotification, requestBrowserNotificationPermission } from '../utils/native-notifications';
+import { clearAgentxClientStorage } from '../utils/client-storage';
 
 type AppView = 'loading' | 'docking' | 'setup-auth' | 'setup-wizard' | 'login' | 'console';
 export type AuthState = 'loading' | 'no-root-user' | 'unauthenticated' | 'needs-setup' | 'authenticated';
@@ -84,19 +85,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const setConfig = useCallback((c: AgentXConfig) => { setAppConfig(c); }, []);
 
-  // Restore auth token from sessionStorage on mount
-  useEffect(() => {
-    const stored = sessionStorage.getItem('agentx_auth_token');
-    if (stored) {
-      setAuthToken(stored);
-    }
-  }, []);
+  // Token/session restoration happens in initialize() after server auth check.
 
   // Register unauthorized handler — any 401 response will reset auth state
   useEffect(() => {
     setOnUnauthorized(() => {
       setAuthToken(null);
-      sessionStorage.removeItem('agentx_auth_token');
       setAuthState('unauthenticated');
       setView('login');
       setAuth(false);
@@ -115,7 +109,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const authCheck = await auth.check();
 
       if (!authCheck.hasRootUser) {
-        // Fresh install — need to create root user first
+        // Fresh install — drop all stale browser state before root-user setup.
+        clearAgentxClientStorage();
+        setAuthToken(null);
         setAuthState('no-root-user');
         setView('setup-auth');
         return;

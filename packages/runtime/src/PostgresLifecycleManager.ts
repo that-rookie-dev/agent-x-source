@@ -67,8 +67,51 @@ export class PostgresLifecycleManager {
     }
   }
 
+  private binaryExt(): string {
+    return platform() === 'win32' ? '.exe' : '';
+  }
+
+  private requiredBinaryNames(): string[] {
+    const ext = this.binaryExt();
+    return [`postgres${ext}`, `initdb${ext}`, `pg_ctl${ext}`];
+  }
+
+  private isCompleteBinaryDir(dir: string): boolean {
+    if (!dir) return false;
+    return this.requiredBinaryNames().every((name) => existsSync(join(dir, name)));
+  }
+
+  private fallbackPackageNames(primary: string): string[] {
+    if (primary === '@embedded-postgres/darwin-x64') {
+      return ['@embedded-postgres/darwin-arm64'];
+    }
+    return [];
+  }
+
+  private packageBinaryCandidates(packageName: string, installDir: string, resourcesPath: string, execDir: string): string[] {
+    const candidates = [
+      join(resourcesPath, 'app.asar.unpacked', 'node_modules', packageName, 'native', 'bin'),
+      join(resourcesPath, 'app.asar.unpacked', 'node_modules', '.pnpm', packageName, 'native', 'bin'),
+      join(resourcesPath, 'node_modules', packageName, 'native', 'bin'),
+      join(installDir, 'node_modules', packageName, 'native', 'bin'),
+      join(installDir, 'resources', 'node_modules', packageName, 'native', 'bin'),
+      join(execDir, 'node_modules', packageName, 'native', 'bin'),
+      join(process.cwd(), 'node_modules', packageName, 'native', 'bin'),
+    ];
+    for (const fallback of this.fallbackPackageNames(packageName)) {
+      candidates.push(
+        join(resourcesPath, 'app.asar.unpacked', 'node_modules', fallback, 'native', 'bin'),
+        join(installDir, 'node_modules', fallback, 'native', 'bin'),
+        join(installDir, 'resources', 'node_modules', fallback, 'native', 'bin'),
+      );
+    }
+    return candidates;
+  }
+
   private async getBinaryDir(): Promise<string> {
-    if (this.options.binaryDir) return this.options.binaryDir;
+    if (this.options.binaryDir && this.isCompleteBinaryDir(this.options.binaryDir)) {
+      return this.options.binaryDir;
+    }
 
     const packageName = this.getPackageName();
     if (!packageName) {
@@ -77,38 +120,68 @@ export class PostgresLifecycleManager {
 
     const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ?? '';
     const installDir = process.env['AGENTX_INSTALL_DIR'] ?? '';
-    const ext = platform() === 'win32' ? '.exe' : '';
+    const execDir = dirname(process.execPath);
 
-    const candidates = [
-      join(resourcesPath, 'app.asar.unpacked', 'node_modules', packageName, 'native', 'bin'),
-      join(resourcesPath, 'app.asar.unpacked', 'node_modules', '.pnpm', packageName, 'native', 'bin'),
-      join(resourcesPath, 'node_modules', packageName, 'native', 'bin'),
-      join(installDir, 'node_modules', packageName, 'native', 'bin'),
-      join(installDir, 'resources', 'node_modules', packageName, 'native', 'bin'),
-    ];
-
-    for (const candidate of candidates) {
-      if (candidate && existsSync(join(candidate, `postgres${ext}`))) {
+    for (const candidate of this.packageBinaryCandidates(packageName, installDir, resourcesPath, execDir)) {
+      if (candidate && this.isCompleteBinaryDir(candidate)) {
+        if (candidate.includes('darwin-arm64') && packageName.includes('darwin-x64')) {
+          this.options.onWarn(
+            'darwin-x64 PostgreSQL binaries were incomplete — using darwin-arm64 universal binaries instead',
+          );
+        }
         return candidate;
       }
     }
 
-    try {
-      const mod = await import(packageName) as { initdb: string; postgres: string; pg_ctl: string };
-      return dirname(mod.postgres);
-    } catch (e) {
-      throw new Error(`Could not resolve native PostgreSQL binaries for ${packageName}: ${e instanceof Error ? e.message : e}. Ensure embedded-postgres platform packages are installed or provide binaryDir.`);
+    const importPackages = [packageName, ...this.fallbackPackageNames(packageName)];
+    const importErrors: string[] = [];
+    for (const pkg of importPackages) {
+      try {
+        const mod = await import(pkg) as { initdb: string; postgres: string; pg_ctl: string };
+        const importDirs = [dirname(mod.postgres), dirname(mod.initdb), dirname(mod.pg_ctl)];
+        for (const dir of importDirs) {
+          if (this.isCompleteBinaryDir(dir)) {
+            if (pkg.includes('darwin-arm64') && packageName.includes('darwin-x64')) {
+              this.options.onWarn(
+                'darwin-x64 PostgreSQL binaries were incomplete — using darwin-arm64 universal binaries instead',
+              );
+            }
+            return dir;
+          }
+        }
+        const missing = this.requiredBinaryNames().filter(
+          (name) => !importDirs.some((dir) => existsSync(join(dir, name))),
+        );
+        importErrors.push(`${pkg}: missing ${missing.join(', ')}`);
+      } catch (e) {
+        importErrors.push(`${pkg}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
+
+    throw new Error(
+      `Incomplete native PostgreSQL binaries for ${packageName} on ${platform()}/${arch()}`
+      + (importErrors.length ? ` (${importErrors.join('; ')})` : '')
+      + '. Reinstall Agent-X or run the installer again to restore embedded PostgreSQL.',
+    );
   }
 
   private async getBinaries(): Promise<PostgresBinaries> {
     const binaryDir = await this.getBinaryDir();
-    const ext = platform() === 'win32' ? '.exe' : '';
-    return {
+    const ext = this.binaryExt();
+    const bin: PostgresBinaries = {
       initdb: join(binaryDir, `initdb${ext}`),
       postgres: join(binaryDir, `postgres${ext}`),
       pgCtl: join(binaryDir, `pg_ctl${ext}`),
     };
+    for (const [label, filePath] of Object.entries(bin) as Array<[keyof PostgresBinaries, string]>) {
+      if (!existsSync(filePath)) {
+        throw new Error(
+          `Missing PostgreSQL binary "${label}" at ${filePath}. `
+          + 'The embedded PostgreSQL install is incomplete — reinstall Agent-X.',
+        );
+      }
+    }
+    return bin;
   }
 
   private ensureExecutable(filePath: string): void {
