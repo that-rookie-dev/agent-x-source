@@ -16,39 +16,42 @@ START_TIMEOUT_SECS="${AGENTX_START_TIMEOUT_SECS:-180}"
 
 mkdir -p "$LOG_DIR"
 
-set_embedded_pg_lib_path() {
-  local os arch pkg lib_dir pg_lib
-  os="$(uname -s)"
-  arch="$(uname -m)"
+# NOTE: Do not export DYLD_LIBRARY_PATH / LD_LIBRARY_PATH for embedded Postgres
+# here. Process-wide lib paths break bundled ffmpeg (incompatible libiconv on macOS).
+# PostgresLifecycleManager scopes those paths to postgres/initdb child processes only.
+#
+# If a parent shell still has a poisoned path from an older Agent-X CLI, strip only
+# embedded-postgres entries — keep any legitimate system/user library paths.
 
-  case "$os" in
-    Linux)
-      case "$arch" in
-        aarch64|arm64) pkg="linux-arm64" ;;
-        x86_64|amd64) pkg="linux-x64" ;;
-        *) return 0 ;;
+strip_embedded_pg_lib_paths() {
+  local key value filtered part
+  for key in DYLD_LIBRARY_PATH LD_LIBRARY_PATH; do
+    eval "value=\${${key}-}"
+    [ -z "${value}" ] && continue
+    filtered=""
+    while [ -n "${value}" ]; do
+      part="${value%%:*}"
+      if [ "${part}" = "${value}" ]; then
+        value=""
+      else
+        value="${value#*:}"
+      fi
+      case "${part}" in
+        '') continue ;;
+        *@embedded-postgres*|*/embedded-postgres/*|*\\embedded-postgres\\*) continue ;;
       esac
-      lib_dir="${INSTALL_DIR}/node_modules/@embedded-postgres/${pkg}/native/lib"
-      if [ -d "$lib_dir" ]; then
-        export LD_LIBRARY_PATH="${lib_dir}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+      if [ -n "${filtered}" ]; then
+        filtered="${filtered}:${part}"
+      else
+        filtered="${part}"
       fi
-      ;;
-    Darwin)
-      case "$arch" in
-        arm64) pkg="darwin-arm64" ;;
-        x86_64) pkg="darwin-x64" ;;
-        *) return 0 ;;
-      esac
-      lib_dir="${INSTALL_DIR}/node_modules/@embedded-postgres/${pkg}/native/lib"
-      pg_lib="${lib_dir}/postgresql"
-      if [ -d "$lib_dir" ]; then
-        export DYLD_LIBRARY_PATH="${lib_dir}${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}"
-      fi
-      if [ -d "$pg_lib" ]; then
-        export DYLD_LIBRARY_PATH="${pg_lib}:${DYLD_LIBRARY_PATH:-}"
-      fi
-      ;;
-  esac
+    done
+    if [ -n "${filtered}" ]; then
+      export "${key}=${filtered}"
+    else
+      unset "${key}" 2>/dev/null || true
+    fi
+  done
 }
 
 log() {
@@ -106,7 +109,7 @@ cmd_start() {
 
   export AGENTX_INSTALL_DIR="$INSTALL_DIR"
   export AGENTX_DATA_DIR="$DATA_DIR"
-  set_embedded_pg_lib_path
+  strip_embedded_pg_lib_paths
 
   # Truncate previous run noise so the live tail is useful.
   : > "${LOG_DIR}/agentx.log"

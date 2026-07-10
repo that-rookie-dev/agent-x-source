@@ -3,7 +3,6 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import LinearProgress from '@mui/material/LinearProgress';
-import RadarIcon from '@mui/icons-material/Radar';
 import { colors, alphaColor } from '../../theme';
 import {
   modelBenchmark,
@@ -124,6 +123,11 @@ export function ModelBenchmarkRunner({
     }
     if (event.type === 'error') {
       setError(event.error);
+      setTests([]);
+      setModalities([]);
+      setCurrentTest('');
+      setPhaseMessage('');
+      setProgress(0);
       setRunning(false);
     }
   }, [onComplete]);
@@ -184,7 +188,6 @@ export function ModelBenchmarkRunner({
   useEffect(() => () => cleanupRef.current?.(), []);
 
   const gradeMeta = result ? GRADE_META[result.grade] : null;
-  const radarSpin = running ? '@keyframes radarSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }' : '';
 
   return (
     <Box sx={{
@@ -196,7 +199,6 @@ export function ModelBenchmarkRunner({
       boxShadow: running ? `0 0 40px ${alphaColor(settingsTheme.accent.hud, '22')}, inset 0 0 60px ${alphaColor(settingsTheme.accent.hud, '08')}` : 'none',
       transition: 'box-shadow 0.3s, border-color 0.3s',
     }}>
-      <style>{radarSpin}</style>
       <Box sx={settingsScanlineSx} />
       <Box sx={{ ...settingsGridBgSx, position: 'absolute', inset: 0, opacity: 0.5, pointerEvents: 'none' }} />
 
@@ -206,24 +208,13 @@ export function ModelBenchmarkRunner({
         borderBottom: `1px solid ${settingsTheme.border.subtle}`,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2,
       }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Box sx={{
-            width: 36, height: 36, borderRadius: '50%',
-            border: `1px solid ${running ? settingsTheme.accent.hud : settingsTheme.border.hud}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            animation: running ? 'radarSpin 3s linear infinite' : 'none',
-            boxShadow: running ? `0 0 20px ${alphaColor(settingsTheme.accent.hud, '44')}` : 'none',
-          }}>
-            <RadarIcon sx={{ fontSize: 18, color: running ? settingsTheme.accent.hud : settingsTheme.text.dim }} />
-          </Box>
-          <Box>
-            <Typography sx={{ ...settingsOverlineSx, fontSize: '0.48rem', color: settingsTheme.accent.hud, mb: 0.25 }}>
-              Agentic Clearance Protocol
-            </Typography>
-            <Typography sx={{ ...settingsMonoSx, fontSize: embedded ? '0.68rem' : '0.78rem', fontWeight: 700, color: settingsTheme.text.primary }}>
-              {modelName || modelId}
-            </Typography>
-          </Box>
+        <Box>
+          <Typography sx={{ ...settingsOverlineSx, fontSize: '0.48rem', color: settingsTheme.accent.hud, mb: 0.25 }}>
+            Agentic Clearance Protocol
+          </Typography>
+          <Typography sx={{ ...settingsMonoSx, fontSize: embedded ? '0.68rem' : '0.78rem', fontWeight: 700, color: settingsTheme.text.primary }}>
+            {modelName || modelId}
+          </Typography>
         </Box>
         {!running && !result && !embedded && (
           <Button size="small" variant="contained" onClick={() => void startBenchmark()} sx={settingsBtnPrimarySx}>
@@ -239,8 +230,8 @@ export function ModelBenchmarkRunner({
 
       <Box sx={{ position: 'relative', zIndex: 1, p: embedded ? 1.5 : 2.5 }}>
         {error && (
-          <Typography sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.accent.alert, mb: 1.5 }}>
-            ERR :: {error}
+          <Typography sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.accent.alert, mb: 1.5, wordBreak: 'break-word' }}>
+            {error}
           </Typography>
         )}
 

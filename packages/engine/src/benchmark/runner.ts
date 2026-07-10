@@ -3,6 +3,7 @@ import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { collectCompletion } from './completion.js';
 import { computeGrade } from './grading.js';
 import { runModalityProbes } from './modality-probes.js';
+import { formatBenchmarkAbortError, isProviderAccessOrNetworkError } from './probe-errors.js';
 import { explainFailure, explainPass, formatTestDetails } from './test-explanations.js';
 import type {
   BenchmarkProgressEvent,
@@ -580,6 +581,11 @@ export async function runModelBenchmark(
       tests.push(result);
       onProgress?.({ type: 'test_complete', result, index: i + 1, total });
     } catch (err) {
+      // Auth / network / provider-unavailable: stop the suite. Capability misses
+      // and wrong answers continue so remaining probes can still score.
+      if (isProviderAccessOrNetworkError(err)) {
+        throw new Error(formatBenchmarkAbortError(err));
+      }
       const result: BenchmarkTestResult = {
         id: def.id,
         label: def.label,
