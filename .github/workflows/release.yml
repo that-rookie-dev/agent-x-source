@@ -198,6 +198,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: core-deps
+          path: packages
 
       - uses: actions/download-artifact@v4
         with:
@@ -300,6 +301,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: core-deps
+          path: packages
 
       - uses: actions/download-artifact@v4
         with:
@@ -392,6 +394,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: core-deps
+          path: packages
 
       - uses: actions/download-artifact@v4
         with:
@@ -495,6 +498,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: core-deps
+          path: packages
 
       - uses: actions/download-artifact@v4
         with:
