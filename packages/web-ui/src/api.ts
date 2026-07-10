@@ -848,9 +848,10 @@ export interface TelegramDiscoverResponse {
   error?: string;
   botUsername?: string;
   botName?: string;
-  chats?: Array<{ id: string; title: string; type: string }>;
+  chats?: Array<{ id: string; title: string; type: string; userId?: string }>;
   saved?: boolean;
   chatId?: string;
+  allowedUserId?: string;
 }
 
 export interface TelegramGreetingResponse {
@@ -1261,7 +1262,6 @@ export interface ModelInfo {
     defaultEffort?: string;
     control?: string;
   };
-  pricing?: { input: number; output: number };
 }
 
 export interface Crew {
@@ -1406,7 +1406,6 @@ export interface ChatMessage {
   subAgents?: Array<{ id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }>;
   plan?: string[];
   turnTokens?: number;
-  turnCostUsd?: number;
 }
 
 export interface SessionInfo {

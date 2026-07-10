@@ -4,8 +4,6 @@ export class TokenTracker {
   private history: Array<{ timestamp: number; tokens: number }> = [];
   private inputTokens = 0;
   private outputTokens = 0;
-  private inputPricePerMillion = 0;
-  private outputPricePerMillion = 0;
 
   constructor(contextWindow: number) {
     this.total = contextWindow;
@@ -43,26 +41,9 @@ export class TokenTracker {
     return this.outputTokens;
   }
 
+  /** Cost tracking removed — always 0. */
   get totalCost(): number {
-    const input = (this.inputTokens / 1_000_000) * this.inputPricePerMillion;
-    const output = (this.outputTokens / 1_000_000) * this.outputPricePerMillion;
-    return input + output;
-  }
-
-  get inputCost(): number {
-    return (this.inputTokens / 1_000_000) * this.inputPricePerMillion;
-  }
-
-  get outputCost(): number {
-    return (this.outputTokens / 1_000_000) * this.outputPricePerMillion;
-  }
-
-  get inputPrice(): number { return this.inputPricePerMillion; }
-  get outputPrice(): number { return this.outputPricePerMillion; }
-
-  setPricing(inputPerMillion: number, outputPerMillion: number): void {
-    this.inputPricePerMillion = inputPerMillion;
-    this.outputPricePerMillion = outputPerMillion;
+    return 0;
   }
 
   addUsage(tokens: number): void {
@@ -99,6 +80,6 @@ export class TokenTracker {
   getRecentRate(windowMs = 60_000): number {
     const cutoff = Date.now() - windowMs;
     const recent = this.history.filter((h) => h.timestamp >= cutoff);
-    return recent.reduce((sum, h) => sum + h.tokens, 0);
+    return recent.reduce((sum, h) => h.tokens + sum, 0);
   }
 }

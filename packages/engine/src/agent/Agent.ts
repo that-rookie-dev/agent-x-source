@@ -68,7 +68,6 @@ import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
 import { ToolRegistry } from '../tools/ToolRegistry.js';
-import { getModelPricing } from '../providers/pricing.js';
 import { createDefaultToolkit } from '../tools/toolkit.js';
 import { CommandRegistry } from '../commands/index.js';
 import { GitManager } from '../session/GitManager.js';
@@ -3274,10 +3273,6 @@ Rules:
         mgr.persistSessionFields?.(this.sessionId, { tokenAvailable: ctx });
       } catch { /* best-effort */ }
     }
-
-    // Set pricing for cost tracking
-    const pricing = getModelPricing(modelId);
-    this.tokenTracker.setPricing(pricing.inputPerMillion, pricing.outputPerMillion);
 
     const nowCompact = isCompactContextProfile(
       this.config.provider.activeProvider,

@@ -139,7 +139,7 @@ export class ProviderRouter {
 
     const baseUrlMap: Record<string, string> = {
       'openai': 'https://api.openai.com/v1',
-      'anthropic': 'https://api.anthropic.com/v1',
+      'anthropic': 'https://api.anthropic.com',
       'deepseek': 'https://api.deepseek.com/v1',
       'groq': 'https://api.groq.com/openai/v1',
       'mistral': 'https://api.mistral.ai/v1',
@@ -147,10 +147,12 @@ export class ProviderRouter {
       'xai': 'https://api.x.ai/v1',
       'fireworks': 'https://api.fireworks.ai/inference/v1',
       'perplexity': 'https://api.perplexity.ai',
-      'cohere': 'https://api.cohere.ai/v1',
-      'moonshot': 'https://api.moonshot.cn/v1',
+      'cohere': 'https://api.cohere.com/v2',
+      'moonshot': 'https://api.moonshot.ai/v1',
       'azure': 'https://YOUR_RESOURCE.openai.azure.com',
-      'commandcode': 'https://api.commandcode.ai/v1',
+      'commandcode': 'https://api.commandcode.ai/provider/v1',
+      'opencode': 'https://opencode.ai/zen/go/v1',
+      'opencode-zen': 'https://opencode.ai/zen/v1',
     };
 
     const baseUrl = baseUrlMap[plan.providerId] ?? 'https://api.openai.com/v1';

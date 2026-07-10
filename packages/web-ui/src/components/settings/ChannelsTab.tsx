@@ -168,6 +168,7 @@ function TelegramFields({
   const [greetingMsg, setGreetingMsg] = useState<string | null>(null);
 
   const chatId = getField(value, 'telegram', 'chatId');
+  const allowedUserId = getField(value, 'telegram', 'allowedUserIds').split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean)[0] ?? '';
   const hasToken = Boolean(getField(value, 'telegram', 'botToken').trim());
 
   const handleVerify = async () => {
@@ -185,11 +186,22 @@ function TelegramFields({
         return;
       }
       const botLabel = result.botUsername ? `@${result.botUsername}` : result.botName ?? 'Bot';
-      if (!result.chats?.length) {
-        setVerifyMsg(`Token valid (${botLabel}). Message your bot, then verify again.`);
+      if (result.error && !result.saved) {
+        setVerifyMsg(result.error);
         return;
       }
-      const chat = result.chats[0]!;
+      if (!result.chats?.length) {
+        setVerifyMsg(`Token valid (${botLabel}). Open Telegram, send a private message to your bot, then verify again.`);
+        return;
+      }
+      const ownerId = result.allowedUserId
+        ?? result.chats.find((c) => c.type === 'private')?.userId
+        ?? result.chats.find((c) => c.type === 'private')?.id;
+      if (!ownerId || !result.chatId) {
+        setVerifyMsg(result.error ?? 'Message your bot in a private chat, then verify again.');
+        return;
+      }
+      const chat = result.chats.find((c) => c.id === result.chatId) ?? result.chats[0]!;
       const next = {
         ...value,
         telegram: {
@@ -198,14 +210,15 @@ function TelegramFields({
           inbound: true,
           outbound: true,
           botToken: token,
-          chatId: chat.id,
+          chatId: result.chatId,
+          allowedUserIds: ownerId,
         },
       };
       onChange(next);
       setVerifyMsg(
         result.saved
-          ? `Connected (${botLabel} → ${chat.title}). Saved — survives restart.`
-          : `Connected (${botLabel} → ${chat.title}).`,
+          ? `Connected (${botLabel} → ${chat.title}). Owner user ID ${ownerId} locked.`
+          : `Connected (${botLabel} → ${chat.title}). Owner user ID ${ownerId}.`,
       );
     } catch (e) {
       setVerifyMsg(e instanceof Error ? e.message : 'Verification failed');
@@ -243,6 +256,7 @@ function TelegramFields({
           outbound: true,
           botToken: getField(value, 'telegram', 'botToken'),
           chatId,
+          allowedUserIds: allowedUserId || value.telegram?.allowedUserIds,
         },
       });
       setGreetingMsg(result.message ? `Sent: ${result.message}` : 'Greeting sent. Inbound listener started.');
@@ -265,7 +279,16 @@ function TelegramFields({
         onChange={(e) => onChange(setField(value, 'telegram', 'botToken', e.target.value))}
         sx={settingsTextFieldSx}
       />
-      <AllowedUserIdsField section="telegram" value={value} onChange={onChange} />
+      <Typography sx={{
+        ...settingsMonoSx,
+        fontSize: '0.62rem',
+        color: allowedUserId ? settingsTheme.text.secondary : settingsTheme.text.dim,
+        gridColumn: '1 / -1',
+      }}>
+        {allowedUserId
+          ? `Linked owner user ID: ${allowedUserId}`
+          : 'Linked owner user ID: not set — verify after messaging the bot privately'}
+      </Typography>
       <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button size="small" onClick={() => { void handleVerify(); }} disabled={verifying} sx={settingsBtnGhostSx}>
           {verifying ? <CircularProgress size={12} sx={{ mr: 0.75 }} /> : null}

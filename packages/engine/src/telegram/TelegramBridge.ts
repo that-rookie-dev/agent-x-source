@@ -1,4 +1,4 @@
-import { getLogger, isChannelAllowlistRequired } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
 import type { EngineEvent } from '@agentx/shared';
 import type { Agent } from '../agent/Agent.js';
 import { AgentEventBus } from '../EventBus.js';
@@ -90,6 +90,15 @@ export class TelegramBridge {
    */
   attach(agent: Agent): void {
     this.agent = agent;
+  }
+
+  /** Replace the inbound allowlist (single owner after verify). */
+  setAllowedUserIds(ids: number[]): void {
+    this.config.allowedUserIds = ids;
+  }
+
+  getAllowedUserIds(): number[] {
+    return this.config.allowedUserIds ?? [];
   }
 
   /**
@@ -306,14 +315,11 @@ export class TelegramBridge {
     this.lastMessageTime = now;
     if (fromId) this.lastFromIdByChat.set(chatId, fromId);
 
-    // Check if user is allowed
-    if (this.config.allowedUserIds?.length) {
-      if (!fromId || !this.config.allowedUserIds.includes(fromId)) {
-        await this.sendMessage(chatId, '⚠️ Unauthorized. This bot is restricted to specific users.');
-        return;
-      }
-    } else if (isChannelAllowlistRequired()) {
-      await this.sendMessage(chatId, '⚠️ Unauthorized. Configure allowed Telegram user IDs in Settings → Channels.');
+    // Single-owner ACL: only the verified Telegram user may talk to the bot.
+    // Reject before any agent/LLM work.
+    const allowed = this.config.allowedUserIds ?? [];
+    if (!fromId || allowed.length === 0 || !allowed.includes(fromId)) {
+      await this.sendMessage(chatId, '⚠️ Unauthorized. This bot is restricted to its linked owner.');
       return;
     }
 
@@ -446,6 +452,17 @@ export class TelegramBridge {
     const data = query.data;
     const chatId = query.message?.chat?.id;
     if (!data || !chatId) return;
+
+    const allowed = this.config.allowedUserIds ?? [];
+    const fromId = query.from?.id;
+    if (!fromId || allowed.length === 0 || !allowed.includes(fromId)) {
+      await this.apiCall('answerCallbackQuery', {
+        callback_query_id: query.id,
+        text: 'Unauthorized',
+        show_alert: true,
+      });
+      return;
+    }
 
     // Acknowledge the callback to remove loading indicator
     await this.apiCall('answerCallbackQuery', { callback_query_id: query.id });

@@ -687,7 +687,7 @@ const AVAILABLE_PROVIDERS = [
   { id: 'anthropic', name: 'Anthropic', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.anthropic.com' },
   { id: 'google', name: 'Google', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   { id: 'moonshot', name: 'Moonshot AI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.moonshot.ai/v1' },
-  { id: 'deepseek', name: 'DeepSeek', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.deepseek.com' },
+  { id: 'deepseek', name: 'DeepSeek', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.deepseek.com/v1' },
   { id: 'groq', name: 'Groq', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.groq.com/openai/v1' },
   { id: 'mistral', name: 'Mistral AI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.mistral.ai/v1' },
   { id: 'together', name: 'Together AI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.together.xyz/v1' },
@@ -695,10 +695,10 @@ const AVAILABLE_PROVIDERS = [
   { id: 'fireworks', name: 'Fireworks AI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.fireworks.ai/inference/v1' },
   { id: 'perplexity', name: 'Perplexity', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.perplexity.ai' },
   { id: 'azure', name: 'Azure OpenAI', type: 'cloud', requiresApiKey: true, defaultBaseUrl: '' },
-  { id: 'cohere', name: 'Cohere', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.cohere.com/compatibility/v1' },
+  { id: 'cohere', name: 'Cohere', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.cohere.com/v2' },
   { id: 'commandcode', name: 'CommandCode', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://api.commandcode.ai/provider/v1' },
   { id: 'opencode', name: 'OpenCode Go', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://opencode.ai/zen/go/v1' },
-  { id: 'opencode-zen', name: 'OpenCode Zen', type: 'cloud', requiresApiKey: false, defaultBaseUrl: 'https://opencode.ai/zen/v1' },
+  { id: 'opencode-zen', name: 'OpenCode Zen', type: 'cloud', requiresApiKey: true, defaultBaseUrl: 'https://opencode.ai/zen/v1' },
   { id: 'ollama', name: 'Ollama', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:11434' },
   { id: 'lmstudio', name: 'LM Studio', type: 'local', requiresApiKey: false, defaultBaseUrl: 'http://localhost:1234/v1' },
 ];
@@ -3770,9 +3770,23 @@ app.post('/api/channels/telegram/discover', async (req, res) => {
       return;
     }
     if (result.chats?.length) {
-      const chatId = result.chats[0]!.id;
-      const saved = await saveVerifiedTelegram(botToken, chatId);
-      res.json({ ...result, ...saved, chatId, saved: true });
+      const privateChat = result.chats.find((c) => c.type === 'private') ?? result.chats[0]!;
+      const chatId = privateChat.id;
+      const allowedUserId = result.allowedUserId
+        ?? privateChat.userId
+        ?? (privateChat.type === 'private' ? privateChat.id : undefined);
+      if (!allowedUserId) {
+        res.json({
+          ok: true,
+          botUsername: result.botUsername,
+          botName: result.botName,
+          chats: result.chats,
+          error: 'Message your bot in a private Telegram chat (not a group), then verify again.',
+        });
+        return;
+      }
+      const saved = await saveVerifiedTelegram(botToken, chatId, allowedUserId);
+      res.json({ ...result, ...saved, chatId, allowedUserId, saved: true });
       return;
     }
     res.json(result);

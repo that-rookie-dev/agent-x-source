@@ -335,9 +335,8 @@ export class CrewOrchestrator {
     member.tokensUsedThisSession += outputTokens;
     if (this.tokenTracker) {
       this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
-      const costUsd = (inputTokens * this.tokenTracker.inputPrice + outputTokens * this.tokenTracker.outputPrice) / 1_000_000;
-      this.onTokenLog?.({ inputTokens, outputTokens, costUsd, crewId: member.crew.id });
-      this.eventBus.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.tokenTracker.tokensTotal, turnTokens: inputTokens + outputTokens, costUsd, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, inputPrice: this.tokenTracker.inputPrice, outputPrice: this.tokenTracker.outputPrice } as unknown as EngineEvent);
+      this.onTokenLog?.({ inputTokens, outputTokens, costUsd: 0, crewId: member.crew.id });
+      this.eventBus.emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.tokenTracker.tokensTotal, turnTokens: inputTokens + outputTokens, costUsd: 0, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount } as unknown as EngineEvent);
     }
 
     this.extractCrewMemories(userMessage, content, member.crew.id).catch(() => {});
@@ -511,9 +510,8 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     member.tokensUsedThisSession += outputTokens;
     if (this.tokenTracker) {
       this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
-      const costUsd = (inputTokens * this.tokenTracker.inputPrice + outputTokens * this.tokenTracker.outputPrice) / 1_000_000;
-      this.onTokenLog?.({ inputTokens, outputTokens, costUsd, crewId: member.crew.id });
-      emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.tokenTracker.tokensTotal, turnTokens: inputTokens + outputTokens, costUsd, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount, inputPrice: this.tokenTracker.inputPrice, outputPrice: this.tokenTracker.outputPrice } as unknown as EngineEvent);
+      this.onTokenLog?.({ inputTokens, outputTokens, costUsd: 0, crewId: member.crew.id });
+      emit({ type: 'token_usage', totalTokens: this.tokenTracker.tokensUsed, contextWindow: this.tokenTracker.tokensTotal, turnTokens: inputTokens + outputTokens, costUsd: 0, inputTokens: this.tokenTracker.inputTokenCount, outputTokens: this.tokenTracker.outputTokenCount } as unknown as EngineEvent);
     }
 
     this.eventBus.emit({ type: 'crew_activity', crewId: member.crew.id, crewName: member.crew.name, activity: 'done', content: content.slice(0, 200) });
@@ -972,11 +970,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     if (opts?.shouldAbort?.()) throw new Error('crew-chat-cancelled');
     const inputTokens = countInputTokens((contextText ?? '') + userMessage);
     const outputTokens = estimateOutputTokens(result.content);
-    let costUsd = 0;
-    if (this.tokenTracker) {
-      costUsd = (inputTokens * this.tokenTracker.inputPrice + outputTokens * this.tokenTracker.outputPrice) / 1_000_000;
-    }
-    return { ...result, inputTokens, outputTokens, costUsd };
+    return { ...result, inputTokens, outputTokens, costUsd: 0 };
   }
 
   private extractExpertise(systemPrompt: string): string[] {

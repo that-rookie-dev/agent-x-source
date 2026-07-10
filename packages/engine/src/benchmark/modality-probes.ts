@@ -41,11 +41,13 @@ function openAiBaseUrl(providerId: string, baseUrl?: string): string {
     case 'together': return 'https://api.together.xyz/v1';
     case 'xai': return 'https://api.x.ai/v1';
     case 'fireworks': return 'https://api.fireworks.ai/inference/v1';
-    case 'deepseek': return 'https://api.deepseek.com';
+    case 'deepseek': return 'https://api.deepseek.com/v1';
     case 'moonshot': return 'https://api.moonshot.ai/v1';
     case 'commandcode': return 'https://api.commandcode.ai/provider/v1';
     case 'opencode': return 'https://opencode.ai/zen/go/v1';
     case 'opencode-zen': return 'https://opencode.ai/zen/v1';
+    case 'cohere': return 'https://api.cohere.ai/compatibility/v1';
+    case 'perplexity': return 'https://api.perplexity.ai';
     case 'google': return 'https://generativelanguage.googleapis.com/v1beta/openai';
     case 'ollama': return 'http://localhost:11434/v1';
     case 'lmstudio': return 'http://localhost:1234/v1';

@@ -47,7 +47,6 @@ export interface ModelInfo {
   outputTokenLimit?: number;
   capabilities: ModelCapability[];
   reasoning?: ModelReasoningInfo;
-  pricing?: ModelPricing;
 }
 
 export type ModelCapability =
@@ -57,11 +56,6 @@ export type ModelCapability =
   | 'streaming'
   | 'json_mode'
   | 'reasoning';
-
-export interface ModelPricing {
-  inputPerMillion: number;
-  outputPerMillion: number;
-}
 
 export interface CompletionRequest {
   messages: CompletionMessage[];

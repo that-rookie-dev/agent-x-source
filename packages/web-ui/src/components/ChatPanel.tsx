@@ -174,7 +174,6 @@ interface UIMessage extends ChatMessage {
   plan?: string[];
   attachments?: { name: string }[];
   turnTokens?: number;
-  turnCostUsd?: number;
   voiceInput?: boolean;
   voiceTextOnly?: boolean;
 
@@ -537,8 +536,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const [tokenOutput, setTokenOutput] = useState(0);
   const [tokenReserved, setTokenReserved] = useState(0);
   const [tokenStreaming, setTokenStreaming] = useState(0);
-  const [tokenInputPrice, setTokenInputPrice] = useState(0);
-  const [tokenOutputPrice, setTokenOutputPrice] = useState(0);
   const [tokenTotal, setTokenTotal] = useState(128000);
   const [compactionCount, setCompactionCount] = useState(0);
   const tokenInputRef = useRef(0);
@@ -1758,17 +1755,10 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             if (streaming != null) setTokenStreaming(streaming);
             const used = ev.totalTokens as number | undefined;
             if (used != null) setTokenUsed(used);
-            const ip = ev.inputPrice as number | undefined;
-            if (ip !== undefined) setTokenInputPrice(ip);
-            const op = ev.outputPrice as number | undefined;
-            if (op !== undefined) setTokenOutputPrice(op);
             if (last?.role !== 'assistant') return prev;
             const turn = ev.turnTokens as number | undefined;
-            const cost = ev.costUsd as number | undefined;
-            const updates: Partial<UIMessage> = {};
-            if (turn != null) updates.turnTokens = turn;
-            if (cost != null) updates.turnCostUsd = cost;
-            return Object.keys(updates).length > 0 ? updateLastMessage(prev, updates) : prev;
+            if (turn != null) return updateLastMessage(prev, { turnTokens: turn });
+            return prev;
           }
 
           case 'command_action': {
@@ -3490,13 +3480,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     <Box sx={{ height: '100%', display: 'flex' }}>
       {view === 'sessions' ? (
         <Box sx={{ height: '100%', flex: 1, display: 'flex', flexDirection: 'column', bgcolor: colors.bg.primary, position: 'relative', overflow: 'hidden' }}>
-          {/* Subtle background grid effect */}
-          <Box sx={{
-            position: 'absolute', inset: 0, opacity: 0.03, pointerEvents: 'none',
-            backgroundImage: `linear-gradient(${colors.border.subtle} 1px, transparent 1px), linear-gradient(90deg, ${colors.border.subtle} 1px, transparent 1px)`,
-            backgroundSize: '40px 40px',
-          }} />
-
           {/* Header — HUD style */}
           <Box sx={{
             px: 3, py: 2, borderBottom: `1px solid ${alphaColor(colors.accent.blue, '20')}`,
@@ -4332,14 +4315,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               {compactionCount}
             </Typography>
           </Box>
-          {(tokenInputPrice > 0 || tokenOutputPrice > 0) && (
-          <Box sx={{ mt: 0.25, display: 'flex', justifyContent: 'space-between' }}>
-            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Cost</Typography>
-            <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary }}>
-              ~${((tokenInput * tokenInputPrice + tokenOutput * tokenOutputPrice) / 1000000).toFixed(4)}
-            </Typography>
-          </Box>
-          )}
 
           {currentSessionId && (
             <Box sx={{ mt: 1, pt: 0.75, borderTop: `1px solid ${colors.border.subtle}` }}>

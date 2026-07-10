@@ -18,6 +18,7 @@ import { isToolAllowedInPlanMode, buildPlanModeRestrictedToolHint, type PlanGate
 import { isCompactToolAllowed } from './context-profile.js';
 import { resolveGoogleNativeBaseUrl } from '../providers/google/gemini-metadata.js';
 
+/** Defaults for OpenAI-compatible chat paths only. Native SDK providers use their package defaults. */
 const DEFAULT_BASE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
   lmstudio: 'http://localhost:1234/v1',
@@ -28,12 +29,14 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   opencode: 'https://opencode.ai/zen/go/v1',
   'opencode-zen': 'https://opencode.ai/zen/v1',
   commandcode: 'https://api.commandcode.ai/provider/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  mistral: 'https://api.mistral.ai/v1',
-  xai: 'https://api.x.ai/v1',
-  perplexity: 'https://api.perplexity.ai',
-  cohere: 'https://api.cohere.com/compatibility/v1',
 };
+
+/** Ignore stale OpenAI-compat URLs saved before native Cohere restore. */
+function resolveCohereNativeBaseUrl(configured?: string): string | undefined {
+  if (!configured) return undefined;
+  if (configured.includes('/compatibility/')) return undefined;
+  return configured;
+}
 
 export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string): LanguageModel {
   const activeProvider = config.provider.activeProvider;
@@ -74,9 +77,13 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       const groq = createGroq({ apiKey, ...(baseURL ? { baseURL } : {}) });
       return groq(modelId);
     }
-    case 'cohere':
-    case 'commandcode': {
-      const cohere = createCohere({ apiKey, ...(baseURL ? { baseURL } : {}) });
+    case 'cohere': {
+      // Native Cohere Chat API (default https://api.cohere.com/v2). Never use /compatibility/v1 here.
+      const nativeBase = resolveCohereNativeBaseUrl(baseURL);
+      const cohere = createCohere({
+        apiKey,
+        ...(nativeBase ? { baseURL: nativeBase } : {}),
+      });
       return cohere(modelId);
     }
     case 'mistral': {
@@ -91,7 +98,7 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       const perplexity = createPerplexity({ apiKey, ...(baseURL ? { baseURL } : {}) });
       return perplexity(modelId);
     }
-    // All remaining providers are OpenAI-compatible
+    // OpenAI-compatible vendors & gateways (documented base URLs — never native vendor SDKs)
     case 'ollama':
     case 'lmstudio':
     case 'deepseek':
@@ -100,6 +107,7 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
     case 'fireworks':
     case 'opencode':
     case 'opencode-zen':
+    case 'commandcode':
     default: {
       const resolvedUrl = baseURL || DEFAULT_BASE_URLS[activeProvider] || 'https://api.openai.com/v1';
       const compat = createOpenAICompatible({

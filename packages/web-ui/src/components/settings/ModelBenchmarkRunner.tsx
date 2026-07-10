@@ -18,7 +18,6 @@ import {
   settingsMonoSx,
   settingsOverlineSx,
   settingsScanlineSx,
-  settingsGridBgSx,
   settingsBtnPrimarySx,
   settingsBtnGhostSx,
 } from '../../styles/settings-theme';
@@ -200,7 +199,6 @@ export function ModelBenchmarkRunner({
       transition: 'box-shadow 0.3s, border-color 0.3s',
     }}>
       <Box sx={settingsScanlineSx} />
-      <Box sx={{ ...settingsGridBgSx, position: 'absolute', inset: 0, opacity: 0.5, pointerEvents: 'none' }} />
 
       {/* Header HUD */}
       <Box sx={{

@@ -61,7 +61,7 @@ export function WizardTelegramStep({ onLinkedChange }: WizardTelegramStepProps) 
         setChatLabel(null);
         setPhase('awaiting-chat');
         setStatusTone('info');
-        setStatusMsg(`Token verified for ${label}. Now open Telegram, send any message to your bot, then run the chat detection.`);
+        setStatusMsg(`Token verified for ${label}. Now open Telegram, send any private message to your bot, then run the chat detection.`);
         return;
       }
       // Both phases satisfied in one shot (user already messaged the bot).

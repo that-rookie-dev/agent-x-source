@@ -1,5 +1,4 @@
 import type { ProviderId } from '@agentx/shared';
-import { getModelPricing } from '../providers/pricing.js';
 
 export type TaskType =
   | 'chat'
@@ -62,14 +61,6 @@ export class ModelRouter {
     }
     const best = candidates[0];
     return { provider: best!.provider, model: best!.model };
-  }
-
-  getEstimatedCost(taskType: TaskType, inputTokens: number, outputTokens: number): number {
-    const { model } = this.selectModel(taskType);
-    const pricing = getModelPricing(model);
-    const inputCost = (inputTokens / 1_000_000) * pricing.inputPerMillion;
-    const outputCost = (outputTokens / 1_000_000) * pricing.outputPerMillion;
-    return inputCost + outputCost;
   }
 
   getRoutes(): Map<TaskType, ModelRoute[]> {

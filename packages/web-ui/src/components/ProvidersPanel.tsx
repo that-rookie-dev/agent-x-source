@@ -44,6 +44,7 @@ import { SettingsSectionHeader } from './settings/SettingsSectionHeader';
 import { ModelBenchmarkRunner, ModelBenchmarkScanner, gradeAllowsAgentX } from './settings/ModelBenchmarkRunner';
 
 import { colors, alphaColor } from '../theme';
+import { buildLocalBaseUrl, parseLocalEndpoint, defaultLocalPort } from '../utils/local-provider-endpoint';
 interface ProfileEntry {
   id: string;
   label: string;
@@ -200,7 +201,7 @@ export function ProvidersPanel() {
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [newProfile, setNewProfile] = useState({ label: '', providerId: '', apiKey: '', baseUrl: '' });
+  const [newProfile, setNewProfile] = useState({ label: '', providerId: '', apiKey: '', baseUrl: '', host: 'localhost', port: '' });
   const [saving, setSaving] = useState(false);
 
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
@@ -269,18 +270,28 @@ export function ProvidersPanel() {
     if (sel?.type !== 'local' && !newProfile.apiKey) return;
     setSaving(true);
     try {
-      const result = await provApi.createProfile(newProfile.providerId, newProfile.label, newProfile.apiKey, newProfile.baseUrl || undefined, false);
+      const isLocal = sel?.type === 'local';
+      const resolvedBaseUrl = isLocal
+        ? buildLocalBaseUrl(newProfile.providerId, newProfile.host, newProfile.port || defaultLocalPort(newProfile.providerId))
+        : (newProfile.baseUrl || undefined);
+      const result = await provApi.createProfile(
+        newProfile.providerId,
+        newProfile.label,
+        isLocal ? 'no-api-key-required' : newProfile.apiKey,
+        resolvedBaseUrl,
+        false,
+      );
       const updated = await config.get();
       setCfg(updated);
       setShowAddDialog(false);
-      setNewProfile({ label: '', providerId: '', apiKey: '', baseUrl: '' });
+      setNewProfile({ label: '', providerId: '', apiKey: '', baseUrl: '', host: 'localhost', port: '' });
       openModelPicker({
         id: result.profileId,
         label: newProfile.label,
         providerId: result.provider,
         providerName: providerName(result.provider),
-        apiKey: newProfile.apiKey,
-        baseUrl: newProfile.baseUrl || undefined,
+        apiKey: isLocal ? 'no-api-key-required' : newProfile.apiKey,
+        baseUrl: resolvedBaseUrl,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to add profile');
@@ -543,11 +554,17 @@ export function ProvidersPanel() {
               onChange={(e) => {
                 const provId = e.target.value;
                 const sel = availableProviders.find(p => p.id === provId);
+                const isLocal = sel?.type === 'local';
+                const ep = isLocal
+                  ? parseLocalEndpoint(sel?.defaultBaseUrl, provId)
+                  : { host: 'localhost', port: '' };
                 setNewProfile({
                   ...newProfile,
                   providerId: provId,
-                  apiKey: sel?.type === 'local' ? 'no-api-key-required' : newProfile.apiKey,
-                  baseUrl: sel?.type === 'cloud' ? (sel.defaultBaseUrl ?? '') : newProfile.baseUrl,
+                  apiKey: isLocal ? 'no-api-key-required' : '',
+                  baseUrl: isLocal ? buildLocalBaseUrl(provId, ep.host, ep.port) : (sel?.defaultBaseUrl ?? ''),
+                  host: ep.host,
+                  port: ep.port,
                 });
               }}>
               {availableProviders.map((p) => (
@@ -564,12 +581,35 @@ export function ProvidersPanel() {
           {(() => {
             const sel = availableProviders.find(p => p.id === newProfile.providerId);
             const isLocal = sel?.type === 'local';
-            return !isLocal ? (
+            if (!newProfile.providerId) return null;
+            if (isLocal) {
+              return (
+                <Box sx={{ display: 'flex', gap: 1.5 }}>
+                  <TextField
+                    size="small"
+                    label="Host"
+                    value={newProfile.host}
+                    onChange={(e) => setNewProfile({ ...newProfile, host: e.target.value })}
+                    placeholder="localhost"
+                    sx={{ ...settingsTextFieldSx, flex: 1 }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Port"
+                    value={newProfile.port}
+                    onChange={(e) => setNewProfile({ ...newProfile, port: e.target.value.replace(/[^\d]/g, '') })}
+                    placeholder={defaultLocalPort(newProfile.providerId)}
+                    sx={{ ...settingsTextFieldSx, width: 110 }}
+                  />
+                </Box>
+              );
+            }
+            return (
               <TextField size="small" label="API Key" type="password" value={newProfile.apiKey}
                 onChange={(e) => setNewProfile({ ...newProfile, apiKey: e.target.value })}
                 placeholder="sk-…"
                 sx={settingsTextFieldSx} />
-            ) : null;
+            );
           })()}
         </DialogContent>
         <DialogActions sx={{ px: 2.5, pb: 2 }}>

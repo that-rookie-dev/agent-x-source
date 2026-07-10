@@ -826,22 +826,14 @@ export function CheckpointDrawer({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 9. TurnTokenBadge — small inline tokens/cost badge for assistant message
+// 9. TurnTokenBadge — small inline token badge for assistant message
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function TurnTokenBadge({ tokens, costUsd }: { tokens?: number; costUsd?: number }) {
-  if (!tokens && !costUsd) return null;
+export function TurnTokenBadge({ tokens }: { tokens?: number; costUsd?: number }) {
+  if (!tokens) return null;
   return (
     <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4, mt: 0.5, opacity: 0.55, fontFamily: "'JetBrains Mono', monospace" }}>
-      {tokens != null && (
-        <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>{tokens.toLocaleString()} tok</Typography>
-      )}
-      {tokens != null && costUsd != null && (
-        <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>·</Typography>
-      )}
-      {costUsd != null && (
-        <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>~${costUsd.toFixed(4)}</Typography>
-      )}
+      <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>{tokens.toLocaleString()} tok</Typography>
     </Box>
   );
 }

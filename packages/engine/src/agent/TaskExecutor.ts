@@ -64,8 +64,6 @@ export interface TaskExecutorOptions {
   onCheckpoint?: (step: TaskStep, failures: FailureRecord[]) => Promise<CheckpointAction>;
   /** Optional store for persisting task state across restarts */
   store?: { saveTaskSnapshot: (s: any) => void; getTaskSnapshot: (sessionId: string) => Record<string, unknown> | null; deleteTaskSnapshot: (sessionId: string) => void };
-  /** Maximum total API cost in USD before circuit breaker aborts (default: no limit) */
-  maxCostUsd?: number;
   /** Max idle seconds before auto-abandoning a stored task snapshot (default: no auto-abandon) */
   maxIdleSeconds?: number;
   /** Max total task duration in ms before hard abort (default: 30 min) */
@@ -174,7 +172,6 @@ export class TaskExecutor {
   private maxReplans: number;
   private onCheckpoint?: (step: TaskStep, failures: FailureRecord[]) => Promise<CheckpointAction>;
   private store?: { saveTaskSnapshot: (s: any) => void; getTaskSnapshot: (sessionId: string) => Record<string, unknown> | null; deleteTaskSnapshot: (sessionId: string) => void };
-  private maxCostUsd?: number;
   private maxIdleSeconds?: number;
   private maxTaskDuration: number;
   private stepTimeout: number;
@@ -200,7 +197,6 @@ export class TaskExecutor {
     this._dynamicMaxReplans = this.maxReplans;
     this.onCheckpoint = options.onCheckpoint;
     this.store = options.store;
-    this.maxCostUsd = options.maxCostUsd;
     this.maxIdleSeconds = options.maxIdleSeconds;
     this.maxTaskDuration = options.maxTaskDuration ?? 30 * 60 * 1000;
     this.stepTimeout = options.stepTimeout ?? 5 * 60 * 1000;
@@ -326,13 +322,7 @@ export class TaskExecutor {
       updatedAt: new Date().toISOString(),
     };
 
-    // Cost estimation: warn if plan is likely too expensive
-    const estimatedCost = this.estimatePlanCost(plan);
-    if (estimatedCost > 0.50) {
-      getLogger().warn('TASK_EXECUTOR', `Estimated plan cost: $${estimatedCost.toFixed(4)} — may exceed budget`);
-    }
-
-    this.emitEvent({ type: 'plan_created', planId: plan.id, stepCount: validatedSteps.length, estimatedCost });
+    this.emitEvent({ type: 'plan_created', planId: plan.id, stepCount: validatedSteps.length });
     this.emitSessionEvent({ type: 'task_started', payload: { taskId: plan.id, goal, stepCount: steps.length } });
     this.emitProgress(plan, 0, 'plan_created');
     getLogger().info('TASK_EXECUTOR', `Plan created with ${steps.length} steps`);
@@ -773,7 +763,6 @@ export class TaskExecutor {
   }
 
   private async analyzeProject(goal: string): Promise<{ projectType: string; techStack: string[]; conventions: string[]; keyFiles: string[]; risks: string[] } | null> {
-    this.checkCostBudget();
     try {
       // Detect project structure by checking common files
       const filesToCheck = ['package.json', 'tsconfig.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'Gemfile', 'Dockerfile', 'Makefile', '.gitignore', 'composer.json', 'CMakeLists.txt'];
@@ -920,7 +909,6 @@ export class TaskExecutor {
   }
 
   private async suggestNewSubtasks(plan: TaskPlan, step: TaskStep, goal: string): Promise<TaskStep[]> {
-    this.checkCostBudget();
     const completedCount = plan.steps.filter(s => s.status === 'completed').length;
     if (completedCount < 2) return []; // Don't suggest until at least 2 steps done
 
@@ -1001,7 +989,6 @@ Only add steps that are genuinely necessary — don't over-engineer.`,
   }
 
   private async saveTaskMemory(plan: TaskPlan): Promise<void> {
-    this.checkCostBudget();
     const completedSteps = plan.steps.filter(s => s.status === 'completed').length;
     if (completedSteps === 0) return;
 
@@ -1106,7 +1093,6 @@ Only add steps that are genuinely necessary — don't over-engineer.`,
   }
 
   private async lintStepConventions(step: TaskStep, result: string): Promise<string> {
-    this.checkCostBudget();
     if (this.conventions.length === 0) return result;
 
     // Check if the step mentions file modifications that could violate conventions
@@ -1146,7 +1132,6 @@ If no violations, return { "violations": [] }.`,
   }
 
   private async runDebugCycle(step: TaskStep, result: string, goal: string): Promise<{ passed: boolean; error?: string; lastOutput: string; fixCount: number }> {
-    this.checkCostBudget();
     // Detect if the step produced code that needs building/testing
     const hasCodeArtifacts = /\.(ts|js|tsx|jsx|py|rs|go|c|cpp|java|rb|php|swift|kt)\b/.test(result) ||
       /(created|modified|wrote|updated|added|generated)\s.*\.\w+/.test(result) ||
@@ -1347,7 +1332,6 @@ Return ONLY the test file content. No markdown, no explanation.`,
   }
 
   private async decompose(prompt: string): Promise<TaskStep[]> {
-    this.checkCostBudget();
     const model = createAiSdkModel(this.config, this.apiKey);
     const result = await generateText({
       model,
@@ -1398,16 +1382,6 @@ Return ONLY the test file content. No markdown, no explanation.`,
     return valid.length > 0 ? valid : steps.slice(0, 1);
   }
 
-  private estimatePlanCost(plan: TaskPlan): number {
-    const tracker = (this.agent as any)['tokenTracker'] as { totalCost?: number; inputPrice?: number; outputPrice?: number } | undefined;
-    const inputPrice = tracker?.inputPrice ?? 3e-7;
-    const outputPrice = tracker?.outputPrice ?? 1.5e-6;
-    const avgTokensPerStep = 4000;
-    const avgOutputPerStep = 1000;
-    const avgCostPerStep = (avgTokensPerStep * inputPrice) + (avgOutputPerStep * outputPrice);
-    return plan.steps.length * avgCostPerStep;
-  }
-
   private async midPlanReevaluation(plan: TaskPlan, goal: string): Promise<void> {
     const completedCount = plan.steps.filter(s => s.status === 'completed').length;
     if (completedCount < 3) return;
@@ -1436,7 +1410,6 @@ If the plan is on track, return {"needsAdjustment": false}.`,
   }
 
   private async generateAlternativeApproach(step: TaskStep, failureReason: string, lastResult: string, goal: string): Promise<string> {
-    this.checkCostBudget();
     const model = createAiSdkModel(this.config, this.apiKey);
     const altResult = await generateText({
       model,
@@ -1469,7 +1442,6 @@ Focus on fundamentally different approaches — not minor tweaks.`,
   }
 
   private async verify(step: TaskStep, result: string): Promise<{ passed: boolean; reason: string }> {
-    this.checkCostBudget();
     const model = createAiSdkModel(this.config, this.apiKey);
     const verifyResult = await generateText({
       model,
@@ -1489,7 +1461,6 @@ Focus on fundamentally different approaches — not minor tweaks.`,
   }
 
   private async verifyGoal(goal: string, plan: TaskPlan): Promise<{ achieved: boolean; reason: string; gaps?: string[] }> {
-    this.checkCostBudget();
     const model = createAiSdkModel(this.config, this.apiKey);
     const stepsSummary = plan.steps.map((s, i) =>
       `${i + 1}. ${s.description} — ${s.status}${s.result ? ': ' + s.result.slice(0, 200) : ''}`
@@ -1565,7 +1536,6 @@ Focus on fundamentally different approaches — not minor tweaks.`,
     failureReason: string,
     failureHistory: FailureRecord[],
   ): Promise<TaskStep[]> {
-    this.checkCostBudget();
     const model = createAiSdkModel(this.config, this.apiKey);
     const remainingDesc = failedSteps.map((s, i) => `${i + 1}. ${s.description}`).join('\n');
     const failureContext = failureHistory.length > 0
@@ -2002,13 +1972,4 @@ Preserve all functionality from both sides.`,
     }
   }
 
-  private checkCostBudget(): void {
-    if (!this.maxCostUsd) return;
-    const tracker = (this.agent as any)['tokenTracker'] as { totalCost: number } | undefined;
-    const currentCost = tracker?.totalCost ?? 0;
-    if (currentCost >= this.maxCostUsd) {
-      getLogger().error('COST_CB', `Cost circuit breaker: $${currentCost.toFixed(4)} exceeds max $${this.maxCostUsd}`);
-      throw new Error(`Cost circuit breaker: exceeded max budget of $${this.maxCostUsd}`);
-    }
-  }
 }

@@ -66,6 +66,7 @@ import {
   loadWizardProgress,
   saveWizardProgress,
 } from '../utils/wizard-progress';
+import { buildLocalBaseUrl, parseLocalEndpoint, defaultLocalPort } from '../utils/local-provider-endpoint';
 
 const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Benchmark', 'Neural Core', 'Callsign', 'Voice Comms', 'Telegram Relay', 'Complete'];
 
@@ -120,12 +121,13 @@ export function SetupWizard() {
   const [selectedProvider, setSelectedProvider] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [localHost, setLocalHost] = useState('localhost');
+  const [localPort, setLocalPort] = useState('11434');
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState('');
   const [callsign, setCallsign] = useState('');
   const [profileName, setProfileName] = useState('');
-  const [showCustomConfig, setShowCustomConfig] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkRunResult | null>(null);
   const [benchmarkRunning, setBenchmarkRunning] = useState(false);
@@ -411,18 +413,28 @@ export function SetupWizard() {
 
   const handleProviderNext = () => {
     if (!selectedProvider) { showError('Select a provider'); return; }
-    if (selectedProviderInfo?.type === 'local' && !baseUrl) setBaseUrl(selectedProviderInfo.defaultBaseUrl ?? '');
+    if (selectedProviderInfo?.type === 'local') {
+      const ep = parseLocalEndpoint(selectedProviderInfo.defaultBaseUrl, selectedProvider);
+      setLocalHost(ep.host);
+      setLocalPort(ep.port);
+      setBaseUrl(buildLocalBaseUrl(selectedProvider, ep.host, ep.port));
+    }
     next();
   };
   const handleProfileNext = async () => {
     if (!profileName.trim()) { showError('Enter a profile name'); return; }
     if (!isLocal && !apiKey.trim()) { showError('Enter your API key'); return; }
     if (isAzure && !baseUrl.trim()) { showError('Azure requires a resource endpoint URL'); return; }
+    if (isLocal && !localPort.trim()) { showError('Enter the local server port'); return; }
     setLoading(true);
     try {
-      const r = await provApi.validate(selectedProvider, isLocal ? 'no-key-needed' : apiKey || undefined, baseUrl || undefined);
+      const resolvedBaseUrl = isLocal
+        ? buildLocalBaseUrl(selectedProvider, localHost, localPort)
+        : (baseUrl || undefined);
+      if (isLocal) setBaseUrl(resolvedBaseUrl!);
+      const r = await provApi.validate(selectedProvider, isLocal ? 'no-key-needed' : apiKey || undefined, resolvedBaseUrl);
       if (!r.valid) { showError(r.error ?? 'Invalid credentials'); setLoading(false); return; }
-      await provApi.configure(selectedProvider, isLocal ? 'no-key-needed' : apiKey || undefined, baseUrl || undefined, profileName.trim());
+      await provApi.configure(selectedProvider, isLocal ? 'no-key-needed' : apiKey || undefined, resolvedBaseUrl, profileName.trim());
       const ml = await provApi.models(selectedProvider);
       setAvailableModels(ml); next();
     } catch (err) { showError(err instanceof Error ? err.message : 'Validation failed'); }
@@ -864,33 +876,31 @@ export function SetupWizard() {
                   )}
 
                   {isLocal && (
-                    <>
-                      <Button size="small" onClick={() => setShowCustomConfig(!showCustomConfig)}
-                        sx={{ fontSize: '0.65rem', fontFamily: WIZARD_MONO, textTransform: 'none', color: wizardTheme.textDim, px: 0, minWidth: 0, mb: 1.5,
-                          '&:hover': { color: wizardTheme.textSecondary, bgcolor: 'transparent' } }}>
-                        {showCustomConfig ? '− Hide Custom Configuration' : '+ Custom Configuration'}
-                      </Button>
-
-                      <Box sx={{
-                        overflow: 'hidden',
-                        maxHeight: showCustomConfig ? 200 : 0,
-                        opacity: showCustomConfig ? 1 : 0,
-                        transition: 'max-height 0.25s ease, opacity 0.2s ease, margin 0.25s ease',
-                        mb: showCustomConfig ? 2 : 0,
-                      }}>
-                        <Box sx={{ ...wizardPanelSx, p: 2 }}>
-                          <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mb: 1.5, letterSpacing: '0.5px' }}>
-                            ADVANCED CONNECTION SETTINGS
-                          </Typography>
-                          <TextField label="Base URL" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} fullWidth
-                            placeholder={selectedProviderInfo?.defaultBaseUrl ?? 'https://api.example.com/v1'}
-                            sx={{ mb: 1.5 }}
-                            slotProps={wizardTextFieldSlotProps} />
-                          <TextField label="Port (optional)" value={pgPort} onChange={e => setPgPort(e.target.value)} fullWidth placeholder="11434"
-                            slotProps={wizardTextFieldSlotProps} />
-                        </Box>
-                      </Box>
-                    </>
+                    <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5 }}>
+                      <TextField
+                        label="Host"
+                        value={localHost}
+                        onChange={e => setLocalHost(e.target.value)}
+                        fullWidth
+                        placeholder="localhost"
+                        slotProps={wizardTextFieldSlotProps}
+                      />
+                      <TextField
+                        label="Port"
+                        value={localPort}
+                        onChange={e => setLocalPort(e.target.value.replace(/[^\d]/g, ''))}
+                        sx={{ width: 140, flexShrink: 0 }}
+                        placeholder={defaultLocalPort(selectedProvider)}
+                        slotProps={wizardTextFieldSlotProps}
+                      />
+                    </Box>
+                  )}
+                  {isLocal && (
+                    <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mb: 1.5, letterSpacing: '0.3px' }}>
+                      Must match your {selectedProviderInfo?.name ?? 'local'} server settings
+                      {selectedProvider === 'lmstudio' ? ' (Developer → Local Server)' : ''}.
+                      Default {selectedProvider === 'lmstudio' ? '1234' : '11434'}.
+                    </Typography>
                   )}
                 </Box>
               )}
