@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   assertNativePostgres,
   findInPnpmStore,
+  repairEmbeddedPostgresBinaries,
   requiredEmbeddedPackages,
   resolveTargetArch,
   resolveTargetPlatform,
@@ -136,6 +137,11 @@ function materializeEmbeddedPostgres() {
   }
 
   for (const pkg of packages) {
+    repairEmbeddedPostgresBinaries(
+      desktopNodeModules,
+      pkg,
+      platform === 'win32' ? 'win32' : platform,
+    );
     assertNativePostgres(desktopNodeModules, pkg, platform === 'win32' ? 'win32' : platform);
   }
   log(`verified embedded PostgreSQL binaries for ${packages.join(', ')}`);

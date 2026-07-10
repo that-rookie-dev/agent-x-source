@@ -11,7 +11,7 @@ import {
   type CatalogSeedSnapshot,
 } from './catalog-seed-state.js';
 
-async function runCatalogSeed(
+export async function runCatalogSeed(
   store: CrewCatalogStore,
   onProgress?: (line: string) => void,
 ): Promise<void> {

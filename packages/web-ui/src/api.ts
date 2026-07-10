@@ -1,6 +1,7 @@
 // Centralized API client for all web-api endpoints
 
 import type { ClientSituation } from '@agentx/shared';
+import { AGENTX_AUTH_TOKEN_KEY } from './utils/client-storage';
 import { notifyVoiceConfigUpdated } from './voice/support';
 
 const BASE = '/api';
@@ -13,9 +14,9 @@ let onUnauthorized: (() => void) | null = null;
 export function setAuthToken(token: string | null): void {
   authToken = token;
   if (token) {
-    sessionStorage.setItem('agentx_auth_token', token);
+    sessionStorage.setItem(AGENTX_AUTH_TOKEN_KEY, token);
   } else {
-    sessionStorage.removeItem('agentx_auth_token');
+    sessionStorage.removeItem(AGENTX_AUTH_TOKEN_KEY);
   }
 }
 

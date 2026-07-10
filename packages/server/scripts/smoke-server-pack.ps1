@@ -114,7 +114,14 @@ try {
   if (-not (Test-Path -LiteralPath $libpq)) {
     throw "Missing embedded Postgres library: $libpq"
   }
-  Write-Step 'Embedded Postgres shared libraries present'
+  $pgBin = Join-Path $InstallDir 'node_modules\@embedded-postgres\windows-x64\native\bin'
+  foreach ($name in @('postgres.exe', 'initdb.exe', 'pg_ctl.exe')) {
+    $path = Join-Path $pgBin $name
+    if (-not (Test-Path -LiteralPath $path)) {
+      throw "Missing embedded Postgres binary: $path"
+    }
+  }
+  Write-Step 'Embedded Postgres binaries and shared libraries present'
 
   Ensure-SmokeUser
   Grant-SmokeAccess

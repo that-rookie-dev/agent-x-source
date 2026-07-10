@@ -27,6 +27,7 @@ import {
   resolveBuiltEmbeddedPkgRoot,
   resolveExtensionDonorNative,
   resolvePackSuffix,
+  repairEmbeddedPostgresBinaries,
   syncEmbeddedExtensions,
 } from '../../desktop/scripts/embedded-postgres-pack.mjs';
 
@@ -89,6 +90,7 @@ function syncServerExtensions(suffix, stagingNodeModules, packPlatform) {
     sameTree = donorNative === stagingNative;
   }
   syncEmbeddedExtensions(donorNative, stagingNative, packPlatform);
+  repairEmbeddedPostgresBinaries(stagingNodeModules, pkgName, packPlatform, donorNative);
   if (sameTree) {
     console.log(`Extensions already present in materialized ${suffix} tree`);
   } else {
@@ -132,6 +134,7 @@ function materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform) {
       );
     }
     console.warn(`Using npm-installed ${embeddedPkg}; local build tree not found`);
+    repairEmbeddedPostgresBinaries(stagingNodeModules, embeddedPkg, packPlatform);
     assertNativePostgres(stagingNodeModules, embeddedPkg, packPlatform);
     assertPostgresSharedLibs(stagingNodeModules, embeddedPkg, packPlatform);
     return;
@@ -148,6 +151,7 @@ function materializeEmbeddedPkg(stagingNodeModules, embeddedPkg, packPlatform) {
     ensureDarwinDylibAliases(join(dest, 'native', 'lib'));
   }
 
+  repairEmbeddedPostgresBinaries(stagingNodeModules, embeddedPkg, packPlatform, join(src, 'native'));
   assertNativePostgres(stagingNodeModules, embeddedPkg, packPlatform);
   assertPostgresSharedLibs(stagingNodeModules, embeddedPkg, packPlatform);
 }

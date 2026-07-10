@@ -30,6 +30,7 @@ import {
   createPgNeuralDb,
   healDatabaseStore,
   startPeriodicDatabaseHeal,
+  resetCatalogSeedInflight,
   buildCrewPrivateIdentityPrompt,
   applyWebSearchConfigFromAgentConfig,
   MemoryFabric,
@@ -963,6 +964,7 @@ export function clearEngine(): void {
     state.channelAgent = null;
   }
   state = null;
+  resetCatalogSeedInflight();
 }
 
 export async function getVitals(): Promise<Record<string, unknown>> {

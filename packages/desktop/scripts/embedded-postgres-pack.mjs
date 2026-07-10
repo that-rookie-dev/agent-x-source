@@ -1,7 +1,7 @@
 /**
  * Helpers for bundling @embedded-postgres/* platform binaries into desktop/server packages.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { arch as hostArch } from 'node:os';
 
@@ -98,18 +98,33 @@ export function postgresBinaryName(platform) {
   return platform === 'win32' ? 'postgres.exe' : 'postgres';
 }
 
-export function nativePostgresBin(nodeModulesRoot, pkgName, platform) {
-  return join(nodeModulesRoot, ...pkgName.split('/'), 'native', 'bin', postgresBinaryName(platform));
+export function embeddedPostgresBinNames(platform) {
+  const ext = platform === 'win32' ? '.exe' : '';
+  return [`postgres${ext}`, `initdb${ext}`, `pg_ctl${ext}`];
 }
 
-export function assertNativePostgres(nodeModulesRoot, pkgName, platform) {
-  const bin = nativePostgresBin(nodeModulesRoot, pkgName, platform);
-  if (!existsSync(bin)) {
+export function nativePostgresBinDir(nodeModulesRoot, pkgName) {
+  return join(nodeModulesRoot, ...pkgName.split('/'), 'native', 'bin');
+}
+
+export function assertEmbeddedPostgresBinaries(nodeModulesRoot, pkgName, platform) {
+  const packPlatform = platform === 'win32' ? 'win32' : platform;
+  const binDir = nativePostgresBinDir(nodeModulesRoot, pkgName);
+  const missing = embeddedPostgresBinNames(packPlatform).filter((name) => !existsSync(join(binDir, name)));
+  if (missing.length > 0) {
     throw new Error(
-      `Missing embedded PostgreSQL binary for ${pkgName} (expected ${bin}). `
+      `Missing embedded PostgreSQL binaries for ${pkgName}: ${missing.join(', ')} (expected in ${binDir}). `
       + 'Run pnpm install from the repo root before packaging.',
     );
   }
+}
+
+export function nativePostgresBin(nodeModulesRoot, pkgName, platform) {
+  return join(nativePostgresBinDir(nodeModulesRoot, pkgName), postgresBinaryName(platform));
+}
+
+export function assertNativePostgres(nodeModulesRoot, pkgName, platform) {
+  assertEmbeddedPostgresBinaries(nodeModulesRoot, pkgName, platform);
 }
 
 /**
@@ -205,8 +220,60 @@ export function syncEmbeddedExtensions(fromNative, toNative, packPlatform = 'uni
   }
 }
 
+/** Ensure postgres, initdb, and pg_ctl exist — copy missing files from a donor native tree when needed. */
+export function repairEmbeddedPostgresBinaries(nodeModulesRoot, pkgName, platform, donorNativeDir = null) {
+  const packPlatform = platform === 'win32' ? 'win32' : platform;
+  const toBin = nativePostgresBinDir(nodeModulesRoot, pkgName);
+  if (!existsSync(toBin)) return;
+
+  const required = embeddedPostgresBinNames(packPlatform);
+  const missing = required.filter((name) => !existsSync(join(toBin, name)));
+  if (missing.length === 0) return;
+
+  const donorBins = [];
+  if (donorNativeDir && existsSync(join(donorNativeDir, 'bin'))) {
+    donorBins.push(join(donorNativeDir, 'bin'));
+  }
+  if (pkgName === '@embedded-postgres/darwin-x64') {
+    donorBins.push(join(nodeModulesRoot, '@embedded-postgres', 'darwin-arm64', 'native', 'bin'));
+  }
+
+  const baseNames = ['postgres', 'initdb', 'pg_ctl'];
+  for (const base of baseNames) {
+    const destName = packPlatform === 'win32' ? `${base}.exe` : base;
+    const dest = join(toBin, destName);
+    if (existsSync(dest)) continue;
+    for (const donorBin of donorBins) {
+      const srcName = packPlatform === 'win32' ? `${base}.exe` : base;
+      const src = join(donorBin, srcName);
+      if (!existsSync(src)) continue;
+      cpSync(src, dest, { force: true });
+      try {
+        chmodSync(dest, 0o755);
+      } catch { /* windows / read-only */ }
+      break;
+    }
+  }
+}
+
+/** @deprecated Use repairEmbeddedPostgresBinaries */
+export function syncDarwinEmbeddedBinaries(nodeModulesRoot) {
+  repairEmbeddedPostgresBinaries(
+    nodeModulesRoot,
+    '@embedded-postgres/darwin-x64',
+    'darwin',
+    join(nodeModulesRoot, '@embedded-postgres', 'darwin-arm64', 'native'),
+  );
+}
+
 /** Copy pgvector/AGE artifacts built on arm64 into the Intel macOS tree. */
 export function syncDarwinEmbeddedExtensions(desktopNodeModules) {
+  repairEmbeddedPostgresBinaries(
+    desktopNodeModules,
+    '@embedded-postgres/darwin-x64',
+    'darwin',
+    join(desktopNodeModules, '@embedded-postgres', 'darwin-arm64', 'native'),
+  );
   syncEmbeddedExtensions(
     join(desktopNodeModules, '@embedded-postgres', 'darwin-arm64', 'native'),
     join(desktopNodeModules, '@embedded-postgres', 'darwin-x64', 'native'),

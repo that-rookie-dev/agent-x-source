@@ -43,7 +43,7 @@ import {
 } from './ingestion-governor.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
 import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
-import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath, getBackgroundTaskPool, setMemoryFabricInstance, setEmbedderInstance, backfillChatMemoryFromSessions } from '@agentx/engine';
+import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath, getBackgroundTaskPool, setMemoryFabricInstance, setEmbedderInstance, backfillChatMemoryFromSessions, resetCatalogSeedInflight } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
 import {
@@ -2619,6 +2619,7 @@ app.post('/api/settings/db/provision', async (req, res) => {
   };
 
   try {
+    resetCatalogSeedInflight();
     send('status', { phase: 'starting', backend: resolvedBackend });
     log(`Provisioning ${resolvedBackend === 'embedded-postgres' ? 'embedded' : 'cloud'} PostgreSQL…`);
 
@@ -2671,8 +2672,19 @@ app.post('/api/settings/db/provision', async (req, res) => {
       }
       log('Reconnecting engine with new storage backend…');
       const eng = getEngine();
+      const storageReadyTimeoutMs = 20 * 60 * 1000;
       try {
-        await eng.storageReady;
+        await Promise.race([
+          eng.storageReady,
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error(
+                `Storage setup timed out after ${Math.round(storageReadyTimeoutMs / 60000)} minutes. `
+                + 'Check PostgreSQL connectivity, pgvector extension, and debug logs.',
+              ));
+            }, storageReadyTimeoutMs);
+          }),
+        ]);
       } catch (e) {
         logError('engine-storage-ready', e);
         throw e;

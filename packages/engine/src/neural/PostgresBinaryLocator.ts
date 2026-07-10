@@ -31,22 +31,63 @@ function getPackageName(): string {
   }
 }
 
+function binaryExt(): string {
+  return platform() === 'win32' ? '.exe' : '';
+}
+
+function requiredCoreBinaryNames(): string[] {
+  const ext = binaryExt();
+  return [`postgres${ext}`, `initdb${ext}`, `pg_ctl${ext}`];
+}
+
+function isCompleteCoreBinaryDir(dir: string): boolean {
+  if (!dir) return false;
+  return requiredCoreBinaryNames().every((name) => existsSync(join(dir, name)));
+}
+
+function fallbackPackageNames(primary: string): string[] {
+  if (primary === '@embedded-postgres/darwin-x64') {
+    return ['@embedded-postgres/darwin-arm64'];
+  }
+  return [];
+}
+
+function binaryDirCandidates(packageName: string): string[] {
+  const resourcesPath = (process as any).resourcesPath ?? '';
+  const installDir = process.env['AGENTX_INSTALL_DIR'] ?? '';
+  const execDir = dirname(process.execPath);
+
+  const candidates = [
+    join(resourcesPath, 'app.asar.unpacked', 'node_modules', packageName, 'native', 'bin'),
+    join(resourcesPath, 'app.asar.unpacked', 'node_modules', '.pnpm', packageName, 'native', 'bin'),
+    join(resourcesPath, 'node_modules', packageName, 'native', 'bin'),
+    join(installDir, 'node_modules', packageName, 'native', 'bin'),
+    join(installDir, 'resources', 'node_modules', packageName, 'native', 'bin'),
+    join(execDir, 'node_modules', packageName, 'native', 'bin'),
+    join(process.cwd(), 'node_modules', packageName, 'native', 'bin'),
+  ];
+
+  for (const fallback of fallbackPackageNames(packageName)) {
+    candidates.push(
+      join(resourcesPath, 'app.asar.unpacked', 'node_modules', fallback, 'native', 'bin'),
+      join(installDir, 'node_modules', fallback, 'native', 'bin'),
+      join(installDir, 'resources', 'node_modules', fallback, 'native', 'bin'),
+    );
+  }
+
+  return candidates;
+}
+
 export async function locatePostgresBinaries(): Promise<LocatedBinaries> {
   const packageName = getPackageName();
   if (!packageName) {
     throw new Error(`Unsupported platform/architecture: ${platform()}/${arch()}`);
   }
 
-  const ext = platform() === 'win32' ? '.exe' : '';
-  const resourcesPath = (process as any).resourcesPath ?? '';
-  const candidates = [
-    join(resourcesPath, 'app.asar.unpacked', 'node_modules', packageName, 'native', 'bin'),
-    join(resourcesPath, 'app.asar.unpacked', 'node_modules', '.pnpm', packageName, 'native', 'bin'),
-    join(resourcesPath, 'node_modules', packageName, 'native', 'bin'),
-  ];
+  const ext = binaryExt();
 
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, `postgres${ext}`))) {
+  for (const candidate of binaryDirCandidates(packageName)) {
+    if (candidate && isCompleteCoreBinaryDir(candidate)) {
       return {
         binaryDir: candidate,
         pgDump: join(candidate, `pg_dump${ext}`),
@@ -57,17 +98,30 @@ export async function locatePostgresBinaries(): Promise<LocatedBinaries> {
     }
   }
 
-  try {
-    const mod = await import(packageName) as { postgres: string };
-    const binaryDir = dirname(mod.postgres);
-    return {
-      binaryDir,
-      pgDump: join(binaryDir, `pg_dump${ext}`),
-      pgRestore: join(binaryDir, `pg_restore${ext}`),
-      psql: join(binaryDir, `psql${ext}`),
-      postgres: join(binaryDir, `postgres${ext}`),
-    };
-  } catch (e) {
-    throw new Error(`Could not resolve PostgreSQL binaries for ${packageName}: ${e instanceof Error ? e.message : e}`);
+  const importPackages = [packageName, ...fallbackPackageNames(packageName)];
+  for (const pkg of importPackages) {
+    try {
+      const mod = await import(pkg) as { postgres: string; initdb?: string; pg_ctl?: string };
+      const importDirs = [
+        dirname(mod.postgres),
+        mod.initdb ? dirname(mod.initdb) : '',
+        mod.pg_ctl ? dirname(mod.pg_ctl) : '',
+      ].filter(Boolean);
+      for (const binaryDir of importDirs) {
+        if (!isCompleteCoreBinaryDir(binaryDir)) continue;
+        return {
+          binaryDir,
+          pgDump: join(binaryDir, `pg_dump${ext}`),
+          pgRestore: join(binaryDir, `pg_restore${ext}`),
+          psql: join(binaryDir, `psql${ext}`),
+          postgres: join(binaryDir, `postgres${ext}`),
+        };
+      }
+    } catch { /* try next package */ }
   }
+
+  throw new Error(
+    `Could not resolve complete PostgreSQL binaries for ${packageName} on ${platform()}/${arch()}. `
+    + 'Reinstall Agent-X to restore embedded PostgreSQL.',
+  );
 }

@@ -8,6 +8,7 @@ import { auth, setAuthToken } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { colors, alphaColor, resolveColor } from '../theme';
+import { clearAgentxClientStorage } from '../utils/client-storage';
 
 /** Convert a resolved hex color to "r, g, b" channels for canvas rgba() templates. */
 function hexToRgbChannels(hex: string): string {
@@ -45,6 +46,12 @@ export function SetupAuth() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const strength = useMemo(() => getPasswordStrength(password), [password]);
+
+  // Stale browser state can survive reinstall; start with a clean client store.
+  useEffect(() => {
+    clearAgentxClientStorage();
+    setAuthToken(null);
+  }, []);
 
   // Starfield background effect
   useEffect(() => {
@@ -112,6 +119,7 @@ export function SetupAuth() {
     setLoading(true);
     try {
     const res = await auth.setup(username, password);
+    clearAgentxClientStorage();
     setAuthToken(res.token);
     setAuthState('needs-setup');
     navigate('/setup/wizard');

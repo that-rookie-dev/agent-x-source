@@ -39,6 +39,12 @@ export function getCatalogSeedInflight(): Promise<void> | null {
   return inflight;
 }
 
+/** Drop any in-flight catalog seed (e.g. engine reconnect during setup wizard provision). */
+export function resetCatalogSeedInflight(): void {
+  inflight = null;
+  markCatalogSeedIdle();
+}
+
 export function markCatalogSeedStarted(expectedCount: number, manifestRevision: number): void {
   live.status = 'seeding';
   live.expectedCount = expectedCount;

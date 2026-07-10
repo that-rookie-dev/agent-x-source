@@ -61,30 +61,44 @@ if [ ! -f "${INSTALL_DIR}/index.js" ]; then
 fi
 
 # Fail fast on incomplete embedded Postgres trees (the packaging bugs we hit).
+assert_embedded_pg_bins() {
+  local pkg="$1"
+  local ext="${2:-}"
+  local base="${INSTALL_DIR}/node_modules/@embedded-postgres/${pkg}/native/bin"
+  test -f "${base}/postgres${ext}"
+  test -f "${base}/initdb${ext}"
+  test -f "${base}/pg_ctl${ext}"
+}
+
 os="$(uname -s)"
 arch="$(uname -m)"
 case "${os}-${arch}" in
   Linux-x86_64|Linux-amd64)
     test -f "${INSTALL_DIR}/node_modules/@embedded-postgres/linux-x64/native/lib/libpq.so.5"
+    assert_embedded_pg_bins "linux-x64"
     ;;
   Linux-aarch64|Linux-arm64)
     test -f "${INSTALL_DIR}/node_modules/@embedded-postgres/linux-arm64/native/lib/libpq.so.5"
+    assert_embedded_pg_bins "linux-arm64"
     ;;
   Darwin-arm64)
     test -f "${INSTALL_DIR}/node_modules/@embedded-postgres/darwin-arm64/native/lib/libicudata.68.dylib"
     test -f "${INSTALL_DIR}/node_modules/@embedded-postgres/darwin-arm64/native/lib/libpq.5.dylib"
+    assert_embedded_pg_bins "darwin-arm64"
     ;;
   Darwin-x86_64)
     test -f "${INSTALL_DIR}/node_modules/@embedded-postgres/darwin-x64/native/lib/libicudata.68.dylib"
     test -f "${INSTALL_DIR}/node_modules/@embedded-postgres/darwin-x64/native/lib/libpq.5.dylib"
+    assert_embedded_pg_bins "darwin-x64"
     ;;
   *)
     if is_windows; then
       test -f "${INSTALL_DIR}/node_modules/@embedded-postgres/windows-x64/native/bin/libpq.dll"
+      assert_embedded_pg_bins "windows-x64" ".exe"
     fi
     ;;
 esac
-echo "==> Embedded Postgres shared libraries present"
+echo "==> Embedded Postgres binaries and shared libraries present"
 
 export AGENTX_INSTALL_DIR="$INSTALL_DIR"
 export AGENTX_DATA_DIR="$DATA_DIR"

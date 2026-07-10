@@ -46,13 +46,33 @@ function getAppResourcesDir(context) {
   return join(context.appOutDir, 'resources');
 }
 
+function assertEmbeddedPostgresBinaries(destDir, platform) {
+  const binDir = join(destDir, 'native', 'bin');
+  const ext = platform === 'win32' ? '.exe' : '';
+  for (const base of ['postgres', 'initdb', 'pg_ctl']) {
+    const binPath = join(binDir, `${base}${ext}`);
+    if (!existsSync(binPath)) {
+      throw new Error(`afterPack: missing ${base}${ext} for bundled embedded PostgreSQL at ${binPath}`);
+    }
+  }
+}
+
 function bundleScopedPackage(destRoot, pnpmStore, pkgName, { requireNativeBin = false, platform = 'darwin' } = {}) {
   const destDir = join(destRoot, ...pkgName.split('/'));
   const binName = platform === 'win32' ? 'postgres.exe' : 'postgres';
   const ready = requireNativeBin
     ? existsSync(join(destDir, 'native', 'bin', binName))
     : existsSync(join(destDir, 'package.json'));
-  if (ready) {
+  if (ready && requireNativeBin) {
+    try {
+      assertEmbeddedPostgresBinaries(destDir, platform);
+      console.log(`afterPack: ${pkgName} already present, skipping`);
+      return;
+    } catch {
+      console.warn(`afterPack: replacing incomplete ${pkgName} at ${destDir}`);
+      rmSync(destDir, { recursive: true, force: true });
+    }
+  } else if (ready) {
     console.log(`afterPack: ${pkgName} already present, skipping`);
     return;
   }
@@ -65,6 +85,9 @@ function bundleScopedPackage(destRoot, pnpmStore, pkgName, { requireNativeBin = 
   rmSync(destDir, { recursive: true, force: true });
   mkdirSync(dirname(destDir), { recursive: true });
   cpSync(found, destDir, { recursive: true, force: true });
+  if (requireNativeBin) {
+    assertEmbeddedPostgresBinaries(destDir, platform);
+  }
   console.log(`afterPack: bundled ${pkgName} into app.asar.unpacked`);
 }
 
