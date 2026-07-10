@@ -82,6 +82,8 @@ export {
   buildTextQuestionnaire,
   collectAnsweredQuestionnaireTexts,
   hydrateMessageHistoryEntries,
+  coerceQuestionnaireOptionText,
+  sanitizeQuestionnairePayload,
 } from './utils/questionnaire.js';
 
 export type {

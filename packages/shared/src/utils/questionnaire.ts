@@ -19,7 +19,7 @@ export { MAX_QUESTIONNAIRE_CHOICES, QUESTIONNAIRE_CUSTOM_SUFFIX };
 
 export interface LegacyClarificationInput {
   question: string;
-  options?: string[];
+  options?: AskClarificationOptionInput[];
   allowFreeform?: boolean;
   recommended?: string;
   allowChooseAll?: boolean;
@@ -29,10 +29,19 @@ export interface LegacyClarificationInput {
   source?: ClarificationSource;
 }
 
+/** LLM tool args often send options as plain strings, but sometimes as `{label}` / `{value,label}` objects. */
+export type AskClarificationOptionInput =
+  | string
+  | number
+  | boolean
+  | { value?: unknown; label?: unknown; text?: unknown; name?: unknown }
+  | null
+  | undefined;
+
 export interface AskClarificationToolArgs {
   title?: string;
   question?: string;
-  options?: string[];
+  options?: AskClarificationOptionInput[];
   multiple?: boolean;
   allowFreeform?: boolean;
   recommended?: string;
@@ -41,7 +50,7 @@ export interface AskClarificationToolArgs {
     id?: string;
     prompt?: string;
     type?: string;
-    options?: string[];
+    options?: AskClarificationOptionInput[];
     allowCustom?: boolean;
     required?: boolean;
     placeholder?: string;
@@ -54,13 +63,41 @@ function slugId(prefix: string, index: number): string {
   return `${prefix}_${index + 1}`;
 }
 
-function capOptions(raw: string[] | undefined, recommended?: string): QuestionnaireOption[] {
+/** Coerce one option from tool args into a display/value string. */
+export function coerceQuestionnaireOptionText(raw: unknown): string {
+  if (typeof raw === 'string') return raw.trim();
+  if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw);
+  if (!raw || typeof raw !== 'object') return '';
+  const obj = raw as Record<string, unknown>;
+  for (const key of ['label', 'value', 'text', 'name'] as const) {
+    const nested = obj[key];
+    if (typeof nested === 'string' && nested.trim()) return nested.trim();
+    // Nested `{ label: "…" }` (seen when models wrap option strings)
+    if (nested && typeof nested === 'object') {
+      const deeper = coerceQuestionnaireOptionText(nested);
+      if (deeper) return deeper;
+    }
+  }
+  return '';
+}
+
+function capOptions(raw: AskClarificationOptionInput[] | undefined, recommended?: string): QuestionnaireOption[] {
   if (!raw?.length) return [];
-  return raw.slice(0, MAX_QUESTIONNAIRE_CHOICES).map((value) => ({
-    value,
-    label: value,
-    recommended: recommended === value,
-  }));
+  const recommendedText = coerceQuestionnaireOptionText(recommended);
+  const out: QuestionnaireOption[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (out.length >= MAX_QUESTIONNAIRE_CHOICES) break;
+    const text = coerceQuestionnaireOptionText(item);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push({
+      value: text,
+      label: text,
+      recommended: recommendedText !== '' && recommendedText === text,
+    });
+  }
+  return out;
 }
 
 function normalizeQuestion(
@@ -201,7 +238,7 @@ export function legacyClarificationToQuestionnaire(input: LegacyClarificationInp
 /** Merge event meta + legacy fields into a questionnaire (for transitional callers). */
 export function resolveClarificationQuestionnaire(
   question: string,
-  options: string[],
+  options: AskClarificationOptionInput[],
   allowFreeform: boolean,
   meta?: ClarificationRequestMeta,
   source?: ClarificationSource,
@@ -299,6 +336,30 @@ export function canSubmitQuestionnaire(
   state: QuestionnaireResponseState,
 ): boolean {
   return formatQuestionnaireAnswers(payload, state) !== null;
+}
+
+/** Repair questionnaire options that were persisted as nested `{label}` objects. */
+export function sanitizeQuestionnairePayload(payload: QuestionnairePayload): QuestionnairePayload {
+  return {
+    ...payload,
+    questions: payload.questions.map((q) => {
+      if (!q.options?.length) return q;
+      const options = capOptions(
+        q.options.map((o) => ({ value: o.value, label: o.label })),
+        q.options.find((o) => o.recommended)?.value,
+      );
+      if (options.length === 0) {
+        return {
+          id: q.id,
+          prompt: q.prompt,
+          type: 'text' as const,
+          required: q.required !== false,
+          placeholder: 'Type your answer…',
+        };
+      }
+      return { ...q, options };
+    }),
+  };
 }
 
 /** Build a single text question (e.g. crew mission clarification). */

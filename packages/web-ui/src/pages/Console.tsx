@@ -29,9 +29,14 @@ import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 export type PanelId = 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications';
 
 // Error boundary to prevent panel crashes from taking down the app
-class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
-  state = { error: null as string | null };
+class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null; stack: string | null }> {
+  state = { error: null as string | null, stack: null as string | null };
   static getDerivedStateFromError(e: Error) { return { error: e.message }; }
+  componentDidCatch(error: Error, info: { componentStack?: string | null }) {
+    // Keep stack in state for the fallback UI; also log for desktop/devtools capture.
+    console.error('[PanelErrorBoundary]', error, info.componentStack);
+    this.setState({ stack: info.componentStack ?? null });
+  }
   render() {
     if (this.state.error) {
       return (
@@ -39,7 +44,31 @@ class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: str
           <Typography sx={{ color: colors.accent.red, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.8rem', mb: 1 }}>
             Panel failed to load
           </Typography>
-          <Typography sx={{ color: colors.text.dim, fontSize: '0.7rem' }}>{this.state.error}</Typography>
+          <Typography sx={{ color: colors.text.dim, fontSize: '0.7rem', mb: 1 }}>{this.state.error}</Typography>
+          {this.state.stack && (
+            <Typography
+              component="pre"
+              sx={{
+                mt: 1.5, mx: 'auto', maxWidth: 560, textAlign: 'left',
+                color: colors.text.dim, fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace",
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.85,
+              }}
+            >
+              {this.state.stack.trim()}
+            </Typography>
+          )}
+          <Typography
+            component="button"
+            onClick={() => this.setState({ error: null, stack: null })}
+            sx={{
+              mt: 2, px: 1.5, py: 0.5, cursor: 'pointer',
+              color: colors.text.secondary, fontSize: '0.65rem', fontFamily: "'JetBrains Mono', monospace",
+              bgcolor: 'transparent', border: `1px solid ${colors.border.default}`, borderRadius: 1,
+              '&:hover': { color: colors.text.primary, borderColor: colors.text.dim },
+            }}
+          >
+            Retry panel
+          </Typography>
         </Box>
       );
     }

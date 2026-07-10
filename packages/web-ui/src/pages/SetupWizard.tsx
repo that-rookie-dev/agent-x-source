@@ -36,7 +36,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BoltIcon from '@mui/icons-material/Bolt';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HomeIcon from '@mui/icons-material/Home';
-import { providers as provApi, models as modelsApi, config, settings, type DbConnectionTestResult, type DbExtensionCheck } from '../api';
+import { providers as provApi, models as modelsApi, config, settings, voice, type DbConnectionTestResult, type DbExtensionCheck } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { LocalModelStep } from '../components/LocalModelStep';
@@ -171,6 +171,7 @@ export function SetupWizard() {
   const [installedLocalModels, setInstalledLocalModels] = useState<Array<{ modelId: string; isActive: boolean }>>([]);
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
   const [voiceCalibrated, setVoiceCalibrated] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const [telegramLinked, setTelegramLinked] = useState(false);
 
   const resetPgTest = () => {
@@ -1058,7 +1059,10 @@ export function SetupWizard() {
               )}
 
               {step === 8 && (
-                <WizardVoiceStep onReadyChange={setVoiceCalibrated} />
+                <WizardVoiceStep
+                  onReadyChange={setVoiceCalibrated}
+                  onBusyChange={setVoiceBusy}
+                />
               )}
 
               {step === 9 && (
@@ -1103,7 +1107,7 @@ export function SetupWizard() {
           {step === 5 && <Button onClick={handleBenchmarkBack} sx={wizardBackBtnSx}>Back</Button>}
           {step === 6 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 7 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
-          {step === 8 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 8 && <Button onClick={back} disabled={voiceBusy} sx={wizardBackBtnSx}>Back</Button>}
           {step === 9 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 0 && !showRelayConfig && (
             <Button variant="contained" onClick={handleStorageNext} disabled={loading || provisioning} sx={{ ...wizardPrimaryBtnSx, px: 4 }}>
@@ -1156,12 +1160,24 @@ export function SetupWizard() {
           {step === 8 && (
             <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', justifyContent: voiceCalibrated ? 'flex-end' : 'space-between', width: '100%' }}>
               {!voiceCalibrated && (
-                <Button onClick={next} sx={wizardSkipBtnSx}>
+                <Button onClick={next} disabled={voiceBusy} sx={wizardSkipBtnSx}>
                   Skip for now
                 </Button>
               )}
-              <Button variant="contained" onClick={next} sx={wizardPrimaryBtnSx}>
-                {voiceCalibrated ? 'Continue →' : 'Skip →'}
+              <Button
+                variant="contained"
+                disabled={voiceBusy}
+                onClick={() => {
+                  void (async () => {
+                    if (voiceCalibrated) {
+                      try { await voice.releaseSidecar({ force: true }); } catch { /* idle unload best-effort */ }
+                    }
+                    next();
+                  })();
+                }}
+                sx={wizardPrimaryBtnSx}
+              >
+                {voiceBusy ? 'Installing…' : voiceCalibrated ? 'Continue →' : 'Skip →'}
               </Button>
             </Box>
           )}

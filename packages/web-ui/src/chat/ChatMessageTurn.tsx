@@ -423,7 +423,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
           {[0, 1, 2].map((i) => (
             <Box key={i} sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.2}s` }} />
           ))}
-          {loadingSteps?.[0]?.label && (
+          {typeof loadingSteps?.[0]?.label === 'string' && loadingSteps[0].label && (
             <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontStyle: 'italic', ml: 0.5 }}>{loadingSteps[0].label}</Typography>
           )}
         </Box>

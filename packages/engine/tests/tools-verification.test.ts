@@ -342,21 +342,22 @@ describe('Build tool detection', () => {
     expect(result.success).toBe(true);
   });
 
-  it('detects Cargo project', async () => {
-    writeFileSync(join(tmpDir, 'Cargo.toml'), '[package]\nname = "test"');
-    const { build } = await import('../src/tools/builtin/build.js');
-    const result = await build({}, ctx());
-    // cargo build may fail without actual Rust source — check we get a result
-    expect(result.success !== undefined).toBe(true);
-  });
-
   it('detects Makefile project', async () => {
-    writeFileSync(join(tmpDir, 'Makefile'), 'build:\n\techo built');
+    // .PHONY + @echo keeps BSD/GNU make portable; avoid hanging on inherited MAKEFLAGS in CI.
+    writeFileSync(join(tmpDir, 'Makefile'), '.PHONY: build\nbuild:\n\t@echo built\n');
     const { build } = await import('../src/tools/builtin/build.js');
     const result = await build({ target: 'build' }, ctx());
     expect(result.success).toBe(true);
     expect(result.output).toContain('built');
-  });
+  }, 15_000);
+
+  it('detects Cargo project', async () => {
+    writeFileSync(join(tmpDir, 'Cargo.toml'), '[package]\nname = "test"\nversion = "0.1.0"\nedition = "2021"\n');
+    const { build } = await import('../src/tools/builtin/build.js');
+    const result = await build({}, ctx());
+    // cargo build may fail without actual Rust source — check we get a result
+    expect(result.success !== undefined).toBe(true);
+  }, 15_000);
 
   it('buildCheck runs type checks', async () => {
     writeFileSync(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test', scripts: { build: 'echo ok' } }));

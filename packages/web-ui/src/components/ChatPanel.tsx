@@ -655,6 +655,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const lastTurnFeedbackCandidateRef = useRef<{ messageId: string; elapsedMs: number } | null>(null);
   const activeTurnIdRef = useRef<string | null>(null);
   const turnActiveRef = useRef(false);
+  /** Sync marker for an outgoing user turn so WS handlers don't overwrite the prior assistant before React commits setMessages. */
+  const outgoingTurnRef = useRef<{ userId: string; userContent: string; placeholderId: string } | null>(null);
   const resendInProgressRef = useRef(false);
   const lastActivityRef = useRef<number>(Date.now());
   const isTimeoutWarning = (msg: string) => /timeout|timed out|aborted due to timeout/i.test(msg);
@@ -664,6 +666,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const endTurnUi = useCallback(() => {
     turnActiveRef.current = false;
     activeTurnIdRef.current = null;
+    outgoingTurnRef.current = null;
     resendInProgressRef.current = false;
     setStreaming(false);
     setTurnActivity(null);
@@ -677,6 +680,34 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     setTurnActivity(null);
     setLoadingSteps(null);
     setPendingFeedbackMessageId(null);
+  }, []);
+
+  /** Ensure the optimistic user + streaming placeholder exist even if WS events beat React state. */
+  const ensureOutgoingTurnMessages = useCallback((prev: UIMessage[]): UIMessage[] => {
+    const pending = outgoingTurnRef.current;
+    if (!pending) return prev;
+    let next = prev;
+    const hasUser = next.some((m) => m.id === pending.userId
+      || (m.role === 'user' && m.content === pending.userContent));
+    if (!hasUser) {
+      next = [...next, {
+        id: pending.userId,
+        role: 'user' as const,
+        content: pending.userContent,
+        streaming: false,
+      }];
+    }
+    const hasPlaceholder = next.some((m) => m.id === pending.placeholderId);
+    const last = next[next.length - 1];
+    if (!hasPlaceholder && !(last?.role === 'assistant' && last.streaming)) {
+      next = [...next, {
+        id: pending.placeholderId,
+        role: 'assistant' as const,
+        content: '',
+        streaming: true,
+      }];
+    }
+    return next;
   }, []);
 
   const voicePendingUserIdRef = useRef<string | null>(null);
@@ -1247,6 +1278,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     const stopTurnIndicator = () => {
       turnActiveRef.current = false;
       activeTurnIdRef.current = null;
+      outgoingTurnRef.current = null;
       resendInProgressRef.current = false;
       setStreaming(false);
       setTurnActivity(null);
@@ -1495,9 +1527,14 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                 ...(last?.crew ? { crew: last.crew } : {}),
               }];
             }
+            // Prefer the optimistic turn bubble (sync ref) so we never stream into a prior completed reply
+            // when React hasn't committed executeSend's setMessages yet.
+            const withOutgoing = ensureOutgoingTurnMessages(prev);
+            if (withOutgoing !== prev) {
+              setStreaming(true);
+              return withOutgoing;
+            }
             // Only create a placeholder when a user message just arrived (new turn).
-            // If the last message is a completed assistant (race with handleSend),
-            // let stream_chunk or message_received handle the placeholder instead.
             if (last?.role === 'user') {
               setStreaming(true);
               return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
@@ -1505,6 +1542,11 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             if (last?.role === 'assistant' && (last.streaming || resendInProgressRef.current)) {
               setStreaming(true);
               return prev;
+            }
+            // Completed assistant still last — start a fresh bubble (do not overwrite prior reply).
+            if (last?.role === 'assistant' && !last.streaming) {
+              setStreaming(true);
+              return [...prev, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }];
             }
             if (!last) {
               setStreaming(true);
@@ -1516,12 +1558,18 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
 
           case 'loading_step_update':
             setLoadingSteps((prevSteps) => {
-              const step = { id: ev.stepId as string, label: ev.label as string, status: ev.status as string };
+              // Coerce in case a nested `{ label }` object arrives over the wire —
+              // rendering that object as a React child throws minified error #31.
+              const step = {
+                id: String(ev.stepId ?? ''),
+                label: coerceDisplayLabel(ev.label, 'Working...'),
+                status: String(ev.status ?? 'pending'),
+              };
               if (!prevSteps) return [step];
               const exists = prevSteps.some(s => s.id === step.id);
               if (!exists) return [...prevSteps, step];
               return prevSteps.map((s) =>
-                s.id === ev.stepId ? { ...s, status: ev.status as string } : s,
+                s.id === ev.stepId ? { ...s, status: step.status, label: step.label } : s,
               );
             });
             return prev;
@@ -1544,6 +1592,45 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                 streaming: true,
                 parts: [textPart],
                 ...(last.crew ? { crew: last.crew } : {}),
+              }];
+            }
+            // Never stream into a completed prior reply (race: chunks arrive before optimistic user bubble commits).
+            if (last?.role === 'assistant' && !last.streaming) {
+              const base = ensureOutgoingTurnMessages(prev);
+              const tip = base[base.length - 1];
+              if (tip?.role === 'assistant' && tip.streaming) {
+                streamChunkPendingRef.current = rawFull || null;
+                if (streamChunkRAFRef.current === null) {
+                  streamChunkRAFRef.current = window.setTimeout(() => {
+                    streamChunkRAFRef.current = null;
+                    const fullContent = streamChunkPendingRef.current ?? '';
+                    streamChunkPendingRef.current = null;
+                    if (!fullContent) return;
+                    setMessages(p => {
+                      const ensured = ensureOutgoingTurnMessages(p);
+                      const l = ensured[ensured.length - 1];
+                      if (l?.role !== 'assistant' || !l.streaming) return ensured;
+                      const parts = l.parts || [];
+                      const lastPart = parts[parts.length - 1];
+                      const textPart: PartEntry = lastPart?.type === 'text'
+                        ? { ...lastPart, content: fullContent }
+                        : { type: 'text', id: crypto.randomUUID(), content: fullContent };
+                      const updatedParts = lastPart?.type === 'text'
+                        ? [...parts.slice(0, -1), textPart]
+                        : [...parts, textPart];
+                      return updateLastMessage(ensured, { content: fullContent, parts: updatedParts, streaming: true });
+                    });
+                  }, 80);
+                }
+                return base;
+              }
+              const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: rawFull || rawDelta };
+              return [...base, {
+                id: outgoingTurnRef.current?.placeholderId || crypto.randomUUID(),
+                role: 'assistant',
+                content: rawFull || rawDelta,
+                streaming: true,
+                parts: [textPart],
               }];
             }
             if (last?.role === 'assistant') {
@@ -1685,38 +1772,42 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             }
 
             setStreaming(false);
-            if (last?.role === 'assistant') {
+            const withOutgoing = ensureOutgoingTurnMessages(prev);
+            const tip = withOutgoing[withOutgoing.length - 1];
+            if (tip?.role === 'assistant') {
               const incomingCrewId = crew?.crewId;
-              const lastCrewId = last.crew?.crewId;
-              const crewPrivateMerge = isCrewPrivateRef.current && last.streaming;
+              const lastCrewId = tip.crew?.crewId;
+              const crewPrivateMerge = isCrewPrivateRef.current && tip.streaming;
               const sameSpeaker = crewPrivateMerge
                 || (incomingCrewId
                   ? incomingCrewId === lastCrewId
                   : !lastCrewId);
-              const shouldMerge = sameSpeaker && (last.streaming || (!text && !!last.content));
+              const shouldMerge = sameSpeaker && tip.streaming;
               if (shouldMerge) {
+                outgoingTurnRef.current = null;
                 const mergedParts = reconcileStreamingMessageParts(
-                  (last.parts && last.parts.length > 0) ? last.parts : msg.parts,
-                  last.toolCalls?.length ? last.toolCalls : msg.toolCalls,
+                  (tip.parts && tip.parts.length > 0) ? tip.parts : msg.parts,
+                  tip.toolCalls?.length ? tip.toolCalls : msg.toolCalls,
                   msg.parts,
                 );
-                return updateLastMessage(prev, {
-                  id: msg.id || last.id,
-                  content: text || stripToolNoise(last.content || ''),
+                return updateLastMessage(withOutgoing, {
+                  id: msg.id || tip.id,
+                  content: text || stripToolNoise(tip.content || ''),
                   parts: mergedParts,
-                  toolCalls: last.toolCalls?.length ? last.toolCalls : msg.toolCalls,
+                  toolCalls: tip.toolCalls?.length ? tip.toolCalls : msg.toolCalls,
                   streaming: false,
                   ...(crew ? { crew } : {}),
                 });
               }
             }
             if (msg.role === 'assistant' && (text || msg.parts?.length)) {
+              outgoingTurnRef.current = null;
               const msgId = msg.id || crypto.randomUUID();
-              if (prev.some((m) => m.id === msgId)) return prev;
+              if (withOutgoing.some((m) => m.id === msgId)) return withOutgoing;
               const parts = msg.parts || [{ type: 'text' as const, id: crypto.randomUUID(), content: text }];
-              return [...prev, { id: msgId, role: 'assistant' as const, content: text, streaming: false, parts, ...(crew ? { crew } : {}) } as UIMessage];
+              return [...withOutgoing, { id: msgId, role: 'assistant' as const, content: text, streaming: false, parts, ...(crew ? { crew } : {}) } as UIMessage];
             }
-            return prev;
+            return withOutgoing;
           }
 
           case 'permission_required':
@@ -2487,8 +2578,11 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
 
     beginTurnUi();
     if (!options?.skipUserMessage) {
+      const userId = crypto.randomUUID();
+      const placeholderId = crypto.randomUUID();
+      outgoingTurnRef.current = { userId, userContent: trimmed, placeholderId };
       const userMsg: UIMessage = {
-        id: crypto.randomUUID(),
+        id: userId,
         role: 'user',
         content: trimmed,
         streaming: false,
@@ -2497,7 +2591,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       setMessages((prev) => [
         ...prev,
         userMsg,
-        { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true },
+        { id: placeholderId, role: 'assistant', content: '', streaming: true },
       ]);
       inputBarRef.current?.clear();
     }
@@ -2519,7 +2613,9 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         options?.crewIntakeFromPicker,
         options?.primaryCrewId,
         webSearchAvailable && webSearchForce,
-        options?.userMessagePersisted ?? options?.skipUserMessage,
+        // Only true when the user turn is already in the DB (e.g. crew roster picker).
+        // Do NOT infer from skipUserMessage — that only means the UI already showed the bubble.
+        options?.userMessagePersisted === true,
         clientSituation,
       );
       if (result?.crewSuggestionRequired && result.evaluation) {
@@ -3169,8 +3265,11 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     if (!trimmed && attachments.length === 0) return;
     if (!(await ensureSession())) return;
     beginTurnUi();
-    const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: trimmed, streaming: false, attachments: attachments.map((a) => ({ name: a.name })) };
-    setMessages((prev) => [...prev, userMsg, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }]);
+    const userId = crypto.randomUUID();
+    const placeholderId = crypto.randomUUID();
+    outgoingTurnRef.current = { userId, userContent: trimmed, placeholderId };
+    const userMsg: UIMessage = { id: userId, role: 'user', content: trimmed, streaming: false, attachments: attachments.map((a) => ({ name: a.name })) };
+    setMessages((prev) => [...prev, userMsg, { id: placeholderId, role: 'assistant', content: '', streaming: true }]);
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
     try {
@@ -3203,8 +3302,12 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     if (!trimmed && attachments.length === 0) return;
     if (!(await ensureSession())) return;
     beginTurnUi();
-    const userMsg: UIMessage = { id: crypto.randomUUID(), role: 'user', content: `↑ ${trimmed}`, streaming: false };
-    setMessages((prev) => [...prev, userMsg, { id: crypto.randomUUID(), role: 'assistant', content: '', streaming: true }]);
+    const userId = crypto.randomUUID();
+    const placeholderId = crypto.randomUUID();
+    const userContent = `↑ ${trimmed}`;
+    outgoingTurnRef.current = { userId, userContent, placeholderId };
+    const userMsg: UIMessage = { id: userId, role: 'user', content: userContent, streaming: false };
+    setMessages((prev) => [...prev, userMsg, { id: placeholderId, role: 'assistant', content: '', streaming: true }]);
     const fileRefs = attachments.length > 0 ? attachments.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
     try {
@@ -4059,7 +4162,11 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               <Tooltip title="Provider Profile" arrow>
                 <Chip
                   size="small"
-                  label={(() => { const p = providerList.find(pr => pr.id === currentProvider); return p?.label || currentProvider || 'Provider'; })()}
+                  label={(() => {
+                    const p = providerList.find(pr => pr.id === currentProvider);
+                    const raw = p?.label || currentProvider || 'Provider';
+                    return typeof raw === 'string' ? raw : String((raw as { label?: unknown })?.label ?? 'Provider');
+                  })()}
                   onClick={(e) => setProviderMenuAnchor(e.currentTarget)}
                   sx={{
                     fontSize: '0.55rem', height: 20, cursor: 'pointer',
@@ -4694,8 +4801,21 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
 
 // ─── Thinking Indicator ───
 
+/** Ensure status/step labels are always renderable strings (avoids React #31). */
+function coerceDisplayLabel(value: unknown, fallback = 'Working...'): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value && typeof value === 'object' && 'label' in value) {
+    return coerceDisplayLabel((value as { label: unknown }).label, fallback);
+  }
+  return fallback;
+}
+
 function LoadingStepsIndicator({ steps }: { steps: Array<{ id: string; label: string; status: string }> }) {
-  const label = steps[0]?.label ?? 'Working...';
+  const label = coerceDisplayLabel(steps[0]?.label, 'Working...');
   return (
     <Typography sx={{
       fontSize: '0.75rem',
@@ -4712,6 +4832,7 @@ function LoadingStepsIndicator({ steps }: { steps: Array<{ id: string; label: st
 }
 
 function ThinkingIndicator({ label }: { label?: string }) {
+  const safeLabel = label ? coerceDisplayLabel(label, '') : '';
   return (
     <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', mb: 2, animation: 'agentx-fadeIn 0.3s ease-out' }}>
       <Box sx={{
@@ -4721,8 +4842,8 @@ function ThinkingIndicator({ label }: { label?: string }) {
         <SmartToyIcon sx={{ fontSize: 15, color: colors.accent.purple }} />
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 1.5 }}>
-        {label ? (
-          <LoadingStepsIndicator steps={[{ id: '', label, status: 'running' }]} />
+        {safeLabel ? (
+          <LoadingStepsIndicator steps={[{ id: '', label: safeLabel, status: 'running' }]} />
         ) : (
           <>
             <Box sx={{ display: 'flex', gap: 0.4 }}>

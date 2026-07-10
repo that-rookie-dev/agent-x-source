@@ -8,6 +8,7 @@ import {
   canSubmitQuestionnaire,
   formatQuestionnaireAnswers,
   initialQuestionnaireState,
+  sanitizeQuestionnairePayload,
   type QuestionnaireRecord,
   type QuestionnaireResponseState,
 } from './types';
@@ -43,7 +44,8 @@ function ReadonlyAnswer({ prompt, answer }: { prompt: string; answer: string }) 
 }
 
 export function QuestionnaireMessage({ record, onRespond }: QuestionnaireMessageProps) {
-  const { payload, status, answer } = record;
+  const payload = useMemo(() => sanitizeQuestionnairePayload(record.payload), [record.payload]);
+  const { status, answer } = record;
   const isPending = status === 'pending' && !!onRespond;
   const [state, setState] = useState<QuestionnaireResponseState>(() => initialQuestionnaireState(payload));
   const [focusIdx, setFocusIdx] = useState(0);

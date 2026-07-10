@@ -824,7 +824,6 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
             }
             : {}),
           ...(session.clientSituation ? { clientSituation: session.clientSituation } : {}),
-          userMessagePersisted: true,
         },
       );
 

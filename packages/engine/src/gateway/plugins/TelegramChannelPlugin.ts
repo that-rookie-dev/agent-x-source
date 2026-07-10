@@ -70,6 +70,10 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     return this.bridge.getAllowedUserIds();
   }
 
+  setOwnerClaimHandler(fn: ((userId: number, chatId: number) => void) | null): void {
+    this.bridge.setOwnerClaimHandler(fn);
+  }
+
   setFocusManager(fm: FocusManager): void {
     this.focusManager = fm;
   }

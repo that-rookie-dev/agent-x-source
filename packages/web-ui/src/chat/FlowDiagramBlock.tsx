@@ -49,7 +49,9 @@ export function FlowDiagramBlock({ code }: { code: string }) {
           alignItems: 'stretch',
         }}>
           {diagram.steps.map((step, i) => {
-            const label = formatPipelineStepLabel(step.label);
+            const label = formatPipelineStepLabel(
+              typeof step.label === 'string' ? step.label : String((step.label as { label?: unknown })?.label ?? ''),
+            );
             const divider = i > 0 ? `1px solid ${colors.border.subtle}` : undefined;
             return (
               <Box key={i} sx={{ display: 'contents' }}>

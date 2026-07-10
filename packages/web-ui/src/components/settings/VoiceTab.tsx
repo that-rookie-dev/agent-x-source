@@ -47,10 +47,12 @@ interface VoiceTabProps {
 }
 
 function voiceSysStatus(
+  loading: boolean,
   kitReady: boolean,
   deploying: boolean,
   capabilities: VoiceCapabilityStatus | null,
 ): { label: string; state: 'active' | 'idle' | 'warn' } {
+  if (loading) return { label: 'CHECKING', state: 'idle' };
   if (deploying) return { label: 'CALIBRATING', state: 'warn' };
   if (!capabilities?.pythonAvailable || !capabilities?.ffmpegAvailable) return { label: 'OFFLINE', state: 'idle' };
   if (!kitReady) return { label: 'SETUP', state: 'warn' };
@@ -74,7 +76,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState<VoiceSetupStatus | null>(null);
   const [previewing, setPreviewing] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [ttsDownloading, setTtsDownloading] = useState(false);
@@ -88,7 +90,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const wakePhraseLabel = voiceCtx?.wakePhrase ?? 'your agent';
 
   const kitReady = isVoiceKitReady(installedAssetIds, capabilities);
-  const sysStatus = voiceSysStatus(kitReady, deploying, capabilities);
+  const sysStatus = voiceSysStatus(loading, kitReady, deploying, capabilities);
   const ttsEngine = voiceConfig.tts?.engine ?? 'kokoro';
   const styleTtsReady = isStyleTts2Installed(installedAssetIds);
 
@@ -289,7 +291,9 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
         icon={<MicIcon sx={{ fontSize: 16 }} />}
         title="Voice Comms"
         subtitle="Local speech only — nothing leaves your machine"
-        action={(
+        action={loading ? (
+          <CircularProgress size={12} sx={{ color: settingsTheme.text.dim }} />
+        ) : (
           <Box sx={settingsStatusBadgeSx(sysStatus.state)}>
             {sysStatus.label}
           </Box>
@@ -307,24 +311,30 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       )}
 
       <SettingsCard
-        title={kitReady ? 'Voice systems' : 'Deployment protocol'}
+        title={loading ? 'Voice systems' : kitReady ? 'Voice systems' : 'Deployment protocol'}
         accent={settingsTheme.accent.hud}
-        active={!kitReady}
+        active={!loading && !kitReady}
       >
-        {kitReady ? (
-          <Box sx={{ mb: 1.5 }}>
-            {[
-              { label: 'STT', value: voiceConfig.stt?.modelId ?? 'faster-whisper-base.en' },
-              { label: 'TTS', value: `${ttsEngine === 'styletts2' ? 'StyleTTS 2' : 'Kokoro'} · ${voiceConfig.tts?.voiceId ?? 'kokoro-af'}` },
-              { label: 'VAD', value: 'silero-vad' },
-            ].map((row) => (
-              <Box key={row.label} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
-                <Box sx={settingsStatusBadgeSx('active')}>{row.label}</Box>
-                <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
-                  {row.value}
-                </Typography>
-              </Box>
-            ))}
+        {loading ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.5 }}>
+            <CircularProgress size={12} sx={{ color: settingsTheme.text.dim }} />
+            <Typography sx={{ ...settingsMonoSx, fontSize: '0.62rem', color: settingsTheme.text.dim }}>
+              Checking status…
+            </Typography>
+          </Box>
+        ) : kitReady ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+            <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
+              STT · {voiceConfig.stt?.modelId ?? 'faster-whisper-base.en'}
+            </Typography>
+            <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: settingsTheme.text.dim }}>·</Typography>
+            <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
+              TTS · {ttsEngine === 'styletts2' ? 'StyleTTS 2' : 'Kokoro'}
+            </Typography>
+            <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: settingsTheme.text.dim }}>·</Typography>
+            <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
+              VAD · silero
+            </Typography>
           </Box>
         ) : (
           <Box sx={{ mb: 2 }}>
@@ -337,7 +347,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
         )}
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-          {!kitReady && (
+          {!loading && !kitReady && (
             <Button
               onClick={() => { void deployKit(); }}
               disabled={deploying || Boolean(missingRuntime)}
@@ -348,7 +358,12 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
             </Button>
           )}
           <Button onClick={() => { void load(); }} disabled={loading} sx={settingsBtnGhostSx}>
-            {loading ? 'Refreshing…' : 'Refresh'}
+            {loading ? (
+              <>
+                <CircularProgress size={12} sx={{ mr: 0.75, color: settingsTheme.text.dim }} />
+                Checking…
+              </>
+            ) : 'Refresh'}
           </Button>
         </Box>
 
@@ -407,13 +422,15 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
           </Box>
         )}
 
-        {kitReady && (
+        {kitReady && !loading && (
           <Typography sx={{ ...settingsHelperSx, mt: 1.5, color: settingsTheme.accent.signal }}>
             All systems deployed — enable wake word or use the footer mic to talk.
           </Typography>
         )}
       </SettingsCard>
 
+      {!loading && (
+      <>
       <SettingsCard title="Voice module" subtitle="Master switch for all voice features in the app">
         <FormControlLabel
           control={(
@@ -619,6 +636,8 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
           />
         </SettingsCard>
       </Collapse>
+      </>
+      )}
     </Box>
   );
 }
