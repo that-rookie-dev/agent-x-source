@@ -7,7 +7,10 @@ export interface TelegramChannelConfig {
   outbound?: boolean;
   botToken?: string;
   chatId?: string;
-  /** Comma-separated Telegram user IDs allowed to use inbound bot (required in server mode). */
+  /**
+   * Telegram user ID allowed for inbound (set automatically on Verify).
+   * Stored as a single ID string; only this user may message the bot.
+   */
   allowedUserIds?: string;
 }
 
@@ -59,4 +62,6 @@ export interface TelegramDiscoveredChat {
   id: string;
   title: string;
   type: string;
+  /** Telegram user id of the message sender (set for private chats during discover). */
+  userId?: string;
 }

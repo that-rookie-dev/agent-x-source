@@ -1,4 +1,5 @@
 import type { ProviderId } from '@agentx/shared';
+import { PROVIDERS } from '@agentx/shared';
 import type { ProviderInterface } from './ProviderInterface.js';
 import { OpenAIProvider } from './OpenAIProvider.js';
 import { AnthropicProvider } from './AnthropicProvider.js';
@@ -8,21 +9,27 @@ import { LMStudioProvider } from './LMStudioProvider.js';
 import { OpenAICompatibleProvider } from './OpenAICompatibleProvider.js';
 
 function getDefaultBaseUrl(providerId: ProviderId): string {
+  const fromCatalog = PROVIDERS[providerId]?.defaultBaseUrl;
+  if (fromCatalog) return fromCatalog;
   switch (providerId) {
     case 'moonshot': return 'https://api.moonshot.ai/v1';
-    case 'deepseek': return 'https://api.deepseek.com';
+    case 'deepseek': return 'https://api.deepseek.com/v1';
     case 'groq': return 'https://api.groq.com/openai/v1';
     case 'mistral': return 'https://api.mistral.ai/v1';
     case 'together': return 'https://api.together.xyz/v1';
     case 'xai': return 'https://api.x.ai/v1';
     case 'fireworks': return 'https://api.fireworks.ai/inference/v1';
     case 'perplexity': return 'https://api.perplexity.ai';
-    case 'cohere': return 'https://api.cohere.com/compatibility/v1';
+    case 'cohere': return 'https://api.cohere.ai/compatibility/v1';
     case 'commandcode': return 'https://api.commandcode.ai/provider/v1';
     case 'opencode': return 'https://opencode.ai/zen/go/v1';
     case 'opencode-zen': return 'https://opencode.ai/zen/v1';
     default: return 'https://api.openai.com/v1';
   }
+}
+
+function providerDisplayName(providerId: ProviderId): string {
+  return PROVIDERS[providerId]?.name ?? providerId;
 }
 
 export class ProviderFactory {
@@ -57,7 +64,12 @@ export class ProviderFactory {
       case 'commandcode':
       case 'opencode':
       case 'opencode-zen':
-        return new OpenAICompatibleProvider(providerId, 'OpenCode Zen', apiKey ?? '', baseUrl ?? getDefaultBaseUrl(providerId));
+        return new OpenAICompatibleProvider(
+          providerId,
+          providerDisplayName(providerId),
+          apiKey ?? '',
+          baseUrl ?? getDefaultBaseUrl(providerId),
+        );
       case 'azure':
         if (!apiKey) throw new Error('Azure OpenAI requires an API key');
         if (!baseUrl) throw new Error('Azure OpenAI requires a base URL (resource endpoint)');

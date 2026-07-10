@@ -62,6 +62,14 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     this.bridge.attach(agent);
   }
 
+  setAllowedUserIds(ids: number[]): void {
+    this.bridge.setAllowedUserIds(ids);
+  }
+
+  getAllowedUserIds(): number[] {
+    return this.bridge.getAllowedUserIds();
+  }
+
   setFocusManager(fm: FocusManager): void {
     this.focusManager = fm;
   }

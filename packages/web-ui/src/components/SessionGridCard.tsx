@@ -277,16 +277,6 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
             </Typography>
           </Box>
         )}
-        {(session.totalCostUsd ?? 0) > 0 && (
-          <Typography sx={{
-            fontSize: '0.48rem',
-            color: colors.accent.green,
-            fontFamily: "'JetBrains Mono', monospace",
-            flexShrink: 0,
-          }}>
-            ${session.totalCostUsd!.toFixed(3)}
-          </Typography>
-        )}
       </Box>
       </Box>
     </Box>

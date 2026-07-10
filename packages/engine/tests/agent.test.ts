@@ -34,7 +34,6 @@ const {
     const addTokenUsage = vi.fn((input: number, output?: number) => { return addUsage(input + (output ?? 0)); });
     const setTotal = vi.fn((t: number) => { total = t; });
     const setUsed = vi.fn();
-    const setPricing = vi.fn();
     const reset = vi.fn();
     return {
       addUsage,
@@ -42,7 +41,6 @@ const {
       addTokenUsage,
       setTotal,
       setUsed,
-      setPricing,
       reset,
       get tokensUsed() { return used; },
       get tokensTotal() { return total; },

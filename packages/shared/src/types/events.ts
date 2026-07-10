@@ -157,7 +157,7 @@ export type EngineEvent =
   | { type: 'decomposition_fallback'; task: string }
   | { type: 'reflection_complete'; result: Record<string, unknown> }
   | { type: 'decision_made'; messageClass: string; executionPath: string; confidence: number; reasoning: string }
-  | { type: 'token_usage'; totalTokens: number; contextWindow: number; turnTokens?: number; costUsd?: number; inputTokens?: number; outputTokens?: number; inputPrice?: number; outputPrice?: number; reservedTokens?: number; streamingTokens?: number; estimated?: boolean }
+  | { type: 'token_usage'; totalTokens: number; contextWindow: number; turnTokens?: number; costUsd?: number; inputTokens?: number; outputTokens?: number; reservedTokens?: number; streamingTokens?: number; estimated?: boolean }
   | { type: 'reasoning_delta'; content: string }
   | { type: 'agent_switched'; agent: { id: string; name: string; mode: string; color?: string } }
   | { type: 'context_warning'; currentTokens: number; threshold: number; percentage: number }

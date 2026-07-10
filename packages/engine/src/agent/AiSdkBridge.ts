@@ -6,7 +6,6 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAzure } from '@ai-sdk/azure';
 import { getLogger } from '@agentx/shared';
 import { createGroq } from '@ai-sdk/groq';
-import { createCohere } from '@ai-sdk/cohere';
 import { createMistral } from '@ai-sdk/mistral';
 import { createXai } from '@ai-sdk/xai';
 import { createPerplexity } from '@ai-sdk/perplexity';
@@ -32,7 +31,7 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
   mistral: 'https://api.mistral.ai/v1',
   xai: 'https://api.x.ai/v1',
   perplexity: 'https://api.perplexity.ai',
-  cohere: 'https://api.cohere.com/compatibility/v1',
+  cohere: 'https://api.cohere.ai/compatibility/v1',
 };
 
 export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string): LanguageModel {
@@ -74,11 +73,6 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       const groq = createGroq({ apiKey, ...(baseURL ? { baseURL } : {}) });
       return groq(modelId);
     }
-    case 'cohere':
-    case 'commandcode': {
-      const cohere = createCohere({ apiKey, ...(baseURL ? { baseURL } : {}) });
-      return cohere(modelId);
-    }
     case 'mistral': {
       const mistral = createMistral({ apiKey, ...(baseURL ? { baseURL } : {}) });
       return mistral(modelId);
@@ -91,7 +85,8 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       const perplexity = createPerplexity({ apiKey, ...(baseURL ? { baseURL } : {}) });
       return perplexity(modelId);
     }
-    // All remaining providers are OpenAI-compatible
+    // OpenAI-compatible gateways (must use documented base URLs — never native vendor SDKs)
+    case 'cohere':
     case 'ollama':
     case 'lmstudio':
     case 'deepseek':
@@ -100,6 +95,7 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
     case 'fireworks':
     case 'opencode':
     case 'opencode-zen':
+    case 'commandcode':
     default: {
       const resolvedUrl = baseURL || DEFAULT_BASE_URLS[activeProvider] || 'https://api.openai.com/v1';
       const compat = createOpenAICompatible({

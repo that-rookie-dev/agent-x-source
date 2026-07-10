@@ -50,7 +50,6 @@ export interface UIMessage extends ChatMessage {
   plan?: string[];
   attachments?: { name: string }[];
   turnTokens?: number;
-  turnCostUsd?: number;
   voiceTimings?: {
     sttMs: number;
     thinkingMs: number;

@@ -206,8 +206,8 @@ const BUILTIN_PLUGINS: PluginHubEntry[] = [
       },
       allowedUserIds: {
         type: 'string',
-        label: 'Allowed User IDs (comma-separated)',
-        description: 'Restrict bot access to specific Telegram user IDs. Leave empty for open access.',
+        label: 'Linked owner user ID',
+        description: 'Set automatically when you verify the bot after messaging it privately. Only this Telegram user can talk to the bot.',
         required: false,
       },
     },

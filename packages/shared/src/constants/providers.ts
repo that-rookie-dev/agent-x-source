@@ -23,6 +23,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     type: 'cloud',
     apiKeyRequired: true,
     baseUrlConfigurable: false,
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
   },
   ollama: {
     id: 'ollama',
@@ -54,7 +55,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     type: 'cloud',
     apiKeyRequired: true,
     baseUrlConfigurable: true,
-    defaultBaseUrl: 'https://api.deepseek.com',
+    defaultBaseUrl: 'https://api.deepseek.com/v1',
   },
   groq: {
     id: 'groq',
@@ -118,7 +119,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     type: 'cloud',
     apiKeyRequired: true,
     baseUrlConfigurable: true,
-    defaultBaseUrl: 'https://api.cohere.com/compatibility/v1',
+    defaultBaseUrl: 'https://api.cohere.ai/compatibility/v1',
   },
   commandcode: {
     id: 'commandcode',

@@ -259,13 +259,6 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
       {/* Starfield canvas background */}
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.6 }} />
 
-      {/* Grid overlay */}
-      <Box sx={{
-        position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 1,
-        backgroundImage: `linear-gradient(${alphaColor(colors.accent.blue, 0.03)} 1px, transparent 1px), linear-gradient(90deg, ${alphaColor(colors.accent.blue, 0.03)} 1px, transparent 1px)`,
-        backgroundSize: '40px 40px',
-      }} />
-
       {/* Content */}
       <Box sx={{ position: 'relative', zIndex: 3, p: 4, display: 'flex', flexDirection: 'column', gap: 3, minHeight: 420, justifyContent: 'center' }}>
         {/* Header */}

@@ -23,6 +23,8 @@ export interface TelegramDiscoverResult {
   /** True when bot token + chat were written to config (survives restart). */
   saved?: boolean;
   chatId?: string;
+  /** Telegram user id linked as the sole inbound owner. */
+  allowedUserId?: string;
 }
 
 /** Validate bot token and list recent chats from getUpdates (user must message the bot first). */
@@ -44,21 +46,36 @@ export async function discoverTelegramBot(
     const updatesJson = await updatesRes.json() as {
       ok?: boolean;
       description?: string;
-      result?: Array<{ message?: { chat?: { id?: number; title?: string; first_name?: string; username?: string; type?: string } } }>;
+      result?: Array<{
+        message?: {
+          from?: { id?: number; first_name?: string; username?: string };
+          chat?: { id?: number; title?: string; first_name?: string; username?: string; type?: string };
+        };
+      }>;
     };
     if (!updatesJson.ok) {
       return { ok: false, error: updatesJson.description ?? 'Failed to fetch updates' };
     }
 
     const chatMap = new Map<string, TelegramDiscoveredChat>();
+    let allowedUserId: string | undefined;
+
+    // Walk updates in order; the latest private DM wins as the linked owner.
     for (const update of updatesJson.result ?? []) {
-      const chat = update.message?.chat;
+      const msg = update.message;
+      const chat = msg?.chat;
+      const fromId = msg?.from?.id;
       if (!chat?.id) continue;
       const id = String(chat.id);
+      const type = chat.type ?? 'unknown';
       const title = chat.title
         ?? chat.first_name
         ?? (chat.username ? `@${chat.username}` : `Chat ${id}`);
-      chatMap.set(id, { id, title, type: chat.type ?? 'unknown' });
+      const userId = fromId != null ? String(fromId) : undefined;
+      chatMap.set(id, { id, title, type, userId });
+      if (type === 'private' && userId) {
+        allowedUserId = userId;
+      }
     }
 
     for (const knownId of options?.knownChatIds ?? []) {
@@ -67,11 +84,24 @@ export async function discoverTelegramBot(
       chatMap.set(id, { id, title: `Chat ${id}`, type: 'known' });
     }
 
+    const chats = [...chatMap.values()].sort((a, b) => {
+      if (a.type === 'private' && b.type !== 'private') return -1;
+      if (b.type === 'private' && a.type !== 'private') return 1;
+      return 0;
+    });
+
+    // Private DM chat id equals the user id — use that when updates only had known hints.
+    if (!allowedUserId) {
+      const privateChat = chats.find((c) => c.type === 'private' && c.userId);
+      allowedUserId = privateChat?.userId;
+    }
+
     return {
       ok: true,
       botUsername: meJson.result?.username,
       botName: meJson.result?.first_name,
-      chats: [...chatMap.values()],
+      chats,
+      allowedUserId,
     };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Telegram API request failed' };
@@ -180,6 +210,7 @@ export function isTelegramInboundReady(ch?: NotificationChannelsConfig['telegram
 export function persistTelegramSettings(patch: {
   botToken?: string;
   chatId?: string;
+  allowedUserIds?: string;
   enabled?: boolean;
 }): AgentXConfig {
   const eng = getEngine();
@@ -269,10 +300,14 @@ async function startTelegramInbound(token: string): Promise<void> {
       ? runningEntry.plugin
       : null;
     if (runningPlugin) {
+      const tgAllowed = parseAllowedUserIds(cfg.channels?.telegram?.allowedUserIds)
+        .map((id) => Number(id))
+        .filter((n) => Number.isFinite(n));
+      runningPlugin.setAllowedUserIds(tgAllowed);
       runningPlugin.setAgent(channelAgent);
       runningPlugin.setChatIdPersister((id) => saveTelegramChatId(id));
       runningPlugin.rewirePermissionHandling();
-      getLogger().info('CHANNELS', 'Telegram inbound bridge already running — rewired agent');
+      getLogger().info('CHANNELS', 'Telegram inbound bridge already running — rewired agent + allowlist');
       return;
     }
   }
@@ -290,7 +325,8 @@ async function startTelegramInbound(token: string): Promise<void> {
     .filter((n) => Number.isFinite(n));
   const tgPlugin = existingEntry?.plugin instanceof TelegramChannelPlugin
     ? existingEntry.plugin
-    : eng.gateway.registerTelegram(token, tgAllowed.length > 0 ? tgAllowed : undefined);
+    : eng.gateway.registerTelegram(token, tgAllowed);
+  tgPlugin.setAllowedUserIds(tgAllowed);
   tgPlugin.setAgent(channelAgent);
   tgPlugin.setChatIdPersister((id) => saveTelegramChatId(id));
   await eng.gateway.startChannel('telegram');
@@ -434,6 +470,17 @@ export async function applyChannelsConfig(cfg?: AgentXConfig): Promise<void> {
 
   // Telegram
   const telegramToken = resolveTelegramBotToken(ch?.telegram);
+  // Backfill owner allowlist from private chat id when older configs only saved chatId.
+  if (
+    ch?.telegram?.chatId
+    && !parseAllowedUserIds(ch.telegram.allowedUserIds).length
+    && !String(ch.telegram.chatId).startsWith('-')
+  ) {
+    const backfilled = persistTelegramSettings({
+      allowedUserIds: String(ch.telegram.chatId).trim(),
+    });
+    ch.telegram = backfilled.channels?.telegram;
+  }
   if (isTelegramInboundReady(ch?.telegram) && telegramToken) {
     try {
       lastTelegramStartError = null;
@@ -545,10 +592,15 @@ export async function sendTelegramGreeting(overrides?: {
 export async function saveVerifiedTelegram(
   botToken: string,
   chatId: string,
+  allowedUserId: string,
 ): Promise<TelegramDiscoverResult> {
   const token = botToken.trim();
   const id = chatId.trim();
+  const ownerId = allowedUserId.trim();
   if (!token || !id) return { ok: false, error: 'Bot token and chat id are required' };
+  if (!ownerId) {
+    return { ok: false, error: 'Open Telegram, send a private message to your bot, then verify again.' };
+  }
 
   const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`, { signal: AbortSignal.timeout(12000) });
   const meJson = await meRes.json() as { ok?: boolean; description?: string; result?: { username?: string; first_name?: string } };
@@ -556,7 +608,12 @@ export async function saveVerifiedTelegram(
     return { ok: false, error: meJson.description ?? 'Invalid bot token' };
   }
 
-  const savedCfg = persistTelegramSettings({ botToken: token, chatId: id, enabled: true });
+  const savedCfg = persistTelegramSettings({
+    botToken: token,
+    chatId: id,
+    allowedUserIds: ownerId,
+    enabled: true,
+  });
   try {
     await applyChannelsConfig(savedCfg);
   } catch (e) {
@@ -567,8 +624,9 @@ export async function saveVerifiedTelegram(
     ok: true,
     saved: true,
     chatId: id,
+    allowedUserId: ownerId,
     botUsername: meJson.result?.username,
     botName: meJson.result?.first_name,
-    chats: [{ id, title: `Chat ${id}`, type: 'known' }],
+    chats: [{ id, title: `Chat ${id}`, type: 'private', userId: ownerId }],
   };
 }
