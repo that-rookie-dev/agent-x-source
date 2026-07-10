@@ -334,16 +334,8 @@ export function SetupWizard() {
       try {
         const ok = await runProvision('embedded-postgres');
         if (!ok) {
-          try {
-            const r = await settings.db.update({ backend: 'embedded-postgres' });
-            if (!r.ok) { showError('Embedded PostgreSQL failed to start'); return; }
-            clearError();
-            setStorageProvisioned(true);
-            setProvisionedBackend('embedded-postgres');
-          } catch (e) {
-            showError(e instanceof Error ? e.message : 'Embedded PostgreSQL failed');
-            return;
-          }
+          // Cancelled or failed — stay on storage step (do not advance).
+          return;
         }
         next();
       } catch { /* runProvision surfaces errors */ }
@@ -381,14 +373,8 @@ export function SetupWizard() {
     try {
       const ok = await runProvision('postgres', connStr);
       if (!ok) {
-        try {
-          await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } });
-          setStorageProvisioned(true);
-          setProvisionedBackend('postgres');
-        } catch {
-          showError('Failed to save cloud PostgreSQL configuration');
-          return;
-        }
+        // Cancelled or failed — stay on storage/relay step (do not advance to provider).
+        return;
       }
       next();
     } catch { /* runProvision surfaces errors */ }
@@ -1148,7 +1134,11 @@ export function SetupWizard() {
 
       <Dialog
         open={provisionModalOpen}
-        onClose={discardProvision}
+        onClose={(_event, reason) => {
+          // Don't abort an in-flight provision via backdrop/Escape — require explicit Cancel.
+          if (provisioning && (reason === 'backdropClick' || reason === 'escapeKeyDown')) return;
+          discardProvision();
+        }}
         PaperProps={{ sx: { bgcolor: wizardTheme.panel, border: `1px solid ${wizardTheme.panelBorder}`, borderRadius: 1, maxWidth: 'min(92vw, 900px)', width: 'min(92vw, 900px)' } }}
       >
         <DialogTitle sx={{ fontFamily: WIZARD_MONO, fontSize: '0.85rem', fontWeight: 700, pb: 1, display: 'flex', alignItems: 'center', gap: 1.5 }}>
