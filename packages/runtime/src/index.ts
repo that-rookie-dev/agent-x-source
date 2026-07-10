@@ -18,6 +18,7 @@ export {
   resolveDefaultServerDataDir,
   readConfiguredPostgresPreference,
   isEmbeddedPostgresConnectionString,
+  shouldStartEmbeddedPostgresAtBoot,
   DEFAULT_PORT,
   DEFAULT_EMBEDDED_PG_PORT,
 } from './agent-runtime.js';

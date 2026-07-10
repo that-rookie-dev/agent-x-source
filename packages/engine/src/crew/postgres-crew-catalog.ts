@@ -138,41 +138,54 @@ export async function seedPgCatalog(
   let inserted = 0;
   let updated = 0;
   const total = manifest.crews.length;
+  const BATCH_SIZE = 40;
+  const COLS_PER_ROW = 15;
   const report = (processed: number) => {
     onProgress?.(processed, total);
     markCatalogSeedProgress(processed, total);
   };
   const client = await pool.connect();
+  let processed = 0;
   try {
     await client.query('BEGIN');
-    let processed = 0;
-    for (const crew of manifest.crews) {
-      const existing = await client.query(`SELECT id FROM crew_catalog WHERE id = $1`, [crew.id]);
-      await client.query(
-        `INSERT INTO crew_catalog (
-          id, callsign, name, title, category_id, category_label, description,
-          system_prompt, tone, expertise, traits, tools, tags, search_text, hub_revision, active, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,TRUE,NOW())
-        ON CONFLICT(id) DO UPDATE SET
-          callsign=EXCLUDED.callsign, name=EXCLUDED.name, title=EXCLUDED.title,
-          category_id=EXCLUDED.category_id, category_label=EXCLUDED.category_label,
-          description=EXCLUDED.description, system_prompt=EXCLUDED.system_prompt,
-          tone=EXCLUDED.tone, expertise=EXCLUDED.expertise, traits=EXCLUDED.traits,
-          tools=EXCLUDED.tools, tags=EXCLUDED.tags, search_text=EXCLUDED.search_text,
-          hub_revision=EXCLUDED.hub_revision, active=TRUE, updated_at=NOW()`,
-        [
+    for (let offset = 0; offset < manifest.crews.length; offset += BATCH_SIZE) {
+      const batch = manifest.crews.slice(offset, offset + BATCH_SIZE);
+      const values: string[] = [];
+      const params: unknown[] = [];
+      let paramIdx = 1;
+      for (const crew of batch) {
+        const placeholders = Array.from({ length: COLS_PER_ROW }, () => `$${paramIdx++}`).join(',');
+        values.push(`(${placeholders})`);
+        params.push(
           crew.id, crew.callsign, crew.name, crew.title, crew.categoryId, crew.categoryLabel,
           crew.description, crew.systemPrompt, crew.tone,
           JSON.stringify(crew.expertise), JSON.stringify(crew.traits),
           crew.tools ? JSON.stringify(crew.tools) : null,
           crew.tags ? JSON.stringify(crew.tags) : null,
           crew.searchText, manifest.revision,
-        ],
+        );
+      }
+      const result = await client.query(
+        `INSERT INTO crew_catalog (
+          id, callsign, name, title, category_id, category_label, description,
+          system_prompt, tone, expertise, traits, tools, tags, search_text, hub_revision, active, updated_at
+        ) VALUES ${values.join(',')}
+        ON CONFLICT(id) DO UPDATE SET
+          callsign=EXCLUDED.callsign, name=EXCLUDED.name, title=EXCLUDED.title,
+          category_id=EXCLUDED.category_id, category_label=EXCLUDED.category_label,
+          description=EXCLUDED.description, system_prompt=EXCLUDED.system_prompt,
+          tone=EXCLUDED.tone, expertise=EXCLUDED.expertise, traits=EXCLUDED.traits,
+          tools=EXCLUDED.tools, tags=EXCLUDED.tags, search_text=EXCLUDED.search_text,
+          hub_revision=EXCLUDED.hub_revision, active=TRUE, updated_at=NOW()
+        RETURNING (xmax = 0) AS inserted`,
+        params,
       );
-      if (existing.rowCount) updated += 1;
-      else inserted += 1;
-      processed += 1;
-      if (processed % 25 === 0 || processed === total) report(processed);
+      for (const row of result.rows) {
+        if (row['inserted'] === true) inserted += 1;
+        else updated += 1;
+      }
+      processed += batch.length;
+      report(processed);
     }
     await client.query(
       `INSERT INTO app_metadata (key, value) VALUES ('crew_catalog_revision', $1)
@@ -184,7 +197,11 @@ export async function seedPgCatalog(
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
-    throw e;
+    const batchHint = total > 0
+      ? ` (failed near crew ${Math.min(processed + 1, total)}/${total})`
+      : '';
+    const message = e instanceof Error ? e.message : String(e);
+    throw new Error(`Crew Hub catalog seed failed${batchHint}: ${message}`);
   } finally {
     client.release();
   }
@@ -239,8 +256,8 @@ export function createPgCrewCatalogStore(
       return (res.rows[0]?.['c'] as number) ?? 0;
     },
 
-    seedCatalog(manifest: CatalogManifest) {
-      return seedPgCatalog(pool, manifest);
+    seedCatalog(manifest: CatalogManifest, onProgress?: (processed: number, total: number) => void) {
+      return seedPgCatalog(pool, manifest, onProgress);
     },
 
     async ensureCatalogSeeded(): Promise<void> {

@@ -52,6 +52,20 @@ async function pgMissingTables(pool: PgPool): Promise<string[]> {
   return missing;
 }
 
+export interface CriticalTablesAudit {
+  present: string[];
+  missing: string[];
+  total: number;
+}
+
+/** Report which core Agent-X tables already exist (used during cloud provision UX). */
+export async function auditCriticalTables(pool: PgPool): Promise<CriticalTablesAudit> {
+  const missing = await pgMissingTables(pool);
+  const missingSet = new Set(missing);
+  const present = CRITICAL_DB_TABLES.filter((t) => !missingSet.has(t));
+  return { present: [...present], missing, total: CRITICAL_DB_TABLES.length };
+}
+
 async function repairPgStore(store: unknown): Promise<boolean> {
   const pool = getPgPool(store);
   if (!pool) return false;
@@ -88,14 +102,28 @@ async function catalogNeedsSync(store: NonNullable<ReturnType<typeof getCrewCata
  * Recreate dropped tables (idempotent DDL) and re-seed crew_catalog from the bundled manifest.
  * Safe to call on every startup, catalog API request, and periodic health pass.
  */
-export async function healDatabaseStore(store: unknown): Promise<DatabaseHealResult> {
+export async function healDatabaseStore(
+  store: unknown,
+  onProgress?: (line: string) => void,
+): Promise<DatabaseHealResult> {
   const manifest = loadCatalogManifest();
   const expectedCatalogCount = manifest?.crews.length ?? 0;
   let schemaRepaired = false;
   let catalogSynced = false;
   let catalogCount = 0;
 
+  const missing = await (async () => {
+    const pool = getPgPool(store);
+    if (!pool) return [] as string[];
+    return pgMissingTables(pool);
+  })();
+  if (missing.length === 0) {
+    onProgress?.(`Core tables present (${CRITICAL_DB_TABLES.length}/${CRITICAL_DB_TABLES.length}).`);
+  } else {
+    onProgress?.(`Core tables: ${CRITICAL_DB_TABLES.length - missing.length}/${CRITICAL_DB_TABLES.length} present — repairing ${missing.join(', ')}…`);
+  }
   schemaRepaired = await repairPgStore(store) || schemaRepaired;
+  if (schemaRepaired) onProgress?.('Schema repair complete.');
 
   const catalogStore = getCrewCatalogStoreFromEngine(store);
   if (!catalogStore) {
@@ -103,19 +131,34 @@ export async function healDatabaseStore(store: unknown): Promise<DatabaseHealRes
   }
 
   const syncCatalog = async (): Promise<void> => {
-    await syncCatalogFromManifest(catalogStore);
+    await syncCatalogFromManifest(catalogStore, onProgress);
     catalogSynced = true;
     catalogCount = await catalogStore.getCatalogCount();
   };
 
   try {
     if (await catalogNeedsSync(catalogStore)) {
+      const [storedRev, seededCount] = await Promise.all([
+        catalogStore.getCatalogRevision(),
+        catalogStore.getCatalogCount(),
+      ]);
+      const expectedRev = manifest?.revision ?? 0;
+      onProgress?.(
+        `Crew Hub catalog needs sync (stored r${storedRev} → r${expectedRev}, ${seededCount}/${expectedCatalogCount} crews)…`,
+      );
       await syncCatalog();
     } else {
-      catalogCount = await catalogStore.getCatalogCount();
+      const [catalogCountResult, storedRev] = await Promise.all([
+        catalogStore.getCatalogCount(),
+        catalogStore.getCatalogRevision(),
+      ]);
+      catalogCount = catalogCountResult;
+      const expectedRev = manifest?.revision ?? storedRev;
+      onProgress?.(`Crew Hub catalog current (revision ${storedRev}, ${catalogCount} crews, expected r${expectedRev}).`);
     }
   } catch (e) {
     if (!isMissingTableError(e)) throw e;
+    onProgress?.('Crew catalog tables missing — repairing schema and re-seeding…');
     getLogger().warn('DB_HEAL', 'crew_catalog query failed — repairing schema and re-seeding');
     const repaired = await repairPgStore(store);
     schemaRepaired = schemaRepaired || repaired;

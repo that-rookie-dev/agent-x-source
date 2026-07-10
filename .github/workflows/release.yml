@@ -43,7 +43,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
 
-  build-webui:
+  # Single compile of shared TS packages + web-ui (reused by all platform pack jobs).
+  build-core:
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
@@ -57,10 +58,10 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - name: Build web-ui
+      - name: Build core packages
         run: |
           pnpm install --frozen-lockfile || pnpm install
-          pnpm --filter @agentx/shared --filter @agentx/web-ui run build
+          pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/web-neuron --filter @agentx/runtime --filter @agentx/web-ui run build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -68,8 +69,82 @@ jobs:
           path: packages/web-ui/dist
           retention-days: 1
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-deps
+          path: |
+            packages/shared/dist
+            packages/engine/dist
+            packages/web-api/dist
+            packages/web-neuron/dist
+            packages/runtime/dist
+          retention-days: 1
+
+  # Build pgvector + AGE once per platform arch; desktop + server jobs download instead of recompiling.
+  build-pg-extensions:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-x64
+          - os: ubuntu-24.04-arm
+            suffix: linux-arm64
+          - os: macos-14
+            suffix: darwin-arm64
+          - os: macos-15-intel
+            suffix: darwin-x64
+          - os: windows-latest
+            suffix: windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential curl bison flex
+
+      - name: Install Windows C++ build tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install visualstudio2022buildtools -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --wait"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile || pnpm install
+        env:
+          npm_config_msvs_version: ${{ runner.os == 'Windows' && '2022' || '' }}
+
+      - name: Cache PostgreSQL extension build
+        uses: actions/cache@v4
+        with:
+          path: packages/runtime/.pgvector-build
+          key: pg-ext-artifact-${{ matrix.suffix }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs', 'packages/runtime/scripts/setup-age.mjs') }}
+          restore-keys: |
+            pg-ext-artifact-${{ matrix.suffix }}-
+
+      - name: Build PostgreSQL extensions
+        shell: bash
+        run: pnpm --filter @agentx/runtime run setup:extensions
+        timeout-minutes: 60
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pg-ext-${{ matrix.suffix }}
+          path: packages/runtime/.pgvector-build
+          retention-days: 1
+
   build-macos:
-    needs: [check-version, build-webui]
+    needs: [check-version, build-core, build-pg-extensions]
     if: needs.check-version.outputs.should_release == 'true'
     strategy:
       fail-fast: false
@@ -79,11 +154,12 @@ jobs:
           - arch: arm64
             suffix: mac-arm64
             dist_script: dist:mac:arm64
-            build_extensions: true
+            pg_ext: darwin-arm64
           - arch: x64
             suffix: mac-x64
             dist_script: dist:mac:x64
-            build_extensions: false
+            # pgvector on macos-14 arm64 is a universal binary — covers Intel desktop leg too.
+            pg_ext: darwin-arm64
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -106,30 +182,20 @@ jobs:
       - name: Install embedded PostgreSQL platform binaries (macOS)
         run: pnpm install --filter @agentx/desktop --config.supportedArchitectures.cpu=arm64,x64 --config.supportedArchitectures.os=darwin
 
-      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/runtime run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-deps
 
       - uses: actions/download-artifact@v4
         with:
           name: webui-dist
           path: packages/web-ui/dist
 
-      # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
-      # pgvector is compiled as a universal binary (both arm64 + x86_64) on macOS,
-      # so a single setup:extensions run on arm64 covers both matrix legs (x64 restores cache).
-      - name: Cache PostgreSQL extension build
-        uses: actions/cache@v4
+      - uses: actions/download-artifact@v4
         with:
+          name: pg-ext-${{ matrix.pg_ext }}
           path: packages/runtime/.pgvector-build
-          key: pg-ext-${{ runner.os }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs', 'packages/runtime/scripts/setup-age.mjs') }}
-          restore-keys: |
-            pg-ext-${{ runner.os }}-
 
-      - name: Build PostgreSQL extensions
-        if: matrix.build_extensions
-        run: pnpm --filter @agentx/runtime run setup:extensions
-        timeout-minutes: 60
-
-      # --- Desktop ---
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
 
@@ -182,7 +248,7 @@ jobs:
             packages/desktop/release/latest-mac.yml
 
   build-linux:
-    needs: [check-version, build-webui]
+    needs: [check-version, build-core, build-pg-extensions]
     if: needs.check-version.outputs.should_release == 'true'
     strategy:
       fail-fast: false
@@ -192,10 +258,12 @@ jobs:
             arch: x64
             suffix: linux-x64
             desktop_targets: "deb AppImage"
+            pg_ext: linux-x64
           - os: ubuntu-24.04-arm
             arch: arm64
             suffix: linux-arm64
             desktop_targets: "AppImage"
+            pg_ext: linux-arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -211,27 +279,20 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install
 
-      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/runtime run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-deps
 
       - uses: actions/download-artifact@v4
         with:
           name: webui-dist
           path: packages/web-ui/dist
 
-      # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
-      - name: Cache PostgreSQL extension build
-        uses: actions/cache@v4
+      - uses: actions/download-artifact@v4
         with:
+          name: pg-ext-${{ matrix.pg_ext }}
           path: packages/runtime/.pgvector-build
-          key: pg-ext-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs', 'packages/runtime/scripts/setup-age.mjs') }}
-          restore-keys: |
-            pg-ext-${{ runner.os }}-${{ matrix.arch }}-
 
-      - name: Build PostgreSQL extensions
-        run: pnpm --filter @agentx/runtime run setup:extensions
-        timeout-minutes: 60
-
-      # --- Desktop ---
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
 
@@ -283,7 +344,7 @@ jobs:
             packages/desktop/release/latest-linux.yml
 
   build-windows:
-    needs: [check-version, build-webui]
+    needs: [check-version, build-core, build-pg-extensions]
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: windows-latest
     steps:
@@ -305,30 +366,20 @@ jobs:
         env:
           npm_config_msvs_version: 2022
 
-      - run: pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/runtime run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-deps
 
       - uses: actions/download-artifact@v4
         with:
           name: webui-dist
           path: packages/web-ui/dist
 
-      # --- Build PostgreSQL extensions (pgvector + Apache AGE) for embedded PostgreSQL ---
-      - name: Cache PostgreSQL extension build
-        uses: actions/cache@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: |
-            packages/runtime/.pgvector-build
-            packages/desktop/.pgvector-build/pg-install
-          key: pg-ext-win-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs', 'packages/desktop/package.json') }}
-          restore-keys: |
-            pg-ext-win-
+          name: pg-ext-windows-x64
+          path: packages/runtime/.pgvector-build
 
-      - name: Build PostgreSQL extensions
-        shell: bash
-        run: pnpm --filter @agentx/runtime run setup:extensions
-        timeout-minutes: 60
-
-      # --- Desktop ---
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
 
@@ -378,7 +429,7 @@ jobs:
             packages/desktop/release/latest.yml
 
   build-server:
-    needs: [check-version, build-webui]
+    needs: [check-version, build-core, build-pg-extensions]
     if: needs.check-version.outputs.should_release == 'true'
     strategy:
       fail-fast: false
@@ -386,18 +437,16 @@ jobs:
         include:
           - os: ubuntu-latest
             suffix: linux-x64
+            pg_ext: linux-x64
           - os: ubuntu-24.04-arm
             suffix: linux-arm64
+            pg_ext: linux-arm64
           - os: macos-14
             suffix: darwin-arm64
-          # Native Intel Mac runner — pack + smoke without Rosetta/cross-arch.
+            pg_ext: darwin-arm64
           - os: macos-15-intel
             suffix: darwin-x64
-          # Windows server pack/smoke temporarily disabled: GHA runners are Administrators,
-          # so embedded Postgres refuses to start, and non-admin smoke user creation hits
-          # InvalidPasswordException / policy limits. Desktop Windows (build-windows) remains.
-          # - os: windows-latest
-          #   suffix: win-x64
+            pg_ext: darwin-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -415,31 +464,28 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install
 
-      - name: Cache PostgreSQL extension build
-        uses: actions/cache@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: |
-            packages/runtime/.pgvector-build
-            packages/desktop/.pgvector-build/pg-install
-          # Include runner.arch so darwin-x64 on macos-15-intel never restores an ARM cache
-          # left over from when that suffix was packed on macos-14 (arm64).
-          key: pg-ext-srv-${{ matrix.suffix }}-${{ runner.arch }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs') }}
-          restore-keys: |
-            pg-ext-srv-${{ matrix.suffix }}-${{ runner.arch }}-
-
-      - name: Build PostgreSQL extensions for server pack
-        shell: bash
-        run: pnpm --filter @agentx/runtime run setup:extensions
-        timeout-minutes: 45
+          name: core-deps
 
       - uses: actions/download-artifact@v4
         with:
           name: webui-dist
           path: packages/web-ui/dist
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: pg-ext-${{ matrix.pg_ext }}
+          path: packages/runtime/.pgvector-build
+
       - name: Build server tarball
         shell: bash
-        run: pnpm --filter @agentx/server run pack:server
+        run: |
+          pnpm --filter @agentx/runtime run setup:python
+          pnpm --filter @agentx/runtime run setup:ffmpeg
+          pnpm --filter @agentx/runtime run setup:voice-bundled
+          pnpm --filter @agentx/server run build
+          node packages/server/scripts/pack-server.mjs
         env:
           AGENTX_PACK_SUFFIX: ${{ matrix.suffix }}
         timeout-minutes: 90
@@ -457,8 +503,6 @@ jobs:
           name: agentx-server-${{ matrix.suffix }}
           path: packages/server/release/agentx-*-server.tar.gz
 
-  # Publish only after desktop builds AND server smoke tests succeed
-  # (linux-x64/arm64 + darwin-arm64/x64; Windows server pack deferred).
   publish:
     needs: [check-version, build-macos, build-linux, build-windows, build-server]
     if: |

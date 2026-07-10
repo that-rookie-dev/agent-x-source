@@ -16,6 +16,9 @@ export function getConfigDir(): string {
 }
 
 export function getDataDir(): string {
+  if (process.env['AGENTX_DATA_DIR']) {
+    return process.env['AGENTX_DATA_DIR'];
+  }
   return process.env['XDG_DATA_HOME']
     ? join(process.env['XDG_DATA_HOME'], 'agentx')
     : join(HOME, '.local', 'share', 'agentx');

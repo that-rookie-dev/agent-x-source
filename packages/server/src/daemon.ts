@@ -20,13 +20,17 @@ async function main(): Promise<void> {
 
   const options = createServerRuntimeOptions();
   runtime = new AgentRuntime(options);
-  // setupPythonEnv + staged startup logs happen inside runtime.start()
+  // setupPythonEnv + staged startup (may defer embedded PG on first-run) happen inside runtime.start()
   await runtime.start();
 
   const port = runtime.getPort();
   const url = resolvePublicUrl(port, process.env['AGENTX_PUBLIC_URL']);
+  const host = process.env['AGENTX_HOST'] ?? '127.0.0.1';
   console.log(`Agent-X server running at ${url}`);
-  console.log(`Listening on ${process.env['AGENTX_HOST'] ?? '127.0.0.1'}:${port}`);
+  console.log(`Listening on ${host}:${port}`);
+  if (process.env['AGENTX_EMBEDDED_PG_ENABLED'] !== '1' && !process.env['AGENTX_POSTGRES_CONNECTION_STRING']) {
+    console.log('[startup] Database not provisioned yet — open the Web UI setup wizard to choose Embedded or Cloud PostgreSQL');
+  }
 }
 
 process.on('SIGTERM', () => { void shutdown('SIGTERM'); });

@@ -164,7 +164,7 @@ function resolveConfigDirForDataDir(dataDir: string): string {
 
 /**
  * Read the user's chosen Postgres backend from plugin-registry.json (written by setup wizard).
- * Returns null when unset / first-run (caller should start embedded PG).
+ * Returns null when unset / first-run (caller may defer embedded PG until wizard confirms).
  */
 export function readConfiguredPostgresPreference(dataDir: string): {
   backend: 'embedded-postgres' | 'postgres' | null;
@@ -281,12 +281,54 @@ async function initializeVaultKey(dataDir: string, vaultStorage?: VaultStorageAd
   process.env['AGENTX_VAULT_KEY'] = key;
 }
 
+/**
+ * Decide whether boot should start embedded Postgres immediately.
+ *
+ * Migration-safe rules:
+ * - Explicit AGENTX_POSTGRES_CONNECTION_STRING → use it (no start here; caller applies env)
+ * - Cloud preference saved → skip embedded
+ * - Embedded preference OR existing brain_db → start (returning users / mid-upgrade)
+ * - No preference and no brain_db → defer until wizard provision (true first run)
+ * - AGENTX_FORCE_EMBEDDED_PG=1 → always start (ops/smoke override)
+ */
+export function shouldStartEmbeddedPostgresAtBoot(dataDir: string): {
+  action: 'use-env' | 'use-cloud' | 'start-embedded' | 'defer';
+  connectionString?: string;
+} {
+  if (process.env['AGENTX_POSTGRES_CONNECTION_STRING']) {
+    return {
+      action: 'use-env',
+      connectionString: process.env['AGENTX_POSTGRES_CONNECTION_STRING'],
+    };
+  }
+  if (process.env['AGENTX_FORCE_EMBEDDED_PG'] === '1') {
+    return { action: 'start-embedded' };
+  }
+
+  const pref = readConfiguredPostgresPreference(dataDir);
+  if (pref.backend === 'postgres' && pref.connectionString) {
+    return { action: 'use-cloud', connectionString: pref.connectionString };
+  }
+  if (pref.backend === 'embedded-postgres') {
+    return { action: 'start-embedded' };
+  }
+
+  const brainDb = join(dataDir, 'brain_db');
+  // Returning installs (or interrupted first-run that already initdb'd) keep prior behavior.
+  if (existsSync(brainDb)) {
+    return { action: 'start-embedded' };
+  }
+
+  return { action: 'defer' };
+}
+
 export class AgentRuntime {
   private readonly options: AgentRuntimeOptions;
   private readonly port: number;
   private readonly embeddedPgPort: number;
   private pgManager: PostgresLifecycleManager | null = null;
   private httpServer: Server | null = null;
+  private pgStartPromise: Promise<string> | null = null;
 
   constructor(options: AgentRuntimeOptions) {
     this.options = options;
@@ -302,26 +344,74 @@ export class AgentRuntime {
     return this.httpServer;
   }
 
+  isEmbeddedPostgresRunning(): boolean {
+    return this.pgManager !== null
+      || process.env['AGENTX_EMBEDDED_PG_ENABLED'] === '1';
+  }
+
   setupPythonEnv(): void {
     setupPythonEnv(resolveRuntimePaths(this.options), this.options.isDev);
   }
 
+  /**
+   * Boot-time Postgres resolution. May defer on true first-run so the wizard can choose.
+   */
   async startEmbeddedPostgres(): Promise<string | null> {
-    // Explicit env always wins (CI smoke, operators, overrides).
-    if (process.env['AGENTX_POSTGRES_CONNECTION_STRING']) {
+    const decision = shouldStartEmbeddedPostgresAtBoot(this.options.getDataDir());
+
+    if (decision.action === 'use-env' && decision.connectionString) {
       console.log('[startup] Using AGENTX_POSTGRES_CONNECTION_STRING from environment');
+      return decision.connectionString;
+    }
+
+    if (decision.action === 'use-cloud' && decision.connectionString) {
+      console.log('[startup] Cloud/remote PostgreSQL configured — skipping embedded Postgres');
+      process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = decision.connectionString;
+      process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '0';
+      return decision.connectionString;
+    }
+
+    if (decision.action === 'defer') {
+      console.log('[startup] First-run: deferring PostgreSQL until setup wizard confirms storage');
+      process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '0';
+      delete process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
+      return null;
+    }
+
+    return this.ensureEmbeddedPostgresStarted();
+  }
+
+  /**
+   * Start embedded Postgres on demand (wizard provision). Idempotent / concurrent-safe.
+   */
+  async ensureEmbeddedPostgresStarted(onLog?: (msg: string) => void): Promise<string> {
+    if (process.env['AGENTX_POSTGRES_CONNECTION_STRING']
+      && process.env['AGENTX_EMBEDDED_PG_ENABLED'] === '1'
+      && this.pgManager) {
+      onLog?.('Embedded PostgreSQL already running');
       return process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
     }
 
-    const pref = readConfiguredPostgresPreference(this.options.getDataDir());
-    if (pref.backend === 'postgres' && pref.connectionString) {
-      console.log('[startup] Cloud/remote PostgreSQL configured — skipping embedded Postgres');
-      process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = pref.connectionString;
-      process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '0';
-      return pref.connectionString;
+    if (this.pgStartPromise) {
+      onLog?.('Embedded PostgreSQL start already in progress…');
+      return this.pgStartPromise;
     }
 
-    console.log('[startup] Starting embedded PostgreSQL…');
+    this.pgStartPromise = this.startEmbeddedPostgresInternal(onLog);
+    try {
+      return await this.pgStartPromise;
+    } finally {
+      this.pgStartPromise = null;
+    }
+  }
+
+  private async startEmbeddedPostgresInternal(onLog?: (msg: string) => void): Promise<string> {
+    const emit = (msg: string) => {
+      console.log(`[PG] ${msg}`);
+      onLog?.(msg);
+    };
+
+    emit('Starting embedded PostgreSQL…');
     const dataDir = join(this.options.getDataDir(), 'brain_db');
     this.pgManager = new PostgresLifecycleManager({
       dataDir,
@@ -330,14 +420,19 @@ export class AgentRuntime {
       user: 'agentx',
       password: 'agentx',
       database: 'agentx',
-      onLog: (msg) => console.log(`[PG] ${msg}`),
-      onError: (msg) => console.error(`[PG] ${msg}`),
+      onLog: emit,
+      onError: (msg) => {
+        const text = typeof msg === 'string' ? msg : String(msg);
+        console.error(`[PG] ${text}`);
+        onLog?.(text);
+      },
     });
 
     try {
       const connectionString = await this.pgManager.start();
       process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = connectionString;
       process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '1';
+      emit('Embedded PostgreSQL ready');
       return connectionString;
     } catch (e) {
       this.pgManager = null;
@@ -350,6 +445,9 @@ export class AgentRuntime {
       await this.pgManager.stop();
       this.pgManager = null;
     }
+    if (process.env['AGENTX_EMBEDDED_PG_ENABLED'] === '1') {
+      delete process.env['AGENTX_EMBEDDED_PG_ENABLED'];
+    }
   }
 
   async start(): Promise<void> {
@@ -361,6 +459,9 @@ export class AgentRuntime {
     console.log('[startup] 1/4 Preparing runtime environment…');
     ensureLoginShellPath();
     this.setupPythonEnv();
+
+    // Keep engine/shared getDataDir() aligned with runtime (desktop userData vs server XDG).
+    process.env['AGENTX_DATA_DIR'] = this.options.getDataDir();
 
     console.log('[startup] 2/4 Resolving database…');
     await this.startEmbeddedPostgres();
@@ -394,7 +495,18 @@ export class AgentRuntime {
     process.env['NODE_ENV'] = 'production';
 
     console.log(`[startup] 4/4 Starting web API on ${listenHost}:${this.port}…`);
+    // Register before import — web-api auto-listens on module load.
+    const pgController = {
+      start: (onLog?: (line: string) => void) => this.ensureEmbeddedPostgresStarted(onLog),
+      stop: () => this.stopEmbeddedPostgres(),
+      isRunning: () => this.isEmbeddedPostgresRunning(),
+    };
+    (globalThis as { __agentxEmbeddedPgController?: typeof pgController }).__agentxEmbeddedPgController = pgController;
+
     const mod = await import(pathToFileURL(paths.webApiPath).href);
+    if (typeof mod.registerEmbeddedPostgresController === 'function') {
+      mod.registerEmbeddedPostgresController(pgController);
+    }
     if (mod.server) this.httpServer = mod.server as Server;
     console.log(`[startup] Agent-X is active at http://127.0.0.1:${this.port}`);
   }
@@ -442,6 +554,7 @@ export function createServerRuntimeOptions(params?: {
     ?? join(process.env['XDG_DATA_HOME'] || join(process.env['HOME'] || '', '.local', 'share'), 'agentx');
 
   process.env['AGENTX_INSTALL_DIR'] = installDir;
+  process.env['AGENTX_DATA_DIR'] = dataDir;
   ensureEmbeddedPgLibPath(installDir);
 
   const envPort = process.env['AGENTX_PORT'] ? Number(process.env['AGENTX_PORT']) : NaN;

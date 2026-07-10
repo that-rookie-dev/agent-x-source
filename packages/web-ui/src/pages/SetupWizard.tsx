@@ -3,7 +3,7 @@
  *
  * NOT the MCP integration connect flow: that is `components/integrations/setup-wizards/ProviderSetupWizard`.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -35,7 +35,7 @@ import PublicIcon from '@mui/icons-material/Public';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BoltIcon from '@mui/icons-material/Bolt';
 import HomeIcon from '@mui/icons-material/Home';
-import { providers as provApi, models as modelsApi, config, settings } from '../api';
+import { providers as provApi, models as modelsApi, config, settings, type DbConnectionTestResult, type DbExtensionCheck } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { LocalModelStep } from '../components/LocalModelStep';
@@ -165,7 +165,19 @@ export function SetupWizard() {
   const [pgPassword, setPgPassword] = useState('');
   const [pgDatabase, setPgDatabase] = useState('agentx');
   const [pgTesting, setPgTesting] = useState(false);
-  const [pgTestResult, setPgTestResult] = useState<{ ok: boolean; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean } | null>(null);
+  const [pgTestResult, setPgTestResult] = useState<DbConnectionTestResult | null>(null);
+  const [storageProvisioned, setStorageProvisioned] = useState(false);
+  const [provisionedBackend, setProvisionedBackend] = useState<'embedded-postgres' | 'postgres' | null>(null);
+  const [showStorageBackWarning, setShowStorageBackWarning] = useState(false);
+  const [provisioning, setProvisioning] = useState(false);
+  const [provisionModalOpen, setProvisionModalOpen] = useState(false);
+  const [provisionModalMode, setProvisionModalMode] = useState<'embedded-postgres' | 'postgres' | null>(null);
+  const [embeddedProvisionLogs, setEmbeddedProvisionLogs] = useState<string[]>([]);
+  const [cloudProvisionLogs, setCloudProvisionLogs] = useState<string[]>([]);
+  const embeddedLogRef = useRef<HTMLDivElement | null>(null);
+  const cloudLogRef = useRef<HTMLDivElement | null>(null);
+  const provisionAbortRef = useRef<AbortController | null>(null);
+  const [provisionFailed, setProvisionFailed] = useState(false);
   const [sshEnabled, setSshEnabled] = useState(false);
   const [sshHost, setSshHost] = useState('');
   const [sshPort, setSshPort] = useState('22');
@@ -179,6 +191,8 @@ export function SetupWizard() {
   const [activeDownloads, setActiveDownloads] = useState<ActiveDownload[]>([]);
   const [voiceCalibrated, setVoiceCalibrated] = useState(false);
   const [telegramLinked, setTelegramLinked] = useState(false);
+
+  const resetPgTest = () => setPgTestResult(null);
 
   const buildPgConnStr = () => {
     if (pgMode === 'string') return pgConnStr;
@@ -201,6 +215,10 @@ export function SetupWizard() {
       setSelectedModel(saved.selectedModel);
       setCallsign(saved.callsign || '');
       setSelectedBackend('embedded-postgres');
+      if (saved.step >= 1) {
+        setStorageProvisioned(true);
+        setProvisionedBackend(saved.selectedBackend === 'postgres' ? 'postgres' : 'embedded-postgres');
+      }
       if (saved.selectedLocalModel) setSelectedLocalModel(saved.selectedLocalModel);
       if (saved.skipLocalModel) setSkipLocalModel(saved.skipLocalModel);
       if (saved.voiceCalibrated) setVoiceCalibrated(saved.voiceCalibrated);
@@ -254,31 +272,162 @@ export function SetupWizard() {
     setStep((s) => moveStep(s, -1));
   };
 
+  useEffect(() => {
+    const el = provisionModalMode === 'embedded-postgres' ? embeddedLogRef.current : cloudLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [embeddedProvisionLogs, cloudProvisionLogs, provisionModalMode]);
+
+  const runProvision = async (
+    backend: 'embedded-postgres' | 'postgres',
+    connectionString?: string,
+  ): Promise<boolean> => {
+    setProvisionModalMode(backend);
+    setProvisionModalOpen(true);
+    setProvisioning(true);
+    setProvisionFailed(false);
+    if (backend === 'embedded-postgres') {
+      setEmbeddedProvisionLogs([]);
+    } else {
+      setCloudProvisionLogs([]);
+    }
+    const appendLog = (line: string) => {
+      if (backend === 'embedded-postgres') {
+        setEmbeddedProvisionLogs((prev) => [...prev, line]);
+      } else {
+        setCloudProvisionLogs((prev) => [...prev, line]);
+      }
+    };
+    const ac = new AbortController();
+    provisionAbortRef.current = ac;
+    try {
+      const r = await settings.db.provision(
+        {
+          backend,
+          ...(connectionString ? { postgres: { connectionString } } : {}),
+        },
+        (ev) => {
+          if (ev.type === 'log' && ev.line) appendLog(ev.line);
+          if (ev.type === 'error' && ev.error) appendLog(`[ERROR] ${ev.error}`);
+        },
+        { signal: ac.signal },
+      );
+      if (!r.ok) {
+        if (r.error === 'Cancelled') {
+          appendLog('Cancelled — you can change settings and try again.');
+          return false;
+        }
+        appendLog(`[ERROR] ${r.error || 'Storage provisioning failed'}`);
+        setProvisionFailed(true);
+        showError(r.error || 'Storage provisioning failed');
+        return false;
+      }
+      setStorageProvisioned(true);
+      setProvisionedBackend(backend);
+      setProvisionModalOpen(false);
+      setProvisionModalMode(null);
+      return true;
+    } catch (e) {
+      if (ac.signal.aborted) {
+        appendLog('Cancelled — you can change settings and try again.');
+        return false;
+      }
+      const msg = e instanceof Error ? e.message : 'Storage provisioning failed';
+      appendLog(`[ERROR] ${msg}`);
+      setProvisionFailed(true);
+      showError(msg);
+      return false;
+    } finally {
+      setProvisioning(false);
+      provisionAbortRef.current = null;
+    }
+  };
+
+  const discardProvision = () => {
+    if (provisioning) {
+      provisionAbortRef.current?.abort();
+    }
+    setProvisioning(false);
+    setProvisionFailed(false);
+    setProvisionModalOpen(false);
+    setProvisionModalMode(null);
+  };
+
   const handleStorageNext = async () => {
     if (selectedBackend === 'embedded-postgres') {
-      setLoading(true);
       try {
-        const r = await settings.db.update({ backend: 'embedded-postgres' });
-        if (!r.ok) { showError('Embedded PostgreSQL failed to start'); setLoading(false); return; }
+        const ok = await runProvision('embedded-postgres');
+        if (!ok) {
+          try {
+            const r = await settings.db.update({ backend: 'embedded-postgres' });
+            if (!r.ok) { showError('Embedded PostgreSQL failed to start'); return; }
+            clearError();
+            setStorageProvisioned(true);
+            setProvisionedBackend('embedded-postgres');
+          } catch (e) {
+            showError(e instanceof Error ? e.message : 'Embedded PostgreSQL failed');
+            return;
+          }
+        }
         next();
-      } catch (e) { showError(e instanceof Error ? e.message : 'Embedded PostgreSQL failed'); setLoading(false); return; }
-      finally { setLoading(false); }
+      } catch { /* runProvision surfaces errors */ }
     } else {
       setShowRelayConfig(true);
     }
   };
 
-  const handleRelayNext = async () => {
+  const handleRelayTest = async () => {
     const connStr = buildPgConnStr();
     if (!connStr) { showError('Enter connection details'); return; }
-    setPgTesting(true); setPgTestResult(null);
+    setPgTesting(true);
+    resetPgTest();
+    clearError();
     try {
       const r = await settings.db.testAdvanced(connStr, buildSshConfig());
       setPgTestResult(r);
-      if (!r.ok) { showError(r.error || 'Connection test failed'); setPgTesting(false); return; }
-    } catch (e) { showError(e instanceof Error ? e.message : 'Connection test failed'); setPgTesting(false); return; }
-    setPgTesting(false);
-    next();
+      if (!r.ok) showError(r.error || 'Connection test failed');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Connection test failed';
+      setPgTestResult({ ok: false, error: msg });
+      showError(msg);
+    } finally {
+      setPgTesting(false);
+    }
+  };
+
+  const handleRelaySave = async () => {
+    const connStr = buildPgConnStr();
+    if (!connStr) { showError('Enter connection details'); return; }
+    if (!pgTestResult?.ok) {
+      showError('Test the connection before continuing');
+      return;
+    }
+    try {
+      const ok = await runProvision('postgres', connStr);
+      if (!ok) {
+        try {
+          await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } });
+          setStorageProvisioned(true);
+          setProvisionedBackend('postgres');
+        } catch {
+          showError('Failed to save cloud PostgreSQL configuration');
+          return;
+        }
+      }
+      next();
+    } catch { /* runProvision surfaces errors */ }
+  };
+
+  const handleBackFromProvider = () => {
+    if (storageProvisioned) {
+      setShowStorageBackWarning(true);
+      return;
+    }
+    back();
+  };
+
+  const confirmBackToStorage = () => {
+    setShowStorageBackWarning(false);
+    back();
   };
 
   const handleBackToCredentials = () => { setShowBackWarning(true); };
@@ -367,7 +516,9 @@ export function SetupWizard() {
   const handleComplete = async () => {
     setLoading(true);
     try {
-      const connStr = buildPgConnStr();
+      // Cloud connection is already persisted on the storage step via provision.
+      // Keep a best-effort re-save for interrupted wizard resumes.
+      const connStr = selectedBackend === 'postgres' ? buildPgConnStr() : '';
       if (connStr) {
         try { await settings.db.update({ backend: 'postgres', postgres: { connectionString: connStr } }); } catch {}
       }
@@ -418,7 +569,7 @@ export function SetupWizard() {
               />
 
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                <Box onClick={() => { setSelectedBackend('embedded-postgres'); setPgTestResult(null); }}
+                <Box onClick={() => { setSelectedBackend('embedded-postgres'); resetPgTest(); }}
                   sx={{ ...wizardSelectCardSx(selectedBackend === 'embedded-postgres'), gap: 0 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
                     <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.04), display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
@@ -446,7 +597,7 @@ export function SetupWizard() {
                   </Box>
                 </Box>
 
-                <Box onClick={() => { setSelectedBackend('postgres'); setPgTestResult(null); }}
+                <Box onClick={() => { setSelectedBackend('postgres'); resetPgTest(); }}
                   sx={{ ...wizardSelectCardSx(selectedBackend === 'postgres'), gap: 0 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
                     <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.04), display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
@@ -490,11 +641,11 @@ export function SetupWizard() {
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
                   <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: wizardTheme.text }}>Connection</Typography>
                   <Box sx={{ display: 'flex', gap: 0.5 }}>
-                    <Button size="small" onClick={() => setPgMode('string')}
+                    <Button size="small" onClick={() => { setPgMode('string'); resetPgTest(); }}
                       sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, textTransform: 'none', py: 0, px: 1, color: pgMode === 'string' ? wizardTheme.text : wizardTheme.textDim, minWidth: 0, borderBottom: pgMode === 'string' ? `1px solid ${wizardTheme.text}` : '1px solid transparent', borderRadius: 0 }}>
                       Connection String
                     </Button>
-                    <Button size="small" onClick={() => setPgMode('fields')}
+                    <Button size="small" onClick={() => { setPgMode('fields'); resetPgTest(); }}
                       sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, textTransform: 'none', py: 0, px: 1, color: pgMode === 'fields' ? wizardTheme.text : wizardTheme.textDim, minWidth: 0, borderBottom: pgMode === 'fields' ? `1px solid ${wizardTheme.text}` : '1px solid transparent', borderRadius: 0 }}>
                       Individual Fields
                     </Button>
@@ -503,19 +654,19 @@ export function SetupWizard() {
 
                 {pgMode === 'string' ? (
                   <TextField size="small" fullWidth placeholder="postgresql://user:pass@host:5432/agentx?sslmode=no-verify"
-                    value={pgConnStr} onChange={e => { setPgConnStr(e.target.value); setPgTestResult(null); }} sx={{ mb: 2 }}
+                    value={pgConnStr} onChange={e => { setPgConnStr(e.target.value); resetPgTest(); }} sx={{ mb: 2 }}
                     slotProps={wizardTextFieldSlotProps} />
                 ) : (
                   <>
                     <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, mb: 1 }}>
-                      <TextField size="small" label="Host" value={pgHost} onChange={e => setPgHost(e.target.value)} placeholder="db.example.com" slotProps={wizardTextFieldSlotProps} />
-                      <TextField size="small" label="Port" value={pgPort} onChange={e => setPgPort(e.target.value)} placeholder="5432" slotProps={wizardTextFieldSlotProps} />
-                      <TextField size="small" label="User" value={pgUser} onChange={e => setPgUser(e.target.value)} placeholder="agentx" slotProps={wizardTextFieldSlotProps} />
-                      <TextField size="small" label="Password" type="password" value={pgPassword} onChange={e => setPgPassword(e.target.value)} placeholder="••••" slotProps={wizardTextFieldSlotProps} />
-                      <TextField size="small" label="Database" value={pgDatabase} onChange={e => setPgDatabase(e.target.value)} sx={{ gridColumn: '1 / -1' }} placeholder="agentx" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="Host" value={pgHost} onChange={e => { setPgHost(e.target.value); resetPgTest(); }} placeholder="db.example.com" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="Port" value={pgPort} onChange={e => { setPgPort(e.target.value); resetPgTest(); }} placeholder="5432" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="User" value={pgUser} onChange={e => { setPgUser(e.target.value); resetPgTest(); }} placeholder="agentx" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="Password" type="password" value={pgPassword} onChange={e => { setPgPassword(e.target.value); resetPgTest(); }} placeholder="••••" slotProps={wizardTextFieldSlotProps} />
+                      <TextField size="small" label="Database" value={pgDatabase} onChange={e => { setPgDatabase(e.target.value); resetPgTest(); }} sx={{ gridColumn: '1 / -1' }} placeholder="agentx" slotProps={wizardTextFieldSlotProps} />
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                      <Box onClick={() => setPgSsl(!pgSsl)} sx={{ width: 14, height: 14, borderRadius: '3px', border: `1.5px solid ${pgSsl ? wizardTheme.text : wizardTheme.panelBorderStrong}`, bgcolor: pgSsl ? wizardTheme.text : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Box onClick={() => { setPgSsl(!pgSsl); resetPgTest(); }} sx={{ width: 14, height: 14, borderRadius: '3px', border: `1.5px solid ${pgSsl ? wizardTheme.text : wizardTheme.panelBorderStrong}`, bgcolor: pgSsl ? wizardTheme.text : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         {pgSsl && <Typography sx={{ fontSize: '0.5rem', color: wizardTheme.bg, fontWeight: 900 }}>✓</Typography>}
                       </Box>
                       <Typography sx={{ fontSize: '0.62rem', color: wizardTheme.textSecondary, fontFamily: WIZARD_MONO }}>SSL ({pgSsl ? 'no-verify' : 'off'})</Typography>
@@ -525,8 +676,8 @@ export function SetupWizard() {
 
                 {/* SSH Tunnel */}
                 <Box sx={{ pt: 1.5, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: sshEnabled ? 1.5 : 0, cursor: 'pointer' }} onClick={() => setSshEnabled(!sshEnabled)}>
-                    <Box onClick={e => { e.stopPropagation(); setSshEnabled(!sshEnabled); }} sx={{ width: 14, height: 14, borderRadius: '3px', border: `1.5px solid ${sshEnabled ? wizardTheme.text : wizardTheme.panelBorderStrong}`, bgcolor: sshEnabled ? wizardTheme.text : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: sshEnabled ? 1.5 : 0, cursor: 'pointer' }} onClick={() => { setSshEnabled(!sshEnabled); resetPgTest(); }}>
+                    <Box onClick={e => { e.stopPropagation(); setSshEnabled(!sshEnabled); resetPgTest(); }} sx={{ width: 14, height: 14, borderRadius: '3px', border: `1.5px solid ${sshEnabled ? wizardTheme.text : wizardTheme.panelBorderStrong}`, bgcolor: sshEnabled ? wizardTheme.text : 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {sshEnabled && <Typography sx={{ fontSize: '0.5rem', color: wizardTheme.bg, fontWeight: 900 }}>✓</Typography>}
                     </Box>
                     <Typography sx={{ fontSize: '0.62rem', color: wizardTheme.textSecondary, fontFamily: WIZARD_MONO }}>SSH Tunnel {sshEnabled ? '· bastion / jump host' : '(optional)'}</Typography>
@@ -568,18 +719,78 @@ export function SetupWizard() {
                 {pgTestResult && (
                   <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.02), border: `1px solid ${pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr}` }}>
                     <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr, fontWeight: 600 }}>
-                      {pgTestResult.ok ? 'RELAY ONLINE' : 'CONNECTION FAILED'}
+                      {pgTestResult.ok ? 'CONNECTION OK' : 'CONNECTION FAILED'}
                     </Typography>
                     <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.25 }}>
-                      {pgTestResult.ok ? `${pgTestResult.version || 'PostgreSQL'} · ${pgTestResult.tablesCreated ? `${pgTestResult.tablesCreated} tables created` : 'Schema verified'}` : pgTestResult.error}
+                      {pgTestResult.ok
+                        ? `${pgTestResult.version || 'PostgreSQL'} · ready to provision schema`
+                        : pgTestResult.error}
                     </Typography>
-                    {pgTestResult.ok && (
-                      <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: pgTestResult.ageAvailable ? wizardTheme.accentOk : wizardTheme.accentWarn, mt: 0.25 }}>
-                        {pgTestResult.ageAvailable ? 'Apache AGE: available' : `Apache AGE: unavailable${pgTestResult.ageError ? ` — ${pgTestResult.ageError}` : ''}`}
-                      </Typography>
+
+                    {(pgTestResult.checks?.length
+                      ? pgTestResult.checks
+                      : pgTestResult.ok
+                        ? [{
+                            id: 'age' as const,
+                            label: 'Apache AGE',
+                            status: (pgTestResult.ageAvailable ? 'ok' : 'warn') as DbExtensionCheck['status'],
+                            message: pgTestResult.ageAvailable
+                              ? 'Apache AGE graph extension is available.'
+                              : (pgTestResult.ageError ?? 'Apache AGE is not available on this server.'),
+                          }]
+                        : []
+                    ).map((check) => (
+                      <Box key={check.id} sx={{ mt: 1.25, pt: 1.25, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
+                        <Typography sx={{
+                          fontSize: '0.55rem',
+                          fontFamily: WIZARD_MONO,
+                          fontWeight: 700,
+                          color: check.status === 'ok' ? wizardTheme.accentOk : check.status === 'warn' ? wizardTheme.accentWarn : wizardTheme.accentErr,
+                        }}>
+                          {check.status === 'ok' ? '✓' : check.status === 'warn' ? '⚠' : '✕'} {check.label}
+                          {check.status === 'warn' ? ' (optional)' : check.status === 'fail' ? ' (required)' : ''}
+                        </Typography>
+                        <Typography sx={{ fontSize: '0.52rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.35, lineHeight: 1.5 }}>
+                          {check.message}
+                        </Typography>
+                        {check.remediation && (
+                          <Typography sx={{ fontSize: '0.5rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mt: 0.5, lineHeight: 1.55 }}>
+                            {check.remediation}
+                          </Typography>
+                        )}
+                      </Box>
+                    ))}
+
+                    {pgTestResult.ok && !neuralBrainSupported && (
+                      <Box sx={{ mt: 1.25, pt: 1.25, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
+                        <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, fontWeight: 700, color: wizardTheme.accentWarn }}>
+                          ⚠ Neural Core (this Mac)
+                        </Typography>
+                        <Typography sx={{ fontSize: '0.52rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.35, lineHeight: 1.5 }}>
+                          Requires 16 GB+ RAM. Agent-X will disable the neural brain on this machine; chat and crews still work.
+                        </Typography>
+                      </Box>
                     )}
                   </Box>
                 )}
+
+                <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button
+                    variant="outlined"
+                    onClick={handleRelayTest}
+                    disabled={pgTesting || provisioning}
+                    sx={{
+                      ...wizardPrimaryBtnSx,
+                      bgcolor: 'transparent',
+                      border: `1px solid ${wizardTheme.panelBorderStrong}`,
+                      color: wizardTheme.textSecondary,
+                      px: 2.5,
+                      '&:hover': { bgcolor: alphaColor(colors.ink, 0.04), borderColor: wizardTheme.textDim },
+                    }}
+                  >
+                    {pgTesting ? 'Testing…' : 'Test Connection'}
+                  </Button>
+                </Box>
               </Box>
             </Box>
           )}
@@ -852,7 +1063,7 @@ export function SetupWizard() {
       {/* Bottom Nav */}
       <Box sx={{ flexShrink: 0, borderTop: `1px solid ${wizardTheme.panelBorder}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
         <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 10 ? 'center' : 'space-between', alignItems: 'center' }}>
-          {step === 1 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 1 && <Button onClick={handleBackFromProvider} sx={wizardBackBtnSx}>Back</Button>}
           {step === 2 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 3 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 4 && <Button onClick={localModelSupported ? handleBackToCredentials : back} sx={wizardBackBtnSx}>Back</Button>}
@@ -862,14 +1073,23 @@ export function SetupWizard() {
           {step === 8 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 9 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 0 && !showRelayConfig && (
-            <Button variant="contained" onClick={handleStorageNext} disabled={loading} sx={{ ...wizardPrimaryBtnSx, px: 4 }}>
-              {loading ? 'Starting...' : selectedBackend === 'embedded-postgres' ? 'Start Embedded PostgreSQL →' : 'Configure Relay →'}
+            <Button variant="contained" onClick={handleStorageNext} disabled={loading || provisioning} sx={{ ...wizardPrimaryBtnSx, px: 4 }}>
+              {loading || provisioning
+                ? 'Starting...'
+                : selectedBackend === 'embedded-postgres' ? 'Start Embedded PostgreSQL →' : 'Configure Relay →'}
             </Button>
           )}
           {step === 0 && showRelayConfig && (
             <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-              <Button onClick={() => { setShowRelayConfig(false); }} sx={wizardBackBtnSx}>← Back</Button>
-              <Button variant="contained" onClick={handleRelayNext} disabled={pgTesting} sx={{ ...wizardPrimaryBtnSx, px: 4 }}>{pgTesting ? 'Testing...' : 'Connect & Next →'}</Button>
+              <Button onClick={() => { setShowRelayConfig(false); resetPgTest(); }} disabled={provisioning || pgTesting} sx={wizardBackBtnSx}>← Back</Button>
+              <Button
+                variant="contained"
+                onClick={handleRelaySave}
+                disabled={!pgTestResult?.ok || provisioning || pgTesting}
+                sx={{ ...wizardPrimaryBtnSx, px: 4 }}
+              >
+                {provisioning ? 'Saving…' : 'Save & Continue →'}
+              </Button>
             </Box>
           )}
           {step === 1 && <Button variant="contained" onClick={handleProviderNext} sx={wizardPrimaryBtnSx}>Next</Button>}
@@ -927,6 +1147,79 @@ export function SetupWizard() {
           {step === 10 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ ...wizardPrimaryBtnSx, px: 5, py: 1.2 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
         </Box>
       </Box>
+
+      <Dialog open={showStorageBackWarning} onClose={() => setShowStorageBackWarning(false)}
+        PaperProps={{ sx: { bgcolor: wizardTheme.panel, border: `1px solid ${wizardTheme.panelBorder}`, borderRadius: 1, maxWidth: 440 } }}>
+        <DialogTitle sx={{ fontFamily: WIZARD_MONO, fontSize: '0.85rem', fontWeight: 700, pb: 1 }}>RETURN TO STORAGE?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ color: wizardTheme.textSecondary, fontSize: '0.8rem', lineHeight: 1.6 }}>
+            Storage is already configured
+            {provisionedBackend === 'embedded-postgres' ? ' (embedded PostgreSQL)' : provisionedBackend === 'postgres' ? ' (cloud relay)' : ''}.
+            You can review or change your choice on the storage step.
+          </Typography>
+          {provisionedBackend === 'embedded-postgres' && (
+            <Typography variant="body2" sx={{ color: wizardTheme.textDim, fontSize: '0.75rem', lineHeight: 1.6, mt: 1.5 }}>
+              The local database keeps running in the background. It is not shut down when you go back.
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setShowStorageBackWarning(false)} sx={wizardSkipBtnSx}>Stay on Provider</Button>
+          <Button onClick={confirmBackToStorage} variant="contained" sx={wizardPrimaryBtnSx}>Go to Storage</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={provisionModalOpen}
+        onClose={discardProvision}
+        PaperProps={{ sx: { bgcolor: wizardTheme.panel, border: `1px solid ${wizardTheme.panelBorder}`, borderRadius: 1, maxWidth: 'min(92vw, 900px)', width: 'min(92vw, 900px)' } }}
+      >
+        <DialogTitle sx={{ fontFamily: WIZARD_MONO, fontSize: '0.85rem', fontWeight: 700, pb: 1, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          {provisioning && <CircularProgress size={14} sx={{ color: wizardTheme.textDim }} />}
+          {provisionModalMode === 'embedded-postgres'
+            ? 'STARTING EMBEDDED POSTGRESQL'
+            : 'CONNECTING CLOUD RELAY'}
+        </DialogTitle>
+        <DialogContent sx={{ pt: 0, px: 2.5 }}>
+          <Typography variant="body2" sx={{ color: wizardTheme.textDim, fontSize: '0.72rem', mb: 1.5, lineHeight: 1.5 }}>
+            {provisioning
+              ? (provisionModalMode === 'embedded-postgres'
+                ? 'Initializing the local database. First run can take up to a minute.'
+                : 'Saving configuration and applying schema migrations to your PostgreSQL instance. Crew Hub seeding can take several minutes over cloud networks.')
+              : provisionFailed
+                ? 'Setup did not complete. Review the logs below, then discard to try a different configuration.'
+                : 'Setup complete.'}
+          </Typography>
+          <Box
+            ref={provisionModalMode === 'embedded-postgres' ? embeddedLogRef : cloudLogRef}
+            sx={{
+              minHeight: 200,
+              maxHeight: 280,
+              overflowY: 'auto',
+              overflowX: 'auto',
+              px: 1.5,
+              py: 1.25,
+              bgcolor: alphaColor(colors.ink, 0.06),
+              border: `1px solid ${wizardTheme.panelBorder}`,
+              borderRadius: 0.5,
+              fontFamily: WIZARD_MONO,
+              fontSize: '0.68rem',
+              lineHeight: 1.55,
+              color: wizardTheme.textSecondary,
+              whiteSpace: 'pre',
+            }}
+          >
+            {(provisionModalMode === 'embedded-postgres' ? embeddedProvisionLogs : cloudProvisionLogs).length === 0
+              ? 'Waiting for setup logs…'
+              : (provisionModalMode === 'embedded-postgres' ? embeddedProvisionLogs : cloudProvisionLogs).join('\n')}
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 2.5, pb: 2, pt: 0 }}>
+          <Button onClick={discardProvision} sx={wizardSkipBtnSx}>
+            {provisioning ? 'Cancel setup' : 'Discard'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={showBackWarning} onClose={() => setShowBackWarning(false)}
         PaperProps={{ sx: { bgcolor: wizardTheme.panel, border: `1px solid ${wizardTheme.panelBorder}`, borderRadius: 1, maxWidth: 400 } }}>

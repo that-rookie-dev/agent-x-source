@@ -11,7 +11,10 @@ import {
   type CatalogSeedSnapshot,
 } from './catalog-seed-state.js';
 
-async function runCatalogSeed(store: CrewCatalogStore): Promise<void> {
+async function runCatalogSeed(
+  store: CrewCatalogStore,
+  onProgress?: (line: string) => void,
+): Promise<void> {
   const manifest = loadCatalogManifest();
   if (!manifest) {
     return;
@@ -23,25 +26,37 @@ async function runCatalogSeed(store: CrewCatalogStore): Promise<void> {
 
   if (!catalogNeedsManifestSync(seededCount, storedRev, manifest)) {
     markCatalogSeedReady(seededCount, manifest.revision);
+    onProgress?.(`Crew Hub seed data found (revision ${storedRev}, ${seededCount} crews).`);
     return;
   }
 
   markCatalogSeedStarted(expectedCount, manifest.revision);
+  onProgress?.(
+    `Crew Hub catalog needs sync (stored r${storedRev} → r${manifest.revision}, ${seededCount}/${expectedCount} crews) — seeding…`,
+  );
   try {
-    await store.seedCatalog(manifest);
+    const result = await store.seedCatalog(manifest, (processed, total) => {
+      const pct = total > 0 ? Math.round((processed / total) * 100) : 100;
+      onProgress?.(`Crew Hub catalog: ${processed}/${total} crews (${pct}%)`);
+    });
     const finalCount = await store.getCatalogCount();
     markCatalogSeedReady(finalCount, manifest.revision);
+    onProgress?.(`Crew Hub catalog ready — ${finalCount} crews (${result.inserted} new, ${result.updated} updated).`);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     markCatalogSeedError(message);
+    onProgress?.(`[ERROR] Crew Hub catalog seed failed: ${message}`);
     throw e;
   }
 }
 
 /** Start hub catalog seed in the background (idempotent). */
-export function startBackgroundCatalogSeed(store: CrewCatalogStore): void {
+export function startBackgroundCatalogSeed(
+  store: CrewCatalogStore,
+  onProgress?: (line: string) => void,
+): void {
   if (getCatalogSeedInflight()) return;
-  const promise = runCatalogSeed(store).catch(() => { /* surfaced via seed state */ });
+  const promise = runCatalogSeed(store, onProgress).catch(() => { /* surfaced via seed state */ });
   setCatalogSeedInflight(promise);
   void promise.finally(() => setCatalogSeedInflight(null));
 }

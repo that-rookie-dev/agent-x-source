@@ -35,7 +35,10 @@ import { syncCatalogFromManifest } from './catalog-sync.js';
 export interface CrewCatalogStore {
   getCatalogRevision(): Promise<number>;
   getCatalogCount(): Promise<number>;
-  seedCatalog(manifest: CatalogManifest): Promise<{ inserted: number; updated: number }>;
+  seedCatalog(
+    manifest: CatalogManifest,
+    onProgress?: (processed: number, total: number) => void,
+  ): Promise<{ inserted: number; updated: number }>;
   ensureCatalogSeeded(): Promise<void>;
   searchCatalog(query: string, limit: number): Promise<Array<CatalogEntry & { ftsRank: number }>>;
   listCategories(): Promise<CatalogCategorySummary[]>;
