@@ -68,6 +68,13 @@ assert_embedded_pg_bins() {
   test -f "${base}/postgres${ext}"
   test -f "${base}/initdb${ext}"
   test -f "${base}/pg_ctl${ext}"
+  # Reject truncated stubs that pass -f but break initdb at runtime.
+  local size
+  size="$(wc -c < "${base}/postgres${ext}" | tr -d ' ')"
+  if [ "${size:-0}" -lt 1000000 ]; then
+    echo "postgres${ext} looks truncated (${size} bytes) under ${base}" >&2
+    exit 1
+  fi
 }
 
 os="$(uname -s)"

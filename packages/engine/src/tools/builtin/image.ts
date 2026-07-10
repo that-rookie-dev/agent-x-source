@@ -131,7 +131,8 @@ export async function imageOcr(args: Record<string, unknown>, context: ToolExecu
   } catch {
     return {
       success: false,
-      output: 'Tesseract OCR is not installed. Install it:\n  macOS: brew install tesseract\n  Linux: sudo apt install tesseract-ocr\n  Windows: choco install tesseract',
+      output: 'Tesseract OCR is not installed (needed for image text extraction, not PDFs).\n'
+        + 'Install it:\n  macOS: brew install tesseract\n  Linux: sudo apt install tesseract-ocr\n  Windows: choco install tesseract',
       error: 'TOOL_MISSING',
     };
   }
