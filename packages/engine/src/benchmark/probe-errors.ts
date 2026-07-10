@@ -93,3 +93,69 @@ export function humanizeHttpError(status: number, body: string): Error {
   }
   return new Error(message);
 }
+
+/** HTTP statuses that mean the provider/API is unreachable, unauthorized, or unavailable — not a capability miss. */
+const ACCESS_OR_NETWORK_STATUS = new Set([401, 403, 404, 408, 429, 500, 502, 503, 504]);
+
+/**
+ * True when a thrown provider error is transport/auth/availability — the benchmark
+ * should abort rather than continue scoring remaining tests. Capability misses and
+ * bad model answers are not included (those usually return passed:false without throw).
+ */
+export function isProviderAccessOrNetworkError(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : String(error);
+  const lower = raw.toLowerCase();
+
+  // Capability / unsupported-feature failures must not abort the suite.
+  if (
+    lower.includes('does not support')
+    || lower.includes('unsupported')
+    || lower.includes('not support')
+    || lower.includes('not expose')
+  ) {
+    return false;
+  }
+
+  const statusMatch = raw.match(/\b([45]\d{2})\b/);
+  if (statusMatch) {
+    const status = Number(statusMatch[1]);
+    if (ACCESS_OR_NETWORK_STATUS.has(status)) return true;
+  }
+
+  return (
+    lower.includes('unauthorized')
+    || lower.includes('forbidden')
+    || lower.includes('invalid api key')
+    || lower.includes('authentication')
+    || lower.includes('model_not_found')
+    || lower.includes('model not found')
+    || lower.includes('rate limit')
+    || lower.includes('too many requests')
+    || lower.includes('overloaded')
+    || lower.includes('unavailable')
+    || lower.includes('econnrefused')
+    || lower.includes('econnreset')
+    || lower.includes('enotfound')
+    || lower.includes('etimedout')
+    || lower.includes('socket hang up')
+    || lower.includes('fetch failed')
+    || lower.includes('network')
+    || lower.includes('unable to reach')
+    || lower.includes('connection refused')
+    || lower.includes('certificate')
+    || lower.includes('ssl')
+    || lower.includes('no response body')
+  );
+}
+
+/** Short user-facing message for an aborted benchmark (no raw JSON / status prefixes). */
+export function formatBenchmarkAbortError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const statusMatch = raw.match(/\b([45]\d{2})\b/);
+  const status = statusMatch ? Number(statusMatch[1]) : undefined;
+  if (status !== undefined) {
+    const body = raw.replace(/^[\s\S]*?\b[45]\d{2}\b\s*[-:]?\s*/, '');
+    return humanizeHttpError(status, body).message;
+  }
+  return humanizeProbeError('API', error);
+}

@@ -209,6 +209,14 @@ export function buildStdioEnv(extra?: Record<string, string>): Record<string, st
   return merged;
 }
 
+export {
+  buildEmbeddedPostgresChildEnv,
+  envWithoutEmbeddedPostgresLibs,
+  filterEmbeddedPostgresLibPath,
+  isEmbeddedPostgresLibSegment,
+} from './embedded-pg-env.js';
+export type { EmbeddedPostgresChildEnvOptions } from './embedded-pg-env.js';
+
 export function formatStdioSpawnError(error: unknown, command?: string): string {
   const message = error instanceof Error ? error.message : String(error);
   const mentionsNpx = command === 'npx' || /\bnpx\b/i.test(message);

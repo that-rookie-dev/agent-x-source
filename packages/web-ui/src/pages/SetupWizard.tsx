@@ -34,6 +34,7 @@ import HubIcon from '@mui/icons-material/Hub';
 import PublicIcon from '@mui/icons-material/Public';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BoltIcon from '@mui/icons-material/Bolt';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HomeIcon from '@mui/icons-material/Home';
 import { providers as provApi, models as modelsApi, config, settings, type DbConnectionTestResult, type DbExtensionCheck } from '../api';
 import { useApp } from '../store/AppContext';
@@ -143,6 +144,7 @@ export function SetupWizard() {
   const [pgDatabase, setPgDatabase] = useState('agentx');
   const [pgTesting, setPgTesting] = useState(false);
   const [pgTestResult, setPgTestResult] = useState<DbConnectionTestResult | null>(null);
+  const [pgTestDetailsOpen, setPgTestDetailsOpen] = useState(false);
   const [storageProvisioned, setStorageProvisioned] = useState(false);
   const [provisionedBackend, setProvisionedBackend] = useState<'embedded-postgres' | 'postgres' | null>(null);
   const [showStorageBackWarning, setShowStorageBackWarning] = useState(false);
@@ -169,7 +171,10 @@ export function SetupWizard() {
   const [voiceCalibrated, setVoiceCalibrated] = useState(false);
   const [telegramLinked, setTelegramLinked] = useState(false);
 
-  const resetPgTest = () => setPgTestResult(null);
+  const resetPgTest = () => {
+    setPgTestResult(null);
+    setPgTestDetailsOpen(false);
+  };
 
   const buildPgConnStr = () => {
     if (pgMode === 'string') return pgConnStr;
@@ -353,10 +358,12 @@ export function SetupWizard() {
     try {
       const r = await settings.db.testAdvanced(connStr, buildSshConfig());
       setPgTestResult(r);
+      setPgTestDetailsOpen(false);
       if (!r.ok) showError(r.error || 'Connection test failed');
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Connection test failed';
       setPgTestResult({ ok: false, error: msg });
+      setPgTestDetailsOpen(false);
       showError(msg);
     } finally {
       setPgTesting(false);
@@ -679,63 +686,116 @@ export function SetupWizard() {
                   )}
                 </Box>
 
-                {pgTestResult && (
-                  <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.02), border: `1px solid ${pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr}` }}>
-                    <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr, fontWeight: 600 }}>
-                      {pgTestResult.ok ? 'CONNECTION OK' : 'CONNECTION FAILED'}
-                    </Typography>
-                    <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.25 }}>
-                      {pgTestResult.ok
-                        ? `${pgTestResult.version || 'PostgreSQL'} · ready to provision schema`
-                        : pgTestResult.error}
-                    </Typography>
+                {pgTestResult && (() => {
+                  const extensionChecks: DbExtensionCheck[] = pgTestResult.checks?.length
+                    ? pgTestResult.checks
+                    : pgTestResult.ok
+                      ? [{
+                          id: 'age',
+                          label: 'Apache AGE',
+                          status: (pgTestResult.ageAvailable ? 'ok' : 'warn') as DbExtensionCheck['status'],
+                          message: pgTestResult.ageAvailable
+                            ? 'Apache AGE graph extension is available.'
+                            : (pgTestResult.ageError ?? 'Apache AGE is not available on this server.'),
+                        }]
+                      : [];
+                  const neuralCoreCheck = pgTestResult.ok && !neuralBrainSupported
+                    ? { status: 'warn' as const, label: 'Neural Core (this Mac)', message: 'Requires 16 GB+ RAM. Agent-X will disable the neural brain on this machine; chat and crews still work.' }
+                    : null;
+                  const detailRows = [
+                    ...extensionChecks.map((check) => ({
+                      key: check.id,
+                      status: check.status,
+                      label: `${check.label}${check.status === 'warn' ? ' (optional)' : check.status === 'fail' ? ' (required)' : ''}`,
+                      message: check.message,
+                      remediation: check.remediation,
+                    })),
+                    ...(neuralCoreCheck
+                      ? [{
+                          key: 'neural-core',
+                          status: neuralCoreCheck.status,
+                          label: neuralCoreCheck.label,
+                          message: neuralCoreCheck.message,
+                          remediation: undefined as string | undefined,
+                        }]
+                      : []),
+                  ];
+                  const summary = detailRows
+                    .map((row) => `${row.status === 'ok' ? '✓' : row.status === 'warn' ? '⚠' : '✕'} ${row.label}`)
+                    .join(' · ');
 
-                    {(pgTestResult.checks?.length
-                      ? pgTestResult.checks
-                      : pgTestResult.ok
-                        ? [{
-                            id: 'age' as const,
-                            label: 'Apache AGE',
-                            status: (pgTestResult.ageAvailable ? 'ok' : 'warn') as DbExtensionCheck['status'],
-                            message: pgTestResult.ageAvailable
-                              ? 'Apache AGE graph extension is available.'
-                              : (pgTestResult.ageError ?? 'Apache AGE is not available on this server.'),
-                          }]
-                        : []
-                    ).map((check) => (
-                      <Box key={check.id} sx={{ mt: 1.25, pt: 1.25, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
-                        <Typography sx={{
-                          fontSize: '0.55rem',
-                          fontFamily: WIZARD_MONO,
-                          fontWeight: 700,
-                          color: check.status === 'ok' ? wizardTheme.accentOk : check.status === 'warn' ? wizardTheme.accentWarn : wizardTheme.accentErr,
-                        }}>
-                          {check.status === 'ok' ? '✓' : check.status === 'warn' ? '⚠' : '✕'} {check.label}
-                          {check.status === 'warn' ? ' (optional)' : check.status === 'fail' ? ' (required)' : ''}
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.52rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.35, lineHeight: 1.5 }}>
-                          {check.message}
-                        </Typography>
-                        {check.remediation && (
-                          <Typography sx={{ fontSize: '0.5rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mt: 0.5, lineHeight: 1.55 }}>
-                            {check.remediation}
-                          </Typography>
-                        )}
-                      </Box>
-                    ))}
+                  return (
+                    <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.02), border: `1px solid ${pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr}` }}>
+                      <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: pgTestResult.ok ? wizardTheme.accentOk : wizardTheme.accentErr, fontWeight: 600 }}>
+                        {pgTestResult.ok ? 'CONNECTION OK' : 'CONNECTION FAILED'}
+                      </Typography>
+                      <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.25 }}>
+                        {pgTestResult.ok
+                          ? `${pgTestResult.version || 'PostgreSQL'} · ready to provision schema`
+                          : pgTestResult.error}
+                      </Typography>
 
-                    {pgTestResult.ok && !neuralBrainSupported && (
-                      <Box sx={{ mt: 1.25, pt: 1.25, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
-                        <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, fontWeight: 700, color: wizardTheme.accentWarn }}>
-                          ⚠ Neural Core (this Mac)
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.52rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.35, lineHeight: 1.5 }}>
-                          Requires 16 GB+ RAM. Agent-X will disable the neural brain on this machine; chat and crews still work.
-                        </Typography>
-                      </Box>
-                    )}
-                  </Box>
-                )}
+                      {detailRows.length > 0 && (
+                        <Box sx={{ mt: 1, pt: 1, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
+                          <Box
+                            onClick={() => setPgTestDetailsOpen((open) => !open)}
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 0.75,
+                              cursor: 'pointer',
+                              userSelect: 'none',
+                              '&:hover': { opacity: 0.85 },
+                            }}
+                          >
+                            <ExpandMoreIcon
+                              sx={{
+                                fontSize: 16,
+                                color: wizardTheme.textDim,
+                                transform: pgTestDetailsOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
+                                transition: 'transform 0.15s ease',
+                                flexShrink: 0,
+                              }}
+                            />
+                            <Typography sx={{
+                              fontSize: '0.52rem',
+                              fontFamily: WIZARD_MONO,
+                              color: wizardTheme.textSecondary,
+                              lineHeight: 1.4,
+                              flex: 1,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: pgTestDetailsOpen ? 'normal' : 'nowrap',
+                            }}>
+                              {pgTestDetailsOpen ? 'Capability details' : summary}
+                            </Typography>
+                          </Box>
+
+                          {pgTestDetailsOpen && detailRows.map((row) => (
+                            <Box key={row.key} sx={{ mt: 1.1, pl: 0.25 }}>
+                              <Typography sx={{
+                                fontSize: '0.55rem',
+                                fontFamily: WIZARD_MONO,
+                                fontWeight: 700,
+                                color: row.status === 'ok' ? wizardTheme.accentOk : row.status === 'warn' ? wizardTheme.accentWarn : wizardTheme.accentErr,
+                              }}>
+                                {row.status === 'ok' ? '✓' : row.status === 'warn' ? '⚠' : '✕'} {row.label}
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.52rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.35, lineHeight: 1.5 }}>
+                                {row.message}
+                              </Typography>
+                              {row.remediation && (
+                                <Typography sx={{ fontSize: '0.5rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mt: 0.5, lineHeight: 1.55 }}>
+                                  {row.remediation}
+                                </Typography>
+                              )}
+                            </Box>
+                          ))}
+                        </Box>
+                      )}
+                    </Box>
+                  );
+                })()}
 
                 <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
                   <Button

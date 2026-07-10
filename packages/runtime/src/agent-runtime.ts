@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import { arch, homedir, networkInterfaces } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import type { Server } from 'node:http';
@@ -100,25 +100,16 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
   };
 }
 
-export function ensureEmbeddedPgLibPath(installDir: string): void {
-  const plat = process.platform;
-  if (plat !== 'linux' && plat !== 'darwin') return;
-
-  const pkg = plat === 'linux'
-    ? (arch() === 'arm64' ? '@embedded-postgres/linux-arm64' : '@embedded-postgres/linux-x64')
-    : (arch() === 'arm64' ? '@embedded-postgres/darwin-arm64' : '@embedded-postgres/darwin-x64');
-
-  const libDirs = [
-    join(installDir, 'node_modules', ...pkg.split('/'), 'native', 'lib'),
-    join(installDir, 'node_modules', ...pkg.split('/'), 'native', 'lib', 'postgresql'),
-  ].filter((dir) => existsSync(dir));
-
-  if (libDirs.length === 0) return;
-
-  const prefix = libDirs.join(':');
-  const libPathKey = plat === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
-  const existing = process.env[libPathKey];
-  process.env[libPathKey] = existing ? `${prefix}:${existing}` : prefix;
+/**
+ * Previously set process-wide DYLD/LD_LIBRARY_PATH for embedded Postgres.
+ * That poisoned child processes like bundled ffmpeg: dyld preferred Postgres'
+ * incomplete libiconv and failed with "Symbol not found: _iconv".
+ *
+ * Lib paths are applied only to postgres children in PostgresLifecycleManager.
+ * Kept as a no-op so older call sites remain safe.
+ */
+export function ensureEmbeddedPgLibPath(_installDir: string): void {
+  // intentionally no-op — do not set process-wide library paths
 }
 
 export function setupPythonEnv(paths: AgentRuntimePaths, isDev: boolean): void {

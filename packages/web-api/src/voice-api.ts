@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, existsSync } from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { getDataDir, getLogger, type VoiceCapabilityStatus, type VoiceConfig, type VoiceDownloadedAsset, buildPublicSystemCapabilities } from '@agentx/shared';
+import { getDataDir, getLogger, type VoiceCapabilityStatus, type VoiceConfig, type VoiceDownloadedAsset, buildPublicSystemCapabilities, envWithoutEmbeddedPostgresLibs } from '@agentx/shared';
 import {
   VOICE_ASSET_CATALOG,
   VoiceAssetManager,
@@ -74,7 +74,7 @@ async function execVoiceCommand(
 
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
-      env: options.env ?? process.env,
+      env: envWithoutEmbeddedPostgresLibs(options.env ?? process.env),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -806,7 +806,11 @@ function getVoiceSidecarManager(): VoiceSidecarManager {
 
 async function commandAvailable(command: string, args: string[]): Promise<boolean> {
   try {
-    await execFileAsync(command, args, { timeout: 5_000, maxBuffer: 1024 * 1024 });
+    await execFileAsync(command, args, {
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+      env: envWithoutEmbeddedPostgresLibs(),
+    });
     voiceDebug('Command available', { command, args });
     return true;
   } catch (error) {

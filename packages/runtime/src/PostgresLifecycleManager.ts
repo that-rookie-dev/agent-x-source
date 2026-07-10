@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir, totalmem } from 'node:os';
 import { platform, arch } from 'node:os';
 import { Pool } from 'pg';
-import { isNeuralBrainSupported } from '@agentx/shared';
+import { buildEmbeddedPostgresChildEnv, isNeuralBrainSupported } from '@agentx/shared';
 
 const logger = {
   info: (code: string, message: string) => console.log(`[${code}] ${message}`),
@@ -256,25 +256,9 @@ export class PostgresLifecycleManager {
   }
 
   private getProcessEnv(binaryDir: string): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env, LC_MESSAGES: 'C' };
-    const currentPlatform = platform();
-    if (currentPlatform !== 'linux' && currentPlatform !== 'darwin') return env;
-
-    const libDirs = [
-      join(binaryDir, '..', 'lib'),
-      join(binaryDir, '..', 'lib', 'postgresql'),
-    ].filter((dir) => existsSync(dir));
-
-    if (libDirs.length === 0) return env;
-
-    const paths = [...libDirs];
-    const libPathKey = currentPlatform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
-    const existing = process.env[libPathKey];
-    if (existing) {
-      paths.push(existing);
-    }
-    env[libPathKey] = paths.join(':');
-    return env;
+    // Scoped to postgres/initdb children only — never set on the Agent-X process.
+    // See buildEmbeddedPostgresChildEnv for darwin/linux/win32 behavior.
+    return buildEmbeddedPostgresChildEnv({ binaryDir });
   }
 
   private runInitdb(bin: PostgresBinaries): void {

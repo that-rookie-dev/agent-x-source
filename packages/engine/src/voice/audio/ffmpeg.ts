@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { dirname, normalize, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { envWithoutEmbeddedPostgresLibs } from '@agentx/shared';
 
 const execFileAsync = promisify(execFile);
 
@@ -74,5 +75,6 @@ function defaultFfmpegPath(): string {
 async function execFfmpeg(args: string[], options: FfmpegOptions): Promise<void> {
   await execFileAsync(options.ffmpegPath ?? defaultFfmpegPath(), args, {
     timeout: options.timeoutMs ?? 60_000,
+    env: envWithoutEmbeddedPostgresLibs(),
   });
 }
