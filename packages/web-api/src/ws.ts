@@ -251,7 +251,8 @@ function appendContextFile(
     turnTokens?: number;
     turnCostUsd?: number;
     tokenCount?: number;
-  }
+  },
+  messageId?: string,
 ): void {
   if (!sessionId || !content) return;
 
@@ -266,6 +267,7 @@ function appendContextFile(
       const store = (eng.sessionManager as any).store;
       if (store?.insertMessage) {
         store.insertMessage({
+          id: messageId,
           sessionId,
           role,
           content,
@@ -291,6 +293,7 @@ function appendContextFile(
     const store = (eng.sessionManager as any).store;
     if (store?.insertMessage) {
       store.insertMessage({
+        id: messageId,
         sessionId,
         role,
         content,
@@ -910,9 +913,8 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
         }
         const msg: any = (event as any).message;
         const text = (msg?.content as string) || (event as any).content as string || '';
-        const crew = msg?.crew as CrewInfo | undefined;
+        // User rows are persisted by Agent.persistUserMessage — only ingest memory here.
         if (sessionId && text) {
-          appendContextFile(sessionId, 'user', text, crew);
           ingestConversationMemory(sessionId, 'user', text).catch((e) => getLogger().warn('MEMORY_INGEST', `user message ingest failed: ${e instanceof Error ? e.message : String(e)}`));
         }
       }
@@ -944,7 +946,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
                 ...(mergedParts.length > 0 ? { parts: mergedParts } : {}),
               });
             } else {
-              appendContextFile(sessionId, 'assistant', text, crew, extra);
+              appendContextFile(sessionId, 'assistant', text, crew, extra, typeof msg?.id === 'string' ? msg.id : undefined);
             }
             ingestConversationMemory(sessionId, 'assistant', text).catch((e) => getLogger().warn('MEMORY_INGEST', `assistant message ingest failed: ${e instanceof Error ? e.message : String(e)}`));
           }

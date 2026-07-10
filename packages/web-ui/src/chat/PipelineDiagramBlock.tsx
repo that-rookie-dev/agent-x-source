@@ -28,7 +28,9 @@ export function PipelineDiagramBlock({ code }: { code: string }) {
           '&::-webkit-scrollbar-thumb': { bgcolor: colors.border.default, borderRadius: 2 },
         }}>
         {diagram.steps.map((step, i) => {
-          const label = formatPipelineStepLabel(step.label);
+          const label = formatPipelineStepLabel(
+            typeof step.label === 'string' ? step.label : String((step.label as { label?: unknown })?.label ?? ''),
+          );
           return (
             <Fragment key={i}>
               {i > 0 && (

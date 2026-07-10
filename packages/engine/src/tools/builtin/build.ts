@@ -24,7 +24,16 @@ function detectBuild(cwd: string): BuildSystem {
 
 function execCmd(cmd: string, cwd: string, timeout = 180000): ToolResult {
   try {
-    const output = execSync(cmd, { cwd, encoding: 'utf-8', timeout, maxBuffer: 20 * 1024 * 1024 });
+    // Clear Make jobserver flags — inherited MAKEFLAGS from CI/parent make can hang nested make.
+    const env = { ...process.env, MAKEFLAGS: '', MFLAGS: '', MAKELEVEL: '' };
+    const output = execSync(cmd, {
+      cwd,
+      encoding: 'utf-8',
+      timeout,
+      maxBuffer: 20 * 1024 * 1024,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     return { success: true, output: output.trim() || 'Build succeeded' };
   } catch (error) {
     const err = error as { stdout?: string; stderr?: string; message: string };
@@ -46,7 +55,7 @@ export async function build(args: Record<string, unknown>, context: ToolExecutio
     case 'npm': return execCmd('npm run build', cwd);
     case 'pnpm': return execCmd('pnpm run build', cwd);
     case 'yarn': return execCmd('yarn build', cwd);
-    case 'make': return execCmd(`make${target ? ` ${target}` : ''}`, cwd);
+    case 'make': return execCmd(`make${target ? ` ${target}` : ''}`, cwd, 30_000);
     case 'cmake':
       execSync('mkdir -p build', { cwd });
       return execCmd('cmake --build build', cwd);

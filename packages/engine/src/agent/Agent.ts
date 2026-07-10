@@ -2044,6 +2044,7 @@ Rules:
 
     if (!options?.retry && !options?.voiceContinuation) {
       if (!options?.userMessagePersisted) {
+        this.persistUserMessage(userMessage);
         this.emit({ type: 'message_sent', message: userMessage });
       }
       const userTokens = estimateTokens(cleanContent);
@@ -3995,6 +3996,10 @@ Only include specialists that are actually needed for this task.`;
     // Pass isUpdate=true to allow re-emitting an updated message (e.g. crew delegation)
     if (event.type === 'message_received' && !isUpdate) {
       const crewMsg = (event as { message?: Message }).message;
+      // Persist assistant rows from the Agent (like user turns) so DB writes don't depend solely on WS subscribers.
+      if (crewMsg?.role === 'assistant' && crewMsg.content?.trim()) {
+        this.persistAssistantMessage(crewMsg);
+      }
       if (crewMsg?.crew) {
         this.eventBus.emit(event);
         return;
@@ -4015,6 +4020,7 @@ Only include specialists that are actually needed for this task.`;
     const store = (this.sessionManager as unknown as {
       store?: {
         insertMessage?: (row: {
+          id?: string;
           sessionId: string;
           role: string;
           content: string;
@@ -4026,6 +4032,7 @@ Only include specialists that are actually needed for this task.`;
     if (!store?.insertMessage) return;
     try {
       store.insertMessage({
+        id: msg.id,
         sessionId: this.sessionId,
         role: 'assistant',
         content: msg.content,
@@ -4037,6 +4044,21 @@ Only include specialists that are actually needed for this task.`;
             callsign: msg.crew.callsign,
           }
           : undefined,
+      });
+    } catch { /* best-effort */ }
+  }
+
+  /** Persist user turn to the session store (DB) — independent of WS subscribers. */
+  private persistUserMessage(msg: Message): void {
+    const store = this.getMessageStore();
+    if (!store?.insertMessage) return;
+    try {
+      store.insertMessage({
+        id: msg.id,
+        sessionId: msg.sessionId,
+        role: 'user',
+        content: msg.content,
+        tokenCount: msg.tokenCount ?? 0,
       });
     } catch { /* best-effort */ }
   }

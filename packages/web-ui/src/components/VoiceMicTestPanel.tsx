@@ -101,7 +101,7 @@ export function VoiceMicTestPanel({ compact = false }: VoiceMicTestPanelProps) {
         <Button
           size="small"
           onClick={() => { void handleTestMic(); }}
-          disabled={mic.blocked && mic.state === 'denied'}
+          disabled={testing || (mic.blocked && mic.state === 'denied')}
           sx={settingsBtnGhostSx}
         >
           {testing ? 'Listening…' : 'Test microphone'}

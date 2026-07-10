@@ -38,6 +38,8 @@ export class TelegramBridge {
   private callbackHandlers: Map<string, (data: string, chatId: number, fromUserId?: number) => void> = new Map();
   private messageHandler: ((text: string, chatId: number) => void) | null = null;
   private fileHandler: ((fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => void) | null = null;
+  /** Fired once when the first private DM claims an empty allowlist (sole owner). */
+  private ownerClaimHandler: ((userId: number, chatId: number) => void) | null = null;
   private webhookSecret: string | null = null;
   
   // Message queue to prevent TOCTOU races
@@ -99,6 +101,33 @@ export class TelegramBridge {
 
   getAllowedUserIds(): number[] {
     return this.config.allowedUserIds ?? [];
+  }
+
+  /** Persist sole owner when the first private DM claims an empty allowlist. */
+  setOwnerClaimHandler(handler: ((userId: number, chatId: number) => void) | null): void {
+    this.ownerClaimHandler = handler;
+  }
+
+  /**
+   * Single-owner ACL. Empty allowlist + private DM → claim that user as sole owner
+   * (wizard / first-link bootstrap). Otherwise only the linked owner is accepted.
+   */
+  private authorizeInbound(fromId: number | undefined, chatId: number, chatType?: string): boolean {
+    const allowed = this.config.allowedUserIds ?? [];
+    if (fromId && allowed.includes(fromId)) return true;
+
+    if (allowed.length === 0 && fromId && chatType === 'private') {
+      this.config.allowedUserIds = [fromId];
+      try {
+        this.ownerClaimHandler?.(fromId, chatId);
+      } catch (e) {
+        getLogger().warn('TELEGRAM', `Owner claim persist failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      getLogger().info('TELEGRAM', `Linked owner userId=${fromId} via first private DM`);
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -315,11 +344,12 @@ export class TelegramBridge {
     this.lastMessageTime = now;
     if (fromId) this.lastFromIdByChat.set(chatId, fromId);
 
-    // Single-owner ACL: only the verified Telegram user may talk to the bot.
-    // Reject before any agent/LLM work.
-    const allowed = this.config.allowedUserIds ?? [];
-    if (!fromId || allowed.length === 0 || !allowed.includes(fromId)) {
-      await this.sendMessage(chatId, '⚠️ Unauthorized. This bot is restricted to its linked owner.');
+    // Single-owner ACL: linked owner only. Empty allowlist + private DM claims owner.
+    const chatType = typeof msg.chat?.type === 'string' ? msg.chat.type : undefined;
+    if (!this.authorizeInbound(fromId, chatId, chatType)) {
+      if ((this.config.allowedUserIds ?? []).length > 0) {
+        await this.sendMessage(chatId, '⚠️ Unauthorized. This bot is restricted to its linked owner.');
+      }
       return;
     }
 
@@ -453,14 +483,16 @@ export class TelegramBridge {
     const chatId = query.message?.chat?.id;
     if (!data || !chatId) return;
 
-    const allowed = this.config.allowedUserIds ?? [];
     const fromId = query.from?.id;
-    if (!fromId || allowed.length === 0 || !allowed.includes(fromId)) {
-      await this.apiCall('answerCallbackQuery', {
-        callback_query_id: query.id,
-        text: 'Unauthorized',
-        show_alert: true,
-      });
+    // Callbacks are private-chat UX; claim owner if allowlist empty, else enforce.
+    if (!this.authorizeInbound(fromId, chatId, 'private')) {
+      if ((this.config.allowedUserIds ?? []).length > 0) {
+        await this.apiCall('answerCallbackQuery', {
+          callback_query_id: query.id,
+          text: 'Unauthorized',
+          show_alert: true,
+        });
+      }
       return;
     }
 

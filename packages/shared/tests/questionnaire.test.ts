@@ -8,6 +8,7 @@ import {
   MAX_QUESTIONNAIRE_CHOICES,
   collectAnsweredQuestionnaireTexts,
   hydrateMessageHistoryEntries,
+  sanitizeQuestionnairePayload,
 } from '../src/utils/questionnaire.js';
 
 describe('normalizeAskClarificationArgs', () => {
@@ -34,13 +35,46 @@ describe('normalizeAskClarificationArgs', () => {
     expect(payload.questions[0]?.options).toHaveLength(MAX_QUESTIONNAIRE_CHOICES);
   });
 
-  it('supports legacy single question + options', () => {
+  it('coerces object-shaped options from model tool args', () => {
     const payload = normalizeAskClarificationArgs({
-      question: 'Which framework?',
-      options: ['React', 'Vue'],
+      questions: [{
+        prompt: 'How to proceed?',
+        type: 'single_choice',
+        options: [
+          { label: 'Run it manually now' },
+          { value: 'Save a briefing script' },
+          { label: { label: 'Just retry later' } } as unknown as string,
+          'Both: run now + save script',
+        ],
+      }],
     });
-    expect(payload.questions[0]?.type).toBe('single_choice');
-    expect(payload.questions[0]?.prompt).toBe('Which framework?');
+    const opts = payload.questions[0]?.options ?? [];
+    expect(opts.map((o) => o.value)).toEqual([
+      'Run it manually now',
+      'Save a briefing script',
+      'Just retry later',
+      'Both: run now + save script',
+    ]);
+    expect(opts.every((o) => typeof o.label === 'string')).toBe(true);
+  });
+
+  it('sanitizes already-persisted nested label objects', () => {
+    const cleaned = sanitizeQuestionnairePayload({
+      id: 'q',
+      questions: [{
+        id: 'q_1',
+        prompt: 'Pick',
+        type: 'single_choice',
+        options: [
+          { value: { label: 'A' } as unknown as string, label: { label: 'A' } as unknown as string },
+          { value: { label: 'B' } as unknown as string, label: { label: 'B' } as unknown as string },
+        ],
+      }],
+    });
+    expect(cleaned.questions[0]?.options).toEqual([
+      { value: 'A', label: 'A', recommended: false },
+      { value: 'B', label: 'B', recommended: false },
+    ]);
   });
 });
 

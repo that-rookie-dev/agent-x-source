@@ -238,6 +238,8 @@ export class PostgresLifecycleManager {
           + 'The embedded PostgreSQL install is incomplete — reinstall Agent-X.',
         );
       }
+      // npm/extract can drop +x; initdb requires an *executable* postgres beside itself.
+      this.ensureExecutable(filePath);
     }
     return bin;
   }
@@ -268,7 +270,10 @@ export class PostgresLifecycleManager {
     }
 
     mkdirSync(this.options.dataDir, { recursive: true });
+    // initdb locates postgres via same-dir + execute bit — chmod all three before init.
     this.ensureExecutable(bin.initdb);
+    this.ensureExecutable(bin.postgres);
+    this.ensureExecutable(bin.pgCtl);
 
     const passwordFile = join(tmpdir(), `agentx-pg-password-${Date.now().toString(36)}`);
     writeFileSync(passwordFile, `${this.options.password}\n`);

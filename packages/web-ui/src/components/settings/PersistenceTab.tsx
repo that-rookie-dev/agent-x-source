@@ -65,7 +65,7 @@ export function PersistenceTab() {
     ageAvailable?: boolean;
     ageError?: string | null;
     timestamp?: string;
-  }>({ loading: false });
+  }>({ loading: true });
 
   const loadProvisionStatus = useCallback(async () => {
     setProvisionStatus({ loading: true });

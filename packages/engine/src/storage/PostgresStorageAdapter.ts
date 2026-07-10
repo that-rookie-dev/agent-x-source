@@ -955,8 +955,18 @@ export class PostgresStorageAdapter implements StorageAdapter {
     }
   }
 
+  private async flushWriteQueue(): Promise<void> {
+    // Drain until idle so hydrate/checkpoint never race ahead of pending INSERTs.
+    for (let i = 0; i < 20; i++) {
+      if (this.writeQueue.length === 0 && !this.drainPromise) return;
+      this.scheduleWriteDrain();
+      if (this.drainPromise) await this.drainPromise;
+    }
+  }
+
   private async hydrateMessageCache(sessionId: string): Promise<void> {
     try {
+      await this.flushWriteQueue();
       const messages = await this.pool.query(
         `SELECT id,session_id as "sessionId",role,content,tool_calls as "toolCalls",token_count as "tokenCount",created_at as "createdAt"
          FROM messages WHERE session_id = $1 AND archived_at IS NULL ORDER BY created_at ASC`,
@@ -1272,17 +1282,37 @@ export class PostgresStorageAdapter implements StorageAdapter {
     const msgs = this.cache.messages.get(msg.sessionId) ?? [];
     const id = msg.id ?? crypto.randomUUID();
     const now = new Date().toISOString();
-    msgs.push({
+    const existingIdx = msgs.findIndex((m) => m.id === id);
+    const row = {
       id, sessionId: msg.sessionId, role: msg.role, content: msg.content,
       toolCalls: msg.toolCalls != null ? JSON.stringify(msg.toolCalls) : undefined,
       tokenCount: msg.tokenCount ?? 0, createdAt: now,
       parts: msg.parts,
       metadata: msg.metadata,
-    });
+    };
+    if (existingIdx >= 0) {
+      const prev = msgs[existingIdx]!;
+      msgs[existingIdx] = {
+        ...prev,
+        ...row,
+        createdAt: prev.createdAt,
+        parts: msg.parts ?? prev.parts,
+        metadata: msg.metadata ?? prev.metadata,
+      };
+    } else {
+      msgs.push(row);
+    }
     this.cache.messages.set(msg.sessionId, msgs);
     this.write(
       `INSERT INTO messages (id,session_id,role,content,tool_calls,token_count,plan,parts,metadata,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         content = EXCLUDED.content,
+         tool_calls = COALESCE(EXCLUDED.tool_calls, messages.tool_calls),
+         token_count = EXCLUDED.token_count,
+         plan = COALESCE(EXCLUDED.plan, messages.plan),
+         parts = COALESCE(EXCLUDED.parts, messages.parts),
+         metadata = COALESCE(EXCLUDED.metadata, messages.metadata)`,
       [
         id, msg.sessionId, msg.role, msg.content,
         msg.toolCalls != null ? JSON.stringify(msg.toolCalls) : null,
@@ -1413,6 +1443,8 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   createCheckpoint(sessionId: string, label: string): { id: string } | null {
+    // Best-effort: kick a drain so recent inserts are less likely to be missing from cache/PG.
+    void this.flushWriteQueue();
     const msgs = this.getMessages(sessionId);
     if (!msgs || msgs.length === 0) return null;
     const id = crypto.randomUUID();

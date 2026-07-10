@@ -1736,8 +1736,11 @@ export const voice = {
     request<{ sidecar: VoiceSidecarStatusResponse['sidecar'] }>('/voice/sidecar/status'),
   ensureSidecar: () =>
     request<VoiceSidecarStatusResponse>('/voice/sidecar/ensure', { method: 'POST' }, 5 * 60_000),
-  releaseSidecar: () =>
-    request<{ ok: boolean; skipped?: string; scheduled?: boolean }>('/voice/sidecar/release', { method: 'POST' }),
+  releaseSidecar: (opts?: { force?: boolean }) =>
+    request<{ ok: boolean; skipped?: string; scheduled?: boolean; stopped?: boolean }>(
+      '/voice/sidecar/release',
+      { method: 'POST', body: JSON.stringify({ force: opts?.force === true }) },
+    ),
   preview: (text: string, engine: TtsEngine, voiceId?: string, style?: VoiceTtsStyleConfig) =>
     request<{ audioBase64: string; mimeType: string; durationMs?: number }>(
       '/voice/preview',

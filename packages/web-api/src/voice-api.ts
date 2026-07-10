@@ -601,16 +601,17 @@ router.post('/voice/sidecar/ensure', async (_req, res) => {
   }
 });
 
-router.post('/voice/sidecar/release', async (_req, res) => {
+router.post('/voice/sidecar/release', async (req, res) => {
   try {
     const config = mergeVoiceConfig(getEngine().configManager.load().voice);
+    const force = req.body?.force === true;
     const { countActiveVoiceWebSocketSessions } = await import('./voice-ws.js');
     if (countActiveVoiceWebSocketSessions() > 0) {
       return res.json({ ok: true, skipped: 'sessions_active' });
     }
     const { getVoiceService } = await import('./voice-runtime.js');
     const service = getVoiceService();
-    if (!config.enabled) {
+    if (!config.enabled || force) {
       await service.stop();
       return res.json({ ok: true, stopped: true });
     }

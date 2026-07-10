@@ -19,6 +19,7 @@ export {
   formatQuestionnaireAnswers,
   canSubmitQuestionnaire,
   buildTextQuestionnaire,
+  sanitizeQuestionnairePayload,
 } from '@agentx/shared/browser';
 
 /** @deprecated Use QuestionnairePayload from events directly */

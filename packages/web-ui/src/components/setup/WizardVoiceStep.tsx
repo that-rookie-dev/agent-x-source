@@ -16,6 +16,8 @@ import { colors, alphaColor } from '../../theme';
 
 export interface WizardVoiceStepProps {
   onReadyChange?: (ready: boolean) => void;
+  /** True while deploy/warmup is in progress — parent should disable Skip/Back. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 function micStatusLabel(state: string): string {
@@ -25,7 +27,7 @@ function micStatusLabel(state: string): string {
   return 'UNKNOWN';
 }
 
-export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
+export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStepProps) {
   const mic = useMicrophonePermission();
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState<VoiceSetupStatus | null>(null);
@@ -55,9 +57,36 @@ export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
     onReadyChange?.(complete);
   }, [complete, onReadyChange]);
 
+  useEffect(() => {
+    onBusyChange?.(deploying);
+  }, [deploying, onBusyChange]);
+
   const persistVoiceEnabled = async () => {
     const cfg = await voice.getConfig();
     await voice.updateConfig(applyVoicePreset(mergeVoiceConfig(cfg)));
+  };
+
+  /** Enable voice, warm the sidecar, then mark the step complete. */
+  const finishDeployWithWarmup = async () => {
+    setDeployStatus({
+      phase: 'runtime',
+      message: 'Warming voice engine…',
+      detail: 'Loading speech models so Test speaker responds immediately',
+      progress: 96,
+    });
+    try {
+      await persistVoiceEnabled();
+      await voice.ensureSidecar();
+    } catch {
+      // Kit is installed; speaker test can still cold-start if warmup fails.
+    }
+    setDeployStatus({
+      phase: 'complete',
+      message: 'Voice comms ready',
+      progress: 100,
+    });
+    setDeploying(false);
+    setComplete(true);
   };
 
   const pollSetup = () => {
@@ -69,9 +98,7 @@ export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
         if (status.phase === 'complete') {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
-          setDeploying(false);
-          setComplete(true);
-          await persistVoiceEnabled();
+          await finishDeployWithWarmup();
         } else if (status.phase === 'error') {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
@@ -101,9 +128,7 @@ export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
       const { status } = await voice.setup();
       setDeployStatus(status);
       if (status.phase === 'complete') {
-        setDeploying(false);
-        setComplete(true);
-        await persistVoiceEnabled();
+        await finishDeployWithWarmup();
         return;
       }
       pollSetup();
@@ -277,13 +302,18 @@ export function WizardVoiceStep({ onReadyChange }: WizardVoiceStepProps) {
                 size="small"
                 variant="outlined"
                 onClick={() => { void runMicTest(); }}
-                disabled={mic.blocked && mic.state === 'denied'}
+                disabled={testingMic || (mic.blocked && mic.state === 'denied')}
                 sx={{
                   fontFamily: WIZARD_MONO,
                   fontSize: '0.62rem',
                   color: wizardTheme.textSecondary,
                   borderColor: wizardTheme.panelBorder,
                   '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
+                  '&.Mui-disabled': {
+                    color: testingMic ? wizardTheme.accentSignal : undefined,
+                    borderColor: testingMic ? wizardTheme.panelBorder : undefined,
+                    opacity: testingMic ? 1 : undefined,
+                  },
                 }}
               >
                 {testingMic ? 'Listening…' : mic.state === 'granted' ? 'Test microphone' : 'Grant & test mic'}

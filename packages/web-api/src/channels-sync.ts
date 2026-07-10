@@ -81,7 +81,14 @@ export async function discoverTelegramBot(
     for (const knownId of options?.knownChatIds ?? []) {
       const id = knownId.trim();
       if (!id || chatMap.has(id)) continue;
-      chatMap.set(id, { id, title: `Chat ${id}`, type: 'known' });
+      // Private chat ids are positive; treat as private owner when backfilling from config.
+      const isPrivate = !id.startsWith('-');
+      chatMap.set(id, {
+        id,
+        title: `Chat ${id}`,
+        type: isPrivate ? 'private' : 'known',
+        userId: isPrivate ? id : undefined,
+      });
     }
 
     const chats = [...chatMap.values()].sort((a, b) => {
@@ -203,7 +210,12 @@ export function isTelegramOutboundReady(ch?: NotificationChannelsConfig['telegra
 }
 
 export function isTelegramInboundReady(ch?: NotificationChannelsConfig['telegram']): boolean {
-  return wantsInbound(ch) && Boolean(resolveTelegramBotToken(ch));
+  if (!wantsInbound(ch) || !resolveTelegramBotToken(ch)) return false;
+  // Require a linked owner (or legacy private chat id) before starting the bridge,
+  // so the first verify message is not consumed/rejected during linking.
+  if (parseAllowedUserIds(ch?.allowedUserIds).length > 0) return true;
+  const chatId = ch?.chatId?.trim();
+  return Boolean(chatId && !chatId.startsWith('-'));
 }
 
 /** Persist Telegram credentials so verify/greeting are one-time setup (survives restart). */
@@ -294,6 +306,14 @@ async function startTelegramInbound(token: string): Promise<void> {
 
   const channelAgent = ensureChannelAgent();
 
+  const claimOwner = (userId: number, chatId: number) => {
+    persistTelegramSettings({
+      allowedUserIds: String(userId),
+      chatId: String(chatId),
+      enabled: true,
+    });
+  };
+
   if (eng.telegramBridge?.isRunning() && eng.gateway) {
     const runningEntry = eng.gateway.registry.getChannel('telegram');
     const runningPlugin = runningEntry?.plugin instanceof TelegramChannelPlugin
@@ -306,6 +326,7 @@ async function startTelegramInbound(token: string): Promise<void> {
       runningPlugin.setAllowedUserIds(tgAllowed);
       runningPlugin.setAgent(channelAgent);
       runningPlugin.setChatIdPersister((id) => saveTelegramChatId(id));
+      runningPlugin.setOwnerClaimHandler(claimOwner);
       runningPlugin.rewirePermissionHandling();
       getLogger().info('CHANNELS', 'Telegram inbound bridge already running — rewired agent + allowlist');
       return;
@@ -329,6 +350,7 @@ async function startTelegramInbound(token: string): Promise<void> {
   tgPlugin.setAllowedUserIds(tgAllowed);
   tgPlugin.setAgent(channelAgent);
   tgPlugin.setChatIdPersister((id) => saveTelegramChatId(id));
+  tgPlugin.setOwnerClaimHandler(claimOwner);
   await eng.gateway.startChannel('telegram');
   eng.telegramBridge = eng.gateway.getTelegramBridge();
   try {
@@ -576,7 +598,13 @@ export async function sendTelegramGreeting(overrides?: {
       }
     }
     getLogger().info('CHANNELS', `Telegram greeting sent (${greeting.slice(0, 60)}…)`);
-    const savedCfg = persistTelegramSettings({ botToken, chatId, enabled: true });
+    const savedCfg = persistTelegramSettings({
+      botToken,
+      chatId,
+      // Private chat id equals the Telegram user id — link as sole owner.
+      allowedUserIds: !chatId.startsWith('-') ? chatId : undefined,
+      enabled: true,
+    });
     try {
       await applyChannelsConfig(savedCfg);
     } catch (e) {

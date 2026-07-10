@@ -107,6 +107,23 @@ interface ChoiceListProps {
   listRef: React.RefObject<HTMLDivElement | null>;
 }
 
+/** Options may arrive corrupted as nested `{label}` objects from older model tool args. */
+function choiceText(raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw);
+  if (!raw || typeof raw !== 'object') return '';
+  const obj = raw as Record<string, unknown>;
+  for (const key of ['label', 'value', 'text', 'name'] as const) {
+    const nested = obj[key];
+    if (typeof nested === 'string' && nested.trim()) return nested.trim();
+    if (nested && typeof nested === 'object') {
+      const deeper = choiceText(nested);
+      if (deeper) return deeper;
+    }
+  }
+  return '';
+}
+
 function ChoiceList({
   mode,
   options,
@@ -126,24 +143,25 @@ function ChoiceList({
       sx={{ outline: 'none', py: 0.5, px: 0.75, display: 'flex', flexDirection: 'column', gap: 0.25 }}
     >
       {options.map((opt, idx) => {
-        const label = opt.label ?? opt.value;
+        const value = choiceText(opt.value) || choiceText(opt.label) || `option_${idx}`;
+        const label = choiceText(opt.label) || value;
         const isDisabled = opt.disabled === true;
         const checked = mode === 'single'
-          ? selected === opt.value
-          : (selected as Set<string>).has(opt.value);
+          ? selected === value
+          : (selected as Set<string>).has(value);
         const focused = focusIdx === idx;
 
         return (
           <Box
-            key={opt.value}
+            key={`${idx}:${value}`}
             role={mode === 'single' ? 'radio' : 'checkbox'}
             aria-checked={checked}
             aria-disabled={isDisabled}
             onClick={() => {
               if (isDisabled) return;
               onFocusIdx(idx);
-              if (mode === 'single') onSelectSingle(opt.value);
-              else onToggleMulti(opt.value);
+              if (mode === 'single') onSelectSingle(value);
+              else onToggleMulti(value);
             }}
             onMouseEnter={() => onFocusIdx(idx)}
             sx={{
@@ -226,12 +244,14 @@ export function QuestionBlockRenderer({
       e.preventDefault();
       const opt = options[focusIdx];
       if (!opt) return;
+      const value = choiceText(opt.value) || choiceText(opt.label);
+      if (!value) return;
       if (question.type === 'single_choice') {
-        onStateChange(question.id, opt.value);
+        onStateChange(question.id, value);
       } else {
         const current = new Set((state[question.id] as Set<string>) ?? []);
-        if (current.has(opt.value)) current.delete(opt.value);
-        else current.add(opt.value);
+        if (current.has(value)) current.delete(value);
+        else current.add(value);
         onStateChange(question.id, current);
       }
     } else if (e.key === 'Escape') {
