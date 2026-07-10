@@ -6,7 +6,7 @@
 import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pgVectorControlPath } from '../../desktop/scripts/embedded-postgres-pack.mjs';
+import { pgVectorControlPath, findInPnpmStore } from '../../desktop/scripts/embedded-postgres-pack.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const runtimeRoot = join(__dirname, '..');
@@ -26,11 +26,16 @@ function packageFolder(pkgName) {
 
 function embeddedCandidates(pkgName) {
   const folder = packageFolder(pkgName);
-  return [
+  const candidates = [
     join(workspaceRoot, 'node_modules', '@embedded-postgres', folder),
     join(runtimeRoot, 'node_modules', '@embedded-postgres', folder),
     join(workspaceRoot, 'packages', 'desktop', 'node_modules', '@embedded-postgres', folder),
   ];
+
+  const fromStore = findInPnpmStore(join(workspaceRoot, 'node_modules', '.pnpm'), pkgName);
+  if (fromStore) candidates.push(fromStore);
+
+  return candidates;
 }
 
 function resolveBuiltPackageRoot(pkgName, packPlatform = process.platform === 'win32' ? 'win32' : process.platform) {
@@ -50,13 +55,18 @@ function stageCommand(suffix) {
   const packPlatform = suffix.startsWith('windows') ? 'win32' : suffix.startsWith('darwin') ? 'darwin' : 'linux';
   const builtRoot = resolveBuiltPackageRoot(pkgName, packPlatform);
   if (!builtRoot) {
+    const checked = embeddedCandidates(pkgName)
+      .map((candidate) => `  - ${candidate}`)
+      .join('\n');
     throw new Error(
-      `pgvector is not installed for ${pkgName}. `
+      `pgvector is not installed for ${pkgName}.\n`
+      + 'Checked:\n'
+      + `${checked}\n`
       + 'Run pnpm --filter @agentx/runtime run setup:extensions first.',
     );
   }
 
-  const stageRoot = join(runtimeRoot, '.pg-ext-artifact', packageFolder(pkgName));
+  const stageRoot = join(runtimeRoot, 'pg-ext-artifact-staging', packageFolder(pkgName));
   rmSync(stageRoot, { recursive: true, force: true });
   mkdirSync(dirname(stageRoot), { recursive: true });
   cpSync(builtRoot, stageRoot, { recursive: true });
