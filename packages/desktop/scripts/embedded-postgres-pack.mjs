@@ -1,7 +1,7 @@
 /**
  * Helpers for bundling @embedded-postgres/* platform binaries into desktop/server packages.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, chmodSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, symlinkSync, chmodSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { arch as hostArch } from 'node:os';
 
@@ -115,6 +115,15 @@ export function assertEmbeddedPostgresBinaries(nodeModulesRoot, pkgName, platfor
     throw new Error(
       `Missing embedded PostgreSQL binaries for ${pkgName}: ${missing.join(', ')} (expected in ${binDir}). `
       + 'Run pnpm install from the repo root before packaging.',
+    );
+  }
+  // Guard against stub/empty files that pass existsSync but break initdb.
+  const postgresName = postgresBinaryName(packPlatform);
+  const postgresPath = join(binDir, postgresName);
+  const { size } = statSync(postgresPath);
+  if (size < 1_000_000) {
+    throw new Error(
+      `Embedded PostgreSQL binary looks truncated for ${pkgName}: ${postgresPath} is ${size} bytes (expected >1MB).`,
     );
   }
 }

@@ -381,17 +381,26 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   static async testConnection(connectionString: string): Promise<{ ok: true; version: string } | { ok: false; error: string }> {
+    const pool = new (await import('pg')).Pool({
+      connectionString,
+      max: 1,
+      connectionTimeoutMillis: 15_000,
+      // Avoid hanging forever on half-open TCP / flaky cloud relays.
+      idleTimeoutMillis: 5_000,
+    });
     try {
-      const { Pool } = await import('pg');
-      const pool = new Pool({ connectionString, max: 1 });
       const client = await pool.connect();
-      const result = await client.query('SELECT version() as version');
-      const pgVersion = result.rows[0]?.['version'] as string;
-      client.release();
-      await pool.end();
-      return { ok: true, version: pgVersion || 'connected' };
+      try {
+        const result = await client.query('SELECT version() as version');
+        const pgVersion = result.rows[0]?.['version'] as string;
+        return { ok: true, version: pgVersion || 'connected' };
+      } finally {
+        client.release();
+      }
     } catch (e: unknown) {
       return { ok: false, error: e instanceof Error ? e.message : 'connection-failed' };
+    } finally {
+      await pool.end().catch(() => {});
     }
   }
 

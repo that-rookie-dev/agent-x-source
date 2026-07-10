@@ -2582,6 +2582,10 @@ app.post('/api/settings/db/provision', async (req, res) => {
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
+  // Flush headers immediately so the wizard sees progress before long work starts.
+  if (typeof (res as { flushHeaders?: () => void }).flushHeaders === 'function') {
+    (res as { flushHeaders: () => void }).flushHeaders();
+  }
 
   let eventId = 0;
   let clientDisconnected = false;
@@ -2592,11 +2596,19 @@ app.post('/api/settings/db/provision', async (req, res) => {
     });
   });
 
+  const flush = () => {
+    const r = res as { flush?: () => void };
+    if (typeof r.flush === 'function') {
+      try { r.flush(); } catch { /* ignore */ }
+    }
+  };
+
   const send = (event: string, data: unknown) => {
     if (clientDisconnected) return;
     try {
       res.write(`id: ${eventId}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       eventId += 1;
+      flush();
     } catch { /* client closed */ }
   };
 
@@ -2617,6 +2629,20 @@ app.post('/api/settings/db/provision', async (req, res) => {
     });
     send('log', { line: `[ERROR] ${phase}: ${message}`, ts: new Date().toISOString() });
   };
+
+  // Keepalive so proxies / browsers don't treat a quiet stream as dead during slow cloud migrate/seed.
+  let heartbeatTicks = 0;
+  const heartbeat = setInterval(() => {
+    if (clientDisconnected) return;
+    heartbeatTicks += 1;
+    send('status', { phase: 'working', backend: resolvedBackend, tick: heartbeatTicks });
+    if (heartbeatTicks % 5 === 0) {
+      log(`Still working… (${heartbeatTicks * 2}s elapsed — schema migrate / catalog seed can take a few minutes on cloud)`);
+    }
+  }, 2_000);
+  if (typeof heartbeat === 'object' && heartbeat && 'unref' in heartbeat) {
+    (heartbeat as NodeJS.Timeout).unref();
+  }
 
   try {
     resetCatalogSeedInflight();
@@ -2641,9 +2667,10 @@ app.post('/api/settings/db/provision', async (req, res) => {
         res.end();
         return;
       }
-      log('Testing remote PostgreSQL connection…');
+      log('Testing remote PostgreSQL connection (15s timeout)…');
     }
 
+    log('Loading storage adapter…');
     const { PostgresStorageAdapter } = await import('@agentx/engine');
     let test: Awaited<ReturnType<typeof PostgresStorageAdapter.testConnection>>;
     try {
@@ -2671,6 +2698,7 @@ app.post('/api/settings/db/provision', async (req, res) => {
         throw e;
       }
       log('Reconnecting engine with new storage backend…');
+      log('Applying schema migrations and seeding Crew Hub catalog (progress updates every few seconds)…');
       const eng = getEngine();
       const storageReadyTimeoutMs = 20 * 60 * 1000;
       try {
@@ -2697,6 +2725,7 @@ app.post('/api/settings/db/provision', async (req, res) => {
       getLogger().info('PG_PROVISION', 'Provision finished after client disconnect', { backend: resolvedBackend });
       return;
     }
+    log('Storage provision complete.');
     send('complete', { ok: true, backend: resolvedBackend });
     res.end();
   } catch (e: unknown) {
@@ -2704,6 +2733,8 @@ app.post('/api/settings/db/provision', async (req, res) => {
     logError('provision', e);
     send('error', { error: message });
     res.end();
+  } finally {
+    clearInterval(heartbeat);
   }
 });
 
@@ -2716,30 +2747,33 @@ app.post('/api/settings/db/test', async (req, res) => {
     }
     const { Pool } = await import('pg');
     const { runDbExtensionChecks } = await import('./db-extension-checks.js');
-    const pool = new Pool({ connectionString, max: 1 });
+    const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 15_000 });
     const client = await pool.connect();
-    const result = await client.query('SELECT version() as version');
-    const pgVersion = result.rows[0]?.['version'] as string;
-    const ext = await runDbExtensionChecks(client);
-    client.release();
-    await pool.end();
+    try {
+      const result = await client.query('SELECT version() as version');
+      const pgVersion = result.rows[0]?.['version'] as string;
+      const ext = await runDbExtensionChecks(client);
 
-    const blocking = ext.checks.some((c) => c.status === 'fail');
-    getLogger().info('SETTINGS_DB_TEST', `PostgreSQL connection ${blocking ? 'partial' : 'successful'}: ${pgVersion}`);
+      const blocking = ext.checks.some((c) => c.status === 'fail');
+      getLogger().info('SETTINGS_DB_TEST', `PostgreSQL connection ${blocking ? 'partial' : 'successful'}: ${pgVersion}`);
 
-    res.json({
-      ok: !blocking,
-      version: pgVersion || 'connected',
-      checks: ext.checks,
-      vectorAvailable: ext.vectorAvailable,
-      vectorError: ext.vectorError,
-      ageAvailable: ext.ageAvailable,
-      ageError: ext.ageError,
-      extensionsCreated: ext.extensionsCreated,
-      error: blocking
-        ? ext.checks.find((c) => c.status === 'fail')?.message ?? 'Required database extensions are missing'
-        : undefined,
-    });
+      res.json({
+        ok: !blocking,
+        version: pgVersion || 'connected',
+        checks: ext.checks,
+        vectorAvailable: ext.vectorAvailable,
+        vectorError: ext.vectorError,
+        ageAvailable: ext.ageAvailable,
+        ageError: ext.ageError,
+        extensionsCreated: ext.extensionsCreated,
+        error: blocking
+          ? ext.checks.find((c) => c.status === 'fail')?.message ?? 'Required database extensions are missing'
+          : undefined,
+      });
+    } finally {
+      try { client.release(); } catch { /* ignore */ }
+      await pool.end().catch(() => {});
+    }
   } catch (e: unknown) {
     getLogger().error('POST_API_SETTINGS_DB_TEST', e instanceof Error ? e : String(e));
     res.status(400).json({ ok: false, error: e instanceof Error ? e.message : 'connection-failed' });

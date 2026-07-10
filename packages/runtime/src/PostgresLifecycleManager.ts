@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, chmodSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, chmodSync, statSync, writeFileSync, unlinkSync, cpSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir, totalmem } from 'node:os';
 import { platform, arch } from 'node:os';
@@ -82,9 +82,9 @@ export class PostgresLifecycleManager {
   }
 
   private fallbackPackageNames(primary: string): string[] {
-    if (primary === '@embedded-postgres/darwin-x64') {
-      return ['@embedded-postgres/darwin-arm64'];
-    }
+    // macOS packages ship universal binaries — either arch tree can donate missing files.
+    if (primary === '@embedded-postgres/darwin-x64') return ['@embedded-postgres/darwin-arm64'];
+    if (primary === '@embedded-postgres/darwin-arm64') return ['@embedded-postgres/darwin-x64'];
     return [];
   }
 
@@ -103,9 +103,59 @@ export class PostgresLifecycleManager {
         join(resourcesPath, 'app.asar.unpacked', 'node_modules', fallback, 'native', 'bin'),
         join(installDir, 'node_modules', fallback, 'native', 'bin'),
         join(installDir, 'resources', 'node_modules', fallback, 'native', 'bin'),
+        join(process.cwd(), 'node_modules', fallback, 'native', 'bin'),
       );
     }
     return candidates;
+  }
+
+  /**
+   * initdb requires `postgres` in the *same* directory as itself.
+   * Broken installs often have initdb/pg_ctl but missing postgres — repair in place
+   * by copying from any complete donor tree (same host or sibling macOS arch).
+   */
+  private repairIncompleteBinaryDir(targetDir: string, donorDirs: string[]): boolean {
+    if (!targetDir || !existsSync(targetDir)) return false;
+    if (this.isCompleteBinaryDir(targetDir)) return true;
+
+    const missing = this.requiredBinaryNames().filter((name) => !existsSync(join(targetDir, name)));
+    if (missing.length === 0) return true;
+
+    let repaired = 0;
+    for (const name of missing) {
+      const dest = join(targetDir, name);
+      for (const donor of donorDirs) {
+        if (!donor || donor === targetDir || !existsSync(join(donor, name))) continue;
+        try {
+          cpSync(join(donor, name), dest, { force: true });
+          this.ensureExecutable(dest);
+          repaired += 1;
+          this.options.onWarn(`Repaired missing PostgreSQL binary: ${name} ← ${donor}`);
+          break;
+        } catch (e) {
+          this.options.onWarn(`Failed to repair ${name} from ${donor}: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+    }
+    return this.isCompleteBinaryDir(targetDir) && repaired >= 0;
+  }
+
+  private collectDonorBinaryDirs(packageName: string, installDir: string, resourcesPath: string, execDir: string): string[] {
+    const pkgs = [packageName, ...this.fallbackPackageNames(packageName)];
+    const dirs: string[] = [];
+    for (const pkg of pkgs) {
+      dirs.push(...this.packageBinaryCandidates(pkg, installDir, resourcesPath, execDir));
+    }
+    // Also scan sibling @embedded-postgres/*/native/bin under installDir
+    const scope = join(installDir, 'node_modules', '@embedded-postgres');
+    if (existsSync(scope)) {
+      try {
+        for (const entry of readdirSync(scope)) {
+          dirs.push(join(scope, entry, 'native', 'bin'));
+        }
+      } catch { /* ignore */ }
+    }
+    return [...new Set(dirs.filter(Boolean))];
   }
 
   private async getBinaryDir(): Promise<string> {
@@ -121,16 +171,28 @@ export class PostgresLifecycleManager {
     const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ?? '';
     const installDir = process.env['AGENTX_INSTALL_DIR'] ?? '';
     const execDir = dirname(process.execPath);
+    const primaryCandidates = this.packageBinaryCandidates(packageName, installDir, resourcesPath, execDir);
+    const donors = this.collectDonorBinaryDirs(packageName, installDir, resourcesPath, execDir);
+    const completeDonors = donors.filter((d) => this.isCompleteBinaryDir(d));
 
-    for (const candidate of this.packageBinaryCandidates(packageName, installDir, resourcesPath, execDir)) {
-      if (candidate && this.isCompleteBinaryDir(candidate)) {
-        if (candidate.includes('darwin-arm64') && packageName.includes('darwin-x64')) {
-          this.options.onWarn(
-            'darwin-x64 PostgreSQL binaries were incomplete — using darwin-arm64 universal binaries instead',
-          );
-        }
+    // Prefer a complete primary tree; if incomplete, repair in place (initdb needs same-dir postgres).
+    for (const candidate of primaryCandidates) {
+      if (!candidate || !existsSync(candidate)) continue;
+      if (this.isCompleteBinaryDir(candidate)) return candidate;
+      if (this.repairIncompleteBinaryDir(candidate, completeDonors.length ? completeDonors : donors)) {
+        this.options.onLog(`Repaired incomplete PostgreSQL binaries in ${candidate}`);
         return candidate;
       }
+    }
+
+    // Fall back to any complete donor directory (e.g. sibling macOS arch with universal bins).
+    for (const donor of completeDonors) {
+      if (donor.includes('darwin-arm64') && packageName.includes('darwin-x64')) {
+        this.options.onWarn(
+          'darwin-x64 PostgreSQL binaries were incomplete — using darwin-arm64 universal binaries instead',
+        );
+      }
+      return donor;
     }
 
     const importPackages = [packageName, ...this.fallbackPackageNames(packageName)];
@@ -140,14 +202,10 @@ export class PostgresLifecycleManager {
         const mod = await import(pkg) as { initdb: string; postgres: string; pg_ctl: string };
         const importDirs = [dirname(mod.postgres), dirname(mod.initdb), dirname(mod.pg_ctl)];
         for (const dir of importDirs) {
-          if (this.isCompleteBinaryDir(dir)) {
-            if (pkg.includes('darwin-arm64') && packageName.includes('darwin-x64')) {
-              this.options.onWarn(
-                'darwin-x64 PostgreSQL binaries were incomplete — using darwin-arm64 universal binaries instead',
-              );
-            }
+          if (this.repairIncompleteBinaryDir(dir, completeDonors.length ? completeDonors : donors)) {
             return dir;
           }
+          if (this.isCompleteBinaryDir(dir)) return dir;
         }
         const missing = this.requiredBinaryNames().filter(
           (name) => !importDirs.some((dir) => existsSync(join(dir, name))),
