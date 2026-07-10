@@ -26,5 +26,7 @@ packages/desktop/web-ui/
 packages/runtime/python/
 packages/runtime/ffmpeg/
 packages/runtime/.ffmpeg-download/
+packages/runtime/.pg-ext-artifact/
+packages/runtime/.pg-ext-download/
 .pgvector-build/
 graphify-out/
