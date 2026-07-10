@@ -2589,7 +2589,11 @@ app.post('/api/settings/db/provision', async (req, res) => {
 
   let eventId = 0;
   let clientDisconnected = false;
-  req.on('close', () => {
+  // IMPORTANT: use res 'close', not req 'close'.
+  // For POST + SSE, req emits 'close' when the request *body* is fully consumed —
+  // that happens immediately after Express parses JSON, which would silence every
+  // subsequent progress event (exactly the "stuck after Loading storage adapter" bug).
+  res.on('close', () => {
     clientDisconnected = true;
     getLogger().warn('PG_PROVISION', 'Client disconnected during provision — server setup may continue in background', {
       backend: resolvedBackend,
@@ -2604,7 +2608,7 @@ app.post('/api/settings/db/provision', async (req, res) => {
   };
 
   const send = (event: string, data: unknown) => {
-    if (clientDisconnected) return;
+    if (clientDisconnected || res.writableEnded || res.destroyed) return;
     try {
       res.write(`id: ${eventId}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       eventId += 1;
@@ -2633,7 +2637,7 @@ app.post('/api/settings/db/provision', async (req, res) => {
   // Keepalive so proxies / browsers don't treat a quiet stream as dead during slow cloud migrate/seed.
   let heartbeatTicks = 0;
   const heartbeat = setInterval(() => {
-    if (clientDisconnected) return;
+    if (clientDisconnected || res.writableEnded || res.destroyed) return;
     heartbeatTicks += 1;
     send('status', { phase: 'working', backend: resolvedBackend, tick: heartbeatTicks });
     if (heartbeatTicks % 5 === 0) {
@@ -2670,8 +2674,8 @@ app.post('/api/settings/db/provision', async (req, res) => {
       log('Testing remote PostgreSQL connection (15s timeout)…');
     }
 
-    log('Loading storage adapter…');
-    const { PostgresStorageAdapter } = await import('@agentx/engine');
+    // Use the already-loaded adapter — avoid a second dynamic import that can stall first-load.
+    log('Opening PostgreSQL connection…');
     let test: Awaited<ReturnType<typeof PostgresStorageAdapter.testConnection>>;
     try {
       test = await PostgresStorageAdapter.testConnection(connectionString);
