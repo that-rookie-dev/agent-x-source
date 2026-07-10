@@ -100,8 +100,17 @@ tray.save(f'{out_dir}/tray.png')
       for (const [name] of sizes) {
         copyFileSync(join(tmpDir, name), join(iconset, name));
       }
-      execSync(`iconutil -c icns "${iconset}" -o "${ICON_ICNS}"`, { stdio: 'pipe' });
-      console.log('Icons generated (macOS .icns included)');
+      try {
+        execSync(`iconutil -c icns "${iconset}" -o "${ICON_ICNS}"`, { stdio: 'pipe' });
+        console.log('Icons generated (macOS .icns included)');
+      } catch (e) {
+        if (existsSync(ICON_ICNS)) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn(`iconutil failed; keeping existing ${ICON_ICNS}: ${msg}`);
+        } else {
+          throw e;
+        }
+      }
     } else {
       console.log('Icons generated');
     }

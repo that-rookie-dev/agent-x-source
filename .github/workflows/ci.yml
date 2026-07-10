@@ -9,6 +9,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Lint + typecheck once (TS is platform-independent). Extension compile is validated in release.yml.
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential python3 curl bison flex
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build
+
+      - run: pnpm run lint
+
+      - name: Type check (all packages)
+        run: pnpm run typecheck
+
+      - run: pnpm run check:platform
+
+  # Compile + test on all three OS targets (no pgvector compile — release smoke covers native extensions).
   build-and-test:
     strategy:
       fail-fast: false
@@ -37,20 +65,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm run lint
-        if: runner.os == 'Linux'
-
       - run: pnpm run build
-
-      - name: Type check (all packages)
-        run: pnpm run typecheck
-
-      - run: pnpm run check:platform
-        if: runner.os == 'Linux'
-
-      - name: Build pgvector extension for embedded PostgreSQL
-        run: pnpm --filter @agentx/desktop run setup:pgvector
-        timeout-minutes: 30
 
       - name: Pre-install MCP E2E stdio packages
         run: npx -y @pulsemcp/pulse-fetch --version

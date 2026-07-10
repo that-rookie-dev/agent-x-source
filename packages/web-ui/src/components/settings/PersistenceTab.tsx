@@ -197,7 +197,10 @@ export function PersistenceTab() {
 
         {provisionMode === 'cloud' && !provisionStatus.ageAvailable && !provisionStatus.loading && (
           <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mt: 1.5, fontSize: '0.65rem', bgcolor: `${alphaColor(settingsTheme.accent.amber, '12')}`, border: `1px solid ${alphaColor(settingsTheme.accent.amber, '33')}`, ...settingsMonoSx }}>
-            Cloud PostgreSQL lacks Apache AGE. Graph walks use recursive-CTE fallback.
+            Apache AGE is optional on cloud PostgreSQL. Agent-X uses a built-in SQL graph fallback — sessions, crews, and chat still work.
+            For full graph performance use Embedded PostgreSQL (16 GB+ RAM) or self-host AGE from{' '}
+            <a href="https://age.apache.org/" target="_blank" rel="noreferrer">age.apache.org</a>.
+            Most managed providers (RDS, Neon, Supabase) do not ship AGE.
           </Alert>
         )}
       </SettingsCard>

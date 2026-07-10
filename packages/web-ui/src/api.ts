@@ -1630,6 +1630,30 @@ export const webuiActive = {
 };
 
 // ─── Settings: Database ───
+export type DbExtensionCheckStatus = 'ok' | 'warn' | 'fail';
+
+export interface DbExtensionCheck {
+  id: 'pgvector' | 'age';
+  label: string;
+  status: DbExtensionCheckStatus;
+  message: string;
+  remediation?: string;
+}
+
+export interface DbConnectionTestResult {
+  ok: boolean;
+  version?: string;
+  tablesCreated?: number;
+  latencyMs?: number;
+  error?: string;
+  checks?: DbExtensionCheck[];
+  vectorAvailable?: boolean;
+  vectorError?: string;
+  ageAvailable?: boolean;
+  ageError?: string;
+  extensionsCreated?: boolean;
+}
+
 export interface DbStatus {
   backend: 'postgres';
   connected: boolean;
@@ -1892,17 +1916,115 @@ export const modelBenchmark = {
   },
 };
 
+export type DbProvisionEvent =
+  | { type: 'log'; line: string; ts?: string }
+  | { type: 'status'; phase: string; backend?: string }
+  | { type: 'complete'; ok: boolean; backend?: string }
+  | { type: 'error'; error: string };
+
 export const settings = {
   db: {
     get: () => request<DbStatus>('/settings/db'),
     update: (config: { backend: string; postgres?: { connectionString: string } }) =>
       request<{ ok: boolean; backend?: string; tablesCreated?: number }>('/settings/db', { method: 'PUT', body: JSON.stringify(config) }),
+    /**
+     * Stream Postgres provision progress (embedded start or cloud connect).
+     * Uses fetch + SSE parsing so the auth cookie/token from request() helpers is not required
+     * beyond the same-origin session cookie / Authorization header we attach here.
+     */
+    provision: (
+      config: { backend: string; postgres?: { connectionString: string } },
+      onEvent: (event: DbProvisionEvent) => void,
+      options?: { signal?: AbortSignal },
+    ): Promise<{ ok: boolean; backend?: string; error?: string }> => {
+      return (async () => {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        let res: Response;
+        try {
+          res = await fetch(`${BASE}/settings/db/provision`, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify(config),
+            signal: options?.signal,
+          });
+        } catch (e) {
+          if (options?.signal?.aborted || (e instanceof DOMException && e.name === 'AbortError')) {
+            return { ok: false, error: 'Cancelled' };
+          }
+          throw e;
+        }
+        if (res.status === 401) {
+          onUnauthorized?.();
+          return { ok: false, error: 'Unauthorized' };
+        }
+        if (!res.ok || !res.body) {
+          const text = await res.text().catch(() => '');
+          return { ok: false, error: text || `Provision failed (${res.status})` };
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let result: { ok: boolean; backend?: string; error?: string } = { ok: false, error: 'Provision ended unexpectedly' };
+        let eventName = 'message';
+        let dataLines: string[] = [];
+
+        const flush = () => {
+          if (dataLines.length === 0) {
+            eventName = 'message';
+            return;
+          }
+          const raw = dataLines.join('\n');
+          dataLines = [];
+          const name = eventName;
+          eventName = 'message';
+          try {
+            const data = JSON.parse(raw) as Record<string, unknown>;
+            if (name === 'log') {
+              onEvent({ type: 'log', line: String(data.line ?? ''), ts: data.ts as string | undefined });
+            } else if (name === 'status') {
+              onEvent({ type: 'status', phase: String(data.phase ?? ''), backend: data.backend as string | undefined });
+            } else if (name === 'complete') {
+              result = { ok: true, backend: data.backend as string | undefined };
+              onEvent({ type: 'complete', ok: true, backend: data.backend as string | undefined });
+            } else if (name === 'error') {
+              result = { ok: false, error: String(data.error ?? 'Provision failed') };
+              onEvent({ type: 'error', error: String(data.error ?? 'Provision failed') });
+            }
+          } catch { /* ignore malformed */ }
+        };
+
+        while (true) {
+          if (options?.signal?.aborted) {
+            try { await reader.cancel(); } catch { /* ignore */ }
+            return { ok: false, error: 'Cancelled' };
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n');
+          buffer = parts.pop() ?? '';
+          for (const line of parts) {
+            if (line.startsWith('event:')) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              dataLines.push(line.slice(5).trim());
+            } else if (line === '') {
+              flush();
+            }
+          }
+        }
+        flush();
+        return result;
+      })();
+    },
     test: (connectionString: string) =>
-      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean }>(
+      request<DbConnectionTestResult>(
         '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh: undefined }) }
       ),
     testAdvanced: (connectionString: string, ssh?: { host: string; port: number; username: string; password?: string; privateKey?: string } | null) =>
-      request<{ ok: boolean; latencyMs?: number; version?: string; tablesCreated?: number; error?: string; ageAvailable?: boolean; ageError?: string; extensionsCreated?: boolean }>(
+      request<DbConnectionTestResult>(
         '/settings/db/test', { method: 'POST', body: JSON.stringify({ connectionString, ssh }) }
       ),
     migrate: () =>

@@ -148,6 +148,9 @@ cmd_start() {
       echo
       echo "Agent-X server started (pid $(cat "$PID_FILE"))."
       echo "Agent is active at http://127.0.0.1:${PORT}"
+      if grep -q 'deferring PostgreSQL\|Database not provisioned' "${LOG_DIR}/agentx.log" 2>/dev/null; then
+        echo "First-run: open the Web UI to choose Embedded or Cloud PostgreSQL."
+      fi
       echo "Logs: ${LOG_DIR}/agentx.log"
       return 0
     fi

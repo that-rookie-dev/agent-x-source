@@ -23,18 +23,36 @@ describe('getConfigDir', () => {
 });
 
 describe('getDataDir', () => {
+  it('prefers AGENTX_DATA_DIR when set', () => {
+    const prevAgentx = process.env['AGENTX_DATA_DIR'];
+    const prevXdg = process.env['XDG_DATA_HOME'];
+    process.env['AGENTX_DATA_DIR'] = '/tmp/agentx-explicit';
+    process.env['XDG_DATA_HOME'] = '/tmp/test-data';
+    expect(getDataDir()).toBe('/tmp/agentx-explicit');
+    if (prevAgentx) process.env['AGENTX_DATA_DIR'] = prevAgentx;
+    else delete process.env['AGENTX_DATA_DIR'];
+    if (prevXdg) process.env['XDG_DATA_HOME'] = prevXdg;
+    else delete process.env['XDG_DATA_HOME'];
+  });
+
   it('uses XDG_DATA_HOME when set', () => {
+    const prevAgentx = process.env['AGENTX_DATA_DIR'];
     const prev = process.env['XDG_DATA_HOME'];
+    delete process.env['AGENTX_DATA_DIR'];
     process.env['XDG_DATA_HOME'] = '/tmp/test-data';
     expect(getDataDir()).toBe(join('/tmp/test-data', 'agentx'));
+    if (prevAgentx) process.env['AGENTX_DATA_DIR'] = prevAgentx;
     if (prev) process.env['XDG_DATA_HOME'] = prev;
     else delete process.env['XDG_DATA_HOME'];
   });
 
   it('defaults to ~/.local/share/agentx', () => {
+    const prevAgentx = process.env['AGENTX_DATA_DIR'];
     const prev = process.env['XDG_DATA_HOME'];
+    delete process.env['AGENTX_DATA_DIR'];
     delete process.env['XDG_DATA_HOME'];
     expect(getDataDir()).toBe(join(HOME, '.local', 'share', 'agentx'));
+    if (prevAgentx) process.env['AGENTX_DATA_DIR'] = prevAgentx;
     if (prev) process.env['XDG_DATA_HOME'] = prev;
   });
 });

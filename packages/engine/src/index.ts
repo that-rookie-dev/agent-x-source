@@ -180,9 +180,10 @@ export {
   startPeriodicDatabaseHeal,
   stopPeriodicDatabaseHeal,
   isMissingTableError,
+  auditCriticalTables,
   CRITICAL_DB_TABLES,
 } from './db/database-healer.js';
-export type { DatabaseHealResult } from './db/database-healer.js';
+export type { DatabaseHealResult, CriticalTablesAudit } from './db/database-healer.js';
 export {
   recruitCandidatesForMission,
   ensureHubCrewOnRoster,

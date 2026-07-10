@@ -246,9 +246,16 @@ export class MemoryFabric {
    * - verify every required table and recreate missing indexes.
    * Safe to call on every startup and periodic health pass.
    */
-  async heal(): Promise<{ schemaRepaired: boolean; ageAvailable: boolean; ageError?: string }> {
+  async heal(onProgress?: (line: string) => void): Promise<{ schemaRepaired: boolean; ageAvailable: boolean; ageError?: string }> {
     const runner = new MemoryMigrationRunner(this.pool);
-    const { applied: schemaRepaired } = await runner.ensureSchema();
+    const { applied, currentVersion } = await runner.ensureSchema();
+    if (onProgress) {
+      if (applied === 0) {
+        onProgress(`Neural memory fabric verified (schema v${currentVersion}, 0 new migrations).`);
+      } else {
+        onProgress(`Applied ${applied} neural memory migration(s) — now at v${currentVersion}.`);
+      }
+    }
     let { available: ageAvailable, error: ageError } = await runner.detectAge();
 
     // If AGE is available as an extension but not installed yet (e.g. the database
@@ -270,6 +277,16 @@ export class MemoryFabric {
       }
     }
 
+    if (onProgress) {
+      if (ageAvailable) {
+        onProgress('Apache AGE graph extension found.');
+      } else if (ageError) {
+        onProgress(`Apache AGE not available (optional): ${ageError}`);
+      } else {
+        onProgress('Apache AGE not installed (optional — SQL graph fallback active).');
+      }
+    }
+
     let graphRepaired = false;
     if (ageAvailable) {
       try {
@@ -285,6 +302,7 @@ export class MemoryFabric {
         `);
         await this.pool.query('SET search_path = public');
         graphRepaired = true;
+        onProgress?.('AGE memory graph verified.');
       } catch (graphErr) {
         getLogger().warn('MEMORY_FABRIC_HEAL', `AGE graph repair failed: ${graphErr instanceof Error ? graphErr.message : graphErr}`);
         await this.pool.query('SET search_path = public').catch(() => {});
@@ -293,8 +311,10 @@ export class MemoryFabric {
     const missingIndexes = await this.verifyIndexes();
     if (missingIndexes.length > 0) {
       getLogger().warn('MEMORY_FABRIC_HEAL', `Rebuilding missing indexes: ${missingIndexes.join(', ')}`);
+      onProgress?.(`Rebuilding ${missingIndexes.length} missing neural memory index(es)…`);
     }
-    return { schemaRepaired: !!schemaRepaired || graphRepaired || missingIndexes.length > 0, ageAvailable, ageError };
+    const schemaRepaired = applied > 0 || graphRepaired || missingIndexes.length > 0;
+    return { schemaRepaired, ageAvailable, ageError };
   }
 
   private async verifyIndexes(): Promise<string[]> {

@@ -21,6 +21,7 @@ import {
 } from '../crew/postgres-crew-catalog.js';
 import type { CrewCatalogStore } from '../crew/CrewSuggestionService.js';
 import { MemoryFabric } from '../neural/MemoryFabric.js';
+import { auditCriticalTables } from '../db/database-healer.js';
 
 const logger = getLogger();
 
@@ -357,18 +358,26 @@ export interface PostgresConfig extends PoolConfig {
   autoMigrate?: boolean;
   /** When true (default), only load session metadata at connect; messages load on demand. */
   lazyHydrate?: boolean;
+  /** Optional progress lines for setup wizards and first-connect provisioning. */
+  onProgress?: (line: string) => void;
 }
 
 export class PostgresStorageAdapter implements StorageAdapter {
   private pool: Pool;
   private connected = false;
   private lazyHydrate: boolean;
+  private onProgress?: (line: string) => void;
   private hydratedSessions = new Set<string>();
   private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
 
   constructor(config: PostgresConfig) {
     this.pool = new Pool(config);
     this.lazyHydrate = config.lazyHydrate !== false;
+    this.onProgress = config.onProgress;
+  }
+
+  private progress(line: string): void {
+    this.onProgress?.(line);
   }
 
   static async testConnection(connectionString: string): Promise<{ ok: true; version: string } | { ok: false; error: string }> {
@@ -401,20 +410,32 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   private async doConnect(): Promise<void> {
     try {
+      this.progress('Opening PostgreSQL connection pool…');
       const client = await this.pool.connect();
       client.release();
       await this.migrate();
-      await this.seedDefaultPersona();
+      this.progress('Checking default agent persona…');
+      const persona = await this.seedDefaultPersona();
+      if (persona.created) this.progress('Default persona created.');
+      else this.progress('Default persona found.');
       if (this.lazyHydrate) {
+        this.progress('Loading session metadata cache…');
         await this.hydrateEssentialCache();
       } else {
+        this.progress('Loading full storage cache…');
         await this.hydrateCache();
       }
       this.connected = true;
+      this.progress('PostgreSQL storage connected.');
       logger.info('PG_CONNECTED', 'PostgreSQL connection established');
     } catch (error) {
       this.connected = false;
-      logger.error('PG_CONNECT_FAILED', error);
+      const message = error instanceof Error ? error.message : String(error);
+      this.progress(`[ERROR] PostgreSQL connect failed: ${message}`);
+      logger.error('PG_CONNECT_FAILED', {
+        error: message,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       throw error;
     }
   }
@@ -433,11 +454,47 @@ export class PostgresStorageAdapter implements StorageAdapter {
     return this.pool;
   }
 
+  /** True when crew-catalog schema marker (v20) is already recorded. */
+  private async isIncrementalSchemaCurrent(
+    client: { query: (sql: string) => Promise<{ rows: Array<Record<string, unknown>> }> },
+  ): Promise<boolean> {
+    try {
+      const { rows } = await client.query(`SELECT 1 AS ok FROM _schema WHERE version >= 20 LIMIT 1`);
+      return rows.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   async migrate(): Promise<void> {
     const client = await this.pool.connect();
     try {
+      const tablesBefore = await auditCriticalTables(this.pool);
+      const { rows: vectorRows } = await client.query<{ installed: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS installed`,
+      );
+      if (vectorRows[0]?.installed) {
+        this.progress('pgvector extension found.');
+      } else {
+        this.progress('Installing pgvector extension…');
+      }
       await client.query('CREATE EXTENSION IF NOT EXISTS vector;');
+
+      if (tablesBefore.missing.length === 0) {
+        this.progress(`Core tables present (${tablesBefore.total}/${tablesBefore.total}).`);
+      } else {
+        this.progress(
+          `Core tables: ${tablesBefore.present.length}/${tablesBefore.total} present — creating ${tablesBefore.missing.join(', ')}…`,
+        );
+      }
       await client.query(SCHEMA_SQL);
+
+      const incrementalCurrent = await this.isIncrementalSchemaCurrent(client);
+      if (incrementalCurrent) {
+        this.progress('Incremental schema current (verifying columns and indexes)…');
+      } else {
+        this.progress('Applying incremental schema updates…');
+      }
       // Incremental migrations for columns added after initial schema
       await client.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS parts TEXT');
       // Soft-archive: hidden from UI/history reads but kept in DB (memory ingestion untouched)
@@ -495,6 +552,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
         ON CONFLICT (id) DO NOTHING
       `);
       await purgeOrphanChildSessionsPg(this.pool);
+      this.progress('Setting up Crew Hub catalog tables…');
       await runPgCrewCatalogMigration(this.pool);
       await backfillPgCrewSearchColumns(this.pool, (row) => this.crewFromRow(row));
       await client.query(`
@@ -566,7 +624,13 @@ export class PostgresStorageAdapter implements StorageAdapter {
           confirmation_note TEXT
         )
       `);
-      await new MemoryFabric(this.pool).migrate();
+      const mig = await new MemoryFabric(this.pool).migrate();
+      if (mig.applied === 0) {
+        this.progress(`Neural memory schema current (v${mig.currentVersion}, 0 new migrations).`);
+      } else {
+        this.progress(`Applied ${mig.applied} neural memory migration(s) — now at v${mig.currentVersion}.`);
+      }
+      this.progress('Core schema migrations complete.');
     } finally {
       client.release();
     }

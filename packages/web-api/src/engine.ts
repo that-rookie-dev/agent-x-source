@@ -38,7 +38,7 @@ import {
   configureBackgroundTaskPool,
   setOnnxThreadConfig,
 } from '@agentx/engine';
-import type { AgentXConfig, ProviderId, TelemetryBus, Session } from '@agentx/shared';
+import type { AgentXConfig, ProviderId, TelemetryBus, Session, StorageAdapter } from '@agentx/shared';
 import { resolveRuntimeSettings } from '@agentx/shared';
 import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
@@ -48,6 +48,7 @@ import { getDataDir, getLogger, hydrateMessageHistoryEntries, isNeuralBrainSuppo
 import os from 'node:os';
 import { resolveCrewPrivateHostForAgent } from './host-crew-session.js';
 import { persistClarificationResumeFromAgent } from './clarification-resume.js';
+import { DeferredStorageAdapter } from './deferred-storage.js';
 
 export interface EngineState {
   configManager: ConfigManager;
@@ -63,6 +64,8 @@ export interface EngineState {
   gateway: Gateway | null;
   pgPool: { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> } | null;
   connectionString: string;
+  /** True until the wizard (or settings) provisions a real Postgres backend. */
+  storageDeferred: boolean;
   /** Resolves when the active storage backend has finished connect + schema migration. */
   storageReady: Promise<void>;
   telegramBridge: TelegramBridge | null;
@@ -78,6 +81,16 @@ export interface EngineState {
 let state: EngineState | null = null;
 /** Ensures channel bridges start once after auth unlocks encrypted config (not on every request). */
 let channelsBootstrappedAfterAuth = false;
+/** Optional SSE/log hook while storage connects, migrates, and seeds (setup wizard). */
+let storageProgressCallback: ((line: string) => void) | undefined;
+
+export function setStorageProgressCallback(cb: ((line: string) => void) | undefined): void {
+  storageProgressCallback = cb;
+}
+
+function reportStorageProgress(line: string): void {
+  storageProgressCallback?.(line);
+}
 
 function safeLoadConfig(configManager: ConfigManager): AgentXConfig | null {
   try {
@@ -160,42 +173,89 @@ export function getEngine(): EngineState {
       return undefined;
     }
   })();
-  // Prefer runtime-provided env (embedded start or cloud preference applied at boot),
-  // then the wizard/settings plugin config, then legacy config fields, then embedded default.
-  const pgConnectionString =
-    process.env['AGENTX_POSTGRES_CONNECTION_STRING'] ??
-    pluginPgConnection ??
-    ((loadedConfig as any)?.postgres?.connectionString as string | undefined) ??
-    (configManager as any).getPostgresConnectionString?.() ??
-    embeddedPgDefault;
+  const pluginBackend = (() => {
+    try {
+      const cfg = pluginRegistry.getConfig('postgresql');
+      const b = cfg['backend'];
+      return b === 'embedded-postgres' || b === 'postgres' ? b : null;
+    } catch {
+      return null;
+    }
+  })();
 
-  if (!pgConnectionString) {
+  // Prefer runtime-provided env (embedded start or cloud preference applied at boot),
+  // then the wizard/settings plugin config, then legacy config fields.
+  // Do NOT fall back to embedded default when first-run deferred PG (no env, no preference).
+  const resolvedFromConfig =
+    process.env['AGENTX_POSTGRES_CONNECTION_STRING']
+    ?? pluginPgConnection
+    ?? ((loadedConfig as any)?.postgres?.connectionString as string | undefined)
+    ?? (configManager as any).getPostgresConnectionString?.();
+
+  const brainDbExists = existsSync(join(getDataDir(), 'brain_db'));
+  const storageDeferred = !resolvedFromConfig
+    && !pluginBackend
+    && !brainDbExists
+    && process.env['AGENTX_FORCE_EMBEDDED_PG'] !== '1';
+
+  const pgConnectionString = resolvedFromConfig
+    ?? (storageDeferred ? '' : embeddedPgDefault);
+
+  if (!pgConnectionString && !storageDeferred) {
     throw new Error(
       'PostgreSQL connection string is required. When running the Agent-X desktop app, the bundled embedded PostgreSQL is started automatically. When running the web-api standalone, set AGENTX_POSTGRES_CONNECTION_STRING or configure postgres.connectionString in config.',
     );
   }
 
   const lazyHydrate = loadedConfig?.runtime?.lazyStorageCache !== false;
-  const pgAdapter = new PostgresStorageAdapter({
-    connectionString: pgConnectionString,
-    max: ((loadedConfig as any)?.postgres?.poolSize as number) ?? 5,
-    lazyHydrate,
-  } as any);
-  const sessionManager = new SessionManager({ storageAdapter: pgAdapter });
+  let storageAdapter: StorageAdapter;
+  let pgAdapter: PostgresStorageAdapter | null = null;
+
+  if (storageDeferred) {
+    getLogger().info('STORAGE', 'Deferred storage mode — waiting for setup wizard Postgres choice');
+    storageAdapter = new DeferredStorageAdapter();
+  } else {
+    pgAdapter = new PostgresStorageAdapter({
+      connectionString: pgConnectionString,
+      max: ((loadedConfig as any)?.postgres?.poolSize as number) ?? 5,
+      lazyHydrate,
+      onProgress: reportStorageProgress,
+      connectionTimeoutMillis: 30_000,
+    } as any);
+    storageAdapter = pgAdapter;
+  }
+
+  const sessionManager = new SessionManager({ storageAdapter });
 
   const storageReady = (async () => {
-    await pgAdapter.connect();
-    const pool = pgAdapter.getPool();
-    if (pool) {
-      const fabric = new MemoryFabric(pool as any);
-      await fabric.heal();
+    if (!pgAdapter) return;
+    try {
+      reportStorageProgress('Connecting engine storage…');
+      await pgAdapter.connect();
+      const pool = pgAdapter.getPool();
+      if (pool) {
+        reportStorageProgress('Initializing neural memory fabric…');
+        const fabric = new MemoryFabric(pool as any);
+        await fabric.heal(reportStorageProgress);
+        reportStorageProgress('Neural memory fabric ready.');
+      }
+      const store = (sessionManager as any).store as PostgresStorageAdapter;
+      reportStorageProgress('Verifying schema and Crew Hub catalog…');
+      await healDatabaseStore(store, reportStorageProgress);
+      startPeriodicDatabaseHeal(store);
+      reportStorageProgress('Engine storage ready.');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      getLogger().error('STORAGE_READY', {
+        error: message,
+        stack: e instanceof Error ? e.stack : undefined,
+      });
+      reportStorageProgress(`[ERROR] Storage setup failed: ${message}`);
+      throw e;
     }
-    const store = (sessionManager as any).store as PostgresStorageAdapter;
-    await healDatabaseStore(store);
-    startPeriodicDatabaseHeal(store);
   })();
 
-  const store = (sessionManager as any).store as PostgresStorageAdapter;
+  const store = storageDeferred ? undefined : (sessionManager as any).store as PostgresStorageAdapter;
   const crewManager = new CrewManager(store);
 
   const telemetry = new DefaultTelemetryBus({ enabled: true });
@@ -232,6 +292,7 @@ export function getEngine(): EngineState {
     gateway: null,
     pgPool: pgAdapter?.getPool() ?? null,
     connectionString: pgConnectionString,
+    storageDeferred,
     storageReady,
     telegramBridge: null,
     discordBridge: null,
@@ -245,6 +306,7 @@ export function getEngine(): EngineState {
 
   void storageReady
     .then(async () => {
+      if (!store) return;
       if (state) state.crewManager.refresh();
       await healDatabaseStore(store);
       startPeriodicDatabaseHeal(store);
@@ -260,6 +322,15 @@ export function getEngine(): EngineState {
     });
 
   return state!;
+}
+
+/** Whether the engine is waiting for wizard Postgres provision. */
+export function isStorageDeferred(): boolean {
+  try {
+    return getEngine().storageDeferred;
+  } catch {
+    return true;
+  }
 }
 
 /** Wait until the active storage backend has finished schema migration. */

@@ -8,7 +8,8 @@ import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, voiceConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported, resolveRuntimeSettings, normalizeClientSituation } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady, applyRuntimeSettings } from './engine.js';
+import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady, applyRuntimeSettings, isStorageDeferred, setStorageProgressCallback } from './engine.js';
+import { registerEmbeddedPostgresController, startEmbeddedPostgresViaBridge } from './pg-lifecycle-bridge.js';
 import { applyChannelsConfig, discoverTelegramBot, getTelegramInboundStatus, getTelegramRuntimeHints, restartTelegramInbound, saveVerifiedTelegram, sendTelegramGreeting } from './channels-sync.js';
 import { buildGraphRagSummarizer } from './distillation-generator.js';
 import { setupWebSocket, ensureSubscribed, persistMessageDirect, broadcastBrainActivity } from './ws.js';
@@ -437,6 +438,9 @@ app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     version: VERSION,
+    storageDeferred: (() => {
+      try { return isStorageDeferred(); } catch { return false; }
+    })(),
     pid: process.pid,
     node: process.version,
     platform: process.platform,
@@ -2492,6 +2496,33 @@ app.post('/api/settings/web-search/test', async (req, res) => {
   }
 });
 
+async function persistPostgresBackend(
+  resolvedBackend: 'embedded-postgres' | 'postgres',
+  connectionString: string,
+): Promise<void> {
+  process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = connectionString;
+  process.env['AGENTX_EMBEDDED_PG_ENABLED'] = resolvedBackend === 'embedded-postgres' ? '1' : '0';
+
+  const eng = getEngine();
+  const { getBuiltinPlugin } = await import('@agentx/engine');
+
+  if (!eng.pluginRegistry.isInstalled('postgresql')) {
+    const entry = getBuiltinPlugin('postgresql');
+    if (entry) eng.pluginRegistry.install(entry);
+  }
+  if (!eng.pluginRegistry.isEnabled('postgresql')) {
+    eng.pluginRegistry.enable('postgresql');
+  }
+  eng.pluginRegistry.updateConfig('postgresql', {
+    backend: resolvedBackend,
+    connectionString,
+    autoMigrate: true,
+    poolSize: 5,
+  });
+
+  clearEngine();
+}
+
 app.put('/api/settings/db', async (req, res) => {
   try {
     const { backend, postgres } = req.body || {};
@@ -2501,11 +2532,20 @@ app.put('/api/settings/db', async (req, res) => {
     let connectionString = postgres?.connectionString as string | undefined;
 
     if (resolvedBackend === 'embedded-postgres') {
-      // Runtime starts the bundled native PostgreSQL and sets this env var.
       connectionString = process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
       if (!connectionString) {
-        res.status(400).json({ ok: false, error: 'Embedded PostgreSQL is not running. Start Agent-X to use the bundled database.' });
-        return;
+        // First-run deferred boot: start embedded PG on demand (same process as desktop/server).
+        try {
+          connectionString = await startEmbeddedPostgresViaBridge((line) => {
+            getLogger().info('PG_PROVISION', line);
+          });
+        } catch (e: unknown) {
+          res.status(400).json({
+            ok: false,
+            error: e instanceof Error ? e.message : 'Embedded PostgreSQL failed to start',
+          });
+          return;
+        }
       }
     }
 
@@ -2517,31 +2557,141 @@ app.put('/api/settings/db', async (req, res) => {
         return;
       }
 
-      const eng = getEngine();
-      const { getBuiltinPlugin } = await import('@agentx/engine');
-
-      if (!eng.pluginRegistry.isInstalled('postgresql')) {
-        const entry = getBuiltinPlugin('postgresql');
-        if (entry) eng.pluginRegistry.install(entry);
-      }
-      if (!eng.pluginRegistry.isEnabled('postgresql')) {
-        eng.pluginRegistry.enable('postgresql');
-      }
-      // Persist backend so the next process start can skip embedded PG for cloud setups.
-      eng.pluginRegistry.updateConfig('postgresql', {
-        backend: resolvedBackend,
-        connectionString,
-        autoMigrate: true,
-        poolSize: 5,
-      });
-
-      clearEngine();
+      await persistPostgresBackend(resolvedBackend, connectionString);
     }
 
     res.json({ ok: true, backend: resolvedBackend });
   } catch (e: unknown) {
     getLogger().error('PUT_API_SETTINGS_DB', e instanceof Error ? e : String(e));
     res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-update-failed' });
+  }
+});
+
+/**
+ * SSE provision endpoint used by the setup wizard.
+ * Streams progress lines, then persists backend + reconnects the engine.
+ * Wizard step order is unchanged — this only adds visible progress for the storage confirm action.
+ */
+app.post('/api/settings/db/provision', async (req, res) => {
+  const { backend, postgres } = req.body || {};
+  const resolvedBackend = backend === 'embedded-postgres' ? 'embedded-postgres' : 'postgres';
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  let eventId = 0;
+  let clientDisconnected = false;
+  req.on('close', () => {
+    clientDisconnected = true;
+    getLogger().warn('PG_PROVISION', 'Client disconnected during provision — server setup may continue in background', {
+      backend: resolvedBackend,
+    });
+  });
+
+  const send = (event: string, data: unknown) => {
+    if (clientDisconnected) return;
+    try {
+      res.write(`id: ${eventId}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      eventId += 1;
+    } catch { /* client closed */ }
+  };
+
+  const log = (line: string) => {
+    getLogger().info('PG_PROVISION', line);
+    send('log', { line, ts: new Date().toISOString() });
+  };
+
+  const logError = (phase: string, e: unknown) => {
+    const message = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    getLogger().error('PG_PROVISION', {
+      phase,
+      error: message,
+      stack,
+      backend: resolvedBackend,
+      clientDisconnected,
+    });
+    send('log', { line: `[ERROR] ${phase}: ${message}`, ts: new Date().toISOString() });
+  };
+
+  try {
+    send('status', { phase: 'starting', backend: resolvedBackend });
+    log(`Provisioning ${resolvedBackend === 'embedded-postgres' ? 'embedded' : 'cloud'} PostgreSQL…`);
+
+    let connectionString = typeof postgres?.connectionString === 'string'
+      ? postgres.connectionString.trim()
+      : '';
+
+    if (resolvedBackend === 'embedded-postgres') {
+      log('Starting bundled PostgreSQL (initdb / extensions may take a minute on first run)…');
+      try {
+        connectionString = await startEmbeddedPostgresViaBridge((line) => log(line));
+      } catch (e) {
+        logError('embedded-postgres-start', e);
+        throw e;
+      }
+    } else {
+      if (!connectionString) {
+        send('error', { error: 'Connection string is required for cloud PostgreSQL' });
+        res.end();
+        return;
+      }
+      log('Testing remote PostgreSQL connection…');
+    }
+
+    const { PostgresStorageAdapter } = await import('@agentx/engine');
+    let test: Awaited<ReturnType<typeof PostgresStorageAdapter.testConnection>>;
+    try {
+      test = await PostgresStorageAdapter.testConnection(connectionString);
+    } catch (e) {
+      logError('connection-test', e);
+      throw e;
+    }
+    if (!test.ok) {
+      const err = test.error ?? 'PostgreSQL connection failed';
+      getLogger().error('PG_PROVISION', { phase: 'connection-test', error: err, backend: resolvedBackend });
+      send('error', { error: err });
+      res.end();
+      return;
+    }
+    log(test.version ? `Connected: ${test.version}` : 'Connection OK');
+
+    log('Saving storage configuration…');
+    setStorageProgressCallback((line) => log(line));
+    try {
+      try {
+        await persistPostgresBackend(resolvedBackend, connectionString);
+      } catch (e) {
+        logError('persist-config', e);
+        throw e;
+      }
+      log('Reconnecting engine with new storage backend…');
+      const eng = getEngine();
+      try {
+        await eng.storageReady;
+      } catch (e) {
+        logError('engine-storage-ready', e);
+        throw e;
+      }
+    } finally {
+      setStorageProgressCallback(undefined);
+    }
+
+    if (clientDisconnected) {
+      getLogger().info('PG_PROVISION', 'Provision finished after client disconnect', { backend: resolvedBackend });
+      return;
+    }
+    send('complete', { ok: true, backend: resolvedBackend });
+    res.end();
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'provision-failed';
+    logError('provision', e);
+    send('error', { error: message });
+    res.end();
   }
 });
 
@@ -2553,28 +2703,31 @@ app.post('/api/settings/db/test', async (req, res) => {
       return;
     }
     const { Pool } = await import('pg');
+    const { runDbExtensionChecks } = await import('./db-extension-checks.js');
     const pool = new Pool({ connectionString, max: 1 });
     const client = await pool.connect();
     const result = await client.query('SELECT version() as version');
     const pgVersion = result.rows[0]?.['version'] as string;
-    let ageAvailable = false;
-    let ageError: string | undefined;
-    let extensionsCreated = false;
-    try {
-      await client.query('CREATE EXTENSION IF NOT EXISTS vector');
-      try { await client.query('CREATE EXTENSION IF NOT EXISTS age'); } catch (ageErr) {
-        ageError = ageErr instanceof Error ? ageErr.message : 'AGE not available';
-      }
-      extensionsCreated = true;
-      const { rows } = await client.query(`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'age') AS available`);
-      ageAvailable = rows[0]?.available === true;
-    } catch (extErr) {
-      ageError = extErr instanceof Error ? extErr.message : 'Failed to install extensions';
-    }
+    const ext = await runDbExtensionChecks(client);
     client.release();
     await pool.end();
-    getLogger().info('SETTINGS_DB_TEST', `PostgreSQL connection successful: ${pgVersion}`);
-    res.json({ ok: true, version: pgVersion || 'connected', ageAvailable, ageError, extensionsCreated });
+
+    const blocking = ext.checks.some((c) => c.status === 'fail');
+    getLogger().info('SETTINGS_DB_TEST', `PostgreSQL connection ${blocking ? 'partial' : 'successful'}: ${pgVersion}`);
+
+    res.json({
+      ok: !blocking,
+      version: pgVersion || 'connected',
+      checks: ext.checks,
+      vectorAvailable: ext.vectorAvailable,
+      vectorError: ext.vectorError,
+      ageAvailable: ext.ageAvailable,
+      ageError: ext.ageError,
+      extensionsCreated: ext.extensionsCreated,
+      error: blocking
+        ? ext.checks.find((c) => c.status === 'fail')?.message ?? 'Required database extensions are missing'
+        : undefined,
+    });
   } catch (e: unknown) {
     getLogger().error('POST_API_SETTINGS_DB_TEST', e instanceof Error ? e : String(e));
     res.status(400).json({ ok: false, error: e instanceof Error ? e.message : 'connection-failed' });
@@ -4787,7 +4940,7 @@ setupWebSocket(server);
 setupVoiceWebSocket(server);
 attachWebSocketUpgradeRouter(server);
 
-export { app, server };
+export { app, server, registerEmbeddedPostgresController };
 
 export function startServer(port = PORT): ReturnType<typeof server.listen> {
   const publicUrl = (process.env['AGENTX_PUBLIC_URL'] ?? `http://localhost:${port}`).replace(/\/$/, '');
