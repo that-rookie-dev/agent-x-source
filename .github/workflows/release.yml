@@ -140,10 +140,17 @@ jobs:
       - name: Stage pg extension artifact
         run: node packages/runtime/scripts/pg-ext-artifact.mjs stage ${{ matrix.suffix }}
 
+      - name: Verify pg extension artifact staging tree
+        shell: bash
+        run: |
+          test -d packages/runtime/pg-ext-artifact-staging
+          ls -la packages/runtime/pg-ext-artifact-staging
+          find packages/runtime/pg-ext-artifact-staging -name 'vector.control' -print
+
       - uses: actions/upload-artifact@v4
         with:
           name: pg-ext-${{ matrix.suffix }}
-          path: packages/runtime/.pg-ext-artifact
+          path: packages/runtime/pg-ext-artifact-staging
           if-no-files-found: error
           retention-days: 1
 
@@ -200,10 +207,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-ext-${{ matrix.pg_ext }}
-          path: packages/runtime/.pg-ext-download
+          path: packages/runtime/pg-ext-download
 
       - name: Install pg extension artifact
-        run: node packages/runtime/scripts/pg-ext-artifact.mjs install ${{ matrix.pg_ext }} packages/runtime/.pg-ext-download
+        run: node packages/runtime/scripts/pg-ext-artifact.mjs install ${{ matrix.pg_ext }} packages/runtime/pg-ext-download
 
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
@@ -302,10 +309,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-ext-${{ matrix.pg_ext }}
-          path: packages/runtime/.pg-ext-download
+          path: packages/runtime/pg-ext-download
 
       - name: Install pg extension artifact
-        run: node packages/runtime/scripts/pg-ext-artifact.mjs install ${{ matrix.pg_ext }} packages/runtime/.pg-ext-download
+        run: node packages/runtime/scripts/pg-ext-artifact.mjs install ${{ matrix.pg_ext }} packages/runtime/pg-ext-download
 
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
@@ -394,10 +401,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-ext-windows-x64
-          path: packages/runtime/.pg-ext-download
+          path: packages/runtime/pg-ext-download
 
       - name: Install pg extension artifact
-        run: node packages/runtime/scripts/pg-ext-artifact.mjs install windows-x64 packages/runtime/.pg-ext-download
+        run: node packages/runtime/scripts/pg-ext-artifact.mjs install windows-x64 packages/runtime/pg-ext-download
 
       - name: Setup bundled Python
         run: node packages/runtime/scripts/setup-python.mjs
@@ -497,10 +504,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: pg-ext-${{ matrix.pg_ext }}
-          path: packages/runtime/.pg-ext-download
+          path: packages/runtime/pg-ext-download
 
       - name: Install pg extension artifact
-        run: node packages/runtime/scripts/pg-ext-artifact.mjs install ${{ matrix.pg_ext }} packages/runtime/.pg-ext-download
+        run: node packages/runtime/scripts/pg-ext-artifact.mjs install ${{ matrix.pg_ext }} packages/runtime/pg-ext-download
 
       - name: Build server tarball
         shell: bash
