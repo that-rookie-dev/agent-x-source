@@ -3,6 +3,8 @@ import path from 'node:path';
 import { platform as hostPlatform } from 'node:os';
 
 const EMBEDDED_PG_LIB_MARKERS = ['@embedded-postgres', 'embedded-postgres'];
+/** DYLD_LIBRARY_PATH / LD_LIBRARY_PATH always use ':' even on Windows hosts. */
+const UNIX_LIB_PATH_DELIMITER = ':';
 
 function pathApiFor(plat: NodeJS.Platform): typeof path.posix {
   return plat === 'win32' ? path.win32 : path.posix;
@@ -41,7 +43,7 @@ export function envWithoutEmbeddedPostgresLibs(
   for (const key of ['DYLD_LIBRARY_PATH', 'LD_LIBRARY_PATH'] as const) {
     const value = env[key];
     if (!value) continue;
-    const filtered = filterEmbeddedPostgresLibPath(value);
+    const filtered = filterEmbeddedPostgresLibPath(value, UNIX_LIB_PATH_DELIMITER);
     if (filtered) env[key] = filtered;
     else delete env[key];
   }
@@ -97,12 +99,12 @@ export function buildEmbeddedPostgresChildEnv(
 
   const libPathKey = plat === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
   const inherited = (env[libPathKey] || '')
-    .split(':')
+    .split(UNIX_LIB_PATH_DELIMITER)
     .map((segment) => segment.trim())
     .filter(Boolean)
     .filter((segment) => !libDirs.includes(segment));
 
   // Postgres libs first so the server never picks up a conflicting system dylib.
-  env[libPathKey] = [...libDirs, ...inherited].join(':');
+  env[libPathKey] = [...libDirs, ...inherited].join(UNIX_LIB_PATH_DELIMITER);
   return env;
 }
