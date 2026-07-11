@@ -71,6 +71,7 @@ import modelBenchmarkRouter from './model-benchmark-api.js';
 import voiceRouter from './voice-api.js';
 import { integrationsRouter, handleMcpStdioOAuthCallback } from './integrations-api.js';
 import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutomation } from './automation/index.js';
+import { registerCanvasRoutes } from './canvas-api.js';
 import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
@@ -372,6 +373,7 @@ app.use('/api', modelBenchmarkRouter);
 app.use('/api', voiceRouter);
 app.use('/api', integrationsRouter);
 registerAutomationRoutes(app);
+registerCanvasRoutes(app);
 
 // Security headers (content-type sniffing, XSS, clickjacking protection)
 app.use(helmet({

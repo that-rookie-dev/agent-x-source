@@ -15,6 +15,8 @@ interface AgentXDesktopBridge {
   isMaximized: () => Promise<boolean>;
   openFolder: () => Promise<string | null>;
   openFile: (filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>;
+  saveFile: (opts?: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<string | null>;
+  writeFileBytes: (filePath: string, data: Uint8Array) => Promise<{ ok: boolean }>;
   checkNodeRuntime: () => Promise<{ node?: string; npx?: string; ok: boolean }>;
   defaultWorkspace: () => Promise<string>;
   requestNotifications: () => Promise<{ ok: boolean; reason?: string }>;

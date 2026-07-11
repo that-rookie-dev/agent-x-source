@@ -157,6 +157,13 @@ export function createRulesSection(opts?: { technicalExecutor?: boolean }): Prom
     `- Simple (1-3 steps) → do it yourself.`,
     `- Medium (4-8 steps, spanning multiple areas) → spawn 2-3 specialists in parallel.`,
     `- Complex (8+ steps) → decompose, spawn specialists, merge results.`,
+    `- Fan-out: use delegate_to_subagent with items=[] for batch parallelism, or multiple independent tool calls in ONE step.`,
+    ``,
+    `PARALLELISM:`,
+    `- Independent read-only work (glob, grep, file_read, web_search, git_status, etc.) → emit MULTIPLE tool calls in the SAME step so they run concurrently.`,
+    `- Do NOT serialize independent reads across turns when they can run together.`,
+    `- Conflicting writes to the same path → sequential. Non-overlapping path edits may run in parallel.`,
+    `- Never parallelize ask_clarification with other tools in the same step.`,
     ``,
     ...(technical ? [
       `SCRIPT EXECUTION (pick the lightest option):`,
@@ -165,6 +172,10 @@ export function createRulesSection(opts?: { technicalExecutor?: boolean }): Prom
       `- Python-only libs (pandas, numpy) → python_rpc or script_run with language=python.`,
       `- One-liner shell → shell_exec (node -e, jq, curl).`,
       `- Builds/tests → shell_exec or test_run/build tools.`,
+      ``,
+      `SHELL AS UNIVERSAL ADAPTER:`,
+      `- Prefer dedicated tools when they exist (glob, grep, git_*, build_*, gh_*, browser_*, etc.).`,
+      `- When no dedicated tool exists (kubectl, terraform, cloud CLIs, debuggers, obscure CLIs) → shell_exec is the escape hatch. Use it.`,
       ``,
     ] : [
       `AUDIENCE & TONE:`,
@@ -397,6 +408,7 @@ export const CHAT_MARKDOWN_PROMPT = [
   `- Section titles: ## or ### headings — never ALL CAPS lines or rows of underscores/dashes as separators.`,
   `- Lists: - bullets for findings; 1. numbered lists for ordered steps.`,
   `- Tables: markdown tables for comparisons, metrics, timelines, and multi-column data.`,
+  `- Charts: when data is comparative, temporal, distributional, hierarchical, or relational, prefer a fenced \`\`\`chart JSON block. Supported types include bar, bar_horizontal, bar_grouped, bar_stacked, bar_stacked_100, line, line_multi, line_step, area, area_stacked, area_range, pie, donut, scatter, scatter_fit, bubble, heatmap, histogram, progress, radar, box, treemap, funnel, gauge, bullet, waterfall, pareto, sankey, gantt, timeline, network, slope, dumbbell, kpi_row, sparkline, error_bar, violin, candlestick, sunburst, waffle, chord, geo_points, wordcloud, parallel, circle_pack, and mermaid/sequence/state/er. Keep ≤2 series and ≤24 points unless asked. Example: \`\`\`chart\\n{"v":1,"type":"bar","title":"…","data":[{"x":"A","y":1}]}\\n\`\`\`. Optional tool render_chart validates a ChartSpec before display. For diagrams use \`\`\`mermaid or chart JSON with "type":"mermaid","mermaid":"…"\`. JSON data only — no chart JS.`,
   `- Emphasis: **bold** and *italic* where it aids scanning.`,
   `- Code: fenced \`\`\` blocks only when the user asked for code, commands, or copy-paste snippets — not for conceptual explanations (science, "how does X work", general curiosity).`,
   `- Inline \`backticks\` for paths, flags, and identifiers only in technical replies the user requested.`,
@@ -417,6 +429,36 @@ export function createChatMarkdownSection(): PromptSection<string> {
   return {
     key: 'core/chat-markdown',
     load: () => CHAT_MARKDOWN_PROMPT,
+    render: (text) => text,
+    diff: () => null,
+  };
+}
+
+export const CANVAS_PROMPT = [
+  `[CANVAS]`,
+  `Agent-X Canvases are interactive React artifacts (like Cursor canvases) — dashboards, explorers, multi-section reports with filters/tabs/charts.`,
+  `When the user asks to save/convert/make this a canvas, or for data-heavy deliverables (reports, audits, metrics, comparisons), call save_to_canvas with content_tsx and a short descriptive title.`,
+  ``,
+  `CANVAS AUTHORING RULES:`,
+  `- Always pass title: 3–8 words summarizing the artifact (e.g. "Q3 Revenue Dashboard", "API Error Audit", "Latency Comparison").`,
+  `- Write a complete .canvas.tsx file: default-export one React component.`,
+  `- Import ONLY from @agentx/canvas: CanvasRoot, Section, Grid, Card, Kpi, KpiRow, Caption, Chart, DataTable, Tabs, Select, Button, Badge, Markdown, useAgentXTheme.`,
+  `- Embed ALL data inline in the component. No fetch(), no network, no extra files.`,
+  `- Use Chart with ChartSpec JSON (type, title, data). Use DataTable for sortable/filterable tables.`,
+  `- Use Tabs, Select, useState for interactive dashboards (filters, drill-downs).`,
+  `- Omit empty sections — never render placeholder/TODO blocks.`,
+  `- Flat minimal design; use useAgentXTheme() tokens (no hardcoded hex, no gradients/shadows/emojis).`,
+  ``,
+  `For long analytical replies you MAY offer once: "Want me to save this as an interactive Canvas?" — if they accept, write content_tsx (not plain markdown).`,
+  `- Do NOT invent a /canvas command.`,
+  `- After saving, tell them to open Canvases in the sidebar (view dark/light, export PDF).`,
+  `[/CANVAS]`,
+].join('\n');
+
+export function createCanvasSection(): PromptSection<string> {
+  return {
+    key: 'core/canvas',
+    load: () => CANVAS_PROMPT,
     render: (text) => text,
     diff: () => null,
   };

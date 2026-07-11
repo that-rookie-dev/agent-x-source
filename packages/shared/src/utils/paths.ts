@@ -19,6 +19,11 @@ export function getLogDir(): string {
   return join(getDataDir(), 'logs');
 }
 
+/** Internal canvas artifacts (markdown + metadata); never leaves data dir except via explicit PDF export. */
+export function getCanvasesDir(): string {
+  return join(getDataDir(), 'canvases');
+}
+
 export function isWithinScope(targetPath: string, scopePath: string): boolean {
   const normalizedTarget = join(targetPath);
   const normalizedScope = join(scopePath);

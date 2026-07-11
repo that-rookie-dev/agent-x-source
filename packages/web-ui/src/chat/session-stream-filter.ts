@@ -5,6 +5,7 @@ const SESSION_AGNOSTIC_EVENT_TYPES = new Set([
   'crew_suggestion',
   'crew_suggestion_required',
   'notification_created',
+  'canvas_created',
   'automation_run_started',
   'automation_run_ended',
 ]);

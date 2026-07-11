@@ -18,6 +18,7 @@ sleep 1
 echo ">>> Building shared, engine, web-api, web-ui, web-neuron..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
+pnpm --filter @agentx/canvas run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build

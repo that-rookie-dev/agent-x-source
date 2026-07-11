@@ -5,6 +5,7 @@ import ReplayIcon from '@mui/icons-material/Replay';
 import type { VisibleMessageItem, UIMessage } from './types';
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { ChatMessageTurn } from './ChatMessageTurn';
+import { AgentTurnLoader } from './AgentTurnLoader';
 import { ChatUserMessage } from './ChatUserMessage';
 import { ChatModeChangeChip } from './ChatModeChangeChip';
 
@@ -20,13 +21,17 @@ interface ChatMessageListProps {
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
   pendingFeedbackMessageId?: string | null;
   onTurnFeedback?: (messageId: string, rating: import('@agentx/shared/browser').TurnFeedbackRating) => void;
+  onSaveCanvas?: (message: UIMessage) => void;
   feedbackSubmitting?: boolean;
+  /** Show agent-side loader after the list while the current turn is active. */
+  turnStreaming?: boolean;
+  turnActivityLabel?: string;
   /** Disable content-visibility sizing while prepending older messages (prevents scroll jumps). */
   freezeLayout?: boolean;
 }
 
 /** Virtual-ish message list — content-visibility keeps long sessions smooth. */
-export const ChatMessageList = memo(function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting, freezeLayout }: ChatMessageListProps) {
+export const ChatMessageList = memo(function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, onSaveCanvas, feedbackSubmitting, turnStreaming, turnActivityLabel, freezeLayout }: ChatMessageListProps) {
   const renderMessage = useCallback((msg: UIMessage, idx: number) => {
     const isLast = idx === items.length - 1;
     const hasText = !!(msg.content?.trim() || msg.parts?.some((p) => p.type === 'text' && p.content?.trim()));
@@ -51,10 +56,11 @@ export const ChatMessageList = memo(function ChatMessageList({ items, loadingSte
         onViewCrewDossier={onViewCrewDossier}
         showFeedback={pendingFeedbackMessageId === msg.id}
         onTurnFeedback={onTurnFeedback}
+        onSaveCanvas={onSaveCanvas}
         feedbackSubmitting={feedbackSubmitting}
       />
     );
-  }, [items.length, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, feedbackSubmitting]);
+  }, [items.length, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, onSaveCanvas, feedbackSubmitting]);
 
   return (
     <>
@@ -82,6 +88,7 @@ export const ChatMessageList = memo(function ChatMessageList({ items, loadingSte
         </Box>
         );
       })}
+      {turnStreaming ? <AgentTurnLoader label={turnActivityLabel} /> : null}
       <div ref={bottomRef} />
     </>
   );

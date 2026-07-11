@@ -72,6 +72,10 @@ const LANG_LABELS: Record<string, string> = {
   pipeline: 'Pipeline',
   tree: 'Hierarchy',
   diagram: 'Hierarchy',
+  chart: 'Chart',
+  graph: 'Chart',
+  viz: 'Chart',
+  mermaid: 'Diagram',
 };
 
 /** Human-readable label for code fence language or custom block type. */

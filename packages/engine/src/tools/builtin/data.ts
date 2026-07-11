@@ -246,3 +246,39 @@ export async function validateSchema(args: Record<string, unknown>): Promise<Too
     metadata: { valid: errors.length === 0, errorCount: errors.length },
   };
 }
+
+export async function renderChart(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+  const { parseChartSpec } = await import('@agentx/shared');
+  let payload: string;
+  if (typeof args['spec'] === 'string') {
+    payload = args['spec'];
+  } else if (args['spec'] && typeof args['spec'] === 'object') {
+    payload = JSON.stringify(args['spec']);
+  } else if (typeof args['chart'] === 'string') {
+    payload = args['chart'];
+  } else if (args['chart'] && typeof args['chart'] === 'object') {
+    payload = JSON.stringify(args['chart']);
+  } else if (typeof args['type'] === 'string') {
+    // Flat ChartSpec passed as tool args
+    payload = JSON.stringify(args);
+  } else {
+    return { success: false, output: 'Provide a ChartSpec object via "spec"', error: 'MISSING_INPUT' };
+  }
+
+  const parsed = parseChartSpec(payload);
+  if (!parsed.ok) {
+    return { success: false, output: `Invalid chart spec: ${parsed.error}`, error: 'INVALID_CHART' };
+  }
+
+  const canonical = JSON.stringify(parsed.spec, null, 2);
+  return {
+    success: true,
+    output: [
+      'Chart spec validated. Include this fence in your reply (or the UI will render from tool metadata):',
+      '```chart',
+      canonical,
+      '```',
+    ].join('\n'),
+    metadata: { chartSpec: parsed.spec, chartType: parsed.spec.type },
+  };
+}

@@ -102,6 +102,7 @@ const {
     cancelAll: vi.fn(),
     spawn: vi.fn(),
     setParentAgent: vi.fn(),
+    setMaxConcurrent: vi.fn(),
   });
 
   const createTaskMgr = () => ({
@@ -842,7 +843,7 @@ describe('Agent', () => {
       const agent = createTestAgent();
       agent.spawnSubAgent('do something', ['shell_exec'], 30_000);
 
-      expect(mockSubAgentMgr.spawn).toHaveBeenCalledWith('do something', ['shell_exec'], 30_000, 5);
+      expect(mockSubAgentMgr.spawn).toHaveBeenCalledWith('do something', ['shell_exec'], 30_000, 8);
     });
   });
 

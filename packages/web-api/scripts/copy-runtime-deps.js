@@ -8,13 +8,15 @@
  * their production dependencies from the pnpm workspace and copies them into
  * dist/node_modules.
  */
-import { readFileSync, cpSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, cpSync, mkdirSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const distDir = fileURLToPath(new URL('../dist', import.meta.url));
 const targetModulesDir = join(distDir, 'node_modules');
+const webApiDir = fileURLToPath(new URL('..', import.meta.url));
+const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
 
 // Packages that are externalized in tsup.config.ts because they load native
 // binaries or use runtime dynamic imports that can't be bundled.
@@ -24,9 +26,28 @@ const externalPackages = [
   'onnxruntime-common',
   'pdfjs-dist',
   '@napi-rs/keyring',
+  'esbuild',
 ];
 
 const copied = new Set();
+
+function storeEntryPrefix(pkgName) {
+  return pkgName.startsWith('@') ? `${pkgName.replace('/', '+')}@` : `${pkgName}@`;
+}
+
+function findInPnpmStore(pkgName) {
+  const pnpmStore = join(workspaceRoot, 'node_modules', '.pnpm');
+  if (!existsSync(pnpmStore)) return null;
+  const prefix = storeEntryPrefix(pkgName);
+  for (const entry of readdirSync(pnpmStore)) {
+    if (!entry.startsWith(prefix)) continue;
+    const src = pkgName.startsWith('@')
+      ? join(pnpmStore, entry, 'node_modules', ...pkgName.split('/'))
+      : join(pnpmStore, entry, 'node_modules', pkgName);
+    if (existsSync(src)) return src;
+  }
+  return null;
+}
 
 function packageDirLooksComplete(dir) {
   return existsSync(join(dir, 'package.json'));
@@ -64,7 +85,10 @@ function copyPackage(name, lookupPaths) {
   if (copied.has(name)) return;
   copied.add(name);
 
-  const sourceDir = resolvePackageDir(name, lookupPaths);
+  let sourceDir = resolvePackageDir(name, lookupPaths);
+  if (!sourceDir) {
+    sourceDir = findInPnpmStore(name);
+  }
   if (!sourceDir) {
     console.warn(`Skipping ${name}: could not resolve package`);
     return;
@@ -97,10 +121,14 @@ function copyPackage(name, lookupPaths) {
 
 mkdirSync(targetModulesDir, { recursive: true });
 
+function esbuildPlatformPackageName() {
+  const platform = process.platform;
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  return `@esbuild/${platform}-${arch}`;
+}
+
 // Start resolution from the web-api package and the workspace root so transitive
 // dependencies of @huggingface/transformers are reachable in all environments.
-const webApiDir = fileURLToPath(new URL('..', import.meta.url));
-const workspaceRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const lookupDirs = [webApiDir, workspaceRoot];
 
 const hfDir = resolvePackageDir('@huggingface/transformers', lookupDirs);
@@ -111,5 +139,8 @@ if (hfDir) {
 for (const pkg of externalPackages) {
   copyPackage(pkg, lookupDirs);
 }
+
+const esbuildPlatform = esbuildPlatformPackageName();
+copyPackage(esbuildPlatform, lookupDirs);
 
 console.log('Runtime dependencies copied to dist/node_modules');

@@ -187,6 +187,41 @@ function bundlePdfjsDist(webApiDir, pnpmStore) {
   bundlePackageFromPnpmStore(webApiDir, pnpmStore, 'pdfjs-dist');
 }
 
+function bundleScopedPackage(webApiDir, pnpmStore, pkgName) {
+  const destDir = join(webApiDir, 'node_modules', ...pkgName.split('/'));
+  if (existsSync(destDir) && packageDirLooksComplete(destDir)) {
+    console.log(`afterPack: ${pkgName} already present, skipping`);
+    return;
+  }
+  if (existsSync(destDir)) {
+    console.warn(`afterPack: replacing incomplete ${pkgName} at ${destDir}`);
+    rmSync(destDir, { recursive: true, force: true });
+  }
+
+  const found = findInPnpmStore(pnpmStore, pkgName);
+  if (!found) {
+    console.warn(`afterPack: could not find ${pkgName} in pnpm store`);
+    return;
+  }
+
+  mkdirSync(dirname(destDir), { recursive: true });
+  cpSync(found, destDir, { recursive: true, force: true });
+  console.log(`afterPack: bundled ${pkgName} into web-api/node_modules`);
+}
+
+function esbuildPlatformPackage(platform, archName) {
+  const os = platform === 'win32' ? 'win32' : platform;
+  const cpu = archName === 'arm64' ? 'arm64' : 'x64';
+  return `@esbuild/${os}-${cpu}`;
+}
+
+function bundleEsbuildDeps(webApiDir, pnpmStore, context) {
+  bundleScopedPackage(webApiDir, pnpmStore, 'esbuild');
+  const archName = resolveArchName(context.arch);
+  const platformPkg = esbuildPlatformPackage(context.electronPlatformName, archName);
+  bundleScopedPackage(webApiDir, pnpmStore, platformPkg);
+}
+
 module.exports = async function afterPack(context) {
   const pnpmStore = resolvePnpmStore(context);
   if (pnpmStore) {
@@ -207,6 +242,7 @@ module.exports = async function afterPack(context) {
       bundleMissingNativeDeps(webApiDir, pnpmStore);
       bundleOnnxRuntimeDeps(webApiDir, pnpmStore);
       bundlePdfjsDist(webApiDir, pnpmStore);
+      bundleEsbuildDeps(webApiDir, pnpmStore, context);
     }
   }
 

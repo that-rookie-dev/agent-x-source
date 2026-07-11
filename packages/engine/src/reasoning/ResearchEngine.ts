@@ -115,14 +115,20 @@ Sources must be one of: "web", "code", "docs", "all".`;
         const start = Date.now();
         this.emit({ type: 'research_query', queryId: query.id, question: query.question, sources: query.sources });
 
-        const subAgent = new SmartSubAgent({
-          parentAgent: agent,
-          instruction: `Research this specific question thoroughly and return a concise but comprehensive summary with sources:\n\n${query.question}`,
-          tools: toolMap[query.sources] ?? toolMap.all,
-          timeout: 120_000,
-        });
+        const run = async () => {
+          const subAgent = new SmartSubAgent({
+            parentAgent: agent,
+            instruction: `Research this specific question thoroughly and return a concise but comprehensive summary with sources:\n\n${query.question}`,
+            tools: toolMap[query.sources] ?? toolMap.all,
+            timeout: 120_000,
+          });
+          return subAgent.execute();
+        };
 
-        const subResult = await subAgent.execute();
+        // Share Agent-X virtual concurrency pool (queue when at capacity)
+        const subResult = agent.agents
+          ? await agent.agents.runInPool(run)
+          : await run();
         const elapsed = Date.now() - start;
 
         const result: ResearchResult = {

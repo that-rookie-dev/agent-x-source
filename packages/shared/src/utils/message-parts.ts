@@ -1,6 +1,7 @@
 import { stripToolNoise } from './text-sanitize.js';
 import { appendStreamText, repairStreamTextGlitches } from './stream-text.js';
 import { attachDeepSearchPartsFromTools } from './deep-search-parts.js';
+import { attachChartPartsFromTools } from './chart-parts.js';
 
 export interface PersistedToolCall {
   id: string;
@@ -17,11 +18,13 @@ import type { CrewRosterPickerRecord } from '../types/crew-roster-picker.js';
 import type { DeepSearchProgress, DeepSearchResultBundle } from '../types/deep-search.js';
 
 export interface MessagePart {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart';
   id: string;
   content?: string;
   questionnaire?: QuestionnaireRecord;
   crewRosterPicker?: CrewRosterPickerRecord;
+  /** Canonical ChartSpec JSON string for structured chart parts. */
+  chartJson?: string;
   deepSearch?: {
     bundle?: DeepSearchResultBundle;
     progress?: DeepSearchProgress;
@@ -321,17 +324,26 @@ export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts
       if (p.type === 'questionnaire' && p.questionnaire) return p;
       if (p.type === 'crew_roster_picker' && p.crewRosterPicker) return p;
       if (p.type === 'deep_search' && p.deepSearch) return p;
+      if (p.type === 'chart' && p.chartJson) return p;
       return p;
     }), true);
     if (!shouldRebuildStoredParts(content, mapped, toolCalls)) {
-      return { content, parts: attachDeepSearchPartsFromTools(mapped, toolCalls), toolCalls };
+      return {
+        content,
+        parts: attachChartPartsFromTools(attachDeepSearchPartsFromTools(mapped, toolCalls), toolCalls),
+        toolCalls,
+      };
     }
   }
 
   if (sessionParts && sessionParts.length > 0) {
     const parts = buildPartsFromDbRows(sessionParts, content, toolCalls);
     if (parts.length > 0 && !shouldRebuildStoredParts(content, parts, toolCalls)) {
-      return { content, parts: attachDeepSearchPartsFromTools(parts, toolCalls), toolCalls };
+      return {
+        content,
+        parts: attachChartPartsFromTools(attachDeepSearchPartsFromTools(parts, toolCalls), toolCalls),
+        toolCalls,
+      };
     }
   }
 
@@ -339,7 +351,9 @@ export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts
     const parts = rebuildPartsFromCanonical(content, toolCalls);
     return {
       content,
-      parts: parts.length > 0 ? attachDeepSearchPartsFromTools(parts, toolCalls) : undefined,
+      parts: parts.length > 0
+        ? attachChartPartsFromTools(attachDeepSearchPartsFromTools(parts, toolCalls), toolCalls)
+        : undefined,
       toolCalls,
     };
   }

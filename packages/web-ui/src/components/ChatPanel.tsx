@@ -48,7 +48,7 @@ import {
   CheckpointDrawer,
   type PaletteAction,
 } from './ChatEnhancements';
-import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
+import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, canvases, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
 import { subscribeTelemetry } from '../telemetry-hub';
 import { collectClientSituation } from '../client-situation.js';
 import { eventBelongsToViewSession } from '../chat/session-stream-filter';
@@ -184,13 +184,14 @@ interface UIMessage extends ChatMessage {
 }
 
 interface PartEntry {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart';
   id: string;
   content?: string;
   tool?: ToolCall;
   agent?: SubAgent;
   questionnaire?: import('@agentx/shared/browser').QuestionnaireRecord;
   crewRosterPicker?: import('./crew/CrewRosterPickerMessage').CrewRosterPickerRecord;
+  chartJson?: string;
   deepSearch?: {
     bundle?: import('@agentx/shared/browser').DeepSearchResultBundle;
     progress?: import('@agentx/shared/browser').DeepSearchProgress;
@@ -860,6 +861,29 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     }
   }, [messages, replaceWarning]);
 
+  const handleSaveCanvas = useCallback(async (message: UIMessage) => {
+    const sessionId = currentSessionIdRef.current;
+    if (!sessionId || message.streaming) return;
+    const { messageToCanvasMarkdown, deriveCanvasTitleFromMessage } = await import('../canvas/canvas-export');
+    const contentMarkdown = messageToCanvasMarkdown(message);
+    if (!contentMarkdown.trim()) return;
+    const title = deriveCanvasTitleFromMessage(message);
+    try {
+      await canvases.create({
+        sessionId,
+        title,
+        contentMarkdown,
+        contentFormat: 'canvas_tsx',
+        messageId: message.id,
+        sourceRole: message.role === 'user' ? 'user' : 'assistant',
+      });
+      const { notify } = await import('./NotificationToast');
+      notify('checkpoint', 'Saved as interactive Canvas — open the sidebar to view or export PDF.');
+    } catch (err) {
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to save canvas'));
+    }
+  }, [replaceWarning]);
+
   useEffect(() => {
     sessionRestoringRef.current = sessionRestoring;
   }, [sessionRestoring]);
@@ -1394,6 +1418,13 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                 progress,
                 running: !bundle,
               });
+            }
+          }
+          if (toolName === 'render_chart') {
+            const resolvedId = callId || finalParts.find((p) => p.type === 'tool' && p.tool?.name === 'render_chart')?.tool?.id;
+            const spec = meta?.chartSpec;
+            if (resolvedId && spec && typeof spec === 'object' && !finalParts.some((p) => p.type === 'chart' && p.id === resolvedId)) {
+              finalParts = [...finalParts, { type: 'chart', id: resolvedId, chartJson: JSON.stringify(spec) }];
             }
           }
           return updateLastMessage(prev, {
@@ -3902,7 +3933,10 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
               onViewCrewDossier={handleViewCrewDossier}
               pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
               onTurnFeedback={handleTurnFeedback}
+              onSaveCanvas={handleSaveCanvas}
               feedbackSubmitting={feedbackSubmitting}
+              turnStreaming={streaming && visibleMessages.length > 0 && visibleMessages[visibleMessages.length - 1]?.role === 'assistant'}
+              turnActivityLabel={turnActivity?.stage}
               freezeLayout={freezeMessageLayout || loadingOlderMessages}
             />
           </PlanModeContext.Provider>

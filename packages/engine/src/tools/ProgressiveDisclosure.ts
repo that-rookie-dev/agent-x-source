@@ -3,10 +3,29 @@ import type {
   ToolParameterSchema,
 } from '@agentx/shared';
 
+/** Always-visible tools when progressive disclosure is active (catalog > threshold). */
 const CORE_TOOL_PATTERNS = [
-  /^file_/, /^folder_/, /^shell_/, /^git_/, /^code_/, /^package_/,
-  /^test_/, /^http_/, /^web_/, /^system_/, /^container_/, /^db_/,
-  /^ask_clarification/, /^delegate_to/, /^todo/, /^search_crew_hub/,
+  // Filesystem & search
+  /^file_/, /^folder_/, /^glob$/, /^grep$/, /^read$/, /^cat$/, /^list_dir$/,
+  /^search_files$/, /^create_dir$/, /^delete_file$/, /^write_file$/, /^read_file$/,
+  // Shell & scripts
+  /^shell_/, /^bash$/, /^execute$/, /^run_command$/, /^script_run$/,
+  /^python_rpc$/, /^node_rpc$/,
+  // VCS & GitHub
+  /^git_/, /^gh_/, /^apply_patch$/,
+  // Code intelligence
+  /^code_/,
+  // Build / test / packages
+  /^build/, /^test_/, /^package_/, /^pkg_/, /^project_detect$/,
+  // Network / browser / remote
+  /^http_/, /^web_/, /^deep_web/, /^browser_/, /^ssh_/,
+  // System / containers / data
+  /^system_/, /^container_/, /^docker_/, /^db_/,
+  // Memory / RAG
+  /^memory_/, /^rag_/,
+  // Agent meta / charts / todos
+  /^ask_clarification/, /^delegate_to/, /^sub_agent/, /^todo/,
+  /^search_crew_hub/, /^render_chart$/, /^spawn_crew/, /^save_to_canvas$/,
 ];
 
 const DISCLOSURE_THRESHOLD = 40;
@@ -93,9 +112,31 @@ export function resolveBridgeToolCall(
   allTools: ToolDefinition[],
 ): { resolved: ToolDefinition | null; resolvedArgs: Record<string, unknown>; error?: string } {
   if (toolName === 'tool_search') {
+    const query = String(args['query'] ?? '').trim().toLowerCase();
+    if (!query) {
+      return { resolved: null, resolvedArgs: { matches: [] }, error: 'query is required' };
+    }
+    const matches = allTools
+      .filter((t) => {
+        const hay = `${t.id} ${t.name} ${t.description} ${t.modelDescription}`.toLowerCase();
+        return hay.includes(query) || query.split(/\s+/).every((w) => hay.includes(w));
+      })
+      .slice(0, 25)
+      .map((t) => ({
+        id: t.id,
+        description: t.modelDescription || t.description,
+        category: t.category,
+        riskLevel: t.riskLevel,
+      }));
     return {
       resolved: null,
-      resolvedArgs: {},
+      resolvedArgs: {
+        matches,
+        count: matches.length,
+        hint: matches.length === 0
+          ? 'No tools matched. Try a broader keyword (e.g. git, docker, browser).'
+          : 'Use tool_describe for full schema, then tool_call to execute.',
+      },
     };
   }
 
@@ -104,7 +145,15 @@ export function resolveBridgeToolCall(
     const tool = allTools.find((t) => t.id === toolId || t.name === toolId);
     return {
       resolved: null,
-      resolvedArgs: tool ? { schema: JSON.stringify(tool.schema) } : {},
+      resolvedArgs: tool
+        ? {
+            id: tool.id,
+            description: tool.modelDescription || tool.description,
+            schema: tool.schema,
+            riskLevel: tool.riskLevel,
+            category: tool.category,
+          }
+        : {},
       error: tool ? undefined : `Tool "${toolId}" not found`,
     };
   }

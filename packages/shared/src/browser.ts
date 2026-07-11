@@ -24,6 +24,7 @@ export {
 } from './utils/deep-search-parts.js';
 export type { DeepSearchPartPayload } from './utils/deep-search-parts.js';
 
+export { attachChartPartsFromTools } from './utils/chart-parts.js';
 export {
   MEDICAL_INFORMATIONAL_DISCLAIMER,
   MEDICAL_HUB_CATEGORY_IDS,
@@ -86,6 +87,36 @@ export {
   sanitizeQuestionnairePayload,
 } from './utils/questionnaire.js';
 
+export {
+  CHART_P0_TYPES,
+  CHART_P1_TYPES,
+  CHART_P2_TYPES,
+  CHART_ALL_TYPES,
+  CHART_FENCE_LANGS,
+  MAX_CHART_ROWS,
+  MAX_CHART_SERIES,
+  MAX_PIE_SLICES,
+  DEFAULT_CHART_HEIGHT,
+  ChartSpecSchema,
+  isChartSpecContent,
+  isIncompleteChartJson,
+  isMermaidSource,
+  mermaidSpecFromSource,
+  parseChartSpec,
+  chartBlockTitle,
+  resolveChartHeight,
+  chartSpecFromTable,
+} from './utils/chart-spec.js';
+
+export type {
+  ChartP0Type,
+  ChartP1Type,
+  ChartP2Type,
+  ChartType,
+  ChartSpec,
+  ChartParseResult,
+} from './utils/chart-spec.js';
+
 export type {
   TurnFeedbackRating,
   TurnFeedbackRecord,
@@ -100,6 +131,8 @@ export {
 
 export { summarizeMessageForTurnFeedback, displayTextForTurnFeedback } from './utils/turn-display.js';
 export { sanitizeAutomationNotificationBody } from './utils/notification-body.js';
+export { deriveCanvasTitle, isGenericCanvasTitle } from './utils/canvas-title.js';
+export type { DeriveCanvasTitleInput } from './utils/canvas-title.js';
 
 export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNeed } from './utils/crew-roster-intent.js';
 

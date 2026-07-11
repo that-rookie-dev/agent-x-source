@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import Box from '@mui/material/Box';
+import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
+import Tooltip from '@mui/material/Tooltip';
+import IconButton from '@mui/material/IconButton';
 import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import TextFieldsIcon from '@mui/icons-material/TextFields';
@@ -20,6 +23,7 @@ import { TurnFeedbackBar } from './TurnFeedbackBar';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
 import { formatVoiceTimingMs } from '../voice/timing';
 import { extractVoiceChannelBlock, stripVoiceChannelBlock } from './utils';
+import { ChartBlock } from './ChartBlock';
 
 function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   const [expanded, setExpanded] = useState(false);
@@ -146,10 +150,6 @@ function renderParts(
   const ordered = orderPartsForChatRender(filtered);
   const webSources = collectWebSourceUrls(ordered);
 
-  const firstDeepIdx = ordered.findIndex((p) => p.type === 'deep_search');
-  const lastDeepIdx = ordered.reduce((acc, p, i) => (p.type === 'deep_search' ? i : acc), -1);
-  const hasDeepSearch = firstDeepIdx >= 0;
-
   const renderDeepSearchPart = (part: PartEntry, afterTool: boolean) => (
     <Box key={part.id} sx={{ mb: 0.25, mt: afterTool ? -0.625 : 0 }}>
       <DeepSearchMessageBlock
@@ -198,6 +198,13 @@ function renderParts(
             onViewDossier={onViewCrewDossier}
           />
         );
+      case 'chart':
+        // Avoid double-render when the matching render_chart tool already shows ChartToolRender.
+        if (!part.chartJson) return null;
+        if (ordered.some((p) => p.type === 'tool' && p.tool?.id === part.id && p.tool?.name === 'render_chart')) {
+          return null;
+        }
+        return <ChartBlock key={part.id} code={part.chartJson} language="chart" />;
       case 'tool':
         return part.tool ? <InlineToolCall key={part.id} tool={part.tool} compactTop={compactTop} /> : null;
       case 'subagent':
@@ -232,33 +239,6 @@ function renderParts(
         return null;
     }
   };
-
-  if (hasDeepSearch) {
-    const before = ordered.slice(0, firstDeepIdx);
-    const deepParts = ordered.filter((p) => p.type === 'deep_search');
-    const after = ordered.slice(lastDeepIdx + 1);
-
-    return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-        {before.map((part, i) => {
-          const prev = before[i - 1];
-          const compactTop = part.type === 'tool' && prev?.type === 'tool';
-          return renderMainPart(part, compactTop);
-        })}
-        {deepParts.map((part, i) => {
-          const prev = i === 0 ? before[before.length - 1] : deepParts[i - 1];
-          const afterTool = prev?.type === 'tool';
-          return renderDeepSearchPart(part, afterTool);
-        })}
-        {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
-        {after.map((part, i) => {
-          const prev = after[i - 1];
-          const compactTop = part.type === 'tool' && prev?.type === 'tool';
-          return renderMainPart(part, compactTop);
-        })}
-      </Box>
-    );
-  }
 
   const firstTextIdx = ordered.findIndex((p) => p.type === 'text');
   if (firstTextIdx >= 0) {
@@ -302,7 +282,7 @@ function renderParts(
   );
 }
 
-function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, showFeedback, onTurnFeedback, feedbackSubmitting }: {
+function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, showFeedback, onTurnFeedback, onSaveCanvas, feedbackSubmitting }: {
   message: UIMessage;
   loadingSteps?: Array<{ id: string; label: string; status: string }> | null;
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void;
@@ -312,6 +292,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
   showFeedback?: boolean;
   onTurnFeedback?: (messageId: string, rating: TurnFeedbackRating) => void;
+  onSaveCanvas?: (message: UIMessage) => void;
   feedbackSubmitting?: boolean;
 }) {
   const crewInfo = message.crew;
@@ -341,6 +322,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
   const webSources = collectWebSourceUrls(displayMessage.parts);
   const hasQuestionnaire = !!(displayMessage.parts?.some((p) => p.type === 'questionnaire'));
+  const canSaveCanvas = !message.streaming && message.role === 'assistant' && onSaveCanvas && (hasParts || !!cleanContent);
   const contentBlock = hasParts ? renderParts(
     displayMessage.parts!,
     onOpenChildSession,
@@ -438,6 +420,17 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
 
       {!message.streaming && (
         <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75, opacity: 0.45 }}>
+            {canSaveCanvas && (
+              <Tooltip title="Save as Canvas">
+                <IconButton
+                  size="small"
+                  onClick={() => onSaveCanvas!(message)}
+                  sx={{ p: 0.25, color: colors.text.dim, '&:hover': { color: colors.text.primary } }}
+                >
+                  <ViewQuiltIcon sx={{ fontSize: 13 }} />
+                </IconButton>
+              </Tooltip>
+            )}
             {message.timestamp && (
               <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
                 {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -465,8 +458,8 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   );
 }
 
-function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean },
-  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; feedbackSubmitting?: boolean }) {
+function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveCanvas?: unknown; feedbackSubmitting?: boolean },
+  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveCanvas?: unknown; feedbackSubmitting?: boolean }) {
   if (prev.loadingSteps !== next.loadingSteps) return false;
   if (prev.onOpenChildSession !== next.onOpenChildSession) return false;
   if (prev.onQuestionnaireRespond !== next.onQuestionnaireRespond) return false;
@@ -475,6 +468,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   if (prev.onViewCrewDossier !== next.onViewCrewDossier) return false;
   if (prev.showFeedback !== next.showFeedback) return false;
   if (prev.onTurnFeedback !== next.onTurnFeedback) return false;
+  if (prev.onSaveCanvas !== next.onSaveCanvas) return false;
   if (prev.feedbackSubmitting !== next.feedbackSubmitting) return false;
   const pm = prev.message;
   const nm = next.message;

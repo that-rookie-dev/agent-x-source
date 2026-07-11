@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, dialog, nativeImage, shell, safeStorage, systemPreferences } from 'electron';
+import { writeFileSync } from 'node:fs';
 import { join, basename } from 'path';
 import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } from 'fs';
 import { spawn, execFileSync } from 'child_process';
@@ -545,6 +546,21 @@ ipcMain.handle('dialog:openFile', async (_event, filters?: Array<{ name: string;
     filters: filters?.length ? filters : undefined,
   });
   return result.canceled ? null : result.filePaths[0] ?? null;
+});
+ipcMain.handle('dialog:saveFile', async (_event, opts?: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => {
+  if (!mainWindow) return null;
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save file',
+    defaultPath: opts?.defaultPath,
+    filters: opts?.filters?.length ? opts.filters : [{ name: 'All Files', extensions: ['*'] }],
+  });
+  return result.canceled ? null : result.filePath ?? null;
+});
+ipcMain.handle('file:writeBytes', async (_event, filePath: string, data: Uint8Array | number[]) => {
+  if (!filePath || typeof filePath !== 'string') return { ok: false };
+  const bytes = data instanceof Uint8Array ? data : Uint8Array.from(data);
+  writeFileSync(filePath, bytes);
+  return { ok: true };
 });
 ipcMain.handle('permissions:checkNodeRuntime', async () => {
   const tryVersion = (cmd: string): string | undefined => {

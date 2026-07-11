@@ -1,6 +1,14 @@
 export { ToolRegistry } from './ToolRegistry.js';
 export { ToolExecutor } from './ToolExecutor.js';
 export { EnhancedToolExecutor } from './EnhancedToolExecutor.js';
+export { ParallelClassifier } from './ParallelClassifier.js';
+export type { ClassifiedTool, ParallelClassification } from './ParallelClassifier.js';
+export {
+  getCoreTools,
+  shouldDisclose,
+  createBridgeTools,
+  resolveBridgeToolCall,
+} from './ProgressiveDisclosure.js';
 export { createDefaultToolkit } from './toolkit.js';
 export type { PermissionRequestHandler } from './ToolExecutor.js';
 export { PermissionManager } from './permissions/PermissionManager.js';
@@ -43,6 +51,7 @@ export { testRun, testWatch, testCoverage, testCreate } from './builtin/testing.
 
 // Data tools
 export { jsonParse, jsonQuery, jsonSet, csvParse, textTransform } from './builtin/data.js';
+export { renderChart } from './builtin/data.js';
 
 // Web tools
 export { httpGet, httpPost, httpRequest, webScrape, webSearch } from './builtin/web.js';

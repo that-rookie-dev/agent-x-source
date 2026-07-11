@@ -25,13 +25,15 @@ export interface SubAgent {
 import type { QuestionnaireRecord } from '@agentx/shared/browser';
 
 export interface PartEntry {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart';
   id: string;
   content?: string;
   tool?: ToolCall;
   agent?: SubAgent;
   questionnaire?: QuestionnaireRecord;
   crewRosterPicker?: import('../components/crew/CrewRosterPickerMessage').CrewRosterPickerRecord;
+  /** Canonical ChartSpec JSON for structured chart parts. */
+  chartJson?: string;
   deepSearch?: {
     bundle?: import('@agentx/shared/browser').DeepSearchResultBundle;
     progress?: import('@agentx/shared/browser').DeepSearchProgress;

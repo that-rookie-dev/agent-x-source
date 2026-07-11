@@ -17,7 +17,6 @@ import type {
 } from '@agentx/shared';
 import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
-import { Mutex } from '../concurrency/Mutex.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -56,7 +55,7 @@ import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
 import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCurrentTimeSection, createSchedulingSection, createThirdPartyServicesSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCanvasSection, createCurrentTimeSection, createSchedulingSection, createThirdPartyServicesSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
 import {
   buildCompletionMessages,
@@ -83,7 +82,6 @@ import { getRAGEngineInstance, setIndexerEventBus } from '../commands/builtin/ra
 import type { UserCommandConfig } from '../commands/UserCommandRegistry.js';
 import { UserCommandRegistry } from '../commands/UserCommandRegistry.js';
 import { PromptEngine } from '../prompt/PromptEngine.js';
-import { SmartSubAgent } from './SmartSubAgent.js';
 import type { IntentResult } from '../prompt/PromptEngine.js';
 import { DecisionEngine } from './DecisionEngine.js';
 import type { DecisionResult } from './DecisionEngine.js';
@@ -475,8 +473,7 @@ export class Agent {
     this.contextTracker.setPersistDir(dir);
     if (scopePath) this.contextTracker.setScopePath(scopePath);
   }
-  private maxSubAgents = 5;
-  readonly serialLock: Mutex = new Mutex();
+  private maxSubAgents = 8;
   private sessionManager: {
     createSession: (providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string) => { id: string };
     createChildSessionRecord?: (
@@ -931,23 +928,8 @@ export class Agent {
       waitForClarification: async (questionnaire: QuestionnairePayload) => {
         return this.waitForQuestionnaireResponse(questionnaire);
       },
-      runSubAgent: async (instruction, toolsList, timeout, background) => {
-        const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents);
-        if (!task) {
-          return { success: false, output: 'Sub-agent limit reached. Wait for existing sub-agents to complete.', elapsed: 0 };
-        }
-        if (background) {
-          this.emit({ type: 'task_backgrounded', taskId: task.id } as EngineEvent);
-          return { success: true, output: `[Sub-agent started in background — task ${task.id}]`, elapsed: 0, agentId: task.id };
-        }
-        const completed = await this.subAgents.waitFor(task.id);
-        return {
-          success: completed?.status === 'completed',
-          output: completed?.result ?? '',
-          elapsed: (completed?.endTime ?? Date.now()) - (completed?.startTime ?? Date.now()),
-          agentId: task.id,
-        };
-      },
+      runSubAgent: (instruction, toolsList, timeout, background) =>
+        this.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
       onTokenUsage: (input, output) => {
         this.tokenTracker.addTokenUsage(input, output);
         this.onTokenLog?.({ inputTokens: input, outputTokens: output, costUsd: 0 });
@@ -1051,7 +1033,11 @@ export class Agent {
     );
 
     // crewOrchestrator is lazy-init (created on first access)
-    this.maxSubAgents = options.config.maxSubAgents ?? 5;
+    this.maxSubAgents = options.config.maxSubAgents ?? 8;
+    this.subAgents.setMaxConcurrent(this.maxSubAgents);
+    if (this.toolExecutor instanceof EnhancedToolExecutor) {
+      this.toolExecutor.setMaxToolConcurrency(Math.max(this.maxSubAgents, 8));
+    }
 
     // Initialize prompt engine for token-efficient prompting
     this.promptEngine = new PromptEngine(this.getContextWindow());
@@ -1479,7 +1465,33 @@ Rules:
     const cbStatus = this.toolExecutor instanceof EnhancedToolExecutor ? (this.toolExecutor as EnhancedToolExecutor).getCircuitBreakerStatus() : [] as any[];
     const avgResp = this._responseTimes.length ? Math.round(this._responseTimes.reduce((a: number, b: number) => a + b, 0) / this._responseTimes.length) : 0;
     const neuralAvg = this._experienceEngine?.getAverageConfidence() ?? 0;
-    return { sessionId: this.sessionId, uptimeMs: Date.now() - this._sessionStartTime, llmCalls: this._llmCallCount, toolExecs: this._toolExecCount, errors: this._errorCount, avgResponseMs: avgResp, totalCost: cost, budgetLimit: this._maxSessionCost, budgetPct: this._maxSessionCost > 0 ? Math.round((cost / this._maxSessionCost) * 10000) / 100 : 0, circuitBreakers: cbStatus.filter((c: any) => c.blacklisted).length, model: this.config.provider.activeModel, provider: this.config.provider.activeProvider, activeSubAgents: (this.subAgents as any).runningCount ?? 0, contextTokens: this.tokenTracker.tokensUsed, contextWindow: this.getContextWindow(), compactionCount: this._compactionCount, planMode: this.planMode, hyperdriveMode: this._hyperdriveMode, neuralConfidenceAvg: Math.round(neuralAvg * 100) };
+    const subStats = this.subAgents.getConcurrencyStats();
+    const toolStats = this.toolExecutor instanceof EnhancedToolExecutor
+      ? this.toolExecutor.getToolConcurrencyStats()
+      : null;
+    return {
+      sessionId: this.sessionId,
+      uptimeMs: Date.now() - this._sessionStartTime,
+      llmCalls: this._llmCallCount,
+      toolExecs: this._toolExecCount,
+      errors: this._errorCount,
+      avgResponseMs: avgResp,
+      totalCost: cost,
+      budgetLimit: this._maxSessionCost,
+      budgetPct: this._maxSessionCost > 0 ? Math.round((cost / this._maxSessionCost) * 10000) / 100 : 0,
+      circuitBreakers: cbStatus.filter((c: any) => c.blacklisted).length,
+      model: this.config.provider.activeModel,
+      provider: this.config.provider.activeProvider,
+      activeSubAgents: subStats.running,
+      queuedSubAgents: subStats.pending,
+      toolConcurrency: toolStats,
+      contextTokens: this.tokenTracker.tokensUsed,
+      contextWindow: this.getContextWindow(),
+      compactionCount: this._compactionCount,
+      planMode: this.planMode,
+      hyperdriveMode: this._hyperdriveMode,
+      neuralConfidenceAvg: Math.round(neuralAvg * 100),
+    };
   }
   resolveCheckpoint(checkpointId: string, action: string): boolean {
     if (!this._pendingCheckpoint || this._pendingCheckpoint.checkpointId !== checkpointId) return false;
@@ -1597,6 +1609,35 @@ Rules:
    */
   spawnSubAgent(instruction: string, tools: string[], timeout?: number) {
     return this.subAgents.spawn(instruction, tools, timeout, this.maxSubAgents);
+  }
+
+  /**
+   * Shared runSubAgent callback for createAiSdkTools / SessionRunner.
+   * Always routes through SubAgentManager (Fiber + concurrency pool).
+   */
+  private async runDelegatedSubAgent(
+    instruction: string,
+    toolsList: string[] | undefined,
+    timeout: number,
+    background?: boolean,
+  ): Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }> {
+    const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents);
+    if (background) {
+      this.emit({ type: 'task_backgrounded', taskId: task.id } as EngineEvent);
+      return {
+        success: true,
+        output: `[Sub-agent started in background — task ${task.id}]`,
+        elapsed: 0,
+        agentId: task.id,
+      };
+    }
+    const completed = await this.subAgents.waitFor(task.id);
+    return {
+      success: completed?.status === 'completed',
+      output: completed?.result ?? '',
+      elapsed: (completed?.endTime ?? Date.now()) - (completed?.startTime ?? Date.now()),
+      agentId: task.id,
+    };
   }
 
   get planModeEnabled(): boolean {
@@ -2595,16 +2636,8 @@ Rules:
         }
         return this.waitForQuestionnaireResponse(questionnaire);
       },
-      async (instruction, toolsList, timeout) => {
-        const subAgent = new SmartSubAgent({
-          parentAgent: this,
-          instruction,
-          tools: toolsList,
-          timeout,
-          planMode: this.planMode,
-        });
-        return subAgent.execute();
-      },
+      async (instruction, toolsList, timeout, background) =>
+        this.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
       this.planMode,
       this.options.promptProfile === 'crew_private' || this.options.channelSession
         ? undefined
@@ -2838,7 +2871,20 @@ Rules:
                 : `[SYSTEM] The user said: "${aiMessages[aiMessages.length - 1]?.content?.slice(0, 500)}"\n\nUse the appropriate tools to answer. Prefer connected MCP integration tools when the request targets an external service — do not scan the local filesystem as a substitute. Do not return empty.`
               },
             ],
-            tools: createAiSdkTools(this.toolRegistry!, this.toolExecutor!, this.sessionId, (e) => this.emit(e), async () => 'continue', async () => ({ success: true, output: '(fallback)', elapsed: 0 }), this.planMode, undefined, undefined, 'default', compact),
+            tools: createAiSdkTools(
+              this.toolRegistry!,
+              this.toolExecutor!,
+              this.sessionId,
+              (e) => this.emit(e),
+              async () => 'continue',
+              (instruction, toolsList, timeout, background) =>
+                this.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
+              this.planMode,
+              undefined,
+              undefined,
+              'default',
+              compact,
+            ),
             stopWhen: stepCountIs(50),
             toolChoice: 'auto',
             maxRetries: 1,
@@ -3107,6 +3153,7 @@ Rules:
         .register(createRulesSection({ technicalExecutor: true }))
         .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
+        .register(createCanvasSection())
         .register(createCurrentTimeSection(ctx))
         .register(createMemoryContextSection(ctx));
       if (systemOverride) {
@@ -3130,6 +3177,7 @@ Rules:
           .register(createCrewPrivateConductSection())
           .register(createQuestionnaireGuideSection())
           .register(createChatMarkdownSection())
+        .register(createCanvasSection())
           .register(createCurrentTimeSection(ctx))
           .register(createWorkingDirectorySection(ctx))
           .register(createLearningsSection(ctx))
@@ -3161,6 +3209,7 @@ Rules:
         .register(createChannelMessagingSection())
         .register(createThirdPartyServicesSection())
         .register(createChatMarkdownSection())
+        .register(createCanvasSection())
         .register(createCurrentTimeSection(ctx))
         .register(createSchedulingSection())
         .register(createLearningsSection(ctx))
@@ -3202,6 +3251,7 @@ Rules:
         .register(createThirdPartyServicesSection())
         .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
+        .register(createCanvasSection())
         .register(createCurrentTimeSection(ctx))
         .register(createSchedulingSection())
         .register(createLearningsSection(ctx))
@@ -3806,13 +3856,15 @@ Only include specialists that are actually needed for this task.`;
         if (chunk.type === 'text_delta' && chunk.content) decomposition += chunk.content;
       }
     } catch (e) {
-      // Fallback: single sub-agent
+      // Fallback: single sub-agent via concurrency pool
       this.emit({ type: 'decomposition_fallback', task });
-      const sub = new SmartSubAgent({ parentAgent: this, instruction: task });
-      const result = await sub.execute();
+      const spawned = this.subAgents.spawn(task, [], 120_000, this.maxSubAgents);
+      const completed = await this.subAgents.waitFor(spawned.id);
+      const output = completed?.result ?? '';
+      const elapsed = (completed?.endTime ?? Date.now()) - (completed?.startTime ?? Date.now());
       return {
-        subResults: [{ specialist: 'coder' as SpecialistType, output: result.output, elapsed: result.elapsed }],
-        synthesized: result.output,
+        subResults: [{ specialist: 'coder' as SpecialistType, output, elapsed }],
+        synthesized: output,
         totalElapsed: Date.now() - start,
       };
     }
@@ -3839,26 +3891,28 @@ Only include specialists that are actually needed for this task.`;
 
     this.emit({ type: 'decomposition_ready', subtaskCount: subtasks.length });
 
-    // Spawn parallel sub-agents
+    // Spawn parallel sub-agents through SubAgentManager (Fiber + semaphore)
     const subPromises = subtasks.map(async ({ specialist, instruction }) => {
       const spec = this.specialistRegistry.getByType(specialist);
       if (!spec) return null;
-
-      const sub = new SmartSubAgent({
-        parentAgent: this,
-        instruction: `[SPECIALIST: ${spec.name}]\n${instruction}`,
-        tools: spec.preferredTools,
-        config: { ...this.config },
-        sessionId: `sub-${specialist}-${Date.now()}`,
-      });
 
       this.agentBus.publish(this.sessionId, spec.agentId, 'subtask', {
         instruction,
         parentTask: task,
       });
 
-      const result = await sub.execute();
-      return { specialist, output: result.output, elapsed: result.elapsed };
+      const spawned = this.subAgents.spawn(
+        `[SPECIALIST: ${spec.name}]\n${instruction}`,
+        spec.preferredTools ?? [],
+        120_000,
+        this.maxSubAgents,
+      );
+      const completed = await this.subAgents.waitFor(spawned.id);
+      return {
+        specialist,
+        output: completed?.result ?? '',
+        elapsed: (completed?.endTime ?? Date.now()) - (completed?.startTime ?? Date.now()),
+      };
     });
 
     const rawResults = await Promise.all(subPromises);
@@ -4594,7 +4648,8 @@ Only include specialists that are actually needed for this task.`;
   }
 
   setMaxSubAgents(limit: number): void {
-    this.maxSubAgents = Math.max(1, Math.min(20, limit));
+    this.maxSubAgents = Math.max(1, Math.min(32, limit));
+    this.subAgents.setMaxConcurrent(this.maxSubAgents);
   }
 
   setSessionManager(sm: { createSession: (providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string) => { id: string } }): void {

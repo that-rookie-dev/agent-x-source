@@ -168,7 +168,7 @@ export async function seedPgCatalog(
       const result = await client.query(
         `INSERT INTO crew_catalog (
           id, callsign, name, title, category_id, category_label, description,
-          system_prompt, tone, expertise, traits, tools, tags, search_text, hub_revision, active, updated_at
+          system_prompt, tone, expertise, traits, tools, tags, search_text, hub_revision
         ) VALUES ${values.join(',')}
         ON CONFLICT(id) DO UPDATE SET
           callsign=EXCLUDED.callsign, name=EXCLUDED.name, title=EXCLUDED.title,

@@ -51,7 +51,8 @@ export class AgentOrchestrator {
   }
 
   /**
-   * Execute an orchestration plan — runs steps respecting dependencies.
+   * Execute an orchestration plan — independent ready steps run in parallel
+   * via SubAgentManager.spawnParallel (virtual concurrency pool).
    */
   async execute(planId: string): Promise<OrchestrationPlan> {
     const plan = this.plans.get(planId);
@@ -61,29 +62,45 @@ export class AgentOrchestrator {
     const startTime = Date.now();
 
     try {
-      for (const step of plan.steps) {
-        // Wait for dependencies
-        await this.waitForDependencies(plan, step);
+      while (plan.steps.some((s) => s.status === 'pending')) {
+        const ready = plan.steps.filter(
+          (s) => s.status === 'pending' && this.depsSatisfied(plan, s),
+        );
 
-        step.status = 'running';
+        if (ready.length === 0) {
+          // Deadlock / failed deps — mark remaining pending as failed
+          for (const s of plan.steps) {
+            if (s.status === 'pending') {
+              s.status = 'failed';
+              s.result = 'Dependencies not satisfiable';
+            }
+          }
+          break;
+        }
+
+        for (const step of ready) {
+          step.status = 'running';
+        }
         this.emit({
           type: 'processing_progress',
-          stage: step.description,
+          stage: ready.map((s) => s.description).join(', '),
           progress: this.calculateProgress(plan),
         });
 
-        const task = this.subAgents.spawn(step.instruction, step.tools, 120_000, 10);
-        if (!task) {
-          step.status = 'failed';
-          step.result = 'Sub-agent limit reached';
-          continue;
-        }
-        step.status = 'running';
+        // Fan-out: spawnParallel queues behind the concurrency semaphore
+        const spawned = this.subAgents.spawnParallel(
+          ready.map((s) => ({ instruction: s.instruction, tools: s.tools })),
+          10,
+        );
 
-        // Wait for this step's sub-agent to complete
-        const result = await this.waitForSubAgent(task);
-        step.result = result;
-        step.status = result ? 'completed' : 'failed';
+        await Promise.all(
+          spawned.map(async (task, i) => {
+            const step = ready[i]!;
+            const result = await this.waitForSubAgent(task);
+            step.result = result;
+            step.status = task.status === 'completed' && result ? 'completed' : 'failed';
+          }),
+        );
       }
 
       plan.status = plan.steps.every((s) => s.status === 'completed') ? 'completed' : 'failed';
@@ -150,32 +167,20 @@ export class AgentOrchestrator {
     return step;
   }
 
-  private async waitForDependencies(plan: OrchestrationPlan, step: OrchestrationStep): Promise<void> {
+  private depsSatisfied(plan: OrchestrationPlan, step: OrchestrationStep): boolean {
     for (const depId of step.dependsOn) {
       const dep = plan.steps.find((s) => s.id === depId);
       if (!dep) continue;
-      while (dep.status !== 'completed' && dep.status !== 'failed') {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      if (dep.status === 'failed') {
-        step.status = 'failed';
-        throw new Error(`Dependency ${dep.description} failed`);
-      }
+      if (dep.status === 'failed') return false;
+      if (dep.status !== 'completed') return false;
     }
+    return true;
   }
 
   private async waitForSubAgent(task: SubAgentTask): Promise<string> {
-    return new Promise((resolve) => {
-      const check = setInterval(() => {
-        if (task.status === 'completed') {
-          clearInterval(check);
-          resolve(task.result ?? '');
-        } else if (task.status === 'failed' || task.status === 'cancelled') {
-          clearInterval(check);
-          resolve('');
-        }
-      }, 50);
-    });
+    const completed = await this.subAgents.waitFor(task.id);
+    if (completed?.status === 'completed') return completed.result ?? '';
+    return '';
   }
 
   private calculateProgress(plan: OrchestrationPlan): number {

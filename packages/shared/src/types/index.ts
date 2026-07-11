@@ -26,3 +26,4 @@ export * from './automation.js';
 export * from './channels.js';
 export * from './voice.js';
 export * from './client-situation.js';
+export * from './canvas.js';
