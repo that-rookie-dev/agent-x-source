@@ -1,9 +1,23 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
-import { ChatPanel } from '../components/ChatPanel';
 import { colors } from '../theme';
+import { getCoreSessionId } from '../perf/api-cache';
+
+const ChatPanel = lazy(() => import('../components/ChatPanel').then((m) => ({ default: m.ChatPanel })));
+
+function ChatPanelLazy(props: { sessionId: string; coreSession?: boolean }) {
+  return (
+    <Suspense fallback={(
+      <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <CircularProgress size={24} sx={{ color: colors.text.dim }} />
+      </Box>
+    )}>
+      <ChatPanel {...props} />
+    </Suspense>
+  );
+}
 
 export function AgentXCoreChat() {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -12,16 +26,8 @@ export function AgentXCoreChat() {
   useEffect(() => {
     void (async () => {
       try {
-        const res = await fetch('/api/agent-x-core/session', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        });
-        if (!res.ok) throw new Error('Failed to open Agent-X session');
-        const data = await res.json() as { sessionId?: string };
-        if (!data.sessionId) throw new Error('Missing session id');
-        setSessionId(data.sessionId);
+        const id = await getCoreSessionId();
+        setSessionId(id);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load Agent-X');
       }
@@ -46,5 +52,5 @@ export function AgentXCoreChat() {
     );
   }
 
-  return <ChatPanel sessionId={sessionId} coreSession />;
+  return <ChatPanelLazy sessionId={sessionId} coreSession />;
 }

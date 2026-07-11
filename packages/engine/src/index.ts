@@ -39,9 +39,11 @@ export type { MessageClass, ExecutionPath, DecisionResult } from './agent/Decisi
 export { PromptEngine } from './prompt/PromptEngine.js';
 export type { IntentResult, PromptBudget } from './prompt/PromptEngine.js';
 export { AgentEventBus } from './EventBus.js';
-export { CanvasStore, setCanvasStoreInstance, getCanvasStoreInstance } from './canvas/CanvasStore.js';
-export { compileCanvasTsx, wrapMarkdownInCanvasTsx } from './canvas/CanvasCompiler.js';
-export { validateCanvasSource } from './canvas/CanvasValidator.js';
+export {
+  MarkdownDocumentStore,
+  setMarkdownDocumentStoreInstance,
+  getMarkdownDocumentStoreInstance,
+} from './markdown/MarkdownDocumentStore.js';
 export { ProviderFactory } from './providers/index.js';
 export type { ProviderInterface } from './providers/index.js';
 export { OpenAIProvider } from './providers/OpenAIProvider.js';
@@ -225,6 +227,7 @@ export type { AutomationBridge } from './automation/automation-bridge.js';
 export { setAgentXOverviewBridge, getAgentXOverviewBridge } from './agent/agent-x-overview-bridge.js';
 export type { AgentXOverviewBridge, AgentXOverviewView } from './agent/agent-x-overview-bridge.js';
 export { setChannelSuperSessionSync, syncChannelSuperSessionContext } from './channels/channel-super-session-sync.js';
+export { setChannelInboundAgentResolver, resolveChannelInboundAgent } from './channels/channel-inbound-router.js';
 export {
   buildAutomationNotifyQuestionnaire,
   getNotificationChannelStatus,

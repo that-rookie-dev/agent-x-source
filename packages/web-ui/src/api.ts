@@ -954,34 +954,30 @@ export const notifications = {
   dismissAll: () => request<{ ok: boolean; count: number }>('/notifications/dismiss-all', { method: 'POST' }),
 };
 
-export type CanvasRecord = import('@agentx/shared').AgentXCanvasRecord;
+export type MarkdownDocumentRecord = import('@agentx/shared').MarkdownDocumentRecord;
 
-export const canvases = {
+export const markdownDocuments = {
   list: (opts?: { sessionId?: string; limit?: number; offset?: number }) => {
     const params = new URLSearchParams();
     if (opts?.sessionId) params.set('session_id', opts.sessionId);
     if (opts?.limit) params.set('limit', String(opts.limit));
     if (opts?.offset) params.set('offset', String(opts.offset));
     const qs = params.toString();
-    return request<{ canvases: CanvasRecord[] }>(`/canvases${qs ? `?${qs}` : ''}`);
+    return request<{ documents: MarkdownDocumentRecord[] }>(`/markdown${qs ? `?${qs}` : ''}`);
   },
   get: (id: string) => request<{
-    canvas: CanvasRecord;
+    document: MarkdownDocumentRecord;
     contentMarkdown?: string;
-    contentTsx?: string;
-    compiledJs?: string;
-    compileError?: string | null;
-  }>(`/canvases/${id}`),
+  }>(`/markdown/${id}`),
   create: (body: {
     sessionId: string;
     contentMarkdown?: string;
     contentTsx?: string;
-    contentFormat?: 'markdown' | 'canvas_tsx';
     title?: string;
     messageId?: string;
     sourceRole?: 'user' | 'assistant' | 'system';
-  }) => request<{ canvas: CanvasRecord }>('/canvases', { method: 'POST', body: JSON.stringify(body) }),
-  delete: (id: string) => request<{ ok: boolean }>(`/canvases/${id}`, { method: 'DELETE' }),
+  }) => request<{ document: MarkdownDocumentRecord }>('/markdown', { method: 'POST', body: JSON.stringify(body) }),
+  delete: (id: string) => request<{ ok: boolean }>(`/markdown/${id}`, { method: 'DELETE' }),
 };
 
 // ─── Secret Sauce (Soul / Identity / Diary / Memories / Permission / Crew) ───

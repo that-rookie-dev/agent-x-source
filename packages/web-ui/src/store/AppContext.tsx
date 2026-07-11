@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import { auth, config, health, setOnUnauthorized, setAuthToken, notifications, type AgentXConfig, type TelemetryEvent, type HealthStatus, type NotificationRecord } from '../api';
 import { subscribeTelemetry } from '../telemetry-hub';
+import { shouldAppendToAppContextEvents } from '../perf/telemetry-event-filter';
+import { cachedApiCall, invalidateApiCache, invalidateCoreSessionCache } from '../perf/api-cache';
 import { showAgentXNotification, requestBrowserNotificationPermission } from '../utils/native-notifications';
 import { clearAgentxClientStorage } from '../utils/client-storage';
 
@@ -58,7 +60,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setUnreadNotificationCount((prev) => prev + 1);
       }
     }
-    setEvents((prev) => [...prev.slice(-200), e]); // Keep last 200 events
+    if (shouldAppendToAppContextEvents(e)) {
+      setEvents((prev) => [...prev.slice(-200), e]);
+    }
   }, []);
 
   const refreshHealth = useCallback(async () => {
@@ -91,6 +95,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setOnUnauthorized(() => {
       setAuthToken(null);
+      invalidateApiCache();
+      invalidateCoreSessionCache();
       setAuthState('unauthenticated');
       setView('login');
       setAuth(false);
@@ -102,23 +108,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setView('loading');
     setAuthState('loading');
     try {
-      // 1. Check if server is reachable
       await refreshHealth();
 
-      // 2. Check auth state
       const authCheck = await auth.check();
 
       if (!authCheck.hasRootUser) {
-        // Fresh install — drop all stale browser state before root-user setup.
         clearAgentxClientStorage();
         setAuthToken(null);
+        invalidateApiCache();
+        invalidateCoreSessionCache();
         setAuthState('no-root-user');
         setView('setup-auth');
         return;
       }
 
-      // 3. Check if we have a valid session (must include unlocked DEK after server restart)
-      const authStatus = await auth.status();
+      const [authStatus, setupStatus] = await Promise.all([
+        auth.status(),
+        config.getSetupStatus(),
+      ]);
+
       if (!authStatus.isAuthenticated) {
         setAuthToken(null);
         setAuthState('unauthenticated');
@@ -133,21 +141,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setAuth(true);
       setUsername(authStatus.username ?? null);
 
-      // 4. Check setup status
-      const setupStatus = await config.getSetupStatus();
       if (!setupStatus.setupComplete) {
         setAuthState('needs-setup');
         setView('setup-wizard');
         return;
       }
 
-      // 5. Load config
       try {
-        const cfg = await config.get();
+        const cfg = await cachedApiCall('config', () => config.get(), 60_000);
         setAppConfig(cfg);
       } catch { /* proceed without config */ }
 
-      // 6. All good
       setAuthState('authenticated');
       setView('docking');
     } catch (err) {
@@ -177,7 +181,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Load config when authenticated (e.g. after login, when initialize() isn't called)
   useEffect(() => {
     if (authState !== 'authenticated' || appConfig) return;
-    config.get().then((cfg) => setAppConfig(cfg)).catch(() => {});
+    cachedApiCall('config', () => config.get(), 60_000).then((cfg) => setAppConfig(cfg)).catch(() => {});
   }, [authState, appConfig]);
 
   // Memoize the provider value so consumers don't re-render when an unrelated

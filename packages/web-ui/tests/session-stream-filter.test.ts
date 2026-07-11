@@ -36,4 +36,9 @@ describe('session stream filter', () => {
   it('allows session-agnostic events such as crew suggestions', () => {
     expect(eventBelongsToViewSession({ type: 'crew_suggestion' }, 'sess_a')).toBe(true);
   });
+
+  it('allows session-agnostic automation lifecycle events', () => {
+    expect(eventBelongsToViewSession({ type: 'automation_run_triggered' }, 'sess_a')).toBe(true);
+    expect(eventBelongsToViewSession({ type: 'automation_run_preparing' }, 'sess_a')).toBe(true);
+  });
 });

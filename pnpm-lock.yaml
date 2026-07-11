@@ -52,40 +52,6 @@ importers:
         specifier: '>=4.1.0'
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.1)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.0)(tsx@4.19.2))
 
-  packages/canvas:
-    dependencies:
-      '@agentx/shared':
-        specifier: workspace:*
-        version: link:../shared
-      react-markdown:
-        specifier: ^9.0.1
-        version: 9.1.0(@types/react@18.3.29)(react@18.3.1)
-      recharts:
-        specifier: ^2.15.4
-        version: 2.15.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      remark-gfm:
-        specifier: ^4.0.0
-        version: 4.0.1
-    devDependencies:
-      '@types/react':
-        specifier: ^18.3.0
-        version: 18.3.29
-      '@types/react-dom':
-        specifier: ^18.3.0
-        version: 18.3.7(@types/react@18.3.29)
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.1
-        version: 18.3.1(react@18.3.1)
-      tsup:
-        specifier: ^8.0.0
-        version: 8.5.1(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
-
   packages/desktop:
     dependencies:
       '@agentx/runtime':
@@ -137,9 +103,6 @@ importers:
 
   packages/engine:
     dependencies:
-      '@agentx/canvas':
-        specifier: workspace:*
-        version: link:../canvas
       '@agentx/shared':
         specifier: workspace:*
         version: link:../shared
@@ -191,9 +154,6 @@ importers:
       discord.js:
         specifier: ^14.26.4
         version: 14.26.4
-      esbuild:
-        specifier: ^0.25.0
-        version: 0.25.12
       graphology:
         specifier: ^0.26.0
         version: 0.26.0(graphology-types@0.24.8)
@@ -434,9 +394,6 @@ importers:
 
   packages/web-ui:
     dependencies:
-      '@agentx/canvas':
-        specifier: workspace:*
-        version: link:../canvas
       '@agentx/shared':
         specifier: workspace:*
         version: link:../shared

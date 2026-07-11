@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, PermissionRule } from '@agentx/shared';
+import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, PermissionRule, QuestionnairePayload } from '@agentx/shared';
 import { generateMessageId, CREW_DOMAIN_KEYWORDS, appendStreamText, extractStreamTextDelta } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import type { AgentEventBus } from '../EventBus.js';
@@ -93,6 +93,7 @@ export class CrewOrchestrator {
   private toolExecutor?: ToolExecutor;
   private config?: AgentXConfig;
   private sessionId: string = 'crew';
+  private waitForClarification?: (questionnaire: QuestionnairePayload) => Promise<string>;
   sessionManager?: SessionManager;
 
   constructor(provider: ProviderInterface, eventBus: AgentEventBus, tokenTracker?: TokenTracker) {
@@ -118,6 +119,10 @@ export class CrewOrchestrator {
   setTools(registry: ToolRegistry, executor: ToolExecutor): void {
     this.toolRegistry = registry;
     this.toolExecutor = executor;
+  }
+
+  setClarificationHandler(handler: (questionnaire: QuestionnairePayload) => Promise<string>): void {
+    this.waitForClarification = handler;
   }
 
   setConfig(config: AgentXConfig): void {
@@ -392,7 +397,12 @@ export class CrewOrchestrator {
       crewExecutor,
       this.sessionId,
       emit,
-      () => Promise.resolve('Clarification not available in crew mode.'),
+      async (questionnaire: QuestionnairePayload) => {
+        if (!this.waitForClarification) {
+          return 'Proceed with your best judgment using available tools and context.';
+        }
+        return this.waitForClarification(questionnaire);
+      },
       () => Promise.resolve({ success: false as const, output: 'Sub-agents not supported in crew mode.', elapsed: 0 }),
       planMode,
     );

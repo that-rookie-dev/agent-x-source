@@ -2,53 +2,45 @@ import { useEffect, useRef, useState } from 'react';
 import type { TelemetryEvent } from '../api';
 import { eventBelongsToViewSession } from '../chat/session-stream-filter';
 import { chatAgentTelemetryToLogEntry, type OpsLogEntry } from '../telemetry/ops-log';
-import { useApp } from '../store/AppContext';
+import { subscribeOptimizedTelemetry } from '../perf/optimized-telemetry';
 
 const MAX_ENTRIES = 80;
 
+/** Live agent/tool log for voice UI — subscribes directly to telemetry (not AppContext.events). */
 export function useVoiceActivityLog(
   sessionId: string | null,
   turnEpoch: number,
   enabled: boolean,
 ) {
-  const { events } = useApp();
   const [entries, setEntries] = useState<OpsLogEntry[]>([]);
-  const processedCountRef = useRef(0);
   const turnEpochRef = useRef(turnEpoch);
-
-  const resetLog = (cursor = events.length) => {
-    setEntries([]);
-    processedCountRef.current = cursor;
-  };
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
 
   useEffect(() => {
     if (!enabled) {
-      resetLog(0);
+      setEntries([]);
       turnEpochRef.current = 0;
       return;
     }
     if (turnEpochRef.current !== turnEpoch) {
       turnEpochRef.current = turnEpoch;
-      resetLog(events.length);
+      setEntries([]);
     }
-  }, [turnEpoch, enabled, events.length]);
+  }, [turnEpoch, enabled]);
 
   useEffect(() => {
     if (!enabled || !sessionId || turnEpoch === 0) return;
-    if (events.length <= processedCountRef.current) return;
 
-    const fresh = events.slice(processedCountRef.current);
-    processedCountRef.current = events.length;
-
-    const next: OpsLogEntry[] = [];
-    for (const ev of fresh as TelemetryEvent[]) {
-      if (!eventBelongsToViewSession(ev, sessionId)) continue;
+    const disconnect = subscribeOptimizedTelemetry((ev: TelemetryEvent) => {
+      if (!eventBelongsToViewSession(ev, sessionIdRef.current)) return;
       const entry = chatAgentTelemetryToLogEntry(ev);
-      if (entry) next.push(entry);
-    }
-    if (next.length === 0) return;
-    setEntries((prev) => [...prev, ...next].slice(-MAX_ENTRIES));
-  }, [events, sessionId, turnEpoch, enabled]);
+      if (!entry) return;
+      setEntries((prev) => [...prev, entry].slice(-MAX_ENTRIES));
+    });
+
+    return disconnect;
+  }, [enabled, sessionId, turnEpoch]);
 
   return entries;
 }

@@ -176,7 +176,8 @@ export async function postCrewSuggestionEvaluate(req: Request, res: Response): P
       expandKeywords: resolveKeywordExpander(eng),
     });
 
-    emitCrewSuggestionTelemetry(eng, evaluation, text);
+    // In-chat roster picker uses this endpoint directly; telemetry would race the client gate
+    // and attach a second picker bubble via WebSocket.
     res.json(evaluation);
   } catch (e: unknown) {
     getLogger().error('CREW_SUGGESTION_EVALUATE', e instanceof Error ? e : String(e));

@@ -10,7 +10,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@agentx/shared/browser': path.resolve(__dirname, '../shared/src/browser.ts'),
-      '@agentx/canvas': path.resolve(__dirname, '../canvas/src/index.ts'),
     },
   },
   server: {
@@ -39,6 +38,21 @@ export default defineConfig({
           }
           if (id.includes('node_modules/react-markdown') || id.includes('node_modules/remark') || id.includes('node_modules/unified') || id.includes('node_modules/mdast') || id.includes('node_modules/micromark')) {
             return 'markdown';
+          }
+          if (id.includes('node_modules/mermaid')) {
+            return 'mermaid';
+          }
+          if (id.includes('node_modules/jspdf') || id.includes('node_modules/html2canvas')) {
+            return 'pdf-export';
+          }
+          if (id.includes('node_modules/recharts') || id.includes('node_modules/d3-')) {
+            return 'charts';
+          }
+          if (id.includes('node_modules/@mui/')) {
+            return 'mui';
+          }
+          if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/')) {
+            return 'react-vendor';
           }
           if (id.includes('node_modules')) {
             return 'vendor';

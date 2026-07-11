@@ -55,7 +55,7 @@ import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
 import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createCanvasSection, createCurrentTimeSection, createSchedulingSection, createThirdPartyServicesSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createMarkdownSection, createCurrentTimeSection, createSchedulingSection, createThirdPartyServicesSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
 import {
   buildCompletionMessages,
@@ -454,6 +454,7 @@ export class Agent {
       if (this.toolRegistry && this.toolExecutor) { this._crewOrchestrator.setTools(this.toolRegistry, this.toolExecutor); }
       this._crewOrchestrator.setConfig(this.config);
       this._crewOrchestrator.setSessionId(this.sessionId);
+      this._crewOrchestrator.setClarificationHandler((questionnaire) => this.waitForQuestionnaireResponse(questionnaire));
       this._crewOrchestrator.onTokenLog = (opts) => {
         this.onTokenLog?.({ ...opts, crewId: opts.crewId });
       };
@@ -1991,8 +1992,15 @@ Rules:
       this.clientSituation = options.clientSituation;
     }
 
+    const messagingChannelInbound = options?.sourceChannel === 'telegram'
+      || options?.sourceChannel === 'slack'
+      || options?.sourceChannel === 'discord';
+    if (messagingChannelInbound && this.planMode) {
+      this.setPlanMode(false);
+    }
+
     const searchStatus = isWebSearchAvailableForChat(this.config);
-    if (this.options.channelSession) {
+    if (this.options.channelSession || messagingChannelInbound) {
       // Messaging channels need fast replies — skip optional LLM intent classifier.
       this.turnWebSearchPolicy = resolveWebSearchTurnPolicy({
         forceWebSearch: options?.forceWebSearch,
@@ -3153,7 +3161,7 @@ Rules:
         .register(createRulesSection({ technicalExecutor: true }))
         .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
-        .register(createCanvasSection())
+        .register(createMarkdownSection())
         .register(createCurrentTimeSection(ctx))
         .register(createMemoryContextSection(ctx));
       if (systemOverride) {
@@ -3177,7 +3185,7 @@ Rules:
           .register(createCrewPrivateConductSection())
           .register(createQuestionnaireGuideSection())
           .register(createChatMarkdownSection())
-        .register(createCanvasSection())
+        .register(createMarkdownSection())
           .register(createCurrentTimeSection(ctx))
           .register(createWorkingDirectorySection(ctx))
           .register(createLearningsSection(ctx))
@@ -3209,7 +3217,7 @@ Rules:
         .register(createChannelMessagingSection())
         .register(createThirdPartyServicesSection())
         .register(createChatMarkdownSection())
-        .register(createCanvasSection())
+        .register(createMarkdownSection())
         .register(createCurrentTimeSection(ctx))
         .register(createSchedulingSection())
         .register(createLearningsSection(ctx))
@@ -3251,7 +3259,7 @@ Rules:
         .register(createThirdPartyServicesSection())
         .register(createQuestionnaireGuideSection())
         .register(createChatMarkdownSection())
-        .register(createCanvasSection())
+        .register(createMarkdownSection())
         .register(createCurrentTimeSection(ctx))
         .register(createSchedulingSection())
         .register(createLearningsSection(ctx))

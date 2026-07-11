@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { deriveCanvasTitle, isGenericCanvasTitle } from '../src/utils/canvas-title.js';
+import { deriveMarkdownTitle, isGenericMarkdownTitle } from '../src/utils/markdown-title.js';
 
-describe('deriveCanvasTitle', () => {
+describe('deriveMarkdownTitle', () => {
   it('prefers explicit non-generic title', () => {
-    expect(deriveCanvasTitle({ title: 'Q3 Revenue Dashboard' })).toBe('Q3 Revenue Dashboard');
+    expect(deriveMarkdownTitle({ title: 'Q3 Revenue Dashboard' })).toBe('Q3 Revenue Dashboard');
   });
 
   it('ignores generic explicit titles and derives from TSX Section', () => {
@@ -11,35 +11,35 @@ describe('deriveCanvasTitle', () => {
 export default function SavedCanvas() {
   return <CanvasRoot><Section title="API Error Audit">...</Section></CanvasRoot>;
 }`;
-    expect(deriveCanvasTitle({ title: 'Canvas', contentTsx: tsx })).toBe('API Error Audit');
+    expect(deriveMarkdownTitle({ title: 'Canvas', contentTsx: tsx })).toBe('API Error Audit');
   });
 
   it('derives from component name when section title missing', () => {
     const tsx = `export default function OpsDashboard() { return null; }`;
-    expect(deriveCanvasTitle({ contentTsx: tsx })).toBe('Ops Dashboard');
+    expect(deriveMarkdownTitle({ contentTsx: tsx })).toBe('Ops Dashboard');
   });
 
   it('derives from markdown heading', () => {
-    expect(deriveCanvasTitle({
+    expect(deriveMarkdownTitle({
       contentMarkdown: '# Incident postmortem\n\nDetails here.',
     })).toBe('Incident postmortem');
   });
 
   it('derives from chart fence title', () => {
     const md = '```chart\n{"v":1,"type":"bar","title":"Errors by service","data":[]}\n```';
-    expect(deriveCanvasTitle({ contentMarkdown: md })).toBe('Errors by service');
+    expect(deriveMarkdownTitle({ contentMarkdown: md })).toBe('Errors by service');
   });
 
   it('uses first sentence when no heading', () => {
-    expect(deriveCanvasTitle({
+    expect(deriveMarkdownTitle({
       contentMarkdown: 'Latency increased across all regions during the outage window.',
     })).toBe('Latency increased across all regions during the outage window.');
   });
 });
 
-describe('isGenericCanvasTitle', () => {
+describe('isGenericMarkdownTitle', () => {
   it('flags generic titles', () => {
-    expect(isGenericCanvasTitle('Saved message')).toBe(true);
-    expect(isGenericCanvasTitle('Q1 Ops Review')).toBe(false);
+    expect(isGenericMarkdownTitle('Saved message')).toBe(true);
+    expect(isGenericMarkdownTitle('Q1 Ops Review')).toBe(false);
   });
 });

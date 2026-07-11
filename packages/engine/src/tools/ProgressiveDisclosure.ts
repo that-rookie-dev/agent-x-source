@@ -25,7 +25,7 @@ const CORE_TOOL_PATTERNS = [
   /^memory_/, /^rag_/,
   // Agent meta / charts / todos
   /^ask_clarification/, /^delegate_to/, /^sub_agent/, /^todo/,
-  /^search_crew_hub/, /^render_chart$/, /^spawn_crew/, /^save_to_canvas$/,
+  /^search_crew_hub/, /^render_chart$/, /^spawn_crew/, /^save_to_markdown$/,
 ];
 
 const DISCLOSURE_THRESHOLD = 40;

@@ -13,7 +13,7 @@ interface ChatMessageListProps {
   items: VisibleMessageItem[];
   loadingSteps: Array<{ id: string; label: string; status: string }> | null;
   onResend: (text: string) => void;
-  bottomRef: React.RefObject<HTMLDivElement>;
+  bottomRef: React.RefObject<HTMLDivElement | null>;
   onOpenChildSession?: (props: { childSessionId: string; label: string; kind: 'sub_agent' | 'crew_worker'; status: 'running' | 'done' | 'error'; task?: string }) => void;
   onQuestionnaireRespond?: (messageId: string, response: string) => void;
   onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void;
@@ -21,7 +21,7 @@ interface ChatMessageListProps {
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
   pendingFeedbackMessageId?: string | null;
   onTurnFeedback?: (messageId: string, rating: import('@agentx/shared/browser').TurnFeedbackRating) => void;
-  onSaveCanvas?: (message: UIMessage) => void;
+  onSaveMarkdown?: (message: UIMessage) => void;
   feedbackSubmitting?: boolean;
   /** Show agent-side loader after the list while the current turn is active. */
   turnStreaming?: boolean;
@@ -31,7 +31,7 @@ interface ChatMessageListProps {
 }
 
 /** Virtual-ish message list — content-visibility keeps long sessions smooth. */
-export const ChatMessageList = memo(function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, onSaveCanvas, feedbackSubmitting, turnStreaming, turnActivityLabel, freezeLayout }: ChatMessageListProps) {
+export const ChatMessageList = memo(function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, onSaveMarkdown, feedbackSubmitting, turnStreaming, turnActivityLabel, freezeLayout }: ChatMessageListProps) {
   const renderMessage = useCallback((msg: UIMessage, idx: number) => {
     const isLast = idx === items.length - 1;
     const hasText = !!(msg.content?.trim() || msg.parts?.some((p) => p.type === 'text' && p.content?.trim()));
@@ -56,11 +56,11 @@ export const ChatMessageList = memo(function ChatMessageList({ items, loadingSte
         onViewCrewDossier={onViewCrewDossier}
         showFeedback={pendingFeedbackMessageId === msg.id}
         onTurnFeedback={onTurnFeedback}
-        onSaveCanvas={onSaveCanvas}
+        onSaveMarkdown={onSaveMarkdown}
         feedbackSubmitting={feedbackSubmitting}
       />
     );
-  }, [items.length, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, onSaveCanvas, feedbackSubmitting]);
+  }, [items.length, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, onSaveMarkdown, feedbackSubmitting]);
 
   return (
     <>
@@ -89,7 +89,7 @@ export const ChatMessageList = memo(function ChatMessageList({ items, loadingSte
         );
       })}
       {turnStreaming ? <AgentTurnLoader label={turnActivityLabel} /> : null}
-      <div ref={bottomRef} />
+      <div ref={bottomRef as React.RefObject<HTMLDivElement>} />
     </>
   );
 });

@@ -19,8 +19,13 @@ export function getLogDir(): string {
   return join(getDataDir(), 'logs');
 }
 
-/** Internal canvas artifacts (markdown + metadata); never leaves data dir except via explicit PDF export. */
-export function getCanvasesDir(): string {
+/** Internal markdown documents; never leaves data dir except via explicit PDF export. */
+export function getMarkdownDocumentsDir(): string {
+  return join(getDataDir(), 'markdown');
+}
+
+/** @deprecated Legacy storage path — used for reading older installs. */
+export function getLegacyMarkdownDocumentsDir(): string {
   return join(getDataDir(), 'canvases');
 }
 

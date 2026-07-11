@@ -38,8 +38,8 @@ import {
   IntegrationHub,
   configureBackgroundTaskPool,
   setOnnxThreadConfig,
-  CanvasStore,
-  setCanvasStoreInstance,
+  MarkdownDocumentStore,
+  setMarkdownDocumentStoreInstance,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session, StorageAdapter } from '@agentx/shared';
 import { resolveRuntimeSettings } from '@agentx/shared';
@@ -77,6 +77,7 @@ export interface EngineState {
   emailBridge: EmailBridge | null;
   redisRuntime: RedisCacheRuntime | null;
   webhookRuntime: WebhookNotifierRuntime | null;
+  channelSessionBindings?: Partial<Record<import('@agentx/shared').ChannelBindingId, import('@agentx/shared').ChannelSessionBinding>>;
   dek: Buffer | null;
   integrationHub: IntegrationHub;
 }
@@ -286,6 +287,7 @@ export function getEngine(): EngineState {
     sessionManager,
     agent: null,
     channelAgent: null,
+    channelSessionBindings: {},
     crewManager,
     toolkit,
     configured,
@@ -311,8 +313,8 @@ export function getEngine(): EngineState {
     .then(async () => {
       if (!store) return;
       if (state?.pgPool) {
-        await CanvasStore.ensureSchema(state.pgPool);
-        setCanvasStoreInstance(new CanvasStore(state.pgPool));
+        await MarkdownDocumentStore.ensureSchema(state.pgPool);
+        setMarkdownDocumentStoreInstance(new MarkdownDocumentStore(state.pgPool));
       }
       if (state) state.crewManager.refresh();
       await healDatabaseStore(store);
@@ -893,7 +895,14 @@ export function syncChannelSuperSessionContext(eng?: ReturnType<typeof getEngine
   const channelAgent = e.channelAgent as Agent | null | undefined;
   if (!channelAgent) return;
 
-  const active = e.sessionManager.getActiveSession()
+  const bindings = Object.values(e.channelSessionBindings ?? {});
+  const preferredBinding = bindings
+    .sort((a, b) => (b.boundAt ?? '').localeCompare(a.boundAt ?? ''))[0];
+  const binding = preferredBinding?.sessionId
+    ? e.sessionManager.getSessionById(preferredBinding.sessionId)
+    : null;
+  const active = binding
+    ?? e.sessionManager.getActiveSession()
     ?? (e.agent?.currentSessionId && e.agent.currentSessionId !== '__channel__'
       ? e.sessionManager.getSessionById(e.agent.currentSessionId)
       : null);

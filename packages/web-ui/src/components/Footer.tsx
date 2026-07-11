@@ -3,6 +3,7 @@ import Box from '@mui/material/Box';
 import MicIcon from '@mui/icons-material/Mic';
 import { colors } from '../theme';
 import { health, config as configApi } from '../api';
+import { cachedApiCall } from '../perf/api-cache';
 import { useNeuralBrainSupported, useCapabilitiesReady } from '../hooks/useSystemCapabilities';
 import { useVoiceOptional } from './voice/VoiceProvider';
 
@@ -51,13 +52,16 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
           : 'Voice idle';
 
   useEffect(() => {
-    health.check().then((h) => setVersion(h.version)).catch(() => {});
+    cachedApiCall('health', () => health.check(), 30_000)
+      .then((h) => setVersion(h.version))
+      .catch(() => {});
     if (!capabilitiesReady) return;
     if (!neuralBrainSupported) {
       setNeuralBrainDisabled(true);
       return;
     }
-    configApi.get().then((cfg) => setNeuralBrainDisabled(cfg.neuralBrain === false)).catch(() => {
+    cachedApiCall('config', () => configApi.get(), 60_000)
+      .then((cfg) => setNeuralBrainDisabled(cfg.neuralBrain === false)).catch(() => {
       setNeuralBrainDisabled(false);
     });
   }, [neuralBrainSupported, capabilitiesReady]);
@@ -108,9 +112,20 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
         <span>🇮🇳 Made in India</span>
         <span style={{ color: colors.border.default }}>/</span>
         <span>
-          Created by Sivaprakash Rajendran (
-          <a href="mailto:sivaprakash.rajendran.316@gmail.com" style={{ color: colors.accent.blue, textDecoration: 'none' }}>sivaprakash.rajendran.316@gmail.com</a>
-          )
+          Created by{' '}
+          <Box
+            component="a"
+            href="mailto:sivaprakash.rajendran.316@gmail.com"
+            title="sivaprakash.rajendran.316@gmail.com"
+            sx={{
+              color: colors.text.secondary,
+              textDecoration: 'none',
+              transition: 'color 0.15s',
+              '&:hover': { color: colors.accent.blue, textDecoration: 'none' },
+            }}
+          >
+            Sivaprakash Rajendran
+          </Box>
         </span>
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>

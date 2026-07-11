@@ -12,7 +12,7 @@
     "setup:age": "node ../runtime/scripts/setup-age.mjs",
     "setup:extensions": "node ../runtime/scripts/setup-pgvector.mjs && node ../runtime/scripts/setup-age.mjs",
     "build": "pnpm --filter @agentx/runtime run build && tsup",
-    "build:deps": "pnpm --filter @agentx/shared --filter @agentx/canvas --filter @agentx/engine --filter @agentx/runtime run build && pnpm --filter @agentx/web-api run build && pnpm --filter @agentx/web-ui run build",
+    "build:deps": "pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/runtime run build && pnpm --filter @agentx/web-api run build && pnpm --filter @agentx/web-ui run build",
     "dev": "echo 'Use ../../scripts/dev-desktop.sh — raw electron dist/main.js fails in monorepos (npm electron shadows builtin).'",
     "dev:run": "bash ../../scripts/dev-desktop.sh",
     "dev:sync": "bash ../../scripts/sync-desktop.sh",

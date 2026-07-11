@@ -14,7 +14,7 @@ import { PanelHeader } from './PanelHeader';
 import { automation, type AutomationTaskRecord, type TelemetryEvent } from '../api';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { automationRunSessionId } from '@agentx/shared/browser';
-import { useApp } from '../store/AppContext';
+import { subscribeOptimizedTelemetry } from '../perf/optimized-telemetry';
 import { colors } from '../theme';
 
 /** Minimal black & white palette for this panel only */
@@ -279,7 +279,6 @@ function TaskCard({
 }
 
 export function AutomationPanel() {
-  const { events } = useApp();
   const pageVisible = usePageVisible();
   const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -289,6 +288,7 @@ export function AutomationPanel() {
   const [loading, setLoading] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
   const seenEventKeys = useRef<Set<string>>(new Set());
+  const runningIdsRef = useRef<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -312,6 +312,10 @@ export function AutomationPanel() {
   );
 
   const selectedRunning = selectedId ? runningIds.has(selectedId) : false;
+
+  useEffect(() => {
+    runningIdsRef.current = runningIds;
+  }, [runningIds]);
 
   const loadLogs = useCallback(async (taskId: string) => {
     try {
@@ -354,16 +358,17 @@ export function AutomationPanel() {
 
   useEffect(() => {
     if (!selectedId) return;
-    for (const ev of events) {
-      if (!eventBelongsToTask(ev, selectedId)) continue;
+    const disconnect = subscribeOptimizedTelemetry((ev) => {
+      if (!eventBelongsToTask(ev, selectedId)) return;
       const key = `${ev.type}-${JSON.stringify(ev).slice(0, 120)}`;
-      if (seenEventKeys.current.has(key)) continue;
+      if (seenEventKeys.current.has(key)) return;
       seenEventKeys.current.add(key);
 
       if (ev.type === 'automation_run_triggered' || ev.type === 'automation_run_started') {
         const tid = (ev as { taskId?: string }).taskId;
         if (tid) {
-          setRunningIds((prev) => new Set(prev).add(tid));
+          runningIdsRef.current = new Set(runningIdsRef.current).add(tid);
+          setRunningIds(runningIdsRef.current);
           if (tid === selectedId) {
             seenEventKeys.current.clear();
             setOpsLog([]);
@@ -373,11 +378,10 @@ export function AutomationPanel() {
       if (ev.type === 'automation_run_ended') {
         const tid = (ev as { taskId?: string }).taskId;
         if (tid) {
-          setRunningIds((prev) => {
-            const next = new Set(prev);
-            next.delete(tid);
-            return next;
-          });
+          const next = new Set(runningIdsRef.current);
+          next.delete(tid);
+          runningIdsRef.current = next;
+          setRunningIds(next);
           void load();
           if (selectedId === tid) void loadLogs(tid);
         }
@@ -387,7 +391,8 @@ export function AutomationPanel() {
         || ev.type === 'automation_run_preparing'
         || ev.type === 'automation_run_started'
         || ev.type === 'automation_run_ended';
-      if (!selectedRunning && !isAutomationSysEvent) continue;
+      const taskRunning = selectedId ? runningIdsRef.current.has(selectedId) : false;
+      if (!taskRunning && !isAutomationSysEvent) return;
 
       const entry = telemetryToLogEntry(ev);
       if (entry) {
@@ -396,8 +401,9 @@ export function AutomationPanel() {
           return [...prev.slice(-199), entry];
         });
       }
-    }
-  }, [events, selectedId, selectedRunning, load, loadLogs]);
+    });
+    return disconnect;
+  }, [selectedId, load, loadLogs]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;

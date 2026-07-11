@@ -8,7 +8,7 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { useColorScheme } from '@mui/material/styles';
 import { colors, alphaColor } from '../theme';
 import { crewPalette } from '../styles/brands';
-import { StyledUl, StyledOl, StyledLi, ChartableTableWrapper } from '../components/StructuredViews';
+import { StyledUl, StyledOl, StyledLi, StyledTableWrapper } from '../components/StructuredViews';
 import { splitMarkdownSections, isPlainTextMarkdown, PLAIN_TEXT_BUBBLE_MAX_WIDTH } from './markdown-normalize';
 import { expandCollapsedTreeLine, isTreeDiagramContent } from './tree-diagram';
 import { isHorizontalPipelineContent, isPipelineDiagramContent } from './pipeline-diagram';
@@ -269,7 +269,7 @@ function createMarkdownComponents(isFirstSection: boolean) {
       );
     },
     pre({ children }: { children?: React.ReactNode }) { return <>{children}</>; },
-    table({ children }: { children?: React.ReactNode }) { return <ChartableTableWrapper>{children}</ChartableTableWrapper>; },
+    table({ children }: { children?: React.ReactNode }) { return <StyledTableWrapper>{children}</StyledTableWrapper>; },
     thead({ children }: { children?: React.ReactNode }) { return <thead>{children}</thead>; },
     tbody({ children }: { children?: React.ReactNode }) { return <tbody>{children}</tbody>; },
     tr({ children }: { children?: React.ReactNode }) { return <tr>{children}</tr>; },

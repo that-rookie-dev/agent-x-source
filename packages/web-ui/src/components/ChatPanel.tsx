@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useDeferredValue } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -48,8 +48,9 @@ import {
   CheckpointDrawer,
   type PaletteAction,
 } from './ChatEnhancements';
-import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, canvases, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
-import { subscribeTelemetry } from '../telemetry-hub';
+import { chat, sessions, todos, tools, models, crews, crewSuggestions, crewCatalog, providers, system, sessionSettings, agent, settings, permissions, markdownDocuments, type TelemetryEvent, type ChatMessage, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type CatalogSummary, type IntegrationActionPreview } from '../api';
+import { subscribeOptimizedTelemetry } from '../perf/optimized-telemetry';
+import { ensureRenderInstrumentation } from '../perf/render-instrumentation';
 import { collectClientSituation } from '../client-situation.js';
 import { eventBelongsToViewSession } from '../chat/session-stream-filter';
 import { ActionPreviewCard } from './integrations/ActionPreviewCard';
@@ -66,8 +67,7 @@ import type { VoiceTurnTimings } from '../voice/VoiceSessionClient';
 import { useVoiceOptional } from './voice/VoiceProvider';
 import { WebSearchGlobeToggle, readWebSearchForcePreference, writeWebSearchForcePreference } from './WebSearchGlobeToggle';
 import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
-import { ChatMessageList } from '../chat/ChatMessageList';
-import { PlanModeContext } from '../chat/PlanModeContext';
+import { ChatThreadView } from './chat/ChatThreadView';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
 import { crewTheme } from '../styles/crew-theme';
@@ -75,7 +75,11 @@ import { stripToolNoise, sanitizeForJson, repairStreamTextGlitches, hasPendingCh
 import { CHAT_INITIAL_MESSAGES_PER_ROLE, CORE_SESSION_MESSAGES_PER_ROLE, mapHistoryToUiMessages, buildSessionShellPatch, applyTurnFeedbackRows } from '../chat/restoreMessages';
 import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
 import { hydrateCrewDeliverables } from '../chat/restoreCrewHydration';
-import { createCrewSuggestionEvalMessage, shouldOfferCrewRosterPicker } from '../chat/crew-suggestion-flow';
+import {
+  createCrewSuggestionEvalMessage,
+  mergeCrewRosterPickerIntoMessages,
+  shouldOfferCrewRosterPicker,
+} from '../chat/crew-suggestion-flow';
 import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
 import {
@@ -485,8 +489,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         tokenOutputRef.current = outputEst;
         if (resolvedScope) setCwd(resolvedScope);
         loadTodos();
-        setSessionRestoring(false);
-        sessionRestoringRef.current = false;
         isInitialLoadRef.current = false;
         if (!session.title || session.title === 'New Session' || session.title === 'Child Session') {
           generateTitle(sessionId, visible);
@@ -861,26 +863,25 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     }
   }, [messages, replaceWarning]);
 
-  const handleSaveCanvas = useCallback(async (message: UIMessage) => {
+  const handleSaveMarkdown = useCallback(async (message: UIMessage) => {
     const sessionId = currentSessionIdRef.current;
     if (!sessionId || message.streaming) return;
-    const { messageToCanvasMarkdown, deriveCanvasTitleFromMessage } = await import('../canvas/canvas-export');
-    const contentMarkdown = messageToCanvasMarkdown(message);
+    const { messageToMarkdownDocument, deriveMarkdownTitleFromMessage } = await import('../markdown/markdown-export');
+    const contentMarkdown = messageToMarkdownDocument(message);
     if (!contentMarkdown.trim()) return;
-    const title = deriveCanvasTitleFromMessage(message);
+    const title = deriveMarkdownTitleFromMessage(message);
     try {
-      await canvases.create({
+      await markdownDocuments.create({
         sessionId,
         title,
         contentMarkdown,
-        contentFormat: 'canvas_tsx',
         messageId: message.id,
         sourceRole: message.role === 'user' ? 'user' : 'assistant',
       });
       const { notify } = await import('./NotificationToast');
-      notify('checkpoint', 'Saved as interactive Canvas — open the sidebar to view or export PDF.');
+      notify('checkpoint', 'Saved to Markdown — open the sidebar to view or export PDF.');
     } catch (err) {
-      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to save canvas'));
+      setWarnings((prev) => replaceWarning(prev, err instanceof Error ? err.message : 'Failed to save markdown'));
     }
   }, [replaceWarning]);
 
@@ -904,6 +905,11 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       setPendingFeedbackMessageId(candidate.messageId);
     }
   }, [messages]);
+
+  const messageScrollKey = useMemo(() => {
+    const last = messages[messages.length - 1];
+    return `${messages.length}:${last?.id ?? ''}:${last?.content?.length ?? 0}:${streaming ? 1 : 0}`;
+  }, [messages, streaming]);
 
   // Smart auto-scroll state
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -1078,9 +1084,13 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         isAtBottomRef.current = true;
         lastScrollTopRef.current = el.scrollTop;
         paginationCooldownUntilRef.current = Date.now() + 600;
+        if (sessionRestoringRef.current) {
+          setSessionRestoring(false);
+          sessionRestoringRef.current = false;
+        }
       }
     }
-  }, [messages]);
+  }, [messageScrollKey]);
 
   useEffect(() => {
     if (!needsInitialScrollRef.current || messages.length === 0) return;
@@ -1097,10 +1107,30 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         isAtBottomRef.current = true;
         lastScrollTopRef.current = el.scrollTop;
         paginationCooldownUntilRef.current = Date.now() + 600;
+        if (sessionRestoringRef.current) {
+          setSessionRestoring(false);
+          sessionRestoringRef.current = false;
+        }
       }
     }, 50);
     return () => window.clearTimeout(timer);
   }, [messages.length, scrollMessagesToBottom]);
+
+  // Safety net: never leave the restore overlay stuck if scroll anchoring fails
+  useEffect(() => {
+    if (!sessionRestoring) return;
+    const timer = window.setTimeout(() => {
+      if (!sessionRestoringRef.current) return;
+      setSessionRestoring(false);
+      sessionRestoringRef.current = false;
+      needsInitialScrollRef.current = false;
+      initialScrollDoneRef.current = true;
+      setInitialScrollDone(true);
+      paginationReadyRef.current = true;
+      scrollMessagesToBottom('instant');
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [sessionRestoring, scrollMessagesToBottom]);
 
   // Auto-scroll only when user is at bottom — also on streaming content updates
   const prevRealCountRef = useRef(0);
@@ -1114,7 +1144,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     } else if (countChanged) {
       setShowJumpPill(true);
     }
-  }, [messages, streaming, scrollMessagesToBottom]);
+  }, [messageScrollKey, streaming, scrollMessagesToBottom]);
 
   // Pin scroll to bottom when a turn finishes — content-visibility/layout reflow can jump upward
   useLayoutEffect(() => {
@@ -1123,7 +1153,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     if (!wasStreaming || streaming || !isAtBottomRef.current) return;
     scrollMessagesToBottom('instant');
     requestAnimationFrame(() => scrollMessagesToBottom('instant'));
-  }, [streaming, messages, scrollMessagesToBottom]);
+  }, [streaming, messageScrollKey, scrollMessagesToBottom]);
 
   // Load sessions
   const loadSessions = useCallback(() => {
@@ -1437,6 +1467,87 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       }
     };
 
+    const applySubagentToolEvent = (prev: UIMessage[], ev: TelemetryEvent): UIMessage[] => {
+      const last = prev[prev.length - 1];
+      const subagentId = (ev as { subagentId?: string }).subagentId as string;
+      const parentEvent = (ev as { parentEvent?: Record<string, unknown> }).parentEvent;
+      if (!subagentId || !parentEvent || !last?.subAgents) return prev;
+      switch (parentEvent.type) {
+        case 'tool_executing': {
+          const toolName = (parentEvent.tool as string) ?? 'unknown';
+          const desc = (parentEvent.description as string) ?? '';
+          const eventArgs = parentEvent.args ?? desc;
+          const callId = (parentEvent.callId as string) ?? crypto.randomUUID();
+          const tc: ToolCall = { id: callId, name: toolName, args: eventArgs as ToolCall['args'], status: 'running' };
+          const newSubAgents = last.subAgents.map((a: SubAgent) =>
+            a.id !== subagentId ? a : { ...a, toolCalls: [...(a.toolCalls || []), tc] });
+          return updateLastMessage(prev, { subAgents: newSubAgents });
+        }
+        case 'tool_output': {
+          const outputCallId = (parentEvent.callId as string) ?? '';
+          const outputText = (parentEvent.output as string) ?? '';
+          if (!outputCallId || !outputText) return prev;
+          const newSubAgents = last.subAgents.map((a: SubAgent) =>
+            a.id !== subagentId ? a : {
+              ...a,
+              toolCalls: (a.toolCalls || []).map((t: ToolCall) =>
+                t.id === outputCallId && t.status === 'running'
+                  ? { ...t, streamOutput: (t.streamOutput || '') + outputText } : t),
+            });
+          return updateLastMessage(prev, { subAgents: newSubAgents });
+        }
+        case 'tool_complete': {
+          const toolName = (parentEvent.tool as string) ?? '';
+          const elapsed = (parentEvent.elapsed as number) ?? 0;
+          const callId = (parentEvent.callId as string) ?? '';
+          const result = (parentEvent as { result?: unknown; output?: unknown }).result
+            ?? (parentEvent as { output?: unknown }).output ?? '';
+          const resultStr = typeof result === 'string' ? result
+            : (result && typeof result === 'object'
+              ? ((result as { output?: string; message?: string }).output
+                || (result as { message?: string }).message
+                || JSON.stringify(result))
+              : '');
+          const newSubAgents = last.subAgents.map((a: SubAgent) =>
+            a.id !== subagentId ? a : {
+              ...a,
+              toolCalls: (a.toolCalls || []).map((t: ToolCall) => {
+                if (callId && t.id !== callId) return t;
+                if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
+                return { ...t, status: 'done' as const, result: resultStr, elapsed };
+              }),
+            });
+          return updateLastMessage(prev, { subAgents: newSubAgents });
+        }
+        default:
+          return prev;
+      }
+    };
+
+    const applyTokenUsageEvent = (ev: TelemetryEvent): void => {
+      const cw = ev.contextWindow as number | undefined;
+      if (cw != null && cw > 0) setTokenTotal(cw);
+      const inp = ev.inputTokens as number | undefined;
+      const out = ev.outputTokens as number | undefined;
+      const reserved = ev.reservedTokens as number | undefined;
+      const streamingTok = ev.streamingTokens as number | undefined;
+      if (inp != null) {
+        setTokenInput(inp);
+        tokenInputRef.current = inp;
+      }
+      if (out != null) {
+        setTokenOutput(out);
+        tokenOutputRef.current = out;
+      }
+      if (reserved != null) {
+        setTokenReserved(reserved);
+        tokenReservedRef.current = reserved;
+      }
+      if (streamingTok != null) setTokenStreaming(streamingTok);
+      const used = ev.totalTokens as number | undefined;
+      if (used != null) setTokenUsed(used);
+    };
+
     const handleEvent = (ev: TelemetryEvent) => {
       if (!eventBelongsToViewSession(ev, viewSessionIdRef.current)) return;
 
@@ -1473,8 +1584,12 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         return;
       }
 
-      // RAF-batch high-frequency tool events to prevent render storm on long-running tasks
-      if (ev.type === 'tool_executing' || ev.type === 'tool_output' || ev.type === 'tool_complete') {
+      // RAF-batch high-frequency tool + subagent tool events
+      const isSubagentTool = ev.type === 'subagent_event'
+        && ['tool_executing', 'tool_output', 'tool_complete'].includes(
+          String((ev as { parentEvent?: { type?: string } }).parentEvent?.type ?? ''),
+        );
+      if (ev.type === 'tool_executing' || ev.type === 'tool_output' || ev.type === 'tool_complete' || isSubagentTool) {
         // Ignore stale tool events replayed from telemetry buffer on page load
         if (isInitialLoadRef.current) return;
         toolBatchRef.current.push(ev);
@@ -1487,7 +1602,9 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             setMessages(prev => {
               let current = prev;
               for (const e of batch) {
-                current = applyToolEvent(current, e);
+                current = e.type === 'subagent_event'
+                  ? applySubagentToolEvent(current, e)
+                  : applyToolEvent(current, e);
               }
               const last = current[current.length - 1];
               if (last?.parts?.length) {
@@ -1500,6 +1617,18 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             });
           });
         }
+        return;
+      }
+
+      if (ev.type === 'token_usage') {
+        applyTokenUsageEvent(ev);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role !== 'assistant') return prev;
+          const turn = ev.turnTokens as number | undefined;
+          if (turn != null) return updateLastMessage(prev, { turnTokens: turn });
+          return prev;
+        });
         return;
       }
 
@@ -1855,33 +1984,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             });
             return prev;
 
-          case 'token_usage': {
-            const cw = ev.contextWindow as number | undefined;
-            if (cw != null && cw > 0) setTokenTotal(cw);
-            const inp = ev.inputTokens as number | undefined;
-            const out = ev.outputTokens as number | undefined;
-            const reserved = ev.reservedTokens as number | undefined;
-            const streaming = ev.streamingTokens as number | undefined;
-            if (inp != null) {
-              setTokenInput(inp);
-              tokenInputRef.current = inp;
-            }
-            if (out != null) {
-              setTokenOutput(out);
-              tokenOutputRef.current = out;
-            }
-            if (reserved != null) {
-              setTokenReserved(reserved);
-              tokenReservedRef.current = reserved;
-            }
-            if (streaming != null) setTokenStreaming(streaming);
-            const used = ev.totalTokens as number | undefined;
-            if (used != null) setTokenUsed(used);
-            if (last?.role !== 'assistant') return prev;
-            const turn = ev.turnTokens as number | undefined;
-            if (turn != null) return updateLastMessage(prev, { turnTokens: turn });
+          case 'token_usage':
             return prev;
-          }
 
           case 'command_action': {
             const action = ev.action as string | undefined;
@@ -2011,7 +2115,9 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
           case 'crew_suggestion':
           case 'crew_suggestion_required': {
             if (isInitialLoadRef.current) return prev;
-            if (isCrewPrivateRef.current || crewSuggestionHandledRef.current) return prev;
+            if (isCrewPrivateRef.current || crewSuggestionHandledRef.current || crewGateInFlightRef.current) {
+              return prev;
+            }
             const evaluation = (ev as { evaluation?: CrewSuggestionEvaluation }).evaluation;
             const message = (ev as { message?: string }).message;
             if (!evaluation || !message || !shouldOfferCrewRosterPicker(evaluation)) return prev;
@@ -2215,56 +2321,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             return attachChildSessionToAssistant(prev, agentId, 'Sub-Agent', 'sub_agent', task.slice(0, 200));
           }
 
-          case 'subagent_event': {
-            const subagentId = (ev as any).subagentId as string;
-            const parentEvent = (ev as any).parentEvent as Record<string, unknown>;
-            if (!subagentId || !parentEvent || !last?.subAgents) return prev;
-            switch (parentEvent.type) {
-              case 'tool_executing': {
-                const toolName = (parentEvent.tool as string) ?? 'unknown';
-                const desc = (parentEvent.description as string) ?? '';
-                const eventArgs = parentEvent.args ?? desc;
-                const callId = (parentEvent.callId as string) ?? crypto.randomUUID();
-                const tc: ToolCall = { id: callId, name: toolName, args: eventArgs as any, status: 'running' };
-                const newSubAgents = last.subAgents.map((a: SubAgent) =>
-                  a.id !== subagentId ? a : { ...a, toolCalls: [...(a.toolCalls || []), tc] });
-                return updateLastMessage(prev, { subAgents: newSubAgents });
-              }
-              case 'tool_output': {
-                const outputCallId = (parentEvent.callId as string) ?? '';
-                const outputText = (parentEvent.output as string) ?? '';
-                if (!outputCallId || !outputText) return prev;
-                const newSubAgents = last.subAgents.map((a: SubAgent) =>
-                  a.id !== subagentId ? a : {
-                    ...a,
-                    toolCalls: (a.toolCalls || []).map((t: ToolCall) =>
-                      t.id === outputCallId && t.status === 'running'
-                        ? { ...t, streamOutput: (t.streamOutput || '') + outputText } : t),
-                  });
-                return updateLastMessage(prev, { subAgents: newSubAgents });
-              }
-              case 'tool_complete': {
-                const toolName = (parentEvent.tool as string) ?? '';
-                const elapsed = (parentEvent.elapsed as number) ?? 0;
-                const callId = (parentEvent.callId as string) ?? '';
-                const result = (parentEvent as any).result ?? (parentEvent as any).output ?? '';
-                const resultStr = typeof result === 'string' ? result
-                  : (result && typeof result === 'object' ? ((result as any).output || (result as any).message || JSON.stringify(result)) : '');
-                const newSubAgents = last.subAgents.map((a: SubAgent) =>
-                  a.id !== subagentId ? a : {
-                    ...a,
-                    toolCalls: (a.toolCalls || []).map((t: ToolCall) => {
-                      if (callId && t.id !== callId) return t;
-                      if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
-                      return { ...t, status: 'done' as const, result: resultStr, elapsed };
-                    }),
-                  });
-                return updateLastMessage(prev, { subAgents: newSubAgents });
-              }
-              default:
-                return prev;
-            }
-          }
+          case 'subagent_event':
+            return prev;
 
           default:
             return prev;
@@ -2272,7 +2330,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       });
     };
 
-    disconnectRef.current = subscribeTelemetry(
+    ensureRenderInstrumentation();
+    disconnectRef.current = subscribeOptimizedTelemetry(
       handleEvent,
       (state) => {
         setConnState(state);
@@ -2542,35 +2601,15 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       };
 
       setMessages((prev) => {
-        if (opts?.userMessageId && opts?.evalAssistantMessageId) {
-          return prev.map((m) => {
-            if (m.id === opts.userMessageId) {
-              return {
-                ...m,
-                id: persisted.userMessageId,
-                content: trimmed,
-              };
-            }
-            if (m.id === opts.evalAssistantMessageId) return pickerMsg;
-            return m;
-          });
-        }
-
-        if (opts?.userMessageId) {
-          return [
-            ...prev.map((m) => (m.id === opts.userMessageId ? { ...m, id: persisted.userMessageId } : m)),
-            pickerMsg,
-          ];
-        }
-
-        const userMsg: UIMessage = {
-          id: persisted.userMessageId,
-          role: 'user',
-          content: trimmed,
-          streaming: false,
-          attachments: attachments.map((a) => ({ name: a.name })),
-        };
-        return [...prev, userMsg, pickerMsg];
+        if (prev.some((message) => message.id === persisted.pickerMessageId)) return prev;
+        return mergeCrewRosterPickerIntoMessages(
+          prev,
+          trimmed,
+          pickerMsg,
+          persisted,
+          opts,
+          attachments.map((attachment) => ({ name: attachment.name })),
+        );
       });
       inputBarRef.current?.clear();
       setAttachments([]);
@@ -2708,6 +2747,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     if (!sessionId) return false;
 
     crewGateInFlightRef.current = true;
+    crewSuggestionHandledRef.current = true;
     try {
     const userMessageId = crypto.randomUUID();
     const evalAssistant = createCrewSuggestionEvalMessage();
@@ -2735,7 +2775,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       }
 
       if (evaluation && shouldOfferCrewRosterPicker(evaluation)) {
-        crewSuggestionHandledRef.current = true;
         const attached = await attachCrewRosterPicker(trimmed, evaluation, {
           userMessageId,
           evalAssistantMessageId: evalAssistant.id,
@@ -2801,11 +2840,17 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     setLoadingSteps(null);
     beginTurnUi();
 
-    // Remove the old assistant response — SSE will update the placeholder
+    const placeholderId = crypto.randomUUID();
+    // Remove the old assistant response and show a streaming placeholder immediately.
     setMessages(prev => {
-      const last = prev[prev.length - 1];
-      return last?.role === 'assistant' ? prev.slice(0, -1) : prev;
+      const withoutAssistant = prev[prev.length - 1]?.role === 'assistant' ? prev.slice(0, -1) : prev;
+      const tip = withoutAssistant[withoutAssistant.length - 1];
+      if (tip?.role === 'user') {
+        return [...withoutAssistant, { id: placeholderId, role: 'assistant' as const, content: '', streaming: true }];
+      }
+      return withoutAssistant;
     });
+    requestAnimationFrame(() => scrollMessagesToBottom('instant'));
 
     try {
       const clientSituation = await collectClientSituation();
@@ -2844,7 +2889,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       });
       endTurnUi();
     }
-  }, [streaming, currentProvider, currentModel, ensureSession, beginTurnUi, endTurnUi]);
+  }, [streaming, currentProvider, currentModel, ensureSession, beginTurnUi, endTurnUi, scrollMessagesToBottom]);
 
   // --- Clarification response ---
   const markCrewRosterPickerResolved = useCallback((
@@ -3468,8 +3513,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       const restoredCwd = scopePath || session?.scopePath || '';
       if (restoredCwd) setCwd(restoredCwd);
       loadTodos();
-      setSessionRestoring(false);
-      sessionRestoringRef.current = false;
       isInitialLoadRef.current = false;
       navigate(`/console/chat/${s.id}`);
 
@@ -3607,7 +3650,10 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     }
     return visible.map((msg, idx) => ({ msg, isLastUser: idx === lastUserIdx }));
   }, [messages]);
-  
+
+  const deferredVisibleMessagesWithFlags = useDeferredValue(visibleMessagesWithFlags);
+  const threadMessagesWithFlags = streaming ? visibleMessagesWithFlags : deferredVisibleMessagesWithFlags;
+
   const visibleMessages = visibleMessagesWithFlags.map(item => item.msg);
 
   return (
@@ -3880,7 +3926,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
 
         {/* Messages */}
         <Box
-          ref={messagesContainerRef}
           sx={{
             flex: 1,
             overflow: 'auto',
@@ -3891,55 +3936,32 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             msOverflowStyle: 'none',
             '&::-webkit-scrollbar': { display: 'none' },
           }}
+          ref={messagesContainerRef}
         >
-          {sessionRestoring && visibleMessagesWithFlags.length === 0 && (
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-              <CircularProgress size={22} sx={{ color: colors.text.dim }} />
-            </Box>
-          )}
-
-          {visibleMessagesWithFlags.length === 0 && !streaming && !sessionRestoring && (
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-              <Box sx={{ textAlign: 'center', maxWidth: 300 }}>
-                <SmartToyIcon sx={{ fontSize: 36, color: colors.border.strong, mb: 1 }} />
-                <Typography sx={{ fontSize: '0.85rem', fontWeight: 500, color: colors.text.secondary, mb: 0.5 }}>How can I help?</Typography>
-                <Typography sx={{ fontSize: '0.65rem', color: colors.text.dim, lineHeight: 1.5 }}>
-                  Send a message, attach files, or ask me to execute tasks.
-                </Typography>
-              </Box>
-            </Box>
-          )}
-
-          {(loadingOlderMessages || hasOlderMessages) && visibleMessagesWithFlags.length > 0 && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 0.75 }}>
-              {loadingOlderMessages ? (
-                <CircularProgress size={14} sx={{ color: colors.text.dim }} />
-              ) : (
-                <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim }}>Scroll up for older messages</Typography>
-              )}
-            </Box>
-          )}
-
-          <PlanModeContext.Provider value={agentMode === 'plan'}>
-            <ChatMessageList
-              items={visibleMessagesWithFlags}
-              loadingSteps={loadingSteps}
-              onResend={handleResend}
-              bottomRef={bottomRef}
-              onOpenChildSession={openChildSession}
-              onQuestionnaireRespond={handleQuestionnaireRespond}
-              onCrewRosterPickerSubmit={handleCrewRosterPickerSubmit}
-              onCrewRosterPickerSkip={handleCrewRosterPickerSkip}
-              onViewCrewDossier={handleViewCrewDossier}
-              pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
-              onTurnFeedback={handleTurnFeedback}
-              onSaveCanvas={handleSaveCanvas}
-              feedbackSubmitting={feedbackSubmitting}
-              turnStreaming={streaming && visibleMessages.length > 0 && visibleMessages[visibleMessages.length - 1]?.role === 'assistant'}
-              turnActivityLabel={turnActivity?.stage}
-              freezeLayout={freezeMessageLayout || loadingOlderMessages}
-            />
-          </PlanModeContext.Provider>
+          <ChatThreadView
+            agentMode={agentMode}
+            messagesContainerRef={messagesContainerRef}
+            sessionRestoring={sessionRestoring}
+            visibleMessagesWithFlags={threadMessagesWithFlags}
+            visibleMessages={visibleMessages}
+            streaming={streaming}
+            loadingOlderMessages={loadingOlderMessages}
+            hasOlderMessages={hasOlderMessages}
+            loadingSteps={loadingSteps}
+            freezeMessageLayout={freezeMessageLayout || loadingOlderMessages || sessionRestoring || !initialScrollDone}
+            pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
+            feedbackSubmitting={feedbackSubmitting}
+            turnActivityStage={turnActivity?.stage}
+            bottomRef={bottomRef}
+            onResend={handleResend}
+            onOpenChildSession={openChildSession}
+            onQuestionnaireRespond={handleQuestionnaireRespond}
+            onCrewRosterPickerSubmit={handleCrewRosterPickerSubmit}
+            onCrewRosterPickerSkip={handleCrewRosterPickerSkip}
+            onViewCrewDossier={handleViewCrewDossier}
+            onTurnFeedback={handleTurnFeedback}
+            onSaveMarkdown={handleSaveMarkdown}
+          />
 
           {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
             <ThinkingIndicator label={loadingSteps?.[0]?.label} />

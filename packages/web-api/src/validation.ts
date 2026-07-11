@@ -353,12 +353,11 @@ export const benchmarkRunSchema = z.object({
   tag: z.string().optional(),
 });
 
-export const createCanvasSchema = z.object({
+export const createMarkdownDocumentSchema = z.object({
   sessionId: z.string().min(1),
   title: z.string().optional(),
   contentMarkdown: z.string().optional(),
   contentTsx: z.string().optional(),
-  contentFormat: z.enum(['markdown', 'canvas_tsx']).optional(),
   messageId: z.string().optional(),
   sourceRole: z.enum(['user', 'assistant', 'system']).optional(),
 }).refine(

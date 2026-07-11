@@ -4,6 +4,15 @@ import {
   isStyleTtsSupported,
   isVoiceWarmupSupported,
 } from '@agentx/shared/browser';
+import { cachedApiCall } from '../perf/api-cache';
+
+interface SystemCapabilitiesResponse {
+  totalMemoryGB?: number;
+  localModelSupported?: boolean;
+  neuralBrainSupported?: boolean;
+  styleTtsSupported?: boolean;
+  voiceWarmupSupported?: boolean;
+}
 
 export interface SystemCapabilities {
   totalMemoryGB: number;
@@ -31,8 +40,7 @@ export function useSystemCapabilities(): SystemCapabilities | null {
   useEffect(() => {
     if (caps !== null) return;
 
-    fetch('/api/system/capabilities')
-      .then((r) => r.json())
+    cachedApiCall('system-capabilities', () => fetch('/api/system/capabilities').then((r) => r.json() as Promise<SystemCapabilitiesResponse>), 60_000)
       .then((data) => {
         const totalMemoryGB = typeof data.totalMemoryGB === 'number' ? data.totalMemoryGB : 0;
         setCaps({

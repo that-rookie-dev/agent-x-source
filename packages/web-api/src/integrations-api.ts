@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import type { ConnectIntegrationRequest, IntegrationHubSettings } from '@agentx/shared';
+import { isChannelCoveredMcpIntegration } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { validate, connectIntegrationSchema, mcpImportSchema, integrationSettingsSchema, integrationRunToolSchema } from './validation.js';
 import { importMcpConfig, parseMcpImportConfig } from '@agentx/engine';
@@ -22,7 +23,9 @@ router.get('/integrations/catalog', (_req: Request, res: Response) => {
 
 router.get('/integrations/connections', (_req: Request, res: Response) => {
   const eng = getEngine();
-  res.json({ connections: eng.integrationHub.listConnections() });
+  res.json({
+    connections: eng.integrationHub.listConnections().filter((c) => !isChannelCoveredMcpIntegration(c.providerId)),
+  });
 });
 
 router.get('/integrations/audit', (req: Request, res: Response) => {
@@ -73,6 +76,12 @@ router.post('/integrations/preflight', async (req: Request, res: Response) => {
     const folderPath = typeof req.body?.folderPath === 'string' ? req.body.folderPath : undefined;
     const remoteUrl = typeof req.body?.remoteUrl === 'string' ? req.body.remoteUrl : undefined;
     if (!providerId) return res.status(400).json({ error: 'providerId is required' });
+    if (isChannelCoveredMcpIntegration(providerId)) {
+      res.status(400).json({
+        error: `${providerId} is configured under Settings → Channels, not MCP Store.`,
+      });
+      return;
+    }
     const results = await eng.integrationHub.preflightProvider(providerId, checks, { env, folderPath, remoteUrl });
     res.json({ results });
   } catch (error) {
@@ -96,6 +105,12 @@ router.post('/integrations/:providerId/connect', validate(connectIntegrationSche
   try {
     const eng = getEngine();
     const providerId = req.params.providerId!;
+    if (isChannelCoveredMcpIntegration(providerId)) {
+      res.status(400).json({
+        error: `${providerId} is configured under Settings → Channels. Remove the MCP connection and use Channels instead.`,
+      });
+      return;
+    }
     const body = req.body as ConnectIntegrationRequest;
     const connection = await eng.integrationHub.connect(providerId, body);
     syncIntegrationTools();

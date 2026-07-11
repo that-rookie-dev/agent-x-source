@@ -626,8 +626,8 @@ export class PostgresStorageAdapter implements StorageAdapter {
       await client.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(read_at) WHERE read_at IS NULL AND dismissed_at IS NULL`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_active ON notifications(created_at DESC) WHERE dismissed_at IS NULL`);
-      const { CanvasStore } = await import('../canvas/CanvasStore.js');
-      await CanvasStore.ensureSchema(this.pool);
+      const { MarkdownDocumentStore } = await import('../markdown/MarkdownDocumentStore.js');
+      await MarkdownDocumentStore.ensureSchema(this.pool);
       await client.query(`
         CREATE TABLE IF NOT EXISTS automation_session_confirmations (
           session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,

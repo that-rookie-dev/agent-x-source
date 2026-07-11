@@ -3,18 +3,6 @@ import { candidateStdio } from '../helpers.js';
 /** Evaluation candidates — shown in the store alongside shipped integrations. */
 export const COMMUNICATION_CANDIDATES = [
   candidateStdio({
-    id: 'telegram',
-    name: 'Telegram',
-    category: 'communication',
-    pkg: '@chaindead/telegram-mcp',
-    description: 'Read and send Telegram messages via MCP.',
-    icon: 'telegram',
-    website: 'https://telegram.org',
-    envKey: 'TELEGRAM_BOT_TOKEN',
-    envLabel: 'Telegram Bot Token',
-    evaluationNotes: 'Community MCP package published on npm.',
-  }),
-  candidateStdio({
     id: 'twilio',
     name: 'Twilio',
     category: 'communication',

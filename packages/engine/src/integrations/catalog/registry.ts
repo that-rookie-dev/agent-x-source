@@ -1,4 +1,5 @@
 import type { IntegrationCatalogStatus, IntegrationCategory, IntegrationProvider } from '@agentx/shared';
+import { isChannelCoveredMcpIntegration } from '@agentx/shared';
 import { SHIPPED_PROVIDERS } from './shipped.js';
 import { CATALOG_CANDIDATES } from './candidates.js';
 import { withProviderHighlights } from './provider-highlights.js';
@@ -28,6 +29,7 @@ export const INTEGRATION_CATALOG: IntegrationProvider[] = [
 
 export function listCatalogProviders(options: CatalogListOptions = {}): IntegrationProvider[] {
   return INTEGRATION_CATALOG
+    .filter((provider) => !isChannelCoveredMcpIntegration(provider.id))
     .filter((provider) => matchesStatus(provider, options))
     .map(withProviderHighlights);
 }

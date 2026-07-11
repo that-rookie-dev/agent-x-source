@@ -36,7 +36,7 @@ export function DeepSearchShell({
   running?: boolean;
   progress?: DeepSearchProgress;
 }) {
-  if (!bundle && !running) return null;
+  if (!bundle && !running && !progress) return null;
 
   const results = bundle?.results ?? [];
   const stats = bundle?.stats;

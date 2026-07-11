@@ -131,8 +131,9 @@ export {
 
 export { summarizeMessageForTurnFeedback, displayTextForTurnFeedback } from './utils/turn-display.js';
 export { sanitizeAutomationNotificationBody } from './utils/notification-body.js';
-export { deriveCanvasTitle, isGenericCanvasTitle } from './utils/canvas-title.js';
-export type { DeriveCanvasTitleInput } from './utils/canvas-title.js';
+export { sanitizeMarkdownDeliverable } from './utils/markdown-deliverable.js';
+export { deriveMarkdownTitle, isGenericMarkdownTitle } from './utils/markdown-title.js';
+export type { DeriveMarkdownTitleInput } from './utils/markdown-title.js';
 
 export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNeed } from './utils/crew-roster-intent.js';
 
@@ -170,6 +171,17 @@ export {
   isSuperSessionId,
   resolveFleetToolSessionScope,
 } from './utils/channel-session.js';
+export {
+  CHANNEL_COVERED_MCP_INTEGRATION_IDS,
+  isChannelCoveredMcpIntegration,
+  detectChannelHandoffIntent,
+  isBareContinueIntent,
+} from './utils/channel-integration-overlap.js';
+export type { ChannelCoveredMcpIntegrationId } from './utils/channel-integration-overlap.js';
+export {
+  formatChannelBindingLabel,
+} from './utils/channel-session-binding.js';
+export type { ChannelBindingId, ChannelSessionBinding } from './utils/channel-session-binding.js';
 
 export {
   isMemoryFabricSuperSession,

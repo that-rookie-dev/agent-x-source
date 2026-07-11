@@ -1,9 +1,9 @@
 import type { UIMessage } from '../chat/types';
-import { deriveCanvasTitle } from '@agentx/shared/browser';
+import { deriveMarkdownTitle, sanitizeMarkdownDeliverable } from '@agentx/shared/browser';
 import { displayContent } from '../chat/utils';
 
-/** Serialize a chat message into markdown suitable for Canvas storage (preserves chart parts). */
-export function messageToCanvasMarkdown(message: UIMessage): string {
+/** Serialize a chat message into markdown for document storage (preserves chart parts). */
+export function messageToMarkdownDocument(message: UIMessage): string {
   const chunks: string[] = [];
   if (message.parts?.length) {
     for (const part of message.parts) {
@@ -15,18 +15,56 @@ export function messageToCanvasMarkdown(message: UIMessage): string {
     }
   }
   const fromParts = chunks.join('\n\n').trim();
-  if (fromParts) return fromParts;
-  return displayContent(message);
+  const raw = fromParts || displayContent(message);
+  return sanitizeMarkdownDeliverable(raw);
 }
 
-/** Derive a canvas title from a chat message body. */
-export function deriveCanvasTitleFromMessage(message: UIMessage): string {
-  const markdown = messageToCanvasMarkdown(message);
-  return deriveCanvasTitle({ contentMarkdown: markdown });
+/** Derive a markdown document title from a chat message body. */
+export function deriveMarkdownTitleFromMessage(message: UIMessage): string {
+  const markdown = messageToMarkdownDocument(message);
+  return deriveMarkdownTitle({ contentMarkdown: markdown });
 }
 
-export interface CanvasPdfSaveOptions {
+export interface MarkdownPdfSaveOptions {
   defaultFilename: string;
+}
+
+const PDF_COLOR_PROPS = [
+  'color',
+  'background-color',
+  'border-color',
+  'border-top-color',
+  'border-right-color',
+  'border-bottom-color',
+  'border-left-color',
+  'outline-color',
+  'text-decoration-color',
+] as const;
+
+/** Inline computed rgb colors so html2canvas never parses color()/color-mix() from stylesheets. */
+function inlineComputedColorsForPdf(cloneRoot: HTMLElement, sourceRoot: HTMLElement): void {
+  const win = cloneRoot.ownerDocument.defaultView;
+  if (!win) return;
+
+  const pairs: Array<[Element, Element]> = [[sourceRoot, cloneRoot]];
+  const sourceNodes = sourceRoot.querySelectorAll('*');
+  const cloneNodes = cloneRoot.querySelectorAll('*');
+  for (let i = 0; i < sourceNodes.length; i++) {
+    pairs.push([sourceNodes[i]!, cloneNodes[i]!]);
+  }
+
+  for (const [src, clone] of pairs) {
+    if (!(src instanceof HTMLElement) || !(clone instanceof HTMLElement)) continue;
+    const computed = win.getComputedStyle(src);
+    for (const prop of PDF_COLOR_PROPS) {
+      const value = computed.getPropertyValue(prop);
+      if (value) clone.style.setProperty(prop, value);
+    }
+    const boxShadow = computed.boxShadow;
+    if (boxShadow && boxShadow !== 'none') {
+      clone.style.boxShadow = boxShadow;
+    }
+  }
 }
 
 /** Capture a DOM subtree and produce a multi-page PDF blob (WYSIWYG). */
@@ -36,7 +74,6 @@ export async function exportElementToPdfBlob(root: HTMLElement): Promise<Blob> {
     import('jspdf'),
   ]);
 
-  // Allow charts / mermaid to finish layout
   await new Promise((r) => setTimeout(r, 400));
 
   const canvas = await html2canvas(root, {
@@ -46,6 +83,12 @@ export async function exportElementToPdfBlob(root: HTMLElement): Promise<Blob> {
     backgroundColor: getComputedStyle(root).backgroundColor || '#ffffff',
     windowWidth: root.scrollWidth,
     windowHeight: root.scrollHeight,
+    onclone: (doc) => {
+      const cloneRoot = doc.querySelector('[data-markdown-export-root]');
+      if (cloneRoot instanceof HTMLElement) {
+        inlineComputedColorsForPdf(cloneRoot, root);
+      }
+    },
   });
 
   const imgData = canvas.toDataURL('image/png');
@@ -73,7 +116,7 @@ export async function exportElementToPdfBlob(root: HTMLElement): Promise<Blob> {
   return pdf.output('blob');
 }
 
-export async function savePdfBlob(blob: Blob, options: CanvasPdfSaveOptions): Promise<string | null> {
+export async function savePdfBlob(blob: Blob, options: MarkdownPdfSaveOptions): Promise<string | null> {
   const name = options.defaultFilename.endsWith('.pdf')
     ? options.defaultFilename
     : `${options.defaultFilename}.pdf`;

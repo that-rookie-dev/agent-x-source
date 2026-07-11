@@ -7,6 +7,7 @@ import { TelegramProgressSession } from '../../telegram/TelegramProgressSession.
 import type { TelegramConfig } from '../../telegram/TelegramBridge.js';
 import type { Agent } from '../../agent/Agent.js';
 import { syncChannelSuperSessionContext } from '../../channels/channel-super-session-sync.js';
+import { resolveChannelInboundAgent } from '../../channels/channel-inbound-router.js';
 import { ProviderFactory } from '../../providers/index.js';
 import { VoiceService, convertWavToOggOpus, mergeVoiceConfig } from '../../voice/index.js';
 import { mkdirSync, existsSync } from 'node:fs';
@@ -372,10 +373,11 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   }
 
   private async dispatchInbound(item: { text: string; chatId: number; voiceReply?: boolean }, attempt = 0): Promise<Message> {
-    if (!this.agent) throw new Error('Channel agent not attached');
+    const agent = resolveChannelInboundAgent('telegram', this.agent);
+    if (!agent) throw new Error('Channel agent not attached');
     try {
       return await Promise.race([
-        this.agent.sendMessage(item.text, { sourceChannel: 'telegram', channelId: String(item.chatId) }),
+        agent.sendMessage(item.text, { sourceChannel: 'telegram', channelId: String(item.chatId) }),
         new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error('Response timed out after 2 minutes')), 120_000);
         }),
@@ -385,7 +387,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       const stuckRun = /already has an active run|already processing/i.test(errMsg);
       if (stuckRun && attempt < 1) {
         getLogger().warn('TELEGRAM', `Channel agent busy — cancelling stale run and retrying chat=${item.chatId}`);
-        this.agent.cancel();
+        agent.cancel();
         return this.dispatchInbound(item, attempt + 1);
       }
       throw err;

@@ -1,4 +1,4 @@
-export interface DeriveCanvasTitleInput {
+export interface DeriveMarkdownTitleInput {
   title?: string;
   contentTsx?: string;
   contentMarkdown?: string;
@@ -6,10 +6,13 @@ export interface DeriveCanvasTitleInput {
 
 const GENERIC_TITLES = new Set([
   'canvas',
+  'markdown',
   'untitled',
   'untitled canvas',
+  'untitled markdown',
   'saved message',
   'saved canvas',
+  'saved markdown',
   'savedcanvas',
   'new canvas',
   'my canvas',
@@ -17,7 +20,7 @@ const GENERIC_TITLES = new Set([
   'report',
 ]);
 
-export function isGenericCanvasTitle(title: string): boolean {
+export function isGenericMarkdownTitle(title: string): boolean {
   const normalized = title.trim().toLowerCase().replace(/\s+/g, ' ');
   return !normalized || GENERIC_TITLES.has(normalized);
 }
@@ -36,7 +39,7 @@ function cleanTitleCandidate(raw: string): string | null {
     .replace(/^["'`]+|["'`]+$/g, '')
     .trim()
     .slice(0, 200);
-  if (!title || isGenericCanvasTitle(title)) return null;
+  if (!title || isGenericMarkdownTitle(title)) return null;
   return title;
 }
 
@@ -107,10 +110,10 @@ function titleFromMarkdown(content: string): string | null {
   return cleanTitleCandidate(words);
 }
 
-/** Derive a human-readable canvas title from explicit title and/or content. */
-export function deriveCanvasTitle(input: DeriveCanvasTitleInput): string {
+/** Derive a human-readable markdown document title from explicit title and/or content. */
+export function deriveMarkdownTitle(input: DeriveMarkdownTitleInput): string {
   const explicit = input.title?.trim();
-  if (explicit && !isGenericCanvasTitle(explicit)) {
+  if (explicit && !isGenericMarkdownTitle(explicit)) {
     return explicit.slice(0, 200);
   }
 
@@ -132,5 +135,5 @@ export function deriveCanvasTitle(input: DeriveCanvasTitleInput): string {
   }
 
   if (explicit) return explicit.slice(0, 200);
-  return 'Canvas';
+  return 'Markdown';
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { connectionStatusRank } from './integration-ui';
+import { isChannelCoveredMcpIntegration } from '@agentx/shared/browser';
 import { integrations, type ConnectIntegrationRequest, type IntegrationAnalytics, type IntegrationConnection, type IntegrationProvider } from '../../api';
 
 export function useIntegrationsHub() {
@@ -22,8 +23,8 @@ export function useIntegrationsHub() {
         integrations.connections(),
         integrations.analytics().catch(() => null),
       ]);
-      setProviders(catalog.providers);
-      setConnections(list.connections);
+      setProviders(catalog.providers.filter((p) => !isChannelCoveredMcpIntegration(p.id)));
+      setConnections(list.connections.filter((c) => !isChannelCoveredMcpIntegration(c.providerId)));
       setAnalytics(stats?.analytics ?? null);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'Failed to load integrations');

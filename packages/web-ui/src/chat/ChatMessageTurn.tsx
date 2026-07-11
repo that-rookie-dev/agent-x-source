@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import Box from '@mui/material/Box';
-import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import Tooltip from '@mui/material/Tooltip';
 import IconButton from '@mui/material/IconButton';
 import Chip from '@mui/material/Chip';
@@ -13,6 +13,7 @@ import { normalizeMessageForUi, orderPartsForChatRender } from '@agentx/shared/b
 import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
+import { StreamingText } from './StreamingText';
 import { collectWebSourceUrls } from './web-source-urls';
 import { DeepSearchMessageBlock } from './DeepSearchMessageBlock';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
@@ -134,6 +135,7 @@ function renderParts(
   onCrewRosterPickerSkip?: (messageId: string, dismissForSession?: boolean) => void,
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void,
   voiceSummary?: string | null,
+  streaming = false,
 ) {
   const filtered = parts.filter((p) => {
     if (p.type === 'deep_search') {
@@ -165,7 +167,10 @@ function renderParts(
       case 'text':
         if (!part.content) return null;
         const textContent = stripVoiceChannelBlock(part.content);
-        return textContent ? <CrewAwareMarkdown key={part.id} content={textContent} webSources={webSources} /> : null;
+        if (!textContent) return null;
+        return streaming
+          ? <StreamingText key={part.id} content={textContent} />
+          : <CrewAwareMarkdown key={part.id} content={textContent} webSources={webSources} />;
       case 'questionnaire':
         if (!part.questionnaire) return null;
         return (
@@ -240,49 +245,42 @@ function renderParts(
     }
   };
 
+  const renderOrderedPart = (part: PartEntry, prev: PartEntry | undefined, compactTop: boolean) => {
+    if (part.type === 'deep_search' && part.deepSearch) {
+      return renderDeepSearchPart(part, prev?.type === 'tool');
+    }
+    return renderMainPart(part, compactTop);
+  };
+
+  const renderSlice = (slice: PartEntry[], startIdx: number) =>
+    slice.map((part, i) => {
+      const globalIdx = startIdx + i;
+      const prev = ordered[globalIdx - 1];
+      const compactTop = part.type === 'tool' && prev?.type === 'tool';
+      const node = renderOrderedPart(part, prev, compactTop);
+      return node ? <React.Fragment key={part.id}>{node}</React.Fragment> : null;
+    });
+
   const firstTextIdx = ordered.findIndex((p) => p.type === 'text');
   if (firstTextIdx >= 0) {
-    const beforeText = ordered.slice(0, firstTextIdx);
-    const textAndAfter = ordered.slice(firstTextIdx);
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-        {beforeText.map((part, i) => {
-          const prev = beforeText[i - 1];
-          const compactTop = part.type === 'tool' && prev?.type === 'tool';
-          if (part.type === 'deep_search' && part.deepSearch) {
-            return renderDeepSearchPart(part, prev?.type === 'tool');
-          }
-          return renderMainPart(part, compactTop);
-        })}
+        {firstTextIdx > 0 ? renderSlice(ordered.slice(0, firstTextIdx), 0) : null}
         {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
-        {textAndAfter.map((part, i) => {
-          const prev = textAndAfter[i - 1];
-          const compactTop = part.type === 'tool' && prev?.type === 'tool';
-          return renderMainPart(part, compactTop);
-        })}
+        {renderSlice(ordered.slice(firstTextIdx), firstTextIdx)}
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {ordered.map((part, i) => {
-        const prev = ordered[i - 1];
-        const compactTop = part.type === 'tool' && prev?.type === 'tool';
-
-        if (part.type === 'deep_search' && part.deepSearch) {
-          const afterTool = prev?.type === 'tool';
-          return renderDeepSearchPart(part, afterTool);
-        }
-
-        return renderMainPart(part, compactTop);
-      })}
+      {renderSlice(ordered, 0)}
       {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
     </Box>
   );
 }
 
-function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, showFeedback, onTurnFeedback, onSaveCanvas, feedbackSubmitting }: {
+function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, showFeedback, onTurnFeedback, onSaveMarkdown, feedbackSubmitting }: {
   message: UIMessage;
   loadingSteps?: Array<{ id: string; label: string; status: string }> | null;
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void;
@@ -292,7 +290,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
   showFeedback?: boolean;
   onTurnFeedback?: (messageId: string, rating: TurnFeedbackRating) => void;
-  onSaveCanvas?: (message: UIMessage) => void;
+  onSaveMarkdown?: (message: UIMessage) => void;
   feedbackSubmitting?: boolean;
 }) {
   const crewInfo = message.crew;
@@ -322,7 +320,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
   const webSources = collectWebSourceUrls(displayMessage.parts);
   const hasQuestionnaire = !!(displayMessage.parts?.some((p) => p.type === 'questionnaire'));
-  const canSaveCanvas = !message.streaming && message.role === 'assistant' && onSaveCanvas && (hasParts || !!cleanContent);
+  const canSaveMarkdown = !message.streaming && message.role === 'assistant' && onSaveMarkdown && (hasParts || !!cleanContent);
   const contentBlock = hasParts ? renderParts(
     displayMessage.parts!,
     onOpenChildSession,
@@ -332,13 +330,18 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     onCrewRosterPickerSkip,
     onViewCrewDossier,
     voiceSummary,
+    message.streaming,
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       {displayMessage.toolCalls?.map((t, i) => (
         <InlineToolCall key={t.id} tool={t} compactTop={i > 0} />
       ))}
       {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
-      {cleanContent && <CrewAwareMarkdown content={cleanContent} webSources={webSources} />}
+      {cleanContent && (
+        message.streaming
+          ? <StreamingText content={cleanContent} />
+          : <CrewAwareMarkdown content={cleanContent} webSources={webSources} />
+      )}
     </Box>
   );
 
@@ -420,14 +423,14 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
 
       {!message.streaming && (
         <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75, opacity: 0.45 }}>
-            {canSaveCanvas && (
-              <Tooltip title="Save as Canvas">
+            {canSaveMarkdown && (
+              <Tooltip title="Save as Markdown">
                 <IconButton
                   size="small"
-                  onClick={() => onSaveCanvas!(message)}
+                  onClick={() => onSaveMarkdown!(message)}
                   sx={{ p: 0.25, color: colors.text.dim, '&:hover': { color: colors.text.primary } }}
                 >
-                  <ViewQuiltIcon sx={{ fontSize: 13 }} />
+                  <ArticleOutlinedIcon sx={{ fontSize: 13 }} />
                 </IconButton>
               </Tooltip>
             )}
@@ -458,8 +461,8 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   );
 }
 
-function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveCanvas?: unknown; feedbackSubmitting?: boolean },
-  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveCanvas?: unknown; feedbackSubmitting?: boolean }) {
+function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveMarkdown?: unknown; feedbackSubmitting?: boolean },
+  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveMarkdown?: unknown; feedbackSubmitting?: boolean }) {
   if (prev.loadingSteps !== next.loadingSteps) return false;
   if (prev.onOpenChildSession !== next.onOpenChildSession) return false;
   if (prev.onQuestionnaireRespond !== next.onQuestionnaireRespond) return false;
@@ -468,7 +471,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   if (prev.onViewCrewDossier !== next.onViewCrewDossier) return false;
   if (prev.showFeedback !== next.showFeedback) return false;
   if (prev.onTurnFeedback !== next.onTurnFeedback) return false;
-  if (prev.onSaveCanvas !== next.onSaveCanvas) return false;
+  if (prev.onSaveMarkdown !== next.onSaveMarkdown) return false;
   if (prev.feedbackSubmitting !== next.feedbackSubmitting) return false;
   const pm = prev.message;
   const nm = next.message;

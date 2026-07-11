@@ -434,31 +434,29 @@ export function createChatMarkdownSection(): PromptSection<string> {
   };
 }
 
-export const CANVAS_PROMPT = [
-  `[CANVAS]`,
-  `Agent-X Canvases are interactive React artifacts (like Cursor canvases) — dashboards, explorers, multi-section reports with filters/tabs/charts.`,
-  `When the user asks to save/convert/make this a canvas, or for data-heavy deliverables (reports, audits, metrics, comparisons), call save_to_canvas with content_tsx and a short descriptive title.`,
+export const MARKDOWN_PROMPT = [
+  `[MARKDOWN]`,
+  `Agent-X Markdown stores polished documents — reports, audits, comparisons, itineraries, and saved chat deliverables.`,
+  `When the user asks to save/convert/make this markdown, or for data-heavy deliverables, call save_to_markdown with content (markdown) and a short descriptive title.`,
   ``,
-  `CANVAS AUTHORING RULES:`,
-  `- Always pass title: 3–8 words summarizing the artifact (e.g. "Q3 Revenue Dashboard", "API Error Audit", "Latency Comparison").`,
-  `- Write a complete .canvas.tsx file: default-export one React component.`,
-  `- Import ONLY from @agentx/canvas: CanvasRoot, Section, Grid, Card, Kpi, KpiRow, Caption, Chart, DataTable, Tabs, Select, Button, Badge, Markdown, useAgentXTheme.`,
-  `- Embed ALL data inline in the component. No fetch(), no network, no extra files.`,
-  `- Use Chart with ChartSpec JSON (type, title, data). Use DataTable for sortable/filterable tables.`,
-  `- Use Tabs, Select, useState for interactive dashboards (filters, drill-downs).`,
+  `MARKDOWN AUTHORING RULES:`,
+  `- Always pass title: 3–8 words summarizing the artifact (e.g. "Q3 Revenue Report", "API Error Audit", "Europe Trip Plan").`,
+  `- Pass content as clean markdown: headings, tables, bullet lists, fenced code blocks, blockquotes for callouts, and markdown links.`,
+  `- Use \`\`\`chart fences for chart specs when visualizing metrics.`,
+  `- Embed all data inline in the markdown — no fetch(), no external files, no React/TSX.`,
   `- Omit empty sections — never render placeholder/TODO blocks.`,
-  `- Flat minimal design; use useAgentXTheme() tokens (no hardcoded hex, no gradients/shadows/emojis).`,
+  `- Write for readability in both dark and light themes (no hardcoded colors).`,
   ``,
-  `For long analytical replies you MAY offer once: "Want me to save this as an interactive Canvas?" — if they accept, write content_tsx (not plain markdown).`,
-  `- Do NOT invent a /canvas command.`,
-  `- After saving, tell them to open Canvases in the sidebar (view dark/light, export PDF).`,
-  `[/CANVAS]`,
+  `For long analytical replies you MAY offer once: "Want me to save this as Markdown?" — if they accept, pass polished markdown via content.`,
+  `- Do NOT invent a /markdown command.`,
+  `- After saving, tell them to open Markdown in the sidebar (view dark/light, export PDF).`,
+  `[/MARKDOWN]`,
 ].join('\n');
 
-export function createCanvasSection(): PromptSection<string> {
+export function createMarkdownSection(): PromptSection<string> {
   return {
-    key: 'core/canvas',
-    load: () => CANVAS_PROMPT,
+    key: 'core/markdown',
+    load: () => MARKDOWN_PROMPT,
     render: (text) => text,
     diff: () => null,
   };
@@ -732,10 +730,10 @@ export function createChannelFocusSection(ctx: SectionContext): PromptSection<Ch
         `Messages can come from TUI, Web-UI, or Telegram. The active "focus" channel receives responses.`,
         `Focus automatically switches to whichever channel the user last sent a message from.`,
         ``,
-        `Telegram connection status: ${state.connected ? 'CONNECTED' : 'NOT CONNECTED'}`,
+        `Telegram connection status: ${state.connected ? 'CONNECTED (Settings → Channels)' : 'NOT CONNECTED'}`,
         state.connected
-          ? `You can send Telegram updates using the telegram_send_message tool.`
-          : `Telegram is not running. Suggest the user run /telegram start <token> to set it up.`,
+          ? `Telegram is linked via Settings → Channels. Inbound Telegram messages continue the active Agent-X session. You can send Telegram updates using the telegram_send_message tool.`
+          : `Telegram is not linked. Tell the user to open Settings → Channels, add their bot token, and message the bot once to link chat.`,
         ``,
         `When starting a long-running task:`,
         `1. ASK the user ONCE: "Would you like progress updates on Telegram?" (do NOT ask again)`,

@@ -16,7 +16,7 @@ import GroupsIcon from '@mui/icons-material/Groups';
 // import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LogoutIcon from '@mui/icons-material/Logout';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
-import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import ContrastIcon from '@mui/icons-material/Contrast';
@@ -24,6 +24,7 @@ import Badge from '@mui/material/Badge';
 import { useColorScheme } from '@mui/material/styles';
 import { useNavigate } from 'react-router-dom';
 import { auth, setAuthToken } from '../api';
+import { invalidateApiCache, invalidateCoreSessionCache } from '../perf/api-cache';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import { layout } from '../styles/layout';
@@ -41,7 +42,7 @@ const NAV_ITEMS: { id: PanelId; icon: ReactNode; label: string }[] = [
   { id: 'agent-x', icon: <IconSparkles {...tablerNavProps} />, label: 'Agent-X' },
   { id: 'chat', icon: <ChatIcon sx={{ fontSize: 16 }} />, label: 'Chat' },
   { id: 'notifications', icon: <NotificationsNoneIcon sx={{ fontSize: 16 }} />, label: 'Notifications' },
-  { id: 'canvases', icon: <ViewQuiltIcon sx={{ fontSize: 16 }} />, label: 'Canvases' },
+  { id: 'markdown', icon: <ArticleOutlinedIcon sx={{ fontSize: 16 }} />, label: 'Markdown' },
   { id: 'automation', icon: <ScheduleIcon sx={{ fontSize: 16 }} />, label: 'Automation' },
   { id: 'crews', icon: <GroupsIcon sx={{ fontSize: 16 }} />, label: 'Crews' },
   { id: 'rag-studio', icon: <StorageIcon sx={{ fontSize: 16 }} />, label: 'RAG Studio' },
@@ -81,6 +82,8 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
   const handleLogout = async () => {
     try { await auth.logout(); } catch { /* ignore */ }
     setAuthToken(null);
+    invalidateApiCache();
+    invalidateCoreSessionCache();
     setAuthenticated(false);
     navigate('/login');
   };

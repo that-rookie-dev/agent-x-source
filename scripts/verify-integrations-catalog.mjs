@@ -3,12 +3,10 @@ import { INTEGRATION_PROVIDERS, INTEGRATION_CATALOG, getCatalogStats } from '../
 
 const KNOWN_PACKAGES = new Set([
   '@modelcontextprotocol/server-github',
-  '@modelcontextprotocol/server-slack',
   '@modelcontextprotocol/server-brave-search',
   '@modelcontextprotocol/server-postgres',
   '@pulsemcp/pulse-fetch',
   '@modelcontextprotocol/server-filesystem',
-  'mcp-discord',
   '@modelcontextprotocol/server-gdrive',
   '@modelcontextprotocol/server-google-maps',
   '@modelcontextprotocol/server-redis',
@@ -24,7 +22,6 @@ const KNOWN_PACKAGES = new Set([
   'clickup-mcp',
   'mcp-server-trello',
   'obsidian-mcp',
-  '@chaindead/telegram-mcp',
   '@gongrzhe/server-gmail-autoauth-mcp',
   'twilio-mcp',
   'zoom-mcp-server',

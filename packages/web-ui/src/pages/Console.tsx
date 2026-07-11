@@ -2,12 +2,25 @@ import { Component, type ReactNode, lazy, Suspense, useState, useCallback, useRe
 import { useParams, useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
+import CircularProgress from '@mui/material/CircularProgress';
 import { Sidebar } from '../components/Sidebar';
 import { Footer } from '../components/Footer';
 import { LogsPanel } from '../components/LogsPanel';
-import { ChatPanel } from '../components/ChatPanel';
 import { AgentXCoreChat } from './AgentXCoreChat';
 import { NotificationToast } from '../components/NotificationToast';
+import { colors, alphaColor } from '../theme';
+import { useApp } from '../store/AppContext';
+import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
+
+const ChatPanel = lazy(() => import('../components/ChatPanel').then((m) => ({ default: m.ChatPanel })));
+
+function ChatPanelFallback() {
+  return (
+    <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <CircularProgress size={24} sx={{ color: colors.text.dim }} />
+    </Box>
+  );
+}
 
 // Secondary panels are code-split so the initial chunk only carries the chat
 // surface — they load on first navigation and stay cached afterwards.
@@ -22,12 +35,9 @@ const CrewsPanel = lazy(() => import('../components/CrewsPanel').then(m => ({ de
 const SoulPanel = lazy(() => import('../components/SoulPanel').then(m => ({ default: m.SoulPanel })));
 const McpStorePage = lazy(() => import('../components/integrations/McpStorePage').then(m => ({ default: m.McpStorePage })));
 const NotificationsPanel = lazy(() => import('../components/NotificationsPanel').then(m => ({ default: m.NotificationsPanel })));
-const CanvasPanel = lazy(() => import('../components/CanvasPanel').then(m => ({ default: m.CanvasPanel })));
-import { colors, alphaColor } from '../theme';
-import { useApp } from '../store/AppContext';
-import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
+const MarkdownPanel = lazy(() => import('../components/MarkdownPanel').then(m => ({ default: m.MarkdownPanel })));
 
-export type PanelId = 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'canvases';
+export type PanelId = 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'markdown';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null; stack: string | null }> {
@@ -185,7 +195,7 @@ export function Console() {
         <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', flexDirection: isVertical ? 'row' : 'column' }}>
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
             <PanelErrorBoundary key={activePanel}>
-              <Suspense fallback={null}>
+              <Suspense fallback={<ChatPanelFallback />}>
                 {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
                 {activePanel === 'agent-x' && <AgentXCoreChat />}
                 {activePanel === 'tools' && <ToolsPanel />}
@@ -199,7 +209,7 @@ export function Console() {
                 {activePanel === 'soul' && <SoulPanel />}
                 {activePanel === 'mcp-store' && <McpStorePage />}
                 {activePanel === 'notifications' && <NotificationsPanel />}
-                {activePanel === 'canvases' && <CanvasPanel />}
+                {activePanel === 'markdown' && <MarkdownPanel />}
               </Suspense>
             </PanelErrorBoundary>
           </Box>

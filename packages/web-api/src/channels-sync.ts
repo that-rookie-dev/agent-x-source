@@ -1,5 +1,4 @@
 import {
-  Agent,
   DiscordBridge,
   Gateway,
   SlackBridge,
@@ -8,7 +7,7 @@ import {
   getActiveTelegramBridge,
   resolveTelegramOutboundChatId,
 } from '@agentx/engine';
-import type { AgentXConfig, NotificationChannelsConfig, ProviderId, TelegramDiscoveredChat } from '@agentx/shared';
+import type { AgentXConfig, NotificationChannelsConfig, TelegramDiscoveredChat } from '@agentx/shared';
 import { parseAllowedUserIds } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import { randomUUID } from 'node:crypto';
@@ -377,6 +376,7 @@ async function stopTelegramInbound(): Promise<void> {
 
 async function startSlackInbound(botToken: string, appToken: string, allowedUserIds?: string[]): Promise<void> {
   const eng = getEngine();
+  const { resolveInboundAgentForChannel } = await import('./channel-session-bridge.js');
   const existing = eng.pluginRegistry.getPlugin('slack');
   if (existing) {
     eng.pluginRegistry.updateConfig('slack', { botToken, appToken });
@@ -396,23 +396,7 @@ async function startSlackInbound(botToken: string, appToken: string, allowedUser
 
   const bridge = new SlackBridge({ botToken, appToken });
   bridge.setAllowedUserIds(allowedUserIds ?? []);
-  bridge.setAgentFactory((_userId) => {
-    const userCfg = eng.configManager.load();
-    const userSession = eng.sessionManager.createSession(
-      userCfg.provider.activeProvider,
-      userCfg.provider.activeModel,
-      process.cwd(),
-    );
-    return new Agent({
-      config: userCfg,
-      sessionId: userSession.id,
-      systemPrompt: '',
-      scopePath: userSession.scopePath,
-      toolExecutor: eng.toolkit.executor,
-      toolRegistry: eng.toolkit.registry,
-      pgPool: eng.pgPool ?? undefined,
-    });
-  });
+  bridge.setAgentFactory(() => resolveInboundAgentForChannel('slack'));
   await bridge.start();
   eng.slackBridge = bridge;
   getLogger().info('CHANNELS', 'Slack inbound bridge started');
@@ -431,6 +415,7 @@ async function stopSlackInbound(): Promise<void> {
 
 async function startDiscordInbound(botToken: string, channelId?: string, allowedUserIds?: string[]): Promise<void> {
   const eng = getEngine();
+  const { resolveInboundAgentForChannel } = await import('./channel-session-bridge.js');
   const existing = eng.pluginRegistry.getPlugin('discord');
   if (existing) {
     eng.pluginRegistry.updateConfig('discord', { botToken, channelId });
@@ -450,24 +435,7 @@ async function startDiscordInbound(botToken: string, channelId?: string, allowed
 
   const bridge = new DiscordBridge();
   bridge.setAllowedUserIds(allowedUserIds ?? []);
-  bridge.setAgentFactory(async (_userId) => {
-    const userCfg = eng.configManager.load();
-    const userProvider = userCfg.provider.activeProvider as ProviderId;
-    const userSession = eng.sessionManager.createSession(
-      userProvider,
-      userCfg.provider.activeModel,
-      process.cwd(),
-    );
-    return new Agent({
-      config: userCfg,
-      sessionId: userSession.id,
-      systemPrompt: '',
-      scopePath: userSession.scopePath,
-      toolExecutor: eng.toolkit.executor,
-      toolRegistry: eng.toolkit.registry,
-      pgPool: eng.pgPool ?? undefined,
-    });
-  });
+  bridge.setAgentFactory(async () => resolveInboundAgentForChannel('discord'));
   await bridge.start(botToken, channelId);
   eng.discordBridge = bridge;
   getLogger().info('CHANNELS', 'Discord inbound bridge started');
@@ -543,6 +511,12 @@ export async function applyChannelsConfig(cfg?: AgentXConfig): Promise<void> {
   } else if (!channelEnabled(discord)) {
     await stopDiscordInbound();
   }
+
+  try {
+    const { propagateTelegramConnectedToAgents, pruneChannelCoveredMcpConnections } = await import('./channel-session-bridge.js');
+    propagateTelegramConnectedToAgents(eng);
+    await pruneChannelCoveredMcpConnections(eng);
+  } catch { /* best-effort */ }
 }
 
 /** Generate a fresh LLM greeting and push it to the configured Telegram chat. */

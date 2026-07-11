@@ -6,31 +6,55 @@ import Tooltip from '@mui/material/Tooltip';
 import CircularProgress from '@mui/material/CircularProgress';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import { PanelHeader } from './PanelHeader';
-import { CanvasViewer } from './CanvasViewer';
-import { canvases, type CanvasRecord } from '../api';
+import { MarkdownViewer } from './MarkdownViewer';
+import { markdownDocuments, type MarkdownDocumentRecord } from '../api';
+import { groupMarkdownDocumentsByDay } from '../markdown/markdown-list-groups';
 import { useApp } from '../store/AppContext';
-import { colors } from '../theme';
+import { colors, MONO } from '../theme';
 
-function formatWhen(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined,
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
     hour: '2-digit',
     minute: '2-digit',
   });
 }
 
-function CanvasListItem({
+function DateGroupDivider({ label, first }: { label: string; first?: boolean }) {
+  return (
+    <Box sx={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 0.6,
+      mt: first ? 0.25 : 1.1,
+      mb: 0.55,
+      px: 0.15,
+    }}>
+      <Box sx={{ flex: 1, height: '1px', bgcolor: colors.border.subtle }} />
+      <Typography sx={{
+        fontSize: '0.48rem',
+        letterSpacing: '0.09em',
+        textTransform: 'uppercase',
+        color: colors.text.dim,
+        fontFamily: MONO,
+        whiteSpace: 'nowrap',
+        flexShrink: 0,
+      }}>
+        [{label}]
+      </Typography>
+      <Box sx={{ flex: 1, height: '1px', bgcolor: colors.border.subtle }} />
+    </Box>
+  );
+}
+
+function MarkdownListItem({
   item,
   selected,
   onSelect,
   onDelete,
 }: {
-  item: CanvasRecord;
+  item: MarkdownDocumentRecord;
   selected: boolean;
   onSelect: () => void;
   onDelete: () => void;
@@ -39,45 +63,28 @@ function CanvasListItem({
     <Box
       onClick={onSelect}
       sx={{
-        mb: 0.7,
-        p: 1,
-        borderRadius: 1.5,
+        mb: 0.6,
+        p: 0.9,
+        borderRadius: 1.25,
         cursor: 'pointer',
         bgcolor: selected ? 'rgba(34, 211, 238, 0.08)' : colors.bg.tertiary,
         border: `1px solid ${selected ? colors.border.strong : colors.border.default}`,
-        boxShadow: selected ? '0 8px 22px rgba(0,0,0,0.18)' : 'none',
-        transition: 'border-color 120ms ease, background 120ms ease, transform 120ms ease',
-        '&:hover': { borderColor: colors.border.strong, transform: 'translateY(-1px)' },
+        transition: 'border-color 120ms ease, background 120ms ease',
+        '&:hover': { borderColor: colors.border.strong },
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75 }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mb: 0.45 }}>
-            <Typography sx={{
-              fontSize: '0.48rem',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-              color: isInteractiveLabel(item) ? colors.accent.cyan : colors.text.dim,
-              fontFamily: "'JetBrains Mono', monospace",
-              border: `1px solid ${colors.border.default}`,
-              borderRadius: 999,
-              px: 0.55,
-              py: 0.15,
-              lineHeight: 1.4,
-            }}>
-              {item.contentFormat === 'canvas_tsx' ? 'Live' : 'Doc'}
-            </Typography>
-            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-              {formatWhen(item.createdAt)}
-            </Typography>
-          </Box>
+          <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: MONO, mb: 0.35 }}>
+            {formatTime(item.createdAt)}
+          </Typography>
           <Typography sx={{
-            fontSize: '0.68rem',
+            fontSize: '0.66rem',
             fontWeight: selected ? 700 : 600,
             color: colors.text.primary,
             fontFamily: "'JetBrains Mono', monospace",
             lineHeight: 1.25,
-            mb: 0.35,
+            mb: 0.3,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -86,7 +93,7 @@ function CanvasListItem({
           </Typography>
           {item.excerpt && (
             <Typography sx={{
-              fontSize: '0.6rem',
+              fontSize: '0.58rem',
               color: colors.text.secondary,
               lineHeight: 1.35,
               display: '-webkit-box',
@@ -98,7 +105,7 @@ function CanvasListItem({
             </Typography>
           )}
         </Box>
-        <Tooltip title="Delete canvas">
+        <Tooltip title="Delete document">
           <IconButton
             size="small"
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
@@ -112,21 +119,12 @@ function CanvasListItem({
   );
 }
 
-function isInteractiveLabel(item: CanvasRecord): boolean {
-  return item.contentFormat === 'canvas_tsx';
-}
-
-export function CanvasPanel() {
+export function MarkdownPanel() {
   const { events } = useApp();
-  const [items, setItems] = useState<CanvasRecord[]>([]);
+  const [items, setItems] = useState<MarkdownDocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<{
-    contentMarkdown?: string;
-    contentTsx?: string;
-    compiledJs?: string;
-    compileError?: string | null;
-  } | null>(null);
+  const [detail, setDetail] = useState<{ contentMarkdown?: string } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const selectedIdRef = useRef<string | null>(null);
 
@@ -137,7 +135,7 @@ export function CanvasPanel() {
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const { canvases: list } = await canvases.list({ limit: 100 });
+      const { documents: list } = await markdownDocuments.list({ limit: 100 });
       setItems(list);
       const currentSelectedId = selectedIdRef.current;
       if (list.length > 0 && !currentSelectedId) {
@@ -156,7 +154,7 @@ export function CanvasPanel() {
 
   useEffect(() => {
     const last = events[events.length - 1];
-    if (last?.type === 'canvas_created') void loadList();
+    if (last?.type === 'markdown_created') void loadList();
   }, [events, loadList]);
 
   useEffect(() => {
@@ -166,14 +164,9 @@ export function CanvasPanel() {
     }
     let cancelled = false;
     setDetailLoading(true);
-    void canvases.get(selectedId).then((payload) => {
+    void markdownDocuments.get(selectedId).then((payload) => {
       if (cancelled) return;
-      setDetail(payload ? {
-        contentMarkdown: payload.contentMarkdown,
-        contentTsx: payload.contentTsx,
-        compiledJs: payload.compiledJs,
-        compileError: payload.compileError,
-      } : null);
+      setDetail(payload ? { contentMarkdown: payload.contentMarkdown } : null);
     }).catch(() => {
       if (!cancelled) setDetail(null);
     }).finally(() => {
@@ -186,7 +179,7 @@ export function CanvasPanel() {
 
   const handleDelete = async (id: string) => {
     try {
-      await canvases.delete(id);
+      await markdownDocuments.delete(id);
       setItems((prev) => prev.filter((c) => c.id !== id));
       if (selectedId === id) {
         const rest = items.filter((c) => c.id !== id);
@@ -198,9 +191,9 @@ export function CanvasPanel() {
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: colors.bg.primary }}>
       <PanelHeader
-        title="Canvases"
-        subtitle="Interactive dashboards & reports — export as PDF"
-        icon={<ViewQuiltIcon sx={{ fontSize: 18 }} />}
+        title="Markdown"
+        subtitle="Saved reports & replies — export as PDF"
+        icon={<ArticleOutlinedIcon sx={{ fontSize: 18 }} />}
         action={(
           <Tooltip title="Refresh">
             <IconButton size="small" onClick={() => void loadList()} sx={{ color: colors.text.dim }}>
@@ -212,13 +205,13 @@ export function CanvasPanel() {
 
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <Box sx={{
-          width: { xs: '100%', md: 292 },
-          maxWidth: { xs: '100%', md: 320 },
+          width: { xs: '100%', md: 260 },
+          maxWidth: { xs: '100%', md: 280 },
           flexShrink: 0,
           borderRight: { md: `1px solid ${colors.border.default}` },
           borderBottom: { xs: `1px solid ${colors.border.default}`, md: 'none' },
           overflow: 'auto',
-          p: 1.1,
+          p: 1,
           bgcolor: colors.bg.secondary,
           display: { xs: selected ? 'none' : 'block', md: 'block' },
         }}>
@@ -228,17 +221,22 @@ export function CanvasPanel() {
             </Box>
           ) : items.length === 0 ? (
             <Typography sx={{ color: colors.text.dim, fontSize: '0.7rem', textAlign: 'center', py: 4, fontFamily: "'JetBrains Mono', monospace" }}>
-              No canvases yet. Ask Agent-X to save a response as canvas, or use Save as Canvas on a message.
+              No documents yet. Ask Agent-X to save a response as markdown, or use Save as Markdown on a message.
             </Typography>
           ) : (
-            items.map((item) => (
-              <CanvasListItem
-                key={item.id}
-                item={item}
-                selected={item.id === selectedId}
-                onSelect={() => setSelectedId(item.id)}
-                onDelete={() => void handleDelete(item.id)}
-              />
+            groupMarkdownDocumentsByDay(items).map((group, groupIdx) => (
+              <Box key={group.dayKey}>
+                <DateGroupDivider label={group.label} first={groupIdx === 0} />
+                {group.items.map((item) => (
+                  <MarkdownListItem
+                    key={item.id}
+                    item={item}
+                    selected={item.id === selectedId}
+                    onSelect={() => setSelectedId(item.id)}
+                    onDelete={() => void handleDelete(item.id)}
+                  />
+                ))}
+              </Box>
             ))
           )}
         </Box>
@@ -251,21 +249,18 @@ export function CanvasPanel() {
           ) : selected && !detail ? (
             <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 3 }}>
               <Typography sx={{ color: colors.accent.red, fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace", textAlign: 'center' }}>
-                Failed to load canvas content
+                Failed to load document
               </Typography>
             </Box>
           ) : selected ? (
-            <CanvasViewer
-              canvas={selected}
+            <MarkdownViewer
+              document={selected}
               contentMarkdown={detail?.contentMarkdown}
-              contentTsx={detail?.contentTsx}
-              compiledJs={detail?.compiledJs}
-              compileError={detail?.compileError ?? selected.compileError}
             />
           ) : (
             <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 3 }}>
               <Typography sx={{ color: colors.text.dim, fontSize: '0.72rem', fontFamily: "'JetBrains Mono', monospace", textAlign: 'center' }}>
-                Select a canvas to view
+                Select a document to view
               </Typography>
             </Box>
           )}

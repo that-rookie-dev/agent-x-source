@@ -828,8 +828,8 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
           ? (result as { output: string }).output
           : JSON.stringify(result ?? '');
       const metadata = ((event as any).metadata ?? (result as { metadata?: unknown })?.metadata) as Record<string, unknown> | undefined;
-      if (toolName === 'save_to_canvas' && metadata?.['canvasId']) {
-        broadcast({ type: 'canvas_created', canvasId: metadata['canvasId'], contentFormat: metadata['contentFormat'] });
+      if (toolName === 'save_to_markdown' && metadata?.['markdownId']) {
+        broadcast({ type: 'markdown_created', markdownId: metadata['markdownId'], contentFormat: metadata['contentFormat'] });
       }
       if (toolName === 'delegate_to_subagent') {
         const id = (event as any).callId as string || (event as any).id as string;

@@ -71,8 +71,13 @@ import modelBenchmarkRouter from './model-benchmark-api.js';
 import voiceRouter from './voice-api.js';
 import { integrationsRouter, handleMcpStdioOAuthCallback } from './integrations-api.js';
 import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutomation } from './automation/index.js';
-import { registerCanvasRoutes } from './canvas-api.js';
+import { registerMarkdownRoutes } from './markdown-api.js';
 import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
+import {
+  handleChannelHandoffRequest,
+  initChannelSessionBridge,
+  maybeAugmentChatInstruction,
+} from './channel-session-bridge.js';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
@@ -373,7 +378,7 @@ app.use('/api', modelBenchmarkRouter);
 app.use('/api', voiceRouter);
 app.use('/api', integrationsRouter);
 registerAutomationRoutes(app);
-registerCanvasRoutes(app);
+registerMarkdownRoutes(app);
 
 // Security headers (content-type sniffing, XSS, clickjacking protection)
 app.use(helmet({
@@ -432,10 +437,10 @@ app.get('/api/health', (_req, res) => {
     } catch (e) { /* ignore */ }
     agentActive = !!eng.agent;
     try {
-      const tgPlugin = eng.pluginRegistry.getPlugin('telegram');
-      telegramConnected = !!tgPlugin?.enabled && !!tgPlugin?.config?.['botToken'] && !!eng.telegramBridge?.isRunning();
+      const tgStatus = getTelegramInboundStatus();
+      telegramConnected = Boolean(tgStatus.inboundReady && tgStatus.bridgeRunning);
+      telegramBot = tgStatus.botUsername ?? null;
     } catch (e) { /* ignore */ }
-    telegramBot = eng.telegramBridge?.isRunning() ? eng.telegramBridge.getStatus().botUsername ?? null : null;
   }
   res.json({
     status: 'ok',
@@ -1730,13 +1735,28 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
     const fullText = buildFullText(text, attachments);
     const activeSess = eng.sessionManager.getActiveSession?.();
     const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
+    const sid = (agent as unknown as { sessionId: string }).sessionId;
+
+    if (sid) {
+      const handoff = await handleChannelHandoffRequest({ eng, sessionId: sid, text: fullText });
+      if (handoff.handled && handoff.reply) {
+        persistMessageDirect(sid, 'user', fullText);
+        persistMessageDirect(sid, 'assistant', handoff.reply);
+        sendEvent('complete', { ok: true, message: { role: 'assistant', content: handoff.reply, id: `msg_${Date.now()}` } });
+        res.end();
+        return;
+      }
+    }
+
     const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
+    const augmentedInstruction = sid
+      ? maybeAugmentChatInstruction(eng, sid, fullText, instruction)
+      : instruction;
 
     // Auto-checkpoint
     try {
       const store = (eng.sessionManager as any).store;
       if (store?.createCheckpoint) {
-        const sid = (agent as unknown as { sessionId: string }).sessionId;
         if (sid) {
           const label = `Auto · ${new Date().toLocaleTimeString()}`;
           store.createCheckpoint(sid, label);
@@ -1756,8 +1776,6 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
         unsub();
       }
     }, 25000);
-
-    const sid = (agent as unknown as { sessionId: string }).sessionId;
 
     const crewGate = sid
       ? await blockForCrewSuggestionIfNeeded({
@@ -1825,7 +1843,7 @@ app.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, re
       try { agent.cancel(); } catch { /* ignore */ }
     });
 
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+    runAgentTurnAsync(agent, fullText, augmentedInstruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
       ...(forceWebSearch ? { forceWebSearch: true } : {}),
       ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
       ...(clientSituation ? { clientSituation } : {}),
@@ -1890,21 +1908,33 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     const fullText = buildFullText(text, attachments);
     const activeSess = eng.sessionManager.getActiveSession?.();
     const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
+    const sid = (agent as unknown as { sessionId: string }).sessionId;
+
+    if (sid) {
+      const handoff = await handleChannelHandoffRequest({ eng, sessionId: sid, text: fullText });
+      if (handoff.handled && handoff.reply) {
+        persistMessageDirect(sid, 'user', fullText);
+        persistMessageDirect(sid, 'assistant', handoff.reply);
+        res.status(200).json({ ok: true, message: { role: 'assistant', content: handoff.reply, id: `msg_${Date.now()}` } });
+        return;
+      }
+    }
+
     const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
+    const augmentedInstruction = sid
+      ? maybeAugmentChatInstruction(eng, sid, fullText, instruction)
+      : instruction;
 
     // Auto-checkpoint before each user turn — enables /undo to roll back this turn
     try {
       const store = (eng.sessionManager as any).store;
       if (store?.createCheckpoint) {
-        const sid = (agent as unknown as { sessionId: string }).sessionId;
         if (sid) {
           const label = `Auto · ${new Date().toLocaleTimeString()}`;
           store.createCheckpoint(sid, label);
         }
       }
     } catch (e) { /* checkpoint failure shouldn't block the message */ }
-
-    const sid = (agent as unknown as { sessionId: string }).sessionId;
 
     const crewGate = sid
       ? await blockForCrewSuggestionIfNeeded({
@@ -1935,7 +1965,7 @@ app.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     }
 
     const turn = turnRegistry.create(sid);
-    runAgentTurnAsync(agent, fullText, instruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
+    runAgentTurnAsync(agent, fullText, augmentedInstruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
       ...(forceWebSearch ? { forceWebSearch: true } : {}),
       ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
       ...(clientSituation ? { clientSituation } : {}),
@@ -5195,6 +5225,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
   return server.listen(port, HOST, () => {
     console.log(`Agent-X web API listening on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${port}`);
     initAgentXOverviewBridge();
+    initChannelSessionBridge();
     void bootstrapAutomationFromEngine().catch((e: unknown) => {
       getLogger().warn('AUTOMATION', e instanceof Error ? e.message : String(e));
     });

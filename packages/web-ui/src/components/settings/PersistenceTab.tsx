@@ -23,6 +23,7 @@ import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import { settings, factoryReset, setAuthToken, knowledge, type DbStatus } from '../../api';
 import { useApp } from '../../store/AppContext';
 import { clearAgentxClientStorage } from '../../utils/client-storage';
+import { invalidateApiCache, invalidateCoreSessionCache } from '../../perf/api-cache';
 import { useNeuralBrainSupported } from '../../hooks/useSystemCapabilities';
 import {
   settingsTheme,
@@ -137,6 +138,8 @@ export function PersistenceTab() {
       await factoryReset.reset();
       clearAgentxClientStorage();
       setAuthToken(null);
+      invalidateApiCache();
+      invalidateCoreSessionCache();
       setResetOpen(false); setResetConfirm('');
       await initialize();
     } catch (e) { setResetError(e instanceof Error ? e.message : 'Factory reset failed'); }

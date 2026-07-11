@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { voice, personaApi } from '../../api';
+import { getCoreSessionId } from '../../perf/api-cache';
 import { useWakeWord } from '../../hooks/useWakeWord';
 import { useVoiceWarmup, type VoiceWarmupPhase } from '../../hooks/useVoiceWarmup';
 import { voiceDisabledReason } from '../../voice/support';
@@ -111,12 +112,10 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
 
   const loadVoiceState = useCallback(async () => {
     try {
-      const [cfg, caps, core, persona] = await Promise.all([
+      const [cfg, caps, coreSessionId, persona] = await Promise.all([
         voice.getConfig(),
         voice.capabilities(),
-        fetch('/api/agent-x-core/session', { method: 'POST', credentials: 'include' })
-          .then((r) => r.json() as Promise<{ sessionId?: string }>)
-          .catch(() => ({ sessionId: undefined })),
+        getCoreSessionId().catch(() => null),
         personaApi.get().catch(() => ({} as Record<string, never>)),
       ]);
       setVoiceEnabled(Boolean(cfg.enabled));
@@ -124,7 +123,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       const personaName = typeof persona?.name === 'string' ? persona.name : null;
       setWakePhrase(resolveWakePhrase(personaName));
       setCanRunWeb(Boolean(caps.capabilities.canRunWeb));
-      if (core.sessionId) setCoreSessionId(core.sessionId);
+      if (coreSessionId) setCoreSessionId(coreSessionId);
     } catch {
       setVoiceEnabled(false);
       setCanRunWeb(false);
@@ -132,7 +131,16 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   }, []);
 
   useEffect(() => {
-    void loadVoiceState();
+    const defer = () => { void loadVoiceState(); };
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(defer, { timeout: 2500 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = window.setTimeout(defer, 1200);
+    return () => window.clearTimeout(timer);
+  }, [loadVoiceState]);
+
+  useEffect(() => {
     const onFocus = () => { void loadVoiceState(); };
     const onPersonaUpdated = () => { void loadVoiceState(); };
     const onVoiceUpdated = (event: Event) => {
