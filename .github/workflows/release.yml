@@ -60,7 +60,7 @@ jobs:
       - name: Build core packages
         run: |
           pnpm install --frozen-lockfile || pnpm install
-          pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/web-neuron --filter @agentx/runtime --filter @agentx/web-ui run build
+          pnpm --filter @agentx/shared --filter @agentx/canvas --filter @agentx/engine --filter @agentx/web-api --filter @agentx/web-neuron --filter @agentx/runtime --filter @agentx/web-ui run build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -73,6 +73,7 @@ jobs:
           name: core-deps
           path: |
             packages/shared/dist
+            packages/canvas/dist
             packages/engine/dist
             packages/web-api/dist
             packages/web-neuron/dist

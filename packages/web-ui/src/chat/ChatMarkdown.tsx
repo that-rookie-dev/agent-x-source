@@ -8,12 +8,14 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { useColorScheme } from '@mui/material/styles';
 import { colors, alphaColor } from '../theme';
 import { crewPalette } from '../styles/brands';
-import { StyledTableWrapper, StyledUl, StyledOl, StyledLi } from '../components/StructuredViews';
+import { StyledUl, StyledOl, StyledLi, ChartableTableWrapper } from '../components/StructuredViews';
 import { splitMarkdownSections, isPlainTextMarkdown, PLAIN_TEXT_BUBBLE_MAX_WIDTH } from './markdown-normalize';
 import { expandCollapsedTreeLine, isTreeDiagramContent } from './tree-diagram';
 import { isHorizontalPipelineContent, isPipelineDiagramContent } from './pipeline-diagram';
 import { FlowDiagramBlock } from './FlowDiagramBlock';
 import { PipelineDiagramBlock } from './PipelineDiagramBlock';
+import { CHART_FENCE_LANGS, isChartSpecContent, isMermaidSource } from '@agentx/shared/browser';
+import { ChartBlock } from './ChartBlock';
 import { CodeBlockChrome, CodeBlockBody, CODE_BLOCK_TOKENS, formatBlockTitle } from './code-block-chrome';
 import { CitationChip } from './CitationChip';
 import { prepareWebSourcedMarkdown } from './source-chip-utils';
@@ -119,6 +121,14 @@ function HierarchyDiagramBlock({ code }: { code: string }) {
 
 function CodeBlockWithCopy({ code, language }: { code: string; language?: string }) {
   const lang = (language || 'text').toLowerCase();
+  if (
+    CHART_FENCE_LANGS.has(lang)
+    || lang === 'mermaid'
+    || isChartSpecContent(code)
+    || isMermaidSource(code)
+  ) {
+    return <ChartBlock code={code} language={lang} />;
+  }
   if (lang === 'tree' || lang === 'diagram' || (isTreeDiagramContent(code) && !isPipelineDiagramContent(code) && !isHorizontalPipelineContent(code))) {
     return <HierarchyDiagramBlock code={code} />;
   }
@@ -236,6 +246,7 @@ function createMarkdownComponents(isFirstSection: boolean) {
       const code = String(children).replace(/\n$/, '');
       if (match) return <CodeBlockWithCopy code={code} language={match[1]} />;
       if (code.includes('\n')) {
+        if (isChartSpecContent(code) || isMermaidSource(code)) return <ChartBlock code={code} />;
         if (isPipelineDiagramContent(code)) return <FlowDiagramBlock code={code} />;
         if (isHorizontalPipelineContent(code)) return <PipelineDiagramBlock code={code} />;
         if (isTreeDiagramContent(code)) return <HierarchyDiagramBlock code={code} />;
@@ -258,7 +269,7 @@ function createMarkdownComponents(isFirstSection: boolean) {
       );
     },
     pre({ children }: { children?: React.ReactNode }) { return <>{children}</>; },
-    table({ children }: { children?: React.ReactNode }) { return <StyledTableWrapper>{children}</StyledTableWrapper>; },
+    table({ children }: { children?: React.ReactNode }) { return <ChartableTableWrapper>{children}</ChartableTableWrapper>; },
     thead({ children }: { children?: React.ReactNode }) { return <thead>{children}</thead>; },
     tbody({ children }: { children?: React.ReactNode }) { return <tbody>{children}</tbody>; },
     tr({ children }: { children?: React.ReactNode }) { return <tr>{children}</tr>; },

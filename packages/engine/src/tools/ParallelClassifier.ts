@@ -12,6 +12,137 @@ export interface ParallelClassification {
   sequential: ClassifiedTool[];
 }
 
+const NEVER_PARALLEL = new Set([
+  'question',
+  'clarify',
+  'approve',
+  'ask_clarification',
+  'ask_followup_question',
+]);
+
+/** Read-only / idempotent tools safe to run concurrently. */
+const SAFE_PARALLEL = new Set([
+  'glob',
+  'grep',
+  'file_read',
+  'file_read_batch',
+  'file_find',
+  'file_info',
+  'file_diff',
+  'file_checksum',
+  'file_metadata',
+  'folder_list',
+  'folder_tree',
+  'list_dir',
+  'search_files',
+  'read',
+  'read_file',
+  'cat',
+  'ls',
+  'web_fetch',
+  'webfetch',
+  'web_search',
+  'websearch',
+  'web_browse',
+  'web_scrape',
+  'deep_web_search',
+  'http_get',
+  'git_status',
+  'git_log',
+  'git_diff',
+  'git_blame',
+  'git_show',
+  'git_branch',
+  'git_remote',
+  'db_query',
+  'db_schema',
+  'code_search',
+  'code_grep',
+  'code_symbols',
+  'code_definitions',
+  'code_references',
+  'code_analyze',
+  'code_lint',
+  'code_typecheck',
+  'code_range',
+  'json_parse',
+  'json_query',
+  'csv_parse',
+  'regex_match',
+  'text_diff',
+  'validate_schema',
+  'render_chart',
+  'list',
+  'search',
+  'project_detect',
+  'package_list',
+  'package_outdated',
+  'pkg_search',
+  'pkg_audit',
+  'gh_pr_view',
+  'gh_pr_list',
+  'gh_issue_list',
+  'gh_repo_view',
+  'gh_workflow_list',
+  'memory_read',
+  'memory_search',
+  'memory_recall',
+  'memory_fabric_search',
+  'rag_search',
+  'system_info',
+  'system_which',
+  'system_disk',
+  'system_ports',
+  'system_env',
+  'system_monitor',
+  'system_tree_size',
+  'env_read',
+  'container_list',
+  'container_logs',
+  'container_images',
+  'process_list',
+  'browser_screenshot',
+  'browser_extract',
+  'agent_x_overview',
+  'sub_agent_status',
+]);
+
+const SAFE_PREFIXES = [
+  'memory_',
+  'rag_',
+  'system_',
+];
+
+const MUTATION_OPS = new Set([
+  'write',
+  'edit',
+  'patch',
+  'file_write',
+  'file_delete',
+  'file_edit',
+  'file_patch',
+  'file_copy',
+  'write_file',
+  'delete_file',
+  'create_dir',
+  'folder_create',
+  'folder_delete',
+  'folder_move',
+  'code_replace',
+  'code_insert',
+  'apply_patch',
+  'git_commit',
+  'git_checkout',
+  'git_add',
+  'git_push',
+  'git_pull',
+  'git_merge',
+  'git_rebase',
+  'git_reset',
+  'git_stash',
+  'git_cherry_pick',
+]);
+
 export class ParallelClassifier {
   classify(tools: ClassifiedTool[]): ParallelClassification {
     const parallel: ClassifiedTool[] = [];
@@ -53,73 +184,54 @@ export class ParallelClassifier {
     return { parallel, sequential };
   }
 
+  private toolKeys(tool: ClassifiedTool): string[] {
+    const keys = [tool.tool.id, tool.tool.name].filter(Boolean);
+    return [...new Set(keys)];
+  }
+
   private inferMode(tool: ClassifiedTool): ParallelMode {
-    const NEVER_PARALLEL = new Set([
-      'question',
-      'clarify',
-      'approve',
-      'ask_clarification',
-      'ask_followup_question',
-    ]);
+    const keys = this.toolKeys(tool);
 
-    const SAFE_PARALLEL = new Set([
-      'glob',
-      'grep',
-      'file_read',
-      'read',
-      'ls',
-      'file_find',
-      'web_fetch',
-      'webfetch',
-      'web_search',
-      'websearch',
-      'git_status',
-      'git_log',
-      'git_diff',
-      'git_blame',
-      'git_show',
-      'db_query',
-      'db_schema',
-      'code_search',
-      'code_grep',
-      'code_symbols',
-      'code_definitions',
-      'code_references',
-      'json_parse',
-      'csv_parse',
-      'validate_schema',
-      'list',
-      'search',
-      'project_detect',
-    ]);
-
-    if (NEVER_PARALLEL.has(tool.tool.name)) {
+    if (keys.some((k) => NEVER_PARALLEL.has(k))) {
       return ParallelMode.NEVER;
     }
 
-    if (SAFE_PARALLEL.has(tool.tool.name)) {
+    if (keys.some((k) => SAFE_PARALLEL.has(k))) {
       return ParallelMode.SAFE;
     }
 
-    const mutationOps = new Set([
-      'write',
-      'edit',
-      'patch',
-      'file_write',
-      'file_delete',
-      'file_patch',
-      'code_replace',
-      'code_insert',
-      'git_commit',
-      'git_checkout',
-    ]);
+    if (keys.some((k) => SAFE_PREFIXES.some((p) => k.startsWith(p)))) {
+      return ParallelMode.SAFE;
+    }
 
-    if (mutationOps.has(tool.tool.name)) {
+    if (keys.some((k) => MUTATION_OPS.has(k))) {
       return ParallelMode.PATH_SCOPED;
     }
 
     if (tool.tool.id.startsWith('integration__') || tool.tool.id.startsWith('integration:')) {
       return ParallelMode.INTEGRATION_CHECK;
+    }
+
+    // Low-risk read-ish categories default to SAFE when not otherwise classified
+    if (
+      tool.tool.riskLevel === 'low' &&
+      (tool.tool.category === 'filesystem' ||
+        tool.tool.category === 'code_intelligence' ||
+        tool.tool.category === 'web_network' ||
+        tool.tool.category === 'ai_meta' ||
+        tool.tool.category === 'agent_meta')
+    ) {
+      const id = tool.tool.id;
+      if (
+        !id.includes('write') &&
+        !id.includes('delete') &&
+        !id.includes('edit') &&
+        !id.includes('exec') &&
+        !id.includes('run') &&
+        !id.includes('create')
+      ) {
+        return ParallelMode.SAFE;
+      }
     }
 
     return ParallelMode.SEQUENTIAL;

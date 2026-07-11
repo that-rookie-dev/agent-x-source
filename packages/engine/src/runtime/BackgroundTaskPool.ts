@@ -9,7 +9,7 @@ export class BackgroundTaskPool {
   constructor(private maxConcurrent = 1) {}
 
   setMaxConcurrent(n: number): void {
-    this.maxConcurrent = Math.max(1, Math.min(8, n));
+    this.maxConcurrent = Math.max(1, Math.min(32, n));
     this.drain();
   }
 

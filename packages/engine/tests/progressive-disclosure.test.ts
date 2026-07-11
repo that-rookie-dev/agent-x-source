@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ProgressiveDisclosure, shouldDisclose, getCoreTools, createBridgeTools, resolveBridgeToolCall } from '../src/tools/ProgressiveDisclosure.js';
+import { shouldDisclose, getCoreTools, createBridgeTools, resolveBridgeToolCall } from '../src/tools/ProgressiveDisclosure.js';
 import type { ToolDefinition } from '@agentx/shared';
 
 const makeTool = (id: string): ToolDefinition => ({
@@ -18,11 +18,28 @@ describe('ProgressiveDisclosure', () => {
   });
 
   it('identifies core tools by pattern', () => {
-    const tools = [makeTool('file_read'), makeTool('shell_exec'), makeTool('deploy_k8s')];
+    const tools = [
+      makeTool('file_read'),
+      makeTool('shell_exec'),
+      makeTool('glob'),
+      makeTool('grep'),
+      makeTool('script_run'),
+      makeTool('project_detect'),
+      makeTool('gh_pr_create'),
+      makeTool('build_run'),
+      makeTool('deploy_k8s'),
+    ];
     const core = getCoreTools(tools);
-    expect(core.map((t) => t.id)).toContain('file_read');
-    expect(core.map((t) => t.id)).toContain('shell_exec');
-    expect(core.map((t) => t.id)).not.toContain('deploy_k8s');
+    const ids = core.map((t) => t.id);
+    expect(ids).toContain('file_read');
+    expect(ids).toContain('shell_exec');
+    expect(ids).toContain('glob');
+    expect(ids).toContain('grep');
+    expect(ids).toContain('script_run');
+    expect(ids).toContain('project_detect');
+    expect(ids).toContain('gh_pr_create');
+    expect(ids).toContain('build_run');
+    expect(ids).not.toContain('deploy_k8s');
   });
 
   it('creates three bridge tools', () => {
@@ -47,9 +64,18 @@ describe('ProgressiveDisclosure', () => {
     expect(result.error).toBeTruthy();
   });
 
+  it('resolves tool_search with matching tools', () => {
+    const tools = [makeTool('file_read'), makeTool('shell_exec'), makeTool('deploy_k8s')];
+    const result = resolveBridgeToolCall('tool_search', { query: 'file' }, tools);
+    expect(result.error).toBeUndefined();
+    const matches = result.resolvedArgs['matches'] as Array<{ id: string }>;
+    expect(matches.some((m) => m.id === 'file_read')).toBe(true);
+  });
+
   it('resolves tool_describe for known tool', () => {
     const tools = [makeTool('file_read')];
     const result = resolveBridgeToolCall('tool_describe', { tool: 'file_read' }, tools);
     expect(result.resolvedArgs['schema']).toBeTruthy();
+    expect(result.resolvedArgs['id']).toBe('file_read');
   });
 });

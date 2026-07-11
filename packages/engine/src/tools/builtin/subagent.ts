@@ -38,12 +38,9 @@ export async function subAgentSpawn(
   }
 
   const task = manager.spawn(instruction, tools, timeout);
-  if (!task) {
-    return { success: false, output: 'Sub-agent limit reached. Wait for existing sub-agents to complete.', error: 'LIMIT_REACHED' };
-  }
   return {
     success: true,
-    output: `Sub-agent spawned (ID: ${task.id}). It will process the task in the background: "${instruction.slice(0, 100)}"`,
+    output: `Sub-agent spawned (ID: ${task.id}, status=${task.status}). It will process the task: "${instruction.slice(0, 100)}"`,
     metadata: { agentId: task.id },
   };
 }
@@ -62,26 +59,25 @@ export async function subAgentStatus(
 
   const agentId = args['agent_id'] as string | undefined;
 
+  // List all active sub-agents (running + queued)
+  const active = manager.getAll().filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'pending');
   if (agentId) {
-    const running = manager.getRunning();
-    const task = running.find((t) => t.id === agentId);
+    const task = active.find((t) => t.id === agentId) ?? manager.getAllIncludingCompleted().find((t) => t.id === agentId);
     if (task) {
       return {
         success: true,
-        output: `Agent ${task.id}: status=${task.status}, runs since ${new Date(task.startTime ?? 0).toLocaleTimeString()}`,
+        output: `Agent ${task.id}: status=${task.status}, started ${task.startTime ? new Date(task.startTime).toLocaleTimeString() : 'n/a'}`,
       };
     }
-    return { success: false, output: `No running agent with ID: ${agentId}`, error: 'NOT_FOUND' };
+    return { success: false, output: `No agent with ID: ${agentId}`, error: 'NOT_FOUND' };
   }
 
-  // List all running sub-agents
-  const running = manager.getRunning();
-  if (running.length === 0) {
-    return { success: true, output: 'No sub-agents currently running.' };
+  if (active.length === 0) {
+    return { success: true, output: 'No sub-agents currently running or queued.' };
   }
 
-  const lines = running.map((t) => `• ${t.id} | "${t.instruction.slice(0, 60)}" | ${t.status}`);
-  return { success: true, output: `Running sub-agents:\n${lines.join('\n')}` };
+  const lines = active.map((t) => `• ${t.id} | "${t.instruction.slice(0, 60)}" | ${t.status}`);
+  return { success: true, output: `Active sub-agents:\n${lines.join('\n')}` };
 }
 
 /**

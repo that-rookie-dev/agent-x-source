@@ -3,7 +3,7 @@ import type { Server } from 'http';
 import { getEngine } from './engine.js';
 import { validateWebSocketConnection } from './auth.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
-import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
+import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, attachChartPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
 import type { DeepSearchProgress } from '@agentx/shared';
 import { MemoryFabric, MemoryService, TtlCache } from '@agentx/engine';
 import { buildDistillationGenerator, buildGraphRagGenerator } from './distillation-generator.js';
@@ -734,7 +734,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     let parts = accumulatedParts.length > 0
       ? JSON.parse(JSON.stringify(accumulatedParts)) as MessagePart[]
       : undefined;
-    if (parts) parts = attachDeepSearchPartsFromTools(parts, toolCalls);
+    if (parts) parts = attachChartPartsFromTools(attachDeepSearchPartsFromTools(parts, toolCalls), toolCalls);
     const extra: ReturnType<typeof buildExtra> = {};
     if (thinkingText) extra.thinking = thinkingText;
     if (thinkingStartedAt != null) extra.thinkingStartedAt = thinkingStartedAt;
@@ -828,6 +828,9 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
           ? (result as { output: string }).output
           : JSON.stringify(result ?? '');
       const metadata = ((event as any).metadata ?? (result as { metadata?: unknown })?.metadata) as Record<string, unknown> | undefined;
+      if (toolName === 'save_to_canvas' && metadata?.['canvasId']) {
+        broadcast({ type: 'canvas_created', canvasId: metadata['canvasId'], contentFormat: metadata['contentFormat'] });
+      }
       if (toolName === 'delegate_to_subagent') {
         const id = (event as any).callId as string || (event as any).id as string;
         if (id && subAgentMap.has(id)) {
@@ -867,6 +870,15 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
             });
             accumulatedParts.length = 0;
             next.forEach((p) => accumulatedParts.push(p));
+          }
+          if (toolName === 'render_chart' && id && metadata?.chartSpec && typeof metadata.chartSpec === 'object') {
+            if (!accumulatedParts.some((p) => p.type === 'chart' && p.id === id)) {
+              accumulatedParts.push({
+                type: 'chart',
+                id,
+                chartJson: JSON.stringify(metadata.chartSpec),
+              });
+            }
           }
         }
       }

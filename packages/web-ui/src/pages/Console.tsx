@@ -22,11 +22,12 @@ const CrewsPanel = lazy(() => import('../components/CrewsPanel').then(m => ({ de
 const SoulPanel = lazy(() => import('../components/SoulPanel').then(m => ({ default: m.SoulPanel })));
 const McpStorePage = lazy(() => import('../components/integrations/McpStorePage').then(m => ({ default: m.McpStorePage })));
 const NotificationsPanel = lazy(() => import('../components/NotificationsPanel').then(m => ({ default: m.NotificationsPanel })));
+const CanvasPanel = lazy(() => import('../components/CanvasPanel').then(m => ({ default: m.CanvasPanel })));
 import { colors, alphaColor } from '../theme';
 import { useApp } from '../store/AppContext';
 import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 
-export type PanelId = 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications';
+export type PanelId = 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'canvases';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null; stack: string | null }> {
@@ -198,6 +199,7 @@ export function Console() {
                 {activePanel === 'soul' && <SoulPanel />}
                 {activePanel === 'mcp-store' && <McpStorePage />}
                 {activePanel === 'notifications' && <NotificationsPanel />}
+                {activePanel === 'canvases' && <CanvasPanel />}
               </Suspense>
             </PanelErrorBoundary>
           </Box>

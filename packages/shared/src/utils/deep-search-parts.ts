@@ -50,6 +50,12 @@ export function upsertDeepSearchPart(parts: MessagePart[], payload: DeepSearchPa
   if (existingIdx >= 0) {
     return [...parts.slice(0, existingIdx), next, ...parts.slice(existingIdx + 1)];
   }
+  const toolIdx = parts.findIndex(
+    (p) => p.type === 'tool' && (p.tool?.id === payload.toolCallId || p.id === payload.toolCallId),
+  );
+  if (toolIdx >= 0) {
+    return [...parts.slice(0, toolIdx + 1), next, ...parts.slice(toolIdx + 1)];
+  }
   return [...parts, next];
 }
 
@@ -67,7 +73,7 @@ function mergeAdjacentTextParts(parts: MessagePart[]): MessagePart[] {
   return merged;
 }
 
-/** Lift deepSearch metadata from tool parts/calls into dedicated message parts (always last). */
+/** Lift deepSearch metadata from tool parts/calls into dedicated message parts beside each tool. */
 export function attachDeepSearchPartsFromTools(parts: MessagePart[], toolCalls?: Array<{ id: string; name: string; metadata?: Record<string, unknown>; streamOutput?: string }>): MessagePart[] {
   let next = parts.filter((p) => p.type !== 'deep_search');
   const seen = new Set<string>();
@@ -111,32 +117,37 @@ export function partitionPartsForRender<T extends { type: string }>(parts: T[]):
   return { main, deepSearch };
 }
 
-/** Place deep_search blocks after the last tool and before the first assistant text. */
-export function orderPartsForChatRender<T extends { type: string }>(parts: T[]): T[] {
-  const deepSearch = parts.filter((p) => p.type === 'deep_search');
-  if (deepSearch.length === 0) return parts;
-
-  const nonDeep = parts.filter((p) => p.type !== 'deep_search');
-  if (nonDeep.length === 0) return deepSearch;
-
-  let lastToolIdx = -1;
-  for (let i = nonDeep.length - 1; i >= 0; i--) {
-    if (nonDeep[i]!.type === 'tool') {
-      lastToolIdx = i;
-      break;
+/** Keep each deep_search block adjacent to its matching deep_web_search tool. */
+export function orderPartsForChatRender<T extends { type: string; id?: string; tool?: { id?: string } }>(parts: T[]): T[] {
+  const deepSearchById = new Map<string, T>();
+  const nonDeep: T[] = [];
+  for (const p of parts) {
+    if (p.type === 'deep_search' && p.id) {
+      deepSearchById.set(p.id, p);
+    } else {
+      nonDeep.push(p);
     }
   }
+  if (deepSearchById.size === 0) return parts;
 
-  const firstTextIdx = nonDeep.findIndex((p) => p.type === 'text');
-  const insertAt = lastToolIdx >= 0
-    ? lastToolIdx + 1
-    : firstTextIdx >= 0
-      ? firstTextIdx
-      : nonDeep.length;
-
-  return [
-    ...nonDeep.slice(0, insertAt),
-    ...deepSearch,
-    ...nonDeep.slice(insertAt),
-  ];
+  const ordered: T[] = [];
+  const placed = new Set<string>();
+  for (const p of nonDeep) {
+    ordered.push(p);
+    const toolId = p.type === 'tool' ? (p.tool?.id ?? p.id) : undefined;
+    if (toolId && deepSearchById.has(toolId)) {
+      ordered.push(deepSearchById.get(toolId)!);
+      placed.add(toolId);
+    }
+  }
+  for (const [id, part] of deepSearchById) {
+    if (placed.has(id)) continue;
+    const textIdx = ordered.findIndex((p) => p.type === 'text');
+    if (textIdx >= 0) {
+      ordered.splice(textIdx, 0, part);
+    } else {
+      ordered.push(part);
+    }
+  }
+  return ordered;
 }

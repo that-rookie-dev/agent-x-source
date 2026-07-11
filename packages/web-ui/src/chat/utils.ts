@@ -1,6 +1,6 @@
 /** Client-side text helpers (mirrors @agentx/shared). */
 
-import { attachDeepSearchPartsFromTools, normalizeMessageForUi, normalizeVoiceAssistantContent, type MessagePart } from '@agentx/shared/browser';
+import { attachDeepSearchPartsFromTools, attachChartPartsFromTools, normalizeMessageForUi, normalizeVoiceAssistantContent, type MessagePart } from '@agentx/shared/browser';
 
 /** Apply tool_complete metadata only to the matching tool call (parallel same-name tools). */
 export function applyToolCompleteMetadata<T extends {
@@ -22,15 +22,15 @@ export function applyToolCompleteMetadata<T extends {
   return { ...tool, metadata: { ...tool.metadata, ...meta } };
 }
 
-/** Rebuild deep_search parts from per-tool metadata after a streaming turn completes. */
+/** Rebuild deep_search / chart parts from per-tool metadata after a streaming turn completes. */
 export function reconcileStreamingMessageParts<T extends MessagePart>(
   liveParts: T[] | undefined,
-  toolCalls: Array<{ id: string; name: string; metadata?: Record<string, unknown>; streamOutput?: string }> | undefined,
+  toolCalls: Array<{ id: string; name: string; metadata?: Record<string, unknown>; streamOutput?: string; result?: string }> | undefined,
   incomingParts: T[] | undefined,
 ): T[] | undefined {
   const base = liveParts?.length ? liveParts : incomingParts;
   if (!base?.length) return base;
-  return attachDeepSearchPartsFromTools(base, toolCalls) as T[];
+  return attachChartPartsFromTools(attachDeepSearchPartsFromTools(base, toolCalls), toolCalls) as T[];
 }
 
 export function sanitizeForJson(text: string): string {

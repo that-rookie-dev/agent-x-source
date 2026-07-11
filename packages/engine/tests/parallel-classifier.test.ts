@@ -59,4 +59,15 @@ describe('ParallelClassifier', () => {
       expect.objectContaining({ tool: expect.objectContaining({ name: 'ask_clarification' }) }),
     );
   });
+
+  it('classifies folder_list and memory_search as SAFE', () => {
+    const result = classifier.classify([
+      makeTool('folder_list'),
+      makeTool('memory_search'),
+      makeTool('http_get'),
+    ]);
+
+    expect(result.parallel).toHaveLength(3);
+    expect(result.sequential).toHaveLength(0);
+  });
 });

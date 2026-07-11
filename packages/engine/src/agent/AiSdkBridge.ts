@@ -16,6 +16,12 @@ import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, Completion
 import { normalizeAskClarificationArgs } from '@agentx/shared';
 import { isToolAllowedInPlanMode, buildPlanModeRestrictedToolHint, type PlanGatePromptProfile } from './plan-mode-utils.js';
 import { isCompactToolAllowed } from './context-profile.js';
+import {
+  shouldDisclose,
+  getCoreTools,
+  createBridgeTools,
+  resolveBridgeToolCall,
+} from '../tools/ProgressiveDisclosure.js';
 import { resolveGoogleNativeBaseUrl } from '../providers/google/gemini-metadata.js';
 
 /** Defaults for OpenAI-compatible chat paths only. Native SDK providers use their package defaults. */
@@ -230,7 +236,18 @@ export function createAiSdkTools(
 
   if (compactContext) {
     filteredTools = filteredTools.filter((t) => isCompactToolAllowed(t.id, planMode));
+  } else if (shouldDisclose(filteredTools.length)) {
+    // Progressive disclosure: expose core tools + bridge (search/describe/call)
+    const core = getCoreTools(filteredTools);
+    const bridges = createBridgeTools();
+    const coreIds = new Set(core.map((t) => t.id));
+    filteredTools = [...core, ...bridges.filter((b) => !coreIds.has(b.id))];
   }
+
+  // Full catalog for tool_search / tool_describe / tool_call resolution
+  const discoveryCatalog = planMode
+    ? allTools.filter((t) => isToolAllowedInPlanMode(t.id))
+    : allTools;
 
   // Wire real-time tool output streaming
   const activeOutputCalls = new Map<string, string>(); // callId -> tool name
@@ -243,6 +260,61 @@ export function createAiSdkTools(
     });
   }
 
+  // Helpers shared by dedicated tools and tool_call bridge (avoids toolkit stubs)
+  const runAskClarification = async (args: Record<string, unknown>): Promise<string> => {
+    const questionnaire = normalizeAskClarificationArgs(args as import('@agentx/shared').AskClarificationToolArgs);
+    const response = await waitForClarification(questionnaire);
+    return `User response: ${response}`;
+  };
+
+  const runDelegateToSubagent = async (args: Record<string, unknown>): Promise<string> => {
+    const mission = (args as any).mission || '';
+    const items = Array.isArray((args as any).items) ? (args as any).items as string[] : undefined;
+    const toolsList = Array.isArray((args as any).tools) ? (args as any).tools : undefined;
+    const timeout = typeof (args as any).timeout === 'number' ? (args as any).timeout : 120_000;
+    const background = (args as any).background === true;
+    const batchSize = Math.max(1, Math.min(typeof (args as any).batchSize === 'number' ? (args as any).batchSize : 10, 50));
+
+    if (items && items.length > 0) {
+      const chunks: string[][] = [];
+      for (let i = 0; i < items.length; i += batchSize) {
+        chunks.push(items.slice(i, i + batchSize));
+      }
+      emit({
+        type: 'tool_executing',
+        tool: 'delegate_to_subagent',
+        description: `Dispatching ${items.length} items across ${chunks.length} sub-agents`,
+        startTime: Date.now(),
+        args: args as Record<string, unknown>,
+        callId: 'subagent',
+      });
+      const pending = chunks.map((chunk) =>
+        runSubAgent(`Process:\n${chunk.map((item, i) => `${i + 1}. ${item}`).join('\n')}`, toolsList, timeout, false),
+      );
+      const resolved = await Promise.all(pending);
+      let totalElapsed = 0;
+      const batchResults: string[] = [];
+      for (const r of resolved) {
+        totalElapsed += r.elapsed;
+        batchResults.push(r.success ? r.output : `[FAILED] ${r.output}`);
+      }
+      const output = [`=== BATCH RESULT ===`, `${items.length} items processed`, `Total elapsed: ${totalElapsed}ms`, '', ...batchResults].join('\n');
+      emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: true, output }, elapsed: totalElapsed, args: args as Record<string, unknown>, callId: 'subagent' });
+      return output;
+    }
+
+    emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${mission}`, startTime: Date.now(), args: args as Record<string, unknown>, callId: 'subagent' });
+    const result2 = await runSubAgent(mission, toolsList, timeout, background);
+    const callId = result2.agentId ?? 'subagent';
+    const output = result2.success
+      ? `[Sub-agent completed in ${result2.elapsed}ms]\n${result2.output}`
+      : `[Sub-agent failed: ${result2.output}]`;
+    emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: result2.success, output }, elapsed: result2.elapsed, args: args as Record<string, unknown>, callId });
+    return output;
+  };
+
+  const BRIDGE_META_IDS = new Set(['tool_search', 'tool_describe', 'tool_call']);
+
    for (const toolDef of filteredTools) {
     const schema = convertToJsonSchema(toolDef.schema);
 
@@ -251,9 +323,69 @@ export function createAiSdkTools(
         description: toolDef.modelDescription,
         inputSchema: jsonSchema(schema),
         async execute(args) {
-          const questionnaire = normalizeAskClarificationArgs(args as import('@agentx/shared').AskClarificationToolArgs);
-          const response = await waitForClarification(questionnaire);
-          return `User response: ${response}`;
+          return runAskClarification(args as Record<string, unknown>);
+        },
+      });
+      continue;
+    }
+
+    if (toolDef.id === 'tool_search' || toolDef.id === 'tool_describe' || toolDef.id === 'tool_call') {
+      tools[toolDef.id] = tool({
+        description: toolDef.modelDescription,
+        inputSchema: jsonSchema(schema),
+        async execute(args) {
+          const startTime = Date.now();
+          const callId = `tc-${toolDef.id}-${startTime}`;
+          emit({
+            type: 'tool_executing',
+            tool: toolDef.id,
+            description: `Bridge: ${toolDef.id}`,
+            startTime,
+            args: args as Record<string, unknown>,
+            callId,
+          });
+
+          const resolved = resolveBridgeToolCall(toolDef.id, args as Record<string, unknown>, discoveryCatalog);
+
+          if (toolDef.id === 'tool_call') {
+            if (resolved.error || !resolved.resolved) {
+              const output = resolved.error ?? 'Tool not found';
+              emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+              return `[TOOL ERROR] ${output}`;
+            }
+            const targetId = resolved.resolved.id;
+            if (BRIDGE_META_IDS.has(targetId)) {
+              const output = `Cannot tool_call meta-tool "${targetId}". Call it directly.`;
+              emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+              return `[TOOL ERROR] ${output}`;
+            }
+            // Route special tools through real handlers — toolkit stubs are placeholders only
+            if (targetId === 'ask_clarification') {
+              const output = await runAskClarification(resolved.resolvedArgs);
+              onToolExecuted?.(targetId, true, output, Date.now() - startTime, resolved.resolvedArgs);
+              emit({ type: 'tool_complete', tool: toolDef.id, result: { success: true, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+              return output;
+            }
+            if (targetId === 'delegate_to_subagent') {
+              const output = await runDelegateToSubagent(resolved.resolvedArgs);
+              onToolExecuted?.(targetId, true, output, Date.now() - startTime, resolved.resolvedArgs);
+              emit({ type: 'tool_complete', tool: toolDef.id, result: { success: true, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+              return output;
+            }
+            const result = await toolExecutor.execute(targetId, resolved.resolvedArgs, sessionId);
+            onToolExecuted?.(targetId, result.success, result.output, Date.now() - startTime, resolved.resolvedArgs);
+            emit({ type: 'tool_complete', tool: toolDef.id, result, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+            return result.success ? result.output : `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
+          }
+
+          if (resolved.error) {
+            emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output: resolved.error }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+            return `[TOOL ERROR] ${resolved.error}`;
+          }
+
+          const output = JSON.stringify(resolved.resolvedArgs, null, 2);
+          emit({ type: 'tool_complete', tool: toolDef.id, result: { success: true, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+          return output;
         },
       });
       continue;
@@ -264,49 +396,7 @@ export function createAiSdkTools(
         description: toolDef.modelDescription,
         inputSchema: jsonSchema(schema),
         async execute(args) {
-          const mission = (args as any).mission || '';
-          const items = Array.isArray((args as any).items) ? (args as any).items as string[] : undefined;
-          const toolsList = Array.isArray((args as any).tools) ? (args as any).tools : undefined;
-          const timeout = typeof (args as any).timeout === 'number' ? (args as any).timeout : 120_000;
-          const background = (args as any).background === true;
-          const batchSize = Math.max(1, Math.min(typeof (args as any).batchSize === 'number' ? (args as any).batchSize : 10, 50));
-
-          if (items && items.length > 0) {
-            const chunks: string[][] = [];
-            for (let i = 0; i < items.length; i += batchSize) {
-              chunks.push(items.slice(i, i + batchSize));
-            }
-            emit({
-              type: 'tool_executing',
-              tool: 'delegate_to_subagent',
-              description: `Dispatching ${items.length} items across ${chunks.length} sub-agents`,
-              startTime: Date.now(),
-              args: args as Record<string, unknown>,
-              callId: 'subagent',
-            });
-            const pending = chunks.map((chunk) =>
-              runSubAgent(`Process:\n${chunk.map((item, i) => `${i + 1}. ${item}`).join('\n')}`, toolsList, timeout, false),
-            );
-            const resolved = await Promise.all(pending);
-            let totalElapsed = 0;
-            const batchResults: string[] = [];
-            for (const r of resolved) {
-              totalElapsed += r.elapsed;
-              batchResults.push(r.success ? r.output : `[FAILED] ${r.output}`);
-            }
-            const output = [`=== BATCH RESULT ===`, `${items.length} items processed`, `Total elapsed: ${totalElapsed}ms`, '', ...batchResults].join('\n');
-            emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: true, output }, elapsed: totalElapsed, args: args as Record<string, unknown>, callId: 'subagent' });
-            return output;
-          }
-
-          emit({ type: 'tool_executing', tool: 'delegate_to_subagent', description: `Spawning sub-agent: ${mission}`, startTime: Date.now(), args: args as Record<string, unknown>, callId: 'subagent' });
-          const result2 = await runSubAgent(mission, toolsList, timeout, background);
-          const callId = result2.agentId ?? 'subagent';
-          const output = result2.success
-            ? `[Sub-agent completed in ${result2.elapsed}ms]\n${result2.output}`
-            : `[Sub-agent failed: ${result2.output}]`;
-          emit({ type: 'tool_complete', tool: 'delegate_to_subagent', result: { success: result2.success, output }, elapsed: result2.elapsed, args: args as Record<string, unknown>, callId });
-          return output;
+          return runDelegateToSubagent(args as Record<string, unknown>);
         },
       });
       continue;

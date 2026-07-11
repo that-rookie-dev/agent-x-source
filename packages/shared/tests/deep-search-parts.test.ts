@@ -17,13 +17,13 @@ const sampleBundle = {
 };
 
 describe('deep-search-parts', () => {
-  it('upsertDeepSearchPart keeps deep_search parts at the end', () => {
+  it('upsertDeepSearchPart inserts new card after matching tool', () => {
     const parts: MessagePart[] = [
       { type: 'text', id: 't1', content: 'answer' },
       { type: 'tool', id: 'c1', tool: { id: 'c1', name: 'deep_web_search', status: 'done' } },
     ];
     const next = upsertDeepSearchPart(parts, { toolCallId: 'c1', bundle: sampleBundle, running: false });
-    expect(next[next.length - 1]?.type).toBe('deep_search');
+    expect(next.map((p) => p.type)).toEqual(['text', 'tool', 'deep_search']);
     expect(next[0]?.type).toBe('text');
   });
 
@@ -55,15 +55,33 @@ describe('deep-search-parts', () => {
     expect(next.some((p) => p.type === 'deep_search')).toBe(true);
   });
 
-  it('orderPartsForChatRender places deep search after tools and before text', () => {
+  it('orderPartsForChatRender places each deep search after its matching tool', () => {
     const parts = [
-      { type: 'tool', id: 't1' },
-      { type: 'tool', id: 't2' },
+      { type: 'tool', id: 'c1' },
+      { type: 'tool', id: 'c2' },
       { type: 'text', id: 'a1' },
       { type: 'deep_search', id: 'c1', deepSearch: { bundle: sampleBundle } },
     ] as MessagePart[];
     const ordered = orderPartsForChatRender(parts);
-    expect(ordered.map((p) => p.type)).toEqual(['tool', 'tool', 'deep_search', 'text']);
+    expect(ordered.map((p) => p.type)).toEqual(['tool', 'deep_search', 'tool', 'text']);
+  });
+
+  it('orderPartsForChatRender keeps parallel deep searches with their tools', () => {
+    const parts = [
+      { type: 'tool', id: 'c1' },
+      { type: 'deep_search', id: 'c1', deepSearch: { bundle: { ...sampleBundle, query: 'a' } } },
+      { type: 'tool', id: 'c2' },
+      { type: 'deep_search', id: 'c2', deepSearch: { bundle: { ...sampleBundle, query: 'b' } } },
+      { type: 'text', id: 'a1' },
+    ] as MessagePart[];
+    const ordered = orderPartsForChatRender(parts);
+    expect(ordered.map((p) => `${p.type}:${p.id}`)).toEqual([
+      'tool:c1',
+      'deep_search:c1',
+      'tool:c2',
+      'deep_search:c2',
+      'text:a1',
+    ]);
   });
 
   it('orderPartsForChatRender places deep search before text when no tools exist', () => {

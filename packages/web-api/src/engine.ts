@@ -38,6 +38,8 @@ import {
   IntegrationHub,
   configureBackgroundTaskPool,
   setOnnxThreadConfig,
+  CanvasStore,
+  setCanvasStoreInstance,
 } from '@agentx/engine';
 import type { AgentXConfig, ProviderId, TelemetryBus, Session, StorageAdapter } from '@agentx/shared';
 import { resolveRuntimeSettings } from '@agentx/shared';
@@ -308,6 +310,10 @@ export function getEngine(): EngineState {
   void storageReady
     .then(async () => {
       if (!store) return;
+      if (state?.pgPool) {
+        await CanvasStore.ensureSchema(state.pgPool);
+        setCanvasStoreInstance(new CanvasStore(state.pgPool));
+      }
       if (state) state.crewManager.refresh();
       await healDatabaseStore(store);
       startPeriodicDatabaseHeal(store);

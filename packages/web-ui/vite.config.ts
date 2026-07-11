@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@agentx/shared/browser': path.resolve(__dirname, '../shared/src/browser.ts'),
+      '@agentx/canvas': path.resolve(__dirname, '../canvas/src/index.ts'),
     },
   },
   server: {

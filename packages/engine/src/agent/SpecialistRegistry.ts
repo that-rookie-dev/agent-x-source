@@ -42,7 +42,7 @@ export class SpecialistRegistry {
 
   /**
    * Get a specialist by type. Returns the template; the caller spawns
-   * a new SmartSubAgent using this template.
+   * via SubAgentManager (Fiber + concurrency pool).
    */
   getByType(type: SpecialistType): Specialist | undefined {
     return this.specialists.get(type);

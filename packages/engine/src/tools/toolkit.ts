@@ -28,6 +28,7 @@ import * as image from './builtin/image.js';
 import * as project from './builtin/project.js';
 import * as ai from './builtin/ai.js';
 import * as notifications from './builtin/notifications.js';
+import * as canvasTool from './builtin/canvas.js';
 import * as security from './builtin/security.js';
 import * as ssh from './builtin/ssh.js';
 import * as media from './builtin/media.js';
@@ -147,6 +148,7 @@ const CORE_TOOLS: ToolDefinition[] = [
   { id: 'automation_list', name: 'List Automations', description: 'List registered automation tasks', modelDescription: 'List durable automation tasks. On messaging channel super-sessions, returns ALL automations across Agent-X (not limited to the channel). On web sessions, returns tasks for the current session. Use agent_x_overview for a richer fleet snapshot.', category: 'scheduler', riskLevel: 'low', schema: { type: 'object', properties: {}, required: [] }, composable: true, source: 'builtin' },
   { id: 'automation_cancel', name: 'Cancel Automation', description: 'Cancel a registered automation', modelDescription: 'Cancel automation by id or task_key. On messaging channel super-sessions, can cancel any automation in the fleet.', category: 'scheduler', riskLevel: 'low', schema: { type: 'object', properties: { id: { type: 'string', description: 'Task ID' }, task_key: { type: 'string', description: 'Task key' } }, required: [] }, composable: true, source: 'builtin' },
   { id: 'agent_x_overview', name: 'Agent-X Overview', description: 'Fleet-wide snapshot of sessions, automations, notifications, and settings', modelDescription: 'Messaging channel super-session only. Returns live Agent-X state: summary (default), sessions, automations, notifications, settings, or session_detail (requires session_id). Use before answering questions about other sessions, automations, private chats, or configuration.', category: 'agent_meta', riskLevel: 'low', schema: { type: 'object', properties: { view: { type: 'string', enum: ['summary', 'sessions', 'automations', 'notifications', 'settings', 'session_detail'], description: 'Which snapshot to return (default summary)' }, session_id: { type: 'string', description: 'Required when view=session_detail' } }, required: [] }, composable: true, source: 'builtin' },
+  { id: 'save_to_canvas', name: 'Save to Canvas', description: 'Save an interactive React canvas artifact', modelDescription: 'Persist a standalone interactive Canvas (.canvas.tsx) for dashboards, reports, and data-heavy UI. Use when the user asks to save/convert to canvas, or after offering canvas and they accept. PREFERRED: pass content_tsx — a complete TSX file that default-exports a React component. Import ONLY from @agentx/canvas (CanvasRoot, Section, Grid, Card, Kpi, KpiRow, Chart, DataTable, Tabs, Select, Button, Badge, Markdown, useAgentXTheme). Embed all data inline; no fetch/network. Example structure: import { CanvasRoot, Section, Chart, DataTable, KpiRow, Kpi } from "@agentx/canvas"; export default function MyDashboard() { ... }. Always pass title — a short descriptive name (3–8 words) for the sidebar and PDF export. Fallback: content/markdown for quick plain saves (auto-wrapped in canvas shell). Stored internally; user opens Canvases sidebar to view/export PDF.', category: 'documents', riskLevel: 'low', schema: { type: 'object', properties: { content_tsx: { type: 'string', description: 'Full .canvas.tsx source (preferred)' }, content: { type: 'string', description: 'Markdown fallback' }, markdown: { type: 'string', description: 'Alias for content' }, title: { type: 'string', description: 'Short descriptive canvas title (3–8 words, e.g. "Q3 Revenue Dashboard")' }, message_id: { type: 'string', description: 'Source chat message id' }, source_role: { type: 'string', enum: ['user', 'assistant', 'system'] }, format: { type: 'string', enum: ['canvas_tsx', 'markdown'], description: 'Force format when using content' } }, required: [] }, composable: false, source: 'builtin' },
 
   // ═══ SUB-AGENTS ═══
   { id: 'sub_agent_spawn', name: 'Spawn Sub-Agent', description: 'Delegate a task to a background sub-agent', modelDescription: 'Spawn a background sub-agent to handle a complex task independently. Use for research, analysis, or any task that can run in parallel. The sub-agent gets its own LLM context.', category: 'agent_orchestration', riskLevel: 'medium', schema: { type: 'object', properties: { instruction: { type: 'string', description: 'Detailed instruction for the sub-agent' }, tools: { type: 'string', description: 'Comma-separated tool IDs the sub-agent can use' }, timeout: { type: 'number', description: 'Timeout in ms (default: 60000)' } }, required: ['instruction'] }, composable: true, source: 'builtin' },
@@ -186,6 +188,7 @@ const CORE_TOOLS: ToolDefinition[] = [
   { id: 'regex_match', name: 'Regex Match', description: 'Match regex against text', modelDescription: 'Apply a regex pattern to text and return matched groups and positions.', category: 'data_processing', riskLevel: 'low', schema: { type: 'object', properties: { text: { type: 'string', description: 'Text to search in' }, pattern: { type: 'string', description: 'Regex pattern' }, flags: { type: 'string', description: 'Regex flags (g, i, m, etc.)' } }, required: ['text', 'pattern'] }, composable: true, source: 'builtin' },
   { id: 'text_diff', name: 'Diff Text', description: 'Compare two text strings', modelDescription: 'Show line-by-line diff between two text strings.', category: 'data_processing', riskLevel: 'low', schema: { type: 'object', properties: { text1: { type: 'string', description: 'First text' }, text2: { type: 'string', description: 'Second text' } }, required: ['text1', 'text2'] }, composable: true, source: 'builtin' },
   { id: 'validate_schema', name: 'Validate Schema', description: 'Validate data against JSON Schema', modelDescription: 'Validate a JSON object against a JSON Schema specification.', category: 'data_processing', riskLevel: 'low', schema: { type: 'object', properties: { data: { type: 'object', description: 'Data to validate' }, schema: { type: 'object', description: 'JSON Schema to validate against' } }, required: ['data', 'schema'] }, composable: true, source: 'builtin' },
+  { id: 'render_chart', name: 'Render Chart', description: 'Validate a chat chart spec', modelDescription: 'Validate and normalize a ChartSpec for chat display. Prefer also emitting a ```chart JSON fence in the assistant reply. Spec fields: type, title, data (or nodes/links, tasks, mermaid). Supported types include bar, line, pie, sankey, gantt, network, mermaid, and other chart types from the chat chart catalog.', category: 'data_processing', riskLevel: 'low', schema: { type: 'object', properties: { spec: { type: 'object', description: 'ChartSpec object (v, type, title, data, …)' }, chart: { type: 'object', description: 'Alias for spec' } }, required: [] }, composable: true, source: 'builtin' },
 
   // ═══ DATABASE ═══
   { id: 'db_query', name: 'Database Query', description: 'Execute SQL on SQLite', modelDescription: 'Run a SQL query against a SQLite database file.', category: 'database', riskLevel: 'medium', schema: { type: 'object', properties: { database: { type: 'string', description: 'Path to .db file' }, query: { type: 'string', description: 'SQL query' } }, required: ['database', 'query'] }, composable: true, source: 'builtin' },
@@ -473,6 +476,7 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('regex_match', data.regexMatch);
   executor.registerHandler('text_diff', data.textDiff);
   executor.registerHandler('validate_schema', data.validateSchema);
+  executor.registerHandler('render_chart', data.renderChart);
 
   // ═══ Database ═══
   executor.registerHandler('db_query', database.dbQuery);
@@ -570,6 +574,7 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('notify_discord', notifications.notifyDiscord);
   executor.registerHandler('clipboard_read', notifications.clipboardRead);
   executor.registerHandler('clipboard_write', notifications.clipboardWrite);
+  executor.registerHandler('save_to_canvas', canvasTool.saveToCanvas);
 
   // ═══ Security ═══
   executor.registerHandler('encrypt_file', security.encryptFile);
@@ -586,12 +591,14 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('todo_read', todo.todoRead);
   executor.registerHandler('todo_delete', todo.todoDelete);
   executor.registerHandler('ask_clarification', async () => ({
-    success: true,
-    output: 'Clarification requested.',
+    success: false,
+    output: 'ask_clarification must run via the AI SDK tool path (createAiSdkTools), not ToolExecutor directly.',
+    error: 'USE_AISDK_PATH',
   }));
   executor.registerHandler('delegate_to_subagent', async () => ({
-    success: true,
-    output: 'Sub-agent delegation handled by agent core.',
+    success: false,
+    output: 'delegate_to_subagent must run via the AI SDK tool path (createAiSdkTools), not ToolExecutor directly.',
+    error: 'USE_AISDK_PATH',
   }));
   executor.registerHandler('script_run', script.scriptRun);
   executor.registerHandler('node_rpc', script.nodeRpc);

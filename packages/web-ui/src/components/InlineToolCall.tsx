@@ -4,7 +4,7 @@ import Typography from '@mui/material/Typography';
 import { isIntegrationToolId } from '@agentx/shared/browser';
 import { colors, alphaColor } from '../theme';
 import { getToolDisplay } from './tool-display';
-import { ShellRender, ReadRender, EditRender, GlobRender, GrepRender, TaskRender } from './tool-renders';
+import { ShellRender, ReadRender, EditRender, GlobRender, GrepRender, TaskRender, ChartToolRender } from './tool-renders';
 import { IntegrationResultRender, type IntegrationStructuredResult } from './integrations/IntegrationResultRender';
 
 export interface InlineToolData {
@@ -60,6 +60,7 @@ function getToolRenderer(tool: InlineToolData): ((props: { tool: InlineToolData 
   if (GLOB_TOOLS.has(tool.name)) return GlobRender;
   if (GREP_TOOLS.has(tool.name)) return GrepRender;
   if (TASK_TOOLS.has(tool.name)) return TaskRender;
+  if (tool.name === 'render_chart') return ChartToolRender;
   return null;
 }
 

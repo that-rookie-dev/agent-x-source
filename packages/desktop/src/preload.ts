@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld('agentx', {
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
   openFile: (filters?: Array<{ name: string; extensions: string[] }>) =>
     ipcRenderer.invoke('dialog:openFile', filters) as Promise<string | null>,
+  saveFile: (opts?: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) =>
+    ipcRenderer.invoke('dialog:saveFile', opts) as Promise<string | null>,
+  writeFileBytes: (filePath: string, data: Uint8Array) =>
+    ipcRenderer.invoke('file:writeBytes', filePath, data) as Promise<{ ok: boolean }>,
   checkNodeRuntime: () =>
     ipcRenderer.invoke('permissions:checkNodeRuntime') as Promise<{ node?: string; npx?: string; ok: boolean }>,
   defaultWorkspace: () => ipcRenderer.invoke('path:defaultWorkspace') as Promise<string>,

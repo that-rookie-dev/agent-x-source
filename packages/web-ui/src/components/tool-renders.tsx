@@ -3,6 +3,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { colors, alphaColor } from '../theme';
 import type { InlineToolData } from './InlineToolCall';
+import { ChartBlock } from '../chat/ChartBlock';
 
 // ─── Specialized renderers for specific tool types ───
 
@@ -246,6 +247,32 @@ export function TaskRender({ tool }: { tool: InlineToolData }) {
           </Box>
         </>
       )}
+    </Box>
+  );
+}
+
+export function ChartToolRender({ tool }: { tool: InlineToolData }) {
+  const metaSpec = tool.metadata?.chartSpec;
+  const fromMeta = metaSpec && typeof metaSpec === 'object' ? JSON.stringify(metaSpec) : null;
+  let fromResult: string | null = null;
+  if (!fromMeta && tool.result) {
+    const fence = tool.result.match(/```chart\s*([\s\S]*?)```/i);
+    if (fence?.[1]) fromResult = fence[1].trim();
+    else if (tool.result.trim().startsWith('{')) fromResult = tool.result.trim();
+  }
+  const code = fromMeta ?? fromResult;
+  if (!code) {
+    return (
+      <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.accent.blue, '15')}` }}>
+        <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim }}>
+          {tool.status === 'running' ? 'Validating chart…' : (cleanResult(tool.result) || 'No chart spec')}
+        </Typography>
+      </Box>
+    );
+  }
+  return (
+    <Box sx={{ px: 0.5, pb: 0.75, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.accent.blue, '15')}` }}>
+      <ChartBlock code={code} language="chart" />
     </Box>
   );
 }

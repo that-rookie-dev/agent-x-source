@@ -132,7 +132,8 @@ export class CrewWorker {
 
     let result;
     try {
-      result = await sub.execute();
+      // Share parent virtual-concurrency pool so crew workers don't stampede
+      result = await parentAgent.agents.runInPool(() => sub.execute());
     } finally {
       unsubProgress();
     }

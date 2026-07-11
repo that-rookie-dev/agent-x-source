@@ -83,6 +83,11 @@ export function getToolDisplay(toolName: string, args: Record<string, unknown> |
       return { icon: <PublicIcon sx={iconSx} />, title: 'Search', subtitle: label };
     case 'deep_web_search':
       return { icon: <PublicIcon sx={iconSx} />, title: 'Deep Search', subtitle: label };
+    case 'render_chart': {
+      const spec = (parsed.spec || parsed.chart || parsed) as Record<string, unknown>;
+      const chartType = typeof spec?.type === 'string' ? String(spec.type) : undefined;
+      return { icon: <AccountTreeIcon sx={iconSx} />, title: 'Chart', subtitle: chartType || label };
+    }
     case 'web_fetch':
     case 'web_scrape':
     case 'http_get':

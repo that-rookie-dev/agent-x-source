@@ -5,7 +5,11 @@ import { ParallelClassifier } from './ParallelClassifier.js';
 import { ToolCallRepairer } from './ToolCallRepairer.js';
 import { DoomLoopDetector } from './DoomLoopDetector.js';
 import { AutonomousDiagnosticsSystem } from '../agent/AutonomousDiagnosticsSystem.js';
+import { Semaphore } from '../concurrency/Semaphore.js';
 import { getLogger } from '@agentx/shared';
+
+/** Default concurrent tool slots (virtual threads for I/O-bound tool calls). */
+const DEFAULT_TOOL_CONCURRENCY = 8;
 
 export interface BatchToolCall {
   toolCallId: string;
@@ -40,6 +44,19 @@ export class EnhancedToolExecutor extends ToolExecutor {
   private diagnosticsSystem = new AutonomousDiagnosticsSystem();
   private sessionContextCache: Map<string, any> = new Map();
   private _scopePath: string;
+  /** Caps concurrent tool executions when the model emits multi-tool batches. */
+  private toolConcurrency = new Semaphore(DEFAULT_TOOL_CONCURRENCY);
+  /** Collects concurrent AI SDK tool calls in one microtask for ParallelClassifier. */
+  private batchPending: Array<{
+    toolId: string;
+    args: Record<string, unknown>;
+    sessionId: string;
+    resolve: (r: ToolResult) => void;
+    reject: (e: unknown) => void;
+  }> = [];
+  private batchScheduled = false;
+  /** >0 while flushing a classified batch — bypasses re-batching. */
+  private batchDepth = 0;
 
   isCircuitBlacklisted(toolName: string): boolean {
     const entry = this.circuitBreakers.get(toolName);
@@ -107,6 +124,91 @@ export class EnhancedToolExecutor extends ToolExecutor {
     return this._scopePath;
   }
 
+  setMaxToolConcurrency(n: number): void {
+    this.toolConcurrency.setPermits(Math.max(1, Math.min(32, n)));
+  }
+
+  getToolConcurrencyStats(): { running: number; pending: number; available: number } {
+    return {
+      running: this.toolConcurrency.running,
+      pending: this.toolConcurrency.pending,
+      available: this.toolConcurrency.available,
+    };
+  }
+
+  /**
+   * Public entry: coalesce concurrent AI SDK tool calls into one classified batch
+   * (SAFE parallel / PATH_SCOPED / NEVER sequential), then run through the semaphore.
+   */
+  override async execute(
+    toolId: string,
+    args: Record<string, unknown>,
+    sessionId: string,
+  ): Promise<ToolResult> {
+    if (this.batchDepth > 0) {
+      return this.executeDirect(toolId, args, sessionId);
+    }
+    return new Promise<ToolResult>((resolve, reject) => {
+      this.batchPending.push({ toolId, args, sessionId, resolve, reject });
+      if (!this.batchScheduled) {
+        this.batchScheduled = true;
+        queueMicrotask(() => {
+          void this.flushToolBatch();
+        });
+      }
+    });
+  }
+
+  /** Direct execution through the concurrency pool (no batch coalescing). */
+  private executeDirect(
+    toolId: string,
+    args: Record<string, unknown>,
+    sessionId: string,
+  ): Promise<ToolResult> {
+    return this.toolConcurrency.run(() => super.execute(toolId, args, sessionId));
+  }
+
+  private async flushToolBatch(): Promise<void> {
+    const batch = this.batchPending.splice(0);
+    this.batchScheduled = false;
+    if (batch.length === 0) return;
+
+    this.batchDepth++;
+    try {
+      if (batch.length === 1) {
+        const b = batch[0]!;
+        try {
+          b.resolve(await this.executeDirect(b.toolId, b.args, b.sessionId));
+        } catch (e) {
+          b.reject(e);
+        }
+        return;
+      }
+
+      const sessionId = batch[0]!.sessionId;
+      const results = await this.executeBatch(
+        batch.map((b, i) => ({
+          toolCallId: `batch-${i}-${b.toolId}`,
+          toolName: b.toolId,
+          args: b.args,
+        })),
+        sessionId,
+      );
+
+      const byId = new Map(results.map((r) => [r.toolCallId, r]));
+      for (let i = 0; i < batch.length; i++) {
+        const b = batch[i]!;
+        const r = byId.get(`batch-${i}-${b.toolId}`);
+        if (r) b.resolve(r.result);
+        else b.reject(new Error(`Missing batch result for ${b.toolId}`));
+      }
+    } catch (e) {
+      for (const b of batch) b.reject(e);
+    } finally {
+      this.batchDepth--;
+    }
+  }
+
   resetDoomLoop(sessionId: string): void {
     this.doomLoopDetector.reset(sessionId);
   }
@@ -128,25 +230,30 @@ export class EnhancedToolExecutor extends ToolExecutor {
     );
 
     const results: BatchToolResult[] = [];
-
-    if (classified.parallel.length > 0) {
-      const parallelResults = await Promise.all(
-        classified.parallel.map((ct) => {
-          const call = calls.find((c) => c.toolCallId === ct.toolCallId);
-          if (!call) return null;
-          return this._execOne(call.toolCallId, call.toolName, call.args, sessionId, onBefore);
-        }),
-      );
-      for (const r of parallelResults) {
-        if (r) results.push(r);
+    const prevDepth = this.batchDepth;
+    this.batchDepth = prevDepth + 1;
+    try {
+      if (classified.parallel.length > 0) {
+        const parallelResults = await Promise.all(
+          classified.parallel.map((ct) => {
+            const call = calls.find((c) => c.toolCallId === ct.toolCallId);
+            if (!call) return null;
+            return this._execOne(call.toolCallId, call.toolName, call.args, sessionId, onBefore);
+          }),
+        );
+        for (const r of parallelResults) {
+          if (r) results.push(r);
+        }
       }
-    }
 
-    for (const ct of classified.sequential) {
-      const call = calls.find((c) => c.toolCallId === ct.toolCallId);
-      if (!call) continue;
-      const r = await this._execOne(call.toolCallId, call.toolName, call.args, sessionId, onBefore);
-      results.push(r);
+      for (const ct of classified.sequential) {
+        const call = calls.find((c) => c.toolCallId === ct.toolCallId);
+        if (!call) continue;
+        const r = await this._execOne(call.toolCallId, call.toolName, call.args, sessionId, onBefore);
+        results.push(r);
+      }
+    } finally {
+      this.batchDepth = prevDepth;
     }
 
     if (onAfter) {
@@ -203,7 +310,7 @@ export class EnhancedToolExecutor extends ToolExecutor {
     }
 
     try {
-      let result = await this.execute(toolName, args, sessionId);
+      let result = await this.executeDirect(toolName, args, sessionId);
 
       // ─── Phase 3: Auto-healing error recovery for PATH_NOT_FOUND ───
       if (!result.success && (result.error === 'PATH_NOT_FOUND' || result.output?.includes('not found'))) {
@@ -230,7 +337,7 @@ export class EnhancedToolExecutor extends ToolExecutor {
               
               // Update arguments with resolved path and retry
               const updatedArgs = { ...args, filePath: resolvedPath };
-              const retryResult = await this.execute(toolName, updatedArgs, sessionId);
+              const retryResult = await this.executeDirect(toolName, updatedArgs, sessionId);
               
               if (retryResult.success) {
                 getLogger().info('AUTO_HEALING', `Operation succeeded after path resolution`);
@@ -281,9 +388,11 @@ export class EnhancedToolExecutor extends ToolExecutor {
 
   private buildToolMeta(toolName: string): ToolDefinition {
     const t = this._registry.get(toolName);
+    // Prefer registry id for classification; keep toolName as fallback key
+    // so SAFE_PARALLEL sets keyed by id (e.g. "glob") still match.
     return {
-      id: toolName,
-      name: toolName,
+      id: t?.id ?? toolName,
+      name: t?.id ?? toolName,
       description: t?.description ?? '',
       modelDescription: t?.modelDescription ?? '',
       category: t?.category ?? 'ai_meta',

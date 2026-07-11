@@ -353,4 +353,17 @@ export const benchmarkRunSchema = z.object({
   tag: z.string().optional(),
 });
 
+export const createCanvasSchema = z.object({
+  sessionId: z.string().min(1),
+  title: z.string().optional(),
+  contentMarkdown: z.string().optional(),
+  contentTsx: z.string().optional(),
+  contentFormat: z.enum(['markdown', 'canvas_tsx']).optional(),
+  messageId: z.string().optional(),
+  sourceRole: z.enum(['user', 'assistant', 'system']).optional(),
+}).refine(
+  (v) => Boolean(v.contentTsx?.trim() || v.contentMarkdown?.trim()),
+  { message: 'contentTsx or contentMarkdown is required' },
+);
+
 

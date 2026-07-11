@@ -1,17 +1,85 @@
+import { useRef, useState } from 'react';
 import Box from '@mui/material/Box';
+import ButtonBase from '@mui/material/ButtonBase';
+import { chartSpecFromTable } from '@agentx/shared/browser';
 import { colors, alphaColor } from '../theme';
+import { ChartBlock } from '../chat/ChartBlock';
 
 // ─── Table ───
 
-export function StyledTableWrapper({ children }: { children: React.ReactNode }) {
+export function StyledTableWrapper({ children, sx }: { children: React.ReactNode; sx?: object }) {
   return (
-    <Box sx={tableContainerSx}>
+    <Box sx={{ ...tableContainerSx, ...sx }}>
       <Box component="table" sx={tableInnerSx}>
         {children}
       </Box>
     </Box>
   );
 }
+
+function readTableMatrix(table: HTMLTableElement): { headers: string[]; rows: string[][] } {
+  const headerCells = table.querySelectorAll('thead th');
+  let headers: string[];
+  let bodyRows: Element[];
+  if (headerCells.length > 0) {
+    headers = [...headerCells].map((el) => el.textContent?.trim() ?? '');
+    bodyRows = [...table.querySelectorAll('tbody tr')];
+  } else {
+    const allRows = [...table.querySelectorAll('tr')];
+    if (allRows.length < 2) return { headers: [], rows: [] };
+    headers = [...(allRows[0]?.querySelectorAll('th,td') ?? [])].map((el) => el.textContent?.trim() ?? '');
+    bodyRows = allRows.slice(1);
+  }
+  const rows = bodyRows.map((tr) =>
+    [...tr.querySelectorAll('td,th')].map((td) => td.textContent?.trim() ?? ''),
+  );
+  return { headers, rows };
+}
+
+/** GFM table with optional “View as chart” when numeric columns are present. */
+export function ChartableTableWrapper({ children }: { children: React.ReactNode }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [chartJson, setChartJson] = useState<string | null>(null);
+
+  const tryChart = () => {
+    const table = wrapRef.current?.querySelector('table');
+    if (!table) return;
+    const { headers, rows } = readTableMatrix(table);
+    const spec = chartSpecFromTable(headers, rows);
+    if (!spec) {
+      setChartJson(null);
+      return;
+    }
+    setChartJson((prev) => (prev ? null : JSON.stringify(spec)));
+  };
+
+  return (
+    <Box sx={{ my: 1.5 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 0.35 }}>
+        <ButtonBase
+          onClick={tryChart}
+          sx={{
+            px: 0.75,
+            py: 0.25,
+            borderRadius: 0.5,
+            fontSize: '0.58rem',
+            fontFamily: "'JetBrains Mono', monospace",
+            color: chartJson ? colors.accent.blue : colors.text.dim,
+            border: `1px solid ${colors.border.subtle}`,
+            '&:hover': { color: colors.accent.blue, borderColor: colors.border.default },
+          }}
+        >
+          {chartJson ? 'Hide chart' : 'View as chart'}
+        </ButtonBase>
+      </Box>
+      <Box ref={wrapRef}>
+        <StyledTableWrapper sx={{ my: 0 }}>{children}</StyledTableWrapper>
+      </Box>
+      {chartJson && <ChartBlock code={chartJson} language="chart" />}
+    </Box>
+  );
+}
+
 
 // ─── Lists ───
 
