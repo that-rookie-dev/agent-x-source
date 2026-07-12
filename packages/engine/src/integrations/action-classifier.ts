@@ -72,7 +72,7 @@ export function integrationToolRiskLevel(
   if (isReadOnlyIntegrationTool(toolName, provider)) {
     return 'low';
   }
-  if (['create', 'update', 'send', 'post', 'write', 'set', 'add', 'put', 'patch'].some((w) => normalized.includes(w))) {
+  if (['create', 'update', 'write', 'set', 'add', 'put', 'patch'].some((w) => normalized.includes(w))) {
     return 'medium';
   }
   return 'high';

@@ -41,28 +41,126 @@ const PDF_COLOR_PROPS = [
   'text-decoration-color',
 ] as const;
 
-/** Inline computed rgb colors so html2canvas never parses color()/color-mix() from stylesheets. */
-function inlineComputedColorsForPdf(cloneRoot: HTMLElement, sourceRoot: HTMLElement): void {
+const PDF_SHADOW_PROPS = ['box-shadow', 'text-shadow'] as const;
+const PDF_BACKGROUND_PROPS = ['background', 'background-image'] as const;
+
+const MODERN_COLOR_RE = /(?:oklch|oklab|lab|lch|color-mix|color)\s*\((?:[^()]*|\([^)]*\))*\)/i;
+const MODERN_COLOR_RE_GLOBAL = new RegExp(MODERN_COLOR_RE.source, 'gi');
+
+/** Build a normalizer that converts any CSS color to an html2canvas-safe rgb/rgba string. */
+function createColorNormalizer(doc: Document): (_value: string, _fallbackColor?: string) => string | null {
+  const canvas = doc.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const cache = new Map<string, string | null>();
+  if (!ctx) return (_value: string, _fallbackColor?: string) => null;
+
+  return (value: string, fallbackColor?: string): string | null => {
+    const key = value + (fallbackColor ? `|${fallbackColor}` : '');
+    const cached = cache.get(key);
+    if (cached !== undefined) return cached;
+
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed || trimmed === 'none') {
+      cache.set(key, null);
+      return null;
+    }
+    if (trimmed === 'transparent') {
+      const out = 'rgba(0, 0, 0, 0)';
+      cache.set(key, out);
+      return out;
+    }
+    if (trimmed === 'currentcolor' || trimmed === 'invert') {
+      const out = fallbackColor || 'rgb(0, 0, 0)';
+      cache.set(key, out);
+      return out;
+    }
+
+    // html2canvas already handles legacy rgb/rgba/hex/hsl/hsla and named colors.
+    if (
+      /^rgba?\s*\(/.test(trimmed) ||
+      /^#[0-9a-f]{3,8}$/.test(trimmed) ||
+      /^hsla?\s*\(/.test(trimmed) ||
+      /^[a-z]+$/.test(trimmed)
+    ) {
+      cache.set(key, value);
+      return value;
+    }
+
+    // Use the canvas' CSS color parser to convert modern color functions.
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = value;
+    const parsed = ctx.fillStyle;
+    if (parsed && !MODERN_COLOR_RE.test(parsed)) {
+      cache.set(key, parsed);
+      return parsed;
+    }
+
+    // The canvas serialized the color as another modern function (e.g. color(srgb ...)).
+    // Sample the rendered pixel to get a safe sRGB representation.
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = value;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    const out = a === 255 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${a / 255})`;
+    cache.set(key, out);
+    return out;
+  };
+}
+
+/** Replace any color()/color-mix()/oklch() value in a CSS value string with html2canvas-safe rgb/rgba. */
+function normalizeColorValues(
+  value: string,
+  fallbackColor: string,
+  normalizeColor: (_value: string, _fallbackColor?: string) => string | null,
+): string | null {
+  if (!value || value === 'none') return null;
+  let normalized = value.replace(MODERN_COLOR_RE_GLOBAL, (match) => normalizeColor(match) || 'rgb(0, 0, 0)');
+  if (fallbackColor) {
+    normalized = normalized.replace(/\bcurrentcolor\b/gi, fallbackColor);
+  }
+  return normalized;
+}
+
+/** Inline computed rgb/rgba colors so html2canvas never parses color()/color-mix()/oklch() from stylesheets. */
+function inlineComputedColorsForPdf(cloneRoot: HTMLElement): void {
   const win = cloneRoot.ownerDocument.defaultView;
   if (!win) return;
 
-  const pairs: Array<[Element, Element]> = [[sourceRoot, cloneRoot]];
-  const sourceNodes = sourceRoot.querySelectorAll('*');
-  const cloneNodes = cloneRoot.querySelectorAll('*');
-  for (let i = 0; i < sourceNodes.length; i++) {
-    pairs.push([sourceNodes[i]!, cloneNodes[i]!]);
-  }
+  const normalizeColor = createColorNormalizer(cloneRoot.ownerDocument);
+  const elements = [cloneRoot, ...cloneRoot.querySelectorAll('*')] as HTMLElement[];
 
-  for (const [src, clone] of pairs) {
-    if (!(src instanceof HTMLElement) || !(clone instanceof HTMLElement)) continue;
-    const computed = win.getComputedStyle(src);
-    for (const prop of PDF_COLOR_PROPS) {
+  for (const clone of elements) {
+    if (!(clone instanceof HTMLElement)) continue;
+    const computed = win.getComputedStyle(clone);
+    const color = normalizeColor(computed.getPropertyValue('color'));
+    if (color) clone.style.setProperty('color', color);
+    const fallbackColor = color || 'rgb(0, 0, 0)';
+
+    for (let i = 1; i < PDF_COLOR_PROPS.length; i++) {
+      const prop = PDF_COLOR_PROPS[i]!;
       const value = computed.getPropertyValue(prop);
-      if (value) clone.style.setProperty(prop, value);
+      const normalized = normalizeColor(value, fallbackColor);
+      if (normalized) clone.style.setProperty(prop, normalized);
     }
-    const boxShadow = computed.boxShadow;
-    if (boxShadow && boxShadow !== 'none') {
-      clone.style.boxShadow = boxShadow;
+
+    for (const prop of PDF_SHADOW_PROPS) {
+      const value = computed.getPropertyValue(prop);
+      if (value && value !== 'none') {
+        const normalized = normalizeColorValues(value, fallbackColor, normalizeColor);
+        if (normalized) clone.style.setProperty(prop, normalized);
+      }
+    }
+
+    for (const prop of PDF_BACKGROUND_PROPS) {
+      const value = computed.getPropertyValue(prop);
+      if (value && value !== 'none') {
+        const normalized = normalizeColorValues(value, fallbackColor, normalizeColor);
+        if (normalized && normalized !== value) {
+          clone.style.setProperty(prop, normalized);
+        }
+      }
     }
   }
 }
@@ -76,17 +174,19 @@ export async function exportElementToPdfBlob(root: HTMLElement): Promise<Blob> {
 
   await new Promise((r) => setTimeout(r, 400));
 
+  const backgroundColor = getComputedStyle(root).backgroundColor || '#ffffff';
+
   const canvas = await html2canvas(root, {
     scale: 2,
     useCORS: true,
     logging: false,
-    backgroundColor: getComputedStyle(root).backgroundColor || '#ffffff',
+    backgroundColor,
     windowWidth: root.scrollWidth,
     windowHeight: root.scrollHeight,
     onclone: (doc) => {
       const cloneRoot = doc.querySelector('[data-markdown-export-root]');
       if (cloneRoot instanceof HTMLElement) {
-        inlineComputedColorsForPdf(cloneRoot, root);
+        inlineComputedColorsForPdf(cloneRoot);
       }
     },
   });
@@ -103,12 +203,19 @@ export async function exportElementToPdfBlob(root: HTMLElement): Promise<Blob> {
   let heightLeft = imgHeight;
   let position = margin;
 
+  const fillPageBackground = () => {
+    pdf.setFillColor(backgroundColor);
+    pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+  };
+
+  fillPageBackground();
   pdf.addImage(imgData, 'PNG', margin, position, imgWidth, imgHeight);
   heightLeft -= pageHeight - margin * 2;
 
   while (heightLeft > 0) {
     position = margin - (imgHeight - heightLeft);
     pdf.addPage();
+    fillPageBackground();
     pdf.addImage(imgData, 'PNG', margin, position, imgWidth, imgHeight);
     heightLeft -= pageHeight - margin * 2;
   }

@@ -46,4 +46,15 @@ export const COMMUNICATION_CANDIDATES = [
     envLabel: 'WhatsApp Access Token',
     transact: true,
   }),
+  candidateStdio({
+    id: 'slack',
+    name: 'Slack',
+    category: 'communication',
+    pkg: '@modelcontextprotocol/server-slack',
+    description: 'Read channels, search messages, and post updates to Slack.',
+    icon: 'slack',
+    website: 'https://slack.com',
+    envKey: 'SLACK_BOT_TOKEN',
+    envLabel: 'Slack Bot Token',
+  }),
 ];

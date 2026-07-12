@@ -134,6 +134,24 @@ const SERVICE_INTENTS: ReadonlyArray<{
       /\b(?:my\s+)?(?:postgres|postgresql|redis)\s+(?:db|database|server|instance)\b/i,
     ],
   },
+  {
+    category: 'slack',
+    providerIds: ['slack'],
+    reason: 'Slack request — requires Slack MCP',
+    patterns: [/\bslack\b/i],
+  },
+  {
+    category: 'discord',
+    providerIds: ['discord'],
+    reason: 'Discord request — requires Discord MCP',
+    patterns: [/\bdiscord\b/i],
+  },
+  {
+    category: 'telegram',
+    providerIds: ['telegram'],
+    reason: 'Telegram request — requires Telegram MCP',
+    patterns: [/\btelegram\b/i],
+  },
 ];
 
 /** Generic “my account / workspace” cues combined with a catalog provider mention. */

@@ -337,7 +337,7 @@ export class SessionManager {
   }
 
   /** Keep the active session row aligned with the global runtime provider/model/mode. */
-  syncActiveSessionRuntime(updates: Pick<Session, 'providerId' | 'modelId' | 'mode'> & Partial<Session>): void {
+  syncActiveSessionRuntime(updates: Partial<Pick<Session, 'providerId' | 'modelId' | 'mode'>>): void {
     if (!this.activeSession) return;
     const patch: Partial<Session> = {};
     if (updates.providerId && updates.providerId !== this.activeSession.providerId) {

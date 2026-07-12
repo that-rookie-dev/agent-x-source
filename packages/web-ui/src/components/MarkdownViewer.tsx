@@ -59,7 +59,7 @@ export function MarkdownViewer({ document, contentMarkdown }: Props) {
             {document.title}
           </Typography>
           <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", mt: 0.25 }}>
-            {new Date(document.createdAt).toLocaleString()} · session {document.sessionId.slice(-8)}
+            {new Date(document.createdAt).toLocaleString()} · session {document.sessionId ? document.sessionId.slice(-8) : 'unknown'}
           </Typography>
         </Box>
         <Button

@@ -6,7 +6,7 @@ import {
   notifyToolsForChannels,
   resolveAutomationNotifyChannels,
 } from '@agentx/engine';
-import { getLogger, isChannelSessionId, parseChannelBindingFromSessionId, type ChannelBindingId } from '@agentx/shared';
+import { getLogger, parseChannelBindingFromSessionId, type ChannelBindingId } from '@agentx/shared';
 import { getEngine, getOrCreateAgent, ensureChannelAgent } from '../engine.js';
 import { getTelegramRuntimeHints } from '../channels-sync.js';
 import { startPgBoss, stopPgBoss } from './boss.js';

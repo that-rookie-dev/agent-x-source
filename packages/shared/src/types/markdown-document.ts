@@ -3,7 +3,8 @@ export type MarkdownDocumentFormat = 'markdown' | 'legacy_tsx';
 
 export interface MarkdownDocumentRecord {
   id: string;
-  sessionId: string;
+  /** The session that created this document. Becomes null if that session is deleted, so the document survives. */
+  sessionId: string | null;
   messageId?: string | null;
   title: string;
   excerpt: string;

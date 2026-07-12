@@ -15,7 +15,7 @@ import type {
   QuestionnaireRecord,
   ClientSituation,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, resolveContinuationInstruction, detectIncompleteLastTurn, isContinuationTrigger, mergeChannelLinkedMessages, resolveChannelResumeStateSessionId, parseChannelBindingFromSessionId, type SessionResumeState, type PermissionHandlerResult, normalizePermissionHandlerResult } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, resolveContinuationInstruction, detectIncompleteLastTurn, isContinuationTrigger, mergeChannelLinkedMessages, resolveChannelResumeStateSessionId, parseChannelBindingFromSessionId, type SessionResumeState, type PermissionHandlerResult } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
@@ -3077,6 +3077,9 @@ Rules:
       } catch (err) {
         streamError = err instanceof Error ? err : new Error(String(err));
         getLogger().warn('AGENT', `streamText failed: ${streamError.message}`);
+        if (streamError.name === 'AbortError') {
+          throw streamError;
+        }
       }
 
       // Fallback: if stream ended without finish event, emit one now to ensure message is recorded
@@ -3846,8 +3849,8 @@ Rules:
   }
 
   /**
-   * Prompt for tools a scheduled automation will need before registration.
-   * Requires allow_always grants so the worker can run without interactive prompts.
+   * Grant tools a scheduled automation will need without prompting.
+   * Permissions are persisted so the worker can run without interactive prompts.
    */
   async ensureAutomationToolsApproved(
     toolIds: string[],
@@ -3855,79 +3858,13 @@ Rules:
     const executor = this.toolExecutor;
     if (!executor || toolIds.length === 0) return { ok: true };
 
-    const denied: string[] = [];
     const unique = [...new Set(toolIds)];
-
-    // Channel-originated automations run unattended — grant tools without a web-only prompt.
-    if (this.isMessagingChannelContext()) {
-      for (const toolId of unique) {
-        const existing = executor.getPermissionManager().check(toolId, '*')
-          ?? executor.getPermissionManager().check(toolId);
-        if (existing === 'allow_always') continue;
-        executor.getPermissionManager().grant(toolId, 'allow_always');
-        this.persistPermissionGrant(toolId, 'allow_always');
-      }
-      return { ok: true };
-    }
-
-    const channelHandler = executor.getChannelPermissionRequestHandler?.();
-
     for (const toolId of unique) {
       const existing = executor.getPermissionManager().check(toolId, '*')
         ?? executor.getPermissionManager().check(toolId);
       if (existing === 'allow_always') continue;
-
-      const tool = this.toolRegistry?.get(toolId);
-      const riskLevel = tool?.riskLevel ?? 'medium';
-
-      let choice: 'allow_once' | 'allow_always' | 'deny';
-      if (channelHandler) {
-        this.emit({
-          type: 'permission_required',
-          requestId: randomUUID(),
-          tool: toolId,
-          path: '*',
-          riskLevel,
-          forAutomation: true,
-        });
-        const result = await channelHandler(toolId, '*', riskLevel, { forAutomation: true });
-        choice = normalizePermissionHandlerResult(result).decision;
-      } else {
-        choice = await new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-          const requestId = randomUUID();
-          this.pendingPermissions.set(requestId, {
-            resolve: (result) => resolve(normalizePermissionHandlerResult(result).decision),
-            toolName: toolId,
-            path: '*',
-            riskLevel,
-          });
-          this.emit({
-            type: 'permission_required',
-            requestId,
-            tool: toolId,
-            path: '*',
-            riskLevel,
-            forAutomation: true,
-          });
-        });
-      }
-
-      if (choice === 'deny') {
-        denied.push(toolId);
-        continue;
-      }
-      if (choice === 'allow_once' || choice === 'allow_always') {
-        executor.getPermissionManager().grant(toolId, 'allow_always');
-        this.persistPermissionGrant(toolId, 'allow_always');
-      }
-    }
-
-    if (denied.length > 0) {
-      return {
-        ok: false,
-        denied,
-        error: `User denied tools required for this automation: ${denied.join(', ')}`,
-      };
+      executor.getPermissionManager().grant(toolId, 'allow_always');
+      this.persistPermissionGrant(toolId, 'allow_always');
     }
     return { ok: true };
   }

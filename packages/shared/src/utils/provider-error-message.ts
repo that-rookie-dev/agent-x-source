@@ -11,7 +11,7 @@ function normalizeWhitespace(text: string): string {
     .replace(/\\n/g, ' ')
     .replace(/\\t/g, ' ')
     .replace(/\\r/g, '')
-    .replace(/[\x00-\x1F\x7F]/g, '')
+    .replace(/\p{Cc}/gu, '')
     .replace(/\s+/g, ' ')
     .replace(/\s*Please retry in [\d.]+s\.?\s*$/i, '')
     .trim();

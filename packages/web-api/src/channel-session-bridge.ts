@@ -11,7 +11,7 @@ import {
   type Session,
   type SessionResumeState,
 } from '@agentx/shared';
-import { setChannelInboundAgentResolver } from '@agentx/engine';
+import { setChannelInboundAgentResolver, type Agent } from '@agentx/engine';
 import { getTelegramInboundStatus, getTelegramRuntimeHints } from './channels-sync.js';
 import { ensureChannelAgent, getEngine, syncChannelSuperSessionContext } from './engine.js';
 
@@ -128,7 +128,7 @@ export function resolveBoundSessionForChannel(
   return resolveUiSessionForChannel(eng);
 }
 
-export function isTelegramChannelOperational(eng: ReturnType<typeof getEngine>): boolean {
+export function isTelegramChannelOperational(_eng: ReturnType<typeof getEngine>): boolean {
   const status = getTelegramInboundStatus();
   return Boolean(status.inboundReady && status.bridgeRunning);
 }

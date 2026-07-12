@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { IntegrationHubSettings, IntegrationProvider } from '@agentx/shared';
 import { getDataDir, getLogger } from '@agentx/shared';
-import { listCatalogProviders } from './registry.js';
+import { getCatalogProvider, listCatalogProviders } from './registry.js';
 import { enrichCatalogProviders } from './setup-wizard.js';
+import { withProviderHighlights } from './provider-highlights.js';
 
 const logger = getLogger();
 
@@ -90,7 +91,10 @@ export function listAllProviders(options?: { includeCandidates?: boolean }): Int
 }
 
 export function getProviderById(id: string): IntegrationProvider | undefined {
-  return listAllProviders().find((provider) => provider.id === id);
+  const remote = remoteProviders.find((provider) => provider.id === id);
+  const provider = remote ?? getCatalogProvider(id);
+  if (!provider) return undefined;
+  return enrichCatalogProviders([withProviderHighlights(provider)])[0];
 }
 
 export function isProviderAllowed(_providerId: string): boolean {
