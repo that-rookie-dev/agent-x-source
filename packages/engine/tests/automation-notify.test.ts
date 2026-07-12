@@ -15,7 +15,7 @@ const baseCfg = {
 } as AgentXConfig;
 
 describe('resolveAutomationNotifyChannels', () => {
-  it('auto-includes telegram for channel super-session without questionnaire', () => {
+  it('includes telegram origin when resolved from channel session', () => {
     const cfg: AgentXConfig = {
       ...baseCfg,
       channels: {
@@ -34,6 +34,10 @@ describe('resolveAutomationNotifyChannels', () => {
 
   it('infers telegram origin from __channel__ session id', () => {
     expect(inferAutomationSourceChannel('web', '__channel__')).toBe('telegram');
+  });
+
+  it('infers slack origin from per-channel session id', () => {
+    expect(inferAutomationSourceChannel('web', '__channel__:slack')).toBe('slack');
   });
 
   it('effectiveAutomationNotifyChannels adds origin even when task only has in_app', () => {

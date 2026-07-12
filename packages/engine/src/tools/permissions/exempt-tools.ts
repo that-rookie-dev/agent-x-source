@@ -14,6 +14,12 @@ export const PERMISSION_EXEMPT_WEB_TOOLS = new Set([
   'web_browse',
 ]);
 
+/** Scheduling catalog tools that are safe to run without an interactive prompt. */
+export const PERMISSION_EXEMPT_AUTOMATION_TOOLS = new Set([
+  'automation_register',
+  'automation_list',
+]);
+
 /**
  * True when a tool may run without an interactive permission prompt.
  * Only read/analyze/fetch tools qualify — shell, writes, and integration
@@ -21,6 +27,7 @@ export const PERMISSION_EXEMPT_WEB_TOOLS = new Set([
  */
 export function isPermissionExemptTool(toolId: string): boolean {
   if (PERMISSION_EXEMPT_WEB_TOOLS.has(toolId)) return true;
+  if (PERMISSION_EXEMPT_AUTOMATION_TOOLS.has(toolId)) return true;
   const parsed = parseIntegrationToolId(toolId);
   if (parsed) {
     const provider = getIntegrationProvider(parsed.providerId);

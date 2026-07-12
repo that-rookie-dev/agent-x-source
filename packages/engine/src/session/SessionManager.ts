@@ -336,6 +336,23 @@ export class SessionManager {
     this.updateSessionRecord(this.activeSession.id, updates);
   }
 
+  /** Keep the active session row aligned with the global runtime provider/model/mode. */
+  syncActiveSessionRuntime(updates: Pick<Session, 'providerId' | 'modelId' | 'mode'> & Partial<Session>): void {
+    if (!this.activeSession) return;
+    const patch: Partial<Session> = {};
+    if (updates.providerId && updates.providerId !== this.activeSession.providerId) {
+      patch.providerId = updates.providerId;
+    }
+    if (updates.modelId && updates.modelId !== this.activeSession.modelId) {
+      patch.modelId = updates.modelId;
+    }
+    if (updates.mode && updates.mode !== this.activeSession.mode) {
+      patch.mode = updates.mode;
+    }
+    if (Object.keys(patch).length === 0) return;
+    this.updateSession(patch);
+  }
+
   async endSession(): Promise<void> {
     if (!this.activeSession) return;
     this.stopAutoSave();

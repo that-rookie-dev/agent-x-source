@@ -303,7 +303,7 @@ async function startTelegramInbound(token: string): Promise<void> {
 
   if (process.env['AGENTX_DAEMON_HANDLES_TG']) return;
 
-  const channelAgent = ensureChannelAgent();
+  const channelAgent = ensureChannelAgent('telegram');
 
   const claimOwner = (userId: number, chatId: number) => {
     persistTelegramSettings({
@@ -542,8 +542,8 @@ export async function sendTelegramGreeting(overrides?: {
     return { ok: false, error: 'Configure a provider and model before sending a greeting.' };
   }
 
-  const agent = ensureChannelAgent();
-  syncChannelSuperSessionContext(eng);
+  const agent = ensureChannelAgent('telegram');
+  syncChannelSuperSessionContext(eng, 'telegram');
 
   const nonce = randomUUID().slice(0, 8);
   let greeting: string;

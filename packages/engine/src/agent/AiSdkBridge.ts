@@ -4,7 +4,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAzure } from '@ai-sdk/azure';
-import { getLogger } from '@agentx/shared';
+import { getLogger, resolveMaxOutputTokens } from '@agentx/shared';
 import { createGroq } from '@ai-sdk/groq';
 import { createCohere } from '@ai-sdk/cohere';
 import { createMistral } from '@ai-sdk/mistral';
@@ -13,7 +13,7 @@ import { createPerplexity } from '@ai-sdk/perplexity';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, QuestionnairePayload } from '@agentx/shared';
-import { normalizeAskClarificationArgs } from '@agentx/shared';
+import { normalizeAskClarificationArgs, shouldUseQuestionnaireClarification, TEXT_CLARIFICATION_REJECTED_MESSAGE } from '@agentx/shared';
 import { isToolAllowedInPlanMode, buildPlanModeRestrictedToolHint, type PlanGatePromptProfile } from './plan-mode-utils.js';
 import { isCompactToolAllowed } from './context-profile.js';
 import {
@@ -22,6 +22,11 @@ import {
   createBridgeTools,
   resolveBridgeToolCall,
 } from '../tools/ProgressiveDisclosure.js';
+import {
+  resolveCommandCodeAnthropicBaseUrl,
+  resolveCommandCodeModelProtocol,
+  resolveCommandCodeOpenAiBaseUrl,
+} from '@agentx/shared';
 import { resolveGoogleNativeBaseUrl } from '../providers/google/gemini-metadata.js';
 
 /** Defaults for OpenAI-compatible chat paths only. Native SDK providers use their package defaults. */
@@ -105,15 +110,38 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       return perplexity(modelId);
     }
     // OpenAI-compatible vendors & gateways (documented base URLs — never native vendor SDKs)
+    case 'opencode':
+    case 'opencode-zen':
     case 'ollama':
     case 'lmstudio':
     case 'deepseek':
     case 'together':
     case 'moonshot':
-    case 'fireworks':
-    case 'opencode':
-    case 'opencode-zen':
-    case 'commandcode':
+    case 'fireworks': {
+      const resolvedUrl = baseURL || DEFAULT_BASE_URLS[activeProvider] || 'https://api.openai.com/v1';
+      const compat = createOpenAICompatible({
+        name: activeProvider,
+        apiKey,
+        baseURL: resolvedUrl,
+      });
+      return compat(modelId);
+    }
+    case 'commandcode': {
+      const protocol = resolveCommandCodeModelProtocol(modelId);
+      if (protocol === 'anthropic-messages') {
+        const anthropic = createAnthropic({
+          apiKey,
+          baseURL: resolveCommandCodeAnthropicBaseUrl(baseURL),
+        });
+        return anthropic(modelId);
+      }
+      const compat = createOpenAICompatible({
+        name: 'commandcode',
+        apiKey,
+        baseURL: resolveCommandCodeOpenAiBaseUrl(baseURL),
+      });
+      return compat(modelId);
+    }
     default: {
       const resolvedUrl = baseURL || DEFAULT_BASE_URLS[activeProvider] || 'https://api.openai.com/v1';
       const compat = createOpenAICompatible({
@@ -263,6 +291,9 @@ export function createAiSdkTools(
   // Helpers shared by dedicated tools and tool_call bridge (avoids toolkit stubs)
   const runAskClarification = async (args: Record<string, unknown>): Promise<string> => {
     const questionnaire = normalizeAskClarificationArgs(args as import('@agentx/shared').AskClarificationToolArgs);
+    if (!shouldUseQuestionnaireClarification(questionnaire)) {
+      return `[TOOL ERROR] ${TEXT_CLARIFICATION_REJECTED_MESSAGE}`;
+    }
     const response = await waitForClarification(questionnaire);
     return `User response: ${response}`;
   };
@@ -531,6 +562,7 @@ export async function* aiSdkStream(
       })),
       ...(tools ? { tools, stopWhen: stepCountIs(100), toolChoice: 'auto' as const } : {}),
       temperature: 0,
+      maxOutputTokens: resolveMaxOutputTokens(config.maxOutputTokens),
       abortSignal,
     });
 

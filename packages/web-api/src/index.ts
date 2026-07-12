@@ -7,8 +7,9 @@ import os from 'node:os';
 import { join, dirname, basename, resolve } from 'node:path';
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, createReadStream, renameSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, voiceConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported, resolveRuntimeSettings, normalizeClientSituation } from '@agentx/shared';
+import { generateId, VERSION, getDataDir, getConfigDir, getCacheDir, getHomeDir, getDefaultWorkspaceDir, isUserFacingSession, isAutomationSessionId, isChannelSessionId, authManager, getLogger, closeLogger, agentXConfigSchema, voiceConfigSchema, normalizeMessageForUi, buildPublicSystemCapabilities, isNeuralBrainSupported, resolveRuntimeSettings, normalizeClientSituation, isMemoryFabricSuperSession, resolveMemoryFabricSearchSessionFilter } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, clearEngine, getOrCreateAgent, ensureChannelAgent, getVitals, getAutonomyStatus, awaitEngineStorageReady, applyRuntimeSettings, isStorageDeferred, setStorageProgressCallback } from './engine.js';
+import { getMemoryFabricInstance } from '@agentx/engine';
 import { registerEmbeddedPostgresController, startEmbeddedPostgresViaBridge } from './pg-lifecycle-bridge.js';
 import { applyChannelsConfig, discoverTelegramBot, getTelegramInboundStatus, getTelegramRuntimeHints, restartTelegramInbound, saveVerifiedTelegram, sendTelegramGreeting } from './channels-sync.js';
 import { buildGraphRagSummarizer } from './distillation-generator.js';
@@ -42,7 +43,7 @@ import {
   getIngestionGovernorState,
 } from './ingestion-governor.js';
 import { createRateLimiter, startGlobalRateLimitCleanup, stopGlobalRateLimitCleanup } from './rate-limit.js';
-import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
+import { validate, chatMessageSchema, chatSteerSchema, permissionRespondSchema, permissionInstructSchema, permissionRespondBatchSchema, createSessionSchema, createCheckpointSchema, generateTitleSchema, crewSuggestionEvaluateSchema, crewSuggestionResolveSchema, crewChatSessionSchema, turnFeedbackSchema, clarificationRespondSchema, crewRosterPickerOfferSchema, crewRosterPickerUpdateSchema, sessionMessagesQuerySchema } from './validation.js';
 import { ProviderFactory, DiscordBridge, DiscordStore, SlackBridge, SlackStore, EmailBridge, Agent, getLogCollector, initLogCollector, healDatabaseStore, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, validateWebSearchProvider, isWebSearchAvailableForChat, PostgresStorageAdapter, MemoryFabric, IngestionQueue, IngestionWorker, OnnxEmbeddingProvider, setDeepSearchStageResult, ensureLoginShellPath, getBackgroundTaskPool, setMemoryFabricInstance, setEmbedderInstance, backfillChatMemoryFromSessions, resetCatalogSeedInflight } from '@agentx/engine';
 import type { ProviderId, AgentXConfig, CompletionRequest, Crew } from '@agentx/shared';
 import crypto from 'node:crypto';
@@ -1046,6 +1047,10 @@ app.post('/api/model/switch', (req, res) => {
       destroyAgent();
       const sess = eng.sessionManager.getActiveSession();
       if (sess) {
+        eng.sessionManager.syncActiveSessionRuntime({
+          providerId: config.provider.activeProvider,
+          modelId,
+        });
         createAgent(undefined, sess);
       }
       ensureSubscribed();
@@ -1059,6 +1064,13 @@ app.post('/api/model/switch', (req, res) => {
       eng.configManager.save(config);
       if (eng.agent) {
         eng.agent.switchModel(modelId, contextWindow);
+      }
+      const sess = eng.sessionManager.getActiveSession();
+      if (sess) {
+        eng.sessionManager.syncActiveSessionRuntime({
+          providerId: config.provider.activeProvider,
+          modelId,
+        });
       }
     }
 
@@ -1205,7 +1217,7 @@ app.post('/api/session/mode', (req, res) => {
     try {
       const sess = eng.sessionManager.getActiveSession();
       if (sess) {
-        eng.sessionManager.updateSession({ mode } as any);
+        eng.sessionManager.syncActiveSessionRuntime({ mode });
       }
     } catch (e) { /* best-effort */ }
     res.json({ ok: true, mode });
@@ -2299,6 +2311,19 @@ app.post('/api/permission/respond', validate(permissionRespondSchema), (req, res
   }
 });
 
+app.post('/api/permission/instruct', validate(permissionInstructSchema), (req, res) => {
+  try {
+    const { requestId, instruction } = req.body as { requestId: string; instruction: string };
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
+    agent.respondToPermissionInstruction(requestId, instruction);
+    res.json({ ok: true });
+  } catch (e: unknown) {
+    getLogger().error('POST_API_PERMISSION_INSTRUCT', e instanceof Error ? e : String(e));    res.status(400).json({ error: e instanceof Error ? e.message : 'instruct-failed' });
+  }
+});
+
 app.post('/api/permission/respond-batch', validate(permissionRespondBatchSchema), (req, res) => {
   try {
     const { choice } = req.body as { choice: 'allow_once' | 'allow_always' | 'deny' };
@@ -3297,6 +3322,53 @@ app.post('/api/sessions/:id/archive-messages', (req, res) => {
   }
 });
 
+// Hard-delete super-session content: messages + memory fabric (clean slate).
+app.post('/api/sessions/:id/purge-content', async (req, res) => {
+  try {
+    const sessionId = req.params['id']!;
+    const eng = getEngine();
+    const peek = eng.sessionManager.getSessionById(sessionId);
+    if (!peek) { res.status(404).json({ error: 'not-found' }); return; }
+    if (!isMemoryFabricSuperSession(sessionId, peek.contextKind)) {
+      res.status(403).json({ error: 'super-session-only' });
+      return;
+    }
+    const store = (eng.sessionManager as unknown as {
+      store: { purgeSessionContent?: (id: string) => void };
+    }).store;
+    if (!store.purgeSessionContent) {
+      res.status(501).json({ error: 'purge-not-supported' });
+      return;
+    }
+    store.purgeSessionContent(sessionId);
+
+    const fabric = getMemoryFabricInstance();
+    let memoryWiped = { deletedNodes: 0, deletedEdges: 0 };
+    if (fabric) {
+      const scope = resolveMemoryFabricSearchSessionFilter(sessionId, peek.contextKind);
+      memoryWiped = await fabric.wipeMemoryForSessionScope(scope);
+    }
+
+    const agent = eng.agent;
+    if (agent && (agent as unknown as { sessionId: string }).sessionId === sessionId) {
+      agent.clearHistory();
+      agent.clearClarificationResumeState?.();
+      try {
+        eng.sessionManager.persistSessionFields(sessionId, { tokensUsed: 0, compactionCount: 0 });
+      } catch { /* best-effort */ }
+    }
+
+    getLogger().info(
+      'PURGE_SUPER_SESSION',
+      `session=${sessionId.slice(0, 8)} nodes=${memoryWiped.deletedNodes} edges=${memoryWiped.deletedEdges}`,
+    );
+    res.json({ ok: true, memoryWiped });
+  } catch (e) {
+    getLogger().error('PURGE_SUPER_SESSION', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: 'purge-failed' });
+  }
+});
+
 app.post('/api/sessions/:id/restore', async (req, res) => {
   try {
     const sessionId = req.params['id']!;
@@ -3304,7 +3376,7 @@ app.post('/api/sessions/:id/restore', async (req, res) => {
     const perRole = typeof perRoleRaw === 'number'
       ? Math.min(50, Math.max(1, Math.floor(perRoleRaw)))
       : undefined;
-    if (sessionId === '__channel__' || isAutomationSessionId(sessionId)) {
+    if (isChannelSessionId(sessionId) || isAutomationSessionId(sessionId)) {
       res.status(403).json({ error: 'internal-session' });
       return;
     }
@@ -3898,7 +3970,7 @@ app.post('/api/telegram/start', async (req, res) => {
       eng.gateway = new Gateway();
       try {
         const tgPlugin = eng.gateway.registerTelegram(token);
-        tgPlugin.setAgent(ensureChannelAgent());
+        tgPlugin.setAgent(ensureChannelAgent('telegram'));
         await eng.gateway.startChannel('telegram');
         eng.telegramBridge = eng.gateway.getTelegramBridge();
         res.json({ ok: true, message: 'Telegram bot started and listening.' });

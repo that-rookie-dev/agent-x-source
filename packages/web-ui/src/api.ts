@@ -475,6 +475,11 @@ export const sessions = {
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
   // Soft-archive: hides messages from the UI without deleting DB rows or memory embeddings
   archiveMessages: (id: string) => request<{ ok: boolean }>(`/sessions/${id}/archive-messages`, { method: 'POST' }),
+  // Hard-delete super-session messages + memory fabric (irreversible clean slate)
+  purgeContent: (id: string) => request<{ ok: boolean; memoryWiped?: { deletedNodes: number; deletedEdges: number } }>(
+    `/sessions/${id}/purge-content`,
+    { method: 'POST' },
+  ),
   restore: (id: string, opts?: { perRole?: number }) =>
     request<{
       session: SessionInfo;
@@ -556,6 +561,8 @@ export const sessions = {
 export const permissions = {
   respond: (requestId: string, choice: 'allow_once' | 'allow_always' | 'deny') =>
     request<{ ok: boolean }>('/permission/respond', { method: 'POST', body: JSON.stringify({ requestId, choice }) }),
+  instruct: (requestId: string, instruction: string) =>
+    request<{ ok: boolean }>('/permission/instruct', { method: 'POST', body: JSON.stringify({ requestId, instruction }) }),
   respondBatch: (choice: 'allow_once' | 'allow_always' | 'deny') =>
     request<{ ok: boolean }>('/permission/respond-batch', { method: 'POST', body: JSON.stringify({ choice }) }),
 };

@@ -1426,6 +1426,41 @@ export class MemoryFabric {
     return { deleted: rowCount ?? 0 };
   }
 
+  /**
+   * Remove memory fabric nodes (and connected edges) for a session scope.
+   * sessionId null = super-session global bucket (session_id IS NULL).
+   */
+  async wipeMemoryForSessionScope(sessionId: string | null): Promise<{ deletedNodes: number; deletedEdges: number }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const sessionClause = sessionId === null ? 'session_id IS NULL' : 'session_id = $1';
+      const params = sessionId === null ? [] : [sessionId];
+      const { rowCount: deletedEdges } = await client.query(
+        `DELETE FROM memory_edges
+         WHERE source_node_id IN (SELECT id FROM memory_nodes WHERE ${sessionClause})
+            OR target_node_id IN (SELECT id FROM memory_nodes WHERE ${sessionClause})`,
+        params,
+      );
+      await client.query(
+        `DELETE FROM neuron_activity
+         WHERE node_id IN (SELECT id FROM memory_nodes WHERE ${sessionClause})`,
+        params,
+      );
+      const { rowCount: deletedNodes } = await client.query(
+        `DELETE FROM memory_nodes WHERE ${sessionClause}`,
+        params,
+      );
+      await client.query('COMMIT');
+      return { deletedNodes: deletedNodes ?? 0, deletedEdges: deletedEdges ?? 0 };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
   async wipeBenchmark(): Promise<{ deletedNodes: number; deletedEdges: number }> {
     const client = await this.pool.connect();
     try {

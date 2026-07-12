@@ -586,10 +586,23 @@ export class TelegramBridge {
   }
 
   /**
-   * Send a message with inline keyboard buttons.
+   * Send a message with inline keyboard buttons (single row).
    */
   async sendWithButtons(chatId: number, text: string, buttons: Array<{ text: string; callbackData: string }>): Promise<void> {
-    const inlineKeyboard = [buttons.map((b) => ({ text: b.text, callback_data: b.callbackData }))];
+    await this.sendWithButtonRows(chatId, text, [buttons]);
+  }
+
+  /**
+   * Send a message with inline keyboard button rows. Returns message_id when available.
+   */
+  async sendWithButtonRows(
+    chatId: number,
+    text: string,
+    rows: Array<Array<{ text: string; callbackData: string }>>,
+  ): Promise<number | null> {
+    const inlineKeyboard = rows.map((row) =>
+      row.map((b) => ({ text: b.text, callback_data: b.callbackData })),
+    );
     const result = await this.apiCall('sendMessage', {
       chat_id: chatId,
       text,
@@ -597,12 +610,52 @@ export class TelegramBridge {
       reply_markup: { inline_keyboard: inlineKeyboard },
     });
     if (!result.ok && result.description?.includes('parse')) {
-      await this.apiCall('sendMessage', {
+      const plain = await this.apiCall('sendMessage', {
         chat_id: chatId,
         text,
         reply_markup: { inline_keyboard: inlineKeyboard },
       });
+      if (!plain.ok) {
+        throw new Error(plain.description ?? 'Failed to send Telegram message with buttons');
+      }
+      return (plain.result?.message_id as number | undefined) ?? null;
     }
+    if (!result.ok) {
+      throw new Error(result.description ?? 'Failed to send Telegram message with buttons');
+    }
+    return (result.result?.message_id as number | undefined) ?? null;
+  }
+
+  /** Edit message text and inline keyboard rows. */
+  async editMessageButtonRows(
+    chatId: number,
+    messageId: number,
+    text: string,
+    rows: Array<Array<{ text: string; callbackData: string }>>,
+  ): Promise<boolean> {
+    const inlineKeyboard = rows.map((row) =>
+      row.map((b) => ({ text: b.text, callback_data: b.callbackData })),
+    );
+    const result = await this.apiCall('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      reply_markup: { inline_keyboard: inlineKeyboard },
+    });
+    if (result.ok) return true;
+    if (result.description?.includes('message is not modified')) return true;
+    if (result.description?.includes('parse')) {
+      const plain = await this.apiCall('editMessageText', {
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        reply_markup: { inline_keyboard: inlineKeyboard },
+      });
+      if (plain.ok) return true;
+      if (plain.description?.includes('message is not modified')) return true;
+    }
+    getLogger().warn('TELEGRAM', `editMessageButtonRows failed: ${result.description ?? 'unknown error'}`);
+    return false;
   }
 
   async sendMessage(chatId: number, text: string): Promise<void> {

@@ -47,17 +47,21 @@ import type { PartPersistFn } from '@agentx/engine';
 import { unsubscribeAgent } from './ws.js';
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
-import { getDataDir, getLogger, hydrateMessageHistoryEntries, isNeuralBrainSupported, isChannelSessionId } from '@agentx/shared';
+import { getDataDir, getLogger, hydrateMessageHistoryEntries, isNeuralBrainSupported, isChannelSessionId, CHANNEL_SESSION_ID, channelSessionIdForBinding, type ChannelBindingId } from '@agentx/shared';
 import os from 'node:os';
 import { resolveCrewPrivateHostForAgent } from './host-crew-session.js';
 import { persistClarificationResumeFromAgent } from './clarification-resume.js';
+import { sessionSettings } from './chat-helpers.js';
 import { DeferredStorageAdapter } from './deferred-storage.js';
 
 export interface EngineState {
   configManager: ConfigManager;
   sessionManager: SessionManager;
   agent: Agent | null;
+  /** @deprecated Use channelAgents — kept for Telegram bootstrap compatibility. */
   channelAgent: Agent | null;
+  /** One agent (transcript) per messaging surface: telegram, slack, discord, email. */
+  channelAgents?: Map<ChannelBindingId, Agent>;
   crewManager: CrewManager;
   toolkit: ReturnType<typeof createDefaultToolkit>;
   configured: boolean;
@@ -78,6 +82,8 @@ export interface EngineState {
   redisRuntime: RedisCacheRuntime | null;
   webhookRuntime: WebhookNotifierRuntime | null;
   channelSessionBindings?: Partial<Record<import('@agentx/shared').ChannelBindingId, import('@agentx/shared').ChannelSessionBinding>>;
+  /** Session-scoped agents for channel inbound (does not replace the active UI agent). */
+  boundSessionAgents?: Map<string, Agent>;
   dek: Buffer | null;
   integrationHub: IntegrationHub;
 }
@@ -287,6 +293,7 @@ export function getEngine(): EngineState {
     sessionManager,
     agent: null,
     channelAgent: null,
+    channelAgents: new Map(),
     channelSessionBindings: {},
     crewManager,
     toolkit,
@@ -521,6 +528,20 @@ export function createAgent(
 
   agent.setSessionManager(eng.sessionManager);
 
+  // Global config is the runtime source of truth — keep the session row in sync.
+  try {
+    eng.sessionManager.syncActiveSessionRuntime({
+      providerId: cfg.provider.activeProvider,
+      modelId: cfg.provider.activeModel,
+    });
+  } catch { /* best-effort */ }
+
+  // Keep in-memory sessionSettings aligned when Telegram or UI toggles mode.
+  agent.events.on((event) => {
+    if (event.type === 'plan_mode_exited') sessionSettings.mode = 'agent';
+    if (event.type === 'plan_mode_entered') sessionSettings.mode = 'plan';
+  });
+
   // Initialize Docker sandbox if enabled in config
   if (cfg.useSandbox) {
     try {
@@ -713,7 +734,7 @@ export function createAgent(
   const tgConfig = tgPlugin?.config ?? {};
   if (eng.gateway && tgPlugin?.enabled && tgConfig['botToken']) {
     try {
-      const channelAgent = ensureChannelAgent();
+      const channelAgent = ensureChannelAgent('telegram');
       const entry = (eng.gateway as unknown as { registry?: { getChannel?: (id: string) => { plugin?: TelegramChannelPlugin } | null } }).registry?.getChannel?.('telegram');
       const plugin = entry?.plugin;
       if (plugin && 'setAgent' in plugin) {
@@ -880,36 +901,68 @@ export function rewireTelegramChannelPermissions(eng?: ReturnType<typeof getEngi
 
 export function getOrCreateAgent(config?: AgentXConfig, session?: Session): Agent {
   const eng = getEngine();
-  if (eng.agent && !config) return eng.agent;
-  if (!session) {
-    const sess = eng.sessionManager.getActiveSession();
-    if (!sess) throw new Error('No active session. Create a session first.');
-    return createAgent(config, sess);
+  if (session) {
+    return getOrCreateBoundSessionAgent(session, config);
   }
-  return createAgent(config, session);
+  if (eng.agent && !config) return eng.agent;
+  const sess = eng.sessionManager.getActiveSession();
+  if (!sess) throw new Error('No active session. Create a session first.');
+  return createAgent(config, sess);
 }
 
-/** Align the channel super-session agent with the active UI workspace and crew roster. */
-export function syncChannelSuperSessionContext(eng?: ReturnType<typeof getEngine>): void {
-  const e = eng ?? getEngine();
-  const channelAgent = e.channelAgent as Agent | null | undefined;
-  if (!channelAgent) return;
+/** Resolve or create an agent for a specific session without hijacking the UI agent. */
+export function getOrCreateBoundSessionAgent(session: Session, config?: AgentXConfig): Agent {
+  const eng = getEngine();
+  if (eng.agent?.currentSessionId === session.id && !config) {
+    return eng.agent;
+  }
 
-  const bindings = Object.values(e.channelSessionBindings ?? {});
-  const preferredBinding = bindings
-    .sort((a, b) => (b.boundAt ?? '').localeCompare(a.boundAt ?? ''))[0];
-  const binding = preferredBinding?.sessionId
-    ? e.sessionManager.getSessionById(preferredBinding.sessionId)
-    : null;
-  const active = binding
+  const map = eng.boundSessionAgents ?? (eng.boundSessionAgents = new Map());
+  const cached = map.get(session.id);
+  if (cached && !config) {
+    try {
+      eng.sessionManager.syncActiveSessionRuntime({
+        providerId: eng.configManager.load().provider.activeProvider,
+        modelId: eng.configManager.load().provider.activeModel,
+      });
+    } catch { /* best-effort */ }
+    return cached;
+  }
+
+  eng.sessionManager.restoreSession(session.id);
+  const agent = createAgent(config, session, { attachToEngine: false });
+  map.set(session.id, agent);
+  return agent;
+}
+
+/** Align a channel super-session agent with its linked desktop workspace and crew roster. */
+export function syncChannelSuperSessionContext(
+  eng?: ReturnType<typeof getEngine>,
+  channel: ChannelBindingId = 'telegram',
+): void {
+  const e = eng ?? getEngine();
+  let channelAgent: Agent | null = e.channelAgents?.get(channel) ?? null;
+  if (!channelAgent) {
+    try {
+      channelAgent = ensureChannelAgent(channel);
+    } catch {
+      return;
+    }
+  }
+
+  const binding = e.channelSessionBindings?.[channel];
+  const bound = binding?.sessionId ? e.sessionManager.getSessionById(binding.sessionId) : null;
+  const active = bound
     ?? e.sessionManager.getActiveSession()
-    ?? (e.agent?.currentSessionId && e.agent.currentSessionId !== '__channel__'
+    ?? (e.agent?.currentSessionId && !isChannelSessionId(e.agent.currentSessionId)
       ? e.sessionManager.getSessionById(e.agent.currentSessionId)
       : null);
 
   if (active?.scopePath) {
     channelAgent.setScopePath(active.scopePath);
   }
+
+  channelAgent.setLinkedContextSessionId(active?.id ?? null);
 
   if (active?.id) {
     const crewStates = e.sessionManager.loadCrewStates(active.id);
@@ -930,31 +983,43 @@ export function syncChannelSuperSessionContext(eng?: ReturnType<typeof getEngine
   }
 }
 
-export function ensureChannelAgent(): Agent {
+export function ensureChannelAgent(channel: ChannelBindingId = 'telegram'): Agent {
   const eng = getEngine();
-  if (eng.channelAgent) return eng.channelAgent;
+  const map = eng.channelAgents ?? (eng.channelAgents = new Map());
+  const cached = map.get(channel);
+  if (cached) {
+    if (channel === 'telegram') eng.channelAgent = cached;
+    return cached;
+  }
 
   const cfg = eng.configManager.load();
-
-  const CHANNEL_SESSION_ID = '__channel__';
-  let session = eng.sessionManager.restoreSession(CHANNEL_SESSION_ID);
+  const sessionId = channelSessionIdForBinding(channel);
+  let session = eng.sessionManager.restoreSession(sessionId);
+  // Legacy single-bucket telegram transcript
+  if (!session && channel === 'telegram') {
+    session = eng.sessionManager.restoreSession(CHANNEL_SESSION_ID);
+  }
   if (!session) {
     session = eng.sessionManager.createSession(
       cfg.provider.activeProvider as ProviderId,
       cfg.provider.activeModel,
       process.cwd(),
-      CHANNEL_SESSION_ID,
+      sessionId,
     );
-  } else if (session.mode !== 'agent' || session.hyperdrive) {
-    try {
-      eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false } as never);
+  } else {
+    eng.sessionManager.restoreSession(session.id);
+    if (session.mode !== 'agent' || session.hyperdrive) {
+      try {
+        eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false } as never);
+      } catch { /* best-effort */ }
       session.mode = 'agent';
       session.hyperdrive = false;
-    } catch { /* best-effort */ }
+    }
   }
 
   const agent = createAgent(cfg, session, { attachToEngine: false });
-  eng.channelAgent = agent;
+  map.set(channel, agent);
+  if (channel === 'telegram') eng.channelAgent = agent;
   return agent;
 }
 
@@ -973,10 +1038,24 @@ export function clearEngine(): void {
     (state.agent as any).sessionLogger?.close();
     state.agent.endSession();
   }
+  if (state?.channelAgents) {
+    for (const agent of state.channelAgents.values()) {
+      (agent as any).sessionLogger?.close();
+      agent.endSession();
+    }
+    state.channelAgents.clear();
+  }
   if (state?.channelAgent) {
     (state.channelAgent as any).sessionLogger?.close();
     state.channelAgent.endSession();
     state.channelAgent = null;
+  }
+  if (state?.boundSessionAgents) {
+    for (const agent of state.boundSessionAgents.values()) {
+      (agent as any).sessionLogger?.close();
+      agent.endSession();
+    }
+    state.boundSessionAgents.clear();
   }
   state = null;
   resetCatalogSeedInflight();

@@ -1,5 +1,5 @@
 import type { ToolResult, ToolExecutionContext, PermissionRule, SessionContextKind } from '@agentx/shared';
-import { isChannelSessionId } from '@agentx/shared';
+import { isChannelSessionId, formatPermissionInstructedToolOutput, normalizePermissionHandlerResult, type PermissionHandlerResult } from '@agentx/shared';
 import { evaluateRules } from './permissions/RuleEngine.js';
 import { isPermissionExemptTool } from './permissions/exempt-tools.js';
 import { PermissionManager } from './permissions/PermissionManager.js';
@@ -25,8 +25,17 @@ export type PermissionRequestHandler = (
   context?: {
     args?: Record<string, unknown>;
     integrationPreview?: import('@agentx/shared').IntegrationActionPreview;
+    forAutomation?: boolean;
   },
-) => Promise<'allow_once' | 'allow_always' | 'deny'>;
+) => Promise<PermissionHandlerResult>;
+
+export type PermissionPromptHook = (details: {
+  toolId: string;
+  path: string;
+  riskLevel: string;
+  forAutomation?: boolean;
+  integrationPreview?: import('@agentx/shared').IntegrationActionPreview;
+}) => void;
 
 export interface ToolExecutionEntry {
   toolId: string;
@@ -47,6 +56,9 @@ export class ToolExecutor {
   private permissionRequestHandler?: PermissionRequestHandler;
   /** Dedicated handler for messaging channel super-sessions — not overwritten by UI agent wiring. */
   private channelPermissionRequestHandler?: PermissionRequestHandler;
+  /** When true, route permission prompts through the channel handler (Telegram-bound super-sessions). */
+  private messagingPermissionMode = false;
+  private inboundSourceChannel: string | null = null;
   private onToolOutput?: (output: string) => void;
   private toolCache: Map<string, ReturnType<ToolRegistry['get']>> = new Map();
   private beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null = null;
@@ -64,6 +76,7 @@ export class ToolExecutor {
   private sessionContextKind?: SessionContextKind;
   private thirdPartyTurnPolicy: ThirdPartyTurnPolicy | null = null;
   private turnAborted = false;
+  private permissionPromptHook?: PermissionPromptHook;
 
   constructor(registry: ToolRegistry, scopePath: string) {
     this.registry = registry;
@@ -144,12 +157,31 @@ export class ToolExecutor {
     this.permissionRequestHandler = handler;
   }
 
+  setPermissionPromptHook(hook: PermissionPromptHook | undefined): void {
+    this.permissionPromptHook = hook;
+  }
+
   setChannelPermissionRequestHandler(handler: PermissionRequestHandler | null | undefined): void {
     this.channelPermissionRequestHandler = handler ?? undefined;
   }
 
+  setMessagingPermissionMode(enabled: boolean): void {
+    this.messagingPermissionMode = enabled;
+  }
+
+  setInboundSourceChannel(channel: string | null): void {
+    this.inboundSourceChannel = channel;
+  }
+
+  getChannelPermissionRequestHandler(): PermissionRequestHandler | undefined {
+    return this.channelPermissionRequestHandler;
+  }
+
   private resolvePermissionRequestHandler(sessionId: string): PermissionRequestHandler | undefined {
-    if (isChannelSessionId(sessionId) && this.channelPermissionRequestHandler) {
+    if (
+      this.channelPermissionRequestHandler
+      && (isChannelSessionId(sessionId) || this.messagingPermissionMode)
+    ) {
       return this.channelPermissionRequestHandler;
     }
     return this.permissionRequestHandler;
@@ -340,16 +372,30 @@ export class ToolExecutor {
         const integrationPreview = isIntegrationToolId(toolId)
           ? buildIntegrationActionPreview(toolId, args, tool) ?? undefined
           : undefined;
+        this.permissionPromptHook?.({
+          toolId,
+          path: scopePathForHook ?? '*',
+          riskLevel: tool.riskLevel,
+          integrationPreview,
+        });
         const response = await permissionHandler(
           toolId,
           scopePathForHook ?? '*',
           tool.riskLevel,
           { args, integrationPreview },
         );
-        if (response === 'deny') {
+        const { decision, instruction } = normalizePermissionHandlerResult(response);
+        if (decision === 'deny') {
+          if (instruction) {
+            return {
+              success: false,
+              output: formatPermissionInstructedToolOutput(instruction),
+              error: 'PERMISSION_INSTRUCTED',
+            };
+          }
           return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
         }
-        if (response === 'allow_always') {
+        if (decision === 'allow_always') {
           // Session "always allow" applies to the whole tool, not just one path.
           this.permissionManager.grant(toolId, 'allow_always');
         }
@@ -376,6 +422,7 @@ export class ToolExecutor {
       timeout: this.voiceTurnActive ? 22_000 : 30_000,
       voiceTurn: this.voiceTurnActive,
       mode: this.mode,
+      ...(this.inboundSourceChannel ? { sourceChannel: this.inboundSourceChannel } : {}),
       onOutput: onToolOutput,
     };
 

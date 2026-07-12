@@ -1,5 +1,5 @@
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
-import { isChannelSessionId, resolveFleetToolSessionScope } from '@agentx/shared';
+import { isChannelSessionId, resolveFleetToolSessionScope, parseChannelBindingFromSessionId } from '@agentx/shared';
 import { getAutomationBridge } from '../../automation/automation-bridge.js';
 import { inferAutomationSourceChannel } from '../../automation/automation-notify.js';
 import { getAgentXOverviewBridge } from '../../agent/agent-x-overview-bridge.js';
@@ -23,7 +23,9 @@ export async function automationRegister(
   const timezone = (args['timezone'] as string) ?? 'UTC';
   const taskKey = (args['task_key'] as string) ?? undefined;
   const sourceChannel = inferAutomationSourceChannel(
-    (args['source_channel'] as string) ?? (isChannelSessionId(context.sessionId) ? 'telegram' : undefined),
+    (args['source_channel'] as string)
+      ?? parseChannelBindingFromSessionId(context.sessionId)
+      ?? context.sourceChannel,
     context.sessionId,
   );
   const requiredToolsRaw = args['required_tools'];

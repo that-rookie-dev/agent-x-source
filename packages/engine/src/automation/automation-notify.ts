@@ -1,4 +1,5 @@
 import type { AgentXConfig, AutomationNotifyChannel, NotificationChannelStatus, QuestionnairePayload } from '@agentx/shared';
+import { parseChannelBindingFromSessionId } from '@agentx/shared';
 
 export const AUTOMATION_NOTIFY_NONE = 'none';
 
@@ -131,6 +132,8 @@ export function inferAutomationSourceChannel(
 ): string {
   const explicit = (sourceChannel ?? '').trim();
   if (explicit && explicit !== 'web' && explicit !== 'api') return explicit;
+  const fromSession = parseChannelBindingFromSessionId(sourceSessionId);
+  if (fromSession) return fromSession;
   if (sourceSessionId === '__channel__') return 'telegram';
   return explicit || 'web';
 }

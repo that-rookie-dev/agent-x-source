@@ -32,6 +32,8 @@ export interface SectionContext {
   memoryContext?: { getContext(): Promise<MemoryContextState> } | null;
   getPersona(): AgentPersonaConfig | null;
   getClientSituation(): ClientSituation | null;
+  /** Desktop session narrative block when Telegram is context-linked. */
+  linkedContextBlock?: () => string | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -195,10 +197,10 @@ export function createRulesSection(opts?: { technicalExecutor?: boolean }): Prom
     `- For multi-section replies in chat, follow [CHAT_MARKDOWN] formatting rules.`,
     ``,
     `CLARIFICATION (STRICT):`,
-    `- NEVER ask the user questions in plain assistant message text.`,
-    `- ALWAYS use ask_clarification — the UI renders a structured form, never plain chat questions.`,
-    `- DEFAULT: one question per ask_clarification call. Wait for the answer before asking the next.`,
-    `- MULTI-QUESTION form (questions[] with 2+ items) only when gathering related fields together is clearly better (intake forms, trip setup, config wizard) — not for a simple back-and-forth.`,
+    `- Open-ended / custom-text questions → plain assistant message text. End your turn and wait for the user's reply. NEVER call ask_clarification.`,
+    `- ask_clarification ONLY for single_choice or multi_choice (structured options the UI can render as buttons/checkboxes).`,
+    `- Never use ask_clarification with type "text". Never use ask_clarification for a single open question.`,
+    `- DEFAULT when using ask_clarification: one choice question per call. Wait for the answer before asking the next.`,
     ``,
     `KNOWLEDGE RETRIEVAL (MANDATORY):`,
     `- ALWAYS call memory_fabric_search as your FIRST action before answering any question.`,
@@ -222,7 +224,7 @@ export function createCompactRulesSection(): PromptSection<string> {
   const RULES = [
     `[RULES]`,
     `ACT IMMEDIATELY — use tools when needed; do not narrate your process.`,
-    `Use ask_clarification for questions (never plain-chat questions).`,
+    `Use ask_clarification ONLY for single_choice or multi_choice. Open-ended questions → plain chat text.`,
     `Plain language by default — no code or shell unless the user asked for technical help.`,
     `Be concise. First-person. Answer the latest user message.`,
     `Search memory_fabric_search when the question may involve uploaded documents.`,
@@ -273,9 +275,9 @@ export function createCrewPrivateConductSection(): PromptSection<string> {
     ``,
     `FOLLOW-UPS & DEFERRALS:`,
     `- Short affirmatives ("yes please", "sure", "go ahead") accept YOUR previous offer or question — deliver what you offered. Never treat them as small talk.`,
-    `- If you offered multiple options and the user says yes without choosing, deliver the most useful option — or ask ONE ask_clarification question to pick.`,
+    `- If you offered multiple options and the user says yes without choosing, deliver the most useful option — or ask ONE plain-chat choice question (or ask_clarification single_choice if options are structured).`,
     `- If the user defers ("you decide", "surprise me", "not sure"), state brief assumptions and deliver a concrete answer — do not re-ask for details already in the session.`,
-    `- For open-ended planning requests (itineraries, roadmaps, strategies) missing key details (destination, dates, budget, audience), use ask_clarification FIRST — unless the user defers.`,
+    `- For open-ended planning requests missing key details, ask ONE plain-chat question at a time — unless the user defers.`,
     ``,
     `WHEN TO GO DEEP:`,
     `- Only when the user asks for something that clearly fits YOUR expertise (see [CREW_IDENTITY] and your skills).`,
@@ -295,12 +297,11 @@ export function createCrewPrivateConductSection(): PromptSection<string> {
     `- Agent mode is only relevant when the user explicitly needs filesystem writes or shell execution on their machine.`,
     ``,
     `CLARIFICATION (STRICT):`,
-    `- NEVER ask the user questions in plain chat text.`,
-    `- ALWAYS use ask_clarification (text, single_choice, or multi_choice via the questionnaire UI).`,
+    `- Open-ended / custom-text questions → plain assistant message text. End your turn and wait for the reply. NEVER call ask_clarification.`,
+    `- ask_clarification ONLY for single_choice or multi_choice (structured options).`,
     `- When calling ask_clarification: output ZERO assistant text in that step — tool call only. No recap of prior answers.`,
     `- After the final clarification answer, deliver the full plan or response immediately — never stop at a transition phrase like "let me build your plan" without the actual plan in the same turn.`,
-    `- DEFAULT: one question per tool call — wait for the answer, then continue naturally.`,
-    `- Bundle multiple questions in one call only for complex/related intake (see [QUESTIONNAIRE]).`,
+    `- DEFAULT: one choice question per tool call — wait for the answer, then continue naturally.`,
     ``,
     `KNOWLEDGE RETRIEVAL (MANDATORY):`,
     `- ALWAYS call memory_fabric_search as your FIRST action before answering any question that could reference uploaded documents.`,
@@ -326,32 +327,26 @@ export function createCrewPrivateConductSection(): PromptSection<string> {
 export function createQuestionnaireGuideSection(): PromptSection<string> {
   const GUIDE = [
     `[QUESTIONNAIRE]`,
-    `ANY user question MUST use ask_clarification — never plain chat text. The UI renders a structured form from your tool args.`,
+    `ask_clarification renders a structured UI (web questionnaire / Telegram inline buttons) — ONLY for choice-based questions.`,
+    `Open-ended custom-text questions MUST be plain assistant message text — never ask_clarification, never type "text".`,
     ``,
-    `ONE AT A TIME (DEFAULT — best UX):`,
-    `- Ask ONE question per ask_clarification call.`,
-    `- Wait for the user's answer before asking the next question.`,
-    `- Use this for simple back-and-forth: preferences, confirmations, "which one?", open-ended follow-ups.`,
-    `Example (single question — preferred for most cases):`,
-    `{"questions":[{"prompt":"Which framework should we use?","type":"single_choice","options":["React","Vue","Svelte"]}]}`,
-    `{"questions":[{"prompt":"What error message do you see?","type":"text","placeholder":"Paste or describe…"}]}`,
+    `WHEN TO USE ask_clarification:`,
+    `- single_choice — user picks one option (+ optional custom via chat)`,
+    `- multi_choice — user picks multiple options (+ optional custom via chat)`,
+    `- NEVER for open-ended text, "what dates?", "describe the error", or any custom-text-only question`,
     ``,
-    `MULTI-QUESTION FORM (only when bundling is clearly better):`,
-    `- Use questions[] with 2+ items when collecting related fields in one shot (trip intake, onboarding form, config wizard).`,
-    `- Do NOT bundle unrelated questions or use multi-question forms when one-at-a-time would feel more conversational.`,
-    `Example (complex intake only):`,
-    `{"title":"Trip details","questions":[`,
-    `  {"prompt":"Where are you flying from?","type":"text","placeholder":"City or airport"},`,
-    `  {"prompt":"Cabin class?","type":"single_choice","options":["Economy","Premium Economy","Business"],"recommended":"Economy"},`,
-    `  {"prompt":"Must-haves?","type":"multi_choice","options":["Lounge access","Direct flight","Extra legroom"]}`,
-    `]}`,
+    `ONE AT A TIME (DEFAULT):`,
+    `- Ask ONE choice question per ask_clarification call.`,
+    `- Wait for the user's answer before asking the next.`,
+    `Example (single choice):`,
+    `{"questions":[{"prompt":"Which framework?","type":"single_choice","options":["React","Vue","Svelte"]}]}`,
     ``,
     `QUESTION TYPES (max 5 options each; allowCustom defaults true on choice types):`,
-    `- text — open-ended`,
-    `- single_choice — pick one + optional custom answer`,
-    `- multi_choice — pick many + optional custom answer`,
+    `- single_choice — pick one + optional custom answer via chat`,
+    `- multi_choice — pick many + optional custom answer via chat`,
+    `- text — DO NOT USE (rejected at runtime). Ask in plain chat instead.`,
     ``,
-    `LEGACY single-question shape also works:`,
+    `LEGACY single-question shape also works when options are provided:`,
     `{"question":"Which framework?","options":["React","Vue","Svelte"]}`,
     ``,
     `RULES:`,
@@ -359,8 +354,8 @@ export function createQuestionnaireGuideSection(): PromptSection<string> {
     `- When calling ask_clarification: output ZERO assistant text in that step — tool call only.`,
     `- Do not recap prior Q&A before the next question; answered questionnaires stay visible in chat history.`,
     `- options: string array, max 5 items.`,
-    `- Prefer single_choice when choices exist; text when choices would be reductive.`,
-    `- When in doubt, ask one question now — not a form.`,
+    `- Prefer single_choice when choices exist.`,
+    `- When in doubt, ask one plain-chat question now — not a form.`,
     `[/QUESTIONNAIRE]`,
   ].join('\n');
   return {
@@ -701,6 +696,38 @@ export function createChannelSuperSessionSection(): PromptSection<null> {
   };
 }
 
+export function createChannelLinkedContextSection(ctx: SectionContext): PromptSection<null> {
+  return {
+    key: 'core/channel-linked-context',
+    load: () => null,
+    render: () => ctx.linkedContextBlock?.() ?? '',
+    diff: () => null,
+  };
+}
+
+export function buildClarificationPolicyInstruction(onMessagingChannel = false): string {
+  const lines = [
+    '[CLARIFICATION_POLICY]',
+    'STRICT — applies on every channel (web, Telegram, crew private, group):',
+    '- Open-ended / custom-text clarifications → plain assistant message text. End your turn and wait for the user\'s reply.',
+    '- NEVER call ask_clarification for open-ended questions, type "text", or single custom-text answers.',
+    '- ask_clarification ONLY for single_choice or multi_choice (structured options rendered as UI buttons/checkboxes).',
+  ];
+  if (onMessagingChannel) {
+    lines.push(
+      '- On messaging channels: choice questionnaires render as Telegram inline buttons (single/multi select).',
+      '- Users can also type a custom answer in chat when allowCustom is true.',
+    );
+  }
+  lines.push('[/CLARIFICATION_POLICY]');
+  return lines.join('\n');
+}
+
+/** @deprecated Use buildClarificationPolicyInstruction */
+export function buildMessagingClarificationInstruction(): string {
+  return buildClarificationPolicyInstruction(true);
+}
+
 export function createChannelMessagingSection(): PromptSection<null> {
   return {
     key: 'core/channel-messaging',
@@ -714,6 +741,11 @@ export function createChannelMessagingSection(): PromptSection<null> {
       'When the user asks to see permissions, call channel_permissions with action "list".',
       'When they ask to revoke one, several, or all permissions, call channel_permissions with action "revoke" and tools[] or revoke_all:true.',
       'You may also tell them about /permissions, /permissions revoke <tool>, and /permissions revoke-all.',
+      '',
+      'CLARIFICATION ON MESSAGING CHANNELS:',
+      '- Open-ended questions → plain assistant message text (NOT ask_clarification).',
+      '- ask_clarification only for single_choice or multi_choice — rendered as Telegram inline buttons.',
+      '- Never use ask_clarification with type "text".',
       '[/CHANNEL_MESSAGING]',
     ].join('\n'),
     diff: () => null,
@@ -732,7 +764,7 @@ export function createChannelFocusSection(ctx: SectionContext): PromptSection<Ch
         ``,
         `Telegram connection status: ${state.connected ? 'CONNECTED (Settings → Channels)' : 'NOT CONNECTED'}`,
         state.connected
-          ? `Telegram is linked via Settings → Channels. Inbound Telegram messages continue the active Agent-X session. You can send Telegram updates using the telegram_send_message tool.`
+          ? `Messaging channels are linked via Settings → Channels. Each surface (Telegram, Slack, Discord) has its own transcript session; desktop sessions stay separate. A linked desktop session supplies goals, crew, and resume context per channel. Use agent_x_overview for fleet state.`
           : `Telegram is not linked. Tell the user to open Settings → Channels, add their bot token, and message the bot once to link chat.`,
         ``,
         `When starting a long-running task:`,

@@ -1255,6 +1255,29 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   /**
+   * Hard-delete all session content: messages, parts, checkpoints, feedback, resume
+   * state, and related artifacts. The session row itself is preserved.
+   */
+  purgeSessionContent(sessionId: string): void {
+    this.cache.messages.set(sessionId, []);
+    this.cache.parts.set(sessionId, []);
+    this.cache.checkpoints.set(sessionId, []);
+    this.cache.turnFeedback.delete(sessionId);
+    this.cache.taskSnapshots.delete(sessionId);
+    this.cache.tokenLogs.delete(sessionId);
+    this.cache.sessionEvents.delete(sessionId);
+    this.write('DELETE FROM message_parts WHERE session_id = $1', [sessionId]);
+    this.write('DELETE FROM messages WHERE session_id = $1', [sessionId]);
+    this.write('DELETE FROM checkpoints WHERE session_id = $1', [sessionId]);
+    this.write('DELETE FROM turn_feedback WHERE session_id = $1', [sessionId]);
+    this.write('DELETE FROM session_resume_state WHERE session_id = $1', [sessionId]);
+    this.write('DELETE FROM task_snapshots WHERE session_id = $1', [sessionId]);
+    this.write('DELETE FROM token_logs WHERE session_id = $1', [sessionId]);
+    this.write("DELETE FROM session_events WHERE session_id = $1", [sessionId]);
+    this.updateSession(sessionId, { tokenUsed: 0, compactionCount: 0 });
+  }
+
+  /**
    * Soft-archive all messages in a session: hidden from UI/history reads but
    * kept in the DB so memory ingestion/backfill and audits are unaffected.
    */

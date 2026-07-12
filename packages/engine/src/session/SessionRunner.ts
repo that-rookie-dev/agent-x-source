@@ -1,6 +1,6 @@
 import { streamText, stepCountIs } from 'ai';
 import type { EngineEvent, AgentXConfig, SessionEvent } from '@agentx/shared';
-import { getLogger } from '@agentx/shared';
+import { getLogger, resolveMaxOutputTokens } from '@agentx/shared';
 import type { AgentEventBus } from '../EventBus.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
@@ -96,6 +96,7 @@ export class SessionRunner {
           tools,
           temperature: 0,
           maxRetries: config.maxRetries ?? 2,
+          maxOutputTokens: resolveMaxOutputTokens(config.maxOutputTokens),
           stopWhen: stepCountIs(100),
           toolChoice: 'auto',
           abortSignal,

@@ -22,6 +22,13 @@ describe('channel-integration-overlap', () => {
   it('detects bare continue intent', () => {
     expect(isBareContinueIntent('continue')).toBe(true);
     expect(isBareContinueIntent('conitnue')).toBe(true);
+    expect(isBareContinueIntent('Try now')).toBe(true);
+    expect(isBareContinueIntent('try again')).toBe(true);
+    expect(isBareContinueIntent('retry')).toBe(true);
+    expect(isBareContinueIntent('can you try now')).toBe(true);
+    expect(isBareContinueIntent('please try again')).toBe(true);
+    expect(isBareContinueIntent('could you retry now')).toBe(true);
     expect(isBareContinueIntent('continue on telegram')).toBe(false);
+    expect(isBareContinueIntent('Plan my trip to Japan')).toBe(false);
   });
 });

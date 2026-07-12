@@ -172,6 +172,11 @@ export const permissionRespondSchema = z.object({
   choice: z.enum(['allow_once', 'allow_always', 'deny']),
 });
 
+export const permissionInstructSchema = z.object({
+  requestId: z.string().min(1),
+  instruction: z.string().min(1).max(4000),
+});
+
 export const permissionRespondBatchSchema = z.object({
   choice: z.enum(['allow_once', 'allow_always', 'deny']),
 });

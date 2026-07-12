@@ -12,13 +12,18 @@ interface PanelHeaderProps {
   action?: React.ReactNode;
   /** Combine title and subtitle on one line: "Title - subtitle" */
   inline?: boolean;
+  /** Compact density — matches mono logger / search toolbar sizing */
+  compact?: boolean;
 }
 
-export function PanelHeader({ title, subtitle, icon, action, inline }: PanelHeaderProps) {
+export function PanelHeader({ title, subtitle, icon, action, inline, compact }: PanelHeaderProps) {
+  const titleSize = compact ? '0.65rem' : inline ? '0.75rem' : '0.85rem';
+  const headerHeight = compact ? 36 : PANEL_HEADER_HEIGHT;
+
   return (
     <Box sx={{
       flexShrink: 0,
-      height: PANEL_HEADER_HEIGHT,
+      height: headerHeight,
       px: 2,
       boxSizing: 'border-box',
       borderBottom: `1px solid ${colors.border.default}`,
@@ -27,7 +32,7 @@ export function PanelHeader({ title, subtitle, icon, action, inline }: PanelHead
       justifyContent: 'space-between',
       bgcolor: colors.bg.secondary,
     }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: compact ? 0.75 : 1.25, minWidth: 0 }}>
         {icon && (
           <Box sx={{ display: 'flex', alignItems: 'center', color: colors.accent.blue, flexShrink: 0 }}>
             {icon}
@@ -35,7 +40,7 @@ export function PanelHeader({ title, subtitle, icon, action, inline }: PanelHead
         )}
         {inline && subtitle ? (
           <Typography sx={{
-            fontSize: '0.75rem',
+            fontSize: titleSize,
             fontWeight: 500,
             color: colors.text.primary,
             lineHeight: 1.2,
@@ -49,7 +54,7 @@ export function PanelHeader({ title, subtitle, icon, action, inline }: PanelHead
           </Typography>
         ) : (
           <Box sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontSize: '0.85rem', fontWeight: 600, color: colors.text.primary, lineHeight: 1.2 }}>
+            <Typography sx={{ fontSize: titleSize, fontWeight: 600, color: colors.text.primary, lineHeight: 1.2 }}>
               {title}
             </Typography>
             {subtitle && (

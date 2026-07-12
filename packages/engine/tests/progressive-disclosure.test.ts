@@ -42,6 +42,29 @@ describe('ProgressiveDisclosure', () => {
     expect(ids).not.toContain('deploy_k8s');
   });
 
+  it('always exposes scheduling, automation, and notification tools as core', () => {
+    // Regression: hiding these behind progressive disclosure caused the agent to
+    // refuse scheduling requests ("I cannot assist with that request") because the
+    // system prompt commands automation_register but the tool was not exposed.
+    const tools = [
+      makeTool('automation_register'),
+      makeTool('automation_list'),
+      makeTool('automation_cancel'),
+      makeTool('notify_telegram'),
+      makeTool('notify_email'),
+      makeTool('agent_x_overview'),
+      makeTool('deploy_k8s'),
+    ];
+    const ids = getCoreTools(tools).map((t) => t.id);
+    expect(ids).toContain('automation_register');
+    expect(ids).toContain('automation_list');
+    expect(ids).toContain('automation_cancel');
+    expect(ids).toContain('notify_telegram');
+    expect(ids).toContain('notify_email');
+    expect(ids).toContain('agent_x_overview');
+    expect(ids).not.toContain('deploy_k8s');
+  });
+
   it('creates three bridge tools', () => {
     const bridges = createBridgeTools();
     expect(bridges).toHaveLength(3);
@@ -70,6 +93,12 @@ describe('ProgressiveDisclosure', () => {
     expect(result.error).toBeUndefined();
     const matches = result.resolvedArgs['matches'] as Array<{ id: string }>;
     expect(matches.some((m) => m.id === 'file_read')).toBe(true);
+  });
+
+  it('rejects tool_search without a query', () => {
+    const result = resolveBridgeToolCall('tool_search', {}, [makeTool('web_search')]);
+    expect(result.error).toContain('query is required');
+    expect(result.resolvedArgs['hint']).toContain('web_search');
   });
 
   it('resolves tool_describe for known tool', () => {

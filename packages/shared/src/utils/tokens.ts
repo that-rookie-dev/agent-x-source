@@ -53,6 +53,83 @@ export function getOutputReserve(contextWindow: number): number {
   return getTokenThresholds(contextWindow).outputReserve;
 }
 
+export const MIN_OUTPUT_TOKENS = 16;
+const DEFAULT_OUTPUT_TOKENS = 8192;
+/** Fallback per tool when schema JSON size is unavailable. */
+const ESTIMATED_TOKENS_PER_TOOL = 2500;
+/** Extra headroom because provider tokenizers count more than char heuristics. */
+const PROMPT_SAFETY_MARGIN = 8192;
+
+/** Conservative text token estimate (tighter than estimateTokens). */
+export function estimateTokensConservative(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 3);
+}
+
+/** Clamp configured output budget — providers reject values below 16 (e.g. OpenAI max_output_tokens). */
+export function resolveMaxOutputTokens(configured?: number): number {
+  return Math.max(MIN_OUTPUT_TOKENS, configured ?? DEFAULT_OUTPUT_TOKENS);
+}
+
+export class ContextBudgetExceededError extends Error {
+  readonly code = 'context_budget_exceeded' as const;
+  readonly estimatedInputTokens: number;
+  readonly contextWindow: number;
+  readonly remainingTokens: number;
+
+  constructor(estimatedInputTokens: number, contextWindow: number) {
+    const remainingTokens = contextWindow - estimatedInputTokens;
+    super(
+      `Prompt is too large for this model (${formatTokenCount(estimatedInputTokens)} / ${formatTokenCount(contextWindow)} tokens). `
+      + `Need at least ${MIN_OUTPUT_TOKENS} tokens free for a reply. Start a new session or switch to a model with a larger context window.`,
+    );
+    this.name = 'ContextBudgetExceededError';
+    this.estimatedInputTokens = estimatedInputTokens;
+    this.contextWindow = contextWindow;
+    this.remainingTokens = remainingTokens;
+  }
+}
+
+/** Rough prompt size: message bodies plus tool-schema overhead sent with the request. */
+export function estimatePromptTokens(
+  messages: Array<{ content: string; toolCalls?: unknown; metadata?: Record<string, unknown> }>,
+  toolCount = 0,
+  toolSchemaChars = 0,
+): number {
+  let total = 0;
+  for (const msg of messages) {
+    total += estimateTokensConservative(msg.content || '');
+    if (msg.toolCalls) total += estimateTokensConservative(JSON.stringify(msg.toolCalls));
+    if (msg.metadata) total += estimateTokensConservative(JSON.stringify(msg.metadata));
+  }
+  const toolTokens = toolSchemaChars > 0
+    ? Math.ceil(toolSchemaChars / 3)
+    : toolCount * ESTIMATED_TOKENS_PER_TOOL;
+  return total + toolTokens + PROMPT_SAFETY_MARGIN;
+}
+
+import { getReasoningOutputReserve } from './model-limits.js';
+
+/** Output budget that fits remaining context; throws if fewer than MIN_OUTPUT_TOKENS remain. */
+export function resolveEffectiveMaxOutputTokens(opts: {
+  configured?: number;
+  contextWindow: number;
+  estimatedInputTokens: number;
+  modelCaps?: {
+    hasReasoning?: boolean;
+    contextWindow?: number;
+    outputTokenLimit?: number;
+  };
+}): number {
+  const requested = resolveMaxOutputTokens(opts.configured);
+  const reasoningReserve = getReasoningOutputReserve(opts.modelCaps);
+  const remaining = opts.contextWindow - opts.estimatedInputTokens - reasoningReserve;
+  if (remaining < MIN_OUTPUT_TOKENS) {
+    throw new ContextBudgetExceededError(opts.estimatedInputTokens + reasoningReserve, opts.contextWindow);
+  }
+  return Math.min(requested, remaining);
+}
+
 /** Display total: committed in/out + in-flight output estimate + output reserve. */
 export function buildDisplayTokenUsage(opts: {
   inputTokens: number;

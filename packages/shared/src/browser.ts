@@ -85,7 +85,20 @@ export {
   hydrateMessageHistoryEntries,
   coerceQuestionnaireOptionText,
   sanitizeQuestionnairePayload,
+  formatQuestionnaireForMessagingChannel,
+  extractAssistantReplyText,
+  questionnaireSupportsInlineButtons,
+  MESSAGING_INLINE_MAX_OPTIONS,
+  MESSAGING_INLINE_MAX_QUESTIONS,
 } from './utils/questionnaire.js';
+
+export {
+  PERMISSION_INSTRUCTED_ERROR,
+  isPermissionInstructResult,
+  normalizePermissionHandlerResult,
+  formatPermissionInstructedToolOutput,
+} from './utils/messaging-permission.js';
+export type { PermissionHandlerResult, PermissionInstructResult } from './utils/messaging-permission.js';
 
 export {
   CHART_P0_TYPES,
@@ -167,6 +180,8 @@ export {
 } from './utils/automation-session.js';
 export {
   CHANNEL_SESSION_ID,
+  channelSessionIdForBinding,
+  parseChannelBindingFromSessionId,
   isChannelSessionId,
   isSuperSessionId,
   resolveFleetToolSessionScope,
@@ -177,6 +192,13 @@ export {
   detectChannelHandoffIntent,
   isBareContinueIntent,
 } from './utils/channel-integration-overlap.js';
+export {
+  buildResumeTurnInstructionFromMessages,
+  resolveContinuationInstruction,
+  isContinuationTrigger,
+  detectIncompleteLastTurn,
+} from './utils/resume-turn.js';
+export type { ResumeTurnMessage } from './utils/resume-turn.js';
 export type { ChannelCoveredMcpIntegrationId } from './utils/channel-integration-overlap.js';
 export {
   formatChannelBindingLabel,
@@ -201,6 +223,8 @@ export {
   VOICE_BLOCK_CLOSE,
   normalizeVoiceAssistantContent,
 } from './utils/voice-channel.js';
+
+export { formatProviderErrorMessage } from './utils/provider-error-message.js';
 
 export type {
   DeepSearchContentType,

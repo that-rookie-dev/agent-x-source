@@ -24,7 +24,7 @@ export function isUuid(id: string): boolean {
 
 /** True when id uses a known application prefix (sub-agent, message, etc.). */
 export function isPseudoId(id: string): boolean {
-  if (id === '__channel__') return true;
+  if (id === '__channel__' || id.startsWith('__channel__:')) return true;
   return PSEUDO_ID_PREFIXES.some((p) => p !== '__channel__' && id.startsWith(p));
 }
 

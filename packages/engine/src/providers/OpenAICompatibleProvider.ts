@@ -2,6 +2,7 @@ import type {
   ModelInfo,
   ProviderId,
 } from '@agentx/shared';
+import { apiRecordToModelInfo } from '@agentx/shared';
 import { OpenAIProvider } from './OpenAIProvider.js';
 import { captureResponse } from '../utils/DebugLogger.js';
 
@@ -81,71 +82,13 @@ export class OpenAICompatibleProvider extends OpenAIProvider {
     // Unrecognised format — log raw response for debugging
     await captureResponse(this.id, `${this.baseUrl}/models`, 'listModels-unrecognised-format', response);
 
-    // Known models fallback — provider API returned OK but format is unrecognised
-    const knownModels = KNOWN_MODELS[this.id];
-    if (knownModels && knownModels.length > 0) {
-      return knownModels.map((m) => ({
-        id: m,
-        name: m,
-        providerId: this.id,
-        contextWindow: this.getContextWindow(m),
-        capabilities: this.getCapabilities(m),
-      })).sort((a, b) => a.name.localeCompare(b.name));
-    }
-
     return [];
   }
 
-  private parseModels(items: Array<Record<string, unknown>>): ModelInfo[] {
+  protected parseModels(items: Array<Record<string, unknown>>): ModelInfo[] {
     return items
-      .map((m): ModelInfo => {
-        const id = String(m['id'] ?? m['name'] ?? '');
-        return {
-          id,
-          name: String(m['display_name'] ?? m['name'] ?? m['id'] ?? id),
-          providerId: this.id,
-          contextWindow: this.getContextWindow(id),
-          capabilities: this.getCapabilities(id),
-        };
-      })
-      .filter((m) => m.id)
+      .map((m) => apiRecordToModelInfo(m, this.id, this.getCapabilities(String(m['id'] ?? m['name'] ?? ''))))
+      .filter((m): m is ModelInfo => m != null)
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 }
-
-// Known model IDs for providers whose API doesn't expose a /models endpoint.
-// Kept lightweight — users can type in any model ID in the chat panel's model selector.
-const KNOWN_MODELS: Partial<Record<ProviderId, string[]>> = {
-  perplexity: [
-    'sonar-pro', 'sonar', 'sonar-reasoning-pro', 'sonar-reasoning',
-    'sonar-deep-research', 'codestral-latest',
-  ],
-  fireworks: [
-    'accounts/fireworks/models/llama-v3p3-70b-instruct',
-    'accounts/fireworks/models/llama-v3p1-8b-instruct',
-    'accounts/fireworks/models/mixtral-8x22b-instruct',
-    'accounts/fireworks/models/deepseek-r1',
-    'accounts/fireworks/models/qwen2p5-72b-instruct',
-  ],
-  cohere: [
-    'command-r-plus', 'command-r', 'command-r7b-12-2024',
-    'c4ai-aya-23-35b',
-  ],
-  'opencode-zen': [
-    'deepseek-v4-flash-free', 'big-pickle',
-    'mimo-v2.5-free', 'north-mini-code-free', 'nemotron-3-ultra-free',
-    'claude-haiku-4-5', 'claude-sonnet-4', 'claude-opus-4-5',
-    'claude-opus-4-6', 'claude-opus-4-7',
-    'gemini-3-flash', 'gemini-3.1-pro', 'gemini-3.5-flash',
-    'gpt-5', 'gpt-5-codex', 'gpt-5-nano',
-    'gpt-5.1', 'gpt-5.1-codex', 'gpt-5.1-codex-max', 'gpt-5.1-codex-mini',
-    'gpt-5.2', 'gpt-5.2-codex',
-    'gpt-5.3-codex', 'gpt-5.3-codex-spark',
-    'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano',
-    'glm-5', 'glm-5.1', 'kimi-k2.5', 'kimi-k2.6',
-    'deepseek-v4-pro', 'deepseek-v4-flash',
-    'qwen-3.7-max', 'qwen-3.7-plus',
-    'minimax-m3', 'minimax-m2.7', 'minimax-m2.5',
-    'mimo-v2.5', 'mimo-v2.5-pro',
-  ],
-};

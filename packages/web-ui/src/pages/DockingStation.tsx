@@ -427,23 +427,55 @@ export function DockingStation() {
       </Box>
 
       {vitals && vitals.status !== 'uninitialized' && (
-        <Box sx={{
-          borderTop: `1px solid ${colors.border.default}`,
-          px: 3, py: 2, mx: 3, mb: 2,
-          bgcolor: colors.bg.secondary, borderRadius: 1,
-          border: `1px solid ${colors.border.default}`,
-        }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-            <VitalChip label="Age" value={`${vitals.ageDays}d`} />
-            <VitalChip label="Level" value={vitals.level} color={colors.accent.blue} />
-            <VitalChip label="Wisdom" value={`${Math.round(vitals.wisdomScore)}`} />
-            <VitalChip label="Experiences" value={String(vitals.totalExperiences)} />
-            <VitalChip label="Memories" value={String(vitals.memories.total)} />
-            <VitalChip label="Mood" value={vitals.currentMood} color={
-              vitals.currentMood === 'enthusiastic' || vitals.currentMood === 'confident' ? colors.accent.green :
-              vitals.currentMood === 'frustrated' || vitals.currentMood === 'anxious' ? colors.accent.orange :
-              colors.text.secondary
-            } />
+        <Box sx={{ px: 2, pb: 2, flexShrink: 0 }}>
+          <Box sx={{
+            py: 1.5,
+            px: 2,
+            bgcolor: colors.bg.secondary,
+            borderRadius: '6px',
+            border: `1px solid ${colors.border.default}`,
+          }}>
+            <Box sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0,
+              flexWrap: 'nowrap',
+              overflow: 'hidden',
+            }}>
+              {([
+                { label: 'Age', value: `${vitals.ageDays}d` },
+                { label: 'Level', value: vitals.level, color: colors.accent.blue },
+                { label: 'Wisdom', value: `${Math.round(vitals.wisdomScore)}` },
+                { label: 'Experiences', value: String(vitals.totalExperiences) },
+                { label: 'Memories', value: String(vitals.memories.total) },
+                {
+                  label: 'Mood',
+                  value: vitals.currentMood,
+                  color:
+                    vitals.currentMood === 'enthusiastic' || vitals.currentMood === 'confident' ? colors.accent.green
+                      : vitals.currentMood === 'frustrated' || vitals.currentMood === 'anxious' ? colors.accent.orange
+                        : colors.text.secondary,
+                },
+              ] as Array<{ label: string; value: string; color?: string }>).map((chip, index) => (
+                <Box key={chip.label} sx={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  {index > 0 && (
+                    <Typography
+                      component="span"
+                      sx={{
+                        color: colors.border.strong,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: '0.62rem',
+                        mx: 1.25,
+                        userSelect: 'none',
+                      }}
+                    >
+                      |
+                    </Typography>
+                  )}
+                  <VitalChip label={chip.label} value={chip.value} color={chip.color} />
+                </Box>
+              ))}
+            </Box>
           </Box>
         </Box>
       )}

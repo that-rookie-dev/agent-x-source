@@ -5,6 +5,7 @@ import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
+import TextField from '@mui/material/TextField';
 import CircularProgress from '@mui/material/CircularProgress';
 
 import LinearProgress from '@mui/material/LinearProgress';
@@ -68,6 +69,7 @@ import { useVoiceOptional } from './voice/VoiceProvider';
 import { WebSearchGlobeToggle, readWebSearchForcePreference, writeWebSearchForcePreference } from './WebSearchGlobeToggle';
 import { applyOperationEventToAssistant } from '../chat/operation-tool-patch';
 import { ChatThreadView } from './chat/ChatThreadView';
+import { ChatWarningBand } from './chat/ChatWarningBand';
 import { ChildSessionDrawer, type ChildSessionDrawerState } from '../chat/ChildSessionDrawer';
 import { ExecutionStatusChip } from '../chat/ExecutionStatusChip';
 import { crewTheme } from '../styles/crew-theme';
@@ -80,7 +82,7 @@ import {
   mergeCrewRosterPickerIntoMessages,
   shouldOfferCrewRosterPicker,
 } from '../chat/crew-suggestion-flow';
-import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
+import { isTurnFeedbackEligible, crewRequiresMedicalDisclaimer, formatProviderErrorMessage } from '@agentx/shared/browser';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
 import {
   upsertDeepSearchPart,
@@ -348,47 +350,33 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const providerErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rateLimitSeenRef = useRef(false);
 
-  // Extract a clean, human-readable message from raw provider errors
-  const extractProviderError = useCallback((raw: string): string => {
-    // Try to extract the "message" field from JSON error responses
-    const msgMatch = raw.match(/"message"\s*:\s*"([^"]+)"/);
-    let msg = '';
-    if (msgMatch?.[1]) {
-      msg = msgMatch[1];
-    } else {
-      // Try pattern: "Provider API error (CODE): ..."
-      const prefixMatch = raw.match(/^\w+\s+API\s+error\s*\(\d+\):\s*(.*)/is);
-      msg = prefixMatch?.[1] ?? raw;
+  const formatWarningMessage = useCallback((raw: unknown): string => {
+    const text = typeof raw === 'string' ? raw : (raw instanceof Error ? raw.message : String(raw ?? ''));
+    if (/api\s+error|provider|429|quota|billing|rate.?limit|unauthorized|forbidden|invalid_request/i.test(text)
+      || text.trimStart().startsWith('{')) {
+      return formatProviderErrorMessage(text);
     }
-    // Decode unicode escapes, escaped sequences, and strip non-readable chars
-    try { msg = JSON.parse(`"${msg.replace(/"/g, '\\"')}"`); } catch { /* use as-is */ }
-    msg = msg
-      .replace(/\\n/g, ' ')
-      .replace(/\\t/g, ' ')
-      .replace(/\\r/g, '')
-      .replace(/[\x00-\x1F\x7F]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    // Strip variable retry time suffix so dedup works across retries
-    msg = msg.replace(/\s*Please retry in [\d.]+s\.?\s*$/, '');
-    return msg;
+    const trimmed = text.trim();
+    return trimmed.length > 500 ? `${trimmed.slice(0, 497)}…` : trimmed;
   }, []);
 
   // Replace a warning if one with the same tool name (doom loop) exists, else append
   const replaceWarning = useCallback((prev: string[], newMsg: string): string[] => {
+    const msg = formatWarningMessage(newMsg);
+    if (!msg || msg === '{' || msg === '{\\' || /^[{[\s\\]+$/.test(msg)) return prev;
     // Detect doom-loop style: "toolName called Nx consecutively" or "[DOOM LOOP DETECTED] toolName"
-    const doomMatch = newMsg.match(/(\[DOOM LOOP DETECTED\])?\s*(\S+?)\s*(?:called|repeated)/i);
+    const doomMatch = msg.match(/(\[DOOM LOOP DETECTED\])?\s*(\S+?)\s*(?:called|repeated)/i);
     if (doomMatch) {
       const toolName = doomMatch[2];
       const idx = prev.findIndex(w => w.includes(toolName) && /(called|repeated)\s+\d+\s*x?/i.test(w));
       if (idx !== -1) {
         const copy = [...prev];
-        copy[idx] = newMsg;
+        copy[idx] = msg;
         return copy;
       }
     }
-    return prev.includes(newMsg) ? prev : [...prev, newMsg];
-  }, []);
+    return prev.includes(msg) ? prev : [...prev, msg];
+  }, [formatWarningMessage]);
 
   // Sync view with sessionId prop from URL — also restore session history on mount/refresh
   useEffect(() => {
@@ -666,6 +654,10 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
   const clearTimeoutWarnings = useCallback((prev: string[]) => prev.filter(w => !isTimeoutWarning(w)), []);
   const isAgentRecentlyActive = useCallback((withinMs = 45000) => Date.now() - lastActivityRef.current < withinMs, []);
 
+  // Single replaceable "current step" line shown during streaming — each new
+  // tool/deep-search/thinking event replaces the previous label (no card accumulation).
+  const [currentStep, setCurrentStep] = useState<string | null>(null);
+
   const endTurnUi = useCallback(() => {
     turnActiveRef.current = false;
     activeTurnIdRef.current = null;
@@ -673,6 +665,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     resendInProgressRef.current = false;
     setStreaming(false);
     setTurnActivity(null);
+    setCurrentStep(null);
     setTokenStreaming(0);
   }, []);
 
@@ -681,6 +674,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     isInitialLoadRef.current = false;
     setStreaming(true);
     setTurnActivity(null);
+    setCurrentStep(null);
     setLoadingSteps(null);
     setPendingFeedbackMessageId(null);
   }, []);
@@ -1599,6 +1593,18 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             const batch = toolBatchRef.current;
             toolBatchRef.current = [];
             if (batch.length === 0) return;
+            // Replace the current step line with the latest activity in this batch.
+            for (let i = batch.length - 1; i >= 0; i--) {
+              const e = batch[i]!;
+              const src = e.type === 'subagent_event'
+                ? (e as { parentEvent?: { type?: string; tool?: string } }).parentEvent
+                : e;
+              const toolName = (src?.tool as string) ?? '';
+              if (!toolName) continue;
+              if (src?.type === 'tool_executing') { setCurrentStep(`Running ${toolName}…`); break; }
+              if (src?.type === 'tool_complete') { setCurrentStep(`${toolName} · done`); break; }
+              if (src?.type === 'tool_output') { setCurrentStep(`Running ${toolName}…`); break; }
+            }
             setMessages(prev => {
               let current = prev;
               for (const e of batch) {
@@ -1739,6 +1745,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             if (isInitialLoadRef.current) return prev;
             if (!turnActiveRef.current) return prev;
             setStreaming(true);
+            setCurrentStep(null);
             const rawDelta = (ev.content as string) ?? '';
             if (/Calling:|✅ Result:|\[STEP \d+\]/.test(rawDelta)) return prev;
             const rawFull = (ev.fullContent as string) ?? '';
@@ -2017,8 +2024,12 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
                 setMessages(p => {
                   const l = p[p.length - 1];
                   if (l?.role !== 'assistant') return p;
+                  const accumulated = (l.thinking ?? '') + pending;
+                  // Show only the latest thinking fragment as the step line (replaced each flush).
+                  const tail = accumulated.replace(/\s+/g, ' ').trim().slice(-110);
+                  if (tail) setCurrentStep(`Thinking… ${tail}`);
                   return updateLastMessage(p, {
-                    thinking: (l.thinking ?? '') + pending,
+                    thinking: accumulated,
                     thinkingStartedAt: l.thinkingStartedAt ?? Date.now(),
                   });
                 });
@@ -2041,7 +2052,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
 
           case 'provider_error': {
             const providerMsg = (ev.message as string) ?? 'Provider error';
-            const msg = extractProviderError(providerMsg);
+            const msg = providerMsg;
             // Rate-limit errors suppress all subsequent warnings for this turn
             if (/rate.?limit|429|too many requests|quota/i.test(providerMsg)) {
               rateLimitSeenRef.current = true;
@@ -2478,6 +2489,14 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     ? 'Select a provider before sending'
     : !currentModel ? 'Select a model before sending' : '';
 
+  const chatWarnings = useMemo(() => {
+    const items = [...warnings];
+    if (sendBlocked && configLoaded && sendBlockedReason) {
+      items.unshift(sendBlockedReason);
+    }
+    return items;
+  }, [warnings, sendBlocked, configLoaded, sendBlockedReason]);
+
   // Keep refs in sync so send handlers never capture stale session/cwd from closures.
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
   useEffect(() => { viewSessionIdRef.current = sessionId ?? null; }, [sessionId]);
@@ -2720,15 +2739,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       endTurnUi();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
-      const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired|insufficient|credits|balance|dunning|deny/i.test(errorMsg);
-      if (isProviderErr) {
-        setWarnings(prev => replaceWarning(prev, extractProviderError(errorMsg)));
-        chat.cancel().catch(() => {});
-      } else {
-        setWarnings(prev => replaceWarning(prev, displayError));
-        chat.cancel().catch(() => {});
-      }
+      setWarnings(prev => replaceWarning(prev, errorMsg));
+      chat.cancel().catch(() => {});
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === 'assistant' && last.streaming) return prev.slice(0, -1);
@@ -2870,16 +2882,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
       endTurnUi();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      const displayError = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '...' : errorMsg;
-      const isProviderErr = /429|quota|billing|suspended|rate.?limit|api.?key|unauthorized|forbidden|exceeded|invalid.*key|disabled|expired|insufficient|credits|balance|dunning|deny/i.test(errorMsg);
-      if (isProviderErr) {
-        const msg = extractProviderError(errorMsg);
-        setWarnings(prev => replaceWarning(prev, msg));
-        chat.cancel().catch(() => {});
-      } else {
-        setWarnings(prev => replaceWarning(prev, displayError));
-        chat.cancel().catch(() => {});
-      }
+      setWarnings(prev => replaceWarning(prev, errorMsg));
+      chat.cancel().catch(() => {});
       setMessages(prev => {
         const last = prev[prev.length - 1];
         if (last?.role === 'assistant' && last.streaming) {
@@ -3552,27 +3556,47 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
     void startNewSession(folder);
   };
 
-  // Clear session view: soft-archives messages (kept in DB + memory), two-step confirm
-  const [clearArmed, setClearArmed] = useState(false);
-  const clearArmTimerRef = useRef<number | null>(null);
-  const handleClearSession = async () => {
+  // Clear session view: modal with archive (soft) or delete (hard purge)
+  const [clearSessionModalOpen, setClearSessionModalOpen] = useState(false);
+  const [clearSessionBusy, setClearSessionBusy] = useState(false);
+
+  const resetSessionViewState = () => {
+    setMessages([]);
+    setHasOlderMessages(false);
+    setPendingFeedbackMessageId(null);
+    setTokenUsed(0);
+    setTokenInput(0);
+    setTokenOutput(0);
+    setCompactionCount(0);
+  };
+
+  const handleArchiveSession = async () => {
     const sid = currentSessionIdRef.current;
     if (!sid) return;
-    if (!clearArmed) {
-      setClearArmed(true);
-      if (clearArmTimerRef.current) window.clearTimeout(clearArmTimerRef.current);
-      clearArmTimerRef.current = window.setTimeout(() => setClearArmed(false), 4000);
-      return;
-    }
-    if (clearArmTimerRef.current) { window.clearTimeout(clearArmTimerRef.current); clearArmTimerRef.current = null; }
-    setClearArmed(false);
+    setClearSessionBusy(true);
     try {
       await sessions.archiveMessages(sid);
-      setMessages([]);
-      setHasOlderMessages(false);
-      setPendingFeedbackMessageId(null);
+      resetSessionViewState();
+      setClearSessionModalOpen(false);
     } catch (e) {
-      setWarnings([`Failed to clear session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
+      setWarnings([`Failed to archive session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
+    } finally {
+      setClearSessionBusy(false);
+    }
+  };
+
+  const handleDeleteSessionContent = async () => {
+    const sid = currentSessionIdRef.current;
+    if (!sid) return;
+    setClearSessionBusy(true);
+    try {
+      await sessions.purgeContent(sid);
+      resetSessionViewState();
+      setClearSessionModalOpen(false);
+    } catch (e) {
+      setWarnings([`Failed to delete session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
+    } finally {
+      setClearSessionBusy(false);
     }
   };
 
@@ -3893,12 +3917,12 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             </IconButton>
           </Tooltip>
           {coreSession && (
-            <Tooltip title={clearArmed ? 'Click again to confirm clear' : 'Clear session view (archives messages; DB & memory untouched)'} arrow>
+            <Tooltip title="Clear session view" arrow>
               <IconButton
                 size="small"
-                onClick={() => { void handleClearSession(); }}
+                onClick={() => setClearSessionModalOpen(true)}
                 sx={{
-                  color: clearArmed ? colors.accent.red : colors.text.dim,
+                  color: colors.text.dim,
                   p: 0.5,
                   '&:hover': { color: colors.accent.red },
                 }}
@@ -3923,6 +3947,8 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         </Box>
 
         {showMedicalSessionDisclaimer && <MedicalDisclaimerChatSessionStrip />}
+
+        <ChatWarningBand messages={chatWarnings} />
 
         {/* Messages */}
         <Box
@@ -3951,7 +3977,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
             freezeMessageLayout={freezeMessageLayout || loadingOlderMessages || sessionRestoring || !initialScrollDone}
             pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
             feedbackSubmitting={feedbackSubmitting}
-            turnActivityStage={turnActivity?.stage}
+            turnActivityStage={currentStep ?? turnActivity?.stage}
             bottomRef={bottomRef}
             onResend={handleResend}
             onOpenChildSession={openChildSession}
@@ -3964,7 +3990,7 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
           />
 
           {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
-            <ThinkingIndicator label={loadingSteps?.[0]?.label} />
+            <ThinkingIndicator label={currentStep ?? loadingSteps?.[0]?.label} />
           )}
 
            {toolEnablePrompt && (
@@ -3984,60 +4010,6 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
 
         {/* ─── Unified Input Module ─── */}
         <Box sx={{ px: 2, pb: 1.5, pt: 1, position: 'relative' }}>
-          {/* Unified warning band — combines provider errors and send-blocked notifications */}
-          {(() => {
-            const allWarnings: string[] = [...warnings];
-            if (sendBlocked && configLoaded && sendBlockedReason) {
-              allWarnings.unshift(sendBlockedReason);
-            }
-            const hasWarnings = allWarnings.length > 0;
-
-            return (
-          <Box sx={{
-            position: 'relative',
-            zIndex: 0,
-            overflow: 'hidden',
-            maxHeight: hasWarnings ? 260 : 0,
-            opacity: hasWarnings ? 1 : 0,
-            transition: 'max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease',
-            mb: hasWarnings ? '-20px' : 0,
-          }}>
-    <Box sx={{
-      bgcolor: alphaColor(colors.accent.orange, '18'),
-      border: `1px solid ${alphaColor(colors.accent.orange, '30')}`,
-      borderBottom: 'none',
-      borderRadius: '14px 14px 0 0',
-      px: 1.5, pt: 1, pb: 1.5,
-      display: 'flex', alignItems: 'flex-start', gap: 0.75,
-      maxHeight: 250,
-    }}>
-      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 0.3, overflowY: 'auto', maxHeight: 240, pb: 1 }}>
-                {allWarnings.map((msg, i) => (
-                  <Typography key={i} sx={{
-                    fontSize: '0.58rem',
-                    color: colors.accent.orange,
-                    fontFamily: "'Inter', sans-serif",
-                    fontWeight: 500,
-                    letterSpacing: '0.2px',
-                    lineHeight: 1.5,
-                    flexShrink: 0,
-                  }}>
-                    ⚠ {msg}
-                  </Typography>
-                ))}
-              </Box>
-              <IconButton
-                size="small"
-                onClick={() => setWarnings([])}
-                sx={{ color: alphaColor(colors.accent.orange, 'cc'), p: 0, minWidth: 0, '&:hover': { bgcolor: alphaColor(colors.accent.orange, '20') } }}
-              >
-                <CloseIcon sx={{ fontSize: 11 }} />
-              </IconButton>
-            </Box>
-          </Box>
-            );
-          })()}
-
           {/* Attachment chips */}
           {attachments.length > 0 && (
             <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.75 }}>
@@ -4812,6 +4784,71 @@ export function ChatPanel({ sessionId, coreSession = false }: ChatPanelProps) {
         </DialogActions>
       </Dialog>
       <Dialog
+        open={clearSessionModalOpen}
+        onClose={() => { if (!clearSessionBusy) setClearSessionModalOpen(false); }}
+        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxWidth: 480, width: '90%' } }}
+      >
+        <DialogTitle sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 700, letterSpacing: '1px', pb: 1 }}>
+          CLEAR SUPER SESSION
+        </DialogTitle>
+        <DialogContent>
+          <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
+            Choose how to reset this super session:
+          </Typography>
+          <Box sx={{ bgcolor: colors.bg.tertiary, border: `1px solid ${colors.border.subtle}`, borderRadius: 1, p: 1.5, mb: 1 }}>
+            <Typography sx={{ color: colors.text.primary, fontSize: '0.7rem', fontWeight: 600, mb: 0.5 }}>
+              Archive session
+            </Typography>
+            <Typography sx={{ color: colors.text.dim, fontSize: '0.65rem', lineHeight: 1.6 }}>
+              Hides messages from the chat view. Database rows and memory fabric stay intact for recovery and context.
+            </Typography>
+          </Box>
+          <Box sx={{ bgcolor: alphaColor(colors.accent.red, '10'), border: `1px solid ${alphaColor(colors.accent.red, '35')}`, borderRadius: 1, p: 1.5 }}>
+            <Typography sx={{ color: colors.accent.red, fontSize: '0.7rem', fontWeight: 600, mb: 0.5 }}>
+              Delete session
+            </Typography>
+            <Typography sx={{ color: colors.text.dim, fontSize: '0.65rem', lineHeight: 1.6 }}>
+              Permanently removes all messages and clears saved agent memories (memory fabric) for this super session.
+              The agent may need to start fresh and relearn context from new conversations. This cannot be undone.
+            </Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, gap: 1, flexWrap: 'wrap' }}>
+          <Button
+            onClick={() => setClearSessionModalOpen(false)}
+            disabled={clearSessionBusy}
+            size="small"
+            sx={{ color: colors.text.dim, textTransform: 'none', fontSize: '0.65rem', fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => { void handleArchiveSession(); }}
+            disabled={clearSessionBusy}
+            size="small"
+            sx={{ color: colors.text.primary, textTransform: 'none', fontSize: '0.65rem', fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            Archive session
+          </Button>
+          <Button
+            onClick={() => { void handleDeleteSessionContent(); }}
+            disabled={clearSessionBusy}
+            size="small"
+            sx={{
+              color: colors.bg.primary,
+              bgcolor: colors.accent.red,
+              textTransform: 'none',
+              fontSize: '0.65rem',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontWeight: 700,
+              '&:hover': { bgcolor: alphaColor(colors.accent.red, '85') },
+            }}
+          >
+            Delete session
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
         open={folderConsentOpen}
         onClose={() => setFolderConsentOpen(false)}
         PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxWidth: 480, width: '90%' } }}
@@ -4925,10 +4962,26 @@ interface PermissionBannerProps {
 }
 
 function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: PermissionBannerProps) {
+  const [instructMode, setInstructMode] = useState(false);
+  const [instruction, setInstruction] = useState('');
+
   const handleRespond = async (choice: 'allow_once' | 'allow_always' | 'deny') => {
     try {
       await fetch('/api/permission/respond', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId: prompt.requestId, choice }) });
     } catch { /* ignore */ }
+    setInstructMode(false);
+    setInstruction('');
+    onRespond();
+  };
+
+  const handleInstruct = async () => {
+    const text = instruction.trim();
+    if (!text) return;
+    try {
+      await fetch('/api/permission/instruct', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId: prompt.requestId, instruction: text }) });
+    } catch { /* ignore */ }
+    setInstructMode(false);
+    setInstruction('');
     onRespond();
   };
 
@@ -4992,7 +5045,29 @@ function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: Per
         )}
         <Chip size="small" label={prompt.forAutomation ? 'Allow for automations' : 'Always'} onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.blue, '15'), color: colors.accent.blue, '&:hover': { bgcolor: alphaColor(colors.accent.blue, '30') } }} />
         <Chip size="small" label="Deny" onClick={() => handleRespond('deny')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.red, '15'), color: colors.accent.red, '&:hover': { bgcolor: alphaColor(colors.accent.red, '30') } }} />
+        <Chip size="small" label="Instruct" onClick={() => setInstructMode((v) => !v)} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.purple, '15'), color: colors.accent.purple, '&:hover': { bgcolor: alphaColor(colors.accent.purple, '30') } }} />
       </Box>
+      {instructMode && (
+        <Box sx={{ display: 'flex', gap: 0.75, mt: 1, alignItems: 'flex-end' }}>
+          <TextField
+            size="small"
+            fullWidth
+            multiline
+            minRows={2}
+            placeholder="Tell the agent how to proceed instead…"
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void handleInstruct();
+              }
+            }}
+            sx={{ '& .MuiInputBase-input': { fontSize: '0.6rem' } }}
+          />
+          <Chip size="small" label="Send" onClick={() => void handleInstruct()} sx={{ cursor: 'pointer', height: 24, fontSize: '0.55rem', bgcolor: alphaColor(colors.accent.purple, '20'), color: colors.accent.purple }} />
+        </Box>
+      )}
     </Box>
   );
 }

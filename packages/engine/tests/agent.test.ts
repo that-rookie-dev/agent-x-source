@@ -612,6 +612,11 @@ describe('Agent', () => {
 
       expect(result).toBe(true);
       expect(agent.isModelGrounded('gpt-4o')).toBe(false);
+      expect(mockProvider.complete).toHaveBeenCalledWith(
+        expect.objectContaining({ maxTokens: expect.any(Number) }),
+      );
+      const trialRequest = mockProvider.complete.mock.calls[0]?.[0] as { maxTokens?: number };
+      expect(trialRequest.maxTokens).toBeGreaterThanOrEqual(16);
     });
 
     it('returns false and grounds model on error', async () => {

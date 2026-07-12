@@ -15,7 +15,7 @@ import type {
   QuestionnaireRecord,
   ClientSituation,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, resolveContinuationInstruction, detectIncompleteLastTurn, isContinuationTrigger, mergeChannelLinkedMessages, resolveChannelResumeStateSessionId, parseChannelBindingFromSessionId, type SessionResumeState, type PermissionHandlerResult, normalizePermissionHandlerResult } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
@@ -55,8 +55,10 @@ import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
 import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createMarkdownSection, createCurrentTimeSection, createSchedulingSection, createThirdPartyServicesSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createMarkdownSection, createCurrentTimeSection, createSchedulingSection, createThirdPartyServicesSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelLinkedContextSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, buildClarificationPolicyInstruction, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
+import { globalNarrativeStore } from '../context/SessionNarrativeStore.js';
+import { renderNarrativeText } from '../context/NarrativeBuilder.js';
 import {
   buildCompletionMessages,
   COMPACT_MEMORY_MAX_CHARS,
@@ -112,7 +114,7 @@ import { AutonomousDiagnosticsSystem, type SessionContext } from './AutonomousDi
 import { TodoManager } from './TodoManager.js';
 import type { SessionLogger } from '../session/SessionLogger.js';
 import { COMPACTION_PROMPT, COMPACTION_UPDATE_PROMPT } from './compaction-prompt.js';
-import { getTokenThresholds, isTokenOverflow, estimateTokens, estimateMessagesTokens, getOutputReserve } from '@agentx/shared';
+import { getTokenThresholds, isTokenOverflow, estimateTokens, estimateMessagesTokens, getOutputReserve, resolveEffectiveMaxOutputTokens, estimatePromptTokens, ContextBudgetExceededError, DEFAULT_FALLBACK_CONTEXT_WINDOW, resolveTrialOutputTokens, modelInfoHasReasoning, type ModelInfo } from '@agentx/shared';
 
 // ─── UNIFIED PIPELINE IMPORTS (Phase 1-11 integration) ───
 import { InputNormalizer } from '../communication/InputNormalizer.js';
@@ -237,6 +239,16 @@ export class Agent {
   private scopePath: string;
   /** Public accessor for session ID — needed by SmartSubAgent to pass parentSessionId to crew workers. */
   get currentSessionId(): string { return this.sessionId; }
+
+  /** Link a desktop session for context (scope, crew, resume, narrative) — not transcript merge. */
+  setLinkedContextSessionId(sessionId: string | null): void {
+    this.linkedContextSessionId = sessionId?.trim() || null;
+  }
+
+  getLinkedContextSessionId(): string | null {
+    return this.linkedContextSessionId;
+  }
+
   private isProcessing = false;
   readonly lifecycle = new AgentLifecycle();
   private scope: Scope | null = null;
@@ -257,7 +269,7 @@ export class Agent {
   private errorShield: ErrorShield;
   private toolExecutor?: EnhancedToolExecutor;
   private toolRegistry?: ToolRegistry;
-  private pendingPermissions = new Map<string, { resolve: (choice: 'allow_once' | 'allow_always' | 'deny') => void; toolName: string; path: string; riskLevel: string }>();
+  private pendingPermissions = new Map<string, { resolve: (choice: PermissionHandlerResult) => void; toolName: string; path: string; riskLevel: string }>();
   private turnApprovedAll = false;
   private _onPart?: PartPersistFn;
   autoApproveTools = false;
@@ -331,8 +343,7 @@ export class Agent {
   private toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
 
   // ─── Model Selection
-  private cachedModels: Map<string, number> = new Map();
-  private cachedModelCapabilities: Map<string, unknown[]> = new Map();
+  private cachedModelInfo: Map<string, ModelInfo> = new Map();
   private groundedModels: Set<string> = new Set();
   private fallbackModel: string | null = null;
 
@@ -438,6 +449,10 @@ export class Agent {
   private get runStateMgr(): RunStateManager { if (!this._runStateMgr) this._runStateMgr = new RunStateManager(); return this._runStateMgr; }
   private _telegramConnected = false;
   private _telegramChatId: number | null = null;
+  /** Active inbound messaging channel for the current turn (telegram/slack/discord). */
+  private activeInboundChannel: string | null = null;
+  /** Desktop session linked for context when this agent is the channel super-session. */
+  private linkedContextSessionId: string | null = null;
   private _crewOrchestrator: CrewOrchestrator | null = null;
   private _crewMissionOrchestrator: CrewMissionOrchestrator | null = null;
   private get crewMissionOrchestrator(): CrewMissionOrchestrator {
@@ -552,6 +567,128 @@ export class Agent {
     this.activeClarificationResume = null;
   }
 
+  private getPersistStore(): {
+    getMessages?: (sessionId: string) => Array<{ role?: string; content?: string; parts?: unknown }>;
+    getSessionResumeState?: (sessionId: string) => Record<string, unknown> | null;
+    setSessionResumeState?: (sessionId: string, state: {
+      kind: string;
+      messageId: string;
+      payload: Record<string, unknown>;
+      createdAt?: string;
+    }) => void;
+    clearSessionResumeState?: (sessionId: string) => void;
+  } | null {
+    const sm = this.sessionManager as { store?: unknown } | null | undefined;
+    return (sm?.store as ReturnType<Agent['getPersistStore']>) ?? null;
+  }
+
+  private parseStoredResumeState(row: Record<string, unknown> | null | undefined): SessionResumeState | null {
+    if (!row) return null;
+    let payload: Record<string, unknown> = {};
+    const raw = row['payload'];
+    if (typeof raw === 'string' && raw) {
+      try { payload = JSON.parse(raw) as Record<string, unknown>; } catch { payload = {}; }
+    } else if (raw && typeof raw === 'object') {
+      payload = raw as Record<string, unknown>;
+    }
+    return {
+      kind: (row['kind'] ?? 'questionnaire') as SessionResumeState['kind'],
+      messageId: String(row['message_id'] ?? row['messageId'] ?? ''),
+      questionnaireMessageId: payload.questionnaireMessageId as string | undefined,
+      userText: payload.userText as string | undefined,
+      lastFailure: payload.lastFailure as string | undefined,
+      delegateCrewIds: payload.delegateCrewIds as string[] | undefined,
+      primaryCrewId: payload.primaryCrewId as string | undefined,
+      crewIntakeFromPicker: payload.crewIntakeFromPicker as boolean | undefined,
+      createdAt: String(row['created_at'] ?? row['createdAt'] ?? new Date().toISOString()),
+    };
+  }
+
+  private loadAuthoritativeMessages(): Array<{ role?: string; content?: string; parts?: unknown }> {
+    const store = this.getPersistStore();
+    if (store?.getMessages) {
+      if (this.options.channelSession && this.linkedContextSessionId) {
+        const linked = store.getMessages(this.linkedContextSessionId);
+        const channel = store.getMessages(this.sessionId);
+        return mergeChannelLinkedMessages(linked, channel);
+      }
+      return store.getMessages(this.sessionId);
+    }
+    return this.messages.map((m) => ({
+      role: m.role,
+      content: typeof m.content === 'string' ? m.content : '',
+    }));
+  }
+
+  private resolveContinuationResumeState(): SessionResumeState | null {
+    const store = this.getPersistStore();
+    if (!store?.getSessionResumeState) return null;
+    const resumeSessionId = this.options.channelSession
+      ? resolveChannelResumeStateSessionId(this.sessionId, this.linkedContextSessionId)
+      : this.sessionId;
+    return this.parseStoredResumeState(store.getSessionResumeState(resumeSessionId));
+  }
+
+  private resolveContinuationInstructionBlock(userText: string): string | null {
+    const messages = this.loadAuthoritativeMessages();
+    const resumeState = this.resolveContinuationResumeState();
+    return resolveContinuationInstruction({ userText, messages, resumeState });
+  }
+
+  private persistOutstandingTask(userText: string, failureNote: string): void {
+    const store = this.getPersistStore();
+    if (!store?.setSessionResumeState || !userText.trim()) return;
+    const targetSessionId = this.options.channelSession
+      ? resolveChannelResumeStateSessionId(this.sessionId, this.linkedContextSessionId)
+      : this.sessionId;
+    store.setSessionResumeState(targetSessionId, {
+      kind: 'outstanding_task',
+      messageId: generateMessageId(),
+      payload: {
+        userText: userText.trim(),
+        lastFailure: failureNote.slice(0, 280),
+      },
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  private clearOutstandingTask(): void {
+    const store = this.getPersistStore();
+    const targetSessionId = this.options.channelSession
+      ? resolveChannelResumeStateSessionId(this.sessionId, this.linkedContextSessionId)
+      : this.sessionId;
+    const row = store?.getSessionResumeState?.(targetSessionId);
+    if (row?.['kind'] === 'outstanding_task') {
+      store?.clearSessionResumeState?.(targetSessionId);
+    }
+  }
+
+  private isFailureAssistantContent(content: string): boolean {
+    return /\b(unable to generate|i apologize|i was unable|provider error|encountered an error|cannot assist|tell me which|please tell me|which action you)\b/i.test(content);
+  }
+
+  private noteTurnOutcome(content: string): void {
+    if (!content?.trim()) return;
+    const lastUser = [...this.messages].reverse().find((m) => m.role === 'user');
+    let userText = typeof lastUser?.content === 'string'
+      ? lastUser.content.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim()
+      : '';
+    if (this.options.channelSession && isContinuationTrigger(userText)) {
+      const resumeState = this.resolveContinuationResumeState();
+      const incomplete = detectIncompleteLastTurn(this.loadAuthoritativeMessages());
+      userText = resumeState?.userText?.trim()
+        || incomplete?.userGoal
+        || userText;
+    }
+    if (this.isFailureAssistantContent(content)) {
+      this.persistOutstandingTask(userText, content);
+      return;
+    }
+    if (content.length > 40 && !content.startsWith('⏹')) {
+      this.clearOutstandingTask();
+    }
+  }
+
   recordCrewFeedback(crewId: string, positive: boolean): void {
     this.crewOrchestrator.recordFeedback(crewId, positive);
   }
@@ -574,20 +711,99 @@ export class Agent {
     this.activeStreamHandler?.discardCurrentStepText();
   }
 
+  private isMessagingChannelContext(): boolean {
+    if (this.options.channelSession) return true;
+    return isMessagingChannel(this.activeInboundChannel);
+  }
+
+  private async waitForOpenClarification(prompt: string, _source?: ClarificationSource): Promise<string> {
+    if (this.userCancelledTurn) {
+      const err = new Error('Turn aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
+    this.turnState.setPhase('awaiting_permission', 'clarification');
+    this.discardStreamPreambleBeforeQuestionnaire();
+
+    const messageId = generateMessageId();
+    const host = this.options.crewPrivateHost;
+    const crew = this.options.promptProfile === 'crew_private' && host
+      ? { crewId: host.id, name: host.name, callsign: host.callsign, color: host.color, icon: host.icon }
+      : undefined;
+    const clarMsg: Message = {
+      id: messageId,
+      sessionId: this.sessionId,
+      role: 'assistant',
+      content: prompt,
+      toolCalls: null,
+      createdAt: new Date().toISOString(),
+      tokenCount: 0,
+      crew,
+    };
+
+    const store = this.getMessageStore();
+    if (store?.insertMessage) {
+      try {
+        store.insertMessage({
+          id: clarMsg.id,
+          sessionId: clarMsg.sessionId,
+          role: clarMsg.role,
+          content: clarMsg.content,
+          createdAt: clarMsg.createdAt,
+        });
+      } catch { /* best-effort */ }
+    }
+
+    this.activeClarificationResume = {
+      kind: this.activeClarificationResume?.kind ?? 'questionnaire',
+      questionnaireMessageId: messageId,
+      userText: this.activeClarificationResume?.userText,
+      delegateCrewIds: this.activeClarificationResume?.delegateCrewIds,
+      primaryCrewId: this.activeClarificationResume?.primaryCrewId,
+      crewIntakeFromPicker: this.activeClarificationResume?.crewIntakeFromPicker,
+    };
+    this.emit({ type: 'message_received', message: clarMsg, elapsed: 0 });
+
+    let response: string;
+    try {
+      response = await new Promise<string>((resolve, reject) => {
+        this.clarificationResolve = resolve;
+        this.clarificationReject = reject;
+      });
+    } finally {
+      this.clarificationResolve = null;
+      this.clarificationReject = null;
+    }
+    this.activeClarificationResume = null;
+
+    if (response && response !== '(skipped)') {
+      this.messages.push({ role: 'user', content: response });
+    }
+
+    this.turnState.setPhase('running', 'resuming');
+    this.emit({
+      type: 'loading_start',
+      stage: this.options.promptProfile === 'crew_private' ? 'crew_private' : 'thinking',
+    });
+    return response;
+  }
+
   private async waitForQuestionnaireResponse(questionnaire: QuestionnairePayload): Promise<string> {
     if (this.userCancelledTurn) {
       const err = new Error('Turn aborted');
       err.name = 'AbortError';
       throw err;
     }
-    // Messaging channels have no UI questionnaire modal — waiting would hang forever.
-    if (this.options.channelSession) {
-      getLogger().info('CHANNEL', 'Auto-proceeding past questionnaire on messaging channel');
-      return 'Proceed with your best judgment using available tools and context.';
-    }
     const payload: QuestionnairePayload = questionnaire.source
       ? questionnaire
       : { ...questionnaire, source: this.clarificationSource() };
+
+    if (!shouldUseQuestionnaireClarification(payload)) {
+      const prompt = payload.questions.map((q) => q.prompt).filter(Boolean).join('\n') || 'Could you clarify?';
+      getLogger().warn('CLARIFICATION', 'Text-only questionnaire redirected to plain chat');
+      return this.waitForOpenClarification(prompt, payload.source);
+    }
+
     this.turnState.setPhase('awaiting_permission', 'clarification');
 
     // Drop any assistant preamble streamed before ask_clarification in this step
@@ -596,6 +812,13 @@ export class Agent {
     const messageId = generateMessageId();
     const record: QuestionnaireRecord = { payload, status: 'pending' };
     const questionnaireMsg = this.buildQuestionnaireMessage(messageId, record);
+
+    // Messaging channels have no questionnaire modal — populate content so Telegram/Slack/Discord can reply.
+    if (this.isMessagingChannelContext()) {
+      questionnaireMsg.content = formatQuestionnaireForMessagingChannel(payload);
+      getLogger().info('CHANNEL', `Clarification on messaging channel (${this.activeInboundChannel ?? 'channelSession'}): len=${questionnaireMsg.content.length}`);
+    }
+
     this.persistQuestionnaireMessage(questionnaireMsg);
     this.activeClarificationResume = {
       kind: this.activeClarificationResume?.kind ?? 'questionnaire',
@@ -627,6 +850,9 @@ export class Agent {
       answeredAt: new Date().toISOString(),
     };
     const updatedMsg = this.buildQuestionnaireMessage(messageId, answered);
+    if (this.isMessagingChannelContext()) {
+      updatedMsg.content = questionnaireMsg.content;
+    }
     this.updateQuestionnaireMessage(messageId, answered);
     this.emit({ type: 'message_received', message: updatedMsg, elapsed: 0, isUpdate: true });
 
@@ -1992,11 +2218,42 @@ Rules:
       this.clientSituation = options.clientSituation;
     }
 
+    if (!options?.retry) {
+      const continuationBlock = this.resolveContinuationInstructionBlock(cleanContent);
+      if (continuationBlock) {
+        this.pendingInstruction = this.pendingInstruction
+          ? `${this.pendingInstruction}\n\n${continuationBlock}`
+          : continuationBlock;
+      }
+    }
+
     const messagingChannelInbound = options?.sourceChannel === 'telegram'
       || options?.sourceChannel === 'slack'
       || options?.sourceChannel === 'discord';
+    this.activeInboundChannel = messagingChannelInbound ? (options?.sourceChannel ?? null) : null;
+    this.toolExecutor?.setMessagingPermissionMode(messagingChannelInbound);
+    this.toolExecutor?.setInboundSourceChannel(messagingChannelInbound ? (options?.sourceChannel ?? null) : null);
+    this.toolExecutor?.setPermissionPromptHook((details) => {
+      this.emit({
+        type: 'permission_required',
+        requestId: randomUUID(),
+        tool: details.toolId,
+        path: details.path,
+        riskLevel: details.riskLevel,
+        forAutomation: details.forAutomation,
+        integrationPreview: details.integrationPreview,
+      });
+    });
     if (messagingChannelInbound && this.planMode) {
       this.setPlanMode(false);
+      this.syncSessionRuntimeRecord({ mode: 'agent' });
+    }
+
+    if (!options?.retry) {
+      const clarificationBlock = buildClarificationPolicyInstruction(this.isMessagingChannelContext() || messagingChannelInbound);
+      this.pendingInstruction = this.pendingInstruction
+        ? `${this.pendingInstruction}\n\n${clarificationBlock}`
+        : clarificationBlock;
     }
 
     const searchStatus = isWebSearchAvailableForChat(this.config);
@@ -2135,7 +2392,7 @@ Rules:
     // ─── MODEL CAPABILITY CHECK: warn if model lacks function calling for task intents ───
     const isTaskIntent = decision.messageClass === 'task';
     if (isTaskIntent && !this._capabilityWarningEmitted) {
-      const caps = this.cachedModelCapabilities.get(this.config.provider.activeModel) ?? [];
+      const caps = this.cachedModelInfo.get(this.config.provider.activeModel)?.capabilities ?? [];
       if (!caps.includes('function_calling')) {
         this._capabilityWarningEmitted = true;
         this.emit({
@@ -2435,6 +2692,7 @@ Rules:
          throw new Error('Cannot reach LLM provider. Check your internet connection.');
        }
        let assistantMessage = await this.runCompletionLoop(startTime);
+       this.noteTurnOutcome(assistantMessage.content);
 
        // ─── CRITICAL: Server-side validation for mode restriction transparency ───
        if (this.planMode && this.options.promptProfile !== 'crew_private') {
@@ -2550,6 +2808,7 @@ Rules:
           tokenCount: 0,
         };
         this.emit({ type: 'message_received', message: fallbackMessage, elapsed: Date.now() - startTime });
+        this.noteTurnOutcome(fallbackContent);
         return fallbackMessage;
       }
       this.emit({
@@ -2561,6 +2820,10 @@ Rules:
       });
       throw error;
     } finally {
+      this.activeInboundChannel = null;
+      this.toolExecutor?.setMessagingPermissionMode(false);
+      this.toolExecutor?.setInboundSourceChannel(null);
+      this.toolExecutor?.setPermissionPromptHook(undefined);
       this.turnWebSearchPolicy = 'off';
       this.forcedWebSearchToolName = null;
       this.pendingVoiceMerge = null;
@@ -2604,6 +2867,7 @@ Rules:
    */
   private async runCompletionLoop(startTime: number): Promise<Message> {
     await this.reconcileSystemPrompt();
+    await this.compactContext();
 
     const emit = (e: EngineEvent) => this.emit(e);
     const registry = this.toolRegistry;
@@ -2686,65 +2950,20 @@ Rules:
 
     const model = createAiSdkModel(this.config, this.getApiKey());
 
-    const aiMessages = buildCompletionMessages(
-      this.messages.map((m) => ({
-        role: m.role,
-        content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
-      })),
+    let aiMessages = this.buildAiMessagesForTurn({
+      lastUserText,
       compact,
-      3,
-      this.config.provider.activeProvider,
-    ).map((m) => ({
-      role: m.role as 'user' | 'assistant' | 'system',
-      content: m.content,
-    }));
-
-    // Append instruction to last user message (instead of separate role:system)
-    if (this.pendingInstruction) {
-      const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
-      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
-      if (userMsg) {
-        aiMessages[userIdx] = { role: 'user', content: `${userMsg.content}\n\n[INSTRUCTION]\n${this.pendingInstruction}\n[/INSTRUCTION]` };
-      }
-      this.pendingInstruction = null;
-    }
-
-    // Prepend turn context so short follow-ups retain session intent
-    const turnCtx = this.prepareTurnContext(lastUserText);
-    if (turnCtx.block) {
-      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
-      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
-      if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
-        aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
-      }
-    }
-
-    if (this.clientSituation) {
-      const situationBlock = formatClientSituationBlock(this.clientSituation);
-      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
-      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
-      if (userMsg && !userMsg.content.includes('[CLIENT_SITUATION]')) {
-        aiMessages[userIdx] = { role: 'user', content: `${situationBlock}\n\n${userMsg.content}` };
-      }
-    }
-
-    if (integrationHint) {
-      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
-      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
-      if (userMsg && !userMsg.content.includes('[INTEGRATION')) {
-        aiMessages[userIdx] = { role: 'user', content: `${integrationHint}\n\n${userMsg.content}` };
-      }
-    }
-
-    // Prepend RAG context to last user message (full context profile only)
-    if (!compact && this.lastRagResults.length > 0) {
-      const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
-      const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
-      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
-      if (userMsg) {
-        aiMessages[userIdx] = { role: 'user', content: `${ragCtx}\n\n${userMsg.content}` };
-      }
-    }
+      integrationHint,
+    });
+    const toolCount = Object.keys(tools).length;
+    const rebuildAiMessages = () => this.buildAiMessagesForTurn({
+      lastUserText,
+      compact,
+      integrationHint,
+    });
+    const budget = await this.ensureOutputBudget(aiMessages, tools, rebuildAiMessages);
+    aiMessages = budget.messages;
+    const turnMaxOutputTokens = budget.maxOutputTokens;
 
     const streamHandler = createAiSdkStreamHandler(
       emit,
@@ -2770,8 +2989,7 @@ Rules:
       this.emit({ type: 'loading_start', stage: 'thinking' });
 
       // Log tool setup for debugging
-      const toolCount = Object.keys(tools).length;
-      getLogger().info('AGENT', `Starting streamText with ${toolCount} tools, model: ${this.config.provider.activeModel}, mode: ${this.planMode ? 'plan' : 'agent'}`);
+      getLogger().info('AGENT', `Starting streamText with ${toolCount} tools, model: ${this.config.provider.activeModel}, mode: ${this.planMode ? 'plan' : 'agent'}, maxOutputTokens: ${turnMaxOutputTokens}`);
 
       let stepCapContinuations = 0;
       const stepBudget = this.completionStepBudget();
@@ -2788,11 +3006,31 @@ Rules:
         tools,
         abortSignal: this.abortSignal,
         maxRetries: 2,
+        maxOutputTokens: turnMaxOutputTokens,
         stopWhen: ({ steps }) => steps.length >= stepLimit(),
         toolChoice: 'auto',
         ...(googleProviderOptions ? { providerOptions: googleProviderOptions } : {}),
         prepareStep: async ({ stepNumber, messages }) => {
           this.turnState.setStage('execution', stepNumber);
+          const stepMessages = messages.map((m) => ({
+            content: this.modelMessageContentToText(m.content),
+          }));
+          const stepEstimate = this.estimateTurnInputTokens(stepMessages, tools);
+          try {
+            resolveEffectiveMaxOutputTokens({
+              configured: this.config.maxOutputTokens,
+              contextWindow: this.getContextWindow(),
+              estimatedInputTokens: stepEstimate,
+              modelCaps: this.getActiveModelCaps(),
+            });
+          } catch (error) {
+            getLogger().warn(
+              'AGENT',
+              `Context budget exceeded at step ${stepNumber} (~${stepEstimate} tokens) — stopping tool loop`,
+            );
+            if (stepNumber > 0) throw new Error('STEP_CAP_STOP');
+            throw error;
+          }
           const stepBudgetBase = this.options.promptProfile === 'crew_private'
             ? this.crewPrivateCompletionSteps
             : this.maxCompletionSteps;
@@ -2827,12 +3065,18 @@ Rules:
       });
 
       let finishEmitted = false;
-      for await (const chunk of result.fullStream) {
-        streamHandler.handleEvent(chunk);
-        if (chunk.type === 'text-delta') {
-          this.partialTurnContent = streamHandler.getState().accumulatedContent;
+      let streamError: Error | null = null;
+      try {
+        for await (const chunk of result.fullStream) {
+          streamHandler.handleEvent(chunk);
+          if (chunk.type === 'text-delta') {
+            this.partialTurnContent = streamHandler.getState().accumulatedContent;
+          }
+          if (chunk.type === 'finish') finishEmitted = true;
         }
-        if (chunk.type === 'finish') finishEmitted = true;
+      } catch (err) {
+        streamError = err instanceof Error ? err : new Error(String(err));
+        getLogger().warn('AGENT', `streamText failed: ${streamError.message}`);
       }
 
       // Fallback: if stream ended without finish event, emit one now to ensure message is recorded
@@ -2861,47 +3105,65 @@ Rules:
       getLogger().info('AGENT', `Total tool executions in turn: ${this.toolCallLogForReflection.length}, successful: ${toolExecs}`);
 
       // Generic self-healing: if response is essentially empty (whitespace or <3 chars),
-      // retry once with tool results + full context + explicit instructions.
-      if (content.length < 3) {
+      // or the tool loop crashed (e.g. malformed tool-call arguments), retry once.
+      // When tools already ran, retry WITHOUT tools to force a plain-text summary.
+      if (content.length < 3 || streamError) {
         const toolSummary = this.toolCallLogForReflection
           .map(t => `- ${t.name}: ${t.success ? 'OK' : 'FAILED'} — ${t.output.slice(0, 300)}`)
           .join('\n');
         const worked = toolExecs > 0;
-        getLogger().warn('AGENT', `Response too short (${content.length} chars, ${toolExecs} tools) — retrying with context`);
+        const textOnlyRetry = worked || !!streamError;
+        getLogger().warn(
+          'AGENT',
+          `Response too short (${content.length} chars, ${toolExecs} tools${streamError ? ', stream error' : ''}) — retrying${textOnlyRetry ? ' text-only' : ' with tools'}`,
+        );
         try {
+          const retryMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
+            ...aiMessages,
+            ...(worked ? [{ role: 'assistant' as const, content: text || '(executed tools)' }] : []),
+            {
+              role: 'user' as const,
+              content: worked || streamError
+                ? `[SYSTEM] You just ran these tools:\n${toolSummary || '(see prior tool activity)'}\n\nNow respond to the user based on these results. Do not call more tools. Be thorough and actionable.`
+                : `[SYSTEM] The user said: "${aiMessages[aiMessages.length - 1]?.content?.slice(0, 500)}"\n\nUse the appropriate tools to answer. Prefer connected MCP integration tools when the request targets an external service — do not scan the local filesystem as a substitute. Do not return empty.`,
+            },
+          ];
           const retryResult = streamText({
             model: createAiSdkModel(this.config, this.getApiKey()),
-            messages: [
-              ...aiMessages,
-              ...(worked ? [{ role: 'assistant' as const, content: text || '(executed tools)' }] : []),
-              { role: 'user' as const, content: worked
-                ? `[SYSTEM] You just ran these tools:\n${toolSummary}\n\nNow respond to the user based on these results. Read files if needed. Analyze what you found. Be thorough.`
-                : `[SYSTEM] The user said: "${aiMessages[aiMessages.length - 1]?.content?.slice(0, 500)}"\n\nUse the appropriate tools to answer. Prefer connected MCP integration tools when the request targets an external service — do not scan the local filesystem as a substitute. Do not return empty.`
-              },
-            ],
-            tools: createAiSdkTools(
-              this.toolRegistry!,
-              this.toolExecutor!,
-              this.sessionId,
-              (e) => this.emit(e),
-              async () => 'continue',
-              (instruction, toolsList, timeout, background) =>
-                this.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
-              this.planMode,
-              undefined,
-              undefined,
-              'default',
-              compact,
-            ),
-            stopWhen: stepCountIs(50),
-            toolChoice: 'auto',
+            messages: retryMessages,
+            ...(textOnlyRetry
+              ? {}
+              : {
+                tools: createAiSdkTools(
+                  this.toolRegistry!,
+                  this.toolExecutor!,
+                  this.sessionId,
+                  (e) => this.emit(e),
+                  async () => 'continue',
+                  (instruction, toolsList, timeout, background) =>
+                    this.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
+                  this.planMode,
+                  undefined,
+                  undefined,
+                  'default',
+                  compact,
+                ),
+                stopWhen: stepCountIs(50),
+                toolChoice: 'auto' as const,
+              }),
             maxRetries: 1,
+            maxOutputTokens: turnMaxOutputTokens,
           });
           let retryText = '';
           for await (const chunk of retryResult.fullStream) { streamHandler.handleEvent(chunk); }
           retryText = (streamHandler.getState().accumulatedContent || '').trim();
           if (retryText) content = text.trim() ? text.trim() + '\n\n' + retryText : retryText;
-        } catch { /* retry failed */ }
+        } catch (retryErr) {
+          getLogger().warn(
+            'AGENT',
+            `Empty-response retry failed: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+          );
+        }
       }
 
       if (!content) {
@@ -2987,6 +3249,27 @@ Rules:
           createdAt: new Date().toISOString(),
           tokenCount: 0,
         };
+      }
+      if (error instanceof Error && (error.name === 'NoOutputGeneratedError' || error.message.includes('No output generated'))) {
+        const toolSummary = this.toolCallLogForReflection
+          .map((t) => `- ${t.name}: ${t.success ? 'OK' : 'FAILED'}`)
+          .join('\n');
+        const partial = this.partialTurnContent.trim();
+        const content = partial
+          || (toolSummary
+            ? `I ran tools but could not finish a reply:\n${toolSummary}\n\nSend *continue* to resume.`
+            : 'I could not generate a reply for that request. Send *continue* or try again.');
+        const recoveryMessage: Message = {
+          id: generateMessageId(),
+          sessionId: this.sessionId,
+          role: 'assistant',
+          content,
+          toolCalls: null,
+          createdAt: new Date().toISOString(),
+          tokenCount: 0,
+        };
+        emit({ type: 'message_received', message: recoveryMessage, elapsed: Date.now() - startTime });
+        return recoveryMessage;
       }
 
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -3151,7 +3434,24 @@ Rules:
       memoryContext: { getContext: () => this.buildMemoryContext() },
       getPersona: () => this.persona,
       getClientSituation: () => this.clientSituation,
+      linkedContextBlock: () => this.buildLinkedContextPromptBlock(),
     };
+  }
+
+  private buildLinkedContextPromptBlock(): string | null {
+    if (!this.options.channelSession || !this.linkedContextSessionId) return null;
+    const sm = this.sessionManager as { getSessionById?: (id: string) => { title?: string } | null } | null;
+    const linked = sm?.getSessionById?.(this.linkedContextSessionId);
+    const title = linked?.title?.trim() || this.linkedContextSessionId;
+    const narrative = globalNarrativeStore.load(this.linkedContextSessionId);
+    const narrativeText = narrative ? renderNarrativeText(narrative) : '';
+    return [
+      '[LINKED_DESKTOP_SESSION]',
+      `Telegram is context-linked to desktop session "${title}" (${this.linkedContextSessionId}).`,
+      'Telegram chat history is separate from the desktop transcript — use linked narrative and resume state for goals.',
+      ...(narrativeText ? ['', 'Linked session narrative:', narrativeText] : []),
+      '[/LINKED_DESKTOP_SESSION]',
+    ].join('\n');
   }
 
   private registerPromptSections(systemOverride?: string): void {
@@ -3214,6 +3514,7 @@ Rules:
         .register(createWorkingDirectorySection(ctx))
         .register(createCompactRulesSection())
         .register(createChannelSuperSessionSection())
+        .register(createChannelLinkedContextSection(ctx))
         .register(createChannelMessagingSection())
         .register(createThirdPartyServicesSection())
         .register(createChatMarkdownSection())
@@ -3322,10 +3623,17 @@ Rules:
     this.config.provider.activeModel = modelId;
     this._capabilityWarningEmitted = false;
 
-    const ctx = contextWindow ?? this.cachedModels.get(modelId);
+    const ctx = contextWindow ?? this.cachedModelInfo.get(modelId)?.contextWindow;
     if (ctx) {
       this.tokenTracker.setTotal(ctx);
-      this.cachedModels.set(modelId, ctx);
+      const existing = this.cachedModelInfo.get(modelId);
+      this.cachedModelInfo.set(modelId, existing ? { ...existing, contextWindow: ctx } : {
+        id: modelId,
+        name: modelId,
+        providerId: this.config.provider.activeProvider,
+        contextWindow: ctx,
+        capabilities: [],
+      });
       this.promptEngine = new PromptEngine(ctx);
       try {
         const mgr = this.sessionManager as unknown as { persistSessionFields?: (id: string, u: Record<string, unknown>) => void };
@@ -3342,7 +3650,29 @@ Rules:
       this.rebuildPromptAssembly();
     }
 
+    this.syncSessionRuntimeRecord({
+      modelId,
+      providerId: this.config.provider.activeProvider,
+    });
+
     this.emit({ type: 'command_action', action: 'model_switched', modelId, contextWindow: ctx ?? this.tokenTracker.tokensTotal });
+  }
+
+  private syncSessionRuntimeRecord(patch: {
+    providerId?: string;
+    modelId?: string;
+    mode?: 'agent' | 'plan';
+  }): void {
+    try {
+      const mgr = this.sessionManager as unknown as {
+        syncActiveSessionRuntime?: (u: {
+          providerId?: string;
+          modelId?: string;
+          mode?: 'agent' | 'plan';
+        }) => void;
+      } | null;
+      mgr?.syncActiveSessionRuntime?.(patch);
+    } catch { /* best-effort */ }
   }
 
   private _currentTaskType: TaskType | null = null;
@@ -3394,10 +3724,13 @@ Rules:
   async trialModel(modelId: string): Promise<boolean> {
     const logger = getLogger();
     try {
+      const info = this.cachedModelInfo.get(modelId);
       const request = {
         model: modelId,
         messages: [{ role: 'user' as const, content: 'hi' }],
-        maxTokens: 1,
+        maxTokens: resolveTrialOutputTokens({
+          outputTokenLimit: info?.outputTokenLimit,
+        }),
       };
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for await (const _chunk of this.provider.complete(request)) {
@@ -3458,10 +3791,9 @@ Rules:
         });
         return;
       }
-      // Cache context windows for token tracking
+      // Cache provider-reported model metadata for token tracking and capability checks
       for (const m of models) {
-        this.cachedModels.set(m.id, m.contextWindow);
-        this.cachedModelCapabilities.set(m.id, m.capabilities);
+        this.cachedModelInfo.set(m.id, m);
       }
       this.emit({
         type: 'command_action',
@@ -3492,8 +3824,13 @@ Rules:
       const requestId = randomUUID();
       const { commandPreview, argsSummary } = summarizePermissionArgs(context?.args);
       if (this.userCancelledTurn) return 'deny';
-      return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-        this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path, riskLevel });
+      return new Promise<PermissionHandlerResult>((resolve) => {
+        this.pendingPermissions.set(requestId, {
+          resolve,
+          toolName: toolId,
+          path,
+          riskLevel,
+        });
         this.emit({
           type: 'permission_required',
           requestId,
@@ -3521,6 +3858,20 @@ Rules:
     const denied: string[] = [];
     const unique = [...new Set(toolIds)];
 
+    // Channel-originated automations run unattended — grant tools without a web-only prompt.
+    if (this.isMessagingChannelContext()) {
+      for (const toolId of unique) {
+        const existing = executor.getPermissionManager().check(toolId, '*')
+          ?? executor.getPermissionManager().check(toolId);
+        if (existing === 'allow_always') continue;
+        executor.getPermissionManager().grant(toolId, 'allow_always');
+        this.persistPermissionGrant(toolId, 'allow_always');
+      }
+      return { ok: true };
+    }
+
+    const channelHandler = executor.getChannelPermissionRequestHandler?.();
+
     for (const toolId of unique) {
       const existing = executor.getPermissionManager().check(toolId, '*')
         ?? executor.getPermissionManager().check(toolId);
@@ -3529,24 +3880,43 @@ Rules:
       const tool = this.toolRegistry?.get(toolId);
       const riskLevel = tool?.riskLevel ?? 'medium';
 
-      const choice = await new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-        const requestId = randomUUID();
-        this.pendingPermissions.set(requestId, { resolve, toolName: toolId, path: '*', riskLevel });
+      let choice: 'allow_once' | 'allow_always' | 'deny';
+      if (channelHandler) {
         this.emit({
           type: 'permission_required',
-          requestId,
+          requestId: randomUUID(),
           tool: toolId,
           path: '*',
           riskLevel,
           forAutomation: true,
         });
-      });
+        const result = await channelHandler(toolId, '*', riskLevel, { forAutomation: true });
+        choice = normalizePermissionHandlerResult(result).decision;
+      } else {
+        choice = await new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
+          const requestId = randomUUID();
+          this.pendingPermissions.set(requestId, {
+            resolve: (result) => resolve(normalizePermissionHandlerResult(result).decision),
+            toolName: toolId,
+            path: '*',
+            riskLevel,
+          });
+          this.emit({
+            type: 'permission_required',
+            requestId,
+            tool: toolId,
+            path: '*',
+            riskLevel,
+            forAutomation: true,
+          });
+        });
+      }
 
       if (choice === 'deny') {
         denied.push(toolId);
         continue;
       }
-      if (choice === 'allow_once') {
+      if (choice === 'allow_once' || choice === 'allow_always') {
         executor.getPermissionManager().grant(toolId, 'allow_always');
         this.persistPermissionGrant(toolId, 'allow_always');
       }
@@ -3581,13 +3951,23 @@ Rules:
    * Respond to a pending permission request from the tool executor.
    */
   respondToPermission(requestId: string, choice: 'allow_once' | 'allow_always' | 'deny'): void {
+    this.resolvePermissionRequest(requestId, choice);
+  }
+
+  respondToPermissionInstruction(requestId: string, instruction: string): void {
+    const text = instruction.trim();
+    if (!text) return;
+    this.resolvePermissionRequest(requestId, { type: 'instruct', instruction: text });
+  }
+
+  private resolvePermissionRequest(requestId: string, result: PermissionHandlerResult): void {
     const entry = this.pendingPermissions.get(requestId);
     if (!entry) return;
-    if (choice === 'allow_always') {
+    if (typeof result === 'string' && result === 'allow_always') {
       this.toolExecutor?.getPermissionManager().grant(entry.toolName, 'allow_always');
       this.persistPermissionGrant(entry.toolName, 'allow_always');
     }
-    entry.resolve(choice);
+    entry.resolve(result);
     this.pendingPermissions.delete(requestId);
   }
 
@@ -3968,11 +4348,11 @@ Only include specialists that are actually needed for this task.`;
   // Store the last compaction summary for iterative updates
   private lastCompactionSummary: string | null = null;
 
-  private async compactContext(): Promise<void> {
+  private async compactContext(promptEstimate?: number): Promise<boolean> {
     const contextWindow = this.getContextWindow();
     const thresholds = getTokenThresholds(contextWindow);
-    const usedTokens = this.tokenTracker.tokensUsed;
-    if (!isTokenOverflow(usedTokens, thresholds)) return;
+    const usedTokens = Math.max(this.tokenTracker.tokensUsed, promptEstimate ?? 0);
+    if (!isTokenOverflow(usedTokens, thresholds)) return false;
 
     const lastMarkerIdx: number = this.compactionMarkerIndices.length > 0
       ? this.compactionMarkerIndices[this.compactionMarkerIndices.length - 1]!
@@ -3981,7 +4361,7 @@ Only include specialists that are actually needed for this task.`;
       .filter(m => m.role !== 'system')
       .map(m => `${m.role}: ${m.content}`)
       .join('\n\n');
-    if (!recentMessages.trim()) return;
+    if (!recentMessages.trim()) return false;
 
     this.emit({ type: 'compaction_start', currentTokens: usedTokens, threshold: contextWindow } as EngineEvent);
 
@@ -3992,9 +4372,9 @@ Only include specialists that are actually needed for this task.`;
         : COMPACTION_PROMPT + '\n\n' + recentMessages;
       summary = await this.simpleComplete(prompt);
     } catch {
-      return;
+      return false;
     }
-    if (!summary.trim()) return;
+    if (!summary.trim()) return false;
 
     this.lastCompactionSummary = summary;
 
@@ -4029,6 +4409,144 @@ Only include specialists that are actually needed for this task.`;
       const mgr = this.sessionManager as unknown as { persistSessionFields?: (id: string, u: Record<string, unknown>) => void };
       mgr.persistSessionFields?.(this.sessionId, { compactionCount: this._compactionCount });
     } catch { /* best-effort */ }
+    return true;
+  }
+
+  private buildAiMessagesForTurn(opts: {
+    lastUserText: string;
+    compact: boolean;
+    integrationHint?: string;
+  }): Array<{ role: 'user' | 'assistant' | 'system'; content: string }> {
+    const aiMessages = buildCompletionMessages(
+      this.messages.map((m) => ({
+        role: m.role,
+        content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+      })),
+      opts.compact,
+      3,
+      this.config.provider.activeProvider,
+    ).map((m) => ({
+      role: m.role as 'user' | 'assistant' | 'system',
+      content: m.content,
+    }));
+
+    if (this.pendingInstruction) {
+      const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg) {
+        aiMessages[userIdx] = { role: 'user', content: `${userMsg.content}\n\n[INSTRUCTION]\n${this.pendingInstruction}\n[/INSTRUCTION]` };
+      }
+      this.pendingInstruction = null;
+    }
+
+    const turnCtx = this.prepareTurnContext(opts.lastUserText);
+    if (turnCtx.block) {
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
+        aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
+      }
+    }
+
+    if (this.clientSituation) {
+      const situationBlock = formatClientSituationBlock(this.clientSituation);
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[CLIENT_SITUATION]')) {
+        aiMessages[userIdx] = { role: 'user', content: `${situationBlock}\n\n${userMsg.content}` };
+      }
+    }
+
+    if (opts.integrationHint) {
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[INTEGRATION')) {
+        aiMessages[userIdx] = { role: 'user', content: `${opts.integrationHint}\n\n${userMsg.content}` };
+      }
+    }
+
+    if (!opts.compact && this.lastRagResults.length > 0) {
+      const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
+      const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg) {
+        aiMessages[userIdx] = { role: 'user', content: `${ragCtx}\n\n${userMsg.content}` };
+      }
+    }
+
+    return aiMessages;
+  }
+
+  /** Compact history when needed and ensure the prompt leaves room for model output. */
+  private async ensureOutputBudget(
+    aiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+    tools: Record<string, unknown>,
+    rebuild: () => Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+  ): Promise<{ messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>; maxOutputTokens: number }> {
+    const contextWindow = this.getContextWindow();
+    const modelCaps = this.getActiveModelCaps();
+    let messages = aiMessages;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const estimatedInput = this.estimateTurnInputTokens(messages, tools);
+      try {
+        const maxOutputTokens = resolveEffectiveMaxOutputTokens({
+          configured: this.config.maxOutputTokens,
+          contextWindow,
+          estimatedInputTokens: estimatedInput,
+          modelCaps,
+        });
+        getLogger().info(
+          'AGENT',
+          `Prompt budget: ~${estimatedInput} input / ${contextWindow} window → maxOutput=${maxOutputTokens}`,
+        );
+        return { messages, maxOutputTokens };
+      } catch (error) {
+        if (!(error instanceof ContextBudgetExceededError) || attempt >= 2) throw error;
+        getLogger().warn('AGENT', `Prompt too large (~${estimatedInput} tokens) — compacting before LLM call`);
+        const compacted = await this.compactContext(estimatedInput);
+        if (!compacted) throw error;
+        messages = rebuild();
+      }
+    }
+    throw new ContextBudgetExceededError(this.estimateTurnInputTokens(messages, tools), contextWindow);
+  }
+
+  private modelMessageContentToText(content: unknown): string {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content.map((part) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part === 'object') {
+          const p = part as Record<string, unknown>;
+          if (typeof p.text === 'string') return p.text;
+          if (typeof p.toolName === 'string') return `tool:${p.toolName}`;
+          return JSON.stringify(part);
+        }
+        return '';
+      }).join('\n');
+    }
+    if (content == null) return '';
+    return JSON.stringify(content);
+  }
+
+  private estimateToolSchemaChars(tools: Record<string, unknown>): number {
+    let chars = 0;
+    for (const name of Object.keys(tools)) {
+      const t = tools[name] as { description?: string; inputSchema?: unknown } | undefined;
+      chars += JSON.stringify({ description: t?.description, inputSchema: t?.inputSchema }).length;
+    }
+    return chars;
+  }
+
+  private estimateTurnInputTokens(
+    messages: Array<{ content: string }>,
+    tools: Record<string, unknown>,
+  ): number {
+    return estimatePromptTokens(
+      messages,
+      Object.keys(tools).length,
+      this.estimateToolSchemaChars(tools),
+    );
   }
 
   private tagCrewPrivateAssistant(msg: Message): Message {
@@ -4093,19 +4611,23 @@ Only include specialists that are actually needed for this task.`;
     } | null)?.store;
     if (!store?.insertMessage) return;
     try {
+      const channel = this.activeInboundChannel ?? parseChannelBindingFromSessionId(this.sessionId) ?? undefined;
       store.insertMessage({
         id: msg.id,
         sessionId: this.sessionId,
         role: 'assistant',
         content: msg.content,
         tokenCount: msg.tokenCount ?? 0,
-        metadata: msg.crew
-          ? {
-            crewId: msg.crew.crewId,
-            crewName: msg.crew.name,
-            callsign: msg.crew.callsign,
-          }
-          : undefined,
+        metadata: {
+          ...(msg.crew
+            ? {
+              crewId: msg.crew.crewId,
+              crewName: msg.crew.name,
+              callsign: msg.crew.callsign,
+            }
+            : {}),
+          ...(channel ? { channel } : {}),
+        },
       });
     } catch { /* best-effort */ }
   }
@@ -4114,6 +4636,7 @@ Only include specialists that are actually needed for this task.`;
   private persistUserMessage(msg: Message): void {
     const store = this.getMessageStore();
     if (!store?.insertMessage) return;
+    const channel = this.activeInboundChannel ?? parseChannelBindingFromSessionId(this.sessionId) ?? undefined;
     try {
       store.insertMessage({
         id: msg.id,
@@ -4121,6 +4644,7 @@ Only include specialists that are actually needed for this task.`;
         role: 'user',
         content: msg.content,
         tokenCount: msg.tokenCount ?? 0,
+        ...(channel ? { metadata: { channel } } : {}),
       });
     } catch { /* best-effort */ }
   }
@@ -4178,27 +4702,52 @@ Only include specialists that are actually needed for this task.`;
     return '+00:00';
   }
 
+  private getActiveModelCaps(): {
+    hasReasoning: boolean;
+    contextWindow?: number;
+    outputTokenLimit?: number;
+  } {
+    const info = this.cachedModelInfo.get(this.config.provider.activeModel);
+    return {
+      hasReasoning: modelInfoHasReasoning(info),
+      contextWindow: info?.contextWindow,
+      outputTokenLimit: info?.outputTokenLimit,
+    };
+  }
+
   private getContextWindow(): number {
     const modelId = this.config.provider.activeModel;
-    if (modelId && this.cachedModels.has(modelId)) {
-      return this.cachedModels.get(modelId)!;
-    }
+    const cached = modelId ? this.cachedModelInfo.get(modelId) : undefined;
+    if (cached?.contextWindow) return cached.contextWindow;
     if (this.tokenTracker?.tokensTotal) {
       return this.tokenTracker.tokensTotal;
     }
-    const defaults: Record<string, number> = {
-      openai: 128_000,
-      anthropic: 200_000,
-      google: 1_000_000,
-      ollama: 32_000,
-      lmstudio: 32_000,
-    };
-    return defaults[this.config.provider.activeProvider] ?? 128_000;
+    return DEFAULT_FALLBACK_CONTEXT_WINDOW;
   }
 
   private toFriendlyError(error: unknown): { message: string; actions: RemediationAction[] } {
     const spaceErr = resolveSpaceError(error);
     const msg = error instanceof Error ? error.message : String(error);
+
+    if (error instanceof ContextBudgetExceededError) {
+      return {
+        message: `⚠️ ${error.message}`,
+        actions: [
+          { type: 'switch_model', label: 'Switch model' },
+          { type: 'dismiss', label: 'Dismiss' },
+        ],
+      };
+    }
+    if (msg.includes('max_output_tokens') && msg.includes('below minimum')) {
+      return {
+        message: '⚠️ Model trial or completion used an output token budget below the provider minimum (16). Retry after selecting the model again, or pick a different model.',
+        actions: [
+          { type: 'retry', label: 'Retry' },
+          { type: 'switch_model', label: 'Switch model' },
+          { type: 'dismiss', label: 'Dismiss' },
+        ],
+      };
+    }
 
     // Determine actions based on category
     if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('Invalid API')) {
@@ -4921,11 +5470,18 @@ Provide the corrected response now:`;
 
       let refactoredContent = '';
       this.emit({ type: 'loading_start', stage: 'refactoring' });
+      const refactorMaxOutputTokens = resolveEffectiveMaxOutputTokens({
+        configured: this.config.maxOutputTokens,
+        contextWindow: this.getContextWindow(),
+        estimatedInputTokens: estimatePromptTokens(aiMessages, 0, 0),
+        modelCaps: this.getActiveModelCaps(),
+      });
       const refactorResult = streamText({
         model,
         messages: aiMessages,
         tools: undefined,
         maxRetries: 1,
+        maxOutputTokens: refactorMaxOutputTokens,
       });
 
       for await (const chunk of refactorResult.fullStream) {

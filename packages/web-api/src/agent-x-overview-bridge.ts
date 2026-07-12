@@ -6,6 +6,7 @@ import {
 } from '@agentx/engine';
 import {
   isUserFacingSession,
+  isChannelSessionId,
   type AgentXConfig,
 } from '@agentx/shared';
 import { getEngine, syncChannelSuperSessionContext } from './engine.js';
@@ -27,7 +28,7 @@ function resolveActiveSessionId(eng: ReturnType<typeof getEngine>): string | nul
   const active = eng.sessionManager.getActiveSession();
   if (active?.id) return active.id;
   const main = eng.agent;
-  if (main?.currentSessionId && main.currentSessionId !== '__channel__') {
+  if (main?.currentSessionId && !isChannelSessionId(main.currentSessionId)) {
     return main.currentSessionId;
   }
   return null;

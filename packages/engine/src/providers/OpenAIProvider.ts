@@ -5,6 +5,7 @@ import type {
   ModelInfo,
   ProviderId,
 } from '@agentx/shared';
+import { apiRecordToModelInfo, DEFAULT_FALLBACK_CONTEXT_WINDOW } from '@agentx/shared';
 import type { ProviderInterface } from './ProviderInterface.js';
 import { captureResponse } from '../utils/DebugLogger.js';
 
@@ -62,17 +63,8 @@ export class OpenAIProvider implements ProviderInterface {
     }
 
     return json.data
-      .filter((m: Record<string, unknown>) => {
-        const id = String(m['id'] ?? '');
-        return id.includes('gpt') || id.includes('o1') || id.includes('o3');
-      })
-      .map((m: Record<string, unknown>): ModelInfo => ({
-        id: String(m['id'] ?? ''),
-        name: String(m['id'] ?? ''),
-        providerId: 'openai',
-        contextWindow: this.getContextWindow(String(m['id'] ?? '')),
-        capabilities: this.getCapabilities(String(m['id'] ?? '')),
-      }))
+      .map((m: Record<string, unknown>) => apiRecordToModelInfo(m, 'openai', this.getCapabilities(String(m['id'] ?? ''))))
+      .filter((m): m is ModelInfo => m != null)
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -212,13 +204,12 @@ export class OpenAIProvider implements ProviderInterface {
     yield { type: 'done', usage };
   }
 
-  protected getContextWindow(modelId: string): number {
-    if (modelId.includes('gpt-4o')) return 128000;
-    if (modelId.includes('gpt-4-turbo')) return 128000;
-    if (modelId.includes('gpt-4')) return 8192;
-    if (modelId.includes('gpt-3.5')) return 16385;
-    if (modelId.includes('o1') || modelId.includes('o3')) return 200000;
-    return 128000;
+  protected getContextWindow(record?: Record<string, unknown>): number {
+    if (record) {
+      const info = apiRecordToModelInfo(record, this.id);
+      if (info?.contextWindow) return info.contextWindow;
+    }
+    return DEFAULT_FALLBACK_CONTEXT_WINDOW;
   }
 
   protected getCapabilities(_modelId: string): ModelInfo['capabilities'] {

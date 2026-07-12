@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import Box from '@mui/material/Box';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import Tooltip from '@mui/material/Tooltip';
@@ -7,15 +7,12 @@ import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import TextFieldsIcon from '@mui/icons-material/TextFields';
 import { colors, alphaColor } from '../theme';
-import { ReasoningBlock } from '../components/ChatEnhancements';
-import { InlineToolCall } from '../components/InlineToolCall';
 import { normalizeMessageForUi, orderPartsForChatRender } from '@agentx/shared/browser';
 import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
 import { StreamingText } from './StreamingText';
 import { collectWebSourceUrls } from './web-source-urls';
-import { DeepSearchMessageBlock } from './DeepSearchMessageBlock';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
 import { QuestionnaireMessage } from '../components/questionnaire/QuestionnaireMessage';
 import { CrewRosterPickerMessage } from '../components/crew/CrewRosterPickerMessage';
@@ -25,6 +22,11 @@ import type { TurnFeedbackRating } from '@agentx/shared/browser';
 import { formatVoiceTimingMs } from '../voice/timing';
 import { extractVoiceChannelBlock, stripVoiceChannelBlock } from './utils';
 import { ChartBlock } from './ChartBlock';
+import { WorkflowEntryCard } from './WorkflowEntryCard';
+
+// Loaded only when the user opens a turn's workflow — chunk stays out of the
+// chat path and the modal DOM is destroyed on close.
+const WorkflowModal = lazy(() => import('./WorkflowModal').then((m) => ({ default: m.WorkflowModal })));
 
 function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   const [expanded, setExpanded] = useState(false);
@@ -143,26 +145,20 @@ function renderParts(
     }
     if (p.type === 'text') return !!p.content?.trim();
     if (p.type === 'tool') return !!p.tool;
+    if (p.type === 'chart') return !!p.chartJson;
     if (p.type === 'subagent') return !!p.agent;
     if (p.type === 'questionnaire') return !!p.questionnaire;
     if (p.type === 'crew_roster_picker') return !!p.crewRosterPicker;
     return false;
   });
 
-  const ordered = orderPartsForChatRender(filtered);
-  const webSources = collectWebSourceUrls(ordered);
+  // Web-source chips are derived from tool/deep-search data even though those
+  // steps render only in the Workflow modal, never inline.
+  const orderedAll = orderPartsForChatRender(filtered);
+  const webSources = collectWebSourceUrls(orderedAll);
+  const ordered = orderedAll.filter((p) => p.type !== 'tool' && p.type !== 'deep_search');
 
-  const renderDeepSearchPart = (part: PartEntry, afterTool: boolean) => (
-    <Box key={part.id} sx={{ mb: 0.25, mt: afterTool ? -0.625 : 0 }}>
-      <DeepSearchMessageBlock
-        bundle={part.deepSearch!.bundle}
-        progress={part.deepSearch!.progress}
-        running={part.deepSearch!.running}
-      />
-    </Box>
-  );
-
-  const renderMainPart = (part: PartEntry, compactTop = false) => {
+  const renderMainPart = (part: PartEntry) => {
     switch (part.type) {
       case 'text':
         if (!part.content) return null;
@@ -204,14 +200,8 @@ function renderParts(
           />
         );
       case 'chart':
-        // Avoid double-render when the matching render_chart tool already shows ChartToolRender.
         if (!part.chartJson) return null;
-        if (ordered.some((p) => p.type === 'tool' && p.tool?.id === part.id && p.tool?.name === 'render_chart')) {
-          return null;
-        }
         return <ChartBlock key={part.id} code={part.chartJson} language="chart" />;
-      case 'tool':
-        return part.tool ? <InlineToolCall key={part.id} tool={part.tool} compactTop={compactTop} /> : null;
       case 'subagent':
         if (!part.agent) return null;
         if (part.agent.kind === 'crew_worker') return null;
@@ -245,19 +235,9 @@ function renderParts(
     }
   };
 
-  const renderOrderedPart = (part: PartEntry, prev: PartEntry | undefined, compactTop: boolean) => {
-    if (part.type === 'deep_search' && part.deepSearch) {
-      return renderDeepSearchPart(part, prev?.type === 'tool');
-    }
-    return renderMainPart(part, compactTop);
-  };
-
-  const renderSlice = (slice: PartEntry[], startIdx: number) =>
-    slice.map((part, i) => {
-      const globalIdx = startIdx + i;
-      const prev = ordered[globalIdx - 1];
-      const compactTop = part.type === 'tool' && prev?.type === 'tool';
-      const node = renderOrderedPart(part, prev, compactTop);
+  const renderSlice = (slice: PartEntry[]) =>
+    slice.map((part) => {
+      const node = renderMainPart(part);
       return node ? <React.Fragment key={part.id}>{node}</React.Fragment> : null;
     });
 
@@ -265,16 +245,16 @@ function renderParts(
   if (firstTextIdx >= 0) {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-        {firstTextIdx > 0 ? renderSlice(ordered.slice(0, firstTextIdx), 0) : null}
+        {firstTextIdx > 0 ? renderSlice(ordered.slice(0, firstTextIdx)) : null}
         {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
-        {renderSlice(ordered.slice(firstTextIdx), firstTextIdx)}
+        {renderSlice(ordered.slice(firstTextIdx))}
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {renderSlice(ordered, 0)}
+      {renderSlice(ordered)}
       {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
     </Box>
   );
@@ -296,6 +276,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   const crewInfo = message.crew;
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
   const [whyOpen, setWhyOpen] = useState(false);
+  const [workflowOpen, setWorkflowOpen] = useState(false);
   const normalized = normalizeMessageForUi({
     content: message.content,
     parts: message.parts,
@@ -333,9 +314,6 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     message.streaming,
   ) : (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {displayMessage.toolCalls?.map((t, i) => (
-        <InlineToolCall key={t.id} tool={t} compactTop={i > 0} />
-      ))}
       {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
       {cleanContent && (
         message.streaming
@@ -344,6 +322,19 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       )}
     </Box>
   );
+
+  const hasWorkflow = !message.streaming && message.role === 'assistant' && !!(
+    displayMessage.toolCalls?.length
+    || message.thinking
+    || displayMessage.parts?.some((p) => p.type === 'tool' || p.type === 'deep_search')
+  );
+  const workflowStepCount = (() => {
+    const parts = displayMessage.parts ?? [];
+    const toolParts = parts.filter((p) => p.type === 'tool' && p.tool).length;
+    const deepParts = parts.filter((p) => p.type === 'deep_search' && (p.deepSearch?.bundle || p.deepSearch?.progress)).length;
+    const fallbackTools = toolParts === 0 ? (displayMessage.toolCalls?.length ?? 0) : 0;
+    return toolParts + deepParts + fallbackTools;
+  })();
 
   const subAgentCards = (message.subAgents ?? []).filter(
     (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker',
@@ -373,11 +364,6 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
           <Typography component="span" onClick={() => setWhyOpen(!whyOpen)} sx={{ fontSize: '0.5rem', cursor: 'pointer', color: colors.text.dim, opacity: 0.5 }}>Why?</Typography>
         )}
       </Box>
-
-      {message.thinking && (
-        <ReasoningBlock text={message.thinking} streaming={message.streaming && !message.thinkingDoneAt}
-          durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined} />
-      )}
 
       {subAgentCards.length > 0 && onOpenChildSession && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: hasParts || cleanContent ? 1.25 : 0 }}>
@@ -421,6 +407,14 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
         />
       )}
 
+      {hasWorkflow && (
+        <WorkflowEntryCard
+          stepCount={workflowStepCount}
+          hasReasoning={!!message.thinking}
+          onOpen={() => setWorkflowOpen(true)}
+        />
+      )}
+
       {!message.streaming && (
         <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75, opacity: 0.45 }}>
             {canSaveMarkdown && (
@@ -457,6 +451,12 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
             )}
         </Box>
       )}
+
+      {workflowOpen && (
+        <Suspense fallback={null}>
+          <WorkflowModal message={displayMessage} onClose={() => setWorkflowOpen(false)} />
+        </Suspense>
+      )}
     </Box>
   );
 }
@@ -476,30 +476,34 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   const pm = prev.message;
   const nm = next.message;
   if (pm.id !== nm.id || pm.content !== nm.content || pm.streaming !== nm.streaming) return false;
-  if (pm.thinking !== nm.thinking || pm.toolCalls !== nm.toolCalls) return false;
+  // Thinking renders only in the Workflow modal — presence toggles the button.
+  if (!!pm.thinking !== !!nm.thinking) return false;
+  // Tool cards render only in the Workflow modal — only count/completion matter
+  // (webSources chips derive from completed tool results).
+  if ((pm.toolCalls?.length ?? 0) !== (nm.toolCalls?.length ?? 0)) return false;
+  const pmDone = pm.toolCalls?.reduce((n, t) => n + (t.status === 'done' ? 1 : 0), 0) ?? 0;
+  const nmDone = nm.toolCalls?.reduce((n, t) => n + (t.status === 'done' ? 1 : 0), 0) ?? 0;
+  if (pmDone !== nmDone) return false;
   if (pm.crew?.crewId !== nm.crew?.crewId || pm.crew?.name !== nm.crew?.name) return false;
   if (pm.subAgents !== nm.subAgents) return false;
   if (pm.turnFeedback?.rating !== nm.turnFeedback?.rating) return false;
   if (pm.voiceTimings?.totalMs !== nm.voiceTimings?.totalMs) return false;
-  const prevDeep = pm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
-  const nextDeep = nm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
-  if (prevDeep !== nextDeep) return false;
-  const prevParts = pm.parts ?? [];
-  const nextParts = nm.parts ?? [];
-  if (prevParts !== nm.parts && prevParts.length === nextParts.length) {
+  const isRenderedPart = (p: NonNullable<UIMessage['parts']>[number]) =>
+    p.type === 'text' || p.type === 'chart' || p.type === 'questionnaire'
+    || p.type === 'crew_roster_picker' || p.type === 'subagent';
+  const prevParts = (pm.parts ?? []).filter(isRenderedPart);
+  const nextParts = (nm.parts ?? []).filter(isRenderedPart);
+  if (pm.parts !== nm.parts) {
+    if (prevParts.length !== nextParts.length) return false;
     for (let i = 0; i < prevParts.length; i++) {
       const pp = prevParts[i]!;
       const np = nextParts[i]!;
-      if (pp.type === 'text' && np.type === 'text' && pp.content !== np.content) return false;
-      if (pp.type === 'questionnaire' && np.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
-      if (pp.type === 'tool' && np.type === 'tool') {
-        if (pp.id !== np.id) return false;
-        if (pp.tool?.status !== np.tool?.status) return false;
-        if (pp.tool?.result !== np.tool?.result) return false;
-        if (pp.tool?.streamOutput !== np.tool?.streamOutput) return false;
-        if (pp.tool?.elapsed !== np.tool?.elapsed) return false;
-      }
-      if (pp.type === 'crew_roster_picker' && np.type === 'crew_roster_picker') {
+      if (pp.type !== np.type || pp.id !== np.id) return false;
+      if (pp.type === 'text' && pp.content !== np.content) return false;
+      if (pp.type === 'chart' && pp.chartJson !== np.chartJson) return false;
+      if (pp.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
+      if (pp.type === 'subagent' && (pp.agent?.status !== np.agent?.status || pp.agent?.result !== np.agent?.result)) return false;
+      if (pp.type === 'crew_roster_picker') {
         if (pp.crewRosterPicker?.status !== np.crewRosterPicker?.status) return false;
         const prevIds = pp.crewRosterPicker?.selectedCandidateIds;
         const nextIds = np.crewRosterPicker?.selectedCandidateIds;
@@ -507,8 +511,6 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
         if (prevIds?.some((id, i) => id !== nextIds?.[i])) return false;
       }
     }
-  } else if (prevParts !== nm.parts) {
-    return false;
   }
   return true;
 }

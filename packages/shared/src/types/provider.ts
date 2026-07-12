@@ -38,6 +38,9 @@ export interface ModelReasoningInfo {
   control?: 'reasoning_effort' | 'thinking_level' | 'thinking_budget' | 'output_config.effort';
 }
 
+/** Transport shape for multi-protocol gateways (e.g. CommandCode Provider API). */
+export type ModelApiProtocol = 'openai-chat' | 'anthropic-messages';
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -47,6 +50,8 @@ export interface ModelInfo {
   outputTokenLimit?: number;
   capabilities: ModelCapability[];
   reasoning?: ModelReasoningInfo;
+  /** When set, selects the native client/endpoint for this model (multi-protocol providers). */
+  apiProtocol?: ModelApiProtocol;
 }
 
 export type ModelCapability =

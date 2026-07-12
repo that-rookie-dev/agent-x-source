@@ -27,8 +27,21 @@ export function detectChannelHandoffIntent(text: string): { channel: 'telegram' 
   return { channel: 'telegram' };
 }
 
-const CONTINUE_RE = /^\s*(continue|conitnue|go\s*on|carry\s*on|proceed|keep\s*going)\s*[.!?]?\s*$/i;
+const CONTINUE_RE = /^\s*(?:continue|conitnue|go\s*on|carry\s*on|proceed|keep\s*going|try\s*now|try\s*again|retry(?:\s*now)?|do\s*it(?:\s*now)?|go\s*ahead|please\s*do|now\s*please)\s*[.!?]?\s*$/i;
+
+/** Polite prefixes stripped before matching CONTINUE_RE (e.g. "can you try now"). */
+const CONTINUE_PREFIX_RE = /^\s*(?:(?:can|could|will|would|please|pls|kindly)\s+(?:you\s+)?)+/i;
+
+/** Embedded continuation phrase in short messages (≤48 chars). */
+const CONTINUE_PHRASE_RE = /\b(?:try\s*(?:now|again)|retry(?:\s*now)?|continue|proceed|go\s*ahead|do\s*it(?:\s*now)?|carry\s*on|keep\s*going)\b/i;
 
 export function isBareContinueIntent(text: string): boolean {
-  return CONTINUE_RE.test(text.trim());
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (CHANNEL_HANDOFF_RE.test(trimmed) || CHANNEL_HANDOFF_REVERSE.test(trimmed)) return false;
+  if (CONTINUE_RE.test(trimmed)) return true;
+  const stripped = trimmed.replace(CONTINUE_PREFIX_RE, '').trim();
+  if (stripped !== trimmed && CONTINUE_RE.test(stripped)) return true;
+  if (trimmed.length <= 48 && CONTINUE_PHRASE_RE.test(trimmed)) return true;
+  return false;
 }

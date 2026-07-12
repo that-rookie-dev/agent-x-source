@@ -81,5 +81,7 @@ export interface ToolExecutionContext {
   mode?: 'agent' | 'plan';
   /** Voice comms turn — tighter tool time budgets. */
   voiceTurn?: boolean;
+  /** Originating messaging channel for this turn (telegram, slack, etc.). */
+  sourceChannel?: string;
   onOutput?: (output: string) => void;
 }

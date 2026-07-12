@@ -3,7 +3,14 @@ import type { Agent } from '../agent/Agent.js';
 import { EventEmitter } from 'node:events';
 import type { EngineEvent } from '@agentx/shared';
 import { isChannelUserAllowed } from '@agentx/shared';
-import { randomUUID } from 'node:crypto';
+import { MessagingPermissionCoordinator, permissionResultLabel } from '../channels/MessagingPermissionCoordinator.js';
+import { MessagingQuestionnaireCoordinator } from '../channels/MessagingQuestionnaireCoordinator.js';
+import {
+  attachMessagingClarificationListener,
+  deliverQuestionnaireCallback,
+  extractMessagingReplyText,
+  tryConsumeMessagingClarification,
+} from '../channels/MessagingClarificationHelper.js';
 
 export interface SlackConfig {
   botToken: string;
@@ -49,8 +56,10 @@ export class SlackBridge extends EventEmitter {
   private unsubscribers = new Map<string, () => void>();
   private allowedUserIds: string[] = [];
   private lastChannelByUser = new Map<string, string>();
-  private pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
-  private permRequesters = new Map<string, string>();
+  private lastThreadByUser = new Map<string, string>();
+  private permissionCoordinator = new MessagingPermissionCoordinator();
+  private questionnaireCoordinator = new MessagingQuestionnaireCoordinator();
+  private permToolIds = new Map<string, string>();
   private wiredAgents = new WeakSet<Agent>();
 
   constructor(config: SlackConfig) {
@@ -72,57 +81,52 @@ export class SlackBridge extends EventEmitter {
     const toolExecutor = agent.getToolExecutor?.();
     if (!toolExecutor?.setChannelPermissionRequestHandler) return;
 
-    toolExecutor.setChannelPermissionRequestHandler(
-      async (toolId: string, path: string, riskLevel: string) => {
+    const handler = this.permissionCoordinator.createHandler(
+      async (permId, details) => {
         const channel = this.lastChannelByUser.get(userId);
-        if (!channel || !this.app) return 'deny' as const;
-
-        const permId = randomUUID();
-        this.permRequesters.set(permId, userId);
-        const riskEmoji = riskLevel === 'high' ? ':red_circle:' : riskLevel === 'medium' ? ':large_yellow_circle:' : ':large_green_circle:';
-
-        try {
-          await this.app.client.chat.postMessage({
-            channel,
-            text: `${riskEmoji} Permission request: ${toolId}`,
-            blocks: [
-              {
-                type: 'section',
-                text: {
-                  type: 'mrkdwn',
-                  text: `${riskEmoji} *Permission Request*\n\nTool: \`${toolId}\`\nPath: \`${path}\`\nRisk: ${riskLevel}`,
-                },
+        if (!channel || !this.app) return;
+        this.permToolIds.set(permId, details.toolId);
+        const threadTs = this.lastThreadByUser.get(userId);
+        const riskEmoji = details.riskLevel === 'high' ? ':red_circle:' : details.riskLevel === 'medium' ? ':large_yellow_circle:' : ':large_green_circle:';
+        const automationNote = details.forAutomation ? '\n\n_This tool is required for a scheduled automation._' : '';
+        await this.app.client.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: `${riskEmoji} Permission request: ${details.toolId}`,
+          blocks: [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: `${riskEmoji} *Permission Request*\n\nTool: \`${details.toolId}\`\nPath: \`${details.path}\`\nRisk: ${details.riskLevel}${automationNote}\n\nAllow, deny, or send a custom instruction?`,
               },
-              {
-                type: 'actions',
-                block_id: `perm_${permId}`,
-                elements: [
-                  { type: 'button', text: { type: 'plain_text', text: 'Allow Once' }, action_id: `perm_${permId}_allow_once`, style: 'primary' },
-                  { type: 'button', text: { type: 'plain_text', text: 'Always Allow' }, action_id: `perm_${permId}_allow_always` },
-                  { type: 'button', text: { type: 'plain_text', text: 'Deny' }, action_id: `perm_${permId}_deny`, style: 'danger' },
-                ],
-              },
-            ],
-          });
-        } catch {
-          return 'deny' as const;
-        }
-
-        return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-          const timeout = setTimeout(() => {
-            this.pendingPermissions.delete(permId);
-            this.permRequesters.delete(permId);
-            resolve('deny');
-          }, 120_000);
-          this.pendingPermissions.set(permId, (choice) => {
-            clearTimeout(timeout);
-            this.pendingPermissions.delete(permId);
-            this.permRequesters.delete(permId);
-            resolve(choice);
-          });
+            },
+            {
+              type: 'actions',
+              block_id: `perm_${permId}`,
+              elements: [
+                { type: 'button', text: { type: 'plain_text', text: 'Allow Once' }, action_id: `perm_${permId}_allow_once`, style: 'primary' },
+                { type: 'button', text: { type: 'plain_text', text: 'Always Allow' }, action_id: `perm_${permId}_allow_always` },
+                { type: 'button', text: { type: 'plain_text', text: 'Deny' }, action_id: `perm_${permId}_deny`, style: 'danger' },
+                { type: 'button', text: { type: 'plain_text', text: 'Instruct' }, action_id: `perm_${permId}_instruct` },
+              ],
+            },
+          ],
+        });
+      },
+      () => userId,
+      async (key) => {
+        const channel = this.lastChannelByUser.get(key);
+        if (!channel || !this.app) return;
+        await this.app.client.chat.postMessage({
+          channel,
+          thread_ts: this.lastThreadByUser.get(key),
+          text: '✏️ Reply with your instruction for the agent (how to proceed instead).',
         });
       },
     );
+
+    toolExecutor.setChannelPermissionRequestHandler(handler);
   }
 
   setAgentFactory(factory: (userId: string) => Agent): void {
@@ -201,29 +205,70 @@ export class SlackBridge extends EventEmitter {
       this.emit('slack_error', error);
     });
 
-    this.app.action(/^perm_[a-f0-9-]+_(allow_once|allow_always|deny)$/, async ({ action, ack, body, client }) => {
+    this.app.action(/^perm_[a-f0-9-]+_(allow_once|allow_always|deny|instruct)$/, async ({ action, ack, body, client }) => {
       await ack();
       const actionId = (action as { action_id?: string }).action_id ?? '';
-      const match = actionId.match(/^perm_([a-f0-9-]+)_(allow_once|allow_always|deny)$/);
+      const match = actionId.match(/^perm_([a-f0-9-]+)_(allow_once|allow_always|deny|instruct)$/);
       if (!match) return;
       const permId = match[1]!;
-      const choice = match[2] as 'allow_once' | 'allow_always' | 'deny';
+      const choice = match[2] as 'allow_once' | 'allow_always' | 'deny' | 'instruct';
       const userId = (body as { user?: { id?: string } }).user?.id;
-      const expectedRequester = this.permRequesters.get(permId);
-      if (expectedRequester && userId && userId !== expectedRequester) return;
-
-      const resolver = this.pendingPermissions.get(permId);
-      if (!resolver) return;
-      resolver(choice);
+      if (!userId) return;
 
       const channel = (body as { channel?: { id?: string } }).channel?.id;
       const messageTs = (body as { message?: { ts?: string } }).message?.ts;
+
+      if (choice === 'instruct') {
+        await this.permissionCoordinator.beginInstruct(permId, userId, async () => {
+          if (channel) {
+            await client.chat.postMessage({
+              channel,
+              thread_ts: messageTs,
+              text: '✏️ Reply with your instruction for the agent (how to proceed instead).',
+            });
+          }
+        });
+        return;
+      }
+
+      if (!this.permissionCoordinator.resolveDecision(permId, choice, userId)) return;
+
+      const toolId = this.permToolIds.get(permId);
+      this.permToolIds.delete(permId);
+      const agent = this.userAgents.get(userId);
+      if (agent && toolId && choice !== 'allow_once') {
+        agent.recordToolPermissionDecision(toolId, choice);
+      }
+
       if (channel && messageTs) {
-        const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';
+        const label = permissionResultLabel(choice);
         try {
           await client.chat.update({ channel, ts: messageTs, text: label, blocks: [] });
         } catch { /* best effort */ }
       }
+    });
+
+    this.app.action(/^clar_/, async ({ action, ack, body }) => {
+      await ack();
+      const actionId = (action as { action_id?: string }).action_id ?? '';
+      const userId = (body as { user?: { id?: string } }).user?.id;
+      if (!userId || !actionId.startsWith('clar_')) return;
+      const data = actionId.slice('clar_'.length);
+      const agent = this.userAgents.get(userId);
+      const channel = (body as { channel?: { id?: string } }).channel?.id;
+      const threadTs = (body as { message?: { thread_ts?: string; ts?: string } }).message?.thread_ts
+        ?? (body as { message?: { ts?: string } }).message?.ts;
+      await deliverQuestionnaireCallback(
+        this.questionnaireCoordinator,
+        data,
+        userId,
+        agent,
+        {
+          sendQuestionnaireStep: (prompt, buttons, ts) => this.sendSlackQuestionnaireStep(channel ?? '', prompt, buttons, ts ?? threadTs),
+          sendText: (text, ts) => this.sendSlackText(channel ?? '', text, ts ?? threadTs),
+          threadTs,
+        },
+      );
     });
 
     await this.app.start();
@@ -300,6 +345,8 @@ export class SlackBridge extends EventEmitter {
     }
 
     this.lastChannelByUser.set(event.userId, event.channel);
+    const threadTs = event.threadTs ?? event.messageTs;
+    this.lastThreadByUser.set(event.userId, threadTs);
     this.messageCount++;
     this.emit('slack_message', event);
 
@@ -308,20 +355,35 @@ export class SlackBridge extends EventEmitter {
       cleanText = cleanText.replace(new RegExp(`<@${this.botUserId}>\\s*`, 'g'), '').trim();
     }
 
+    if (this.permissionCoordinator.isAwaitingInstruct(event.userId)) {
+      if (this.permissionCoordinator.consumeInstructText(event.userId, cleanText)) {
+        await client.chat.postMessage({
+          channel: event.channel,
+          text: '✏️ Instruction sent to the agent.',
+          thread_ts: threadTs,
+        });
+        return;
+      }
+    }
+
     let agent = this.userAgents.get(event.userId);
     if (!agent && this.agentFactory) {
       agent = this.agentFactory(event.userId);
       this.wireAgentPermissions(agent, event.userId);
       this.userAgents.set(event.userId, agent);
-      this.attachToolStatusListener(event.userId, agent, event.channel, event.threadTs ?? event.messageTs);
+      this.attachToolStatusListener(event.userId, agent, event.channel, threadTs);
     }
 
     if (!agent) {
       await client.chat.postMessage({
         channel: event.channel,
         text: '⚠️ Agent not configured for this workspace.',
-        thread_ts: event.threadTs ?? event.messageTs,
+        thread_ts: threadTs,
       });
+      return;
+    }
+
+    if (tryConsumeMessagingClarification(agent, cleanText)) {
       return;
     }
 
@@ -329,7 +391,7 @@ export class SlackBridge extends EventEmitter {
       const thinkingMsg = await client.chat.postMessage({
         channel: event.channel,
         text: '🤔 Thinking...',
-        thread_ts: event.threadTs ?? event.messageTs,
+        thread_ts: threadTs,
       });
       const thinkingTs = thinkingMsg.ts as string | undefined;
 
@@ -341,8 +403,26 @@ export class SlackBridge extends EventEmitter {
         }
       }
 
-      const response = await agent.sendMessage(cleanText);
-      const content = response.content || '(No response)';
+      const exec = agent.getToolExecutor();
+      exec?.setMessagingPermissionMode(true);
+      const unsubClarification = attachMessagingClarificationListener(agent, {
+        userKey: event.userId,
+        threadTs,
+        questionnaireCoordinator: this.questionnaireCoordinator,
+        sendText: (text, ts) => this.sendSlackText(event.channel, text, ts ?? threadTs),
+        sendQuestionnaireStep: (prompt, buttons, ts) =>
+          this.sendSlackQuestionnaireStep(event.channel, prompt, buttons, ts ?? threadTs),
+      });
+
+      let response;
+      try {
+        response = await agent.sendMessage(cleanText);
+      } finally {
+        unsubClarification();
+        exec?.setMessagingPermissionMode(false);
+      }
+
+      const content = extractMessagingReplyText(response);
 
       // Delete the "Thinking..." message now that we have the response
       if (thinkingTs) {
@@ -367,7 +447,7 @@ export class SlackBridge extends EventEmitter {
       const messageArgs: Record<string, unknown> = {
         channel: event.channel,
         text: content,
-        thread_ts: event.threadTs ?? event.messageTs,
+        thread_ts: threadTs,
       };
       if (blocks) {
         messageArgs.blocks = blocks;
@@ -379,9 +459,45 @@ export class SlackBridge extends EventEmitter {
       await client.chat.postMessage({
         channel: event.channel,
         text: `❌ Error: ${errMsg}`,
-        thread_ts: event.threadTs ?? event.messageTs,
+        thread_ts: threadTs,
       });
     }
+  }
+
+  private async sendSlackText(channel: string, text: string, threadTs?: string): Promise<void> {
+    if (!this.app) return;
+    await this.app.client.chat.postMessage({
+      channel,
+      text,
+      thread_ts: threadTs,
+    });
+  }
+
+  private async sendSlackQuestionnaireStep(
+    channel: string,
+    prompt: string,
+    buttons: Array<{ label: string; actionId: string }>,
+    threadTs?: string,
+  ): Promise<void> {
+    if (!this.app || !channel) return;
+    const elements = buttons.slice(0, 25).map((btn) => ({
+      type: 'button' as const,
+      text: { type: 'plain_text' as const, text: btn.label.slice(0, 75) },
+      action_id: `clar_${btn.actionId}`.slice(0, 255),
+    }));
+    const rows: Array<{ type: 'actions'; elements: typeof elements }> = [];
+    for (let i = 0; i < elements.length; i += 5) {
+      rows.push({ type: 'actions', elements: elements.slice(i, i + 5) });
+    }
+    await this.app.client.chat.postMessage({
+      channel,
+      thread_ts: threadTs,
+      text: prompt.replace(/\*/g, '').slice(0, 3000),
+      blocks: [
+        { type: 'section', text: { type: 'mrkdwn', text: prompt.slice(0, 3000) } },
+        ...rows,
+      ],
+    });
   }
 
   private async downloadFiles(files: SlackFile[]): Promise<string[]> {

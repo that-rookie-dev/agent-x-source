@@ -23,6 +23,14 @@ const CORE_TOOL_PATTERNS = [
   /^system_/, /^container_/, /^docker_/, /^db_/,
   // Memory / RAG
   /^memory_/, /^rag_/,
+  // Scheduling & automation — first-class capability; the system prompt tells the
+  // model to call automation_register directly, so it must never be hidden behind
+  // progressive disclosure. Hiding it caused scheduling requests to be refused.
+  /^automation_/, /^schedule_/,
+  // Notifications (used by scheduled jobs and direct pings)
+  /^notify_/, /^notification_/,
+  // Fleet / cross-session awareness (messaging channel super-sessions)
+  /^agent_x_overview$/,
   // Agent meta / charts / todos
   /^ask_clarification/, /^delegate_to/, /^sub_agent/, /^todo/,
   /^search_crew_hub/, /^render_chart$/, /^spawn_crew/, /^save_to_markdown$/,
@@ -114,7 +122,15 @@ export function resolveBridgeToolCall(
   if (toolName === 'tool_search') {
     const query = String(args['query'] ?? '').trim().toLowerCase();
     if (!query) {
-      return { resolved: null, resolvedArgs: { matches: [] }, error: 'query is required' };
+      return {
+        resolved: null,
+        resolvedArgs: {
+          matches: [],
+          count: 0,
+          hint: 'query is required — pass a keyword (e.g. "web_search", "automation", "schedule", "fetch").',
+        },
+        error: 'query is required — provide a search keyword in the "query" field.',
+      };
     }
     const matches = allTools
       .filter((t) => {

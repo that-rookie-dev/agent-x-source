@@ -9,6 +9,16 @@ import {
   collectAnsweredQuestionnaireTexts,
   hydrateMessageHistoryEntries,
   sanitizeQuestionnairePayload,
+  formatQuestionnaireForMessagingChannel,
+  extractAssistantReplyText,
+  isTextOnlyClarification,
+  shouldUseQuestionnaireClarification,
+  TEXT_CLARIFICATION_REJECTED_MESSAGE,
+  isMessagingChannel,
+  questionnaireHasChoices,
+  questionnaireSupportsInlineButtons,
+  MESSAGING_INLINE_MAX_OPTIONS,
+  MESSAGING_INLINE_MAX_QUESTIONS,
 } from '../src/utils/questionnaire.js';
 
 describe('normalizeAskClarificationArgs', () => {
@@ -137,5 +147,102 @@ describe('hydrateMessageHistoryEntries', () => {
       { role: 'user', content: 'Plan a trip' },
       { role: 'user', content: 'Dates: Oct 15–25' },
     ]);
+  });
+});
+
+describe('messaging channel questionnaire helpers', () => {
+  it('detects messaging channels', () => {
+    expect(isMessagingChannel('telegram')).toBe(true);
+    expect(isMessagingChannel('slack')).toBe(true);
+    expect(isMessagingChannel('api')).toBe(false);
+  });
+
+  it('formats choice questionnaire for messaging', () => {
+    const payload = normalizeAskClarificationArgs({
+      questions: [{
+        prompt: 'Which framework?',
+        type: 'single_choice',
+        options: ['React', 'Vue'],
+        recommended: 'React',
+      }],
+    });
+    expect(questionnaireHasChoices(payload)).toBe(true);
+    expect(isTextOnlyClarification(payload)).toBe(false);
+    const text = formatQuestionnaireForMessagingChannel(payload);
+    expect(text).toContain('Which framework?');
+    expect(text).toContain('1. React *(suggested)*');
+    expect(text).toContain('2. Vue');
+  });
+
+  it('detects text-only clarifications', () => {
+    const textOnly = normalizeAskClarificationArgs({
+      questions: [{ prompt: 'What dates?', type: 'text' }],
+    });
+    expect(isTextOnlyClarification(textOnly)).toBe(true);
+    expect(shouldUseQuestionnaireClarification(textOnly)).toBe(false);
+
+    const choice = normalizeAskClarificationArgs({
+      questions: [{ prompt: 'Pick', type: 'single_choice', options: ['A', 'B'] }],
+    });
+    expect(shouldUseQuestionnaireClarification(choice)).toBe(true);
+  });
+
+  it('extractAssistantReplyText prefers content then questionnaire parts', () => {
+    const withContent = extractAssistantReplyText({ content: 'Hello there' });
+    expect(withContent).toBe('Hello there');
+
+    const payload = normalizeAskClarificationArgs({
+      question: 'Pick one',
+      options: ['A', 'B'],
+    });
+    const fromParts = extractAssistantReplyText({
+      content: '',
+      parts: [{ type: 'questionnaire', questionnaire: { payload } }],
+    });
+    expect(fromParts).toContain('Pick one');
+    expect(fromParts).toContain('1. A');
+  });
+
+  it('questionnaireSupportsInlineButtons allows simple choice wizards', () => {
+    const ok = normalizeAskClarificationArgs({
+      questions: [
+        { prompt: 'Channel?', type: 'single_choice', options: ['Telegram', 'Slack', 'Discord'] },
+        { prompt: 'Frequency?', type: 'single_choice', options: ['Daily', 'Weekly'] },
+      ],
+    });
+    expect(questionnaireSupportsInlineButtons(ok)).toBe(true);
+  });
+
+  it('questionnaireSupportsInlineButtons rejects too many options or mixed types', () => {
+    const tooManyOptions: import('../src/types/questionnaire.js').QuestionnairePayload = {
+      id: 'q',
+      questions: [{
+        id: 'q1',
+        prompt: 'Pick',
+        type: 'single_choice',
+        options: Array.from({ length: MESSAGING_INLINE_MAX_OPTIONS + 1 }, (_, i) => ({
+          value: `opt${i}`,
+          label: `opt${i}`,
+        })),
+      }],
+    };
+    expect(questionnaireSupportsInlineButtons(tooManyOptions)).toBe(false);
+
+    const mixed = normalizeAskClarificationArgs({
+      questions: [
+        { prompt: 'Name?', type: 'text' },
+        { prompt: 'Channel?', type: 'single_choice', options: ['A', 'B'] },
+      ],
+    });
+    expect(questionnaireSupportsInlineButtons(mixed)).toBe(false);
+
+    const tooManyQuestions = normalizeAskClarificationArgs({
+      questions: Array.from({ length: MESSAGING_INLINE_MAX_QUESTIONS + 1 }, (_, i) => ({
+        prompt: `Q${i}`,
+        type: 'single_choice' as const,
+        options: ['A', 'B'],
+      })),
+    });
+    expect(questionnaireSupportsInlineButtons(tooManyQuestions)).toBe(false);
   });
 });

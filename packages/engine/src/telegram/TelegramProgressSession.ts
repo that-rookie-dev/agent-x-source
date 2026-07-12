@@ -50,21 +50,42 @@ export function formatProgressToolLabel(toolId: string): string {
   return toolId.replace(/_/g, ' ');
 }
 
-export function formatProgressStatusText(activity: string | null, elapsedSec: number): string {
-  const header = '⏳ Agent-X · Working…';
+/**
+ * Hourglass + growing dots for the in-message Telegram loader.
+ * Always shows the hourglass with at least one dot, grows to four dots,
+ * then cycles back to a single dot.
+ */
+export const PROGRESS_LOADER_FRAMES = [
+  '⏳.',
+  '⏳..',
+  '⏳...',
+  '⏳....',
+] as const;
+
+export function formatProgressLoaderFrame(frameIndex: number): string {
+  const frames = PROGRESS_LOADER_FRAMES;
+  return frames[((frameIndex % frames.length) + frames.length) % frames.length]!;
+}
+
+export function formatProgressStatusText(
+  activity: string | null,
+  elapsedSec: number,
+  frameIndex = 0,
+): string {
+  const loader = formatProgressLoaderFrame(frameIndex);
   if (activity) {
-    return `${header}\n\n• ${activity} (${elapsedSec}s)`;
+    return `${loader} ${activity} (${elapsedSec}s)`;
   }
-  return `${header}\n\n• Thinking… (${elapsedSec}s)`;
+  return loader;
 }
 
 const TYPING_INTERVAL_MS = 4_000;
-const MIN_EDIT_INTERVAL_MS = 10_000;
-const INITIAL_ACK = '⏳ Got it — working on your request…';
+const LOADER_ANIMATION_MS = 550;
 
 /**
  * Keeps Telegram users engaged during long agent turns:
- * immediate ack, refreshed typing indicator, and one editable status message.
+ * animated loader message (edited in place), refreshed typing indicator,
+ * and optional activity line when meaningful work is underway.
  */
 export class TelegramProgressSession {
   private chatId: number;
@@ -73,10 +94,11 @@ export class TelegramProgressSession {
   private startedAt = 0;
   private statusMessageId: number | null = null;
   private currentActivity: string | null = null;
-  private lastEditAt = 0;
+  private loaderFrameIndex = 0;
   private lastRenderedText = '';
   private editInFlight = false;
   private typingTimer: ReturnType<typeof setInterval> | null = null;
+  private loaderTimer: ReturnType<typeof setInterval> | null = null;
   private unsubscribe: (() => void) | null = null;
   private stopped = false;
 
@@ -89,14 +111,16 @@ export class TelegramProgressSession {
   async start(): Promise<void> {
     this.startedAt = Date.now();
     this.stopped = false;
+    this.loaderFrameIndex = 0;
 
+    const initialText = formatProgressStatusText(null, 0, this.loaderFrameIndex);
     try {
-      this.statusMessageId = await this.bridge.sendPlainMessage(this.chatId, INITIAL_ACK);
-      this.lastRenderedText = INITIAL_ACK;
+      this.statusMessageId = await this.bridge.sendPlainMessage(this.chatId, initialText);
+      this.lastRenderedText = initialText;
     } catch (err) {
       getLogger().warn(
         'TELEGRAM',
-        `Progress ack failed: ${err instanceof Error ? err.message : String(err)}`,
+        `Progress loader failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
 
@@ -104,6 +128,11 @@ export class TelegramProgressSession {
     this.typingTimer = setInterval(() => {
       void this.bridge.sendChatAction(this.chatId, 'typing').catch(() => {});
     }, TYPING_INTERVAL_MS);
+
+    this.loaderTimer = setInterval(() => {
+      this.loaderFrameIndex += 1;
+      void this.flushDisplay(false);
+    }, LOADER_ANIMATION_MS);
 
     this.unsubscribe = this.agent.events.on((event) => {
       this.handleEvent(event);
@@ -117,6 +146,10 @@ export class TelegramProgressSession {
     if (this.typingTimer) {
       clearInterval(this.typingTimer);
       this.typingTimer = null;
+    }
+    if (this.loaderTimer) {
+      clearInterval(this.loaderTimer);
+      this.loaderTimer = null;
     }
     if (this.unsubscribe) {
       this.unsubscribe();
@@ -140,66 +173,66 @@ export class TelegramProgressSession {
       case 'tool_executing':
         if (!isQuietProgressTool(event.tool)) {
           this.currentActivity = event.description?.trim() || formatProgressToolLabel(event.tool);
-          void this.flushUpdate(true);
+          void this.flushDisplay(true);
         }
         break;
       case 'turn_heartbeat':
-        void this.flushUpdate(false);
+        void this.flushDisplay(false);
         break;
       case 'loading_start':
         this.currentActivity = event.stage || 'Loading…';
-        void this.flushUpdate(true);
+        void this.flushDisplay(true);
         break;
       case 'processing_start':
         this.currentActivity = event.taskDescription?.slice(0, 80) || 'Processing…';
-        void this.flushUpdate(true);
+        void this.flushDisplay(true);
         break;
       case 'compaction_start':
         this.currentActivity = 'Compacting context…';
-        void this.flushUpdate(true);
+        void this.flushDisplay(true);
         break;
       case 'permission_required':
         this.currentActivity = 'Waiting for your approval…';
-        void this.flushUpdate(true);
+        void this.flushDisplay(true);
         break;
       case 'agent_spawned':
         this.currentActivity = 'Running sub-agent…';
-        void this.flushUpdate(true);
+        void this.flushDisplay(true);
         break;
       case 'crew_worker_spawned':
         this.currentActivity = `${event.callsign} working…`;
-        void this.flushUpdate(true);
+        void this.flushDisplay(true);
         break;
       case 'crew_mission_start':
         this.currentActivity = 'Crew mission started…';
-        void this.flushUpdate(true);
+        void this.flushDisplay(true);
         break;
       case 'decomposition_start':
         this.currentActivity = 'Breaking down task…';
-        void this.flushUpdate(true);
+        void this.flushDisplay(true);
         break;
       default:
         break;
     }
   }
 
-  private async flushUpdate(force: boolean): Promise<void> {
+  private async flushDisplay(force: boolean): Promise<void> {
     if (this.stopped || this.statusMessageId === null || this.editInFlight) return;
 
     const now = Date.now();
-    if (!force && now - this.lastEditAt < MIN_EDIT_INTERVAL_MS) return;
-
     const elapsedSec = Math.max(1, Math.round((now - this.startedAt) / 1000));
-    const text = formatProgressStatusText(this.currentActivity, elapsedSec);
+    const text = formatProgressStatusText(this.currentActivity, elapsedSec, this.loaderFrameIndex);
     if (text === this.lastRenderedText && !force) return;
 
     this.editInFlight = true;
     try {
+      if (this.stopped || this.statusMessageId === null) return;
       const ok = await this.bridge.editMessageText(this.chatId, this.statusMessageId, text);
       if (ok) {
-        this.lastEditAt = now;
         this.lastRenderedText = text;
       }
+    } catch {
+      // Loader message may have been deleted when the turn ended.
     } finally {
       this.editInFlight = false;
     }

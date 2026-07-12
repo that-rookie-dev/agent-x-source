@@ -3,6 +3,7 @@ import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, Permission
 import { generateMessageId, CREW_DOMAIN_KEYWORDS, appendStreamText, extractStreamTextDelta } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import type { AgentEventBus } from '../EventBus.js';
+import { resolveMaxOutputTokens } from '@agentx/shared';
 import { countInputTokens, estimateOutputTokens } from '../session/tokenCount.js';
 import type { TokenTracker } from '../session/TokenTracker.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
@@ -488,6 +489,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
       ],
       tools: allTools,
       temperature: 0,
+      maxOutputTokens: resolveMaxOutputTokens(this.config?.maxOutputTokens),
       stopWhen: stepCountIs(20),
       toolChoice: 'auto',
     });

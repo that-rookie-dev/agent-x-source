@@ -1,16 +1,19 @@
 import {
   formatChannelBindingLabel,
   detectChannelHandoffIntent,
-  isBareContinueIntent,
+  isContinuationTrigger,
+  resolveContinuationInstruction,
   isChannelCoveredMcpIntegration,
   isUserFacingSession,
+  isChannelSessionId,
   type ChannelBindingId,
   type ChannelSessionBinding,
   type Session,
+  type SessionResumeState,
 } from '@agentx/shared';
 import { setChannelInboundAgentResolver } from '@agentx/engine';
 import { getTelegramInboundStatus, getTelegramRuntimeHints } from './channels-sync.js';
-import { ensureChannelAgent, getEngine, getOrCreateAgent, syncChannelSuperSessionContext } from './engine.js';
+import { ensureChannelAgent, getEngine, syncChannelSuperSessionContext } from './engine.js';
 
 export interface EngineWithChannelBindings {
   channelSessionBindings?: Partial<Record<ChannelBindingId, ChannelSessionBinding>>;
@@ -26,7 +29,7 @@ export function resolveUiSessionForChannel(eng: ReturnType<typeof getEngine>): S
     return active;
   }
   const main = eng.agent;
-  if (main?.currentSessionId && main.currentSessionId !== '__channel__') {
+  if (main?.currentSessionId && !isChannelSessionId(main.currentSessionId)) {
     const session = eng.sessionManager.getSessionById(main.currentSessionId);
     if (session && isUserFacingSession({
       id: session.id,
@@ -62,7 +65,7 @@ export function bindChannelToSession(
   try {
     (eng.sessionManager as { setActiveSession?: (id: string) => void }).setActiveSession?.(session.id);
   } catch { /* best-effort */ }
-  syncChannelSuperSessionContext(eng);
+  syncChannelSuperSessionContext(eng, channel);
   propagateTelegramConnectedToAgents(eng);
   return binding;
 }
@@ -134,7 +137,14 @@ export function propagateTelegramConnectedToAgents(eng: ReturnType<typeof getEng
   const operational = isTelegramChannelOperational(eng);
   const chatIdRaw = eng.configManager.load().channels?.telegram?.chatId;
   const chatId = chatIdRaw ? Number(chatIdRaw) : null;
-  const agents = [eng.agent, eng.channelAgent].filter(Boolean);
+  const agents: Agent[] = [];
+  const seen = new Set<Agent>();
+  for (const candidate of [eng.agent, eng.channelAgent, ...(eng.channelAgents ? [...eng.channelAgents.values()] : [])]) {
+    if (candidate && !seen.has(candidate)) {
+      seen.add(candidate);
+      agents.push(candidate);
+    }
+  }
   for (const agent of agents) {
     try {
       agent!.setTelegramConnected(operational, Number.isFinite(chatId) ? chatId : null);
@@ -165,7 +175,7 @@ export async function sendChannelHandoffPing(
   const text = [
     `Continuing *${title}* here on Telegram.`,
     '',
-    'This thread is now linked to your active Agent-X session — send your next message and I\'ll pick up with full context.',
+    'This thread is context-linked to your desktop session — Telegram chat stays separate, but goals, crew, and automations carry over.',
   ].join('\n');
   try {
     await bridge.sendToChat(Number(chatId), text);
@@ -206,51 +216,52 @@ export async function handleChannelHandoffRequest(input: {
 
   return {
     handled: true,
-    reply: `Done — I linked **${binding.sessionTitle ?? 'this session'}** to ${label} and sent you a ping there. Continue the conversation on ${label}; replies will stay in sync with this session.`,
+    reply: `Done — I linked **${binding.sessionTitle ?? 'this session'}** to ${label} and sent you a ping there. Continue on ${label} for mobile; your desktop transcript stays separate, but I'll keep the same goals and context.`,
   };
 }
 
-export function buildContinueTurnInstruction(eng: ReturnType<typeof getEngine>, sessionId: string): string | null {
+export function buildContinueTurnInstruction(eng: ReturnType<typeof getEngine>, sessionId: string, userText = 'continue'): string | null {
   const store = (eng.sessionManager as unknown as {
-    store?: { getMessages?: (id: string) => Array<{ role?: string; content?: string; parts?: unknown }> };
+    store?: {
+      getMessages?: (id: string) => Array<{ role?: string; content?: string; parts?: unknown }>;
+      getSessionResumeState?: (id: string) => Record<string, unknown> | null;
+    };
   }).store;
   if (!store?.getMessages) return null;
 
   const messages = store.getMessages(sessionId);
-  const answered = messages
-    .filter((m) => m.role === 'assistant' && Array.isArray(m.parts))
-    .flatMap((m) => (m.parts as Array<{ type?: string; questionnaire?: { status?: string; answer?: string; payload?: { questions?: Array<{ prompt?: string }> } } }>))
-    .filter((p) => p.type === 'questionnaire' && p.questionnaire?.status === 'answered' && p.questionnaire.answer);
+  const resumeState = parseStoredResumeState(store.getSessionResumeState?.(sessionId));
+  return resolveContinuationInstruction({ userText, messages, resumeState });
+}
 
-  if (answered.length === 0) return null;
-
-  const facts = answered.slice(-12).map((p) => {
-    const prompt = p.questionnaire?.payload?.questions?.[0]?.prompt ?? 'Answer';
-    return `- ${prompt}: ${p.questionnaire!.answer}`;
-  });
-
-  return [
-    '[CONTINUE — SESSION CONTEXT]',
-    'The user said "continue". Do NOT restart discovery or ask another questionnaire unless a critical fact is still missing.',
-    'Synthesize what is already known and deliver the next concrete output (plan, research summary, or next action).',
-    'Established facts from this session:',
-    ...facts,
-    '[/CONTINUE — SESSION CONTEXT]',
-  ].join('\n');
+function parseStoredResumeState(row: Record<string, unknown> | null | undefined): SessionResumeState | null {
+  if (!row) return null;
+  let payload: Record<string, unknown> = {};
+  const raw = row['payload'];
+  if (typeof raw === 'string' && raw) {
+    try { payload = JSON.parse(raw) as Record<string, unknown>; } catch { payload = {}; }
+  } else if (raw && typeof raw === 'object') {
+    payload = raw as Record<string, unknown>;
+  }
+  return {
+    kind: (row['kind'] ?? 'questionnaire') as SessionResumeState['kind'],
+    messageId: String(row['message_id'] ?? row['messageId'] ?? ''),
+    questionnaireMessageId: payload.questionnaireMessageId as string | undefined,
+    userText: payload.userText as string | undefined,
+    lastFailure: payload.lastFailure as string | undefined,
+    delegateCrewIds: payload.delegateCrewIds as string[] | undefined,
+    primaryCrewId: payload.primaryCrewId as string | undefined,
+    crewIntakeFromPicker: payload.crewIntakeFromPicker as boolean | undefined,
+    createdAt: String(row['created_at'] ?? row['createdAt'] ?? new Date().toISOString()),
+  };
 }
 
 export function resolveInboundAgentForChannel(channel: ChannelBindingId): Agent {
   const eng = getEngine();
+  // Bindings link desktop context per channel — each surface has its own transcript session.
   autoBindChannelToUiSession(eng, channel);
-  const bound = resolveBoundSessionForChannel(eng, channel);
-  if (bound) {
-    try {
-      return getOrCreateAgent(undefined, bound);
-    } catch {
-      return ensureChannelAgent();
-    }
-  }
-  return ensureChannelAgent();
+  syncChannelSuperSessionContext(eng, channel);
+  return ensureChannelAgent(channel);
 }
 
 export function registerChannelInboundRouting(): void {
@@ -278,8 +289,8 @@ export function maybeAugmentChatInstruction(
   text: string,
   instruction?: string,
 ): string | undefined {
-  if (!isBareContinueIntent(text)) return instruction;
-  const block = buildContinueTurnInstruction(eng, sessionId);
+  if (!isContinuationTrigger(text)) return instruction;
+  const block = buildContinueTurnInstruction(eng, sessionId, text);
   if (!block) return instruction;
   return instruction ? `${instruction}\n\n${block}` : block;
 }
