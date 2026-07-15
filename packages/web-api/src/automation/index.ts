@@ -12,6 +12,7 @@ import { getTelegramRuntimeHints } from '../channels-sync.js';
 import { startPgBoss, stopPgBoss } from './boss.js';
 import { AutomationService, type AutomationDbPool } from './service.js';
 import { startAutomationWorker, triggerAutomationRun } from './worker.js';
+import { startBackgroundTaskNotifier, stopBackgroundTaskNotifier } from './background-notify.js';
 
 let service: AutomationService | null = null;
 let stopWorker: (() => void) | null = null;
@@ -96,11 +97,13 @@ export async function initAutomation(connectionString: string, pool: AutomationD
     cancelTask: (idOrKey, sessionId) => service!.cancelTask(idOrKey, sessionId),
   });
   stopWorker = await startAutomationWorker(service);
+  startBackgroundTaskNotifier();
   getLogger().info('AUTOMATION', 'Automation subsystem initialized');
 }
 
 export async function shutdownAutomation(): Promise<void> {
   setAutomationBridge(null);
+  stopBackgroundTaskNotifier();
   stopWorker?.();
   stopWorker = null;
   service = null;

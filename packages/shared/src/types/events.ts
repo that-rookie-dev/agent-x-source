@@ -80,7 +80,7 @@ export type EngineEvent =
   | { type: 'task_backgrounded'; taskId: string }
   | { type: 'steer_message'; taskId: string; instruction: string }
   | { type: 'reminder_fired'; taskId: string; name: string; message: string }
-  | { type: 'background_task_complete'; taskId: string; childSessionId?: string; tokensUsed?: number; elapsedMs?: number; summary: string }
+  | { type: 'background_task_complete'; taskId: string; childSessionId?: string; tokensUsed?: number; elapsedMs?: number; summary: string; instruction?: string; inboundChannel?: string; inboundThreadId?: string; success?: boolean }
   | { type: 'subagent_result'; taskId: string; childSessionId: string; tokensUsed: number; elapsedMs: number }
   | { type: 'reasoning_start' }
   | { type: 'reasoning_glimpse'; text: string }

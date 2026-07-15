@@ -885,7 +885,7 @@ export const channels = {
 // ─── Automation & Notifications ───
 export type AutomationNotifyChannel = 'in_app' | 'desktop' | 'telegram' | 'slack' | 'email' | 'discord';
 export type AutomationTaskStatus = 'active' | 'paused' | 'cancelled' | 'completed';
-export type NotificationKind = 'automation_success' | 'automation_failure' | 'automation_scheduled';
+export type NotificationKind = 'automation_success' | 'automation_failure' | 'automation_scheduled' | 'background_task_complete' | 'background_task_failed';
 
 export interface AutomationTaskRecord {
   id: string;

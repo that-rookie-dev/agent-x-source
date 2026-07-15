@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { EngineEvent, CompletionMessage, AgentXConfig } from '@agentx/shared';
+import { generateId, getLogger } from '@agentx/shared';
 import type { AgentEventBus } from '../EventBus.js';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
-import { generateId } from '@agentx/shared';
 import type { Agent } from './Agent.js';
 import { SmartSubAgent } from './SmartSubAgent.js';
 import { SubAgentCache } from './SubAgentCache.js';
@@ -15,6 +15,8 @@ import { Semaphore } from '../concurrency/Semaphore.js';
 import type { SubAgentType } from './subagent-types.js';
 import { SUBAGENT_TYPES } from './subagent-types.js';
 import { getSubAgentServiceInstance, type SubAgentService } from './SubAgentService.js';
+import { getChannelServiceInstance } from '../services/ServiceContext.js';
+import type { ChannelId, OutboundMessage } from '../services/channel/IChannelService.js';
 
 /** Default concurrent sub-agent slots (virtual fibers; queue when full). */
 const DEFAULT_MAX_CONCURRENT = 8;
@@ -35,6 +37,11 @@ export interface SubAgentTask {
   childSessionId?: string;
   background?: boolean;
   consumed?: boolean;
+  // Inbound channel context — captured at spawn time so background sub-agents can
+  // reply on the same thread even after the parent turn has ended.
+  inboundChannel?: string;
+  inboundThreadId?: string;
+  inboundMessageId?: string;
   // Resource monitoring
   resourceUsage?: {
     cpuTime?: number; // milliseconds
@@ -151,7 +158,7 @@ export class SubAgentManager {
    * Spawn a sub-agent that will actually execute an LLM completion in the background.
    * When at maxConcurrent, the task is queued (virtual concurrency) — never rejected.
    */
-  spawn(instruction: string, tools: string[] = [], timeout = 60_000, maxConcurrent = DEFAULT_MAX_CONCURRENT, typeId?: string, background = false): SubAgentTask {
+  spawn(instruction: string, tools: string[] = [], timeout = 60_000, maxConcurrent = DEFAULT_MAX_CONCURRENT, typeId?: string, background = false, channelContext?: { channel?: string; threadId?: string; messageId?: string }): SubAgentTask {
     let effectiveTools = tools;
     let deniedTools: string[] | undefined;
     if (typeId) {
@@ -181,6 +188,9 @@ export class SubAgentManager {
         childSessionId: generateId(),
         background,
         consumed: !background,
+        inboundChannel: channelContext?.channel,
+        inboundThreadId: channelContext?.threadId,
+        inboundMessageId: channelContext?.messageId,
       };
       this.completedAgents.set(task.id, task);
       this.service.registerTask(task);
@@ -204,6 +214,9 @@ export class SubAgentManager {
       childSessionId: generateId(),
       background,
       consumed: !background,
+      inboundChannel: channelContext?.channel,
+      inboundThreadId: channelContext?.threadId,
+      inboundMessageId: channelContext?.messageId,
     };
 
     this.agents.set(task.id, task);
@@ -272,6 +285,9 @@ export class SubAgentManager {
           tools: task.tools.length > 0 ? task.tools : undefined,
           timeout: task.timeout,
           sessionId: task.id,
+          inboundChannel: task.inboundChannel,
+          inboundThreadId: task.inboundThreadId,
+          inboundMessageId: task.inboundMessageId,
         });
 
         // Set up timeout
@@ -368,6 +384,40 @@ export class SubAgentManager {
     return spawned;
   }
 
+  /**
+   * Send the background sub-agent's result back to the originating messaging
+   * channel thread so the user is notified without waiting in the parent turn.
+   */
+  private async notifyChannelOnCompletion(task: SubAgentTask, result: string, elapsedMs: number): Promise<void> {
+    if (!task.inboundChannel) return;
+    const supported: ChannelId[] = ['telegram', 'discord', 'slack', 'email'];
+    if (!supported.includes(task.inboundChannel as ChannelId)) return;
+
+    const channelService = getChannelServiceInstance();
+    if (!channelService) return;
+
+    const channel = task.inboundChannel as ChannelId;
+    const snippet = result.length > 3500 ? `${result.slice(0, 3400)}\n\n…(truncated, ${result.length - 3400} more chars)` : result;
+    const header = `✅ Background task complete (${Math.round(elapsedMs / 1000)}s)`;
+    const message: OutboundMessage = {
+      text: `${header}\n\n${snippet}`,
+      threadId: task.inboundThreadId,
+    };
+    if (channel === 'email') {
+      message.to = task.inboundThreadId;
+      message.subject = 'Agent-X background task complete';
+    }
+    if (task.inboundMessageId && (channel === 'slack' || channel === 'email')) {
+      message.replyTo = task.inboundMessageId;
+    }
+
+    try {
+      await channelService.send(channel, message);
+    } catch (err) {
+      getLogger('SubAgentManager').warn('background-notify', `Failed to send completion to ${channel}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   complete(agentId: string, result: string): void {
     const task = this.agents.get(agentId);
     if (task) {
@@ -394,7 +444,17 @@ export class SubAgentManager {
           childSessionId: task.childSessionId ?? task.id,
           tokensUsed,
           elapsedMs: elapsed,
+          summary: result.slice(0, 200),
+          instruction: task.instruction.slice(0, 300),
+          inboundChannel: task.inboundChannel,
+          inboundThreadId: task.inboundThreadId,
+          success: true,
         } as EngineEvent);
+        // Send the full result to the originating channel thread (thread-aware reply).
+        // The notification system handles fan-out to all OTHER surfaces.
+        this.notifyChannelOnCompletion(task, result, elapsed).catch((err) => {
+          getLogger('SubAgentManager').warn('background-notify', `Channel notification failed for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
       }
       this.finalizeTask(agentId);
     }
@@ -414,6 +474,20 @@ export class SubAgentManager {
         summary: `Failed: ${error}`,
         elapsed: Date.now() - (task.startTime ?? Date.now()),
       } as EngineEvent);
+      if (task.background) {
+        const elapsed = Date.now() - (task.startTime ?? Date.now());
+        this.eventBus.emit({
+          type: 'background_task_complete',
+          taskId: task.id,
+          childSessionId: task.childSessionId ?? task.id,
+          elapsedMs: elapsed,
+          summary: `Failed: ${error}`.slice(0, 200),
+          instruction: task.instruction.slice(0, 300),
+          inboundChannel: task.inboundChannel,
+          inboundThreadId: task.inboundThreadId,
+          success: false,
+        } as EngineEvent);
+      }
       this.finalizeTask(agentId);
     }
   }

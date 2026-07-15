@@ -25,6 +25,10 @@ export interface SmartSubAgentOptions {
   crewPermissions?: PermissionRule[];
   missionContext?: CrewMissionContext;
   childSessionKind?: 'sub_agent' | 'crew_worker';
+  /** Inbound channel context captured at spawn time — propagated to the child tool executor. */
+  inboundChannel?: string;
+  inboundThreadId?: string;
+  inboundMessageId?: string;
 }
 
 export interface SmartSubAgentResult {
@@ -52,6 +56,9 @@ export class SmartSubAgent {
   private missionContext?: CrewMissionContext;
   private displayName?: string;
   private childSessionKind: 'sub_agent' | 'crew_worker';
+  private inboundChannel?: string;
+  private inboundThreadId?: string;
+  private inboundMessageId?: string;
   private abortController = new AbortController();
   private toolCallsLog: Array<{ name: string; args: Record<string, unknown>; result: ToolResult; elapsed: number }> = [];
   private startTime = 0;
@@ -78,6 +85,9 @@ export class SmartSubAgent {
     this.displayName = options.displayName;
     this.childSessionKind = options.childSessionKind
       ?? (options.systemPromptOverride ? 'crew_worker' : 'sub_agent');
+    this.inboundChannel = options.inboundChannel;
+    this.inboundThreadId = options.inboundThreadId;
+    this.inboundMessageId = options.inboundMessageId;
   }
 
   /**
@@ -107,6 +117,12 @@ export class SmartSubAgent {
           }
           const childExecutor = new EnhancedToolExecutor(toolRegistry, scopePath);
           childExecutor.copyExecutionPolicyFrom(parentExecutor);
+          // Override inbound channel context with values captured at spawn time.
+          // For background sub-agents the parent executor's inbound source may have
+          // been reset by the time the background task actually runs.
+          if (this.inboundChannel !== undefined) childExecutor.setInboundSourceChannel(this.inboundChannel ?? null);
+          if (this.inboundThreadId !== undefined) childExecutor.setInboundSourceThreadId(this.inboundThreadId ?? null);
+          if (this.inboundMessageId !== undefined) childExecutor.setInboundSourceMessageId(this.inboundMessageId ?? null);
           if (this.crewPermissions.length > 0) {
             const baseRules = (childExecutor as unknown as { sessionRules: PermissionRule[] }).sessionRules ?? [];
             childExecutor.setSessionRules([...baseRules, ...this.crewPermissions]);

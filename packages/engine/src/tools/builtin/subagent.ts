@@ -18,7 +18,7 @@ export function getSubAgentManagerInstance(): SubAgentManager | null {
  */
 export async function subAgentSpawn(
   args: Record<string, unknown>,
-  _context: ToolExecutionContext,
+  context: ToolExecutionContext,
 ): Promise<ToolResult> {
   const instruction = args['instruction'] as string;
   const toolsRaw = args['tools'] as string | string[] | undefined;
@@ -38,7 +38,15 @@ export async function subAgentSpawn(
     return { success: false, output: 'Sub-agent manager not available', error: 'NOT_CONFIGURED' };
   }
 
-  const task = manager.spawn(instruction, tools, timeout);
+  const channelContext = (context.sourceChannel || context.sourceThreadId)
+    ? {
+        channel: context.sourceChannel,
+        threadId: context.sourceThreadId,
+        messageId: context.sourceMessageId,
+      }
+    : undefined;
+
+  const task = manager.spawn(instruction, tools, timeout, undefined, undefined, false, channelContext);
   return {
     success: true,
     output: `Sub-agent spawned (ID: ${task.id}, status=${task.status}). It will process the task: "${instruction.slice(0, 100)}"`,

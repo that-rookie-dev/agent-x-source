@@ -1525,7 +1525,17 @@ export class Agent {
     timeout: number,
     background?: boolean,
   ): Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }> {
-    const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents, undefined, !!background);
+    // Capture inbound channel context so background sub-agents can reply on the
+    // same thread even after this turn has ended.
+    const exec = this.toolExecutor;
+    const channelContext = exec && (exec.getInboundSourceChannel() || exec.getInboundSourceThreadId())
+      ? {
+          channel: exec.getInboundSourceChannel() ?? undefined,
+          threadId: exec.getInboundSourceThreadId() ?? undefined,
+          messageId: exec.getInboundSourceMessageId() ?? undefined,
+        }
+      : undefined;
+    const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents, undefined, !!background, channelContext);
     if (background) {
       this.emit({ type: 'task_backgrounded', taskId: task.id } as EngineEvent);
       return {
