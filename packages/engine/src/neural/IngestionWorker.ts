@@ -10,7 +10,7 @@ import { IngestionQueue, type ClaimedJob, type JobKind } from './IngestionQueue.
 import type { MemoryFabric } from './MemoryFabric.js';
 import { MemoryPipeline } from './MemoryPipeline.js';
 import { MemoryConsolidator } from './MemoryConsolidator.js';
-import { DocumentIngester } from './DocumentIngester.js';
+import { DocumentIngester, type DocumentIngestInput } from './DocumentIngester.js';
 import { OnnxEmbeddingProvider } from './OnnxEmbeddingProvider.js';
 import { LocalLLMJudge } from './LocalLLMJudge.js';
 import { CommunitySummarizer } from './CommunitySummarizer.js';
@@ -186,7 +186,7 @@ export class IngestionWorker {
         const jobId = job.id;
         const result = await ingester.ingest({
           name: payload.name,
-          kind: (payload.kind as any) ?? 'text',
+          kind: (payload.kind as DocumentIngestInput['kind']) ?? 'text',
           content: payload.content,
           chunkSize: payload.chunkSize,
           chunkOverlap: payload.chunkOverlap,
@@ -286,7 +286,7 @@ export class IngestionWorker {
         return;
       }
       default:
-        throw new Error(`Unknown job kind: ${(job as any).kind}`);
+        throw new Error(`Unknown job kind: ${job.kind}`);
     }
   }
 

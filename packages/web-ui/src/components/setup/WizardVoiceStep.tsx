@@ -10,6 +10,7 @@ import { applyVoicePreset, mergeVoiceConfig } from '../../voice/voice-config';
 import { markVoiceOutputUnlocked } from '../../voice/support';
 import { hasSeenMicPreprompt, markMicPrepromptSeen } from '../../utils/microphone-permission';
 import { VoicePermissionDialog } from '../VoicePermissionDialog';
+import { VoiceWarmupProgress } from './VoiceWarmupProgress';
 import { WizardStatusLine, WizardStepShell } from './wizard-step-shell';
 import { wizardPrimaryBtnSx, wizardTheme, WIZARD_MONO } from './wizard-theme';
 import { colors, alphaColor } from '../../theme';
@@ -18,6 +19,8 @@ export interface WizardVoiceStepProps {
   onReadyChange?: (ready: boolean) => void;
   /** True while deploy/warmup is in progress — parent should disable Skip/Back. */
   onBusyChange?: (busy: boolean) => void;
+  /** User callsign — used to generate a personalised TTS greeting after warmup. */
+  callsign?: string;
 }
 
 function micStatusLabel(state: string): string {
@@ -27,12 +30,13 @@ function micStatusLabel(state: string): string {
   return 'UNKNOWN';
 }
 
-export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStepProps) {
+export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: WizardVoiceStepProps) {
   const mic = useMicrophonePermission();
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState<VoiceSetupStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [complete, setComplete] = useState(false);
+  const [installComplete, setInstallComplete] = useState(false);
+  const [warmupComplete, setWarmupComplete] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [testingMic, setTestingMic] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -40,6 +44,8 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
+
+  const complete = installComplete && warmupComplete;
 
   useEffect(() => () => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -49,7 +55,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
 
   useEffect(() => {
     void voice.setupStatus().then(({ status }) => {
-      if (status.phase === 'complete') setComplete(true);
+      if (status.phase === 'complete') setInstallComplete(true);
     }).catch(() => {});
   }, []);
 
@@ -58,35 +64,28 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
   }, [complete, onReadyChange]);
 
   useEffect(() => {
-    onBusyChange?.(deploying);
-  }, [deploying, onBusyChange]);
+    onBusyChange?.(deploying || (installComplete && !warmupComplete));
+  }, [deploying, installComplete, warmupComplete, onBusyChange]);
 
   const persistVoiceEnabled = async () => {
     const cfg = await voice.getConfig();
     await voice.updateConfig(applyVoicePreset(mergeVoiceConfig(cfg)));
   };
 
-  /** Enable voice, warm the sidecar, then mark the step complete. */
-  const finishDeployWithWarmup = async () => {
-    setDeployStatus({
-      phase: 'runtime',
-      message: 'Warming voice engine…',
-      detail: 'Loading speech models so Test speaker responds immediately',
-      progress: 96,
-    });
+  /** Installation is done — persist voice config and mark install complete. */
+  const finishInstallation = async () => {
     try {
       await persistVoiceEnabled();
-      await voice.ensureSidecar();
     } catch {
-      // Kit is installed; speaker test can still cold-start if warmup fails.
+      // Config persist failure is non-fatal — warmup can still proceed.
     }
     setDeployStatus({
       phase: 'complete',
-      message: 'Voice comms ready',
+      message: 'Installation complete',
       progress: 100,
     });
     setDeploying(false);
-    setComplete(true);
+    setInstallComplete(true);
   };
 
   const pollSetup = () => {
@@ -98,7 +97,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
         if (status.phase === 'complete') {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
-          await finishDeployWithWarmup();
+          await finishInstallation();
         } else if (status.phase === 'error') {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
@@ -117,7 +116,8 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
   const deploy = async () => {
     setDeploying(true);
     setError(null);
-    setComplete(false);
+    setInstallComplete(false);
+    setWarmupComplete(false);
     setDeployStatus({
       phase: 'runtime',
       message: 'Initializing comms array…',
@@ -128,7 +128,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
       const { status } = await voice.setup();
       setDeployStatus(status);
       if (status.phase === 'complete') {
-        await finishDeployWithWarmup();
+        await finishInstallation();
         return;
       }
       pollSetup();
@@ -182,20 +182,10 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
     }
   }, [mic, stopMicTest]);
 
-  const synthAndPlay = async () => {
-    const result = await voice.preview(
-      'Voice comms online. Agent-X standing by.',
-      'kokoro',
-      'kokoro-af',
-    );
+  const synthAndPlay = async (text: string) => {
+    const result = await voice.preview(text, 'kokoro', 'kokoro-af');
     const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
     await audio.play();
-  };
-
-  const isTransientTtsError = (err: unknown): boolean => {
-    const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-    return msg.includes('abort') || msg.includes('timeout') || msg.includes('timed out')
-      || msg.includes('not ready') || msg.includes('econnrefused') || msg.includes('fetch');
   };
 
   const previewSpeaker = async () => {
@@ -203,14 +193,13 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
     setError(null);
     markVoiceOutputUnlocked();
     try {
-      // The TTS sidecar may still be cold-starting on the first request, which
-      // surfaces as an abort/timeout. Retry once transparently before failing.
       try {
-        await synthAndPlay();
+        await synthAndPlay('Voice comms online. Agent-X standing by.');
       } catch (err) {
-        if (!isTransientTtsError(err)) throw err;
+        const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+        if (!msg.includes('abort') && !msg.includes('timeout') && !msg.includes('not ready')) throw err;
         await new Promise((r) => setTimeout(r, 600));
-        await synthAndPlay();
+        await synthAndPlay('Voice comms online. Agent-X standing by.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speaker test failed');
@@ -226,11 +215,20 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
     if (ok) await runMicTest();
   };
 
+  const handleWarmupComplete = useCallback(() => {
+    setWarmupComplete(true);
+  }, []);
+
+  const handleWarmupError = useCallback((msg: string) => {
+    setError(msg);
+    setWarmupComplete(true); // Allow user to proceed despite greeting failure
+  }, []);
+
   const phaseLabel = (() => {
     switch (deployStatus?.phase) {
       case 'runtime': return 'ENGINE SYNC';
       case 'download': return 'ASSET ACQUISITION';
-      case 'complete': return 'COMMS ONLINE';
+      case 'complete': return 'INSTALLATION COMPLETE';
       case 'error': return 'SIGNAL LOST';
       default: return 'STANDBY';
     }
@@ -249,6 +247,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
         <WizardStatusLine label="EST. PAYLOAD" value="~480 MB download" />
         <WizardStatusLine label="SECURITY" value="LOCAL ONLY · ENCRYPTED AT REST" ok />
 
+        {/* Installation progress — shown only during installation phase */}
         {deployStatus && deploying && (
           <Box sx={{ mt: 2, pt: 2, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
             <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mb: 0.5 }}>
@@ -270,7 +269,26 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
           </Box>
         )}
 
-        {complete && !deploying && (
+        {/* Installation complete marker */}
+        {installComplete && !warmupComplete && (
+          <Box sx={{ mt: 2, p: 1.25, borderRadius: 1, border: `1px solid ${wizardTheme.accentOk}`, bgcolor: alphaColor(colors.accent.green, 0.06) }}>
+            <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk }}>
+              INSTALLATION COMPLETE · 100%
+            </Typography>
+          </Box>
+        )}
+
+        {/* Warmup phase — separate progress UI after installation */}
+        {installComplete && !warmupComplete && (
+          <VoiceWarmupProgress
+            callsign={callsign || 'Operator'}
+            onComplete={handleWarmupComplete}
+            onError={handleWarmupError}
+          />
+        )}
+
+        {/* Fully complete marker */}
+        {complete && (
           <Box sx={{ mt: 2, p: 1.25, borderRadius: 1, border: `1px solid ${wizardTheme.panelBorder}`, bgcolor: alphaColor(colors.ink, 0.02) }}>
             <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk }}>
               COMMS ARRAY ONLINE
@@ -278,7 +296,8 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
           </Box>
         )}
 
-        {!complete && (
+        {/* Deploy button — only before installation starts */}
+        {!installComplete && (
           <Button
             fullWidth
             variant="contained"
@@ -290,6 +309,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
           </Button>
         )}
 
+        {/* Post-deploy controls — mic test + manual speaker test */}
         {complete && (
           <Box sx={{ mt: 2.5, pt: 2, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
             <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, letterSpacing: '1px', mb: 1.5 }}>
@@ -336,7 +356,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
                   '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
                 }}
               >
-                {previewing ? 'Transmitting…' : 'Test speaker'}
+                {previewing ? 'Transmitting…' : 'Replay greeting'}
               </Button>
             </Box>
 

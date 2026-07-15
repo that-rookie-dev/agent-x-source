@@ -1,6 +1,6 @@
 import type { Agent } from '@agentx/engine';
 import { applyWebSearchConfigFromAgentConfig, isWebSearchAvailableForChat } from '@agentx/engine';
-import type { AgentPersonaConfig, AgentXConfig, ClientSituation } from '@agentx/shared';
+import type { AgentPersonaConfig, AgentXConfig, ClientSituation, Message, StorageAdapter, StorableMessage } from '@agentx/shared';
 import { normalizeClientSituation } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
@@ -112,10 +112,10 @@ YOUR RESPONSIBILITIES:
 export function refreshAgentPersona(agent: Agent): void {
   try {
     const eng = getEngine();
-    const store = (eng.sessionManager as unknown as { store?: { getPersona?: () => AgentPersonaConfig | null } })?.store;
+    const store = eng.sessionManager.getStorageAdapter();
     if (!store?.getPersona) return;
     const persona = store.getPersona();
-    const current = (agent as unknown as { persona?: AgentPersonaConfig | null }).persona;
+    const current = agent.getPersona();
     if (JSON.stringify(persona) === JSON.stringify(current)) return;
     agent.applyPersona(persona);
   } catch { /* best-effort */ }
@@ -141,7 +141,7 @@ export function buildInstructionForMode(
 
 export function persistToolLedger(agent: Agent, sessionId: string): void {
   try {
-    const ledger = (agent as unknown as { getToolLedgerContent?: () => string }).getToolLedgerContent?.() ?? '';
+    const ledger = agent.getToolLedgerContent?.() ?? '';
     if (ledger) {
       persistMessageDirect(sessionId, 'system', ledger);
     }
@@ -212,6 +212,8 @@ export function runAgentTurnAsync(
       primaryCrewId?: string;
     };
     clientSituation?: ClientSituation | null;
+    crewSuggestionRequested?: boolean;
+    signal?: AbortSignal;
   },
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -269,7 +271,7 @@ export function runAgentTurnAsync(
       agent.cancel();
       turnCompleted = true;
       finalizeTurn();
-      const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
+      const partial = agent.getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, 'The operation was aborted due to timeout', partial);
       if (partial) {
         persistMessageDirect(sessionId, 'assistant', partial + '\n\n⚠ Turn timed out — partial output saved.');
@@ -341,18 +343,25 @@ export function runAgentTurnAsync(
     ...(extra?.voiceMergeIntoMessage ? { voiceMergeIntoMessage: extra.voiceMergeIntoMessage } : {}),
     ...(extra?.resumeCrewIntake ? { resumeCrewIntake: extra.resumeCrewIntake } : {}),
     ...(clientSituation ? { clientSituation } : {}),
+    ...(extra?.crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
+    ...(extra?.signal ? { signal: extra.signal } : {}),
   })
     .then((message) => {
       turnCompleted = true;
       finalizeTurn();
       persistToolLedger(agent, sessionId);
-      if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
-        turnRegistry.complete(turnId, message as any);
+      if (!message) {
+        turnRegistry.complete(turnId, message as Message);
+        onComplete?.(message as Message);
+        return;
+      }
+      if (message.id === '__clarify__') {
+        turnRegistry.complete(turnId, message);
         onComplete?.(message);
         return;
       }
       turnRegistry.complete(turnId, message);
-      try { getEngine().sessionManager.updateSession({ updatedAt: new Date().toISOString() } as any); } catch { /* best-effort */ }
+      try { getEngine().sessionManager.updateSession({ updatedAt: new Date().toISOString() }); } catch { /* best-effort */ }
       onComplete?.(message);
     })
     .catch((e: unknown) => {
@@ -360,14 +369,14 @@ export function runAgentTurnAsync(
       finalizeTurn();
       const isAbort = e instanceof Error && (e.name === 'AbortError' || /aborted/i.test(e.message));
       if (isAbort) {
-        const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
+        const partial = agent.getPartialTurnContent?.() ?? '';
         turnRegistry.cancel(turnId);
         persistToolLedger(agent, sessionId);
         onError?.('Cancelled', partial);
         return;
       }
       const errMsg = e instanceof Error ? e.message : 'chat-failed';
-      const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
+      const partial = agent.getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, errMsg, partial);
       persistToolLedger(agent, sessionId);
       if (partial) {
@@ -383,36 +392,24 @@ type TurnFeedbackStoreLike = {
   getTurnFeedbackBySession?: (sessionId: string) => Array<Record<string, unknown>>;
 };
 
-export function getSessionStore(): TurnFeedbackStoreLike | null {
+export function getSessionStore(): StorageAdapter | null {
   const eng = getEngine();
-  return (eng.sessionManager as unknown as { store?: TurnFeedbackStoreLike })?.store ?? null;
+  return eng.sessionManager?.getStorageAdapter() ?? null;
 }
 
-type MessagePageStore = {
-  getMessagesPage?: (
-    sessionId: string,
-    opts: { limit?: number; before?: string },
-  ) => { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean } | Promise<{ messages: Array<Record<string, unknown>>; total: number; hasMore: boolean }>;
-  getMessages?: (sessionId: string) => Array<Record<string, unknown>>;
-  getParts?: (sessionId: string) => Array<Record<string, unknown>>;
-  getPartsForMessages?: (sessionId: string, messages: Array<Record<string, unknown>>) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
-};
-
-export function getMessageStore(): MessagePageStore | null {
+export function getMessageStore(): StorageAdapter | null {
   const eng = getEngine();
-  return (eng.sessionManager as unknown as { store?: MessagePageStore })?.store ?? null;
+  return eng.sessionManager?.getStorageAdapter() ?? null;
 }
 
 export async function loadSessionMessagesPage(
   sessionId: string,
   opts: { limit?: number; before?: string },
-): Promise<{ messages: Array<Record<string, unknown>>; total: number; hasMore: boolean }> {
+): Promise<{ messages: Array<Record<string, unknown> | StorableMessage>; total: number; hasMore: boolean }> {
   const store = getMessageStore();
   if (!store) return { messages: [], total: 0, hasMore: false };
 
-  if ('ensureSessionHydrated' in store && typeof (store as { ensureSessionHydrated?: (id: string) => Promise<void> }).ensureSessionHydrated === 'function') {
-    await (store as { ensureSessionHydrated: (id: string) => Promise<void> }).ensureSessionHydrated(sessionId);
-  }
+  await store.ensureSessionHydrated?.(sessionId);
 
   if (store.getMessagesPage) {
     return await store.getMessagesPage(sessionId, opts);
@@ -452,7 +449,7 @@ export function recordTurnFeedback(input: {
   metadata?: Record<string, unknown> | null;
 }): { ok: true } | { ok: false; error: string } {
   const eng = getEngine();
-  const agent = eng.agent as Agent | null;
+  const agent = eng.agent;
   const service = agent?.turnFeedbackService;
   if (!service) {
     const store = getSessionStore();
@@ -483,12 +480,11 @@ export function recordTurnFeedback(input: {
   if (input.rating === 'positive' || input.rating === 'negative') {
     if (input.crewId) {
       try {
-        (agent as Agent & { recordCrewFeedback?: (crewId: string, positive: boolean) => void })?.recordCrewFeedback?.(input.crewId, input.rating === 'positive');
+        agent?.recordCrewFeedback?.(input.crewId, input.rating === 'positive');
       } catch { /* best-effort */ }
     }
     try {
-      const exp = agent as unknown as { experienceEngine?: { recordTrial: (sid: string, trial: Record<string, unknown>) => void } } | null;
-      exp?.experienceEngine?.recordTrial(input.sessionId, {
+      agent?.recordTrial?.(input.sessionId, {
         category: 'user_feedback',
         action: input.turnSummary || 'assistant_turn',
         result: input.rating === 'positive' ? 'success' : 'failure',

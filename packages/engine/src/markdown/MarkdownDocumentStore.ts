@@ -18,24 +18,6 @@ export type MarkdownDocumentDbPool = {
   query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
 };
 
-const DOCUMENTS_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS canvases (
-  id TEXT PRIMARY KEY,
-  session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-  message_id TEXT,
-  title TEXT NOT NULL,
-  excerpt TEXT NOT NULL DEFAULT '',
-  file_path TEXT NOT NULL,
-  content_format TEXT NOT NULL DEFAULT 'markdown',
-  source_role TEXT,
-  compile_error TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_canvases_created ON canvases(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_canvases_session ON canvases(session_id, created_at DESC);
-`;
-
 const TSX_FILE = 'canvas.canvas.tsx';
 const MD_FILE = 'content.md';
 
@@ -105,41 +87,9 @@ export class MarkdownDocumentStore {
   constructor(private pool: MarkdownDocumentDbPool) {}
 
   static async ensureSchema(pool: MarkdownDocumentDbPool): Promise<void> {
-    await pool.query(DOCUMENTS_SCHEMA_SQL);
-    await pool.query(`ALTER TABLE canvases ADD COLUMN IF NOT EXISTS compile_error TEXT`);
-
-    // Existing canvases may have been created with a NOT NULL session_id + ON DELETE CASCADE.
-    // Convert the link to an optional reference so deleting a session does not delete the document.
-    await pool.query(`ALTER TABLE canvases ALTER COLUMN session_id DROP NOT NULL`);
-    await pool.query(`
-      DO $$
-      DECLARE
-        conname TEXT;
-        has_set_null BOOLEAN;
-      BEGIN
-        SELECT EXISTS (
-          SELECT 1 FROM pg_constraint
-          WHERE conrelid = 'canvases'::regclass
-            AND contype = 'f'
-            AND pg_get_constraintdef(oid) LIKE 'FOREIGN KEY (session_id)%'
-            AND pg_get_constraintdef(oid) LIKE '%ON DELETE SET NULL%'
-        ) INTO has_set_null;
-
-        IF NOT has_set_null THEN
-          SELECT c.conname INTO conname
-          FROM pg_constraint c
-          WHERE c.conrelid = 'canvases'::regclass
-            AND c.contype = 'f'
-            AND pg_get_constraintdef(c.oid) LIKE 'FOREIGN KEY (session_id)%';
-
-          IF conname IS NOT NULL THEN
-            EXECUTE format('ALTER TABLE canvases DROP CONSTRAINT %I', conname);
-          END IF;
-
-          EXECUTE 'ALTER TABLE canvases ADD CONSTRAINT canvases_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL';
-        END IF;
-      END $$;
-    `);
+    // Schema is now managed by versioned migrations (V005__markdown_canvases.sql).
+    // This method is kept for backward compatibility — it's a no-op.
+    void pool;
   }
 
   async create(input: CreateMarkdownDocumentInput): Promise<MarkdownDocumentRecord> {

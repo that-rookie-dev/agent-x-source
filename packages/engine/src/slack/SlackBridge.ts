@@ -5,6 +5,7 @@ import type { EngineEvent } from '@agentx/shared';
 import { isChannelUserAllowed } from '@agentx/shared';
 import { MessagingPermissionCoordinator, permissionResultLabel } from '../channels/MessagingPermissionCoordinator.js';
 import { MessagingQuestionnaireCoordinator } from '../channels/MessagingQuestionnaireCoordinator.js';
+import { getRenderer } from '../channels/renderers/index.js';
 import {
   attachMessagingClarificationListener,
   deliverQuestionnaireCallback,
@@ -51,6 +52,7 @@ export class SlackBridge extends EventEmitter {
   private botUserId?: string;
   private userAgents = new Map<string, Agent>();
   private agentFactory: ((userId: string) => Agent) | null = null;
+  private messageHandler: ((event: SlackMessageEvent, client: InstanceType<typeof App>['client']) => void | Promise<void>) | null = null;
   private config: SlackConfig;
   private messageCount = 0;
   private unsubscribers = new Map<string, () => void>();
@@ -131,6 +133,10 @@ export class SlackBridge extends EventEmitter {
 
   setAgentFactory(factory: (userId: string) => Agent): void {
     this.agentFactory = factory;
+  }
+
+  setMessageHandler(handler: (event: SlackMessageEvent, client: InstanceType<typeof App>['client']) => void | Promise<void>): void {
+    this.messageHandler = handler;
   }
 
   async start(): Promise<void> {
@@ -350,6 +356,11 @@ export class SlackBridge extends EventEmitter {
     this.messageCount++;
     this.emit('slack_message', event);
 
+    if (this.messageHandler) {
+      await this.messageHandler(event, client);
+      return;
+    }
+
     let cleanText = event.text;
     if (this.botUserId) {
       cleanText = cleanText.replace(new RegExp(`<@${this.botUserId}>\\s*`, 'g'), '').trim();
@@ -443,17 +454,22 @@ export class SlackBridge extends EventEmitter {
         }
       }
 
-      const blocks = this.buildResponseBlocks(content);
-      const messageArgs: Record<string, unknown> = {
-        channel: event.channel,
-        text: content,
-        thread_ts: threadTs,
-      };
-      if (blocks) {
-        messageArgs.blocks = blocks;
+      // Use SlackRenderer for native Block Kit formatting
+      const renderer = getRenderer('slack');
+      const renderResults = renderer.renderMarkdown(content);
+      for (const result of renderResults) {
+        const payload = result.payload as { blocks?: unknown[] };
+        const messageArgs: Record<string, unknown> = {
+          channel: event.channel,
+          text: content.slice(0, 3000),
+          thread_ts: threadTs,
+        };
+        if (payload.blocks) {
+          messageArgs.blocks = payload.blocks;
+        }
+        // @ts-expect-error — Slack SDK types are strict about Block shapes; our runtime objects are valid
+        await client.chat.postMessage(messageArgs);
       }
-      // @ts-expect-error — Slack SDK types are strict about Block shapes; our runtime objects are valid
-      await client.chat.postMessage(messageArgs);
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Processing failed';
       await client.chat.postMessage({
@@ -577,16 +593,4 @@ export class SlackBridge extends EventEmitter {
     this.unsubscribers.set(userId, unsub);
   }
 
-  private buildResponseBlocks(content: string): unknown[] | undefined {
-    if (content.length < 3000 && !content.includes('```')) return undefined;
-    return [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: content.slice(0, 3000),
-        },
-      },
-    ];
-  }
 }

@@ -2,13 +2,14 @@ import { stripToolNoise } from './text-sanitize.js';
 import { appendStreamText, repairStreamTextGlitches } from './stream-text.js';
 import { attachDeepSearchPartsFromTools } from './deep-search-parts.js';
 import { attachChartPartsFromTools } from './chart-parts.js';
+import type { StorableMessage } from '../types/storage.js';
 
 export interface PersistedToolCall {
   id: string;
   name: string;
   args?: string | Record<string, unknown>;
   result?: string;
-  status?: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error';
   elapsed?: number;
   metadata?: Record<string, unknown>;
 }
@@ -17,7 +18,7 @@ import type { QuestionnaireRecord } from '../types/questionnaire.js';
 import type { CrewRosterPickerRecord } from '../types/crew-roster-picker.js';
 import type { DeepSearchProgress, DeepSearchResultBundle } from '../types/deep-search.js';
 
-export interface MessagePart {
+export interface MessagePart extends Record<string, unknown> {
   type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart';
   id: string;
   content?: string;
@@ -263,17 +264,17 @@ export function partsCorruptedByCrossTurn(content: string, parts: MessagePart[])
 
 /** Assign message_parts rows to one assistant message (turn window: after prev user, through assistant). */
 export function assignPartsToAssistantMessage(
-  messages: Array<Record<string, unknown>>,
+  messages: Array<Record<string, unknown> | StorableMessage>,
   allParts: DbPartRow[],
   assistantIndex: number,
 ): DbPartRow[] {
   const msg = messages[assistantIndex]!;
-  const msgCreatedAt = (msg['created_at'] as string) || '';
+  const msgCreatedAt = ((msg['created_at'] as string) ?? (msg['createdAt'] as string)) || '';
 
   let prevUserCreatedAt = '';
   for (let j = assistantIndex - 1; j >= 0; j--) {
     if (messages[j]!['role'] === 'user') {
-      prevUserCreatedAt = (messages[j]!['created_at'] as string) || '';
+      prevUserCreatedAt = ((messages[j]!['created_at'] as string) ?? (messages[j]!['createdAt'] as string)) || '';
       break;
     }
   }
@@ -287,7 +288,7 @@ export function assignPartsToAssistantMessage(
 }
 
 /** Normalize stored parts JSON or reconstruct from toolCalls. */
-export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts?: DbPartRow[]): {
+export function normalizeMessageForUi(msg: Record<string, unknown> | StorableMessage, sessionParts?: DbPartRow[]): {
   content: string;
   parts?: MessagePart[];
   toolCalls?: PersistedToolCall[];
@@ -296,7 +297,7 @@ export function normalizeMessageForUi(msg: Record<string, unknown>, sessionParts
   const content = repairStreamTextGlitches(stripToolNoise(rawContent));
 
   let toolCalls: PersistedToolCall[] | undefined;
-  const rawTools = msg['tool_calls'] ?? msg['toolCalls'];
+  const rawTools = msg['toolCalls'];
   if (rawTools) {
     try {
       const parsed = typeof rawTools === 'string' ? JSON.parse(rawTools) : rawTools;

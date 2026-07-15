@@ -10,51 +10,7 @@ import { markCatalogSeedProgress } from './catalog-seed-state.js';
 import { dedupePgCatalogTitles, prunePgCatalogOrphans } from './catalog-prune.js';
 import type { CrewCatalogStore } from './CrewSuggestionService.js';
 
-export const PG_CREW_CATALOG_SCHEMA = `
-CREATE TABLE IF NOT EXISTS crew_catalog (
-  id              TEXT PRIMARY KEY,
-  callsign        TEXT NOT NULL UNIQUE,
-  name            TEXT NOT NULL,
-  title           TEXT NOT NULL DEFAULT '',
-  category_id     TEXT NOT NULL,
-  category_label  TEXT NOT NULL DEFAULT '',
-  description     TEXT NOT NULL DEFAULT '',
-  system_prompt   TEXT NOT NULL DEFAULT '',
-  tone            TEXT,
-  expertise       TEXT,
-  traits          TEXT,
-  tools           TEXT,
-  tags            TEXT,
-  search_text     TEXT NOT NULL DEFAULT '',
-  hub_revision    INTEGER NOT NULL DEFAULT 1,
-  active          BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS app_metadata (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS session_crew_preferences (
-  session_id              TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-  suggestions_dismissed     BOOLEAN NOT NULL DEFAULT FALSE,
-  dismissed_at            TIMESTAMPTZ,
-  last_suggestion_at      TIMESTAMPTZ,
-  last_suggestion_turn_id TEXT,
-  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_crew_catalog_category ON crew_catalog(category_id);
-CREATE INDEX IF NOT EXISTS idx_crew_catalog_callsign ON crew_catalog(callsign);
-CREATE INDEX IF NOT EXISTS idx_crew_catalog_active ON crew_catalog(active);
-
-CREATE TABLE IF NOT EXISTS _schema (
-  version     INTEGER PRIMARY KEY,
-  applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-`;
+// Schema is now managed by versioned SQL migrations (V003__crew_catalog_and_fts.sql).
 
 function parseJsonArray(raw: unknown): string[] {
   if (!raw) return [];
@@ -95,39 +51,10 @@ function toTsQuery(query: string): string {
   return buildPostgresHubTsQuery(query);
 }
 
+// Schema migration is now handled by versioned SQL migrations (V003__crew_catalog_and_fts.sql).
+// runPgCrewCatalogMigration is kept as a no-op for backward compatibility.
 export async function runPgCrewCatalogMigration(pool: Pool): Promise<void> {
-  await pool.query(PG_CREW_CATALOG_SCHEMA);
-
-  await pool.query(`ALTER TABLE crews ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'custom'`);
-  await pool.query(`ALTER TABLE crews ADD COLUMN IF NOT EXISTS catalog_id TEXT`);
-  await pool.query(`ALTER TABLE crews ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT ''`);
-  await pool.query(`ALTER TABLE crews ADD COLUMN IF NOT EXISTS suggestable BOOLEAN NOT NULL DEFAULT TRUE`);
-  // tags column added in schema v20 — backfill for existing crew_catalog tables.
-  await pool.query(`ALTER TABLE crew_catalog ADD COLUMN IF NOT EXISTS tags TEXT`);
-
-  await pool.query(`
-    DO $$ BEGIN
-      ALTER TABLE crew_catalog ADD COLUMN search_tsv tsvector
-        GENERATED ALWAYS AS (to_tsvector('english', coalesce(search_text, ''))) STORED;
-    EXCEPTION WHEN duplicate_column THEN NULL;
-    END $$;
-  `);
-  await pool.query(`
-    DO $$ BEGIN
-      ALTER TABLE crews ADD COLUMN search_tsv tsvector
-        GENERATED ALWAYS AS (to_tsvector('english', coalesce(search_text, ''))) STORED;
-    EXCEPTION WHEN duplicate_column THEN NULL;
-    END $$;
-  `);
-
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_crew_catalog_tsv ON crew_catalog USING GIN (search_tsv)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_crews_tsv ON crews USING GIN (search_tsv)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_crews_source ON crews(source)`);
-  await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_crews_catalog_id ON crews(catalog_id) WHERE catalog_id IS NOT NULL
-  `);
-
-  await pool.query(`INSERT INTO _schema (version) VALUES (20) ON CONFLICT (version) DO NOTHING`);
+  void pool;
 }
 
 export async function seedPgCatalog(
@@ -243,6 +170,7 @@ export async function backfillPgCrewSearchColumns(
 export function createPgCrewCatalogStore(
   pool: Pool,
   crewFromRow: (row: Record<string, unknown>) => Crew,
+  flushPendingWrites?: () => Promise<void>,
 ): CrewCatalogStore {
   return {
     async getCatalogRevision(): Promise<number> {
@@ -398,6 +326,8 @@ export function createPgCrewCatalogStore(
     },
 
     async upsertSessionCrewPreferences(sessionId: string, patch: Partial<SessionCrewPreferences>): Promise<SessionCrewPreferences> {
+      // Flush pending session INSERTs so the FK constraint on session_id is satisfied.
+      if (flushPendingWrites) await flushPendingWrites();
       const existing = await this.getSessionCrewPreferences(sessionId);
       const merged: SessionCrewPreferences = {
         ...existing,

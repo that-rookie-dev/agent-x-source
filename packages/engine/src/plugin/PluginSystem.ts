@@ -68,7 +68,7 @@ export class PluginSystem {
       autoEnable: config.autoEnable ?? true,
       healthCheckIntervalMs: config.healthCheckIntervalMs ?? 60000,
       maxErrorsBeforeDisable: config.maxErrorsBeforeDisable ?? 5,
-      db: undefined as any,
+      db: undefined,
     };
   }
 

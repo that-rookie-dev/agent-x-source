@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
-import { generateId } from '@agentx/shared';
+import { generateId, getLogger } from '@agentx/shared';
 
 export interface RecipeStep {
   description: string;
@@ -122,7 +122,17 @@ export class RecipeEngine {
   }
 
   importRecipe(data: string | Recipe, filename?: string): Recipe | undefined {
-    const recipe = typeof data === 'string' ? JSON.parse(data) as Recipe : data;
+    let recipe: Recipe;
+    if (typeof data === 'string') {
+      try {
+        recipe = JSON.parse(data) as Recipe;
+      } catch (error) {
+        getLogger().warn('RECIPE_ENGINE', `Failed to parse recipe JSON: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
+      }
+    } else {
+      recipe = data;
+    }
     if (!recipe.name || !recipe.steps) {
       return undefined;
     }

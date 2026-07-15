@@ -1,0 +1,20 @@
+{
+  "routes": [
+    ["post", "/api/channels/telegram/discover"],
+    ["post", "/api/channels/telegram/greeting"],
+    ["get", "/api/channels/telegram/status"],
+    ["post", "/api/channels/telegram/restart"],
+    ["post", "/api/telegram/start"],
+    ["post", "/api/telegram/stop"],
+    ["get", "/api/telegram/status"],
+    ["post", "/api/discord/start"],
+    ["post", "/api/discord/stop"],
+    ["get", "/api/discord/status"],
+    ["post", "/api/slack/start"],
+    ["post", "/api/slack/stop"],
+    ["get", "/api/slack/status"],
+    ["post", "/api/email/start"],
+    ["post", "/api/email/stop"],
+    ["get", "/api/email/status"]
+  ]
+}

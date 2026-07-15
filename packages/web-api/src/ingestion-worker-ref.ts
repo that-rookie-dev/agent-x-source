@@ -56,8 +56,8 @@ async function enqueueReExtractionJobs(): Promise<void> {
   try {
     const pool = getEngine().pgPool;
     if (!pool) return;
-    const fabric = new MemoryFabric(pool as any);
-    const queue = new IngestionQueue(pool as any);
+    const fabric = new MemoryFabric(pool);
+    const queue = new IngestionQueue(pool);
 
     // Get all sources.
     const sources = await fabric.getSources();

@@ -3,7 +3,7 @@
 // CommandPalette, SessionSearchModal, DoomLoopWarning, ReasoningBlock,
 // CheckpointDrawer, TurnTokenBadge, StreamingCursor.
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -98,7 +98,7 @@ function formatAgo(ms: number): string {
 // 2. ScrollToBottomPill — grey circle, bottom-right; shows when scrolled up
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function ScrollToBottomPill({
+export const ScrollToBottomPill = memo(function ScrollToBottomPill({
   visible,
   onClick,
 }: {
@@ -132,7 +132,7 @@ export function ScrollToBottomPill({
       <KeyboardArrowDownIcon sx={{ fontSize: 18, color: colors.text.secondary }} />
     </Box>
   );
-}
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. SlashCommandMenu — autocomplete dropdown for `/` commands

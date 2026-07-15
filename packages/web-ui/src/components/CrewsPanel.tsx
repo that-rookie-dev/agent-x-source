@@ -221,7 +221,7 @@ export function CrewsPanel() {
     e?.stopPropagation();
     setRegenerating(c.id);
     try {
-      const meta = await crewsApi.generateMetadata(c.systemPrompt, c.title || undefined, c.name, (c as any).description);
+      const meta = await crewsApi.generateMetadata(c.systemPrompt, c.title || undefined, c.name, c.description);
       await crewsApi.update(c.id, { expertise: meta.expertise, traits: meta.traits, systemPrompt: meta.revisedPrompt || c.systemPrompt });
       await load();
       if (detailCrew?.id === c.id) {

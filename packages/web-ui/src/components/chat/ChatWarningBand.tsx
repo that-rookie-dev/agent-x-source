@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState, memo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -13,12 +13,23 @@ function formatWarningsForCopy(messages: string[]): string {
 }
 
 interface Props {
-  messages: string[];
+  warnings: string[];
+  sendBlocked: boolean;
+  sendBlockedReason: string;
+  configLoaded: boolean;
 }
 
 /** Thin full-width band at the top of the chat window for warnings and errors. */
-export function ChatWarningBand({ messages }: Props) {
+export const ChatWarningBand = memo(function ChatWarningBand({ warnings, sendBlocked, sendBlockedReason, configLoaded }: Props) {
   const [copied, setCopied] = useState(false);
+
+  const messages = useMemo(() => {
+    const items = [...warnings];
+    if (sendBlocked && configLoaded && sendBlockedReason) {
+      items.unshift(sendBlockedReason);
+    }
+    return items;
+  }, [warnings, sendBlocked, configLoaded, sendBlockedReason]);
 
   const handleCopy = useCallback(async () => {
     if (messages.length === 0) return;
@@ -108,4 +119,4 @@ export function ChatWarningBand({ messages }: Props) {
       </Tooltip>
     </Box>
   );
-}
+});

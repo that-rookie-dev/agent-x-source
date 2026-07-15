@@ -4,6 +4,7 @@ import type { Agent } from '../agent/Agent.js';
 import { AgentEventBus } from '../EventBus.js';
 import { TelegramStore } from './TelegramStore.js';
 import { randomBytes } from 'node:crypto';
+import { getRenderer } from '../channels/renderers/index.js';
 
 export interface TelegramConfig {
   botToken: string;
@@ -659,31 +660,29 @@ export class TelegramBridge {
   }
 
   async sendMessage(chatId: number, text: string): Promise<void> {
-    // Telegram has a 4096 character limit per message
-    const maxLen = 4096;
-    const chunks: string[] = [];
-    if (text.length <= maxLen) {
-      chunks.push(text);
-    } else {
-      for (let i = 0; i < text.length; i += maxLen) {
-        chunks.push(text.slice(i, i + maxLen));
-      }
-    }
+    // Use the TelegramRenderer for native MarkdownV2 formatting + chunking
+    const renderer = getRenderer('telegram');
+    const results = renderer.renderMarkdown(text);
 
-    for (const chunk of chunks) {
-      const result = await this.apiCall('sendMessage', {
+    for (const result of results) {
+      const payload = result.payload as { text: string; parse_mode?: string; reply_markup?: unknown };
+      const apiParams: Record<string, unknown> = {
         chat_id: chatId,
-        text: chunk,
-        parse_mode: 'Markdown',
-      });
-      if (!result.ok) {
-        if (result.description?.includes('parse')) {
-          const plain = await this.apiCall('sendMessage', { chat_id: chatId, text: chunk });
+        text: payload.text,
+      };
+      if (payload.parse_mode) apiParams['parse_mode'] = payload.parse_mode;
+      if (payload.reply_markup) apiParams['reply_markup'] = payload.reply_markup;
+
+      const apiResult = await this.apiCall('sendMessage', apiParams);
+      if (!apiResult.ok) {
+        // Fallback: try plain text without markdown if parsing failed
+        if (apiResult.description?.includes('parse') || apiResult.description?.includes('can\'t parse')) {
+          const plain = await this.apiCall('sendMessage', { chat_id: chatId, text: payload.text });
           if (!plain.ok) {
             throw new Error(plain.description ?? 'Failed to send Telegram message');
           }
         } else {
-          throw new Error(result.description ?? 'Failed to send Telegram message');
+          throw new Error(apiResult.description ?? 'Failed to send Telegram message');
         }
       }
     }

@@ -1,4 +1,4 @@
-import { streamText, stepCountIs } from 'ai';
+import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import type { EngineEvent, AgentXConfig, SessionEvent } from '@agentx/shared';
 import { getLogger, resolveMaxOutputTokens } from '@agentx/shared';
 import type { AgentEventBus } from '../EventBus.js';
@@ -89,10 +89,10 @@ export class SessionRunner {
         const result = streamText({
           model,
           messages: normalizeAiSdkMessagesForProvider(aiMessages, config.provider.activeProvider).map(m => ({
-            role: m.role,
+            role: m.role as 'system' | 'user' | 'assistant' | 'tool',
             content: m.content,
             ...(m.toolCallId ? { toolCallId: m.toolCallId } : {}),
-          })) as any,
+          })) as ModelMessage[],
           tools,
           temperature: 0,
           maxRetries: config.maxRetries ?? 2,

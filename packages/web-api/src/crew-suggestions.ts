@@ -11,7 +11,7 @@ import {
   type CrewCatalogStore,
   type CrewKeywordExpandFn,
 } from '@agentx/engine';
-import type { CrewMatchCandidate, CrewSuggestionEvaluation, CatalogEntry } from '@agentx/shared';
+import type { CrewMatchCandidate, CrewSuggestionEvaluation, CatalogEntry, TelemetryEvent } from '@agentx/shared';
 import { explicitCrewRequest } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import { mapPrimaryCrewId } from './crew-roster-picker-api.js';
@@ -49,7 +49,7 @@ export function emitCrewSuggestionTelemetry(
       type: 'crew_suggestion',
       evaluation,
       message,
-    } as never);
+    } as unknown as TelemetryEvent);
   } catch { /* best-effort */ }
 }
 

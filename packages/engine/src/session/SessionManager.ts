@@ -1,4 +1,4 @@
-import type { Session, SessionStatus, SessionEvent } from '@agentx/shared';
+import type { Session, SessionStatus, SessionEvent, StorableTokenLog, StorableSession } from '@agentx/shared';
 import type { StorageAdapter } from '@agentx/shared';
 import { generateSessionId, generateId } from '@agentx/shared';
 import { TokenTracker } from './TokenTracker.js';
@@ -24,6 +24,11 @@ export class SessionManager {
    * Must be called after successful authentication to enable field-level encryption.
    */
   setDEK(_dek: Buffer | null): void {
+  }
+
+  /** Expose the underlying storage adapter for callers that need adapter-specific methods (e.g. insertMessage, insertPart). */
+  getStorageAdapter(): StorageAdapter {
+    return this.store;
   }
 
   /** Legacy handle accessor — always returns null because SQLite is removed. */
@@ -60,12 +65,22 @@ export class SessionManager {
     this.store.updateSession(id, normalized as Partial<Session>);
   }
 
+  private castSession(raw: StorableSession): Session {
+    return {
+      ...raw,
+      mode: raw.mode === 'plan' ? 'plan' : 'agent',
+      updatedAt: raw.updatedAt ?? raw.createdAt,
+      status: raw.status as SessionStatus,
+    } as Session;
+  }
+
   private getSessionRecord(id: string): Session | null {
-    return this.store.getSession(id) as unknown as Session | null;
+    const raw = this.store.getSession(id);
+    return raw ? this.castSession(raw) : null;
   }
 
   private listSessionRecords(limit = 20): Session[] {
-    return this.store.listSessions(limit) as unknown as Session[];
+    return this.store.listSessions(limit).map((s) => this.castSession(s));
   }
 
   createSession(providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string): Session {
@@ -285,15 +300,15 @@ export class SessionManager {
 
   getChildSessions(parentId: string): Session[] {
     if (this.store.listChildSessions) {
-      return this.store.listChildSessions(parentId) as unknown as Session[];
+      return this.store.listChildSessions(parentId).map((s) => this.castSession(s));
     }
     const all = this.listSessions(9999);
     return all.filter(s => s.parentId === parentId);
   }
 
-  getSessionListKpis(sessionId: string, base?: Record<string, unknown>): SessionListKpis {
+  getSessionListKpis(sessionId: string, base?: Session | Record<string, unknown>): SessionListKpis {
     if (this.store.getSessionListKpis) {
-      return this.store.getSessionListKpis(sessionId, base) as unknown as SessionListKpis;
+      return this.store.getSessionListKpis(sessionId, base);
     }
     return { ...EMPTY_SESSION_KPIS };
   }
@@ -312,9 +327,9 @@ export class SessionManager {
         return true;
       });
     if (this.store.listRootSessions) {
-      return filterAutomation(this.store.listRootSessions(limit) as unknown as Session[]);
+      return filterAutomation(this.store.listRootSessions(limit).map((s) => this.castSession(s)));
     }
-    return filterAutomation(this.store.listSessions(limit) as unknown as Session[]);
+    return filterAutomation(this.store.listSessions(limit).map((s) => this.castSession(s)));
   }
 
   getSessionTree(): Session[] {
@@ -382,30 +397,19 @@ export class SessionManager {
   }
 
   replayEvents(sessionId: string, sinceSequence?: number): Generator<SessionEvent, void, undefined> {
-    const adapter = this.store as any;
-    if (typeof adapter.getSessionEvents === 'function') {
-      const events = adapter.getSessionEvents(sessionId, sinceSequence) as SessionEvent[];
-      let idx = 0;
-      return {
-        next: () => {
-          if (idx >= events.length) return { value: undefined, done: true };
-          return { value: events[idx++], done: false };
-        },
-        [Symbol.iterator]() { return this; },
-      } as Generator<SessionEvent, void, undefined>;
-    }
+    const events = this.store.getSessionEvents?.(sessionId, sinceSequence) ?? [];
+    let idx = 0;
     return {
-      next: () => ({ value: undefined, done: true }),
+      next: () => {
+        if (idx >= events.length) return { value: undefined, done: true };
+        return { value: events[idx++], done: false };
+      },
       [Symbol.iterator]() { return this; },
-    } as unknown as Generator<SessionEvent, void, undefined>;
+    } as Generator<SessionEvent, void, undefined>;
   }
 
   getSessionEvents(sessionId: string, sinceSequence?: number): SessionEvent[] {
-    const adapter = this.store as any;
-    if (typeof adapter.getSessionEvents === 'function') {
-      return adapter.getSessionEvents(sessionId, sinceSequence) as SessionEvent[];
-    }
-    return [];
+    return this.store.getSessionEvents?.(sessionId, sinceSequence) ?? [];
   }
 
   saveCrewState(crewId: string, enabled: boolean, messageCount?: number): void {
@@ -420,28 +424,16 @@ export class SessionManager {
       messageCount: messageCount ?? 0,
     };
 
-    const adapter = this.store as any;
-    if (typeof adapter.saveCrewState === 'function') {
-      adapter.saveCrewState(state);
-    }
+    this.store.saveCrewState?.(state);
   }
 
   getCrewStates(): Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }> {
     if (!this.activeSession) return [];
-
-    const adapter = this.store as any;
-    if (typeof adapter.loadCrewStates === 'function') {
-      return adapter.loadCrewStates(this.activeSession.id) as Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }>;
-    }
-    return [];
+    return this.store.loadCrewStates?.(this.activeSession.id) ?? [];
   }
 
   loadCrewStates(sessionId: string): Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }> {
-    const adapter = this.store as any;
-    if (typeof adapter.loadCrewStates === 'function') {
-      return adapter.loadCrewStates(sessionId) as Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }>;
-    }
-    return [];
+    return this.store.loadCrewStates?.(sessionId) ?? [];
   }
 
   restoreCrewStates(): Array<{ crewId: string; enabled: boolean }> {
@@ -457,7 +449,7 @@ export class SessionManager {
   }
 
   addTokenLog(opts: { sessionId: string; inputTokens: number; outputTokens: number; model: string; costUsd: number; providerId: string; crewId?: string }): void {
-    const log: Record<string, unknown> = {
+    const log: Omit<StorableTokenLog, 'id' | 'createdAt'> = {
       sessionId: opts.sessionId,
       model: opts.model,
       inputTokens: opts.inputTokens,
@@ -466,7 +458,7 @@ export class SessionManager {
       providerId: opts.providerId,
       crewId: opts.crewId || null,
     };
-    this.store.addTokenLog(opts.sessionId, log as any);
+    this.store.addTokenLog(opts.sessionId, log);
   }
 
   addToolExecution(exec: {
@@ -478,10 +470,7 @@ export class SessionManager {
     success: boolean;
     elapsedMs: number;
   }): void {
-    const adapter = this.store as any;
-    if (typeof adapter.addToolExecution === 'function') {
-      adapter.addToolExecution(exec);
-    }
+    this.store.addToolExecution?.(exec);
   }
 
   private startAutoSave(): void {
@@ -489,9 +478,9 @@ export class SessionManager {
     this.autoSaveInterval = setInterval(() => {
       if (this.activeSession && this.tokenTracker) {
         this.updateSessionRecord(this.activeSession.id, {
-          tokensUsed: this.tokenTracker.tokensUsed,
+          tokenUsed: this.tokenTracker.tokensUsed,
           updatedAt: new Date().toISOString(),
-        } as Partial<Session>);
+        });
       }
     }, 30_000);
   }

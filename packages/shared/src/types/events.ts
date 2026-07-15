@@ -55,7 +55,7 @@ export type EngineEvent =
   | { type: 'message_received'; message: Message; elapsed: number; isUpdate?: boolean }
   | { type: 'stream_chunk'; content: string; fullContent: string }
   | { type: 'stream_clear' }
-  | { type: 'loading_start'; stage: string; steps?: Array<{ id: string; label: string; status: 'pending' | 'active' | 'completed' }> }
+  | { type: 'loading_start'; stage: string; message?: string; steps?: Array<{ id: string; label: string; status: 'pending' | 'active' | 'completed' }> }
   | { type: 'loading_end' }
   | { type: 'loading_step_update'; stepId: string; label: string; status: 'pending' | 'active' | 'completed' }
   | { type: 'processing_start'; taskDescription: string }
@@ -63,7 +63,7 @@ export type EngineEvent =
   | { type: 'processing_complete'; result: FormattedResponse }
   | { type: 'permission_required'; requestId: string; tool: string; path: string; riskLevel: string; integrationPreview?: IntegrationActionPreview; forAutomation?: boolean; commandPreview?: string; argsSummary?: string }
   | { type: 'token_update'; used: number; available: number }
-  | { type: 'error'; code: string; message: string; recoverable: boolean; actions?: RemediationAction[] }
+  | { type: 'error'; code: string; message: string; recoverable: boolean; actions?: RemediationAction[]; description?: string; details?: Record<string, unknown> }
   | { type: 'provider_error'; provider: string; model: string; statusCode?: number; message: string; recoverable: boolean; actions?: RemediationAction[] }
   | { type: 'tool_executing'; tool: string; description: string; startTime: number; args?: Record<string, unknown>; callId?: string; message?: string }
   | { type: 'tool_complete'; tool: string; result: ToolResult; elapsed: number; args?: Record<string, unknown>; callId?: string; message?: string }
@@ -74,6 +74,7 @@ export type EngineEvent =
   | { type: 'child_session_started'; childSessionId: string; parentSessionId: string; label: string; kind: 'sub_agent' | 'crew_worker' }
   | { type: 'child_session_complete'; childSessionId: string; parentSessionId: string; success: boolean }
   | { type: 'agent_progress'; agentId: string; status: string }
+  | { type: 'task_progress'; status: string; description?: string; details?: Record<string, unknown> }
   | { type: 'agent_complete'; agentId: string; summary: string; elapsed: number }
   | { type: 'task_consolidated_time'; totalElapsed: number; breakdown: Array<{ tool: string; elapsed: number }> }
   | { type: 'task_backgrounded'; taskId: string }
@@ -139,6 +140,7 @@ export type EngineEvent =
   | { type: 'discord_connected'; code: string; message: string; recoverable: boolean }
   | { type: 'discord_message'; code: string; message: string; recoverable: boolean }
   | { type: 'discord_error'; code: string; message: string; recoverable: boolean }
+  | { type: 'discord_agent_evicted'; code: string; message: string; recoverable: boolean }
   // Tree of Thoughts events
   | { type: 'tot_start'; problem: string }
   | { type: 'tot_thought_generated'; thoughtId: string; content: string; parentId?: string; depth: number }
@@ -151,6 +153,7 @@ export type EngineEvent =
   | { type: 'research_synthesis'; resultCount: number }
   | { type: 'research_complete'; report: string }
   | { type: 'agent_message'; message: Record<string, unknown> }
+  | { type: 'task_event'; [key: string]: unknown }
   | { type: 'decomposition_start'; task: string }
   | { type: 'decomposition_ready'; subtaskCount: number }
   | { type: 'decomposition_complete'; subResultCount: number; totalElapsed: number }
@@ -158,6 +161,7 @@ export type EngineEvent =
   | { type: 'reflection_complete'; result: Record<string, unknown> }
   | { type: 'decision_made'; messageClass: string; executionPath: string; confidence: number; reasoning: string }
   | { type: 'token_usage'; totalTokens: number; contextWindow: number; turnTokens?: number; costUsd?: number; inputTokens?: number; outputTokens?: number; reservedTokens?: number; streamingTokens?: number; estimated?: boolean }
+  | { type: 'thinking_delta'; content?: string; text?: string }
   | { type: 'reasoning_delta'; content: string }
   | { type: 'agent_switched'; agent: { id: string; name: string; mode: string; color?: string } }
   | { type: 'context_warning'; currentTokens: number; threshold: number; percentage: number }
@@ -176,7 +180,8 @@ export type EngineEvent =
   // Escalation event — emitted when agent is stuck and needs manual intervention
   | { type: 'assistance_required'; sessionId: string; checkpointId: string; step: { description: string; expectedOutcome: string; error?: string }; failures: Array<{ description: string; failureReason: string; attemptNumber: number }>; consecutiveCheckpoints: number; message: string }
   // Progress events for self-healing autonomous loop
-  | { type: 'task_progress'; phase: string; stepIndex: number; completed: number; total: number };
+  | { type: 'task_progress'; phase: string; stepIndex: number; completed: number; total: number }
+  | { type: 'completion_finished'; message: string };
 
 export interface FormattedResponse {
   content: string;

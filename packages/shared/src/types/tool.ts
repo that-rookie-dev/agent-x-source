@@ -84,4 +84,6 @@ export interface ToolExecutionContext {
   /** Originating messaging channel for this turn (telegram, slack, etc.). */
   sourceChannel?: string;
   onOutput?: (output: string) => void;
+  /** Abort signal that should be checked by long-running tool handlers. */
+  signal?: AbortSignal;
 }

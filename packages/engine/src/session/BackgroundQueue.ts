@@ -1,4 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { exec as execCallback, type ExecException } from 'node:child_process';
+import { promisify } from 'node:util';
+import { getLogger } from '@agentx/shared';
+import type { IJobQueue, JobContext } from '../queue/IJobQueue.js';
+import { InMemoryQueue } from '../queue/InMemoryQueue.js';
+
+/** Error from a failed exec call, carrying captured stdout/stderr. */
+type ExecError = ExecException & { stdout?: string; stderr?: string };
 
 export interface BackgroundTask {
   id: string;
@@ -10,51 +17,81 @@ export interface BackgroundTask {
   completedAt?: number;
 }
 
+export interface BackgroundQueueOptions {
+  jobQueue?: IJobQueue;
+  maxRetainedTasks?: number;
+}
+
+/**
+ * @deprecated BackgroundQueue is being replaced by the IJobQueue abstraction.
+ * It remains only for the legacy /bg command. New code should use IJobQueue
+ * (InMemoryQueue or PgBossQueue) directly.
+ */
 export class BackgroundQueue {
-  private tasks: Map<string, BackgroundTask> = new Map();
-  private queue: string[] = [];
-  private maxConcurrent: number;
+  private tasks = new Map<string, BackgroundTask>();
+  private jobQueue: IJobQueue;
   private readonly maxRetainedTasks: number;
   private onCompleteCallback: ((task: BackgroundTask) => void) | null = null;
+  private started = false;
+  private starting: Promise<void> | null = null;
 
-  constructor(maxConcurrent = 2, maxRetainedTasks = 100) {
-    this.maxConcurrent = maxConcurrent;
-    this.maxRetainedTasks = maxRetainedTasks;
+  constructor(options: BackgroundQueueOptions = {}) {
+    this.jobQueue = options.jobQueue ?? new InMemoryQueue();
+    this.maxRetainedTasks = options.maxRetainedTasks ?? 100;
+    this.handleShellExec = this.handleShellExec.bind(this);
   }
 
   onComplete(cb: (task: BackgroundTask) => void): void {
     this.onCompleteCallback = cb;
   }
 
-  enqueue(command: string): BackgroundTask {
-    const id = randomUUID();
+  async enqueue(command: string): Promise<BackgroundTask> {
     const task: BackgroundTask = {
-      id,
+      id: '',
       command,
       status: 'queued',
       progress: 'Waiting in queue...',
       createdAt: Date.now(),
     };
-    this.tasks.set(id, task);
-    this.queue.push(id);
-    this.processQueue();
-    return task;
+
+    try {
+      await this.start();
+      const id = await this.jobQueue.enqueue(
+        'shell.exec',
+        { command },
+        { priority: 0, retries: 0 },
+      );
+      task.id = id;
+      this.tasks.set(id, task);
+      return task;
+    } catch (err) {
+      getLogger().error(
+        'BACKGROUND_QUEUE',
+        err instanceof Error ? err.message : String(err),
+      );
+      throw err;
+    }
   }
 
-  cancel(id: string): boolean {
+  async cancel(id: string): Promise<boolean> {
     const task = this.tasks.get(id);
-    if (!task) return false;
-    if (task.status === 'queued') {
-      task.status = 'cancelled';
-      this.queue = this.queue.filter((qid) => qid !== id);
-      return true;
+    if (!task || task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+      return false;
     }
-    if (task.status === 'running') {
+
+    try {
+      await this.start();
+      await this.jobQueue.cancel(id);
       task.status = 'cancelled';
       task.progress = 'Cancelled by user.';
       return true;
+    } catch (err) {
+      getLogger().error(
+        'BACKGROUND_QUEUE',
+        err instanceof Error ? err.message : String(err),
+      );
+      return false;
     }
-    return false;
   }
 
   getTask(id: string): BackgroundTask | undefined {
@@ -76,38 +113,73 @@ export class BackgroundQueue {
   setResult(id: string, result: string, success: boolean): void {
     const task = this.tasks.get(id);
     if (!task) return;
+    if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') return;
     task.status = success ? 'completed' : 'failed';
     task.result = result;
     task.completedAt = Date.now();
     task.progress = success ? 'Completed.' : 'Failed.';
     this.onCompleteCallback?.(task);
     this.pruneFinishedTasks();
-    this.processQueue();
   }
 
   setProgress(id: string, progress: string): void {
     const task = this.tasks.get(id);
-    if (task) task.progress = progress;
+    if (task && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled') {
+      task.progress = progress;
+    }
   }
 
-  runTask(id: string, executor: (task: BackgroundTask) => Promise<boolean>): void {
-    const task = this.tasks.get(id);
-    if (!task) return;
-    task.status = 'running';
-    task.progress = 'Running...';
-    executor(task).then((success) => {
-      if (task.status !== 'cancelled') {
-        if (!task.result) {
-          task.result = success ? 'Completed successfully.' : 'Task failed.';
-        }
-        task.status = success ? 'completed' : 'failed';
-        task.completedAt = Date.now();
-        task.progress = success ? 'Completed.' : 'Failed.';
-        this.onCompleteCallback?.(task);
-      }
-      this.pruneFinishedTasks();
-      this.processQueue();
-    });
+  private async start(): Promise<void> {
+    if (this.started) return;
+    if (this.starting) return this.starting;
+    this.starting = this.doStart();
+    try {
+      await this.starting;
+      this.started = true;
+    } finally {
+      this.starting = null;
+    }
+  }
+
+  private async doStart(): Promise<void> {
+    await this.jobQueue.start();
+    this.jobQueue.registerWorker('shell.exec', this.handleShellExec);
+  }
+
+  private async handleShellExec(data: unknown, ctx: JobContext): Promise<void> {
+    const { command } = data as { command?: string };
+    if (!command || typeof command !== 'string') {
+      this.setResult(ctx.id, 'Invalid command', false);
+      throw new Error('Invalid command');
+    }
+
+    const task = this.tasks.get(ctx.id);
+    if (task?.status === 'cancelled') return;
+    if (task) {
+      task.status = 'running';
+      task.progress = 'Running...';
+    }
+
+    const exec = promisify(execCallback);
+    try {
+      const { stdout, stderr } = await exec(command, {
+        timeout: 300000,
+        maxBuffer: 10 * 1024 * 1024,
+        signal: ctx.signal,
+      });
+      const output = stdout + (stderr ? `\n${stderr}` : '');
+      if (this.tasks.get(ctx.id)?.status === 'cancelled') return;
+      this.setResult(ctx.id, output, true);
+      return;
+    } catch (err) {
+      if (this.tasks.get(ctx.id)?.status === 'cancelled') return;
+      const stdout = (err as ExecError).stdout ?? '';
+      const stderr = (err as ExecError).stderr ?? '';
+      const message = err instanceof Error ? err.message : String(err);
+      const output = [stdout, stderr, message].filter(Boolean).join('\n');
+      this.setResult(ctx.id, output, false);
+      throw new Error(output);
+    }
   }
 
   private pruneFinishedTasks(): void {
@@ -117,30 +189,6 @@ export class BackgroundQueue {
     if (finished.length <= this.maxRetainedTasks) return;
     for (const task of finished.slice(this.maxRetainedTasks)) {
       this.tasks.delete(task.id);
-    }
-  }
-
-  private processQueue(): void {
-    while (this.getRunningCount() < this.maxConcurrent && this.queue.length > 0) {
-      const id = this.queue.shift();
-      if (!id) break;
-      const task = this.tasks.get(id);
-      if (!task || task.status === 'cancelled') continue;
-      this.runTask(id, async (t) => {
-        try {
-          const { execSync } = await import('node:child_process');
-          const output = execSync(t.command, {
-            encoding: 'utf-8',
-            timeout: 300000,
-            maxBuffer: 10 * 1024 * 1024,
-          });
-          t.result = output;
-          return true;
-        } catch (err) {
-          t.result = (err as Error).message;
-          return false;
-        }
-      });
     }
   }
 }

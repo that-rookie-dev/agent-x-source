@@ -384,6 +384,23 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE ingestion_jobs ADD COLUMN IF NOT EXISTS total_output_tokens INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 16,
+    name: 'memory_embedding_hnsw',
+    sql: `
+      -- Ensure a high-performance HNSW index exists for vector similarity search.
+      -- vector_cosine_ops matches the <=> cosine-distance operator used by vectorSearch.
+      DO $$
+      BEGIN
+        CREATE INDEX IF NOT EXISTS idx_memory_nodes_embedding_hnsw
+          ON memory_nodes
+          USING hnsw (embedding vector_cosine_ops)
+          WITH (m = 16, ef_construction = 64);
+      EXCEPTION WHEN unique_violation THEN
+        RAISE NOTICE 'HNSW index idx_memory_nodes_embedding_hnsw already exists';
+      END $$;
+    `,
+  },
 ];
 
 export class MemoryMigrationRunner {
@@ -411,7 +428,7 @@ export class MemoryMigrationRunner {
         if (appliedSet.has(migration.version)) continue;
         await client.query(migration.sql);
         await client.query(
-          `INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`,
+          `INSERT INTO schema_migrations (version, name) VALUES ($1, $2) ON CONFLICT (version) DO NOTHING`,
           [migration.version, migration.name]
         );
         appliedCount++;

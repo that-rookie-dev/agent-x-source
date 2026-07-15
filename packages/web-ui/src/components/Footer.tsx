@@ -67,7 +67,7 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   }, [neuralBrainSupported, capabilitiesReady]);
 
   const handleBrainClick = () => {
-    const agentx = (window as unknown as { agentx?: { openInternalWindow?: (url: string) => Promise<boolean> } }).agentx;
+    const agentx = (window as Window & { agentx?: { openInternalWindow?: (url: string) => Promise<boolean> } }).agentx;
     if (agentx?.openInternalWindow) {
       agentx.openInternalWindow(NEURON_URL);
     } else {

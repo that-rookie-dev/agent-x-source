@@ -75,6 +75,7 @@ export interface CompletionRequest {
 }
 
 export interface CompletionMessage {
+  id?: string;
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   toolCallId?: string;

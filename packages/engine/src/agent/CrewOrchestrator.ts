@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, PermissionRule, QuestionnairePayload } from '@agentx/shared';
+import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, PermissionRule, QuestionnairePayload, StorageAdapter } from '@agentx/shared';
 import { generateMessageId, CREW_DOMAIN_KEYWORDS, appendStreamText, extractStreamTextDelta } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import type { AgentEventBus } from '../EventBus.js';
@@ -8,6 +8,8 @@ import { countInputTokens, estimateOutputTokens } from '../session/tokenCount.js
 import type { TokenTracker } from '../session/TokenTracker.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
+import type { ToolService } from '../services/tool/ToolService.js';
+import type { MemoryService } from '../services/memory/MemoryService.js';
 import { streamText, stepCountIs, tool, jsonSchema } from 'ai';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
 import { FiberSet } from '../concurrency/FiberSet.js';
@@ -91,7 +93,8 @@ export class CrewOrchestrator {
   private primaryMember: CrewMember | null = null;
   private activeModel: string = '';
   private toolRegistry?: ToolRegistry;
-  private toolExecutor?: ToolExecutor;
+  private toolExecutor?: ToolExecutor | ToolService;
+  private memoryService?: MemoryService;
   private config?: AgentXConfig;
   private sessionId: string = 'crew';
   private waitForClarification?: (questionnaire: QuestionnairePayload) => Promise<string>;
@@ -117,9 +120,13 @@ export class CrewOrchestrator {
     this.activeModel = model;
   }
 
-  setTools(registry: ToolRegistry, executor: ToolExecutor): void {
+  setTools(registry: ToolRegistry, executor: ToolExecutor | ToolService): void {
     this.toolRegistry = registry;
     this.toolExecutor = executor;
+  }
+
+  setMemoryService(memoryService: MemoryService | null | undefined): void {
+    this.memoryService = memoryService ?? undefined;
   }
 
   setClarificationHandler(handler: (questionnaire: QuestionnairePayload) => Promise<string>): void {
@@ -169,7 +176,7 @@ export class CrewOrchestrator {
 
   getCrewHistory(_crewId: string): Array<Record<string, unknown>> {
     if (!this.sessionManager) return [];
-    const store = (this.sessionManager as any).store;
+    const store = this.sessionManager.getStorageAdapter() as StorageAdapter & { getMessages?: (sessionId: string) => Array<Record<string, unknown>> };
     if (!store || typeof store.getMessages !== 'function') return [];
     return store.getMessages(this.sessionId);
   }
@@ -208,7 +215,7 @@ export class CrewOrchestrator {
 
   private persistCrewMessage(crewId: string, crewName: string, callsign: string, role: string, content: string): void {
     if (!this.sessionManager) return;
-    const store = (this.sessionManager as any).store;
+    const store = this.sessionManager.getStorageAdapter() as StorageAdapter & { insertMessage?: (msg: { sessionId: string; role: string; content: string; metadata: Record<string, unknown> }) => void };
     if (!store || typeof store.insertMessage !== 'function') return;
     try {
       store.insertMessage({
@@ -236,6 +243,11 @@ export class CrewOrchestrator {
 
   private async extractCrewMemories(userMessage: string, crewResponse: string, crewId: string): Promise<void> {
     try {
+      // MemoryService seam is wired, but the legacy crew MemoryManager categories
+      // do not map to MemoryNodeCategory, so we keep the legacy fallback for now.
+      if (this.memoryService) {
+        // no-op
+      }
       const { MemoryExtractor } = await import('../secret-sauce/MemoryExtractor.js');
       const extractor = new MemoryExtractor(this.provider, this.activeModel);
       const memories = await extractor.extract(userMessage, crewResponse);
@@ -382,7 +394,7 @@ export class CrewOrchestrator {
     let prevSessionRules: PermissionRule[] = [];
     const crewExecutor = crewPermissions.length > 0 ? {
       execute: async (toolId: string, args: Record<string, unknown>, sid: string) => {
-        prevSessionRules = [...((baseExecutor as any).sessionRules || [])];
+        prevSessionRules = [...(baseExecutor.getSessionRules() || [])];
         baseExecutor.setSessionRules([...prevSessionRules, ...crewPermissions]);
         try {
           return await baseExecutor.execute(toolId, args, sid);
@@ -506,7 +518,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
           break;
         }
         case 'error': {
-          const errMsg = String((chunk as any).error || 'AI SDK error');
+          const errMsg = String(chunk.error || 'AI SDK error');
           emit({ type: 'error', code: 'CREW_AI_SDK_ERROR', message: errMsg, recoverable: false } as unknown as EngineEvent);
           break;
         }
@@ -870,16 +882,23 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
       });
       this.persistCrewMessage(first.crew.id, first.crew.name, first.crew.callsign, 'assistant', firstOutput);
 
-      for (const handler of handlers) {
-        try {
+      const handlerResults = await Promise.allSettled(
+        handlers.map((handler) => {
           const refinePrompt = `Refine and improve this response from ${first.crew.name}. Add your perspective as ${handler.crew.title || handler.crew.name}. Original response:\n\n${firstOutput}`;
-          const { content: refined } = await this.callCrew(handler, refinePrompt, mainSystemPrompt);
+          return this.callCrew(handler, refinePrompt, mainSystemPrompt).then(({ content: refined }) => ({ handler, refined }));
+        }),
+      );
+      for (let hi = 0; hi < handlerResults.length; hi++) {
+        const result = handlerResults[hi]!;
+        if (result.status === 'fulfilled') {
+          const { handler, refined } = result.value;
           if (refined) {
             this.persistCrewMessage(handler.crew.id, handler.crew.name, handler.crew.callsign, 'assistant', refined);
             responses.push({ member: handler.crew.name, content: refined });
           }
-        } catch (err) {
-          responses.push({ member: handler.crew.name, content: `[Error: ${err instanceof Error ? err.message : 'failed'}]` });
+        } else {
+          const handler = handlers[hi]!;
+          responses.push({ member: handler.crew.name, content: `[Error: ${result.reason instanceof Error ? result.reason.message : 'failed'}]` });
         }
       }
     } catch (err) {
@@ -1064,7 +1083,7 @@ ${crewList}`;
 
   recordFeedback(crewId: string, thumbsUp: boolean): void {
     if (!this.sessionManager) return;
-    const store = (this.sessionManager as any).store;
+    const store = this.sessionManager.getStorageAdapter() as StorageAdapter & { addCrewFeedback?: (fb: { id: string; sessionId: string; crewId: string; positive: boolean; comment: string | null; createdAt: string }) => void };
     if (!store || typeof store.addCrewFeedback !== 'function') return;
     try {
       store.addCrewFeedback({

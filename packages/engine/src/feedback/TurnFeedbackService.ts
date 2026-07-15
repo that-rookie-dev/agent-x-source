@@ -1,6 +1,7 @@
 import { generateId } from '@agentx/shared';
 import type { SessionContextKind, TurnFeedbackRating, TurnFeedbackRecord } from '@agentx/shared';
 import { buildTurnFeedbackContext } from '@agentx/shared';
+import type { StorageAdapter } from '@agentx/shared';
 
 export interface TurnFeedbackStore {
   upsertTurnFeedback?(feedback: {
@@ -41,7 +42,7 @@ function mapRow(row: Record<string, unknown>): TurnFeedbackRecord {
 
 /** Session-scoped turn feedback — persistence + prompt context. */
 export class TurnFeedbackService {
-  constructor(private getStore: () => TurnFeedbackStore | null) {}
+  constructor(private getStore: () => StorageAdapter | null) {}
 
   record(input: {
     sessionId: string;

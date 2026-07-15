@@ -28,6 +28,14 @@ interface IpWhoResponse {
 }
 
 const IP_LOOKUP_TIMEOUT_MS = 8_000;
+const IP_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+let ipCache: { result: IpGeolocationResult | null; fetchedAt: number; browserTimezone: string; inflight: Promise<IpGeolocationResult | null> | null } = {
+  result: null,
+  fetchedAt: 0,
+  browserTimezone: '',
+  inflight: null,
+};
 
 function buildLabel(city?: string, region?: string, country?: string, countryCode?: string): string {
   const parts = [city, region, country || countryCode].filter((p) => p && p.trim());
@@ -48,11 +56,8 @@ export function timezonesLikelyMismatch(browserTz: string, ipTz?: string): boole
   }
 }
 
-/**
- * Resolve approximate location from the client's public IP (browser/Electron renderer fetch).
- * Returns null on network failure. Sets vpnSuspected when proxy/VPN/hosting flags are set.
- */
-export async function fetchClientIpGeolocation(browserTimezone: string): Promise<IpGeolocationResult | null> {
+/** Raw IP lookup without caching. */
+async function fetchIpWho(browserTimezone: string): Promise<IpGeolocationResult | null> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), IP_LOOKUP_TIMEOUT_MS);
   try {
@@ -86,4 +91,32 @@ export async function fetchClientIpGeolocation(browserTimezone: string): Promise
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+/**
+ * Resolve approximate location from the client's public IP, cached for the session.
+ * Returns null on network failure. Sets vpnSuspected when proxy/VPN/hosting flags are set.
+ */
+export async function fetchClientIpGeolocation(browserTimezone: string): Promise<IpGeolocationResult | null> {
+  const now = Date.now();
+  if (
+    ipCache.result != null
+    && ipCache.browserTimezone === browserTimezone
+    && now - ipCache.fetchedAt < IP_CACHE_TTL_MS
+  ) {
+    return ipCache.result;
+  }
+
+  if (ipCache.inflight) return ipCache.inflight;
+
+  ipCache.browserTimezone = browserTimezone;
+  ipCache.inflight = fetchIpWho(browserTimezone).then((result) => {
+    ipCache.result = result;
+    ipCache.fetchedAt = Date.now();
+    return result;
+  }).finally(() => {
+    ipCache.inflight = null;
+  });
+
+  return ipCache.inflight;
 }

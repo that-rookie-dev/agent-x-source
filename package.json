@@ -64,5 +64,10 @@
       "vitest@<4.1.0": ">=4.1.0"
     },
     "patchedDependencies": {}
+  },
+  "redisMemoryServer": {
+    "downloadDir": "node_modules/@embedded-redis/redis-binaries",
+    "version": "stable",
+    "ignoreDownloadCache": false
   }
 }

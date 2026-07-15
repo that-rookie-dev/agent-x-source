@@ -14,8 +14,9 @@ import type {
   ClarificationSource,
   QuestionnaireRecord,
   ClientSituation,
+  StorageAdapter,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, resolveSpaceError, appendStreamText, extractStreamTextDelta, type ChannelKind, getConfigDir, formatClientSituationBlock, resolveClientTimezone, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, resolveContinuationInstruction, detectIncompleteLastTurn, isContinuationTrigger, mergeChannelLinkedMessages, resolveChannelResumeStateSessionId, parseChannelBindingFromSessionId, type SessionResumeState, type PermissionHandlerResult } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, type ChannelKind, getConfigDir, formatClientSituationBlock, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, type PermissionHandlerResult } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
@@ -25,6 +26,7 @@ import { ProviderFactory } from '../providers/index.js';
 import { AgentLifecycle } from './AgentLifecycle.js';
 import { AgentEventBus } from '../EventBus.js';
 import { TokenTracker } from '../session/TokenTracker.js';
+import type { SessionManager } from '../session/SessionManager.js';
 import { estimateOutputTokens } from '../session/tokenCount.js';
 import { SubAgentManager } from './SubAgentManager.js';
 import { TaskManager } from './TaskManager.js';
@@ -47,22 +49,20 @@ import { setToolRegistryInstance } from '../commands/builtin/tools.js';
 import { SecretSauceManager } from '../secret-sauce/index.js';
 import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
 import { ExperienceEngine } from '../neural/ExperienceEngine.js';
+import type { ExperienceTrial } from '../neural/ExperienceEngine.js';
 import { GrowthEngine } from '../neural/GrowthEngine.js';
 import { createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
-import { MemoryFabric, type MemoryNode, setMemoryFabricInstance, getMemoryFabricInstance } from '../neural/MemoryFabric.js';
+import { MemoryFabric, setMemoryFabricInstance, getMemoryFabricInstance } from '../neural/MemoryFabric.js';
 import { OnnxEmbeddingProvider, setEmbedderInstance, getEmbedderInstance } from '../neural/OnnxEmbeddingProvider.js';
 import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
 import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, createProviderPromptSection, createIdentitySection, createPersonaToneSection, createWorkingDirectorySection, createRulesSection, createCompactRulesSection, createLocalPersonaGuardSection, createCrewPrivateConductSection, createQuestionnaireGuideSection, createCrewRosterGuideSection, createChatMarkdownSection, createMarkdownSection, createCurrentTimeSection, createSchedulingSection, createThirdPartyServicesSection, createLearningsSection, createSkillsSection, createFormalSkillsSection, createHyperdriveSection, createChannelFocusSection, createChannelSuperSessionSection, createChannelLinkedContextSection, createChannelMessagingSection, createMultiCrewSection, createUserSection, createTaskPanelSection, createSessionNarrativeSection, createTurnFeedbackSection, createSoulSection, createInstructionsSection, createNeuralSection, createMemoryContextSection, createSystemOverrideSection, buildClarificationPolicyInstruction, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, buildClarificationPolicyInstruction, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
-import { globalNarrativeStore } from '../context/SessionNarrativeStore.js';
-import { renderNarrativeText } from '../context/NarrativeBuilder.js';
+
 import {
   buildCompletionMessages,
-  COMPACT_MEMORY_MAX_CHARS,
-  FULL_MEMORY_MAX_CHARS,
   isCompactContextProfile,
 } from './context-profile.js';
 import { ErrorShield } from './ErrorShield.js';
@@ -109,12 +109,11 @@ import { isMissionInProgress } from './crew-mission-registry.js';
 import { evaluateCrewDelegation } from './crew-delegation-guard.js';
 import { ContextTracker } from './ContextTracker.js';
 import { TurnFeedbackService } from '../feedback/TurnFeedbackService.js';
-import { AutonomousDiagnosticsSystem, type SessionContext } from './AutonomousDiagnosticsSystem.js';
+import { AutonomousDiagnosticsSystem } from './AutonomousDiagnosticsSystem.js';
 
 import { TodoManager } from './TodoManager.js';
 import type { SessionLogger } from '../session/SessionLogger.js';
-import { COMPACTION_PROMPT, COMPACTION_UPDATE_PROMPT } from './compaction-prompt.js';
-import { getTokenThresholds, isTokenOverflow, estimateTokens, estimateMessagesTokens, getOutputReserve, resolveEffectiveMaxOutputTokens, estimatePromptTokens, ContextBudgetExceededError, DEFAULT_FALLBACK_CONTEXT_WINDOW, resolveTrialOutputTokens, modelInfoHasReasoning, type ModelInfo } from '@agentx/shared';
+import { estimateTokens, getOutputReserve, resolveEffectiveMaxOutputTokens, estimatePromptTokens, ContextBudgetExceededError, type ModelInfo } from '@agentx/shared';
 
 // ─── UNIFIED PIPELINE IMPORTS (Phase 1-11 integration) ───
 import { InputNormalizer } from '../communication/InputNormalizer.js';
@@ -127,17 +126,16 @@ import { RunStateManager } from '../agent/RunStateManager.js';
 import { TurnStateManager, type TurnPhase } from './TurnStateManager.js';
 import { ToolLedger } from './ToolLedger.js';
 import {
-  isWriteTool,
   shouldEscalateForExecution,
   shouldUseInteractivePlanGates,
 } from './plan-mode-utils.js';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
 import { reconcileIntegrationHintWithActiveTools } from '../integrations/integration-tool-availability.js';
 import type { ThirdPartyTurnPolicy } from '../integrations/third-party-access.js';
-import { buildGoogleAiSdkProviderOptions, buildProviderConnectivityProbeUrl } from '../providers/google/gemini-metadata.js';
+import { buildGoogleAiSdkProviderOptions } from '../providers/google/gemini-metadata.js';
 import { createAiSdkStreamHandler } from './AiSdkStreamHandler.js';
 import type { PartPersistFn } from './AiSdkStreamHandler.js';
-import { streamText, stepCountIs } from 'ai';
+import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import {
   buildWebSearchTurnInstruction,
   isWebSearchAvailableForChat,
@@ -146,48 +144,72 @@ import {
   createWebSearchIntentClassifier,
   type WebSearchTurnPolicy,
 } from '../search/web-search-policy.js';
-import { isPermissionExemptTool } from '../tools/permissions/exempt-tools.js';
 import { SessionRunner } from '../session/SessionRunner.js';
 import { BUILTIN_AGENTS } from './agent-configs.js';
+import { getLoadingSteps, generateDiff, modelMessageContentToText as modelMessageContentToTextHelper, estimateToolSchemaChars as estimateToolSchemaCharsHelper, toFriendlyError as toFriendlyErrorHelper, detectTaskType as detectTaskTypeHelper, checkConnectivity as checkConnectivityHelper, buildIdentityBlock as buildIdentityBlockHelper, simpleComplete as simpleCompleteHelper, endSession as endSessionHelper, runSummarization as runSummarizationHelper, getHealth as getHealthHelper, initializeDiagnosticsAsync as initializeDiagnosticsAsyncHelper, research as researchHelper, compactContext as compactContextHelper, tagCrewPrivateAssistant as tagCrewPrivateAssistantHelper, buildLinkedContextPromptBlock as buildLinkedContextPromptBlockHelper, getProviderCredentials as getProviderCredentialsHelper, getUserTimezone as getUserTimezoneHelper, getUtcOffset as getUtcOffsetHelper, type ConnectivityContext, type IdentityContext, type SimpleCompleteContext, type SessionLifecycleContext, type HealthContext, type DiagnosticsContext, type ResearchContext, type CompactContext, type CrewPrivateContext, type LinkedContextContext, type ProviderCredentialsContext, type TimezoneContext } from './agent-helpers.js';
+import {
+  enforcePlanModeViolations,
+  validateModeRestrictionTransparency,
+  refactorResponseForTransparency,
+} from './plan-mode-validation.js';
+import {
+  superviseCrewMission as superviseCrewMissionHelper,
+  publishCrewMissionResponses as publishCrewMissionResponsesHelper,
+  executeCrewMission as executeCrewMissionHelper,
+  extractTasksFromResponse as extractTasksFromResponseHelper,
+  detectAtMentions as detectAtMentionsHelper,
+} from './crew-mission-helpers.js';
+import {
+  resolveContinuationInstructionBlock as resolveContinuationInstructionBlockHelper,
+  noteTurnOutcome as noteTurnOutcomeHelper,
+  buildQuestionnaireMessage as buildQuestionnaireMessageHelper,
+  persistQuestionnaireMessage as persistQuestionnaireMessageHelper,
+  updateQuestionnaireMessage as updateQuestionnaireMessageHelper,
+  persistAssistantMessage as persistAssistantMessageHelper,
+  persistUserMessage as persistUserMessageHelper,
+  persistPermissionGrant as persistPermissionGrantHelper,
+  restoreSessionPermissions as restoreSessionPermissionsHelper,
+  formatChannelToolPermissions as formatChannelToolPermissionsHelper,
+  revokeChannelToolPermissions as revokeChannelToolPermissionsHelper,
+  type PersistenceContext,
+} from './agent-persistence.js';
+import { registerPromptSections as registerPromptSectionsHelper } from './agent-prompt.js';
+import {
+  bindPermissionHandler as bindPermissionHandlerHelper,
+  ensureAutomationToolsApproved as ensureAutomationToolsApprovedHelper,
+  grantAutomationNotifyTools as grantAutomationNotifyToolsHelper,
+  resolvePermissionRequest as resolvePermissionRequestHelper,
+  respondToPermissionBatch as respondToPermissionBatchHelper,
+  recordToolPermissionDecision as recordToolPermissionDecisionHelper,
+  type PermissionContext,
+} from './agent-permissions.js';
+import {
+  trialModel as trialModelHelper,
+  listModels as listModelsHelper,
+  switchModel as switchModelHelper,
+  getActiveModelCaps as getActiveModelCapsHelper,
+  getContextWindow as getContextWindowHelper,
+  type ModelTrialContext,
+  type ModelListContext,
+  type SwitchModelContext,
+  type ModelCapsContext,
+  type ContextWindowContext,
+} from './agent-model.js';
+import {
+  extractMemories as extractMemoriesHelper,
+  ingestWebSearchResult as ingestWebSearchResultHelper,
+  reformulateQuery as reformulateQueryHelper,
+  buildMemoryContext as buildMemoryContextHelper,
+  type MemoryExtractionContext,
+  type WebIngestContext,
+  type ReformulateQueryContext,
+  type MemoryContextContext,
+} from './agent-memory.js';
+import {
+  decomposeAndDelegate as decomposeAndDelegateHelper,
+  type DecomposeContext,
+} from './agent-decompose.js';
 // IntentClassifier import removed — DecisionEngine (heuristic) handles all routing
-function getLoadingSteps(_intent: string): Array<{ id: string; label: string; status: 'active' | 'completed' | 'pending' }> {
-  const labels: string[] = ['Thinking…', 'Working…', 'Processing…', 'One moment…'];
-  return [{ id: 'load', label: labels[Math.floor(Math.random() * labels.length)]!, status: 'active' as const }];
-}
-
-/**
- * Build a human/voice-friendly preview of what a tool wants to do, for permission prompts.
- * `commandPreview` is a raw string (e.g. shell command); `argsSummary` is a short spoken phrase.
- */
-function summarizePermissionArgs(
-  args?: Record<string, unknown>,
-): { commandPreview?: string; argsSummary?: string } {
-  if (!args) return {};
-  const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
-
-  const cmd = str(args['command'] ?? args['cmd']);
-  if (cmd) {
-    const trimmed = cmd.trim().slice(0, 400);
-    return { commandPreview: trimmed, argsSummary: `run the command ${trimmed.slice(0, 160)}` };
-  }
-
-  const url = str(args['url']);
-  if (url) {
-    return { commandPreview: url, argsSummary: `access ${url.slice(0, 160)}` };
-  }
-
-  const path = str(args['path'] ?? args['file'] ?? args['filePath'] ?? args['target'] ?? args['to']);
-  if (path) {
-    return { commandPreview: path, argsSummary: `use the path ${path.slice(0, 160)}` };
-  }
-
-  const query = str(args['query']);
-  if (query) {
-    return { commandPreview: query, argsSummary: `search for ${query.slice(0, 160)}` };
-  }
-
-  return {};
-}
 
 export interface AgentOptions {
   config: AgentXConfig;
@@ -231,12 +253,12 @@ export class Agent {
   private provider: ProviderInterface;
   private eventBus: AgentEventBus;
   private tokenTracker: TokenTracker;
-  private messages: CompletionMessage[] = [];
-  private config: AgentXConfig;
+  public messages: CompletionMessage[] = [];
+  public config: AgentXConfig;
   private persona: AgentPersonaConfig | null = null;
   private clientSituation: ClientSituation | null = null;
-  private sessionId: string;
-  private scopePath: string;
+  public sessionId: string;
+  public scopePath: string;
   /** Public accessor for session ID — needed by SmartSubAgent to pass parentSessionId to crew workers. */
   get currentSessionId(): string { return this.sessionId; }
 
@@ -251,7 +273,7 @@ export class Agent {
 
   private isProcessing = false;
   readonly lifecycle = new AgentLifecycle();
-  private scope: Scope | null = null;
+  public scope: Scope | null = null;
   private _abortSignalController: AbortController | null = null;
   private pendingInstruction: string | null = null;
   private pendingVoiceMerge: { messageId: string; prefixContent: string } | null = null;
@@ -260,7 +282,7 @@ export class Agent {
   private forcedWebSearchToolName: 'deep_web_search' | 'web_search' | null = null;
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
-  private todoManager: TodoManager;
+  public todoManager: TodoManager;
   private _secretSauce: SecretSauceManager | null = null;
   private get secretSauce(): SecretSauceManager { if (!this._secretSauce) { this._secretSauce = new SecretSauceManager(); } return this._secretSauce; }
   private memoryExtractor: MemoryExtractor | null = null;
@@ -298,7 +320,6 @@ export class Agent {
 
   // ─── Autonomous Diagnostics System
   private diagnosticsSystem: AutonomousDiagnosticsSystem;
-  private sessionContext: SessionContext | null = null;
 
   // ─── Prompt & Decision Engines
   private promptEngine: PromptEngine;
@@ -340,7 +361,7 @@ export class Agent {
   private researchEngine: ResearchEngine | null = null;
 
   // ─── Tool Call Log
-  private toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
+  public toolCallLogForReflection: Array<{ name: string; success: boolean; output: string; elapsed: number }> = [];
 
   // ─── Model Selection
   private cachedModelInfo: Map<string, ModelInfo> = new Map();
@@ -369,9 +390,9 @@ export class Agent {
   /** Set when the user hits Stop — stream/tools must halt immediately. */
   private userCancelledTurn = false;
   private turnState = new TurnStateManager();
-  private toolLedger = new ToolLedger();
+  public toolLedger = new ToolLedger();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private partialTurnContent = '';
+  public partialTurnContent = '';
   private currentTurnId: string | null = null;
   private readonly maxCompletionSteps = 25;
   private readonly crewPrivateCompletionSteps = 40;
@@ -444,9 +465,9 @@ export class Agent {
   private _visualBridge: VisualEventBridge | null = null;
   private get visualBridge(): VisualEventBridge { if (!this._visualBridge) this._visualBridge = new VisualEventBridge(); return this._visualBridge; }
   private _commandQueue: CommandQueue | null = null;
-  private get commandQueue(): CommandQueue { if (!this._commandQueue) this._commandQueue = new CommandQueue(); return this._commandQueue; }
+  public get commandQueue(): CommandQueue { if (!this._commandQueue) this._commandQueue = new CommandQueue(); return this._commandQueue; }
   private _runStateMgr: RunStateManager | null = null;
-  private get runStateMgr(): RunStateManager { if (!this._runStateMgr) this._runStateMgr = new RunStateManager(); return this._runStateMgr; }
+  public get runStateMgr(): RunStateManager { if (!this._runStateMgr) this._runStateMgr = new RunStateManager(); return this._runStateMgr; }
   private _telegramConnected = false;
   private _telegramChatId: number | null = null;
   /** Active inbound messaging channel for the current turn (telegram/slack/discord). */
@@ -462,6 +483,10 @@ export class Agent {
     }
     return this._crewMissionOrchestrator;
   }
+  public getCrewOrchestrator(): CrewOrchestrator {
+    return this.crewOrchestrator;
+  }
+
   private get crewOrchestrator(): CrewOrchestrator {
     if (!this._crewOrchestrator) {
       this._crewOrchestrator = new CrewOrchestrator(this.provider, this.eventBus, this.tokenTracker);
@@ -479,7 +504,7 @@ export class Agent {
     }
     return this._crewOrchestrator;
   }
-  private contextTracker!: ContextTracker;
+  public contextTracker!: ContextTracker;
   private compactionMarkerIndices: number[] = [];
   sessionLogger: SessionLogger | null = null;
   onTokenLog: ((opts: { inputTokens: number; outputTokens: number; costUsd: number; crewId?: string }) => void) | null = null;
@@ -490,18 +515,7 @@ export class Agent {
     if (scopePath) this.contextTracker.setScopePath(scopePath);
   }
   private maxSubAgents = 8;
-  private sessionManager: {
-    createSession: (providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string) => { id: string };
-    createChildSessionRecord?: (
-      childId: string,
-      parentId: string,
-      providerId: string,
-      modelId: string,
-      scopePath?: string,
-      meta?: { kind?: string; label?: string },
-    ) => unknown;
-    saveCrewState?: (crewId: string, enabled: boolean, messageCount?: number) => void;
-  } | null = null;
+  public sessionManager: SessionManager | null = null;
   private enabledCrewSessionIds: Set<string> = new Set();
 
   setTelegramConnected(connected: boolean, chatId?: number | null): void {
@@ -567,130 +581,51 @@ export class Agent {
     this.activeClarificationResume = null;
   }
 
-  private getPersistStore(): {
-    getMessages?: (sessionId: string) => Array<{ role?: string; content?: string; parts?: unknown }>;
-    getSessionResumeState?: (sessionId: string) => Record<string, unknown> | null;
-    setSessionResumeState?: (sessionId: string, state: {
-      kind: string;
-      messageId: string;
-      payload: Record<string, unknown>;
-      createdAt?: string;
-    }) => void;
-    clearSessionResumeState?: (sessionId: string) => void;
-  } | null {
-    const sm = this.sessionManager as { store?: unknown } | null | undefined;
-    return (sm?.store as ReturnType<Agent['getPersistStore']>) ?? null;
-  }
-
-  private parseStoredResumeState(row: Record<string, unknown> | null | undefined): SessionResumeState | null {
-    if (!row) return null;
-    let payload: Record<string, unknown> = {};
-    const raw = row['payload'];
-    if (typeof raw === 'string' && raw) {
-      try { payload = JSON.parse(raw) as Record<string, unknown>; } catch { payload = {}; }
-    } else if (raw && typeof raw === 'object') {
-      payload = raw as Record<string, unknown>;
-    }
+  private persistenceCtx(): PersistenceContext {
     return {
-      kind: (row['kind'] ?? 'questionnaire') as SessionResumeState['kind'],
-      messageId: String(row['message_id'] ?? row['messageId'] ?? ''),
-      questionnaireMessageId: payload.questionnaireMessageId as string | undefined,
-      userText: payload.userText as string | undefined,
-      lastFailure: payload.lastFailure as string | undefined,
-      delegateCrewIds: payload.delegateCrewIds as string[] | undefined,
-      primaryCrewId: payload.primaryCrewId as string | undefined,
-      crewIntakeFromPicker: payload.crewIntakeFromPicker as boolean | undefined,
-      createdAt: String(row['created_at'] ?? row['createdAt'] ?? new Date().toISOString()),
+      sessionId: this.sessionId,
+      messages: this.messages,
+      sessionManager: this.sessionManager,
+      activeInboundChannel: this.activeInboundChannel,
+      linkedContextSessionId: this.linkedContextSessionId,
+      toolExecutor: this.toolExecutor,
+      options: this.options,
+      getPersistStore: () => this.getPersistStore(),
     };
   }
 
-  private loadAuthoritativeMessages(): Array<{ role?: string; content?: string; parts?: unknown }> {
-    const store = this.getPersistStore();
-    if (store?.getMessages) {
-      if (this.options.channelSession && this.linkedContextSessionId) {
-        const linked = store.getMessages(this.linkedContextSessionId);
-        const channel = store.getMessages(this.sessionId);
-        return mergeChannelLinkedMessages(linked, channel);
-      }
-      return store.getMessages(this.sessionId);
-    }
-    return this.messages.map((m) => ({
-      role: m.role,
-      content: typeof m.content === 'string' ? m.content : '',
-    }));
+  private _permissionCtx(): PermissionContext {
+    return {
+      toolExecutor: this.toolExecutor as unknown as PermissionContext['toolExecutor'],
+      options: this.options,
+      isDelegatedWorker: this.isDelegatedWorker,
+      autoApproveTools: this.autoApproveTools,
+      turnApprovedAll: this.turnApprovedAll,
+      userCancelledTurn: this.userCancelledTurn,
+      pendingPermissions: this.pendingPermissions,
+      emit: (event) => this.emit(event),
+      persistPermissionGrant: (toolId, decision) => this.persistPermissionGrant(toolId, decision),
+    };
   }
 
-  private resolveContinuationResumeState(): SessionResumeState | null {
-    const store = this.getPersistStore();
-    if (!store?.getSessionResumeState) return null;
-    const resumeSessionId = this.options.channelSession
-      ? resolveChannelResumeStateSessionId(this.sessionId, this.linkedContextSessionId)
-      : this.sessionId;
-    return this.parseStoredResumeState(store.getSessionResumeState(resumeSessionId));
+  private getPersistStore(): StorageAdapter | null {
+    return this.sessionManager?.getStorageAdapter() ?? null;
   }
 
   private resolveContinuationInstructionBlock(userText: string): string | null {
-    const messages = this.loadAuthoritativeMessages();
-    const resumeState = this.resolveContinuationResumeState();
-    return resolveContinuationInstruction({ userText, messages, resumeState });
-  }
-
-  private persistOutstandingTask(userText: string, failureNote: string): void {
-    const store = this.getPersistStore();
-    if (!store?.setSessionResumeState || !userText.trim()) return;
-    const targetSessionId = this.options.channelSession
-      ? resolveChannelResumeStateSessionId(this.sessionId, this.linkedContextSessionId)
-      : this.sessionId;
-    store.setSessionResumeState(targetSessionId, {
-      kind: 'outstanding_task',
-      messageId: generateMessageId(),
-      payload: {
-        userText: userText.trim(),
-        lastFailure: failureNote.slice(0, 280),
-      },
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  private clearOutstandingTask(): void {
-    const store = this.getPersistStore();
-    const targetSessionId = this.options.channelSession
-      ? resolveChannelResumeStateSessionId(this.sessionId, this.linkedContextSessionId)
-      : this.sessionId;
-    const row = store?.getSessionResumeState?.(targetSessionId);
-    if (row?.['kind'] === 'outstanding_task') {
-      store?.clearSessionResumeState?.(targetSessionId);
-    }
-  }
-
-  private isFailureAssistantContent(content: string): boolean {
-    return /\b(unable to generate|i apologize|i was unable|provider error|encountered an error|cannot assist|tell me which|please tell me|which action you)\b/i.test(content);
+    return resolveContinuationInstructionBlockHelper(this.persistenceCtx(), userText);
   }
 
   private noteTurnOutcome(content: string): void {
-    if (!content?.trim()) return;
-    const lastUser = [...this.messages].reverse().find((m) => m.role === 'user');
-    let userText = typeof lastUser?.content === 'string'
-      ? lastUser.content.replace(/\n\[TURN[^\]]*\][^\n]*/g, '').trim()
-      : '';
-    if (this.options.channelSession && isContinuationTrigger(userText)) {
-      const resumeState = this.resolveContinuationResumeState();
-      const incomplete = detectIncompleteLastTurn(this.loadAuthoritativeMessages());
-      userText = resumeState?.userText?.trim()
-        || incomplete?.userGoal
-        || userText;
-    }
-    if (this.isFailureAssistantContent(content)) {
-      this.persistOutstandingTask(userText, content);
-      return;
-    }
-    if (content.length > 40 && !content.startsWith('⏹')) {
-      this.clearOutstandingTask();
-    }
+    return noteTurnOutcomeHelper(this.persistenceCtx(), content);
   }
 
   recordCrewFeedback(crewId: string, positive: boolean): void {
     this.crewOrchestrator.recordFeedback(crewId, positive);
+  }
+
+  recordTrial(sessionId: string, trial: ExperienceTrial): void {
+    this.experienceEngine.recordTrial(sessionId, trial);
   }
 
   private clarificationSource(): ClarificationSource | undefined {
@@ -741,7 +676,7 @@ export class Agent {
       crew,
     };
 
-    const store = this.getMessageStore();
+    const store = this.getPersistStore();
     if (store?.insertMessage) {
       try {
         store.insertMessage({
@@ -871,61 +806,15 @@ export class Agent {
   }
 
   private buildQuestionnaireMessage(messageId: string, record: QuestionnaireRecord): Message {
-    const host = this.options.crewPrivateHost;
-    const crew = this.options.promptProfile === 'crew_private' && host
-      ? {
-        crewId: host.id,
-        name: host.name,
-        callsign: host.callsign,
-        color: host.color,
-        icon: host.icon,
-      }
-      : undefined;
-    return {
-      id: messageId,
-      sessionId: this.sessionId,
-      role: 'assistant',
-      content: '',
-      toolCalls: null,
-      createdAt: new Date().toISOString(),
-      tokenCount: 0,
-      crew,
-      parts: [{ type: 'questionnaire', id: record.payload.id, questionnaire: record }],
-    };
-  }
-
-  private getMessageStore(): {
-    insertMessage?: (msg: Record<string, unknown>) => string | void;
-    updateMessage?: (sessionId: string, messageId: string, patch: Record<string, unknown>) => void;
-  } | null {
-    return (this.sessionManager as unknown as { store?: {
-      insertMessage?: (msg: Record<string, unknown>) => string | void;
-      updateMessage?: (sessionId: string, messageId: string, patch: Record<string, unknown>) => void;
-    } } | null)?.store ?? null;
+    return buildQuestionnaireMessageHelper(this.persistenceCtx(), messageId, record);
   }
 
   private persistQuestionnaireMessage(msg: Message): void {
-    const store = this.getMessageStore();
-    if (!store?.insertMessage) return;
-    try {
-      store.insertMessage({
-        id: msg.id,
-        sessionId: msg.sessionId,
-        role: msg.role,
-        content: msg.content,
-        parts: msg.parts,
-        tokenCount: msg.tokenCount ?? 0,
-        metadata: msg.crew
-          ? { crewId: msg.crew.crewId, crewName: msg.crew.name, callsign: msg.crew.callsign }
-          : undefined,
-      });
-    } catch { /* best-effort */ }
+    return persistQuestionnaireMessageHelper(this.persistenceCtx(), msg);
   }
 
   private updateQuestionnaireMessage(messageId: string, record: QuestionnaireRecord): void {
-    const store = this.getMessageStore();
-    const parts = [{ type: 'questionnaire', id: record.payload.id, questionnaire: record }];
-    store?.updateMessage?.(this.sessionId, messageId, { parts });
+    return updateQuestionnaireMessageHelper(this.persistenceCtx(), messageId, record);
   }
 
   constructor(options: AgentOptions) {
@@ -940,7 +829,7 @@ export class Agent {
     this.scopePath = normalize(resolve(options.scopePath!));
     this._pgPool = options.pgPool ?? null;
     const crewHost = options.crewPrivateHost;
-    this.contextTracker = new ContextTracker(null as any, this.sessionId,
+    this.contextTracker = new ContextTracker(null, this.sessionId,
       crewHost && options.promptProfile === 'crew_private'
         ? { kind: 'crew_private', hostCrewId: crewHost.id, hostCrewName: crewHost.name, hostCrewCallsign: crewHost.callsign }
         : undefined,
@@ -1004,8 +893,7 @@ export class Agent {
     });
 
     setCrewHubSearcher(async (query, _sessionId, limit = 5) => {
-      const store = (this.sessionManager as unknown as { store?: unknown })?.store;
-      const service = getCrewSuggestionService(store);
+      const service = getCrewSuggestionService(this.getPersistStore());
       if (!service) return [];
       await service.ensureReady();
       type CatalogSearchStore = {
@@ -1013,7 +901,7 @@ export class Agent {
         searchRosterCrews: (q: string, n: number) => Promise<Array<Record<string, unknown> & { ftsRank: number }>>;
         listRecruitedCatalogIds: () => Promise<Set<string>>;
       };
-      const catalogStore = (store as { getCrewCatalogStore?: () => CatalogSearchStore | null })
+      const catalogStore = (this.getPersistStore() as { getCrewCatalogStore?: () => CatalogSearchStore | null })
         ?.getCrewCatalogStore?.() ?? null;
       if (!catalogStore) return [];
 
@@ -1090,41 +978,24 @@ export class Agent {
         // Wrap plain ToolExecutor in Enhanced for parallel/doom-loop/repair capabilities
         this.toolExecutor = new EnhancedToolExecutor(options.toolRegistry, this.scopePath);
         // Copy handlers and hooks from provided executor
-        const providedHandlers = (options.toolExecutor as unknown as Record<string, unknown>)['handlers'] as
-          | Map<string, (args: Record<string, unknown>, ctx: import('@agentx/shared').ToolExecutionContext) => Promise<import('@agentx/shared').ToolResult>>
-          | undefined;
-        if (providedHandlers) {
-          for (const [name, handler] of providedHandlers) {
-            this.toolExecutor.registerHandler(name, handler);
-          }
+        for (const [name, handler] of options.toolExecutor.getHandlers()) {
+          this.toolExecutor.registerHandler(name, handler);
         }
         // Copy permission handlers from shared toolkit executor
-        const providedExecutor = options.toolExecutor as unknown as Record<string, unknown>;
-        const permHandler = providedExecutor['permissionRequestHandler'];
-        if (typeof permHandler === 'function') {
-          this.toolExecutor.setPermissionRequestHandler(permHandler as (toolId: string, path: string, riskLevel: string) => Promise<'allow_once' | 'allow_always' | 'deny'>);
-        }
-        const channelPermHandler = providedExecutor['channelPermissionRequestHandler'];
-        if (typeof channelPermHandler === 'function') {
-          this.toolExecutor.setChannelPermissionRequestHandler(channelPermHandler as (toolId: string, path: string, riskLevel: string) => Promise<'allow_once' | 'allow_always' | 'deny'>);
-        }
+        const permHandler = options.toolExecutor.getPermissionRequestHandler();
+        if (permHandler) this.toolExecutor.setPermissionRequestHandler(permHandler);
+        const channelPermHandler = options.toolExecutor.getChannelPermissionRequestHandler();
+        if (channelPermHandler) this.toolExecutor.setChannelPermissionRequestHandler(channelPermHandler);
+        const beforeHook = options.toolExecutor.getBeforeToolHook();
+        if (beforeHook) this.toolExecutor.setBeforeToolHook(beforeHook);
       } else {
         // Plain mock object from tests — wrap it
         this.toolExecutor = new EnhancedToolExecutor(options.toolRegistry, this.scopePath);
-        const mockObj = options.toolExecutor as unknown as Record<string, unknown>;
-        if (typeof mockObj['execute'] === 'function') {
-          const mockExec = mockObj['execute'] as (...args: unknown[]) => Promise<unknown>;
-          (this.toolExecutor as unknown as Record<string, unknown>)['execute'] = mockExec;
-        }
-        if (typeof mockObj['setPermissionRequestHandler'] === 'function') {
-          this.toolExecutor.setPermissionRequestHandler = mockObj['setPermissionRequestHandler'] as unknown as typeof this.toolExecutor['setPermissionRequestHandler'];
-        }
-        if (typeof mockObj['setBeforeToolHook'] === 'function') {
-          this.toolExecutor.setBeforeToolHook = mockObj['setBeforeToolHook'] as unknown as typeof this.toolExecutor['setBeforeToolHook'];
-        }
-        if (typeof mockObj['setScopePath'] === 'function') {
-          this.toolExecutor.setScopePath = mockObj['setScopePath'] as unknown as typeof this.toolExecutor['setScopePath'];
-        }
+        const mockObj = options.toolExecutor as Partial<EnhancedToolExecutor>;
+        if (mockObj.execute) this.toolExecutor.execute = mockObj.execute;
+        if (mockObj.setPermissionRequestHandler) this.toolExecutor.setPermissionRequestHandler = mockObj.setPermissionRequestHandler;
+        if (mockObj.setBeforeToolHook) this.toolExecutor.setBeforeToolHook = mockObj.setBeforeToolHook;
+        if (mockObj.setScopePath) this.toolExecutor.setScopePath = mockObj.setScopePath;
       }
       this.toolRegistry = options.toolRegistry;
     } else {
@@ -1134,13 +1005,8 @@ export class Agent {
       // Use EnhancedToolExecutor for parallel/doom-loop/repair capabilities
       this.toolExecutor = new EnhancedToolExecutor(toolkit.registry, effectiveScope);
       // Copy handlers from factory executor
-      const handlersMap = (toolkit.executor as unknown as Record<string, unknown>)['handlers'] as
-        | Map<string, (args: Record<string, unknown>, ctx: import('@agentx/shared').ToolExecutionContext) => Promise<import('@agentx/shared').ToolResult>>
-        | undefined;
-      if (handlersMap) {
-        for (const [name, handler] of handlersMap) {
-          this.toolExecutor.registerHandler(name, handler);
-        }
+      for (const [name, handler] of toolkit.executor.getHandlers()) {
+        this.toolExecutor.registerHandler(name, handler);
       }
     }
     setToolRegistryInstance(this.toolRegistry ?? null);
@@ -1237,7 +1103,7 @@ export class Agent {
       const cmdRegistry = new CommandRegistry();
       const ucr = new UserCommandRegistry(cmdRegistry);
       setUserCommandRegistryInstance(ucr);
-      const userCmds = (options.config as unknown as Record<string, unknown>)['commands'] as UserCommandConfig[] | undefined;
+      const userCmds = options.config['commands'] as UserCommandConfig[] | undefined;
       if (userCmds) {
         ucr.loadFromConfig(userCmds);
       }
@@ -1372,9 +1238,7 @@ export class Agent {
 
   get turnFeedbackService(): TurnFeedbackService {
     if (!this._turnFeedbackService) {
-      this._turnFeedbackService = new TurnFeedbackService(() => {
-        return (this.sessionManager as unknown as { store?: import('../feedback/TurnFeedbackService.js').TurnFeedbackStore })?.store ?? null;
-      });
+      this._turnFeedbackService = new TurnFeedbackService(() => this.getPersistStore());
     }
     return this._turnFeedbackService;
   }
@@ -1451,102 +1315,20 @@ export class Agent {
   }
 
   private async buildMemoryContext(): Promise<{ episodic: string; semantic: string; graph: string; community?: string }> {
-    const retriever = this.graphRagRetriever;
-    if (!retriever) return { episodic: '', semantic: '', graph: '' };
-    try {
-      const lastUser = [...this.messages].reverse().find((m) => m.role === 'user');
-      const rawQuery = typeof lastUser?.content === 'string' ? lastUser.content : '';
-      if (!rawQuery) return { episodic: '', semantic: '', graph: '' };
-
-      // Query reformulation — rewrite follow-up messages into standalone search queries.
-      const query = await this.reformulateQuery(rawQuery);
-
-      const memorySessionId = this.sessionId;
-      const isSuper = isMemoryFabricSuperSession(memorySessionId, this.options.contextKind);
-      const result = await retriever.retrieve(query, {
-        sessionId: memorySessionId,
-        isSuperSession: isSuper,
-        agentId: this.config.user?.callsign,
-        globalLimit: isSuper ? 3 : 0,
-        localLimit: isSuper ? 15 : 8,
-        vectorLimit: 8,
-        graphDepth: isSuper ? 2 : 1,
-        minRelevance: 0.35,
-      });
-
-      // Additional pass: direct chunk search with a lower threshold to ensure
-      // uploaded document chunks are always included in context, even when
-      // entity extraction hasn't run yet or similarity is moderate.
-      const fabric = this.memoryFabric;
-      const embedder = this.memoryEmbedder;
-      let chunkNodes: MemoryNode[] = [];
-      if (fabric && embedder) {
-        try {
-          const chunkEmbedding = await embedder.embed(query);
-          chunkNodes = await fabric.vectorSearch(chunkEmbedding, {
-            limit: 5,
-            category: 'source_doc',
-            ...(isSuper ? {} : { sessionId: memorySessionId }),
-          });
-          // Filter by a lower threshold for chunks (0.25 — chunks are noisier).
-          chunkNodes = chunkNodes.filter((n) => {
-            const distance = (n as unknown as { distance?: number }).distance;
-            return distance == null || (1 - distance) >= 0.25;
-          });
-        } catch { /* best-effort */ }
-      }
-
-      // Merge chunk nodes into the result set.
-      const allNodeIds = new Set(result.all.map((n) => n.id));
-      for (const cn of chunkNodes) {
-        if (!allNodeIds.has(cn.id)) {
-          result.vector.push(cn);
-          result.all.push(cn);
-          allNodeIds.add(cn.id);
-        }
-      }
-      this._memoryContextNodeIds = result.all.map((n) => n.id).filter((id): id is string => !!id);
-
-      // Token budget for memory context — prioritize community > episodic > semantic > graph.
-      const MAX_CHARS = this.usesCompactContext() ? COMPACT_MEMORY_MAX_CHARS : FULL_MEMORY_MAX_CHARS;
-      const fmt = (nodes: Array<{ label: string; content: string; category: string }>, maxChars: number) => {
-        const lines: string[] = [];
-        let used = 0;
-        for (const n of nodes) {
-          const line = `- [${n.category}] ${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 200)}`;
-          if (used + line.length > maxChars) break;
-          lines.push(line);
-          used += line.length + 1;
-        }
-        return lines.join('\n');
-      };
-      const communityText = result.global.length > 0
-        ? result.global.map((n) => `${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 300)}`).join('\n')
-        : undefined;
-      const communityChars = communityText?.length ?? 0;
-      const remainingAfterCommunity = Math.max(0, MAX_CHARS - communityChars);
-      // Split remaining budget: 35% user profile, 25% episodic, 25% semantic, 15% graph.
-      const userProfileText = fmt(result.userProfile, Math.floor(remainingAfterCommunity * 0.35));
-      const episodicText = fmt(result.episodic, Math.floor(remainingAfterCommunity * 0.25));
-      const semanticText = fmt(result.vector, Math.floor(remainingAfterCommunity * 0.25));
-      const graphText = fmt([...result.local, ...result.graph], Math.floor(remainingAfterCommunity * 0.15));
-
-      if (semanticText || communityText || episodicText || graphText || userProfileText) {
-        getLogger().info('AGENT', `buildMemoryContext: ${result.all.length} nodes (community=${result.global.length}, userProfile=${result.userProfile.length}, episodic=${result.episodic.length}, semantic=${result.vector.length}, graph=${result.local.length + result.graph.length}, chunks=${chunkNodes.length})`);
-      }
-
-      return {
-        community: communityText,
-        episodic: [userProfileText, episodicText].filter(Boolean).join('\n'),
-        semantic: semanticText,
-        graph: graphText,
-      };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      getLogger().warn('AGENT', `buildMemoryContext failed: ${msg}`);
-      this._memoryContextNodeIds = [];
-      return { episodic: '', semantic: '', graph: '' };
-    }
+    return buildMemoryContextHelper(
+      {
+        graphRagRetriever: this.graphRagRetriever,
+        messages: this.messages,
+        reformulateQuery: (q) => this.reformulateQuery(q),
+        sessionId: this.sessionId,
+        options: this.options,
+        config: this.config,
+        memoryFabric: this.memoryFabric,
+        memoryEmbedder: this.memoryEmbedder,
+        usesCompactContext: () => this.usesCompactContext(),
+        setMemoryContextNodeIds: (ids) => { this._memoryContextNodeIds = ids; },
+      } as MemoryContextContext,
+    );
   }
 
   /**
@@ -1556,70 +1338,15 @@ export class Agent {
    * Falls back to the raw message if reformulation fails.
    */
   private async reformulateQuery(rawQuery: string): Promise<string> {
-    const trimmed = rawQuery.trim();
-
-    // Compact local models: avoid an extra LLM call; stitch short follow-ups from recent user text.
-    if (this.usesCompactContext()) {
-      if (trimmed.length > 80) return trimmed;
-      const recentUserMsgs = this.messages
-        .filter((m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 20)
-        .slice(-3)
-        .map((m) => (m as { content: string }).content);
-      if (recentUserMsgs.length > 0 && trimmed.split(/\s+/).length <= 8) {
-        return `${recentUserMsgs[recentUserMsgs.length - 1]} ${trimmed}`.trim().slice(0, 300);
-      }
-      return trimmed;
-    }
-
-    // Fast path: if the message is long and self-contained, skip reformulation.
-    if (trimmed.length > 120 && /[.!?]$/.test(trimmed)) return trimmed;
-    // Fast path: single-word or very short messages always need context.
-    if (trimmed.split(/\s+/).length <= 3) {
-      // Find the last substantive user message for context.
-      const recentUserMsgs = this.messages
-        .filter((m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 20)
-        .slice(-3)
-        .map((m) => (m as any).content as string);
-      if (recentUserMsgs.length === 0) return trimmed;
-    }
-
-    try {
-      const recentContext = this.messages
-        .slice(-6)
-        .filter((m) => typeof m.content === 'string')
-        .map((m) => `${m.role}: ${(m as any).content as string}`.slice(0, 200))
-        .join('\n');
-
-      const prompt = `Rewrite the user's latest message into a standalone search query for a knowledge retrieval system.
-
-Conversation context (most recent first):
-${recentContext}
-
-Latest user message: "${rawQuery}"
-
-Rules:
-- Output ONLY the reformulated search query, nothing else.
-- Incorporate context from the conversation so the query is self-contained.
-- If the message is already a clear standalone question, return it as-is.
-- Keep it concise (1-2 sentences max).
-- Do not add quotes or prefixes.`;
-
-      let reformulated = '';
-      const request = {
-        model: this.config.provider.activeModel,
-        messages: [{ role: 'user' as const, content: prompt }],
-        temperature: 0,
-        maxTokens: 150,
-        stream: false,
-      };
-      for await (const chunk of this.provider.complete(request)) {
-        if (chunk.type === 'text_delta' && chunk.content) reformulated += chunk.content;
-      }
-      const cleaned = reformulated.trim().replace(/^["']|["']$/g, '');
-      return cleaned || rawQuery;
-    } catch {
-      return rawQuery;
-    }
+    return reformulateQueryHelper(
+      {
+        usesCompactContext: () => this.usesCompactContext(),
+        messages: this.messages,
+        config: this.config,
+        provider: this.provider,
+      } as ReformulateQueryContext,
+      rawQuery,
+    );
   }
 
   private async reinforceMemoryContext(): Promise<void> {
@@ -1634,91 +1361,40 @@ Rules:
    * Uses the shared MemoryService via the engine's neural brain pipeline.
    */
   private async ingestWebSearchResult(toolId: string, args: Record<string, unknown> | undefined, output: string): Promise<void> {
-    try {
-      if (this.config.neuralBrain === false) return;
-      if (!this._pgPool) return;
-      const query = typeof args?.['query'] === 'string' ? args['query'] : '';
-      const url = typeof args?.['url'] === 'string' ? args['url'] : '';
-      const label = query
-        ? `Web Search: ${query.slice(0, 80)}`
-        : url
-          ? `Web Fetch: ${url.slice(0, 80)}`
-          : `Web Result (${toolId})`;
-      const content = query
-        ? `Search query: ${query}\n\nResults:\n${output.slice(0, 4000)}`
-        : `Source: ${url}\n\nContent:\n${output.slice(0, 4000)}`;
-
-      // Use the engine's MemoryService for structured extraction + embedding.
-      const { MemoryService } = await import('../neural/MemoryService.js');
-      const { OnnxEmbeddingProvider } = await import('../neural/OnnxEmbeddingProvider.js');
-      const embedder = new OnnxEmbeddingProvider();
-      // Build a generate function from the agent's provider for LLM-based extraction.
-      const generate = async (prompt: string) => {
-        let text = '';
-        const request = {
-          model: this.config.provider.activeModel,
-          messages: [{ role: 'user' as const, content: prompt }],
-          temperature: 0,
-          maxTokens: 2048,
-          stream: false,
-        };
-        for await (const chunk of this.provider.complete(request)) {
-          if (chunk.type === 'text_delta' && chunk.content) text += chunk.content;
-        }
-        return text;
-      };
-      const service = new MemoryService(this._pgPool as any, embedder, generate);
-      const storageSessionId = resolveMemoryFabricWriteSessionId(
-        this.options.parentSessionId ?? this.sessionId,
-        this.options.contextKind,
-      );
-      await service.ingest({
-        text: content,
-        label,
-        category: 'source_doc',
-        extract: true,
-        embed: true,
-        sessionId: storageSessionId,
-      });
-      getLogger().info('WEB_INGEST', `Ingested ${toolId} result (${output.length} chars) into neural brain`);
-    } catch (e) {
-      getLogger().warn('WEB_INGEST', `Failed to ingest web result: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    return ingestWebSearchResultHelper(
+      {
+        config: this.config,
+        provider: this.provider,
+        _pgPool: this._pgPool,
+        sessionId: this.sessionId,
+        options: this.options,
+      } as WebIngestContext,
+      toolId,
+      args,
+      output,
+    );
   }
 
   // ─── Health + Checkpoint
   getHealth(): any {
-    const cost = this.tokenTracker.totalCost;
-    const cbStatus = this.toolExecutor instanceof EnhancedToolExecutor ? (this.toolExecutor as EnhancedToolExecutor).getCircuitBreakerStatus() : [] as any[];
-    const avgResp = this._responseTimes.length ? Math.round(this._responseTimes.reduce((a: number, b: number) => a + b, 0) / this._responseTimes.length) : 0;
-    const neuralAvg = this._experienceEngine?.getAverageConfidence() ?? 0;
-    const subStats = this.subAgents.getConcurrencyStats();
-    const toolStats = this.toolExecutor instanceof EnhancedToolExecutor
-      ? this.toolExecutor.getToolConcurrencyStats()
-      : null;
-    return {
+    return getHealthHelper({
       sessionId: this.sessionId,
-      uptimeMs: Date.now() - this._sessionStartTime,
-      llmCalls: this._llmCallCount,
-      toolExecs: this._toolExecCount,
-      errors: this._errorCount,
-      avgResponseMs: avgResp,
-      totalCost: cost,
-      budgetLimit: this._maxSessionCost,
-      budgetPct: this._maxSessionCost > 0 ? Math.round((cost / this._maxSessionCost) * 10000) / 100 : 0,
-      circuitBreakers: cbStatus.filter((c: any) => c.blacklisted).length,
-      model: this.config.provider.activeModel,
-      provider: this.config.provider.activeProvider,
-      activeSubAgents: subStats.running,
-      queuedSubAgents: subStats.pending,
-      toolConcurrency: toolStats,
-      contextTokens: this.tokenTracker.tokensUsed,
-      contextWindow: this.getContextWindow(),
-      compactionCount: this._compactionCount,
+      tokenTracker: this.tokenTracker,
+      toolExecutor: this.toolExecutor,
+      _responseTimes: this._responseTimes,
+      _experienceEngine: this._experienceEngine,
+      subAgents: this.subAgents,
+      _sessionStartTime: this._sessionStartTime,
+      _llmCallCount: this._llmCallCount,
+      _toolExecCount: this._toolExecCount,
+      _errorCount: this._errorCount,
+      _maxSessionCost: this._maxSessionCost,
+      config: this.config,
+      getContextWindow: () => this.getContextWindow(),
+      _compactionCount: this._compactionCount,
       planMode: this.planMode,
-      hyperdriveMode: this._hyperdriveMode,
-      neuralConfidenceAvg: Math.round(neuralAvg * 100),
-    };
+      _hyperdriveMode: this._hyperdriveMode,
+    } as HealthContext);
   }
   resolveCheckpoint(checkpointId: string, action: string): boolean {
     if (!this._pendingCheckpoint || this._pendingCheckpoint.checkpointId !== checkpointId) return false;
@@ -1919,36 +1595,14 @@ Rules:
 
   // ─── Autonomous Diagnostics System Initialization ───
   private async initializeDiagnosticsAsync(): Promise<void> {
-    try {
-      getLogger().info('DIAGNOSTICS', `Starting session health check for scope: ${this.scopePath}`);
-      
-      // Phase 1: Perform session health check (verify scope path, build file cache, fallback if needed)
-      this.sessionContext = await this.diagnosticsSystem.performSessionHealthCheck(this.scopePath);
-      
-      getLogger().info('DIAGNOSTICS', `Session health check completed. Scope verified: ${this.sessionContext.scopePath}`);
-      if ((this.sessionContext as any).fallbackReason) {
-        getLogger().warn('DIAGNOSTICS', `Fallback triggered: ${(this.sessionContext as any).fallbackReason}`);
-        this.emit({
-          type: 'task_progress',
-          status: 'processing',
-          description: `Scope path fallback: ${(this.sessionContext as any).fallbackReason}`,
-          details: { original: this.scopePath, fallback: this.sessionContext.scopePath }
-        } as any);
-        // Update agent scope path if fallback occurred
-        if (this.sessionContext.scopePath !== this.scopePath) {
-          this.scopePath = this.sessionContext.scopePath;
-          if (this.toolExecutor) {
-            this.toolExecutor.setScopePath(this.scopePath);
-          }
-          getLogger().info('DIAGNOSTICS', `Scope path updated to fallback: ${this.scopePath}`);
-        }
-      }
-      
-      getLogger().info('DIAGNOSTICS', `Session context initialized successfully for: ${this.sessionContext.scopePath}`);
-    } catch (error) {
-      getLogger().error('DIAGNOSTICS', `Session health check failed: ${error instanceof Error ? error.message : String(error)}`);
-      // Don't fail the session if diagnostics fails — graceful degradation
-    }
+    return initializeDiagnosticsAsyncHelper({
+      scopePath: this.scopePath,
+      diagnosticsSystem: this.diagnosticsSystem,
+      setSessionContext: (_ctx) => { /* session context stored by diagnostics system */ },
+      emit: (event) => this.emit(event),
+      setScopePath: (path) => { this.scopePath = path; },
+      toolExecutor: this.toolExecutor,
+    } as DiagnosticsContext);
   }
 
   getCurrentPlan(): Plan | null {
@@ -2072,41 +1726,17 @@ Rules:
   private connectivityChecked = false;
 
   private async checkConnectivity(baseUrl?: string): Promise<boolean> {
-    if (this.connectivityChecked) return true;
-    const providerId = this.config.provider.activeProvider;
-    const url = baseUrl ?? this.getBaseUrl();
-    const apiKey = this.getApiKey();
-    const probeUrl = buildProviderConnectivityProbeUrl(providerId, url, apiKey);
-    if (!probeUrl) return true;
-
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      const headers: Record<string, string> = {};
-      if (apiKey && providerId === 'google' && probeUrl.includes('/openai/')) {
-        headers.Authorization = `Bearer ${apiKey}`;
-      }
-      const res = await fetch(probeUrl, {
-        method: 'GET',
-        headers,
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      this.connectivityChecked = true;
-      return res.ok || res.status < 500;
-    } catch {
-      this.emit({
-        type: 'error',
-        code: 'NETWORK_ERROR',
-        message: `Cannot reach provider at ${url ?? probeUrl}. Check your internet connection and provider URL.`,
-        recoverable: true,
-        actions: [
-          { type: 'dismiss', label: 'Dismiss' },
-          { type: 'switch_model', label: 'Switch Provider' },
-        ],
-      });
-      return false;
-    }
+    return checkConnectivityHelper(
+      {
+        connectivityChecked: this.connectivityChecked,
+        setConnectivityChecked: (v) => { this.connectivityChecked = v; },
+        getBaseUrl: () => this.getBaseUrl(),
+        getApiKey: () => this.getApiKey(),
+        config: this.config,
+        emit: (event) => this.emit(event),
+      } as ConnectivityContext,
+      baseUrl,
+    );
   }
 
   /**
@@ -2292,7 +1922,7 @@ Rules:
           .filter((m) => m.role === 'user')
           .map((m) => (typeof m.content === 'string' ? m.content : ''))
           .slice(-3);
-        const store = (this.sessionManager as unknown as { store?: unknown })?.store;
+        const store = this.getPersistStore();
         const rosterHint = await buildCrewRosterHintBlock({
           message: cleanContent,
           sessionId: this.sessionId,
@@ -2368,8 +1998,7 @@ Rules:
         turnTokens: userTokens,
       } as EngineEvent);
       try {
-        const mgr = this.sessionManager as unknown as { persistSessionFields?: (id: string, u: Record<string, unknown>) => void };
-        mgr.persistSessionFields?.(this.sessionId, {
+        this.sessionManager?.persistSessionFields?.(this.sessionId, {
           tokensUsed: this.tokenTracker.tokensUsed,
           tokenAvailable: ctxWindow,
         });
@@ -2400,7 +2029,7 @@ Rules:
           model: this.config.provider.activeModel,
           missing: ['function_calling'],
           message: `This model (${this.config.provider.activeModel}) does not support function calling. It cannot execute tools or take actions. Switch to a model with function calling for autonomous execution.`,
-        } as unknown as EngineEvent);
+        });
       }
     }
 
@@ -2434,7 +2063,7 @@ Rules:
       executionPath: decision.executionPath,
       confidence: decision.confidence,
       reasoning: decision.reasoning,
-    } as unknown as EngineEvent);
+    });
 
     // ─── @MENTION ROUTING — direct crew invocation (Agent-X sessions only) ───
     if (this.options.promptProfile !== 'crew_private') {
@@ -2540,7 +2169,7 @@ Rules:
         try {
           const model = createAiSdkModel(this.config, this.getApiKey());
           const streamPromise = (async () => {
-            const r = await streamText({ model, messages: fastMessages as any, maxOutputTokens: 256 });
+            const r = await streamText({ model, messages: fastMessages as ModelMessage[], maxOutputTokens: 256 });
             let text = '';
             for await (const chunk of r.textStream) { text += chunk; }
             return text;
@@ -2589,7 +2218,7 @@ Rules:
       executionPath: this.currentDecision.executionPath,
       confidence: this.currentDecision.confidence,
       reasoning: this.currentDecision.reasoning,
-    } as unknown as EngineEvent);
+    });
 
     // ─── SMART PROMPTING & RAG ───
     // Detect intent for dynamic tool selection and reasoning mode
@@ -3293,52 +2922,25 @@ Rules:
    * Runs asynchronously and silently — never blocks the main flow.
    */
   private extractMemories(userMessage: string, assistantResponse: string): void {
-    if ((this.config as unknown as Record<string, unknown>)['autoMemory'] === false) return;
-    if (!this.memoryExtractor) {
-      this.memoryExtractor = new MemoryExtractor(this.provider, this.config.provider.activeModel);
-    }
-
-    void this.memoryExtractor.extract(userMessage, assistantResponse).then((memories) => {
-      for (const mem of memories) {
-        this.secretSauce.recordMemory(mem.content, mem.category);
-      }
-    }).catch(() => {
-      // Silent failure — memory extraction is best-effort
-    });
-
-    const fabric = this.memoryFabric;
-    const embedder = this.memoryEmbedder;
-    if (fabric && embedder && this.config.neuralBrain !== false) {
-      if (!this.chatTurnMemoryIngester) {
-        this.chatTurnMemoryIngester = new ChatTurnMemoryIngester(fabric, embedder);
-      }
-      const storageSessionId = resolveMemoryFabricWriteSessionId(this.sessionId, this.options.contextKind);
-      void this.chatTurnMemoryIngester.ingestTurn(
-        userMessage,
-        assistantResponse,
-        this.sessionId,
-        storageSessionId,
-      ).catch(() => {
-        // Silent failure — chat turn embedding is best-effort
-      });
-    }
-
-    // Super-session: persist user-profile facts to global vector memory (shared across all sessions).
-    if (!isMemoryFabricSuperSession(this.sessionId, this.options.contextKind)) return;
-    if (!fabric || !embedder || this.config.neuralBrain === false) return;
-
-    if (!this.userChatMemoryIngester) {
-      this.userChatMemoryIngester = new UserChatMemoryIngester(
-        fabric,
-        embedder,
-        this.provider,
-        this.config.provider.activeModel,
-      );
-    }
-
-    void this.userChatMemoryIngester.ingestTurn(userMessage, assistantResponse, this.sessionId).catch(() => {
-      // Silent failure — vector memory ingestion is best-effort
-    });
+    extractMemoriesHelper(
+      {
+        config: this.config,
+        provider: this.provider,
+        memoryExtractor: this.memoryExtractor,
+        setMemoryExtractor: (e) => { this.memoryExtractor = e; },
+        secretSauce: this.secretSauce,
+        memoryFabric: this.memoryFabric,
+        memoryEmbedder: this.memoryEmbedder,
+        chatTurnMemoryIngester: this.chatTurnMemoryIngester,
+        setChatTurnMemoryIngester: (i) => { this.chatTurnMemoryIngester = i; },
+        userChatMemoryIngester: this.userChatMemoryIngester,
+        setUserChatMemoryIngester: (i) => { this.userChatMemoryIngester = i; },
+        sessionId: this.sessionId,
+        options: this.options,
+      } as MemoryExtractionContext,
+      userMessage,
+      assistantResponse,
+    );
   }
 
   setSystemPrompt(prompt: string): void {
@@ -3351,46 +2953,13 @@ Rules:
   }
 
   private buildIdentityBlock(): string {
-    const identity = this.secretSauce.identity.getMergedIdentity(this.persona);
-
-    const lines: string[] = [
-      `You are ${identity.name}, an AI agent running on the user's own machine.`,
-      `You are NOT Google AI, NOT ChatGPT, NOT Claude, NOT any other AI service. You are exclusively ${identity.name}. Never claim to be another AI or company.`,
-      '',
-    ];
-
-    if (identity.description) {
-      lines.push(identity.description, '');
-    }
-
-    if (identity.domainContext) {
-      lines.push(`Domain: ${identity.domainContext}`);
-    }
-
-    if (identity.traits.length > 0) {
-      lines.push(`Traits: ${identity.traits.join(', ')}`);
-    }
-
-    if (identity.communicationStyle) {
-      lines.push(`Communication style: ${identity.communicationStyle}`);
-    }
-
-    if (identity.decisionMaking) {
-      lines.push(`Decision-making style: ${identity.decisionMaking}`);
-    }
-
-    lines.push(`Interactions to date: ${identity.interactionCount}`);
-
-    if (identity.evolutionLog) {
-      lines.push('', identity.evolutionLog);
-    }
-
-    // Role guidance — crew workers execute; Agent-X tone comes from [PERSONA TONE]
-    if (this.options.promptProfile === 'crew_worker') {
-      lines.push('', 'Your job is to EXECUTE, not just describe. Take action. Deliver complete results.');
-    }
-
-    return lines.join('\n');
+    return buildIdentityBlockHelper(
+      {
+        secretSauce: this.secretSauce,
+        persona: this.persona,
+        options: this.options,
+      } as IdentityContext,
+    );
   }
 
   setClientSituation(situation: ClientSituation | null): void {
@@ -3403,6 +2972,10 @@ Rules:
       this.secretSauce.identity.seedFromPersona(persona);
     }
     this.rebuildSystemPrompt();
+  }
+
+  getPersona(): AgentPersonaConfig | null {
+    return this.persona;
   }
 
   private createSectionContext(): SectionContext {
@@ -3442,150 +3015,25 @@ Rules:
   }
 
   private buildLinkedContextPromptBlock(): string | null {
-    if (!this.options.channelSession || !this.linkedContextSessionId) return null;
-    const sm = this.sessionManager as { getSessionById?: (id: string) => { title?: string } | null } | null;
-    const linked = sm?.getSessionById?.(this.linkedContextSessionId);
-    const title = linked?.title?.trim() || this.linkedContextSessionId;
-    const narrative = globalNarrativeStore.load(this.linkedContextSessionId);
-    const narrativeText = narrative ? renderNarrativeText(narrative) : '';
-    return [
-      '[LINKED_DESKTOP_SESSION]',
-      `Telegram is context-linked to desktop session "${title}" (${this.linkedContextSessionId}).`,
-      'Telegram chat history is separate from the desktop transcript — use linked narrative and resume state for goals.',
-      ...(narrativeText ? ['', 'Linked session narrative:', narrativeText] : []),
-      '[/LINKED_DESKTOP_SESSION]',
-    ].join('\n');
+    return buildLinkedContextPromptBlockHelper(
+      {
+        options: this.options,
+        linkedContextSessionId: this.linkedContextSessionId,
+        sessionManager: this.sessionManager,
+      } as LinkedContextContext,
+    );
   }
 
   private registerPromptSections(systemOverride?: string): void {
-    if (this.options.promptProfile === 'crew_worker') {
-      const ctx = this.createSectionContext();
-      this.promptAssembly
-        .register(createRulesSection({ technicalExecutor: true }))
-        .register(createQuestionnaireGuideSection())
-        .register(createChatMarkdownSection())
-        .register(createMarkdownSection())
-        .register(createCurrentTimeSection(ctx))
-        .register(createMemoryContextSection(ctx));
-      if (systemOverride) {
-        this.promptAssembly.register(createSystemOverrideSection(systemOverride));
-      }
-      return;
-    }
-
-    if (this.options.promptProfile === 'crew_private') {
-      const ctx = this.createSectionContext();
-      if (this.usesCompactContext()) {
-        this.promptAssembly
-          .register(createCrewPrivateConductSection())
-          .register(createLocalPersonaGuardSection())
-          .register(createWorkingDirectorySection(ctx))
-          .register(createUserSection(ctx))
-          .register(createSessionNarrativeSection(ctx))
-          .register(createMemoryContextSection(ctx));
-      } else {
-        this.promptAssembly
-          .register(createCrewPrivateConductSection())
-          .register(createQuestionnaireGuideSection())
-          .register(createChatMarkdownSection())
-        .register(createMarkdownSection())
-          .register(createCurrentTimeSection(ctx))
-          .register(createWorkingDirectorySection(ctx))
-          .register(createLearningsSection(ctx))
-          .register(createSkillsSection(ctx))
-          .register(createFormalSkillsSection(ctx))
-          .register(createSessionNarrativeSection(ctx))
-          .register(createTurnFeedbackSection(ctx))
-          .register(createUserSection(ctx))
-          .register(createSoulSection(ctx))
-          .register(createNeuralSection(ctx))
-          .register(createMemoryContextSection(ctx))
-          .register(createInstructionsSection(ctx.scopePath));
-      }
-      if (systemOverride) {
-        this.promptAssembly.register(createSystemOverrideSection(systemOverride));
-      }
-      return;
-    }
-
-    if (this.options.channelSession) {
-      const ctx = this.createSectionContext();
-      this.promptAssembly
-        .register(createProviderPromptSection(ctx))
-        .register(createIdentitySection(ctx))
-        .register(createPersonaToneSection(ctx))
-        .register(createWorkingDirectorySection(ctx))
-        .register(createCompactRulesSection())
-        .register(createChannelSuperSessionSection())
-        .register(createChannelLinkedContextSection(ctx))
-        .register(createChannelMessagingSection())
-        .register(createThirdPartyServicesSection())
-        .register(createChatMarkdownSection())
-        .register(createMarkdownSection())
-        .register(createCurrentTimeSection(ctx))
-        .register(createSchedulingSection())
-        .register(createLearningsSection(ctx))
-        .register(createSkillsSection(ctx))
-        .register(createFormalSkillsSection(ctx))
-        .register(createMultiCrewSection(ctx))
-        .register(createCrewRosterGuideSection())
-        .register(createUserSection(ctx))
-        .register(createSoulSection(ctx))
-        .register(createNeuralSection(ctx))
-        .register(createMemoryContextSection(ctx))
-        .register(createInstructionsSection(ctx.scopePath));
-      if (systemOverride) {
-        this.promptAssembly.register(createSystemOverrideSection(systemOverride));
-      }
-      return;
-    }
-
-    const ctx = this.createSectionContext();
-    if (this.usesCompactContext()) {
-      this.promptAssembly
-        .register(createProviderPromptSection(ctx))
-        .register(createIdentitySection(ctx))
-        .register(createPersonaToneSection(ctx))
-        .register(createLocalPersonaGuardSection())
-        .register(createWorkingDirectorySection(ctx))
-        .register(createCompactRulesSection())
-        .register(createUserSection(ctx))
-        .register(createSessionNarrativeSection(ctx))
-        .register(createMemoryContextSection(ctx))
-        .register(createInstructionsSection(ctx.scopePath));
-    } else {
-      this.promptAssembly
-        .register(createProviderPromptSection(ctx))
-        .register(createIdentitySection(ctx))
-        .register(createPersonaToneSection(ctx))
-        .register(createWorkingDirectorySection(ctx))
-        .register(createRulesSection())
-        .register(createThirdPartyServicesSection())
-        .register(createQuestionnaireGuideSection())
-        .register(createChatMarkdownSection())
-        .register(createMarkdownSection())
-        .register(createCurrentTimeSection(ctx))
-        .register(createSchedulingSection())
-        .register(createLearningsSection(ctx))
-        .register(createSkillsSection(ctx))
-        .register(createFormalSkillsSection(ctx))
-        .register(createHyperdriveSection(ctx))
-        .register(createChannelFocusSection(ctx))
-        .register(createMultiCrewSection(ctx))
-        .register(createCrewRosterGuideSection())
-        .register(createUserSection(ctx))
-        .register(createSessionNarrativeSection(ctx))
-        .register(createTurnFeedbackSection(ctx))
-        .register(createTaskPanelSection())
-        .register(createSoulSection(ctx))
-        .register(createNeuralSection(ctx))
-        .register(createMemoryContextSection(ctx))
-        .register(createInstructionsSection(ctx.scopePath));
-    }
-
-    if (systemOverride) {
-      this.promptAssembly.register(createSystemOverrideSection(systemOverride));
-    }
+    registerPromptSectionsHelper(
+      {
+        promptAssembly: this.promptAssembly,
+        options: this.options,
+        usesCompactContext: () => this.usesCompactContext(),
+        createSectionContext: () => this.createSectionContext(),
+      },
+      systemOverride,
+    );
   }
 
   rebuildSystemPrompt(): void {
@@ -3622,43 +3070,24 @@ Rules:
   }
 
   switchModel(modelId: string, contextWindow?: number): void {
-    const wasCompact = this.usesCompactContext();
-    this.config.provider.activeModel = modelId;
-    this._capabilityWarningEmitted = false;
-
-    const ctx = contextWindow ?? this.cachedModelInfo.get(modelId)?.contextWindow;
-    if (ctx) {
-      this.tokenTracker.setTotal(ctx);
-      const existing = this.cachedModelInfo.get(modelId);
-      this.cachedModelInfo.set(modelId, existing ? { ...existing, contextWindow: ctx } : {
-        id: modelId,
-        name: modelId,
-        providerId: this.config.provider.activeProvider,
-        contextWindow: ctx,
-        capabilities: [],
-      });
-      this.promptEngine = new PromptEngine(ctx);
-      try {
-        const mgr = this.sessionManager as unknown as { persistSessionFields?: (id: string, u: Record<string, unknown>) => void };
-        mgr.persistSessionFields?.(this.sessionId, { tokenAvailable: ctx });
-      } catch { /* best-effort */ }
-    }
-
-    const nowCompact = isCompactContextProfile(
-      this.config.provider.activeProvider,
+    switchModelHelper(
+      {
+        usesCompactContext: () => this.usesCompactContext(),
+        config: this.config,
+        cachedModelInfo: this.cachedModelInfo,
+        tokenTracker: this.tokenTracker,
+        setPromptEngine: (ctx) => { this.promptEngine = new PromptEngine(ctx); },
+        sessionManager: this.sessionManager,
+        sessionId: this.sessionId,
+        rebuildPromptAssembly: () => this.rebuildPromptAssembly(),
+        syncSessionRuntimeRecord: (patch) => this.syncSessionRuntimeRecord(patch),
+        emit: (event) => this.emit(event),
+        _capabilityWarningEmitted: this._capabilityWarningEmitted,
+        setCapabilityWarningEmitted: (v) => { this._capabilityWarningEmitted = v; },
+      } as SwitchModelContext,
       modelId,
-      ctx ?? this.getContextWindow(),
+      contextWindow,
     );
-    if (wasCompact !== nowCompact) {
-      this.rebuildPromptAssembly();
-    }
-
-    this.syncSessionRuntimeRecord({
-      modelId,
-      providerId: this.config.provider.activeProvider,
-    });
-
-    this.emit({ type: 'command_action', action: 'model_switched', modelId, contextWindow: ctx ?? this.tokenTracker.tokensTotal });
   }
 
   private syncSessionRuntimeRecord(patch: {
@@ -3667,14 +3096,7 @@ Rules:
     mode?: 'agent' | 'plan';
   }): void {
     try {
-      const mgr = this.sessionManager as unknown as {
-        syncActiveSessionRuntime?: (u: {
-          providerId?: string;
-          modelId?: string;
-          mode?: 'agent' | 'plan';
-        }) => void;
-      } | null;
-      mgr?.syncActiveSessionRuntime?.(patch);
+      this.sessionManager?.syncActiveSessionRuntime?.(patch);
     } catch { /* best-effort */ }
   }
 
@@ -3692,32 +3114,7 @@ Rules:
   }
 
   private detectTaskType(content: string): TaskType {
-    const lower = content.toLowerCase();
-    if (lower.includes('write code') || lower.includes('implement') || lower.includes('function') ||
-        lower.includes('refactor') || lower.includes('fix bug') || lower.includes('debug') ||
-        lower.includes('add test') || lower.includes('create file') || /\b(code|program|script|function)\b/.test(lower)) {
-      return 'code';
-    }
-    if (lower.includes('explain') || lower.includes('analyze') || lower.includes('compare') ||
-        lower.includes('summarize') || lower.includes('research') || lower.includes('investigate')) {
-      return 'analysis';
-    }
-    if (lower.includes('plan') || lower.includes('design') || lower.includes('architecture') ||
-        lower.includes('roadmap') || lower.includes('strategy') || lower.includes('approach')) {
-      return 'planning';
-    }
-    if (lower.includes('think step by step') || lower.includes('reason') || lower.includes('logic') ||
-        lower.includes('puzzle') || lower.includes('math') || lower.includes('proof')) {
-      return 'reasoning';
-    }
-    if (lower.includes('write a poem') || lower.includes('story') || lower.includes('creative') ||
-        lower.includes('generate') || lower.includes('draft')) {
-      return 'creative';
-    }
-    if (content.length < 20 || lower.includes('quick') || lower.includes('fast')) {
-      return 'fast';
-    }
-    return 'chat';
+    return detectTaskTypeHelper(content);
   }
 
   /**
@@ -3725,45 +3122,16 @@ Rules:
    * Returns true if the model works, false if it's grounded.
    */
   async trialModel(modelId: string): Promise<boolean> {
-    const logger = getLogger();
-    try {
-      const info = this.cachedModelInfo.get(modelId);
-      const request = {
-        model: modelId,
-        messages: [{ role: 'user' as const, content: 'hi' }],
-        maxTokens: resolveTrialOutputTokens({
-          outputTokenLimit: info?.outputTokenLimit,
-        }),
-      };
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for await (const _chunk of this.provider.complete(request)) {
-        break; // Just need first chunk to confirm it works
-      }
-      // Success — remove from grounded if it was there
-      this.groundedModels.delete(modelId);
-      return true;
-    } catch (err) {
-      logger.error('MODEL_TRIAL_FAILED', err, { modelId });
-      this.groundedModels.add(modelId);
-      const rawTrialMessage = err instanceof Error ? err.message : String(err);
-      const statusCode = typeof err === 'object' && err !== null && 'status' in err
-        ? (err as { status: number }).status
-        : undefined;
-      this.emit({
-        type: 'provider_error',
-        provider: this.config.provider.activeProvider,
-        model: modelId,
-        statusCode,
-        message: rawTrialMessage,
-        recoverable: true,
-        actions: [
-          { type: 'switch_model', label: 'Pick a different model' },
-          { type: 'reconfigure_key', label: 'Update API key' },
-          { type: 'dismiss', label: 'Dismiss' },
-        ],
-      });
-      return false;
-    }
+    return trialModelHelper(
+      {
+        cachedModelInfo: this.cachedModelInfo,
+        groundedModels: this.groundedModels,
+        provider: this.provider,
+        config: this.config,
+        emit: (event) => this.emit(event),
+      } as ModelTrialContext,
+      modelId,
+    );
   }
 
   /**
@@ -3781,71 +3149,19 @@ Rules:
   }
 
   async listModels(): Promise<void> {
-    const logger = getLogger();
-    try {
-      const models = await this.provider.listModels();
-      if (models.length === 0) {
-        this.emit({
-          type: 'error',
-          code: 'NO_MODELS',
-          message: '🏚 Hangar Empty — No models returned by the API. Verify your key has correct permissions.',
-          recoverable: true,
-          actions: [{ type: 'dismiss', label: 'Dismiss' }],
-        });
-        return;
-      }
-      // Cache provider-reported model metadata for token tracking and capability checks
-      for (const m of models) {
-        this.cachedModelInfo.set(m.id, m);
-      }
-      this.emit({
-        type: 'command_action',
-        action: 'list_models',
-        models,
-        currentModel: this.config.provider.activeModel,
-      });
-    } catch (err) {
-      logger.error('MODEL_LIST_FAILED', err);
-      const spaceErr = resolveSpaceError(err);
-      this.emit({
-        type: 'error',
-        code: 'MODEL_LIST_FAILED',
-        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
-        recoverable: true,
-        actions: [{ type: 'dismiss', label: 'Dismiss' }],
-      });
-    }
+    return listModelsHelper(
+      {
+        cachedModelInfo: this.cachedModelInfo,
+        provider: this.provider,
+        config: this.config,
+        emit: (event) => this.emit(event),
+      } as ModelListContext,
+    );
   }
 
   /** Re-attach interactive permission prompts after an ephemeral automation run. */
   bindPermissionHandler(): void {
-    if (!this.toolExecutor || this.options.automationRun) return;
-    this.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel, context) => {
-      if (isPermissionExemptTool(toolId)) return 'allow_once';
-      if (this.userCancelledTurn || this.toolExecutor?.isTurnAborted()) return 'deny';
-      if (this.isDelegatedWorker || this.autoApproveTools || this.turnApprovedAll) return 'allow_once';
-      const requestId = randomUUID();
-      const { commandPreview, argsSummary } = summarizePermissionArgs(context?.args);
-      if (this.userCancelledTurn) return 'deny';
-      return new Promise<PermissionHandlerResult>((resolve) => {
-        this.pendingPermissions.set(requestId, {
-          resolve,
-          toolName: toolId,
-          path,
-          riskLevel,
-        });
-        this.emit({
-          type: 'permission_required',
-          requestId,
-          tool: toolId,
-          path,
-          riskLevel,
-          integrationPreview: context?.integrationPreview,
-          ...(commandPreview ? { commandPreview } : {}),
-          ...(argsSummary ? { argsSummary } : {}),
-        });
-      });
-    });
+    bindPermissionHandlerHelper(this._permissionCtx());
   }
 
   /**
@@ -3855,18 +3171,7 @@ Rules:
   async ensureAutomationToolsApproved(
     toolIds: string[],
   ): Promise<{ ok: boolean; denied?: string[]; error?: string }> {
-    const executor = this.toolExecutor;
-    if (!executor || toolIds.length === 0) return { ok: true };
-
-    const unique = [...new Set(toolIds)];
-    for (const toolId of unique) {
-      const existing = executor.getPermissionManager().check(toolId, '*')
-        ?? executor.getPermissionManager().check(toolId);
-      if (existing === 'allow_always') continue;
-      executor.getPermissionManager().grant(toolId, 'allow_always');
-      this.persistPermissionGrant(toolId, 'allow_always');
-    }
-    return { ok: true };
+    return ensureAutomationToolsApprovedHelper(this._permissionCtx(), toolIds);
   }
 
   /** Show automation notification channel questionnaire in chat. */
@@ -3876,12 +3181,7 @@ Rules:
 
   /** Grant notify tool permissions without prompting (automation channel selection). */
   grantAutomationNotifyTools(toolIds: string[]): void {
-    const executor = this.toolExecutor;
-    if (!executor || toolIds.length === 0) return;
-    for (const toolId of toolIds) {
-      executor.getPermissionManager().grant(toolId, 'allow_always');
-      this.persistPermissionGrant(toolId, 'allow_always');
-    }
+    grantAutomationNotifyToolsHelper(this._permissionCtx(), toolIds);
   }
 
   /**
@@ -3898,84 +3198,27 @@ Rules:
   }
 
   private resolvePermissionRequest(requestId: string, result: PermissionHandlerResult): void {
-    const entry = this.pendingPermissions.get(requestId);
-    if (!entry) return;
-    if (typeof result === 'string' && result === 'allow_always') {
-      this.toolExecutor?.getPermissionManager().grant(entry.toolName, 'allow_always');
-      this.persistPermissionGrant(entry.toolName, 'allow_always');
-    }
-    entry.resolve(result);
-    this.pendingPermissions.delete(requestId);
+    resolvePermissionRequestHelper(this._permissionCtx(), requestId, result);
   }
 
   /**
    * Approve or deny all pending permission requests at once.
    */
   respondToPermissionBatch(choice: 'allow_once' | 'allow_always' | 'deny'): void {
-    if (choice === 'allow_always') {
-      this.toolExecutor?.getPermissionManager().allowAll();
-      this.persistPermissionGrant('*', 'allow_always');
-    } else if (choice !== 'deny') {
-      this.turnApprovedAll = true;
-    }
-    for (const [id, entry] of this.pendingPermissions) {
-      if (choice === 'allow_always') {
-        this.toolExecutor?.getPermissionManager().grant(entry.toolName, 'allow_always');
-        this.persistPermissionGrant(entry.toolName, 'allow_always');
-      }
-      entry.resolve(choice);
-      this.pendingPermissions.delete(id);
-    }
+    respondToPermissionBatchHelper(this._permissionCtx(), choice);
   }
 
   /** Persist Telegram (or other channel) permission decisions from inline buttons. */
   recordToolPermissionDecision(toolName: string, decision: PermissionDecision): void {
-    if (!this.toolExecutor) return;
-    if (decision === 'allow_always') {
-      this.toolExecutor.getPermissionManager().grant(toolName, 'allow_always');
-      this.persistPermissionGrant(toolName, 'allow_always');
-    } else if (decision === 'deny') {
-      this.toolExecutor.getPermissionManager().deny(toolName);
-      this.persistPermissionGrant(toolName, 'deny');
-    }
+    recordToolPermissionDecisionHelper(this._permissionCtx(), toolName, decision);
   }
 
   formatChannelToolPermissions(): string {
-    const pm = this.toolExecutor?.getPermissionManager();
-    if (!pm) return '🔐 No permission state available.';
-    if (pm.isAllAllowed()) {
-      return '🔐 *Permissions*\n✅ All tools are always allowed for this channel session.';
-    }
-    const perms = pm.list().filter((p) => p.id !== '__all__');
-    const allowed = perms.filter((p) => p.decision === 'allow_always').map((p) => p.toolName);
-    const denied = perms.filter((p) => p.decision === 'deny').map((p) => p.toolName);
-    const lines = ['🔐 *Permissions*'];
-    lines.push('', '*Always allowed:*', allowed.length ? allowed.map((t) => `  ✅ ${t}`).join('\n') : '  (none)');
-    lines.push('', '*Denied:*', denied.length ? denied.map((t) => `  ❌ ${t}`).join('\n') : '  (none)');
-    lines.push('', 'Revoke with `/permissions revoke <tool>` or `/permissions revoke-all`.');
-    return lines.join('\n');
+    return formatChannelToolPermissionsHelper(this.persistenceCtx());
   }
 
   revokeChannelToolPermissions(tools?: string[], revokeAll = false): string {
-    const pm = this.toolExecutor?.getPermissionManager();
-    if (!pm) return '🔐 No permission state available.';
-    const store = (this.sessionManager as unknown as {
-      store?: { removePermissions?: (sessionId: string, toolName?: string) => void };
-    })?.store;
-
-    if (revokeAll) {
-      pm.revokeAll();
-      store?.removePermissions?.(this.sessionId);
-      return '🗑 All remembered tool permissions revoked for this channel session.';
-    }
-
-    const names = (tools ?? []).map((t) => t.trim()).filter(Boolean);
-    if (!names.length) return '❌ Specify at least one tool name to revoke.';
-    for (const name of names) {
-      pm.revoke(name);
-      store?.removePermissions?.(this.sessionId, name);
-    }
-    return `🗑 Revoked permissions for: ${names.join(', ')}`;
+    return revokeChannelToolPermissionsHelper(this.persistenceCtx(), tools, revokeAll);
   }
 
   getMessageHistory(): CompletionMessage[] {
@@ -4011,85 +3254,30 @@ Rules:
    * Run deep research on a question using parallel sub-agents and synthesis.
    */
   async research(question: string): Promise<Message> {
-    const startTime = Date.now();
     this.scope = new Scope();
-
-    const userMessage: Message = {
-      id: generateMessageId(),
-      sessionId: this.sessionId,
-      role: 'user',
-      content: `/research ${question}`,
-      toolCalls: null,
-      createdAt: new Date().toISOString(),
-      tokenCount: 0,
-    };
-
-    this.messages.push({ role: 'user', content: userMessage.content });
+    this.messages.push({ role: 'user', content: `/research ${question}` });
     this.turnApprovedAll = false;
-    this.emit({ type: 'message_sent', message: userMessage });
-    this.emit({ type: 'loading_start', stage: 'research' });
-
-    try {
-      const report = await this.researchEngineCapability.research(question, this);
-      this.messages.push({ role: 'assistant', content: report });
-
-      const assistantMessage: Message = {
-        id: generateMessageId(),
+    const result = await researchHelper(
+      {
         sessionId: this.sessionId,
-        role: 'assistant',
-        content: report,
-        toolCalls: null,
-        createdAt: new Date().toISOString(),
-        tokenCount: estimateOutputTokens(report),
-      };
-
-      this.emit({ type: 'loading_end' });
-      this.emit({ type: 'message_received', message: assistantMessage, elapsed: Date.now() - startTime });
-      return assistantMessage;
-    } catch (error) {
-      this.emit({ type: 'loading_end' });
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.sessionLogger?.logErrorUser(errorMessage, 'RESEARCH_FAILED');
-      const fallback: Message = {
-        id: generateMessageId(),
-        sessionId: this.sessionId,
-        role: 'assistant',
-        content: `Research failed: ${errorMessage}`,
-        toolCalls: null,
-        createdAt: new Date().toISOString(),
-        tokenCount: 0,
-      };
-      this.emit({ type: 'message_received', message: fallback, elapsed: Date.now() - startTime });
-      return fallback;
-    } finally {
-      this.lifecycle.forceTransition('idle');
-      this.scope = null;
-    }
+        emit: (event) => this.emit(event),
+        researchEngineCapability: this.researchEngineCapability,
+        agent: this,
+        sessionLogger: this.sessionLogger,
+        lifecycle: this.lifecycle,
+      } as ResearchContext,
+      question,
+    );
+    this.messages.push({ role: 'assistant', content: result.content });
+    this.scope = null;
+    return result as Message;
   }
 
   /**
    * End the session — records diary entry and updates identity.
    */
   endSession(): void {
-    try {
-      this.contextTracker.clear();
-      // Record interaction count
-      this.secretSauce.identity.recordInteraction();
-
-      // Build diary entry from message history
-      const userMsgs = this.messages.filter((m) => m.role === 'user');
-      const assistantMsgs = this.messages.filter((m) => m.role === 'assistant');
-
-      if (userMsgs.length > 0) {
-        const highlights = userMsgs.slice(0, 3).map((m) =>
-          typeof m.content === 'string' ? m.content.slice(0, 60) : 'tool interaction'
-        );
-        const summary = `Session with ${userMsgs.length} user messages and ${assistantMsgs.length} responses.`;
-        this.secretSauce.recordDiary(summary, 1, highlights, []);
-      }
-    } catch {
-      // Silent failure — diary is non-critical
-    }
+    endSessionHelper(this._sessionLifecycleCtx());
   }
 
   /**
@@ -4097,50 +3285,26 @@ Rules:
    * Non-blocking — failures are silently ignored.
    */
   private async runSummarization(): Promise<void> {
-    try {
-      const summarizer = this.secretSauce.summarizer;
+    return runSummarizationHelper(this._sessionLifecycleCtx());
+  }
 
-      // Summarize memories
-      const recentMemories = this.secretSauce.memories.getRecentMemories(50);
-      if (recentMemories.length > 5) {
-        const memPrompt = summarizer.buildMemorySummarizationPrompt(recentMemories);
-        if (memPrompt) {
-          const content = await this.simpleComplete(memPrompt);
-          if (content) summarizer.storeMemorySummary(content);
-        }
-      }
-
-      // Summarize diary
-      const recentDiary = this.secretSauce.diary.getRecent(14);
-      if (recentDiary.length > 3) {
-        const diaryPrompt = summarizer.buildDiarySummarizationPrompt(recentDiary);
-        if (diaryPrompt) {
-          const content = await this.simpleComplete(diaryPrompt);
-          if (content) summarizer.storeDiarySummary(content);
-        }
-      }
-    } catch {
-      // Non-critical — silent failure
-    }
+  private _sessionLifecycleCtx(): SessionLifecycleContext {
+    return {
+      contextTracker: this.contextTracker,
+      secretSauce: this.secretSauce,
+      messages: this.messages,
+      simpleComplete: (prompt) => this.simpleComplete(prompt),
+    };
   }
 
   /**
    * Simple non-streaming completion for internal tasks (summarization, memory extraction).
    */
   private async simpleComplete(prompt: string): Promise<string> {
-    let result = '';
-    const stream = this.provider.complete({
-      messages: [{ role: 'user', content: prompt }],
-      model: this.config.provider.activeModel,
-      maxTokens: 600,
-      stream: true,
-    });
-    for await (const chunk of stream) {
-      if (chunk.type === 'text_delta' && chunk.content) {
-        result += chunk.content;
-      }
-    }
-    return result;
+    return simpleCompleteHelper(
+      { provider: this.provider, config: this.config } as SimpleCompleteContext,
+      prompt,
+    );
   }
 
   /**
@@ -4151,123 +3315,19 @@ Rules:
     synthesized: string;
     totalElapsed: number;
   }> {
-    const start = Date.now();
-    this.emit({ type: 'decomposition_start', task });
-
-    // LLM-driven decomposition: break task into subtasks per specialist
-    const decompositionPrompt = `Break this complex task into subtasks that can be handled by specialist agents:
-"${task.slice(0, 500)}"
-
-Available specialists: coder, reviewer, tester, researcher, devops, docs_writer, architect, debugger
-
-For each specialist that is relevant, write a SUBTASK in one line.
-Format:
-CODER: <subtask>
-REVIEWER: <subtask>
-... etc.
-
-Only include specialists that are actually needed for this task.`;
-
-    const prov = this.provider;
-    let decomposition = '';
-    try {
-      const stream = prov.complete({
-        messages: [{ role: 'user', content: decompositionPrompt }],
-        model: this.config.provider.activeModel,
-        maxTokens: 500,
-        stream: true,
-      });
-      for await (const chunk of stream) {
-        if (chunk.type === 'text_delta' && chunk.content) decomposition += chunk.content;
-      }
-    } catch (e) {
-      // Fallback: single sub-agent via concurrency pool
-      this.emit({ type: 'decomposition_fallback', task });
-      const spawned = this.subAgents.spawn(task, [], 120_000, this.maxSubAgents);
-      const completed = await this.subAgents.waitFor(spawned.id);
-      const output = completed?.result ?? '';
-      const elapsed = (completed?.endTime ?? Date.now()) - (completed?.startTime ?? Date.now());
-      return {
-        subResults: [{ specialist: 'coder' as SpecialistType, output, elapsed }],
-        synthesized: output,
-        totalElapsed: Date.now() - start,
-      };
-    }
-
-    // Parse decomposition into specialist tasks
-    const subtasks: Array<{ specialist: SpecialistType; instruction: string }> = [];
-    const lines = decomposition.split('\n');
-    for (const line of lines) {
-      const match = line.match(/^(\w+):\s*(.+)/);
-      if (match && match[1] && match[2]) {
-        const spec = match[1].toLowerCase() as SpecialistType;
-        const instruction = match[2];
-        if (this.specialistRegistry.getByType(spec)) {
-          subtasks.push({ specialist: spec, instruction });
-        }
-      }
-    }
-
-    if (subtasks.length === 0) {
-      getLogger().warn('DECOMPOSE', 'No matching specialist found for task decomposition. Skipping sub-agent spawn.');
-      this.emit({ type: 'decomposition_ready', subtaskCount: 0 });
-      return { subResults: [], synthesized: '', totalElapsed: Date.now() - start };
-    }
-
-    this.emit({ type: 'decomposition_ready', subtaskCount: subtasks.length });
-
-    // Spawn parallel sub-agents through SubAgentManager (Fiber + semaphore)
-    const subPromises = subtasks.map(async ({ specialist, instruction }) => {
-      const spec = this.specialistRegistry.getByType(specialist);
-      if (!spec) return null;
-
-      this.agentBus.publish(this.sessionId, spec.agentId, 'subtask', {
-        instruction,
-        parentTask: task,
-      });
-
-      const spawned = this.subAgents.spawn(
-        `[SPECIALIST: ${spec.name}]\n${instruction}`,
-        spec.preferredTools ?? [],
-        120_000,
-        this.maxSubAgents,
-      );
-      const completed = await this.subAgents.waitFor(spawned.id);
-      return {
-        specialist,
-        output: completed?.result ?? '',
-        elapsed: (completed?.endTime ?? Date.now()) - (completed?.startTime ?? Date.now()),
-      };
-    });
-
-    const rawResults = await Promise.all(subPromises);
-    const subResults = rawResults.filter((r): r is { specialist: SpecialistType; output: string; elapsed: number } => r !== null);
-
-    // Synthesize results
-    const parts = subResults.map((r) =>
-      `--- ${r.specialist.toUpperCase()} (${r.elapsed}ms) ---\n${r.output.slice(0, 2000)}`
+    return decomposeAndDelegateHelper(
+      {
+        emit: (event) => this.emit(event),
+        provider: this.provider,
+        config: this.config,
+        subAgents: this.subAgents,
+        maxSubAgents: this.maxSubAgents,
+        specialistRegistry: this.specialistRegistry,
+        agentBus: this.agentBus,
+        sessionId: this.sessionId,
+      } as DecomposeContext,
+      task,
     );
-    const synthesisPrompt = `Synthesize these specialist reports into a single coherent response:\n\n${parts.join('\n\n')}\n\nConsolidated response:`;
-
-    let synthesized = '';
-    try {
-      const synthStream = prov.complete({
-        messages: [{ role: 'user', content: synthesisPrompt }],
-        model: this.config.provider.activeModel,
-        maxTokens: 2000,
-        stream: true,
-      });
-      for await (const chunk of synthStream) {
-        if (chunk.type === 'text_delta' && chunk.content) synthesized += chunk.content;
-      }
-    } catch {
-      synthesized = subResults.map((r) => `${r.specialist}: ${r.output}`).join('\n\n');
-    }
-
-    const totalElapsed = Date.now() - start;
-    this.emit({ type: 'decomposition_complete', subResultCount: subResults.length, totalElapsed });
-
-    return { subResults, synthesized, totalElapsed };
   }
 
   /**
@@ -4281,72 +3341,41 @@ Only include specialists that are actually needed for this task.`;
   get specialistRegistryInstance(): SpecialistRegistry { return this.specialistRegistry; }
   get skillGeneratorInstance(): SkillGenerator | null { return this.skillGenerator; }
   get reflectionLoopInstance(): ReflectionLoop { return this.reflectionLoop; }
+  /** Exposed for vitals/diagnostics — returns the experience engine if initialized. */
+  get experienceEngineInstance(): ExperienceEngine | null { return this._experienceEngine; }
+  /** Exposed for vitals/diagnostics — returns the growth engine if initialized. */
+  get growthEngineInstance(): GrowthEngine | null { return this._growthEngine; }
+  /** Exposed for vitals/diagnostics — returns the pending checkpoint if any. */
+  get pendingCheckpoint(): { resolve: (action: unknown) => void; reject: (err: Error) => void; checkpointId: string } | null { return this._pendingCheckpoint; }
 
   // Store the last compaction summary for iterative updates
   private lastCompactionSummary: string | null = null;
 
+  /** Public wrapper for compactContext — used by TaskExecutor for adaptive context compaction. */
+  async compactContextNow(): Promise<boolean> {
+    return this.compactContext();
+  }
+
   private async compactContext(promptEstimate?: number): Promise<boolean> {
-    const contextWindow = this.getContextWindow();
-    const thresholds = getTokenThresholds(contextWindow);
-    const usedTokens = Math.max(this.tokenTracker.tokensUsed, promptEstimate ?? 0);
-    if (!isTokenOverflow(usedTokens, thresholds)) return false;
-
-    const lastMarkerIdx: number = this.compactionMarkerIndices.length > 0
-      ? this.compactionMarkerIndices[this.compactionMarkerIndices.length - 1]!
-      : -1;
-    const recentMessages = this.messages.slice(lastMarkerIdx + 1)
-      .filter(m => m.role !== 'system')
-      .map(m => `${m.role}: ${m.content}`)
-      .join('\n\n');
-    if (!recentMessages.trim()) return false;
-
-    this.emit({ type: 'compaction_start', currentTokens: usedTokens, threshold: contextWindow } as EngineEvent);
-
-    let summary = '';
-    try {
-      const prompt = this.lastCompactionSummary
-        ? COMPACTION_UPDATE_PROMPT.replace('{previousSummary}', this.lastCompactionSummary) + '\n\n' + recentMessages
-        : COMPACTION_PROMPT + '\n\n' + recentMessages;
-      summary = await this.simpleComplete(prompt);
-    } catch {
-      return false;
-    }
-    if (!summary.trim()) return false;
-
-    this.lastCompactionSummary = summary;
-
-    const insertIdx = this.messages.length;
-    this.messages.push({ role: 'system', content: `[COMPACTION SUMMARY — ${new Date().toISOString()}]\n${summary}` });
-    this.compactionMarkerIndices.push(insertIdx);
-
-    const pruneStart = lastMarkerIdx + 1;
-    const pruneEnd = insertIdx;
-    if (pruneStart < pruneEnd) {
-      const removeCount = pruneEnd - pruneStart;
-      this.messages.splice(pruneStart, removeCount);
-      this.compactionMarkerIndices = this.compactionMarkerIndices
-        .filter(i => i !== insertIdx)
-        .map(i => i >= pruneEnd ? i - removeCount : i)
-        .concat(pruneStart);
-    }
-
-    const saved = pruneEnd - pruneStart;
-    if (saved > 0) {
-      // Estimate tokens removed and adjust the tracker downward
-      const compactedMessages = this.messages.slice(pruneStart, pruneStart + (pruneEnd - pruneStart) || 0);
-      const prunedTokens = estimateMessagesTokens(compactedMessages as any);
-      const summaryTokens = estimateTokens(summary);
-      const netSavings = Math.max(0, prunedTokens - summaryTokens);
-      this.tokenTracker.addUsage(-netSavings);
-      getLogger().info('COMPACTION', `Compacted ${saved} messages (${estimateTokens(summary)} token summary, saved ~${netSavings} tokens, ${usedTokens} → ${this.tokenTracker.tokensUsed})`);
-    }
-    this.emit({ type: 'compaction_complete', saved, summary } as EngineEvent);
-    this._compactionCount += 1;
-    try {
-      const mgr = this.sessionManager as unknown as { persistSessionFields?: (id: string, u: Record<string, unknown>) => void };
-      mgr.persistSessionFields?.(this.sessionId, { compactionCount: this._compactionCount });
-    } catch { /* best-effort */ }
-    return true;
+    return compactContextHelper(
+      {
+        getContextWindow: () => this.getContextWindow(),
+        tokenTracker: this.tokenTracker,
+        compactionMarkerIndices: this.compactionMarkerIndices,
+        messages: this.messages,
+        emit: (event) => this.emit(event),
+        lastCompactionSummary: this.lastCompactionSummary,
+        setLastCompactionSummary: (s) => { this.lastCompactionSummary = s; },
+        simpleComplete: (prompt) => this.simpleComplete(prompt),
+        setMessages: (msgs) => { this.messages = msgs as never; },
+        setCompactionMarkerIndices: (indices) => { this.compactionMarkerIndices = indices; },
+        _compactionCount: this._compactionCount,
+        setCompactionCount: (n) => { this._compactionCount = n; },
+        sessionManager: this.sessionManager,
+        sessionId: this.sessionId,
+      } as CompactContext,
+      promptEstimate,
+    );
   }
 
   private buildAiMessagesForTurn(opts: {
@@ -4449,30 +3478,11 @@ Only include specialists that are actually needed for this task.`;
   }
 
   private modelMessageContentToText(content: unknown): string {
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-      return content.map((part) => {
-        if (typeof part === 'string') return part;
-        if (part && typeof part === 'object') {
-          const p = part as Record<string, unknown>;
-          if (typeof p.text === 'string') return p.text;
-          if (typeof p.toolName === 'string') return `tool:${p.toolName}`;
-          return JSON.stringify(part);
-        }
-        return '';
-      }).join('\n');
-    }
-    if (content == null) return '';
-    return JSON.stringify(content);
+    return modelMessageContentToTextHelper(content);
   }
 
   private estimateToolSchemaChars(tools: Record<string, unknown>): number {
-    let chars = 0;
-    for (const name of Object.keys(tools)) {
-      const t = tools[name] as { description?: string; inputSchema?: unknown } | undefined;
-      chars += JSON.stringify({ description: t?.description, inputSchema: t?.inputSchema }).length;
-    }
-    return chars;
+    return estimateToolSchemaCharsHelper(tools);
   }
 
   private estimateTurnInputTokens(
@@ -4487,21 +3497,13 @@ Only include specialists that are actually needed for this task.`;
   }
 
   private tagCrewPrivateAssistant(msg: Message): Message {
-    const host = this.options.crewPrivateHost;
-    if (this.options.promptProfile !== 'crew_private' || !host || msg.crew) return msg;
-    return {
-      ...msg,
-      crew: {
-        crewId: host.id,
-        name: host.name,
-        callsign: host.callsign,
-        color: host.color,
-        icon: host.icon,
-      },
-    };
+    return tagCrewPrivateAssistantHelper(
+      { options: this.options } as CrewPrivateContext,
+      msg,
+    );
   }
 
-  private emit(event: EngineEvent, isUpdateFlag?: boolean): void {
+  public emit(event: EngineEvent, isUpdateFlag?: boolean): void {
     const isUpdate = isUpdateFlag === true || (event as { isUpdate?: boolean }).isUpdate === true;
     if (event.type === 'message_received') {
       const raw = event as { message?: Message };
@@ -4533,206 +3535,63 @@ Only include specialists that are actually needed for this task.`;
     this.eventBus.emit(event);
   }
 
-  private persistAssistantMessage(msg: Message): void {
-    const store = (this.sessionManager as unknown as {
-      store?: {
-        insertMessage?: (row: {
-          id?: string;
-          sessionId: string;
-          role: string;
-          content: string;
-          tokenCount?: number;
-          metadata?: Record<string, unknown>;
-        }) => void;
-      };
-    } | null)?.store;
-    if (!store?.insertMessage) return;
-    try {
-      const channel = this.activeInboundChannel ?? parseChannelBindingFromSessionId(this.sessionId) ?? undefined;
-      store.insertMessage({
-        id: msg.id,
-        sessionId: this.sessionId,
-        role: 'assistant',
-        content: msg.content,
-        tokenCount: msg.tokenCount ?? 0,
-        metadata: {
-          ...(msg.crew
-            ? {
-              crewId: msg.crew.crewId,
-              crewName: msg.crew.name,
-              callsign: msg.crew.callsign,
-            }
-            : {}),
-          ...(channel ? { channel } : {}),
-        },
-      });
-    } catch { /* best-effort */ }
+  public persistAssistantMessage(msg: Message): void {
+    return persistAssistantMessageHelper(this.persistenceCtx(), msg);
   }
 
   /** Persist user turn to the session store (DB) — independent of WS subscribers. */
   private persistUserMessage(msg: Message): void {
-    const store = this.getMessageStore();
-    if (!store?.insertMessage) return;
-    const channel = this.activeInboundChannel ?? parseChannelBindingFromSessionId(this.sessionId) ?? undefined;
-    try {
-      store.insertMessage({
-        id: msg.id,
-        sessionId: msg.sessionId,
-        role: 'user',
-        content: msg.content,
-        tokenCount: msg.tokenCount ?? 0,
-        ...(channel ? { metadata: { channel } } : {}),
-      });
-    } catch { /* best-effort */ }
+    return persistUserMessageHelper(this.persistenceCtx(), msg);
   }
 
-  private getApiKey(): string | undefined {
-    const creds = this.getProviderCredentials();
-    return creds.apiKey;
+  public getApiKey(): string | undefined {
+    return getProviderCredentialsHelper(this._providerCredentialsCtx()).apiKey;
   }
 
   private getBaseUrl(): string | undefined {
-    const creds = this.getProviderCredentials();
-    return creds.baseUrl;
+    return getProviderCredentialsHelper(this._providerCredentialsCtx()).baseUrl;
   }
 
-  private getProviderCredentials(): { apiKey?: string; baseUrl?: string } {
-    const providerSettings = this.config.provider.providers?.[this.config.provider.activeProvider];
-    if (!providerSettings) return {};
-    const activeProfileId = providerSettings.activeProfile;
-    const profile = activeProfileId ? providerSettings.profiles?.[activeProfileId] : undefined;
-    return {
-      apiKey: profile?.apiKey ?? providerSettings.apiKey,
-      baseUrl: profile?.baseUrl ?? providerSettings.baseUrl,
-    };
+  private _providerCredentialsCtx(): ProviderCredentialsContext {
+    return { config: this.config } as ProviderCredentialsContext;
   }
 
   /**
    * Get the user's timezone from config, falling back to system timezone.
    */
   private getUserTimezone(): string {
-    return resolveClientTimezone(this.clientSituation, this.config.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
+    return getUserTimezoneHelper(this._timezoneCtx());
   }
 
   /**
    * Get the UTC offset string for the user's timezone (e.g. "+05:30", "-04:00").
    */
   private getUtcOffset(): string {
-    const tz = this.getUserTimezone();
-    const now = new Date();
-    // Use Intl to get the offset for the target timezone
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      timeZoneName: 'longOffset',
-    });
-    const parts = formatter.formatToParts(now);
-    const tzPart = parts.find((p) => p.type === 'timeZoneName');
-    // Format is like "GMT+5:30" or "GMT-4" — normalize to "+05:30"
-    const raw = tzPart?.value ?? '';
-    const match = raw.match(/GMT([+-])(\d{1,2}):?(\d{2})?/);
-    if (match) {
-      const sign = match[1];
-      const hrs = match[2]!.padStart(2, '0');
-      const mins = (match[3] ?? '00').padStart(2, '0');
-      return `${sign}${hrs}:${mins}`;
-    }
-    return '+00:00';
+    return getUtcOffsetHelper(this._timezoneCtx());
   }
 
-  private getActiveModelCaps(): {
+  private _timezoneCtx(): TimezoneContext {
+    return { clientSituation: this.clientSituation, config: this.config } as TimezoneContext;
+  }
+
+  public getActiveModelCaps(): {
     hasReasoning: boolean;
     contextWindow?: number;
     outputTokenLimit?: number;
   } {
-    const info = this.cachedModelInfo.get(this.config.provider.activeModel);
-    return {
-      hasReasoning: modelInfoHasReasoning(info),
-      contextWindow: info?.contextWindow,
-      outputTokenLimit: info?.outputTokenLimit,
-    };
+    return getActiveModelCapsHelper(
+      { cachedModelInfo: this.cachedModelInfo, config: this.config } as ModelCapsContext,
+    );
   }
 
-  private getContextWindow(): number {
-    const modelId = this.config.provider.activeModel;
-    const cached = modelId ? this.cachedModelInfo.get(modelId) : undefined;
-    if (cached?.contextWindow) return cached.contextWindow;
-    if (this.tokenTracker?.tokensTotal) {
-      return this.tokenTracker.tokensTotal;
-    }
-    return DEFAULT_FALLBACK_CONTEXT_WINDOW;
+  public getContextWindow(): number {
+    return getContextWindowHelper(
+      { config: this.config, cachedModelInfo: this.cachedModelInfo, tokenTracker: this.tokenTracker } as ContextWindowContext,
+    );
   }
 
   private toFriendlyError(error: unknown): { message: string; actions: RemediationAction[] } {
-    const spaceErr = resolveSpaceError(error);
-    const msg = error instanceof Error ? error.message : String(error);
-
-    if (error instanceof ContextBudgetExceededError) {
-      return {
-        message: `⚠️ ${error.message}`,
-        actions: [
-          { type: 'switch_model', label: 'Switch model' },
-          { type: 'dismiss', label: 'Dismiss' },
-        ],
-      };
-    }
-    if (msg.includes('max_output_tokens') && msg.includes('below minimum')) {
-      return {
-        message: '⚠️ Model trial or completion used an output token budget below the provider minimum (16). Retry after selecting the model again, or pick a different model.',
-        actions: [
-          { type: 'retry', label: 'Retry' },
-          { type: 'switch_model', label: 'Switch model' },
-          { type: 'dismiss', label: 'Dismiss' },
-        ],
-      };
-    }
-
-    // Determine actions based on category
-    if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('Invalid API')) {
-      return {
-        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
-        actions: [
-          { type: 'reconfigure_key', label: 'Update API key' },
-          { type: 'switch_model', label: 'Switch provider' },
-          { type: 'dismiss', label: 'Dismiss' },
-        ],
-      };
-    }
-    if (msg.includes('429') || msg.includes('rate limit') || msg.includes('Too Many Requests')) {
-      return {
-        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
-        actions: [
-          { type: 'retry', label: 'Retry' },
-          { type: 'switch_model', label: 'Switch model' },
-          { type: 'dismiss', label: 'Dismiss' },
-        ],
-      };
-    }
-    if (msg.includes('404') || msg.includes('not found')) {
-      return {
-        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
-        actions: [
-          { type: 'switch_model', label: 'Pick a different model' },
-          { type: 'dismiss', label: 'Dismiss' },
-        ],
-      };
-    }
-    if (msg.includes('402') || msg.includes('quota') || msg.includes('billing')) {
-      return {
-        message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
-        actions: [
-          { type: 'switch_model', label: 'Switch provider' },
-          { type: 'dismiss', label: 'Dismiss' },
-        ],
-      };
-    }
-    // Generic — retry + dismiss
-    return {
-      message: `${spaceErr.icon} ${spaceErr.title} — ${spaceErr.message}`,
-      actions: [
-        { type: 'retry', label: 'Retry' },
-        { type: 'dismiss', label: 'Dismiss' },
-      ],
-    };
+    return toFriendlyErrorHelper(error);
   }
 
   // ─── AI SDK PIPELINE: Replaces old _unifiedStream ───
@@ -4868,52 +3727,12 @@ Only include specialists that are actually needed for this task.`;
     };
   }
 
-  private async superviseCrewMission(
+  public async superviseCrewMission(
     mission: CrewMissionResult,
     cleanContent: string,
     startTime: number,
   ): Promise<string> {
-    const systemMsg = this.messages.find((m) => m.role === 'system');
-    const systemContent = typeof systemMsg?.content === 'string' ? systemMsg.content : '';
-    const workerSummary = mission.workers.map((w) =>
-      `@${w.callsign} (${w.crewName}) [${w.success ? 'ok' : 'failed'}]:\n${w.output.slice(0, 2000)}`,
-    ).join('\n\n---\n\n');
-
-    const turnCtx = this.prepareTurnContext(cleanContent);
-    const reviewPrompt = `${systemContent}\n\n[CREW SUPERVISOR]\nYou are Agent-X, the project manager supervising a crew mission. Review worker outputs, resolve conflicts, and deliver the final cohesive answer to the user. If the mission failed or needs user input, say so clearly and concisely.\n[/CREW SUPERVISOR]`;
-
-    try {
-      const model = createAiSdkModel(this.config, this.getApiKey());
-      const r = await streamText({
-        model,
-        messages: [
-          { role: 'system', content: reviewPrompt },
-          {
-            role: 'user',
-            content: `${turnCtx.block}\n\nUser request: ${turnCtx.mergedTask}\n\nMission success: ${mission.success}\n\nCrew outputs:\n${workerSummary}\n\nProvide your final supervised response:`,
-          },
-        ],
-        maxOutputTokens: 4096,
-      });
-      let text = '';
-      for await (const chunk of r.textStream) { text += chunk; }
-      if (text.trim()) {
-        const msg: Message = {
-          id: generateMessageId(),
-          sessionId: this.sessionId,
-          role: 'assistant',
-          content: text,
-          toolCalls: null,
-          createdAt: new Date().toISOString(),
-          tokenCount: Math.ceil(text.length / 4),
-        };
-        this.messages.push({ role: 'assistant', content: text });
-        this.emit({ type: 'message_received', message: msg, elapsed: Date.now() - startTime });
-      }
-      return text.trim() || mission.synthesized;
-    } catch {
-      return mission.synthesized;
-    }
+    return superviseCrewMissionHelper(this, mission, cleanContent, startTime);
   }
 
   /**
@@ -4933,7 +3752,7 @@ Only include specialists that are actually needed for this task.`;
         intent: 'crew_delegation_denied',
         confidence: 1,
         reasons: [result.reason],
-      } as unknown as EngineEvent);
+      });
     }
     return result;
   }
@@ -4951,9 +3770,8 @@ Only include specialists that are actually needed for this task.`;
 
     let missionMembers = members;
     if (this.options.promptProfile !== 'crew_private') {
-      const store = (this.sessionManager as unknown as { store?: unknown })?.store;
-      const catalogStore = (store as { getCrewCatalogStore?: () => CrewCatalogRecruitStore | null })
-        ?.getCrewCatalogStore?.() ?? null;
+      const store = this.getPersistStore();
+      const catalogStore = (store?.getCrewCatalogStore?.() as CrewCatalogRecruitStore | null) ?? null;
       missionMembers = await ensureCrewMembersOnRoster(
         this.secretSauce.crew,
         members,
@@ -4996,35 +3814,7 @@ Only include specialists that are actually needed for this task.`;
     members: CrewMember[],
     startTime: number,
   ): void {
-    for (const r of mission.responses) {
-      const crewMember = members.find((m) => m.crew.id === r.crewId);
-      if (!crewMember) {
-        getLogger().warn('CREW_MISSION', `Response crewId ${r.crewId} not in mission members — skipping misattributed publish`);
-        continue;
-      }
-      const msg: Message = {
-        id: generateMessageId(),
-        sessionId: this.sessionId,
-        role: 'assistant',
-        content: r.content,
-        toolCalls: null,
-        createdAt: new Date().toISOString(),
-        tokenCount: 0,
-        crew: {
-          crewId: crewMember.crew.id,
-          name: r.member,
-          callsign: r.callsign,
-          color: crewMember.crew.color,
-          icon: crewMember.crew.icon,
-          confidence: mission.success ? 'high' : 'medium',
-          reasons: [`Crew worker @${r.callsign}`],
-        },
-      };
-      this.messages.push({ role: 'assistant', content: `[${r.member} (@${r.callsign})]:\n${r.content}` });
-      this.contextTracker.record('crew', r.content, r.member);
-      this.persistAssistantMessage(msg);
-      this.emit({ type: 'message_received', message: msg, elapsed: Date.now() - startTime });
-    }
+    return publishCrewMissionResponsesHelper(this, mission, members, startTime);
   }
 
   /**
@@ -5037,71 +3827,7 @@ Only include specialists that are actually needed for this task.`;
     startTime: number,
     _classificationContext?: string,
   ): Promise<Message> {
-    const mission = await this.runCrewMissionAndPublish(members, cleanContent, {
-      extraContext: _classificationContext,
-      startTime,
-      emitLoading: true,
-    });
-
-    let lastMessage: Message | null = mission.responses.length > 0
-      ? {
-          id: generateMessageId(),
-          sessionId: this.sessionId,
-          role: 'assistant',
-          content: mission.responses[mission.responses.length - 1]!.content,
-          toolCalls: null,
-          createdAt: new Date().toISOString(),
-          tokenCount: 0,
-        }
-      : null;
-
-    const needsSupervision = mission.responses.length > 1 || !mission.success;
-    if (needsSupervision) {
-      const supervisorReview = await this.superviseCrewMission(mission, cleanContent, startTime);
-      mission.supervisorReview = supervisorReview;
-      if (supervisorReview && supervisorReview !== mission.synthesized) {
-        const synthMsg: Message = {
-          id: generateMessageId(),
-          sessionId: this.sessionId,
-          role: 'assistant',
-          content: supervisorReview,
-          toolCalls: null,
-          createdAt: new Date().toISOString(),
-          tokenCount: Math.ceil(supervisorReview.length / 4),
-        };
-        this.messages.push({ role: 'assistant', content: supervisorReview });
-        this.emit({ type: 'message_received', message: synthMsg, elapsed: Date.now() - startTime });
-        lastMessage = synthMsg;
-      }
-    } else if (mission.responses.length === 1) {
-      lastMessage = lastMessage ?? {
-        id: generateMessageId(), sessionId: this.sessionId, role: 'assistant',
-        content: mission.synthesized || '', toolCalls: null, createdAt: new Date().toISOString(), tokenCount: 0,
-      };
-    } else if (mission.synthesized) {
-      const synthMsg: Message = {
-        id: generateMessageId(),
-        sessionId: this.sessionId,
-        role: 'assistant',
-        content: mission.synthesized,
-        toolCalls: null,
-        createdAt: new Date().toISOString(),
-        tokenCount: 0,
-      };
-      this.messages.push({ role: 'assistant', content: mission.synthesized });
-      this.emit({ type: 'message_received', message: synthMsg, elapsed: Date.now() - startTime });
-      lastMessage = synthMsg;
-    }
-
-    this.emit({ type: 'loading_end' });
-    this.lifecycle.forceTransition('idle');
-    this.scope = null;
-    this.runStateMgr.release(this.sessionId);
-    this.commandQueue.release(this.sessionId);
-    return lastMessage ?? {
-      id: generateMessageId(), sessionId: this.sessionId, role: 'assistant',
-      content: mission.synthesized || '', toolCalls: null, createdAt: new Date().toISOString(), tokenCount: 0,
-    };
+    return executeCrewMissionHelper(this, members, cleanContent, startTime, _classificationContext);
   }
 
   /**
@@ -5110,31 +3836,7 @@ Only include specialists that are actually needed for this task.`;
    * Uses LLM-powered semantic matching (scalable to any domain).
    */
   private extractTasksFromResponse(content: string): void {
-    const conversational = /\b(game|option|choice|suggestion|recommendation|example|sample|or you could|why not try|how about|feel free|pick one|choose from)\b/i;
-    if (conversational.test(content)) return;
-
-    const lines = content.split('\n');
-    const taskLines: string[] = [];
-
-    for (const line of lines) {
-      const stripped = line.trim();
-      if (/^\s*[-*•]\s+/.test(stripped) || /^\s*\d+[.)]\s+/.test(stripped)) {
-        taskLines.push(stripped);
-      }
-    }
-
-    if (taskLines.length < 2) return;
-
-    const tasks = taskLines
-      .map((l) => l.replace(/^[\s]*[-*•]\s+/, '').replace(/^[\s]*\d+[.)]\s+/, '').trim())
-      .map((t) => t.replace(/\*\*(.+?)\*\*/g, '$1').replace(/__(.+?)__/g, '$1').replace(/`(.+?)`/g, '$1'))
-      .filter((t) => t.length > 5 && t.length < 200);
-
-    if (tasks.length >= 2) {
-      this.todoManager.clear();
-      this.todoManager.addItems(tasks);
-      getLogger().info('TODO_EXTRACT', `Extracted ${tasks.length} tasks from response`);
-    }
+    return extractTasksFromResponseHelper(this, content);
   }
 
   getMaxSubAgents(): number {
@@ -5146,7 +3848,7 @@ Only include specialists that are actually needed for this task.`;
     this.subAgents.setMaxConcurrent(this.maxSubAgents);
   }
 
-  setSessionManager(sm: { createSession: (providerId: string, modelId: string, scopePath?: string, id?: string, parentId?: string) => { id: string } }): void {
+  setSessionManager(sm: SessionManager): void {
     this.sessionManager = sm;
     this.restoreSessionPermissions();
     if (this.options.channelSession) {
@@ -5158,54 +3860,11 @@ Only include specialists that are actually needed for this task.`;
   }
 
   private persistPermissionGrant(toolName: string, decision: PermissionDecision): void {
-    if (!this.sessionManager) return;
-    const store = (this.sessionManager as unknown as {
-      store?: {
-        addPermission?: (perm: {
-          id: string;
-          sessionId: string;
-          toolName: string;
-          targetPath?: string | null;
-          decision: string;
-        }) => void;
-      };
-    }).store;
-    if (!store?.addPermission) return;
-    try {
-      store.addPermission({
-        id: randomUUID(),
-        sessionId: this.sessionId,
-        toolName,
-        targetPath: null,
-        decision,
-      });
-    } catch { /* best-effort */ }
+    return persistPermissionGrantHelper(this.persistenceCtx(), toolName, decision);
   }
 
   private restoreSessionPermissions(): void {
-    if (!this.sessionManager || !this.toolExecutor) return;
-    const store = (this.sessionManager as unknown as {
-      store?: { getPermissions?: (sessionId: string) => Array<Record<string, unknown>> };
-    }).store;
-    if (!store?.getPermissions) return;
-    try {
-      const rows = store.getPermissions(this.sessionId);
-      const pm = this.toolExecutor.getPermissionManager();
-      const seen = new Set<string>();
-      for (const row of rows) {
-        const toolName = (row['tool_name'] ?? row['toolName']) as string;
-        const decision = row['decision'] as PermissionDecision;
-        if (!toolName || seen.has(toolName)) continue;
-        seen.add(toolName);
-        if (toolName === '*') {
-          pm.allowAll();
-        } else if (decision === 'allow_always') {
-          pm.grant(toolName, 'allow_always');
-        } else if (decision === 'deny') {
-          pm.deny(toolName);
-        }
-      }
-    } catch { /* best-effort */ }
+    return restoreSessionPermissionsHelper(this.persistenceCtx());
   }
 
   createChildSession(
@@ -5231,60 +3890,14 @@ Only include specialists that are actually needed for this task.`;
   }
 
   private detectAtMentions(content: string): string[] {
-    const normalized = content.replace(/\u200b/g, '');
-    const matches = normalized.matchAll(/(?<!\w)@([\w][\w.-]*)/g);
-    const mentioned: string[] = [];
-    const members = this.getCrewMembers();
-    for (const match of matches) {
-      const name = match[1]!.toLowerCase();
-      const found = members.find(
-        (m) => m.crew.callsign.toLowerCase() === name
-          || m.crew.name.toLowerCase() === name
-          || m.crew.name.toLowerCase().replace(/\s+/g, '_') === name
-          || m.crew.id.toLowerCase() === name,
-      );
-      if (found && !mentioned.includes(found.crew.id)) {
-        mentioned.push(found.crew.id);
-      }
-    }
-    return mentioned;
+    return detectAtMentionsHelper(this, content);
   }
 
   /**
    * Detect plan-mode violations (successful write tools) and rollback via latest checkpoint.
    */
   private async enforcePlanModeViolations(turnStart: number): Promise<void> {
-    const violations = this.toolLedger.getEntries().filter((e) => e.success && isWriteTool(e.name));
-    if (violations.length === 0) return;
-
-    getLogger().warn('AGENT', `Plan mode violation: ${violations.length} write tool(s) succeeded`);
-    let checkpointId: string | undefined;
-    let rolledBack = false;
-
-    try {
-      const store = (this.sessionManager as unknown as { store?: { listCheckpoints?: (sid: string) => Array<{ id: string; createdAt: string }>; restoreCheckpoint?: (sid: string, id: string) => boolean } })?.store;
-      if (store?.listCheckpoints && store.restoreCheckpoint) {
-        const checkpoints = store.listCheckpoints(this.sessionId);
-        const turnStartIso = new Date(turnStart - 5000).toISOString();
-        const candidate = checkpoints
-          .filter((c) => c.createdAt >= turnStartIso)
-          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]
-          ?? checkpoints[checkpoints.length - 1];
-        if (candidate) {
-          checkpointId = candidate.id;
-          rolledBack = store.restoreCheckpoint(this.sessionId, checkpointId);
-        }
-      }
-    } catch (e) {
-      getLogger().error('PLAN_VIOLATION', e instanceof Error ? e.message : String(e));
-    }
-
-    this.emit({
-      type: 'plan_mode_violation',
-      violations: violations.map((v) => ({ tool: v.name, path: v.path, output: v.output.slice(0, 200) })),
-      checkpointId,
-      rolledBack,
-    });
+    return enforcePlanModeViolations(this, turnStart);
   }
 
   /**
@@ -5295,65 +3908,7 @@ Only include specialists that are actually needed for this task.`;
     responseContent: string,
     toolExecutions: Array<{ name: string; success: boolean; output: string; elapsed: number }>
   ): { isTransparent: boolean; issues: string[] } {
-    const issues: string[] = [];
-    
-    // Pattern: agent claims to have created/edited/deleted files
-    const writePatterns = [
-      /created\s+(["`]?[\w./-]+["`]?)/gi,
-      /created the file/gi,
-      /created a new file/gi,
-      /wrote.*to\s+(["`]?[\w./-]+["`]?)/gi,
-      /edited\s+(["`]?[\w./-]+["`]?)/gi,
-      /modified\s+(["`]?[\w./-]+["`]?)/gi,
-      /deleted\s+(["`]?[\w./-]+["`]?)/gi,
-      /done!\s*i'[^ ]*ve created/gi,
-      /done.*created/gi,
-      /i've created/gi,
-      /i have created/gi,
-    ];
-    
-    let claimsRestrictedMutation = false;
-    for (const pattern of writePatterns) {
-      if (pattern.test(responseContent)) {
-        claimsRestrictedMutation = true;
-        break;
-      }
-    }
-    
-    // Check if any edit/delete operations failed
-    const restrictedToolsAttempted = toolExecutions.filter(t => isWriteTool(t.name));
-    const failedRestricted = restrictedToolsAttempted.filter(t => !t.success);
-
-    // Filesystem ground-truth: if a claimed path exists but tool reported failure, note the mismatch
-    for (const entry of failedRestricted) {
-      const pathMatch = entry.output.match(/path[=:\s]+(["']?)([\w./-]+)\1/i)
-        || entry.output.match(/([\w./-]+\.\w{1,8})/);
-      const relPath = pathMatch?.[2] || pathMatch?.[1];
-      if (relPath) {
-        const absPath = resolve(this.scopePath, relPath);
-        if (existsSync(absPath)) {
-          issues.push(`Tool ${entry.name} reported failure but file exists: ${relPath}`);
-        }
-      }
-    }
-    
-    if (claimsRestrictedMutation && failedRestricted.length > 0) {
-      issues.push(`Agent claimed success but ${failedRestricted.length} edit/delete operation(s) failed`);
-    }
-    
-    if ((responseContent.includes('Done!') || responseContent.includes('Completed!')) && 
-        claimsRestrictedMutation && 
-        failedRestricted.length > 0 &&
-        !responseContent.toLowerCase().includes('plan mode') &&
-        !responseContent.toLowerCase().includes('mode restriction') &&
-        !responseContent.toLowerCase().includes('switch to agent')) {
-      issues.push('Claims completion without mentioning mode restriction');
-    }
-    
-    return {
-      isTransparent: issues.length === 0,
-      issues,
-    };
+    return validateModeRestrictionTransparency(this, responseContent, toolExecutions);
   }
 
   /**
@@ -5364,97 +3919,7 @@ Only include specialists that are actually needed for this task.`;
     originalMessage: Message,
     validation: { isTransparent: boolean; issues: string[] }
   ): Promise<Message> {
-    getLogger().info('AGENT', `Refactoring response due to mode restriction transparency issues: ${validation.issues.join(', ')}`);
-    
-    // Build context about what failed
-    const failedOps = this.toolCallLogForReflection
-      .filter(t => !t.success)
-      .map(t => `- ${t.name}: ${t.output.slice(0, 100)}`)
-      .join('\n');
-    
-    const refactorPrompt = `[SYSTEM] Your previous response contained an issue:
-
-PROBLEM: You claimed to have edited/deleted files, but those edit/delete tools failed in Plan Mode.
-The following operations actually FAILED:
-${failedOps}
-
-YOUR PREVIOUS RESPONSE:
-${originalMessage.content}
-
-FIX: Rewrite your response to be honest. You must:
-1. Explain EXACTLY what edit/delete action you tried
-2. Explain that edit/delete requires Agent Mode or Hyperdrive
-3. Note that reads, new files, scripts, search, and scheduling work in Plan mode
-4. Do NOT claim an edit or delete succeeded
-
-Provide the corrected response now:`;
-
-    try {
-      const model = createAiSdkModel(this.config, this.getApiKey());
-      const aiMessages = buildCompletionMessages(
-        this.messages.slice(0, -1).map(m => ({
-          role: m.role,
-          content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
-        })),
-        false,
-        3,
-        this.config.provider.activeProvider,
-      ).map((m) => ({
-        role: m.role as 'user' | 'assistant' | 'system',
-        content: m.content,
-      }));
-      aiMessages.push({ role: 'user', content: refactorPrompt });
-
-      let refactoredContent = '';
-      this.emit({ type: 'loading_start', stage: 'refactoring' });
-      const refactorMaxOutputTokens = resolveEffectiveMaxOutputTokens({
-        configured: this.config.maxOutputTokens,
-        contextWindow: this.getContextWindow(),
-        estimatedInputTokens: estimatePromptTokens(aiMessages, 0, 0),
-        modelCaps: this.getActiveModelCaps(),
-      });
-      const refactorResult = streamText({
-        model,
-        messages: aiMessages,
-        tools: undefined,
-        maxRetries: 1,
-        maxOutputTokens: refactorMaxOutputTokens,
-      });
-
-      for await (const chunk of refactorResult.fullStream) {
-        if (chunk.type === 'text-delta') {
-          const delta = extractStreamTextDelta(chunk as Record<string, unknown>);
-          refactoredContent = appendStreamText(refactoredContent, delta);
-          this.partialTurnContent = refactoredContent;
-          this.emit({ type: 'stream_chunk', content: delta, fullContent: refactoredContent });
-        }
-      }
-      this.emit({ type: 'loading_end' });
-
-      if (refactoredContent.trim()) {
-        getLogger().info('AGENT', `Refactored response (${refactoredContent.length} chars)`);
-        this.messages[this.messages.length - 1] = { role: 'assistant', content: refactoredContent };
-        return {
-          id: generateMessageId(),
-          sessionId: this.sessionId,
-          role: 'assistant',
-          content: refactoredContent,
-          toolCalls: null,
-          createdAt: new Date().toISOString(),
-          tokenCount: Math.ceil(refactoredContent.length / 4),
-        };
-      }
-    } catch (error) {
-      getLogger().error('REFACTOR', error instanceof Error ? error.message : String(error));
-      // If refactor fails, return original but prepend a disclaimer
-    }
-    
-    // Fallback: return original with disclaimer prepended
-    const disclaimer = `⚠️ MODE RESTRICTION: You are in Plan Mode (read-only). The operation(s) above could not be executed. Switch to Agent Mode to enable file operations.\n\n${originalMessage.content}`;
-    return {
-      ...originalMessage,
-      content: disclaimer,
-    };
+    return refactorResponseForTransparency(this, originalMessage, validation);
   }
 
   /**
@@ -5479,22 +3944,4 @@ Provide the corrected response now:`;
   }
 }
 
-function generateDiff(oldText: string, newText: string): string {
-  const oldLines = oldText.split('\n');
-  const newLines = newText.split('\n');
-  const lines: string[] = [];
-  let o = 0, n = 0;
-  while (o < oldLines.length || n < newLines.length) {
-    if (o < oldLines.length && n < newLines.length && oldLines[o] === newLines[n]) {
-      lines.push(` ${oldLines[o]}`);
-      o++; n++;
-    } else if (o < oldLines.length && (n >= newLines.length || oldLines[o] !== newLines[n])) {
-      lines.push(`-${oldLines[o]}`);
-      o++;
-    } else if (n < newLines.length) {
-      lines.push(`+${newLines[n]}`);
-      n++;
-    }
-  }
-  return lines.join('\n');
-}
+export { Agent as AgentFacade };

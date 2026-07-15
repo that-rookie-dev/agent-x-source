@@ -1,7 +1,5 @@
 import type { ToolResult, ToolExecutionContext, PermissionRule, SessionContextKind } from '@agentx/shared';
-import { isChannelSessionId, formatPermissionInstructedToolOutput, normalizePermissionHandlerResult, type PermissionHandlerResult } from '@agentx/shared';
-import { evaluateRules } from './permissions/RuleEngine.js';
-import { isPermissionExemptTool } from './permissions/exempt-tools.js';
+import { formatPermissionInstructedToolOutput, type PermissionHandlerResult } from '@agentx/shared';
 import { PermissionManager } from './permissions/PermissionManager.js';
 import { ScopeGuard } from './permissions/ScopeGuard.js';
 import { ToolRegistry } from './ToolRegistry.js';
@@ -14,8 +12,7 @@ import {
   blockCredentialScavenger,
   blockThirdPartyLocalSubstitute,
 } from '../integrations/third-party-access-guard.js';
-import { buildIntegrationActionPreview } from '../integrations/action-preview.js';
-import { isIntegrationToolId } from '../integrations/action-classifier.js';
+import { ToolPermissionService, type ToolPermissionHost } from '../services/tool/ToolPermissionService.js';
 
 
 export type PermissionRequestHandler = (
@@ -48,11 +45,15 @@ export interface ToolExecutionEntry {
 
 const MAX_HISTORY = 200;
 
-export class ToolExecutor {
+export class ToolExecutor implements ToolPermissionHost {
   private registry: ToolRegistry;
   private permissionManager: PermissionManager;
   private scopeGuard: ScopeGuard;
   private handlers: Map<string, (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<ToolResult>> = new Map();
+
+  getHandlers(): Map<string, (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<ToolResult>> {
+    return this.handlers;
+  }
   private permissionRequestHandler?: PermissionRequestHandler;
   /** Dedicated handler for messaging channel super-sessions — not overwritten by UI agent wiring. */
   private channelPermissionRequestHandler?: PermissionRequestHandler;
@@ -77,11 +78,13 @@ export class ToolExecutor {
   private thirdPartyTurnPolicy: ThirdPartyTurnPolicy | null = null;
   private turnAborted = false;
   private permissionPromptHook?: PermissionPromptHook;
+  private permissionService: ToolPermissionService;
 
   constructor(registry: ToolRegistry, scopePath: string) {
     this.registry = registry;
     this.permissionManager = new PermissionManager();
     this.scopeGuard = new ScopeGuard(scopePath);
+    this.permissionService = new ToolPermissionService();
   }
 
   setMode(mode: 'agent' | 'plan'): void {
@@ -173,18 +176,56 @@ export class ToolExecutor {
     this.inboundSourceChannel = channel;
   }
 
+  getPermissionRequestHandler(): PermissionRequestHandler | undefined {
+    return this.permissionRequestHandler;
+  }
+
   getChannelPermissionRequestHandler(): PermissionRequestHandler | undefined {
     return this.channelPermissionRequestHandler;
   }
 
-  private resolvePermissionRequestHandler(sessionId: string): PermissionRequestHandler | undefined {
-    if (
-      this.channelPermissionRequestHandler
-      && (isChannelSessionId(sessionId) || this.messagingPermissionMode)
-    ) {
-      return this.channelPermissionRequestHandler;
-    }
-    return this.permissionRequestHandler;
+  getPermissionPromptHook(): PermissionPromptHook | undefined {
+    return this.permissionPromptHook;
+  }
+
+  getBeforeToolHook(): ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null {
+    return this.beforeToolHook;
+  }
+
+  getAlwaysPromptPermissions(): boolean {
+    return this.alwaysPromptPermissions;
+  }
+
+  getMessagingPermissionMode(): boolean {
+    return this.messagingPermissionMode;
+  }
+
+  getInboundSourceChannel(): string | null {
+    return this.inboundSourceChannel;
+  }
+
+  getMode(): 'agent' | 'plan' {
+    return this.mode;
+  }
+
+  getSessionRules(): PermissionRule[] {
+    return this.sessionRules;
+  }
+
+  getAgentPermissions(): PermissionRule[] {
+    return this.agentPermissions;
+  }
+
+  getUserConfigRules(): PermissionRule[] {
+    return this.userConfigRules;
+  }
+
+  getCurrentAgent(): AgentInfo | null {
+    return this.currentAgent;
+  }
+
+  getRegistry(): ToolRegistry {
+    return this.registry;
   }
 
   /** Copy permission policy, mode, and hooks from another executor (e.g. parent → crew worker). */
@@ -251,7 +292,11 @@ export class ToolExecutor {
     toolId: string,
     args: Record<string, unknown>,
     sessionId: string,
+    options?: { signal?: AbortSignal },
   ): Promise<ToolResult> {
+    if (options?.signal?.aborted) {
+      return { success: false, output: 'Tool execution cancelled', error: 'ABORTED' };
+    }
     if (this.turnAborted) {
       return {
         success: false,
@@ -335,20 +380,7 @@ export class ToolExecutor {
       };
     }
 
-    // Evaluate permission rules (agent rules → session rules → user config rules)
-    const ruleResult = evaluateRules(
-      `tool:${toolId}`,
-      scopePathForHook ?? '*',
-      this.agentPermissions,
-      this.sessionRules,
-      this.userConfigRules,
-    );
-
-    if (ruleResult === 'deny') {
-      return { success: false, output: `"${toolId}" is not available.`, error: 'MODE_RESTRICTED' };
-    }
-
-    if (this.turnAborted) {
+    if (this.turnAborted || options?.signal?.aborted) {
       return {
         success: false,
         output: 'Turn aborted — tool execution stopped.',
@@ -356,50 +388,36 @@ export class ToolExecutor {
       };
     }
 
-    const permissionExempt = isPermissionExemptTool(toolId);
-    const shouldPrompt = this.alwaysPromptPermissions || tool.riskLevel !== 'low';
-    const permissionHandler = this.resolvePermissionRequestHandler(sessionId);
-    if (
-      !permissionExempt
-      && ruleResult === 'ask'
-      && permissionHandler
-      && shouldPrompt
-    ) {
-      const existingGrant = this.permissionManager.check(toolId, scopePathForHook ?? undefined);
-      if (existingGrant === 'allow_always') {
-        // Previously granted — skip prompt
-      } else {
-        const integrationPreview = isIntegrationToolId(toolId)
-          ? buildIntegrationActionPreview(toolId, args, tool) ?? undefined
-          : undefined;
-        this.permissionPromptHook?.({
-          toolId,
-          path: scopePathForHook ?? '*',
-          riskLevel: tool.riskLevel,
-          integrationPreview,
-        });
-        const response = await permissionHandler(
-          toolId,
-          scopePathForHook ?? '*',
-          tool.riskLevel,
-          { args, integrationPreview },
-        );
-        const { decision, instruction } = normalizePermissionHandlerResult(response);
-        if (decision === 'deny') {
-          if (instruction) {
-            return {
-              success: false,
-              output: formatPermissionInstructedToolOutput(instruction),
-              error: 'PERMISSION_INSTRUCTED',
-            };
-          }
-          return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
-        }
-        if (decision === 'allow_always') {
-          // Session "always allow" applies to the whole tool, not just one path.
-          this.permissionManager.grant(toolId, 'allow_always');
-        }
+    const permissionResult = await this.permissionService.requestPermission(
+      this,
+      toolId,
+      args,
+      sessionId,
+      scopePathForHook,
+      tool,
+    );
+
+    if (permissionResult.decision === 'deny') {
+      if (permissionResult.instruction) {
+        return {
+          success: false,
+          output: formatPermissionInstructedToolOutput(permissionResult.instruction),
+          error: permissionResult.error ?? 'PERMISSION_INSTRUCTED',
+        };
       }
+      return {
+        success: false,
+        output: permissionResult.error === 'MODE_RESTRICTED' ? `"${toolId}" is not available.` : 'Permission denied',
+        error: permissionResult.error ?? 'PERMISSION_DENIED',
+      };
+    }
+
+    if (this.turnAborted || options?.signal?.aborted) {
+      return {
+        success: false,
+        output: 'Turn aborted — tool execution stopped.',
+        error: 'TURN_ABORTED',
+      };
     }
 
     // Fire before-tool hook for diff/preview
@@ -414,6 +432,9 @@ export class ToolExecutor {
     }
 
     const abortController = new AbortController();
+    if (options?.signal) {
+      options.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+    }
     const onToolOutput = this.onToolOutput;
     const context: ToolExecutionContext = {
       sessionId,
@@ -424,6 +445,7 @@ export class ToolExecutor {
       mode: this.mode,
       ...(this.inboundSourceChannel ? { sourceChannel: this.inboundSourceChannel } : {}),
       onOutput: onToolOutput,
+      signal: abortController.signal,
     };
 
     try {
@@ -451,6 +473,10 @@ export class ToolExecutor {
 
       // Enterprise audit log
       this.policyEngine?.logAudit({ action: 'execute', toolId, args, result, sessionId, duration: elapsed });
+
+      if (options?.signal?.aborted) {
+        return { success: false, output: 'Tool execution cancelled', error: 'ABORTED' };
+      }
 
       return result;
     } catch (error) {

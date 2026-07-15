@@ -2,6 +2,8 @@ import type { PrebuiltCategory, PrebuiltCrew } from '../../components/crew/CrewH
 import { PREBUILT_CATEGORY_INDEX, type PrebuiltCrewData } from './prebuilt-crews-index';
 import type { CrewSearchIndexEntry } from './search-index';
 
+const SEARCH_INDEX_URL = '/crew-hub/search-index.json';
+
 const categoryModules = import.meta.glob<{ PREBUILT_CREWS: PrebuiltCrewData[] }>('./categories/*.ts');
 
 let cached: PrebuiltCategory[] | null = null;
@@ -26,17 +28,30 @@ async function loadCategoryCrews(categoryId: string): Promise<PrebuiltCrew[]> {
   return mod.PREBUILT_CREWS;
 }
 
-/** Lightweight search catalog (no system prompts). */
+/** Lightweight search catalog (no system prompts), loaded from a static JSON asset. */
 export function loadCrewSearchIndex(): Promise<CrewSearchIndexEntry[]> {
   if (searchIndex) return Promise.resolve(searchIndex);
   if (searchIndexInflight) return searchIndexInflight;
 
-  searchIndexInflight = import('./search-index').then((mod) => {
-    searchIndex = mod.CREW_SEARCH_INDEX;
-    return searchIndex;
-  }).finally(() => {
-    searchIndexInflight = null;
-  });
+  searchIndexInflight = fetch(SEARCH_INDEX_URL)
+    .then(async (res) => {
+      if (!res.ok) throw new Error(`Failed to load crew search index: ${res.status}`);
+      return res.json() as Promise<CrewSearchIndexEntry[]>;
+    })
+    .then((data) => {
+      searchIndex = data;
+      return data;
+    })
+    .catch((err) => {
+      // Some test/SSR environments do not serve the public asset; keep the
+      // search gracefully empty instead of crashing the UI.
+      console.error('Crew search index unavailable', err);
+      searchIndex = [];
+      return searchIndex;
+    })
+    .finally(() => {
+      searchIndexInflight = null;
+    });
 
   return searchIndexInflight;
 }

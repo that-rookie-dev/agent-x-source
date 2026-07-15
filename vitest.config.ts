@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   test: {
@@ -16,6 +17,11 @@ export default defineConfig({
         functions: 85,
         lines: 85,
       },
+    },
+  },
+  resolve: {
+    alias: {
+      '@agentx/runtime': fileURLToPath(new URL('./packages/server/tests/__mocks__/runtime-mock.ts', import.meta.url)),
     },
   },
 });

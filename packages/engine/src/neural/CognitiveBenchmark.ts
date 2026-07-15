@@ -12,7 +12,7 @@
  * scorecard is persisted and the sandbox is wiped, leaving only the score.
  */
 import crypto from 'node:crypto';
-import type { MemoryFabric, TestResult } from './MemoryFabric.js';
+import type { MemoryFabric, TestResult, MemoryNodeCategory } from './MemoryFabric.js';
 import type { MemoryNode } from './MemoryFabric.js';
 import { LocalLLMJudge } from './LocalLLMJudge.js';
 
@@ -237,7 +237,7 @@ export class CognitiveBenchmark {
   private async createBenchmarkNode(category: string, label: string, content: string, tag: string): Promise<MemoryNode> {
     const node = await this.fabric.createNode({
       label,
-      category: category as any,
+      category: category as MemoryNodeCategory,
       content,
       tag,
       isBenchmark: true,

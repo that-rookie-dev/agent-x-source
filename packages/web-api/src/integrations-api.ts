@@ -298,8 +298,8 @@ function oauthResultPage(success: boolean, message: string): string {
 <script>
 (function () {
   var payload = ${payload};
-  try { window.opener && window.opener.postMessage(payload, '*'); } catch (e) {}
-  try { new BroadcastChannel('agentx-integrations').postMessage(payload); } catch (e) {}
+  try { window.opener && window.opener.postMessage(payload, '*'); } catch (e) { /* ignore */ }
+  try { new BroadcastChannel('agentx-integrations').postMessage(payload); } catch (e) { /* ignore */ }
   if (${success ? 'true' : 'false'}) { setTimeout(function () { window.close(); }, 1200); }
 })();
 </script>

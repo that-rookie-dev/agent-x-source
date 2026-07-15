@@ -2,6 +2,7 @@ import { cpSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { VoiceConfig, VoiceDownloadedAsset } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
 import { computeDirectorySha256 } from './VoiceAssetManager.js';
 import { isVoiceAssetInstalled } from './VoiceAssetCatalog.js';
 
@@ -76,7 +77,12 @@ export function loadVoiceModelsManifest(): VoiceModelsManifest {
   if (!manifestPath) {
     throw new Error('voice-models.manifest.json not found');
   }
-  return JSON.parse(readFileSync(manifestPath, 'utf8')) as VoiceModelsManifest;
+  try {
+    return JSON.parse(readFileSync(manifestPath, 'utf8')) as VoiceModelsManifest;
+  } catch (error) {
+    getLogger().warn('VOICE_ASSET_MANIFEST', `Failed to parse voice models manifest: ${error instanceof Error ? error.message : String(error)}`);
+    return { version: 0, assets: [] };
+  }
 }
 
 export function resolveVoiceBundleDir(): string | null {

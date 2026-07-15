@@ -30,7 +30,7 @@ export interface ResolvedClientLocation {
 }
 
 function readSource(): ClientSituation['source'] {
-  const agentx = (window as unknown as { agentx?: { isDesktop?: boolean } }).agentx;
+  const agentx = (window as Window & { agentx?: { isDesktop?: boolean } }).agentx;
   return agentx?.isDesktop ? 'desktop' : 'browser';
 }
 

@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, copyFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { AgentXConfig, ProviderProfile, FeatureRoutingConfig } from '@agentx/shared';
+import type { AgentXConfig, ProviderProfile, FeatureRoutingConfig, ProviderId } from '@agentx/shared';
 import { getLogger, encrypt, decrypt } from '@agentx/shared';
 import { agentXConfigSchema } from './ConfigSchema.js';
 import { getConfigPath, getConfigDir, getDataDir, getCacheDir, getLogDir } from './paths.js';
@@ -177,7 +177,7 @@ export class ConfigManager {
         raw = readFileSync(this.configPath, 'utf-8');
       }
 
-      const parsed = JSON.parse(raw) as unknown;
+      const parsed = JSON.parse(raw);
       const validated = agentXConfigSchema.parse(parsed);
       this.config = this.finalizeConfig(validated as AgentXConfig);
       return this.config;
@@ -193,7 +193,7 @@ export class ConfigManager {
           const secureRaw = readFileSync(encryptedBackupPath, 'utf-8');
           const secureFile = JSON.parse(secureRaw) as { version: number; encrypted: { ciphertext: string; iv: string; tag: string }; checksum: string };
           const raw = decrypt(secureFile.encrypted, this.dek);
-          const parsed = JSON.parse(raw) as unknown;
+          const parsed = JSON.parse(raw);
           const validated = agentXConfigSchema.parse(parsed);
           this.config = this.finalizeConfig(validated as AgentXConfig);
           // Restore backup as primary
@@ -208,7 +208,7 @@ export class ConfigManager {
         logger.info('CONFIG_ROLLBACK', 'Attempting to load backup config');
         try {
           const raw = readFileSync(this.backupPath, 'utf-8');
-          const parsed = JSON.parse(raw) as unknown;
+          const parsed = JSON.parse(raw);
           const validated = agentXConfigSchema.parse(parsed);
           this.config = this.finalizeConfig(validated as AgentXConfig);
           // Restore backup as primary
@@ -297,7 +297,7 @@ export class ConfigManager {
     try {
       const raw = readFileSync(this.backupPath, 'utf-8');
       // Validate backup is parseable
-      const parsed = JSON.parse(raw) as unknown;
+      const parsed = JSON.parse(raw);
       agentXConfigSchema.parse(parsed);
       // Replace current with backup
     const dir = dirname(this.configPath || getConfigPath());
@@ -335,11 +335,9 @@ export class ConfigManager {
   addProviderProfile(providerId: string, profileId: string, profile: ProviderProfile, setActive = true): void {
     const cfg = this.load();
     if (!cfg.provider.providers[providerId]) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (cfg.provider.providers as any)[providerId] = { configured: false };
+      cfg.provider.providers[providerId] = { configured: false };
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const p = (cfg.provider.providers as any)[providerId];
+    const p = cfg.provider.providers[providerId]!;
     p.profiles = p.profiles ?? {};
     p.profiles[profileId] = profile;
     if (setActive) p.activeProfile = profileId;
@@ -351,8 +349,7 @@ export class ConfigManager {
 
   removeProviderProfile(providerId: string, profileId: string): void {
     const cfg = this.load();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const p = (cfg.provider.providers as any)[providerId];
+    const p = cfg.provider.providers[providerId];
     if (!p || !p.profiles || !p.profiles[profileId]) return;
     delete p.profiles[profileId];
     if (p.activeProfile === profileId) {
@@ -374,21 +371,20 @@ export class ConfigManager {
 
   setActiveProviderProfile(providerId: string, profileId: string): void {
     const cfg = this.load();
-    const p = (cfg.provider.providers as any)[providerId];
+    const p = cfg.provider.providers[providerId];
     if (!p || !p.profiles || !p.profiles[profileId]) return;
-    cfg.provider.activeProvider = providerId as any;
+    cfg.provider.activeProvider = providerId as ProviderId;
     p.activeProfile = profileId;
     const active = p.profiles[profileId];
-    p.apiKey = active.apiKey;
-    p.baseUrl = active.baseUrl;
+    p.apiKey = active?.apiKey;
+    p.baseUrl = active?.baseUrl;
     p.configured = true;
     this.save(cfg);
   }
 
   renameProviderProfile(providerId: string, profileId: string, newLabel: string): void {
     const cfg = this.load();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const p = (cfg.provider.providers as any)[providerId];
+    const p = cfg.provider.providers[providerId];
     if (!p?.profiles?.[profileId]) return;
     p.profiles[profileId].label = newLabel;
     this.save(cfg);

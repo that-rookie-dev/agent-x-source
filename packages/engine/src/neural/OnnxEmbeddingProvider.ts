@@ -20,7 +20,7 @@ import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transform
 import type { EmbeddingProvider } from '@agentx/shared';
 import { NEURAL_BRAIN_MIN_RAM_GB } from '@agentx/shared';
 import { LocalEmbeddingProvider } from './LocalEmbeddingProvider.js';
-import { getOnnxThreadConfig } from '../runtime/onnx-thread-config.js';
+import { getOnnxThreadConfig, setOnnxThreadConfig } from '../runtime/onnx-thread-config.js';
 
 /** Target dimension — always 1024 to match BGE-M3 and the DB schema. */
 export const EMBEDDING_DIMENSION = 1024;
@@ -79,6 +79,10 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
     // the provider auto-selects the best model.
     this.model = modelName ?? BGE_M3_MODEL_ID;
     this.cacheDir = cacheDir || defaultEmbeddingCacheDir;
+
+    // Ensure ONNX thread count is propagated to the runtime environment.
+    const cfg = getOnnxThreadConfig();
+    setOnnxThreadConfig(cfg.intraOpNumThreads, cfg.interOpNumThreads);
   }
 
   async embed(text: string): Promise<number[]> {

@@ -12,11 +12,12 @@
     }
   },
   "scripts": {
+    "prebuild": "node scripts/generate-migration-registry.mjs",
     "build": "tsup && node -e \"const fs=require('fs');const path=require('path');fs.mkdirSync('dist/data',{recursive:true});fs.copyFileSync('data/crew-catalog.manifest.json','dist/data/crew-catalog.manifest.json');fs.mkdirSync('dist/voice',{recursive:true});fs.copyFileSync(path.join('..','voice-sidecar','voice-models.manifest.json'),'dist/voice/voice-models.manifest.json')\"",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-    "dependencies": {
+  "dependencies": {
     "@agentx/shared": "workspace:*",
     "@ai-sdk/anthropic": "^3.0.84",
     "@ai-sdk/azure": "^3.0.74",
@@ -44,6 +45,7 @@
     "openai": "^4.50.0",
     "pdfjs-dist": "^6.0.227",
     "pg": "^8.21.0",
+    "pg-boss": "^10.1.5",
     "ws": "^8.17.0",
     "zod": "^3.23.0"
   },
@@ -56,5 +58,8 @@
     "@types/ws": "^8.5.12",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0"
+  },
+  "optionalDependencies": {
+    "redis": "^6.1.0"
   }
 }

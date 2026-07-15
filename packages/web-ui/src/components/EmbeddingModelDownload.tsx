@@ -71,10 +71,13 @@ interface ModelProgressState {
 
 interface EmbeddingModelDownloadProps {
   onComplete: () => void;
+  /** When true, bypass the neuralBrainSupported check (user opted in on low-RAM). */
+  forceEnabled?: boolean;
 }
 
-export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadProps) {
+export function EmbeddingModelDownload({ onComplete, forceEnabled }: EmbeddingModelDownloadProps) {
   const neuralBrainSupported = useNeuralBrainSupported();
+  const enabled = neuralBrainSupported || forceEnabled === true;
   const [models, setModels] = useState<ModelProgressState[]>([
     { id: 'bge-m3', displayName: 'BGE-M3 Neural Embedding Engine', status: 'not_started', downloadedMB: 0, totalMB: 600, percentage: 0 },
     { id: 'minilm', displayName: 'MiniLM Lightweight Embedder', status: 'not_started', downloadedMB: 0, totalMB: 55, percentage: 0 },
@@ -87,16 +90,16 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
 
   // Low-RAM machines skip embedding downloads entirely.
   useEffect(() => {
-    if (neuralBrainSupported) return;
+    if (enabled) return;
     void (async () => {
       try { await configApi.update({ neuralBrain: false }); } catch { /* best effort */ }
       onComplete();
     })();
-  }, [neuralBrainSupported, onComplete]);
+  }, [enabled, onComplete]);
 
   // ── Starfield animation ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!neuralBrainSupported) return;
+    if (!enabled) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -150,11 +153,11 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', resize);
     };
-  }, [neuralBrainSupported]);
+  }, [enabled]);
 
   // ── Start download + SSE progress stream ─────────────────────────────────
   const startDownload = useCallback(async () => {
-    if (!neuralBrainSupported) return;
+    if (!enabled) return;
     // Check if already downloaded.
     try {
       const status = await embeddingModels.status();
@@ -168,9 +171,10 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
       }
     } catch {}
 
-    // Start the download.
+    // Start the download. Pass force=true when the user opted in on a low-RAM
+    // system so the server bypasses its 16 GB hardware check.
     try {
-      await embeddingModels.download();
+      await embeddingModels.download({ force: forceEnabled === true });
     } catch {
       // Download may already be in progress — that's fine.
     }
@@ -191,30 +195,29 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
         setHasError(!!data.hasError);
       }
       if (data.type === 'done' && data.hasError) {
-        // All retries exhausted — disable neural brain and auto-proceed.
-        void disableNeuralBrainAndProceed();
+        // All retries exhausted — keep the page as-is so the user can read
+        // the error message. They can skip manually via the button below.
       }
     });
 
     return cleanup;
-  }, [neuralBrainSupported]);
+  }, [enabled, forceEnabled]);
 
-  /** Disable the neural brain module via config API, then proceed to callsign. */
-  const disableNeuralBrainAndProceed = useCallback(async () => {
+  /** Disable the neural brain module via config API, then proceed. */
+  const skipNeuralBrain = useCallback(async () => {
     try {
       await configApi.update({ neuralBrain: false });
     } catch { /* best effort — proceed anyway */ }
-    // Small delay so the user sees the error state before transitioning.
-    setTimeout(() => onComplete(), 2500);
+    onComplete();
   }, [onComplete]);
 
   // Auto-start on mount.
   useEffect(() => {
-    if (!neuralBrainSupported) return;
+    if (!enabled) return;
     let cleanup: (() => void) | undefined;
     void (async () => { cleanup = await startDownload(); })();
     return () => { cleanup?.(); };
-  }, [startDownload, neuralBrainSupported]);
+  }, [startDownload, enabled]);
 
   // ── Overall percentage = total downloaded MB / total downloadable MB ──────
   const totalDownloadedMB = models.reduce((sum, m) => sum + m.downloadedMB, 0);
@@ -241,7 +244,7 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
     }
   }, [overallPercentage]);
 
-  if (!neuralBrainSupported) {
+  if (!enabled) {
     return (
       <Box sx={{ p: 3, border: `1px solid ${colors.border.default}`, borderRadius: 1, bgcolor: colors.bg.secondary }}>
         <Typography variant="body2" sx={{ color: colors.text.secondary, mb: 1 }}>
@@ -286,7 +289,6 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
             fontSize: '2.5rem',
             fontWeight: 700,
             color: allComplete ? colors.accent.green : hasError ? colors.accent.red : colors.accent.blue,
-            textShadow: allComplete ? `0 0 20px ${alphaColor(colors.accent.green, '80')}` : hasError ? `0 0 20px ${alphaColor(colors.accent.red, '80')}` : `0 0 20px ${alphaColor(colors.accent.blue, '80')}`,
             transition: 'all 0.3s',
             lineHeight: 1,
           }}>
@@ -350,8 +352,22 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
           </Typography>
         </Box>
 
-        {/* Proceed button — only enabled when both models are complete */}
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+        {/* Proceed / Skip button */}
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2, gap: 1.5 }}>
+          {hasError && (
+            <Button
+              onClick={() => { void skipNeuralBrain(); }}
+              sx={{
+                color: colors.text.dim,
+                fontFamily: '"JetBrains Mono", monospace"',
+                fontSize: '0.72rem',
+                letterSpacing: 0.5,
+                textTransform: 'none',
+              }}
+            >
+              Skip Neural Core →
+            </Button>
+          )}
           <Button
             variant="contained"
             onClick={onComplete}
@@ -362,20 +378,20 @@ export function EmbeddingModelDownload({ onComplete }: EmbeddingModelDownloadPro
               fontWeight: 700,
               px: 4,
               py: 1,
-              fontFamily: '"JetBrains Mono", monospace',
+              fontFamily: '"JetBrains Mono", monospace"',
               fontSize: '0.8rem',
               letterSpacing: 1,
               textTransform: 'uppercase',
               borderRadius: 1,
-              boxShadow: allComplete ? `0 0 20px ${alphaColor(colors.accent.green, '40')}` : 'none',
+              boxShadow: 'none',
               transition: 'all 0.3s',
               '&:hover': allComplete ? {
                 bgcolor: colors.accent.green,
-                boxShadow: `0 0 30px ${alphaColor(colors.accent.green, '60')}`,
+                boxShadow: 'none',
               } : {},
             }}
           >
-            {allComplete ? '◆ Proceed to Callsign →' : hasError ? '◆ Bypassing Neural Core...' : '◆ Downloading...'}
+            {allComplete ? '◆ Proceed to Callsign →' : hasError ? '◆ Download Failed' : '◆ Downloading...'}
           </Button>
         </Box>
       </Box>
@@ -434,7 +450,6 @@ function ModelProgressBar({ model }: { model: ModelProgressState }) {
           background: `linear-gradient(90deg, ${alphaColor(barColor, '40')}, ${barColor})`,
           borderRadius: 1,
           transition: 'width 0.5s ease-out',
-          boxShadow: isDownloading ? `0 0 12px ${alphaColor(barColor, '60')}` : 'none',
         }} />
         {/* Animated shimmer overlay while downloading */}
         {isDownloading && (

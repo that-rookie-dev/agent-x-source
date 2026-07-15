@@ -46,7 +46,7 @@ import type { RuntimeSettings } from '../runtime-settings.js';
 
 export type { RuntimeSettings } from '../runtime-settings.js';
 
-export interface AgentXConfig {
+export interface AgentXConfig extends Record<string, unknown> {
   provider: ProviderSettings;
   ui: UISettings;
   organization: OrganizationConfig | null;
@@ -77,6 +77,12 @@ export interface AgentXConfig {
 
   /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
   neuralBrain?: boolean;
+
+  /** Optional PostgreSQL connection config. */
+  postgres?: {
+    connectionString?: string;
+    poolSize?: number;
+  };
 
   permissions?: Record<string, 'allow' | 'deny' | 'ask'>;
   agents?: Record<string, {
@@ -144,6 +150,9 @@ export interface ProviderCredentials {
   // new multi-profile support
   activeProfile?: string;
   profiles?: Record<string, ProviderProfile>;
+
+  /** Azure-specific resource name for Azure OpenAI deployments. */
+  azureResourceName?: string;
 }
 
 export interface UISettings {

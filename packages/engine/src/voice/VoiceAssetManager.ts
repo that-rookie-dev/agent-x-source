@@ -102,7 +102,13 @@ export class VoiceAssetManager {
       this.jobs.set(asset.id, { assetId: asset.id, status: 'running', progress: 75 });
       onProgress?.(this.jobs.get(asset.id)!);
 
-      const result = JSON.parse(stdout.trim()) as PythonAssetResult;
+      let result: PythonAssetResult;
+      try {
+        result = JSON.parse(stdout.trim()) as PythonAssetResult;
+      } catch (error) {
+        getLogger().warn('VOICE', `Failed to parse python asset result: ${error instanceof Error ? error.message : String(error)}`);
+        result = {} as PythonAssetResult;
+      }
       this.jobs.set(asset.id, { assetId: asset.id, status: 'verifying', progress: 90 });
       onProgress?.(this.jobs.get(asset.id)!);
 

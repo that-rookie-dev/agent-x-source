@@ -25,7 +25,7 @@ import PublicIcon from '@mui/icons-material/Public';
 import CircleIcon from '@mui/icons-material/Circle';
 import ChatIcon from '@mui/icons-material/Chat';
 import { PanelHeader } from './PanelHeader';
-import { bridges, gateway, type BridgeStatus } from '../api';
+import { bridges, gateway, type BridgeStatus, type EmailConfig } from '../api';
 import { colors, alphaColor } from '../theme';
 import { brands } from '../styles/brands';
 
@@ -235,8 +235,8 @@ export function ChannelsPanel() {
         const startMap: Record<string, () => Promise<{ ok: boolean }>> = {
           telegram: () => bridges.telegram.start(ch.status?.token ?? ''),
           discord: () => bridges.discord.start(ch.status?.token ?? ''),
-          slack: () => bridges.slack.start(ch.status?.token ?? '', String((ch.status as any)?.appToken ?? '')),
-          email: () => bridges.email.start({} as any),
+          slack: () => bridges.slack.start(ch.status?.token ?? '', String(ch.status?.appToken ?? '')),
+          email: () => bridges.email.start({} as EmailConfig),
         };
         await startMap[ch.id]();
       }

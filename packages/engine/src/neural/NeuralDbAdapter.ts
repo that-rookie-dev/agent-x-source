@@ -26,69 +26,12 @@ export function createPgNeuralDb(pool: { query: (sql: string, params?: unknown[]
   const cache = new Map<string, Record<string, unknown>[]>();
   const singles = new Map<string, Record<string, unknown>>();
 
-  // Run CREATE TABLE IF NOT EXISTS schemas
-  const neuralSchema = `
-    CREATE TABLE IF NOT EXISTS agent_experiences (
-      id TEXT PRIMARY KEY,
-      session_id TEXT,
-      category TEXT,
-      action TEXT,
-      context TEXT,
-      result TEXT,
-      confidence REAL,
-      reward REAL,
-      correction TEXT,
-      learnings TEXT,
-      metadata TEXT,
-      created_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS agent_growth_state (
-      id INTEGER PRIMARY KEY DEFAULT 1,
-      level TEXT DEFAULT 'Fresh',
-      wisdom_score REAL DEFAULT 0,
-      total_experiences INTEGER DEFAULT 0,
-      total_interactions INTEGER DEFAULT 0,
-      total_corrections INTEGER DEFAULT 0,
-      avg_confidence REAL DEFAULT 0.5,
-      emotional_range REAL DEFAULT 0,
-      capabilities TEXT DEFAULT '[]',
-      next_milestone_at INTEGER,
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS agent_emotions (
-      id TEXT PRIMARY KEY,
-      mood TEXT,
-      intensity REAL,
-      context TEXT,
-      created_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS agent_memories (
-      id TEXT PRIMARY KEY,
-      content TEXT,
-      category TEXT,
-      importance REAL,
-      created_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS agent_diary (
-      id TEXT PRIMARY KEY,
-      entry TEXT,
-      importance INTEGER,
-      highlights TEXT,
-      tags TEXT,
-      created_at TEXT
-    );
-    CREATE TABLE IF NOT EXISTS agent_identity (
-      id INTEGER PRIMARY KEY DEFAULT 1,
-      interaction_count INTEGER DEFAULT 0
-    );
-  `;
-  // Init schema in background
-  pool.query(neuralSchema).catch(() => {
-    logger.warn('NEURAL_DB', 'PG schema init failed — neural data will be in-memory only');
+  // Schema for neural engine tables (agent_experiences, agent_growth_state, etc.)
+  // is now managed by versioned migrations (V001 + V003 in MemoryMigrationRunner).
+  // We only seed the singleton growth state row here.
+  pool.query(`INSERT INTO agent_growth_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING`).catch(() => {
+    logger.warn('NEURAL_DB', 'PG seed failed — neural data will be in-memory only');
   });
-
-  // Seed growth state
-  pool.query(`INSERT INTO agent_growth_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING`).catch(() => {});
 
   return {
     prepare(sql: string): NeuralStatement {

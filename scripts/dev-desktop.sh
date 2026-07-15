@@ -27,6 +27,9 @@ echo ">>> Building desktop main/preload..."
 cd "$DESKTOP_DIR"
 pnpm run build
 
+echo ">>> Setting up embedded Redis..."
+pnpm --filter @agentx/runtime run setup:redis
+
 echo ">>> Packing unpacked desktop app (electron-builder --dir)..."
 pnpm exec electron-builder --mac --dir
 

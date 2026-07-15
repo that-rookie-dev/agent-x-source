@@ -1,0 +1,17 @@
+{
+  "routes": [
+    ["get", "/api/providers/available"],
+    ["post", "/api/provider/validate"],
+    ["get", "/api/provider/models"],
+    ["post", "/api/provider/configure"],
+    ["get", "/api/providers"],
+    ["post", "/api/provider/profile"],
+    ["post", "/api/provider/profile/switch"],
+    ["post", "/api/provider/profile/rename"],
+    ["delete", "/api/provider/:providerId/profile/:profileId"],
+    ["post", "/api/provider/switch"],
+    ["post", "/api/model/switch"],
+    ["post", "/api/model/trial"],
+    ["get", "/api/models"]
+  ]
+}

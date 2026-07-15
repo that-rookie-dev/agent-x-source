@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ChannelPlugin } from '../types.js';
 import type { FocusState, FocusManager } from '../FocusManager.js';
-import { getDataDir, type Message, type VisualUpdate, type AgentXConfig, getLogger, formatQuestionnaireForMessagingChannel, extractAssistantReplyText, questionnaireSupportsInlineButtons, type QuestionnairePayload, type QuestionnaireOption } from '@agentx/shared';
+import { getDataDir, type Message, type VisualUpdate, type ProviderId, getLogger, formatQuestionnaireForMessagingChannel, extractAssistantReplyText, questionnaireSupportsInlineButtons, type QuestionnairePayload, type QuestionnaireOption } from '@agentx/shared';
 import { TelegramBridge } from '../../telegram/TelegramBridge.js';
 import { TelegramProgressSession } from '../../telegram/TelegramProgressSession.js';
 import type { TelegramConfig } from '../../telegram/TelegramBridge.js';
@@ -318,7 +318,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         void this.bridge.sendToChat(chatId, '⚠️ Agent not initialized.');
         return;
       }
-      const cfg = (this.agent as any).config as AgentXConfig;
+      const cfg = this.agent.config;
       let foundProviderId: string | null = null;
       for (const [pid, pcfg] of Object.entries(cfg.provider.providers)) {
         if (pcfg.profiles?.[profileId]) { foundProviderId = pid; break; }
@@ -330,7 +330,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       }
       const pCfg = cfg.provider.providers[foundProviderId];
       if (!pCfg) return;
-      this.agent.switchProvider(foundProviderId as any, pCfg.profiles?.[profileId]?.apiKey ?? pCfg.apiKey, pCfg.profiles?.[profileId]?.baseUrl ?? pCfg.baseUrl);
+      this.agent.switchProvider(foundProviderId as ProviderId, pCfg.profiles?.[profileId]?.apiKey ?? pCfg.apiKey, pCfg.profiles?.[profileId]?.baseUrl ?? pCfg.baseUrl);
       void this.bridge.sendToChat(chatId, `✅ Switched to ${profileId}\nUse /models to pick a model.`);
     });
 
@@ -490,7 +490,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       return;
     }
 
-    const cfg = (this.agent as unknown as { config?: AgentXConfig }).config;
+    const cfg = this.agent?.config;
     const voiceConfig = mergeVoiceConfig(cfg?.voice);
     if (!voiceConfig.enabled || voiceConfig.mode?.channels !== 'voice-notes') {
       await this.bridge.sendToChat(chatId, '⚠️ Voice notes are disabled. Enable Voice → Channels → Voice notes in Settings.');
@@ -522,7 +522,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       return;
     }
 
-    const cfg = (this.agent as unknown as { config?: AgentXConfig }).config;
+    const cfg = this.agent?.config;
     const voiceConfig = mergeVoiceConfig(cfg?.voice);
     const outDir = join(getDataDir(), 'voice', 'tmp');
     await mkdir(outDir, { recursive: true });
@@ -833,7 +833,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         return 'ℹ️ Plan Mode and Hyperdrive are not available on messaging channels. Every tool is approved individually via Allow Once, Always Allow, or Deny.';
 
       case 'profiles': {
-        const cfg = (this.agent as any).config as AgentXConfig;
+        const cfg = this.agent.config;
         const profiles: Array<{ id: string; label: string; providerId: string }> = [];
         Object.entries(cfg.provider.providers).forEach(([pid, pcfg]) => {
           if (pcfg.profiles) {
@@ -854,7 +854,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       case 'profile': {
         const profileId = args[0];
         if (!profileId) return '❌ Usage: /profile <profile_id>\nUse /profiles to list available profiles.';
-        const cfg = (this.agent as any).config as AgentXConfig;
+        const cfg = this.agent.config;
         let foundProviderId: string | null = null;
         for (const [pid, pcfg] of Object.entries(cfg.provider.providers)) {
           if (pcfg.profiles?.[profileId]) {
@@ -869,13 +869,13 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         if (!foundProviderId) return `❌ Profile "${profileId}" not found. Use /profiles to list.`;
         const pCfg = cfg.provider.providers[foundProviderId];
         if (!pCfg) return `❌ Provider "${foundProviderId}" not configured.`;
-        this.agent.switchProvider(foundProviderId as any, pCfg.profiles?.[profileId]?.apiKey ?? pCfg.apiKey, pCfg.profiles?.[profileId]?.baseUrl ?? pCfg.baseUrl);
+        this.agent.switchProvider(foundProviderId as ProviderId, pCfg.profiles?.[profileId]?.apiKey ?? pCfg.apiKey, pCfg.profiles?.[profileId]?.baseUrl ?? pCfg.baseUrl);
         return `✅ Switched to profile: ${profileId} (${foundProviderId})\nUse /models to pick a model.`;
       }
 
       case 'models': {
         try {
-          const cfg = (this.agent as any).config as AgentXConfig;
+          const cfg = this.agent.config;
           const provider = ProviderFactory.create(
             cfg.provider.activeProvider,
             cfg.provider.providers[cfg.provider.activeProvider]?.apiKey,
@@ -924,7 +924,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       }
 
       case 'tools': {
-        const toolRegistry = (this.agent as any).toolRegistry;
+        const toolRegistry = this.agent.getToolExecutor()?.getRegistry();
         if (!toolRegistry) return '🔧 No tools available.';
         const tools = toolRegistry.list();
         const categories = new Map<string, string[]>();
@@ -961,8 +961,8 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         const tokens = this.agent.tokens;
         return [
           '📊 *Agent-X Status*',
-          `├ Provider: ${(this.agent as any).config?.provider?.activeProvider ?? 'unknown'}`,
-          `├ Model: ${(this.agent as any).config?.provider?.activeModel ?? 'unknown'}`,
+          `├ Provider: ${this.agent.config?.provider?.activeProvider ?? 'unknown'}`,
+          `├ Model: ${this.agent.config?.provider?.activeModel ?? 'unknown'}`,
           `├ Tokens: ${tokens.tokensUsed} / ${tokens.tokensTotal}`,
           `├ Processing: ${this.agent.processing ? 'yes' : 'idle'}`,
           `└ Active Chat: ${this.activeChatId ?? 'none'}`,
@@ -975,7 +975,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       case 'timezone':
       case 'tz': {
         const newTz = args.join(' ').trim();
-        const cfg = (this.agent as any).config as AgentXConfig | undefined;
+        const cfg = this.agent.config;
         if (!cfg) return '❌ Agent config not available.';
         if (!newTz) {
           const currentTz = cfg.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;

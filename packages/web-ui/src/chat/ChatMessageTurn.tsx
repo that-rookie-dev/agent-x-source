@@ -1,4 +1,4 @@
-import React, { useState, lazy, Suspense } from 'react';
+import React, { useState, useMemo, lazy, Suspense } from 'react';
 import Box from '@mui/material/Box';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import Tooltip from '@mui/material/Tooltip';
@@ -10,8 +10,7 @@ import { colors, alphaColor } from '../theme';
 import { normalizeMessageForUi, orderPartsForChatRender } from '@agentx/shared/browser';
 import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
-import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
-import { StreamingText } from './StreamingText';
+import { CrewAwareMarkdown, getWebCrewColor, StreamingMarkdown } from './ChatMarkdown';
 import { collectWebSourceUrls } from './web-source-urls';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
 import { QuestionnaireMessage } from '../components/questionnaire/QuestionnaireMessage';
@@ -19,6 +18,7 @@ import { CrewRosterPickerMessage } from '../components/crew/CrewRosterPickerMess
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { TurnFeedbackBar } from './TurnFeedbackBar';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
+import { DeepSearchMessageBlock } from './DeepSearchMessageBlock';
 import { formatVoiceTimingMs } from '../voice/timing';
 import { extractVoiceChannelBlock, stripVoiceChannelBlock } from './utils';
 import { ChartBlock } from './ChartBlock';
@@ -152,11 +152,12 @@ function renderParts(
     return false;
   });
 
-  // Web-source chips are derived from tool/deep-search data even though those
-  // steps render only in the Workflow modal, never inline.
+  // Web-source chips are derived from tool/deep-search data. Tool steps still
+  // render only in the Workflow modal, but deep_search parts also have an inline
+  // fallback card so users see a research summary without opening the workflow.
   const orderedAll = orderPartsForChatRender(filtered);
   const webSources = collectWebSourceUrls(orderedAll);
-  const ordered = orderedAll.filter((p) => p.type !== 'tool' && p.type !== 'deep_search');
+  const ordered = orderedAll.filter((p) => p.type !== 'tool');
 
   const renderMainPart = (part: PartEntry) => {
     switch (part.type) {
@@ -165,8 +166,18 @@ function renderParts(
         const textContent = stripVoiceChannelBlock(part.content);
         if (!textContent) return null;
         return streaming
-          ? <StreamingText key={part.id} content={textContent} />
+          ? <StreamingMarkdown key={part.id} content={textContent} webSources={webSources} />
           : <CrewAwareMarkdown key={part.id} content={textContent} webSources={webSources} />;
+      case 'deep_search':
+        if (!part.deepSearch) return null;
+        return (
+          <DeepSearchMessageBlock
+            key={part.id}
+            bundle={part.deepSearch.bundle}
+            progress={part.deepSearch.progress}
+            running={part.deepSearch.running}
+          />
+        );
       case 'questionnaire':
         if (!part.questionnaire) return null;
         return (
@@ -277,67 +288,88 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
   const [whyOpen, setWhyOpen] = useState(false);
   const [workflowOpen, setWorkflowOpen] = useState(false);
-  const normalized = normalizeMessageForUi({
-    content: message.content,
-    parts: message.parts,
-    toolCalls: message.toolCalls,
-  }, []);
-  const displayMessage = {
-    ...message,
-    content: normalized.content || message.content,
-    parts: normalized.parts?.map((p) => (
-      p.type === 'tool' && p.tool
-        ? { ...p, tool: { ...p.tool, status: p.tool.status || 'done' as const } }
-        : p
-    )) as PartEntry[] | undefined ?? message.parts,
-    toolCalls: (normalized.toolCalls ?? message.toolCalls)?.map((t) => ({
-      ...t,
-      status: t.status || 'done' as const,
-    })),
-  };
-  const cleanContent = displayContent(displayMessage);
-  const voiceSummary = extractVoiceChannelBlock(displayMessage.content || '')
-    || extractVoiceChannelBlock(displayMessage.parts?.filter((p) => p.type === 'text' && p.content).map((p) => p.content).join('') || '');
-  const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
-  const webSources = collectWebSourceUrls(displayMessage.parts);
-  const hasQuestionnaire = !!(displayMessage.parts?.some((p) => p.type === 'questionnaire'));
-  const canSaveMarkdown = !message.streaming && message.role === 'assistant' && onSaveMarkdown && (hasParts || !!cleanContent);
-  const contentBlock = hasParts ? renderParts(
-    displayMessage.parts!,
-    onOpenChildSession,
-    onQuestionnaireRespond,
-    message.id,
-    onCrewRosterPickerSubmit,
-    onCrewRosterPickerSkip,
-    onViewCrewDossier,
-    voiceSummary,
-    message.streaming,
-  ) : (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
-      {cleanContent && (
-        message.streaming
-          ? <StreamingText content={cleanContent} />
-          : <CrewAwareMarkdown content={cleanContent} webSources={webSources} />
-      )}
-    </Box>
+  const normalized = useMemo(
+    () => normalizeMessageForUi({
+      content: message.content,
+      parts: message.parts,
+      toolCalls: message.toolCalls,
+    }, []),
+    [message.content, message.parts, message.toolCalls],
+  );
+  const displayMessage = useMemo(
+    () => ({
+      ...message,
+      content: normalized.content || message.content,
+      parts: normalized.parts?.map((p) => (
+        p.type === 'tool' && p.tool
+          ? { ...p, tool: { ...p.tool, status: p.tool.status || 'done' as const } }
+          : p
+      )) as PartEntry[] | undefined ?? message.parts,
+      toolCalls: (normalized.toolCalls ?? message.toolCalls)?.map((t) => ({
+        ...t,
+        status: t.status || 'done' as const,
+      })),
+    }),
+    [message, normalized],
+  );
+  const cleanContent = useMemo(() => displayContent(displayMessage), [displayMessage]);
+  const voiceSummary = useMemo(
+    () => extractVoiceChannelBlock(displayMessage.content || '')
+      || extractVoiceChannelBlock(displayMessage.parts?.filter((p) => p.type === 'text' && p.content).map((p) => p.content).join('') || ''),
+    [displayMessage.content, displayMessage.parts],
+  );
+  const hasParts = useMemo(() => !!(displayMessage.parts && displayMessage.parts.length > 0), [displayMessage.parts]);
+  const webSources = useMemo(() => collectWebSourceUrls(displayMessage.parts), [displayMessage.parts]);
+  const hasQuestionnaire = useMemo(() => !!(displayMessage.parts?.some((p) => p.type === 'questionnaire')), [displayMessage.parts]);
+  const canSaveMarkdown = useMemo(
+    () => !message.streaming && message.role === 'assistant' && onSaveMarkdown && (hasParts || !!cleanContent),
+    [message.streaming, message.role, onSaveMarkdown, hasParts, cleanContent],
+  );
+  const contentBlock = useMemo(
+    () => hasParts ? renderParts(
+      displayMessage.parts!,
+      onOpenChildSession,
+      onQuestionnaireRespond,
+      message.id,
+      onCrewRosterPickerSubmit,
+      onCrewRosterPickerSkip,
+      onViewCrewDossier,
+      voiceSummary,
+      message.streaming,
+    ) : (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
+        {cleanContent && (
+          message.streaming
+            ? <StreamingMarkdown content={cleanContent} webSources={webSources} />
+            : <CrewAwareMarkdown content={cleanContent} webSources={webSources} />
+        )}
+      </Box>
+    ),
+    [hasParts, displayMessage.parts, onOpenChildSession, onQuestionnaireRespond, message.id, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, voiceSummary, message.streaming, cleanContent, webSources],
   );
 
-  const hasWorkflow = !message.streaming && message.role === 'assistant' && !!(
-    displayMessage.toolCalls?.length
-    || message.thinking
-    || displayMessage.parts?.some((p) => p.type === 'tool' || p.type === 'deep_search')
+  const hasWorkflow = useMemo(
+    () => !message.streaming && message.role === 'assistant' && !!(
+      displayMessage.toolCalls?.length
+      || message.thinking
+      || displayMessage.parts?.some((p) => p.type === 'tool' || p.type === 'deep_search')
+    ),
+    [message.streaming, message.role, displayMessage.toolCalls, message.thinking, displayMessage.parts],
   );
-  const workflowStepCount = (() => {
+  const workflowStepCount = useMemo(() => {
     const parts = displayMessage.parts ?? [];
     const toolParts = parts.filter((p) => p.type === 'tool' && p.tool).length;
     const deepParts = parts.filter((p) => p.type === 'deep_search' && (p.deepSearch?.bundle || p.deepSearch?.progress)).length;
     const fallbackTools = toolParts === 0 ? (displayMessage.toolCalls?.length ?? 0) : 0;
     return toolParts + deepParts + fallbackTools;
-  })();
+  }, [displayMessage.parts, displayMessage.toolCalls]);
 
-  const subAgentCards = (message.subAgents ?? []).filter(
-    (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker',
+  const subAgentCards = useMemo(
+    () => (message.subAgents ?? []).filter(
+      (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker',
+    ),
+    [message.subAgents],
   );
 
   return (
@@ -394,9 +426,40 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
           {[0, 1, 2].map((i) => (
             <Box key={i} sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.2}s` }} />
           ))}
-          {typeof loadingSteps?.[0]?.label === 'string' && loadingSteps[0].label && (
-            <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontStyle: 'italic', ml: 0.5 }}>{loadingSteps[0].label}</Typography>
-          )}
+        </Box>
+      )}
+
+      {message.streaming && loadingSteps && loadingSteps.length > 0 && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
+          {loadingSteps.slice(-3).map((step) => (
+            <Box
+              key={step.id}
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.4,
+                px: 0.6,
+                py: 0.2,
+                borderRadius: '4px',
+                bgcolor: step.status === 'complete' ? alphaColor(colors.accent.green, '12') : alphaColor(colors.accent.purple, '10'),
+                border: `1px solid ${step.status === 'complete' ? alphaColor(colors.accent.green, '30') : alphaColor(colors.accent.purple, '25')}`,
+              }}
+            >
+              <Box
+                sx={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: '50%',
+                  bgcolor: step.status === 'complete' ? colors.accent.green : colors.accent.purple,
+                  flexShrink: 0,
+                  ...(step.status !== 'complete' && { animation: 'agentx-pulse 1.2s ease-in-out infinite' }),
+                }}
+              />
+              <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'nowrap' }}>
+                {step.label}
+              </Typography>
+            </Box>
+          ))}
         </Box>
       )}
 

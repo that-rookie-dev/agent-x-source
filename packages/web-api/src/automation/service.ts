@@ -6,6 +6,7 @@ import type {
   AutomationTaskRecord,
   NotificationKind,
   NotificationRecord,
+  TelemetryEvent,
 } from '@agentx/shared';
 import { generateAxId, generateId, getLogger } from '@agentx/shared';
 import { effectiveAutomationNotifyChannels, getNotificationChannelStatus, inferAutomationSourceChannel, normalizeAutomationTaskOrigin } from '@agentx/engine';
@@ -627,7 +628,7 @@ export class AutomationService {
       getEngine().telemetry.emit({
         type: 'notification_created',
         notification,
-      } as never);
+      } as unknown as TelemetryEvent);
     } catch { /* best-effort */ }
     return notification;
   }

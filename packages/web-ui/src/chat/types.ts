@@ -1,5 +1,6 @@
 import type { ChatMessage } from '../api';
 import type { TodoItem } from '../api';
+import { upsertDeepSearchPart, type MessagePart } from '@agentx/shared/browser';
 
 export interface ToolCall {
   id: string;
@@ -24,7 +25,7 @@ export interface SubAgent {
 
 import type { QuestionnaireRecord } from '@agentx/shared/browser';
 
-export interface PartEntry {
+export interface PartEntry extends Record<string, unknown> {
   type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart';
   id: string;
   content?: string;
@@ -80,4 +81,16 @@ export interface UIMessage extends ChatMessage {
 export interface VisibleMessageItem {
   msg: UIMessage;
   isLastUser: boolean;
+}
+
+export interface FileAttachment {
+  name: string;
+  content: string;
+}
+
+export type ChatView = 'sessions' | 'chat';
+export type SessionListTab = 'agent_x' | 'crew_private';
+
+export function upsertDeepSearchPartEntry(parts: PartEntry[], payload: Parameters<typeof upsertDeepSearchPart>[1]): PartEntry[] {
+  return upsertDeepSearchPart(parts as MessagePart[], payload) as PartEntry[];
 }

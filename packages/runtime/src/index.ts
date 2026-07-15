@@ -8,6 +8,14 @@ export type {
 } from './PostgresLifecycleManager.js';
 
 export {
+  RedisLifecycleManager,
+  RedisBinaryResolver,
+} from './RedisLifecycleManager.js';
+export type {
+  RedisLifecycleOptions,
+} from './RedisLifecycleManager.js';
+
+export {
   AgentRuntime,
   createDesktopRuntimeOptions,
   createServerRuntimeOptions,

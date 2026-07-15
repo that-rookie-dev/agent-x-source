@@ -4,12 +4,12 @@ import { join, dirname } from 'node:path';
 import { tmpdir, totalmem } from 'node:os';
 import { platform, arch } from 'node:os';
 import { Pool } from 'pg';
-import { buildEmbeddedPostgresChildEnv, isNeuralBrainSupported } from '@agentx/shared';
+import { buildEmbeddedPostgresChildEnv, isNeuralBrainSupported, getLogger } from '@agentx/shared';
 
 const logger = {
-  info: (code: string, message: string) => console.log(`[${code}] ${message}`),
-  warn: (code: string, message: string | Error) => console.warn(`[${code}] ${message instanceof Error ? message.message : message}`),
-  error: (code: string, message: string | Error) => console.error(`[${code}] ${message instanceof Error ? message.message : message}`),
+  info: (code: string, message: string) => getLogger().info(code, message),
+  warn: (code: string, message: string | Error) => getLogger().warn(code, message instanceof Error ? message.message : String(message)),
+  error: (code: string, message: string | Error) => getLogger().error(code, message instanceof Error ? message : String(message)),
 };
 
 export interface PostgresLifecycleOptions {

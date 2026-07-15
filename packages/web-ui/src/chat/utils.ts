@@ -2,6 +2,19 @@
 
 import { attachDeepSearchPartsFromTools, attachChartPartsFromTools, normalizeMessageForUi, normalizeVoiceAssistantContent, type MessagePart } from '@agentx/shared/browser';
 
+/** Ensure status/step labels are always renderable strings (avoids React #31). */
+export function coerceDisplayLabel(value: unknown, fallback = 'Working...'): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value && typeof value === 'object' && 'label' in value) {
+    return coerceDisplayLabel((value as { label: unknown }).label, fallback);
+  }
+  return fallback;
+}
+
 /** Apply tool_complete metadata only to the matching tool call (parallel same-name tools). */
 export function applyToolCompleteMetadata<T extends {
   id: string;

@@ -27,3 +27,4 @@ export * from './channels.js';
 export * from './voice.js';
 export * from './client-situation.js';
 export * from './markdown-document.js';
+export * from './channel-render.js';

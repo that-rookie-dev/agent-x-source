@@ -12,6 +12,7 @@ import type {
   VoiceSidecarVadDetectResponse,
   VoiceSidecarWarmRequest,
 } from './VoiceSidecarProtocol.js';
+import { getLogger } from '@agentx/shared';
 
 export interface VoiceSidecarClientOptions {
   baseUrl: string;
@@ -100,7 +101,13 @@ export class VoiceSidecarClient {
       });
 
       const text = await response.text();
-      const payload = text.length > 0 ? JSON.parse(text) : undefined;
+      let payload: any;
+      try {
+        payload = text.length > 0 ? JSON.parse(text) : undefined;
+      } catch (error) {
+        getLogger().warn('VOICE_SIDECAR_CLIENT', `Failed to parse sidecar response: ${error instanceof Error ? error.message : String(error)}`);
+        payload = undefined;
+      }
 
       if (!response.ok) {
         const message = typeof payload?.error === 'string' ? payload.error : `Voice sidecar request failed: ${response.status}`;

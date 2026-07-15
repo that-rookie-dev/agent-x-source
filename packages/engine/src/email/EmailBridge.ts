@@ -107,6 +107,7 @@ export class EmailBridge extends EventEmitter {
   private imapConnected = false;
   private attachedAgent: Agent | null = null;
   private agentDeps: EmailBridgeAgentDeps | null = null;
+  private messageHandler: ((email: ParsedEmail) => void | Promise<void>) | null = null;
   private senderAgents = new Map<string, Agent>();
   private backoffMs = 5000;
   private readonly maxBackoffMs = 300_000; // 5 minutes
@@ -134,6 +135,10 @@ export class EmailBridge extends EventEmitter {
    */
   setAgentDeps(deps: EmailBridgeAgentDeps): void {
     this.agentDeps = deps;
+  }
+
+  setMessageHandler(handler: (email: ParsedEmail) => void | Promise<void>): void {
+    this.messageHandler = handler;
   }
 
   get events(): AgentEventBus {
@@ -557,6 +562,11 @@ export class EmailBridge extends EventEmitter {
     const senderEmail = this.extractSenderEmail(email.from);
     if (!senderEmail) {
       this.emitTyped('email_error', new Error('Could not extract sender email'));
+      return;
+    }
+
+    if (this.messageHandler) {
+      await this.messageHandler(email);
       return;
     }
 

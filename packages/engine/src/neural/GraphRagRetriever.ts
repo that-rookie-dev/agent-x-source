@@ -27,12 +27,14 @@ export interface GraphRagRetrievalOptions {
   graphDepth?: number;
   /** Agent ID filter for vector pass. */
   agentId?: string;
-  /** Session ID for episodic context; omit for super sessions that use global retrieval only. */
-  sessionId?: string;
+  /** Session ID for episodic context; null or omit for global retrieval. */
+  sessionId?: string | null;
   /** When false, skip global community/profile passes and scope vector search to sessionId. */
   isSuperSession?: boolean;
   /** Minimum cosine similarity (0–1) for the vector pass. Results below this are filtered out. */
   minRelevance?: number;
+  /** Pre-computed query embedding; when provided the retriever skips the embed call. */
+  embedding?: number[];
 }
 
 export interface GraphRagResult {
@@ -69,7 +71,7 @@ export class GraphRagRetriever {
     const minRelevance = options.minRelevance ?? 0;
     const isSuper = options.isSuperSession === true;
 
-    const embedding = await this.embedder.embed(query);
+    const embedding = options.embedding ?? await this.embedder.embed(query);
 
     // Pass 1: Global — find relevant community summaries (super sessions only).
     const global = isSuper && globalLimit > 0
@@ -96,7 +98,7 @@ export class GraphRagRetriever {
         const graphNodeIds = graphResult.nodeIds.filter((id) => !startNodeIds.includes(id));
         if (graphNodeIds.length > 0) {
           // Fetch graph node details — reuse the fabric's existing pattern.
-          const { rows } = await (this.fabric as any)['pool'].query(
+          const { rows } = await this.fabric.getPool().query(
             `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
                     n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
                     n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt"

@@ -31,6 +31,13 @@ type BrainActivityEvent =
   | { type: 'session_created'; sessionId: string; title: string; timestamp: string }
   | { type: 'message_activity'; sessionId: string; role: 'user' | 'assistant'; textLength: number; timestamp: string };
 
+// Graph visualization events delivered over WebSocket with a string `event`
+// discriminator and snake_case payload fields (distinct from BrainActivityEvent).
+type GraphWsEvent =
+  | { event: 'NODE_CREATED'; node_id: string; label: string; type?: string; content?: string; cluster_id?: string | null; x?: number | null; y?: number | null; sourceColor?: string }
+  | { event: 'SYNAPSE_CONNECTED'; source_id: string; target_id: string; edge_type?: string; weight?: number }
+  | { event: 'NEURON_ACTIVATED'; node_ids: string[] };
+
 function useWebSocket(onEvent: (event: BrainActivityEvent) => void) {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
@@ -472,28 +479,29 @@ export default function App() {
   // ── WebSocket events ───────────────────────────────────────────────────────
   useWebSocket((event) => {
     if ('event' in event && typeof event.event === 'string') {
-      if (event.event === 'NODE_CREATED' && 'node_id' in event && 'label' in event) {
-        const nodeId = (event as any).node_id;
-        const label = (event as any).label;
-        const type = (event as any).type || 'concept';
-        const content = (event as any).content || '';
-        const clusterId = (event as any).cluster_id || null;
-        const x = (event as any).x;
-        const y = (event as any).y;
-        const sourceColor = (event as any).sourceColor;
+      const e = event as unknown as GraphWsEvent;
+      if (e.event === 'NODE_CREATED' && 'node_id' in e && 'label' in e) {
+        const nodeId = e.node_id;
+        const label = e.label;
+        const type = e.type || 'concept';
+        const content = e.content || '';
+        const clusterId = e.cluster_id || null;
+        const x = e.x;
+        const y = e.y;
+        const sourceColor = e.sourceColor;
         const color = sourceColor || CATEGORY_COLORS[type.toLowerCase()] || '#ffffff';
         addNode({ id: nodeId, label, category: type.toLowerCase(), content, sourceId: null, sessionId: clusterId, x: x || undefined, y: y || undefined });
         updateNodeColor(nodeId, color);
-      } else if (event.event === 'SYNAPSE_CONNECTED' && 'source_id' in event && 'target_id' in event) {
-        const sourceId = (event as any).source_id;
-        const targetId = (event as any).target_id;
-        const edgeType = (event as any).edge_type || 'RELATED_TO';
-        const weight = (event as any).weight || 0.5;
+      } else if (e.event === 'SYNAPSE_CONNECTED' && 'source_id' in e && 'target_id' in e) {
+        const sourceId = e.source_id;
+        const targetId = e.target_id;
+        const edgeType = e.edge_type || 'RELATED_TO';
+        const weight = e.weight || 0.5;
         const edgeId = `${sourceId}-${targetId}-${edgeType}`;
         addEdge({ id: edgeId, sourceNodeId: sourceId, targetNodeId: targetId, weight });
         setTimeout(() => flashEdge(edgeId), 100);
-      } else if (event.event === 'NEURON_ACTIVATED' && 'node_ids' in event) {
-        const nodeIds = (event as any).node_ids as string[];
+      } else if (e.event === 'NEURON_ACTIVATED' && 'node_ids' in e) {
+        const nodeIds = e.node_ids;
         for (const nodeId of nodeIds) {
           rendererRef.current?.emitFromNode(nodeId);
         }

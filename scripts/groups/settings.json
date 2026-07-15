@@ -1,0 +1,15 @@
+{
+  "routes": [
+    ["get", "/api/sessions/db-status"],
+    ["get", "/api/settings/db"],
+    ["get", "/api/settings/web-search/status"],
+    ["post", "/api/settings/web-search/test"],
+    ["put", "/api/settings/db"],
+    ["post", "/api/settings/db/provision"],
+    ["post", "/api/settings/db/test"],
+    ["post", "/api/settings/db/migrate"],
+    ["get", "/api/settings/db/health"],
+    ["post", "/api/settings/db/clear"],
+    ["post", "/api/settings/db/clear-cache"]
+  ]
+}

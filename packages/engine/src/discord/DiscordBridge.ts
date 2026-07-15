@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { getDataDir, isChannelUserAllowed } from '@agentx/shared';
 import { MessagingPermissionCoordinator, permissionResultLabel } from '../channels/MessagingPermissionCoordinator.js';
 import { MessagingQuestionnaireCoordinator } from '../channels/MessagingQuestionnaireCoordinator.js';
+import { getRenderer } from '../channels/renderers/index.js';
 import {
   attachMessagingClarificationListener,
   deliverQuestionnaireCallback,
@@ -159,7 +160,7 @@ export class DiscordBridge {
           this.userAgents.delete(userId);
           this.userAgentActivity.delete(userId);
           this.eventBus.emit({
-            type: 'discord_agent_evicted' as any,
+            type: 'discord_agent_evicted',
             code: 'DISCORD_AGENT_EVICTED',
             message: `Evicted inactive agent for user ${userId}`,
             recoverable: false,
@@ -275,6 +276,7 @@ export class DiscordBridge {
     this.stopActivityCleanup();
     this.connected = false;
     if (this.client) {
+      this.client.removeAllListeners();
       this.client.destroy();
       this.client = null;
     }
@@ -287,9 +289,11 @@ export class DiscordBridge {
     try {
       const channel = await this.client.channels.fetch(channelId);
       if (channel && channel.isTextBased()) {
-        const chunks = this.chunkContent(content);
-        for (const chunk of chunks) {
-          await (channel as TextChannel).send(chunk);
+        const renderer = getRenderer('discord');
+        const results = renderer.renderMarkdown(content);
+        for (const result of results) {
+          const payload = result.payload as { content?: string };
+          await (channel as TextChannel).send(payload.content ?? '');
         }
       }
     } catch (error) {
@@ -302,9 +306,11 @@ export class DiscordBridge {
     if (!this.client) return;
     try {
       const user = await this.client.users.fetch(userId);
-      const chunks = this.chunkContent(content);
-      for (const chunk of chunks) {
-        await user.send(chunk);
+      const renderer = getRenderer('discord');
+      const results = renderer.renderMarkdown(content);
+      for (const result of results) {
+        const payload = result.payload as { content?: string };
+        await user.send(payload.content ?? '');
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Failed to send DM';
@@ -444,10 +450,13 @@ export class DiscordBridge {
         }
 
         const content = extractMessagingReplyText(response);
-        const chunks = this.chunkContent(content);
-        await interaction.editReply(chunks[0] ?? '(empty)');
-        for (let i = 1; i < chunks.length; i++) {
-          await interaction.followUp(chunks[i]!);
+        const renderer = getRenderer('discord');
+        const renderResults = renderer.renderMarkdown(content);
+        const firstPayload = renderResults[0]?.payload as { content?: string } | undefined;
+        await interaction.editReply(firstPayload?.content ?? '(empty)');
+        for (let i = 1; i < renderResults.length; i++) {
+          const payload = renderResults[i]!.payload as { content?: string };
+          await interaction.followUp(payload.content ?? '');
         }
       } else if (commandName === 'status') {
         const statusLines = [
@@ -585,15 +594,19 @@ export class DiscordBridge {
       }
 
       const content = extractMessagingReplyText(response);
-      const chunks = this.chunkContent(content);
+
+      // Use DiscordRenderer for native Discord markdown formatting + chunking
+      const renderer = getRenderer('discord');
+      const renderResults = renderer.renderMarkdown(content);
 
       // Reply in the same channel/thread/DM
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]!;
+      for (let i = 0; i < renderResults.length; i++) {
+        const result = renderResults[i]!;
+        const payload = result.payload as { content?: string; components?: unknown };
         if (i === 0) {
-          await message.reply(chunk);
+          await message.reply(payload.content ?? '');
         } else {
-          await (message.channel as TextChannel).send(chunk);
+          await (message.channel as TextChannel).send(payload.content ?? '');
         }
       }
     } catch (error) {
@@ -678,16 +691,6 @@ export class DiscordBridge {
       content: prompt.replace(/\*/g, '').slice(0, 2000),
       components: rows.slice(0, 5),
     });
-  }
-
-  private chunkContent(content: string): string[] {
-    const maxLen = 2000;
-    if (content.length <= maxLen) return [content];
-    const chunks: string[] = [];
-    for (let i = 0; i < content.length; i += maxLen) {
-      chunks.push(content.slice(i, i + maxLen));
-    }
-    return chunks;
   }
 
   private emitError(message: string): void {

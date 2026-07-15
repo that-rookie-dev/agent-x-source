@@ -40,12 +40,12 @@ import { providers as provApi, models as modelsApi, config, settings, voice, typ
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { LocalModelStep } from '../components/LocalModelStep';
-import { EmbeddingModelDownload } from '../components/EmbeddingModelDownload';
 import type { ActiveDownload } from '../components/DownloadIndicator';
 import type { ProviderInfo, ModelInfo, AgentXConfig, BenchmarkRunResult } from '../api';
-import { useLocalModelSupported, useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
+import { useLocalModelSupported, useNeuralBrainSupported, useSystemCapabilities } from '../hooks/useSystemCapabilities';
 import { ModelBenchmarkRunner, gradeAllowsAgentX } from '../components/settings/ModelBenchmarkRunner';
 import { WizardVoiceStep } from '../components/setup/WizardVoiceStep';
+import { WizardNeuralStep } from '../components/setup/WizardNeuralStep';
 import { WizardTelegramStep } from '../components/setup/WizardTelegramStep';
 import { WizardCheckMark, WizardHintTag, WizardStepHeader } from '../components/setup/wizard-ui';
 import {
@@ -75,19 +75,20 @@ export function SetupWizard() {
   const navigate = useNavigate();
   const localModelSupported = useLocalModelSupported();
   const neuralBrainSupported = useNeuralBrainSupported();
+  const systemCaps = useSystemCapabilities();
   const steps = useMemo(() => ALL_STEPS.filter((s) => {
     if (s === 'Local Model' && !localModelSupported) return false;
-    if (s === 'Neural Core' && !neuralBrainSupported) return false;
+    // Neural Core is always shown — low-RAM systems get a warning + opt-in.
     return true;
-  }), [localModelSupported, neuralBrainSupported]);
+  }), [localModelSupported]);
   const [step, setStep] = useState(0);
 
   const isStepSupported = useCallback((stepIndex: number) => {
     const label = ALL_STEPS[stepIndex];
     if (label === 'Local Model' && !localModelSupported) return false;
-    if (label === 'Neural Core' && !neuralBrainSupported) return false;
+    // Neural Core is always shown — low-RAM systems get a warning + opt-in.
     return stepIndex >= 0 && stepIndex < ALL_STEPS.length;
-  }, [localModelSupported, neuralBrainSupported]);
+  }, [localModelSupported]);
 
   const moveStep = useCallback((from: number, delta: 1 | -1) => {
     let next = from + delta;
@@ -173,6 +174,7 @@ export function SetupWizard() {
   const [voiceCalibrated, setVoiceCalibrated] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [telegramLinked, setTelegramLinked] = useState(false);
+  const [neuralBrainOptIn, setNeuralBrainOptIn] = useState(false);
 
   const resetPgTest = () => {
     setPgTestResult(null);
@@ -510,7 +512,7 @@ export function SetupWizard() {
       if (!localModelSupported) {
         setupPatch.localModel = { enabled: false };
       }
-      if (!neuralBrainSupported) {
+      if (!neuralBrainSupported && !neuralBrainOptIn) {
         setupPatch.neuralBrain = false;
       }
       await config.completeSetup(callsign.trim());
@@ -713,7 +715,7 @@ export function SetupWizard() {
                         }]
                       : [];
                   const neuralCoreCheck = pgTestResult.ok && !neuralBrainSupported
-                    ? { status: 'warn' as const, label: 'Neural Core (this Mac)', message: 'Requires 16 GB+ RAM. Agent-X will disable the neural brain on this machine; chat and crews still work.' }
+                    ? { status: 'warn' as const, label: 'Neural Core (this Mac)', message: 'Requires 16 GB+ RAM for stable operation. You can opt in later in the wizard, but performance may be affected.' }
                     : null;
                   const detailRows = [
                     ...extensionChecks.map((check) => ({
@@ -1032,14 +1034,12 @@ export function SetupWizard() {
               )}
 
               {step === 6 && (
-                <Box>
-                  <WizardStepHeader
-                    codename="MODULE · NEURAL CORE"
-                    title="Neural Core Initialization"
-                    subtitle="Downloading local embedding models for the neural brain. This enables offline semantic search and GraphRAG."
-                  />
-                  <EmbeddingModelDownload onComplete={next} />
-                </Box>
+                <WizardNeuralStep
+                  neuralBrainSupported={neuralBrainSupported}
+                  totalMemoryGB={systemCaps?.totalMemoryGB}
+                  onComplete={next}
+                  onOptInChange={setNeuralBrainOptIn}
+                />
               )}
 
               {step === 7 && (
@@ -1062,6 +1062,7 @@ export function SetupWizard() {
                 <WizardVoiceStep
                   onReadyChange={setVoiceCalibrated}
                   onBusyChange={setVoiceBusy}
+                  callsign={callsign}
                 />
               )}
 
@@ -1080,10 +1081,10 @@ export function SetupWizard() {
                     {localModelSupported && (
                       <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
                     )}
-                    {neuralBrainSupported ? (
+                    {neuralBrainSupported || neuralBrainOptIn ? (
                       <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Neural Core: Embedding models downloaded</Typography>
                     ) : (
-                      <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Neural Core: Disabled (requires 16GB+ RAM)</Typography>
+                      <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Neural Core: Skipped (low-RAM opt-out)</Typography>
                     )}
                     <Typography variant="caption" sx={{ display: 'block', color: voiceCalibrated ? wizardTheme.accentOk : wizardTheme.textDim }}>Voice Comms: {voiceCalibrated ? 'Calibrated' : 'Skipped'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: telegramLinked ? wizardTheme.accentOk : wizardTheme.textDim }}>Telegram Relay: {telegramLinked ? 'Linked' : 'Skipped'}</Typography>

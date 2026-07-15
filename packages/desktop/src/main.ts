@@ -248,7 +248,7 @@ async function checkForUpdates(manual = false): Promise<boolean> {
     installUpdate(destPath);
     return true;
   } catch (err) {
-    console.error('Update failed:', err);
+    console.error('Update failed', err);
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showErrorBox('Update Failed', err instanceof Error ? err.message : String(err));
     }
@@ -308,7 +308,7 @@ async function openExternalLink(url: string): Promise<boolean> {
     await shell.openExternal(url);
     return true;
   } catch (err) {
-    console.error('openExternal failed:', err);
+    console.error('openExternal failed', err);
     return false;
   }
 }
@@ -356,7 +356,7 @@ function createWindow(): void {
       return;
     }
     if (permission === 'geolocation' && reqOrigin === appOrigin) {
-      console.info('[desktop] granting geolocation for app origin');
+      console.log('granting geolocation for app origin');
       callback(true);
       return;
     }
@@ -365,11 +365,11 @@ function createWindow(): void {
       const mediaTypes = mediaDetails.mediaTypes ?? [];
       const wantsMic = mediaTypes.includes('audio') || mediaTypes.length === 0;
       if (wantsMic && reqOrigin === appOrigin) {
-        console.info('[desktop] granting microphone for app origin');
+        console.log('granting microphone for app origin');
         callback(true);
         return;
       }
-      console.info('[desktop] denying microphone for origin', reqOrigin);
+      console.log(`denying microphone for origin ${reqOrigin}`);
       callback(false);
       return;
     }
@@ -638,7 +638,7 @@ app.whenReady().then(async () => {
     }, 2000);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('Failed to start:', err);
+    console.error('Failed to start', err);
     dialog.showErrorBox('Startup Error', `Agent-X failed to start.\n\n${msg}`);
     app.quit();
   }

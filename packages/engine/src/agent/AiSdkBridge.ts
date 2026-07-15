@@ -12,7 +12,7 @@ import { createXai } from '@ai-sdk/xai';
 import { createPerplexity } from '@ai-sdk/perplexity';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
-import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, QuestionnairePayload } from '@agentx/shared';
+import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, QuestionnairePayload, ToolDefinition } from '@agentx/shared';
 import { normalizeAskClarificationArgs, shouldUseQuestionnaireClarification, TEXT_CLARIFICATION_REJECTED_MESSAGE } from '@agentx/shared';
 import { isToolAllowedInPlanMode, buildPlanModeRestrictedToolHint, type PlanGatePromptProfile } from './plan-mode-utils.js';
 import { isCompactToolAllowed } from './context-profile.js';
@@ -81,7 +81,7 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       return google(modelId);
     }
     case 'azure': {
-      const azure = createAzure({ apiKey, baseURL: baseURL || '', ...((providerCfg as any)?.azureResourceName ? { resourceName: (providerCfg as any).azureResourceName } : {}) });
+      const azure = createAzure({ apiKey, baseURL: baseURL || '', ...(providerCfg?.azureResourceName ? { resourceName: providerCfg.azureResourceName } : {}) });
       return azure(modelId);
     }
     case 'groq': {
@@ -218,8 +218,9 @@ export function normalizeJsonSchemaNode(node: unknown, propName?: string): Schem
   }
 
   for (const combiner of ['oneOf', 'anyOf', 'allOf'] as const) {
-    if (Array.isArray(out[combiner])) {
-      out[combiner] = (out[combiner] as unknown[]).map((entry, index) =>
+    const combinerVal = out[combiner];
+    if (Array.isArray(combinerVal)) {
+      out[combiner] = combinerVal.map((entry, index) =>
         normalizeJsonSchemaNode(entry, propName ? `${propName}_${combiner}_${index}` : undefined),
       );
     }
@@ -241,9 +242,23 @@ export function convertToJsonSchema(schema: unknown): Record<string, unknown> {
   return { type: 'object', properties: {}, required: [], additionalProperties: false };
 }
 
+export interface AiSdkToolExecutor {
+  execute: (toolId: string, args: Record<string, unknown>, sessionId: string, options?: { signal?: AbortSignal }) => Promise<ToolResult>;
+  setToolOutputHandler?: (handler: (output: string) => void) => void;
+  isTurnAborted: () => boolean;
+  shouldDisclose?: (toolCount: number) => boolean;
+  getCoreTools?: (tools: ToolDefinition[]) => ToolDefinition[];
+  createBridgeTools?: () => ToolDefinition[];
+  resolveBridgeToolCall?: (
+    toolName: string,
+    args: Record<string, unknown>,
+    allTools: ToolDefinition[],
+  ) => { resolved: ToolDefinition | null; resolvedArgs: Record<string, unknown>; error?: string };
+}
+
 export function createAiSdkTools(
   toolRegistry: ToolRegistry,
-  toolExecutor: { execute: (toolId: string, args: Record<string, unknown>, sessionId: string) => Promise<ToolResult>; setToolOutputHandler?: (handler: (output: string) => void) => void; isTurnAborted: () => boolean },
+  toolExecutor: AiSdkToolExecutor,
   sessionId: string,
   emit: (event: EngineEvent) => void,
   waitForClarification: (questionnaire: QuestionnairePayload) => Promise<string>,
@@ -264,10 +279,10 @@ export function createAiSdkTools(
 
   if (compactContext) {
     filteredTools = filteredTools.filter((t) => isCompactToolAllowed(t.id, planMode));
-  } else if (shouldDisclose(filteredTools.length)) {
+  } else if ((toolExecutor.shouldDisclose?.(filteredTools.length) ?? shouldDisclose(filteredTools.length))) {
     // Progressive disclosure: expose core tools + bridge (search/describe/call)
-    const core = getCoreTools(filteredTools);
-    const bridges = createBridgeTools();
+    const core = (toolExecutor.getCoreTools?.(filteredTools) ?? getCoreTools(filteredTools));
+    const bridges = (toolExecutor.createBridgeTools?.() ?? createBridgeTools());
     const coreIds = new Set(core.map((t) => t.id));
     filteredTools = [...core, ...bridges.filter((b) => !coreIds.has(b.id))];
   }
@@ -299,12 +314,12 @@ export function createAiSdkTools(
   };
 
   const runDelegateToSubagent = async (args: Record<string, unknown>): Promise<string> => {
-    const mission = (args as any).mission || '';
-    const items = Array.isArray((args as any).items) ? (args as any).items as string[] : undefined;
-    const toolsList = Array.isArray((args as any).tools) ? (args as any).tools : undefined;
-    const timeout = typeof (args as any).timeout === 'number' ? (args as any).timeout : 120_000;
-    const background = (args as any).background === true;
-    const batchSize = Math.max(1, Math.min(typeof (args as any).batchSize === 'number' ? (args as any).batchSize : 10, 50));
+    const mission = typeof args.mission === 'string' ? args.mission : '';
+    const items = Array.isArray(args.items) ? args.items as string[] : undefined;
+    const toolsList = Array.isArray(args.tools) ? args.tools as string[] : undefined;
+    const timeout = typeof args.timeout === 'number' ? args.timeout : 120_000;
+    const background = args.background === true;
+    const batchSize = Math.max(1, Math.min(typeof args.batchSize === 'number' ? args.batchSize : 10, 50));
 
     if (items && items.length > 0) {
       const chunks: string[][] = [];
@@ -364,7 +379,7 @@ export function createAiSdkTools(
       tools[toolDef.id] = tool({
         description: toolDef.modelDescription,
         inputSchema: jsonSchema(schema),
-        async execute(args) {
+        async execute(args, options) {
           const startTime = Date.now();
           const callId = `tc-${toolDef.id}-${startTime}`;
           emit({
@@ -376,7 +391,8 @@ export function createAiSdkTools(
             callId,
           });
 
-          const resolved = resolveBridgeToolCall(toolDef.id, args as Record<string, unknown>, discoveryCatalog);
+          const resolved = (toolExecutor.resolveBridgeToolCall?.(toolDef.id, args as Record<string, unknown>, discoveryCatalog) ??
+            resolveBridgeToolCall(toolDef.id, args as Record<string, unknown>, discoveryCatalog));
 
           if (toolDef.id === 'tool_call') {
             if (resolved.error || !resolved.resolved) {
@@ -403,7 +419,7 @@ export function createAiSdkTools(
               emit({ type: 'tool_complete', tool: toolDef.id, result: { success: true, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
               return output;
             }
-            const result = await toolExecutor.execute(targetId, resolved.resolvedArgs, sessionId);
+            const result = await toolExecutor.execute(targetId, resolved.resolvedArgs, sessionId, { signal: options?.abortSignal });
             onToolExecuted?.(targetId, result.success, result.output, Date.now() - startTime, resolved.resolvedArgs);
             emit({ type: 'tool_complete', tool: toolDef.id, result, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
             return result.success ? result.output : `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
@@ -457,7 +473,7 @@ export function createAiSdkTools(
            });
 
            try {
-             const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
+             const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId, { signal: options?.abortSignal });
              const elapsed = Date.now() - startTime;
              activeOutputCalls.delete(callId);
              onToolExecuted?.(toolDef.id, result.success, result.output, elapsed, args as Record<string, unknown>);
@@ -485,7 +501,7 @@ export function createAiSdkTools(
                      const accepted = await waitForModeEscalation(toolDef.id, result.output);
                      if (accepted) {
                        emit({ type: 'mode_escalation_accepted', tool: toolDef.id });
-                       const retryResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
+                       const retryResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId, { signal: options?.abortSignal });
                        const retryElapsed = Date.now() - startTime;
                        onToolExecuted?.(toolDef.id, retryResult.success, retryResult.output, retryElapsed, args as Record<string, unknown>);
                         emit({
@@ -573,16 +589,16 @@ export async function* aiSdkStream(
       switch (chunk.type) {
         case 'text-delta':
           textChunkCount++;
-          yield { type: 'text_delta', content: (chunk as any).textDelta || (chunk as any).text || '' };
+          yield { type: 'text_delta', content: chunk.text };
           break;
 
         case 'tool-call': {
           const tc: CompletionToolCall = {
-            id: (chunk as any).toolCallId,
+            id: chunk.toolCallId,
             type: 'function',
             function: {
-              name: (chunk as any).toolName,
-              arguments: JSON.stringify((chunk as any).args || (chunk as any).input || {}),
+              name: chunk.toolName,
+              arguments: JSON.stringify(chunk.input || {}),
             },
           };
           yield { type: 'tool_call_delta', toolCall: tc };
@@ -590,7 +606,7 @@ export async function* aiSdkStream(
         }
 
         case 'finish': {
-          const usage = (chunk as any).usage || (chunk as any).totalUsage;
+          const usage = chunk.totalUsage;
           if (usage) {
             yield {
               type: 'done',
@@ -604,7 +620,7 @@ export async function* aiSdkStream(
         }
 
         case 'error':
-          throw new Error(String((chunk as any).error || 'AI SDK stream error'));
+          throw new Error(String(chunk.error || 'AI SDK stream error'));
       }
     }
     if (chunkCount === 0) {

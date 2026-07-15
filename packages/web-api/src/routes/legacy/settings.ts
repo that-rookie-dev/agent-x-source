@@ -1,0 +1,560 @@
+/**
+ * Settings / DB route group (db status, provision, migrate, web-search, cache).
+ *
+ * Extracted from legacy.ts. Registers handlers on a dedicated Router and
+ * exports createSettingsRouter() for mounting by the legacy aggregator.
+ */
+import { Router } from 'express';
+import { join } from 'node:path';
+import { readdir, stat, rm } from 'node:fs/promises';
+import { getLogger, getDataDir, getConfigDir, getCacheDir } from '@agentx/shared';
+import { getEngine, clearEngine, setStorageProgressCallback } from '../../engine.js';
+import {
+  validateWebSearchProvider,
+  isWebSearchAvailableForChat,
+  applyWebSearchConfigFromAgentConfig,
+  healDatabaseStore,
+  PostgresStorageAdapter,
+  resetCatalogSeedInflight,
+} from '@agentx/engine';
+import { REDACTED_SECRET } from '../../config-redaction.js';
+import { startEmbeddedPostgresViaBridge } from '../../pg-lifecycle-bridge.js';
+import type { DbExtensionCheck } from '../../db-extension-checks.js';
+import { pathExists } from './shared.js';
+
+// ───── Module-local helpers (only used by settings/db routes) ─────
+
+function formatSize(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  let s = bytes;
+  while (s >= 1024 && i < units.length - 1) { s /= 1024; i++; }
+  return `${s.toFixed(1)} ${units[i]}`;
+}
+
+const DB_STATUS_CACHE_MS = 60_000;
+let dbStatusCache: { at: number; data: Record<string, unknown> } | null = null;
+
+async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<string, unknown>> {
+  const now = Date.now();
+  if (dbStatusCache && now - dbStatusCache.at < DB_STATUS_CACHE_MS) {
+    return dbStatusCache.data;
+  }
+  const store = eng.sessionManager?.getStorageAdapter();
+  const pgConnected = !!(store && typeof store.isConnected === 'function' && store.isConnected());
+  let dbSizeBytes = 0;
+  let tableCount = 0;
+  const tables: Record<string, number> = {};
+  let healthStatus: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
+  const checks: Array<{ table: string; rows: number; ok: boolean }> = [];
+  let connectionString = '';
+
+  try {
+    const pgPool = store?.getPool?.() ?? eng.pgPool;
+    if (pgPool && typeof pgPool.query === 'function') {
+      const tabRows = await pgPool.query(
+        "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+      );
+      tableCount = tabRows.rows.length;
+      for (const r of tabRows.rows as Array<{ tablename: string }>) {
+        try {
+          const cnt = await pgPool.query(`SELECT COUNT(*)::int as cnt FROM "${r.tablename}"`);
+          tables[r.tablename] = (cnt.rows[0] as { cnt: number }).cnt;
+          checks.push({ table: r.tablename, rows: (cnt.rows[0] as { cnt: number }).cnt, ok: true });
+        } catch (e) {
+          tables[r.tablename] = -1;
+          checks.push({ table: r.tablename, rows: -1, ok: false });
+          healthStatus = 'degraded';
+        }
+      }
+      try {
+        const sizeRes = await pgPool.query("SELECT pg_database_size(current_database()) as size");
+        dbSizeBytes = (sizeRes.rows[0] as { size: number }).size;
+      } catch (e) { /* db size not available */ }
+      if (tableCount > 0) healthStatus = 'healthy';
+      try {
+        const connRes = await pgPool.query('SELECT current_database() as db, inet_server_addr() as host');
+        const connRow = connRes.rows[0] as { host?: string; db?: string } | undefined;
+        connectionString = `postgresql://${connRow?.['host'] ?? 'localhost'}/${connRow?.['db'] ?? 'agentx'}`;
+      } catch { /* */ }
+    }
+  } catch (e) {
+    healthStatus = 'unhealthy';
+  }
+
+  const dataDir = getDataDir();
+  const configDir = getConfigDir();
+  const cacheDir = getCacheDir();
+
+  async function dirInfo(dir: string): Promise<{ path: string; sizeBytes: number; sizeFormatted: string }> {
+    let sizeBytes = 0;
+    try {
+      if (await pathExists(dir)) {
+        for (const f of await readdir(dir, { withFileTypes: true })) {
+          const fp = join(dir, f.name);
+          try { if (f.isFile()) sizeBytes += (await stat(fp)).size; } catch (e) { /* skip */ }
+        }
+      }
+    } catch (e) { /* skip */ }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let s = sizeBytes;
+    while (s >= 1024 && i < units.length - 1) { s /= 1024; i++; }
+    return { path: dir, sizeBytes, sizeFormatted: `${s.toFixed(1)} ${units[i]}` };
+  }
+
+  const result = {
+    backend: 'postgres',
+    connected: pgConnected,
+    stats: {
+      dbSizeBytes,
+      dbSizeFormatted: dbSizeBytes > 0 ? formatSize(dbSizeBytes) : `${tableCount} tables`,
+      tableCount,
+      tables,
+    },
+    health: { status: healthStatus, checks },
+    fileStorage: {
+      config: await dirInfo(configDir),
+      data: await dirInfo(dataDir),
+      cache: await dirInfo(cacheDir),
+    },
+    postgres: {
+      configured: true,
+      connectionString,
+    },
+  };
+  dbStatusCache = { at: Date.now(), data: result };
+  return result;
+}
+
+async function persistPostgresBackend(
+  resolvedBackend: 'embedded-postgres' | 'postgres',
+  connectionString: string,
+): Promise<void> {
+  process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = connectionString;
+  process.env['AGENTX_EMBEDDED_PG_ENABLED'] = resolvedBackend === 'embedded-postgres' ? '1' : '0';
+
+  const eng = getEngine();
+  const { getBuiltinPlugin } = await import('@agentx/engine');
+
+  if (!eng.pluginRegistry.isInstalled('postgresql')) {
+    const entry = getBuiltinPlugin('postgresql');
+    if (entry) eng.pluginRegistry.install(entry);
+  }
+  if (!eng.pluginRegistry.isEnabled('postgresql')) {
+    eng.pluginRegistry.enable('postgresql');
+  }
+  eng.pluginRegistry.updateConfig('postgresql', {
+    backend: resolvedBackend,
+    connectionString,
+    autoMigrate: true,
+    poolSize: 5,
+  });
+
+  clearEngine();
+}
+
+export function createSettingsRouter(): Router {
+  const r = Router();
+
+  r.get('/api/sessions/db-status', async (_req, res) => {
+    try {
+      const eng = getEngine();
+      const store = eng.sessionManager.getStorageAdapter();
+      const info = store?.getInfo?.() ?? { dbMode: 'postgres', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 };
+      res.json({ ...info, dbMode: 'postgres' });
+    } catch (e) {
+      res.json({ dbMode: 'postgres', sessionCount: 0, filesystemRecovered: 0, schemaVersion: 0 });
+    }
+  });
+
+  r.get('/api/settings/db', async (_req, res) => {
+    try {
+      const eng = getEngine();
+      res.json(await buildDbStatus(eng));
+    } catch (e: unknown) {
+      getLogger().error('GET_API_SETTINGS_DB', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'settings-db-failed' });
+    }
+  });
+
+  r.get('/api/settings/web-search/status', async (_req, res) => {
+    try {
+      const eng = getEngine();
+      const cfg = eng.configManager.load();
+      applyWebSearchConfigFromAgentConfig(cfg);
+      const status = isWebSearchAvailableForChat(cfg);
+      res.json(status);
+    } catch (e: unknown) {
+      getLogger().error('GET_API_SETTINGS_WEB_SEARCH_STATUS', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'web-search-status-failed' });
+    }
+  });
+
+  r.post('/api/settings/web-search/test', async (req, res) => {
+    try {
+      const provider = req.body?.provider as string;
+      if (provider !== 'brave' && provider !== 'exa' && provider !== 'tavily') {
+        res.status(400).json({ ok: false, error: 'provider must be brave, exa, or tavily' });
+        return;
+      }
+      let apiKey = String(req.body?.apiKey ?? '').trim();
+      if (!apiKey || apiKey === REDACTED_SECRET) {
+        try {
+          const cfg = getEngine().configManager.load();
+          apiKey = cfg.tools?.webSearch?.[provider]?.apiKey?.trim() ?? '';
+        } catch {
+          apiKey = '';
+        }
+      }
+      if (!apiKey) {
+        res.status(400).json({ ok: false, error: 'No API key configured for this search provider' });
+        return;
+      }
+      const result = await validateWebSearchProvider(provider, apiKey);
+      res.json(result);
+    } catch (e: unknown) {
+      res.status(500).json({
+        ok: false,
+        error: e instanceof Error ? e.message : 'web-search-test-failed',
+      });
+    }
+  });
+
+  r.put('/api/settings/db', async (req, res) => {
+    try {
+      const { backend, postgres } = req.body || {};
+      const resolvedBackend = backend === 'embedded-postgres' ? 'embedded-postgres' : 'postgres';
+      getLogger().info('SETTINGS_DB_UPDATE', `PostgreSQL connection update requested (backend=${resolvedBackend})`);
+
+      let connectionString = postgres?.connectionString as string | undefined;
+
+      if (resolvedBackend === 'embedded-postgres') {
+        connectionString = process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
+        if (!connectionString) {
+          // First-run deferred boot: start embedded PG on demand (same process as desktop/server).
+          try {
+            connectionString = await startEmbeddedPostgresViaBridge((line) => {
+              getLogger().info('PG_PROVISION', line);
+            });
+          } catch (e: unknown) {
+            res.status(400).json({
+              ok: false,
+              error: e instanceof Error ? e.message : 'Embedded PostgreSQL failed to start',
+            });
+            return;
+          }
+        }
+      }
+
+      if (connectionString) {
+        const { PostgresStorageAdapter } = await import('@agentx/engine');
+        const test = await PostgresStorageAdapter.testConnection(connectionString);
+        if (!test.ok) {
+          res.status(400).json({ ok: false, error: test.error ?? 'PostgreSQL connection failed' });
+          return;
+        }
+
+        await persistPostgresBackend(resolvedBackend, connectionString);
+      }
+
+      res.json({ ok: true, backend: resolvedBackend });
+    } catch (e: unknown) {
+      getLogger().error('PUT_API_SETTINGS_DB', e instanceof Error ? e : String(e));
+      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-update-failed' });
+    }
+  });
+
+  r.post('/api/settings/db/provision', async (req, res) => {
+    const { backend, postgres } = req.body || {};
+    const resolvedBackend = backend === 'embedded-postgres' ? 'embedded-postgres' : 'postgres';
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    // Flush headers immediately so the wizard sees progress before long work starts.
+    if (typeof (res as { flushHeaders?: () => void }).flushHeaders === 'function') {
+      (res as { flushHeaders: () => void }).flushHeaders();
+    }
+
+    let eventId = 0;
+    let clientDisconnected = false;
+    // IMPORTANT: use res 'close', not req 'close'.
+    // For POST + SSE, req emits 'close' when the request *body* is fully consumed —
+    // that happens immediately after Express parses JSON, which would silence every
+    // subsequent progress event (exactly the "stuck after Loading storage adapter" bug).
+    res.on('close', () => {
+      clientDisconnected = true;
+      getLogger().warn('PG_PROVISION', 'Client disconnected during provision — server setup may continue in background', {
+        backend: resolvedBackend,
+      });
+    });
+
+    const flush = () => {
+      const r = res as { flush?: () => void };
+      if (typeof r.flush === 'function') {
+        try { r.flush(); } catch { /* ignore */ }
+      }
+    };
+
+    const send = (event: string, data: unknown) => {
+      if (clientDisconnected || res.writableEnded || res.destroyed) return;
+      try {
+        res.write(`id: ${eventId}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        eventId += 1;
+        flush();
+      } catch { /* client closed */ }
+    };
+
+    const log = (line: string) => {
+      getLogger().info('PG_PROVISION', line);
+      send('log', { line, ts: new Date().toISOString() });
+    };
+
+    const logError = (phase: string, e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e);
+      const stack = e instanceof Error ? e.stack : undefined;
+      getLogger().error('PG_PROVISION', {
+        phase,
+        error: message,
+        stack,
+        backend: resolvedBackend,
+        clientDisconnected,
+      });
+      send('log', { line: `[ERROR] ${phase}: ${message}`, ts: new Date().toISOString() });
+    };
+
+    // Keepalive so proxies / browsers don't treat a quiet stream as dead during slow cloud migrate/seed.
+    let heartbeatTicks = 0;
+    const heartbeat = setInterval(() => {
+      if (clientDisconnected || res.writableEnded || res.destroyed) return;
+      heartbeatTicks += 1;
+      send('status', { phase: 'working', backend: resolvedBackend, tick: heartbeatTicks });
+      if (heartbeatTicks % 5 === 0) {
+        log(`Still working… (${heartbeatTicks * 2}s elapsed — schema migrate / catalog seed can take a few minutes on cloud)`);
+      }
+    }, 2_000);
+    if (typeof heartbeat === 'object' && heartbeat && 'unref' in heartbeat) {
+      (heartbeat as NodeJS.Timeout).unref();
+    }
+
+    try {
+      resetCatalogSeedInflight();
+      send('status', { phase: 'starting', backend: resolvedBackend });
+      log(`Provisioning ${resolvedBackend === 'embedded-postgres' ? 'embedded' : 'cloud'} PostgreSQL…`);
+
+      let connectionString = typeof postgres?.connectionString === 'string'
+        ? postgres.connectionString.trim()
+        : '';
+
+      if (resolvedBackend === 'embedded-postgres') {
+        log('Starting bundled PostgreSQL (initdb / extensions may take a minute on first run)…');
+        try {
+          connectionString = await startEmbeddedPostgresViaBridge((line) => log(line));
+        } catch (e) {
+          logError('embedded-postgres-start', e);
+          throw e;
+        }
+      } else {
+        if (!connectionString) {
+          send('error', { error: 'Connection string is required for cloud PostgreSQL' });
+          res.end();
+          return;
+        }
+        log('Testing remote PostgreSQL connection (15s timeout)…');
+      }
+
+      // Use the already-loaded adapter — avoid a second dynamic import that can stall first-load.
+      log('Opening PostgreSQL connection…');
+      let test: Awaited<ReturnType<typeof PostgresStorageAdapter.testConnection>>;
+      try {
+        test = await PostgresStorageAdapter.testConnection(connectionString);
+      } catch (e) {
+        logError('connection-test', e);
+        throw e;
+      }
+      if (!test.ok) {
+        const err = test.error ?? 'PostgreSQL connection failed';
+        getLogger().error('PG_PROVISION', { phase: 'connection-test', error: err, backend: resolvedBackend });
+        send('error', { error: err });
+        res.end();
+        return;
+      }
+      log(test.version ? `Connected: ${test.version}` : 'Connection OK');
+
+      log('Saving storage configuration…');
+      setStorageProgressCallback((line) => log(line));
+      try {
+        try {
+          await persistPostgresBackend(resolvedBackend, connectionString);
+        } catch (e) {
+          logError('persist-config', e);
+          throw e;
+        }
+        log('Reconnecting engine with new storage backend…');
+        log('Applying schema migrations and seeding Crew Hub catalog (progress updates every few seconds)…');
+        const eng = getEngine();
+        const storageReadyTimeoutMs = 20 * 60 * 1000;
+        try {
+          await Promise.race([
+            eng.storageReady,
+            new Promise<never>((_, reject) => {
+              setTimeout(() => {
+                reject(new Error(
+                  `Storage setup timed out after ${Math.round(storageReadyTimeoutMs / 60000)} minutes. `
+                  + 'Check PostgreSQL connectivity, pgvector extension, and debug logs.',
+                ));
+              }, storageReadyTimeoutMs);
+            }),
+          ]);
+        } catch (e) {
+          logError('engine-storage-ready', e);
+          throw e;
+        }
+      } finally {
+        setStorageProgressCallback(undefined);
+      }
+
+      if (clientDisconnected) {
+        getLogger().info('PG_PROVISION', 'Provision finished after client disconnect', { backend: resolvedBackend });
+        return;
+      }
+      log('Storage provision complete.');
+      send('complete', { ok: true, backend: resolvedBackend });
+      res.end();
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'provision-failed';
+      logError('provision', e);
+      send('error', { error: message });
+      res.end();
+    } finally {
+      clearInterval(heartbeat);
+    }
+  });
+
+  r.post('/api/settings/db/test', async (req, res) => {
+    try {
+      const { connectionString } = req.body || {};
+      if (!connectionString) {
+        res.json({ ok: false, error: 'No connection string provided' });
+        return;
+      }
+      const { Pool } = await import('pg');
+      const { runDbExtensionChecks } = await import('../../db-extension-checks.js');
+      const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 15_000 });
+      const client = await pool.connect();
+      try {
+        const result = await client.query('SELECT version() as version');
+        const pgVersion = result.rows[0]?.['version'] as string;
+        const ext = await runDbExtensionChecks(client);
+
+        const blocking = ext.checks.some((c: DbExtensionCheck) => c.status === 'fail');
+        getLogger().info('SETTINGS_DB_TEST', `PostgreSQL connection ${blocking ? 'partial' : 'successful'}: ${pgVersion}`);
+
+        res.json({
+          ok: !blocking,
+          version: pgVersion || 'connected',
+          checks: ext.checks,
+          vectorAvailable: ext.vectorAvailable,
+          vectorError: ext.vectorError,
+          ageAvailable: ext.ageAvailable,
+          ageError: ext.ageError,
+          extensionsCreated: ext.extensionsCreated,
+          error: blocking
+            ? ext.checks.find((c: DbExtensionCheck) => c.status === 'fail')?.message ?? 'Required database extensions are missing'
+            : undefined,
+        });
+      } finally {
+        try { client.release(); } catch { /* ignore */ }
+        await pool.end().catch(() => {});
+      }
+    } catch (e: unknown) {
+      getLogger().error('POST_API_SETTINGS_DB_TEST', e instanceof Error ? e : String(e));
+      res.status(400).json({ ok: false, error: e instanceof Error ? e.message : 'connection-failed' });
+    }
+  });
+
+  r.post('/api/settings/db/migrate', async (_req, res) => {
+    try {
+      const eng = getEngine();
+      const store = eng.sessionManager?.getStorageAdapter() as PostgresStorageAdapter | undefined;
+      if (!store || typeof store.connect !== 'function') {
+        res.status(500).json({ ok: false, error: 'PostgreSQL storage not initialized' });
+        return;
+      }
+      const started = Date.now();
+      await store.connect();
+      const durationMs = Date.now() - started;
+      res.json({ ok: true, migrated: {}, durationMs });
+    } catch (e: unknown) {
+      getLogger().error('POST_API_SETTINGS_DB_MIGRATE', e instanceof Error ? e : String(e));
+      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-migrate-failed' });
+    }
+  });
+
+  r.get('/api/settings/db/health', async (_req, res) => {
+    try {
+      const eng = getEngine();
+      const store = eng.sessionManager.getStorageAdapter();
+      if (store) {
+        try {
+          await healDatabaseStore(store);
+        } catch (healErr) {
+          getLogger().warn('DB_HEALTH_HEAL', healErr instanceof Error ? healErr.message : String(healErr));
+        }
+      }
+      const status = await buildDbStatus(eng);
+      res.json(status.health);
+    } catch (e: unknown) {
+      getLogger().error('GET_API_SETTINGS_DB_HEALTH', e instanceof Error ? e : String(e));
+      res.status(500).json({ status: 'unhealthy', checks: [] });
+    }
+  });
+
+  r.post('/api/settings/db/clear', async (_req, res) => {
+    try {
+      const eng = getEngine();
+      const store = eng.sessionManager?.getStorageAdapter() as PostgresStorageAdapter | undefined;
+      if (store && typeof store.clearAll === 'function') {
+        await store.clearAll();
+      }
+      getLogger().info('SETTINGS_DB_CLEAR', 'All session data cleared');
+      res.json({ ok: true });
+    } catch (e: unknown) {
+      getLogger().error('POST_API_SETTINGS_DB_CLEAR', e instanceof Error ? e : String(e));
+      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-clear-failed' });
+    }
+  });
+
+  r.post('/api/settings/db/clear-cache', async (_req, res) => {
+    try {
+      const cacheDir = getCacheDir();
+      let freed = 0;
+      if (await pathExists(cacheDir)) {
+        for (const f of await readdir(cacheDir)) {
+          const fp = join(cacheDir, f);
+          try {
+            const s = await stat(fp);
+            if (s.isFile()) { freed += s.size; await rm(fp); }
+          } catch (e) { /* skip */ }
+        }
+      }
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let i = 0;
+      let v = freed;
+      while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+      const freedFormatted = `${v.toFixed(1)} ${units[i]}`;
+      getLogger().info('SETTINGS_DB_CLEAR_CACHE', `Cache cleared: ${freedFormatted}`);
+      res.json({ ok: true, freedFormatted });
+    } catch (e: unknown) {
+      getLogger().error('POST_API_SETTINGS_DB_CLEAR_CACHE', e instanceof Error ? e : String(e));
+      res.status(500).json({ ok: false, freedFormatted: '0 B', error: e instanceof Error ? e.message : 'settings-db-clear-cache-failed' });
+    }
+  });
+
+
+  return r;
+}

@@ -53,19 +53,19 @@ function resolveScopePath(scopePath?: string): string {
   return process.cwd();
 }
 
-function sessionToInfo(session: Record<string, unknown>, crew?: Crew) {
+function sessionToInfo(session: Session, crew?: Crew) {
   return {
-    id: session['id'],
-    title: crew?.name ?? session['title'],
-    contextKind: session['contextKind'] ?? 'crew_private',
-    hostCrewId: session['hostCrewId'] ?? crew?.id,
+    id: session.id,
+    title: crew?.name ?? session.title,
+    contextKind: session.contextKind ?? 'crew_private',
+    hostCrewId: session.hostCrewId ?? crew?.id,
     crewId: crew?.id,
     crewName: crew?.name,
     crewTitle: crew?.title,
     crewCallsign: crew?.callsign,
-    scopePath: session['scopePath'],
-    createdAt: session['createdAt'],
-    updatedAt: session['updatedAt'],
+    scopePath: session.scopePath,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
   };
 }
 
@@ -76,9 +76,7 @@ async function enrichRecruitFromCatalog(recruit: Record<string, unknown>): Promi
 
   try {
     const eng = getEngine();
-    const store = (eng.sessionManager as unknown as {
-      store?: { getCrewCatalogStore?: () => { getCatalogEntry: (id: string) => Promise<{ categoryId?: string } | null> } };
-    }).store;
+    const store = eng.sessionManager.getStorageAdapter();
     const catalogStore = store?.getCrewCatalogStore?.();
     const entry = catalogStore ? await catalogStore.getCatalogEntry(catalogId) : null;
     if (entry?.categoryId) {
@@ -140,10 +138,7 @@ function resolveOrRecruitCrew(body: {
 
 function findCrewPrivateSession(crewId: string): Session | null {
   const eng = getEngine();
-  const mgr = eng.sessionManager as unknown as {
-    findCrewPrivateSession?: (id: string) => Session | null;
-  };
-  return mgr.findCrewPrivateSession?.(crewId) ?? null;
+  return eng.sessionManager.findCrewPrivateSession(crewId);
 }
 
 /** POST /api/crew-chat/sessions — create or return the crew-private session (chat uses /api/sessions + /api/chat). */
@@ -183,7 +178,7 @@ export async function postCrewChatSession(req: Request, res: Response): Promise<
       sessionId: session.id,
       created,
       crew: crewInfo(crew),
-      session: sessionToInfo(session as unknown as Record<string, unknown>, crew),
+      session: sessionToInfo(session, crew),
     });
   } catch (e: unknown) {
     getLogger().error('POST_CREW_CHAT_SESSION', e instanceof Error ? e : String(e));

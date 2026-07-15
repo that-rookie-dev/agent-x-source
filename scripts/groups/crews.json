@@ -1,0 +1,25 @@
+{
+  "routes": [
+    ["get", "/api/crews"],
+    ["post", "/api/crew/toggle"],
+    ["post", "/api/crews"],
+    ["put", "/api/crews/:id"],
+    ["delete", "/api/crews/:id"],
+    ["post", "/api/crew-suggestions/evaluate"],
+    ["post", "/api/crew-suggestions/resolve"],
+    ["post", "/api/crew-suggestions/clear-dismiss"],
+    ["post", "/api/sessions/:id/crew-roster-picker"],
+    ["patch", "/api/sessions/:id/crew-roster-picker"],
+    ["post", "/api/crew-chat/sessions"],
+    ["post", "/api/agent-x-core/session"],
+    ["get", "/api/crew-catalog/categories"],
+    ["get", "/api/crew-catalog/seed-status"],
+    ["get", "/api/crew-catalog/search"],
+    ["get", "/api/crew-catalog/by-category/:categoryId"],
+    ["get", "/api/crew-catalog/:id"],
+    ["get", "/api/crew/:id"],
+    ["post", "/api/crew/:id/feedback"],
+    ["get", "/api/crew/:id/feedback"],
+    ["post", "/api/crew/generate-metadata"]
+  ]
+}

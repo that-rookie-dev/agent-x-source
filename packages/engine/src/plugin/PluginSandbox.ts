@@ -69,12 +69,12 @@ export function executePluginInSandbox(
     clearTimeout(timeout);
 
     const exports: Record<string, unknown> = {};
-    const ctxAny = ctx as any;
-    if (typeof ctxAny.exports === 'object' && ctxAny.exports !== null) {
-      Object.assign(exports, ctxAny.exports);
+    const ctxExports = ctx as unknown as { exports?: Record<string, unknown> | null; module?: { exports?: Record<string, unknown> } };
+    if (typeof ctxExports.exports === 'object' && ctxExports.exports !== null) {
+      Object.assign(exports, ctxExports.exports);
     }
-    if (typeof ctxAny.module?.exports === 'object') {
-      Object.assign(exports, ctxAny.module.exports);
+    if (typeof ctxExports.module?.exports === 'object') {
+      Object.assign(exports, ctxExports.module.exports);
     }
 
     return { success: true, exports, output: output.join('\n') };

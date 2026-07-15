@@ -4,8 +4,8 @@ import { getEngine } from './engine.js';
 import { validateWebSocketConnection } from './auth.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, attachChartPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
-import type { DeepSearchProgress } from '@agentx/shared';
-import { MemoryFabric, MemoryService, TtlCache } from '@agentx/engine';
+import type { DeepSearchProgress, EngineEvent, EventHandler, Message } from '@agentx/shared';
+import { MemoryFabric, MemoryIngestionService as MemoryService, TtlCache } from '@agentx/engine';
 import { buildDistillationGenerator, buildGraphRagGenerator } from './distillation-generator.js';
 
 let localEmbedder: import('@agentx/engine').OnnxEmbeddingProvider | null = null;
@@ -40,7 +40,7 @@ function getLocalModelConfigHash(): string {
 async function getMemoryService(): Promise<MemoryService | null> {
   const fabric = getMemoryFabric();
   if (!fabric) return null;
-  const pool = (fabric as any)['pool'];
+  const pool = fabric.getPool();
   if (!pool) return null;
 
   const currentHash = getLocalModelConfigHash();
@@ -227,7 +227,7 @@ export function persistPart(sessionId: string, part: PartRecord): void {
   if (!sessionId) return;
   try {
     const eng = getEngine();
-    const store = (eng.sessionManager as any).store;
+    const store = eng.sessionManager.getStorageAdapter();
     if (store?.insertPart) { store.insertPart(sessionId, part); }
   } catch { /* best-effort */ }
 }
@@ -264,7 +264,7 @@ function appendContextFile(
       const isCrewPrivate = (session?.contextKind ?? 'agent_x') === 'crew_private';
       if (!isCrewPrivate) return;
 
-      const store = (eng.sessionManager as any).store;
+      const store = eng.sessionManager.getStorageAdapter();
       if (store?.insertMessage) {
         store.insertMessage({
           id: messageId,
@@ -290,7 +290,7 @@ function appendContextFile(
   // Primary: messages table
   try {
     const eng = getEngine();
-    const store = (eng.sessionManager as any).store;
+    const store = eng.sessionManager.getStorageAdapter();
     if (store?.insertMessage) {
       store.insertMessage({
         id: messageId,
@@ -322,7 +322,7 @@ const sessionEventSubscribers = new Map<WebSocket, () => void>();
 function getMemoryFabric(): MemoryFabric | null {
   const pool = getEngine().pgPool;
   if (!pool) return null;
-  return new MemoryFabric(pool as any);
+  return new MemoryFabric(pool);
 }
 
 const sessionHubCache = new TtlCache<{ sourceId: string; hubId: string }>(24 * 60 * 60 * 1000, 500);
@@ -444,8 +444,8 @@ export function setupWebSocket(server: Server): void {
   });
 
   wss.on('error', (err) => {
-    if ((err as any).code === 'EADDRINUSE') return;
-    console.error('WebSocket error:', (err as Error).message);
+    if ('code' in err && err.code === 'EADDRINUSE') return;
+    console.error('WebSocket error:', err.message);
   });
 
   // Enable built-in ping/pong on the WebSocket server
@@ -511,8 +511,8 @@ export function setupWebSocket(server: Server): void {
       try {
         const eng = getEngine();
         const agent = eng.agent;
-        if (agent && typeof (agent as any).lifecycle?.isProcessing === 'function' && (agent as any).lifecycle.isProcessing()) {
-          getLogger().info('WS', `Client disconnected while agent was ${(agent as any).lifecycle.getState()}. Events will be persisted for replay.`);
+        if (agent && typeof agent.lifecycle?.isProcessing === 'function' && agent.lifecycle.isProcessing()) {
+          getLogger().info('WS', `Client disconnected while agent was ${agent.lifecycle.getState()}. Events will be persisted for replay.`);
         }
       } catch { /* best-effort */ }
     });
@@ -531,8 +531,8 @@ export function setupWebSocket(server: Server): void {
 async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]: unknown }): Promise<void> {
   switch (msg.type) {
     case 'chat_message': {
-      const text = msg.text as string;
-      if (!text || typeof text !== 'string') {
+      const text = msg.text;
+      if (typeof text !== 'string' || !text) {
         broadcast({ type: 'error', message: 'Invalid message: text is required' });
         return;
       }
@@ -560,31 +560,37 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
     case 'permission_respond': {
       const eng = getEngine();
       const agent = eng.agent;
-      const requestId = msg.requestId as string;
-      const choice = msg.choice as 'allow_once' | 'allow_always' | 'deny';
-      if (agent && requestId) agent.respondToPermission(requestId, choice);
+      const requestId = msg.requestId;
+      const choice = msg.choice;
+      if (agent && typeof requestId === 'string' && typeof choice === 'string'
+        && (choice === 'allow_once' || choice === 'allow_always' || choice === 'deny')) {
+        agent.respondToPermission(requestId, choice);
+      }
       break;
     }
     case 'permission_respond_batch': {
       const eng = getEngine();
       const agent = eng.agent;
-      const choice = msg.choice as 'allow_once' | 'allow_always' | 'deny';
-      if (agent) agent.respondToPermissionBatch(choice);
+      const choice = msg.choice;
+      if (agent && typeof choice === 'string'
+        && (choice === 'allow_once' || choice === 'allow_always' || choice === 'deny')) {
+        agent.respondToPermissionBatch(choice);
+      }
       break;
     }
     case 'clarification_response': {
       const eng = getEngine();
       const agent = eng.agent;
-      const response = msg.response as string;
-      if (agent && response) agent.respondToClarification(response);
+      const response = msg.response;
+      if (agent && typeof response === 'string' && response) agent.respondToClarification(response);
       break;
     }
     case 'checkpoint_response': {
       const eng = getEngine();
       const agent = eng.agent;
-      const checkpointId = msg.checkpointId as string;
-      const action = msg.action as string;
-      if (agent && checkpointId && action) {
+      const checkpointId = msg.checkpointId;
+      const action = msg.action;
+      if (agent && typeof checkpointId === 'string' && typeof action === 'string') {
         const resolved = agent.resolveCheckpoint(checkpointId, action);
         if (!resolved) {
           getLogger().warn('WS', `Checkpoint ${checkpointId.slice(0, 12)} not found on agent`);
@@ -593,15 +599,15 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
       break;
     }
     case 'subscribe': {
-      const sessionId = msg.sessionId as string;
-      if (!sessionId) break;
+      const sessionId = msg.sessionId;
+      if (typeof sessionId !== 'string' || !sessionId) break;
       try {
         const eng = getEngine();
         const agent = eng.agent;
-        if (agent && agent.events && typeof (agent.events as any).onSessionEvent === 'function') {
+        if (agent && agent.events && typeof agent.events.onSessionEvent === 'function') {
           const unsubOld = sessionEventSubscribers.get(ws);
           if (unsubOld) unsubOld();
-          const unsub = (agent.events as any).onSessionEvent((event: Record<string, unknown>) => {
+          const unsub = agent.events.onSessionEvent((event: Record<string, unknown>) => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'session_event', data: event }));
             }
@@ -609,12 +615,12 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
           sessionEventSubscribers.set(ws, unsub);
         }
         // Send current session state (agent processing status) so client knows if tasks are running
-        if (agent && typeof (agent as any).lifecycle?.isProcessing === 'function') {
+        if (agent && typeof agent.lifecycle?.isProcessing === 'function') {
           ws.send(JSON.stringify({
             type: 'session_state',
             sessionId,
-            processing: (agent as any).lifecycle.isProcessing(),
-            state: (agent as any).lifecycle.getState(),
+            processing: agent.lifecycle.isProcessing(),
+            state: agent.lifecycle.getState(),
           }));
         }
       } catch {
@@ -675,7 +681,7 @@ export function unsubscribeAgent(): void {
   subscribedAgent = null;
 }
 
-export function subscribeToAgent(agent: { events: { on: (handler: (event: Record<string, unknown>) => void) => () => void } }): void {
+export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) => () => void } }): void {
   // Unsubscribe from previous agent to prevent memory leak
   unsubscribeAgent();
   if (subscribedAgent === agent) return;
@@ -741,15 +747,15 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     if (thinkingText) extra.thinkingDoneAt = Date.now();
     if (toolCalls.length > 0) extra.toolCalls = toolCalls;
     if (subAgents.length > 0) extra.subAgents = subAgents;
-    if (parts) extra.parts = parts as unknown as Array<Record<string, unknown>>;
+    if (parts) extra.parts = parts;
     if (currentPlan && currentPlan.length > 0) extra.plan = currentPlan;
     if (perTurnTokens != null) { extra.turnTokens = perTurnTokens; extra.tokenCount = perTurnTokens; }
     if (perTurnCostUsd != null) extra.turnCostUsd = perTurnCostUsd;
     return extra;
   }
 
-  unsubscribeFromAgent = agent.events.on((event: Record<string, unknown>) => {
-    const evType = (event as { type?: string }).type ?? 'unknown';
+  unsubscribeFromAgent = agent.events.on((event: EngineEvent) => {
+    const evType: string = event.type;
     broadcast({
       type: 'engine_event',
       event: evType,
@@ -765,30 +771,27 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
       currentSessionId = sess0?.id || '';
     } catch { /* ignore */ }
 
-    if (evType === 'thinking_delta' || evType === 'reasoning_delta') {
+    if (event.type === 'thinking_delta' || event.type === 'reasoning_delta') {
       if (thinkingStartedAt == null) thinkingStartedAt = Date.now();
-      const delta = ((event as any).content as string) ?? ((event as any).text as string) ?? '';
+      const delta = event.content ?? (event.type === 'thinking_delta' ? event.text : undefined) ?? '';
       accumulatedThinking += delta;
     }
 
     // Track plan steps
-    if (evType === 'plan_generated') {
-      const plan = (event as any).plan as { steps?: { description: string }[] } | undefined;
-      if (plan?.steps) {
-        currentPlan = plan.steps.map((s: { description: string }) => s.description);
+    if (event.type === 'plan_generated') {
+      if (event.plan?.steps) {
+        currentPlan = event.plan.steps.map((s) => s.description);
       }
     }
 
     // Track per-turn token data
-    if (evType === 'token_usage') {
-      const t = (event as any).turnTokens as number | undefined;
-      const c = (event as any).costUsd as number | undefined;
-      if (t != null) perTurnTokens = t;
-      if (c != null) perTurnCostUsd = c;
+    if (event.type === 'token_usage') {
+      if (event.turnTokens != null) perTurnTokens = event.turnTokens;
+      if (event.costUsd != null) perTurnCostUsd = event.costUsd;
     }
 
-    if (evType === 'stream_chunk') {
-      const delta = ((event as any).content as string) ?? '';
+    if (event.type === 'stream_chunk') {
+      const delta = event.content ?? '';
       if (delta && !/Calling:|✅ Result:|\[STEP \d+\]/.test(delta)) {
         textBuffer = appendStreamText(textBuffer, delta);
         if (currentSessionId) {
@@ -798,16 +801,16 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     }
 
     // Accumulate tool calls and sub-agents
-    if (evType === 'tool_executing') {
+    if (event.type === 'tool_executing') {
       flushTextBuffer();
-      const toolName = ((event as any).tool as string) ?? 'unknown';
-      const description = ((event as any).description as string) ?? '';
-      const eventArgs = ((event as any).args as Record<string, unknown> | undefined) ?? description;
+      const toolName = event.tool ?? 'unknown';
+      const description = event.description ?? '';
+      const eventArgs = event.args ?? description;
       if (toolName === 'delegate_to_subagent') {
-        const id = (event as any).callId as string || (event as any).id as string || `sub-${Date.now()}-${subAgentMap.size}`;
+        const id = event.callId ?? `sub-${Date.now()}-${subAgentMap.size}`;
         subAgentMap.set(id, { id, name: 'Sub-Agent', task: description, status: 'running' });
       } else {
-        const id = (event as any).callId as string || (event as any).toolCallId as string || (event as any).id as string || `tool-${Date.now()}-${toolCallMap.size}`;
+        const id = event.callId ?? `tool-${Date.now()}-${toolCallMap.size}`;
         toolCallMap.set(id, { id, name: toolName, args: eventArgs, status: 'running' });
         accumulatedParts.push({
           type: 'tool',
@@ -815,37 +818,37 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
           tool: { id, name: toolName, args: eventArgs, status: 'running' },
         });
         // Persist part to PostgreSQL immediately
-        persistPart(currentSessionId, { type: 'tool-call', toolName, toolCallId: id, toolArgs: typeof eventArgs === 'object' ? eventArgs as Record<string, unknown> : undefined, timestamp: Date.now() });
+        persistPart(currentSessionId, { type: 'tool-call', toolName, toolCallId: id, toolArgs: typeof eventArgs === 'object' ? eventArgs : undefined, timestamp: Date.now() });
       }
     }
-    if (evType === 'tool_complete') {
-      const toolName = ((event as any).tool as string) ?? '';
-      const elapsed = ((event as any).elapsed as number) ?? 0;
-      const result = (event as any).result ?? (event as any).output as string ?? '';
+    if (event.type === 'tool_complete') {
+      const toolName = event.tool ?? '';
+      const elapsed = event.elapsed ?? 0;
+      const result = event.result;
       const resultStr = typeof result === 'string'
         ? result
-        : typeof (result as { output?: unknown })?.output === 'string'
-          ? (result as { output: string }).output
+        : typeof result?.output === 'string'
+          ? result.output
           : JSON.stringify(result ?? '');
-      const metadata = ((event as any).metadata ?? (result as { metadata?: unknown })?.metadata) as Record<string, unknown> | undefined;
+      const metadata = event.result?.metadata;
       if (toolName === 'save_to_markdown' && metadata?.['markdownId']) {
         broadcast({ type: 'markdown_created', markdownId: metadata['markdownId'], contentFormat: metadata['contentFormat'] });
       }
       if (toolName === 'delegate_to_subagent') {
-        const id = (event as any).callId as string || (event as any).id as string;
+        const id = event.callId;
         if (id && subAgentMap.has(id)) {
           const sa = subAgentMap.get(id)!;
           sa.status = 'done';
           sa.result = resultStr;
         }
       } else {
-        const id = (event as any).callId as string || (event as any).toolCallId as string || (event as any).id as string;
+        const id = event.callId;
         if (id && toolCallMap.has(id)) {
           const tc = toolCallMap.get(id)!;
           tc.status = 'done';
           tc.result = resultStr;
           tc.elapsed = elapsed;
-          if (metadata) tc.metadata = metadata as ToolCallRecord['metadata'];
+          if (metadata) tc.metadata = metadata;
           const partIdx = accumulatedParts.findIndex((p) => p.type === 'tool' && p.tool?.id === id);
           if (partIdx >= 0 && accumulatedParts[partIdx]?.tool) {
             accumulatedParts[partIdx] = {
@@ -855,7 +858,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
                 status: 'done',
                 result: resultStr,
                 elapsed,
-                metadata: metadata as ToolCallRecord['metadata'],
+                metadata,
               },
             };
           }
@@ -885,7 +888,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
 
       // Persist tool result to PostgreSQL parts table immediately
       if (toolName !== 'delegate_to_subagent') {
-        const id = (event as any).callId as string || (event as any).toolCallId as string || (event as any).id as string;
+        const id = event.callId;
         persistPart(currentSessionId, {
           type: 'tool-result',
           toolName,
@@ -898,12 +901,10 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     }
 
     // Track crew activity for real-time UI updates
-    if (evType === 'crew_activity') {
-      const crewId = (event as any).crewId as string;
-      const crewName = (event as any).crewName as string;
-      const activity = (event as any).activity as string;
+    if (event.type === 'crew_activity') {
+      const { crewId, crewName, activity, content } = event;
       if (crewId && activity) {
-        broadcast({ type: 'crew_activity', crewId, crewName, activity, content: (event as any).content });
+        broadcast({ type: 'crew_activity', crewId, crewName, activity, content });
       }
     }
 
@@ -911,20 +912,20 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
     try {
       const eng = getEngine();
       const sess = eng.sessionManager.getActiveSession();
-      const msgObj = (event as any).message as Record<string, unknown> | undefined;
-      const sessionId = sess?.id || (msgObj?.sessionId as string) || (event as any).sessionId || '';
+      const msgObj = event.type === 'message_sent' || event.type === 'message_received' ? event.message : undefined;
+      const sessionId = sess?.id || msgObj?.sessionId || '';
 
-      if (evType === 'message_sent') {
+      if (event.type === 'message_sent') {
         // Reset first — new user turn must not inherit prior turn parts
         resetAccumulators();
-        const rawMsg: any = (event as any).message?.content;
+        const rawMsg = event.message?.content;
         if (sess && typeof rawMsg === 'string' && sess.title === 'New Session') {
           const firstLine = String(rawMsg).split('\n')[0] || '';
           const title = firstLine.slice(0, 80).trim();
           if (title.length > 0) eng.sessionManager.updateSession({ title });
         }
-        const msg: any = (event as any).message;
-        const text = (msg?.content as string) || (event as any).content as string || '';
+        const msg: Message | undefined = event.message;
+        const text = msg?.content ?? '';
         // User rows are persisted by Agent.persistUserMessage — only ingest memory here.
         if (sessionId && text) {
           ingestConversationMemory(sessionId, 'user', text).catch((e) => getLogger().warn('MEMORY_INGEST', `user message ingest failed: ${e instanceof Error ? e.message : String(e)}`));
@@ -932,28 +933,23 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
       }
 
       // Persist assistant messages with ALL accumulated rich metadata
-      if (evType === 'message_received') {
+      if (event.type === 'message_received') {
         try {
           flushTextBuffer();
-          const msg: any = (event as any).message;
-          const isUpdate = (event as { isUpdate?: boolean }).isUpdate === true;
-          const text = repairStreamTextGlitches(stripToolNoise((msg?.content as string) || (event as any).content as string || ''));
-          const crew = msg?.crew as CrewInfo | undefined;
+          const msg: Message | undefined = event.message;
+          const isUpdate = event.isUpdate === true;
+          const text = repairStreamTextGlitches(stripToolNoise(msg?.content ?? ''));
+          const crew = msg?.crew;
           if (sessionId && text) {
             const thinkingText = accumulatedThinking || undefined;
             const extra = buildExtra(thinkingText);
             if (isUpdate && msg?.id) {
-              const store = (eng.sessionManager as unknown as {
-                store?: {
-                  getMessages?: (sid: string) => Array<Record<string, unknown>>;
-                  updateMessage?: (sid: string, mid: string, patch: Record<string, unknown>) => void;
-                };
-              }).store;
-              const existing = store?.getMessages?.(sessionId)?.find((m) => m['id'] === msg.id);
-              const existingParts = Array.isArray(existing?.['parts']) ? existing!['parts'] as Array<Record<string, unknown>> : [];
-              const newParts = Array.isArray(extra.parts) ? extra.parts as Array<Record<string, unknown>> : [];
+              const store = eng.sessionManager.getStorageAdapter();
+              const existing = store.getMessages?.(sessionId)?.find((m) => m.id === msg.id);
+              const existingParts = Array.isArray(existing?.parts) ? existing.parts : [];
+              const newParts = Array.isArray(extra.parts) ? extra.parts : [];
               const mergedParts = newParts.length > 0 ? [...existingParts, ...newParts] : existingParts;
-              store?.updateMessage?.(sessionId, msg.id, {
+              store.updateMessage?.(sessionId, msg.id, {
                 content: text,
                 ...(mergedParts.length > 0 ? { parts: mergedParts } : {}),
               });
@@ -969,25 +965,25 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
 
       // Also write tool execution system messages for context.txt readability
       // (conversation.json already has structured data in the message_received record)
-      if (evType === 'tool_executing') {
-        const tool = (event as any).tool as string || '';
+      if (event.type === 'tool_executing') {
+        const tool = event.tool;
         if (sessionId && tool) {
           appendContextFile(sessionId, 'system', `[tool] executing: ${tool}`);
         }
       }
-      if (evType === 'tool_complete') {
-        const tool = (event as any).tool as string || '';
-        const elapsed = (event as any).elapsed as number || 0;
-        const resultObj = (event as any).result;
-        const result = typeof resultObj === 'string' ? resultObj : (resultObj?.output as string || '');
+      if (event.type === 'tool_complete') {
+        const tool = event.tool;
+        const elapsed = event.elapsed ?? 0;
+        const resultObj = event.result;
+        const result = typeof resultObj === 'string' ? resultObj : (resultObj?.output ?? '');
         if (sessionId && tool) {
           const snippet = result.length > 500 ? result.slice(0, 500) + '...' : result;
           appendContextFile(sessionId, 'system', `[tool] ${tool} completed (${elapsed}ms)\n${snippet}`);
         }
       }
 
-      if (evType === 'compaction_complete') {
-        const summary = (event as any).summary as string | undefined;
+      if (event.type === 'compaction_complete') {
+        const summary = event.summary;
         if (sessionId && summary?.trim()) {
           appendContextFile(sessionId, 'system', `[COMPACTION SUMMARY — ${new Date().toISOString()}]\n${summary.trim()}`);
         }
@@ -998,10 +994,26 @@ export function subscribeToAgent(agent: { events: { on: (handler: (event: Record
   });
 }
 
+export function shutdownWebSocket(): void {
+  if (brainActivityFlushTimer) {
+    clearTimeout(brainActivityFlushTimer);
+    brainActivityFlushTimer = null;
+  }
+  brainActivityBatch = [];
+  if (wss) {
+    for (const client of wss.clients) {
+      client.terminate();
+    }
+    wss.close();
+    wss = null;
+  }
+  unsubscribeAgent();
+}
+
 export function ensureSubscribed(): void {
   const eng = getEngine();
   const agent = eng.agent;
   if (!agent) return;
   if (subscribedAgent === agent) return;
-  subscribeToAgent(agent as unknown as { events: { on: (handler: (event: Record<string, unknown>) => void) => () => void } });
+  subscribeToAgent(agent);
 }

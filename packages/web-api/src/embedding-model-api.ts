@@ -23,7 +23,7 @@ const EMBEDDING_MODELS_DIR = join(getDataDir(), 'models');
 
 // Ensure the directory exists.
 if (!existsSync(EMBEDDING_MODELS_DIR)) {
-  try { mkdirSync(EMBEDDING_MODELS_DIR, { recursive: true }); } catch {}
+  try { mkdirSync(EMBEDDING_MODELS_DIR, { recursive: true }); } catch { /* ignore */ }
 }
 
 // Set the embedding cache dir so OnnxEmbeddingProvider finds models here.
@@ -86,10 +86,10 @@ function getDirSize(dirPath: string): number {
       if (entry.isDirectory()) {
         total += getDirSize(fullPath);
       } else if (entry.isFile()) {
-        try { total += statSync(fullPath).size; } catch {}
+        try { total += statSync(fullPath).size; } catch { /* ignore */ }
       }
     }
-  } catch {}
+  } catch { /* ignore */ }
   return total;
 }
 
@@ -119,10 +119,10 @@ const RETRY_BASE_DELAY_MS = 3000;
  */
 function cleanPartialDownload(model: ModelSpec): void {
   const modelDir = join(EMBEDDING_MODELS_DIR, model.subdir);
-  try { rmSync(modelDir, { recursive: true, force: true }); } catch {}
+  try { rmSync(modelDir, { recursive: true, force: true }); } catch { /* ignore */ }
   // Also clean the huggingface-style cache dir name.
   const sanitized = model.huggingfaceId.replace(/[^a-zA-Z0-9_.-]/g, '-');
-  try { rmSync(join(EMBEDDING_MODELS_DIR, `models--${sanitized}`), { recursive: true, force: true }); } catch {}
+  try { rmSync(join(EMBEDDING_MODELS_DIR, `models--${sanitized}`), { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
 /**
@@ -244,8 +244,11 @@ router.get('/embedding-models/status', (_req: Request, res: Response) => {
  * Starts downloading both embedding models in the background.
  * Returns immediately with the initial state.
  */
-router.post('/embedding-models/download', async (_req: Request, res: Response) => {
-  if (!neuralBrainHardwareSupported()) {
+router.post('/embedding-models/download', async (req: Request, res: Response) => {
+  // Allow low-RAM systems to bypass the hardware check when the user has
+  // explicitly opted in via the setup wizard (force: true).
+  const force = req.body?.force === true;
+  if (!neuralBrainHardwareSupported() && !force) {
     return res.status(403).json({
       ok: false,
       error: 'neural-brain-unsupported',

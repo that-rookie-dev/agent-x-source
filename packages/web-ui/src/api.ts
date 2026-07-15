@@ -328,6 +328,7 @@ export const chat = {
     forceWebSearch?: boolean,
     userMessagePersisted?: boolean,
     clientSituation?: ClientSituation,
+    crewSuggestionRequested?: boolean,
   ) =>
     postChatAsync('/chat/message', {
       text,
@@ -341,6 +342,7 @@ export const chat = {
       forceWebSearch,
       userMessagePersisted,
       clientSituation,
+      crewSuggestionRequested,
     }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
@@ -378,8 +380,8 @@ export const chat = {
       }
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: response.statusText }));
-        throw new Error((error as any).error || `HTTP ${response.status}`);
+        const error: { error?: string } = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(error.error || `HTTP ${response.status}`);
       }
 
       // Handle Server-Sent Events
@@ -1783,6 +1785,11 @@ export const voice = {
       },
       engine === 'styletts2' ? 10 * 60_000 : 60_000,
     ),
+  generateGreeting: (callsign: string) =>
+    request<{ text: string }>('/voice/greeting', {
+      method: 'POST',
+      body: JSON.stringify({ callsign }),
+    }, 30_000),
   updateConfig: async (patch: VoiceConfig) => {
     // downloadedAssets is server-managed; sending a stale copy would wipe
     // assets registered during deployment.
@@ -1820,8 +1827,11 @@ export interface EmbeddingModelProgress {
 export const embeddingModels = {
   status: () =>
     request<{ models: EmbeddingModelStatus[]; allDownloaded: boolean }>('/embedding-models/status'),
-  download: () =>
-    request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/embedding-models/download', { method: 'POST' }),
+  download: (opts?: { force?: boolean }) =>
+    request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/embedding-models/download', {
+      method: 'POST',
+      body: JSON.stringify({ force: opts?.force === true }),
+    }),
   /**
    * Opens an SSE connection for download progress. Returns a cleanup function.
    */

@@ -153,7 +153,7 @@ export class DocumentIngester {
         agentId: input.agentId,
       };
       if (embedding) {
-        (nodeInput as any).embedding = embedding;
+        nodeInput.embedding = embedding;
       }
       const chunkNode = await this.fabric.createNode(nodeInput);
       nodes.push({ id: chunkNode.id, label: chunkNode.label, content: chunkNode.content, category: chunkNode.category });
@@ -234,34 +234,44 @@ export class DocumentIngester {
           const { nodes: validNodes, edges: validEdges } = validateAndFilter(assembled.nodes, assembled.edges);
           onProgress?.({ stage: 'storing', progress: pct(0.87), detail: `Storing ${validNodes.length} entities + ${validEdges.length} edges from chunk ${chunkNum}/${chunks.length}`, chunkIndex: chunkNum, chunkCount: chunks.length });
           const idMap = new Map<string, string>();
-          for (const n of validNodes) {
-            const originalId = n.id;
-            // If an identical entity already exists in the brain, reuse it; otherwise create.
-            const entityNode = await this.fabric.createNode({
-              ...n,
-              sourceId: source.id,
-              sessionId: input.sessionId,
-              agentId: input.agentId,
-            });
+          const nodeResults = await Promise.all(
+            validNodes.map(async (n) => {
+              const originalId = n.id;
+              // If an identical entity already exists in the brain, reuse it; otherwise create.
+              const entityNode = await this.fabric.createNode({
+                ...n,
+                sourceId: source.id,
+                sessionId: input.sessionId,
+                agentId: input.agentId,
+              });
+              // Link the extracted entity to the chunk it came from.
+              const entityEdge = await this.fabric.bindEdge({
+                sourceNodeId: chunkNode.id,
+                targetNodeId: entityNode.id,
+                relationshipType: 'DESCRIBES',
+                weight: 0.9,
+              });
+              return { originalId, entityNode, entityEdge };
+            }),
+          );
+          for (const { originalId, entityNode, entityEdge } of nodeResults) {
             nodes.push({ id: entityNode.id, label: entityNode.label, content: entityNode.content, category: entityNode.category });
             if (originalId) {
               idMap.set(originalId, entityNode.id);
             }
-            // Link the extracted entity to the chunk it came from.
-            const entityEdge = await this.fabric.bindEdge({
-              sourceNodeId: chunkNode.id,
-              targetNodeId: entityNode.id,
-              relationshipType: 'DESCRIBES',
-              weight: 0.9,
-            });
             edges.push({ id: entityEdge.id, sourceNodeId: entityEdge.sourceNodeId, targetNodeId: entityEdge.targetNodeId, relationshipType: entityEdge.relationshipType, weight: entityEdge.weight });
           }
-          for (const e of validEdges) {
-            const sourceNodeId = idMap.get(e.sourceNodeId) ?? e.sourceNodeId;
-            const targetNodeId = idMap.get(e.targetNodeId) ?? e.targetNodeId;
-            if (sourceNodeId === targetNodeId) continue;
-            const edge = await this.fabric.bindEdge({ ...e, sourceNodeId, targetNodeId });
-            edges.push({ id: edge.id, sourceNodeId: edge.sourceNodeId, targetNodeId: edge.targetNodeId, relationshipType: edge.relationshipType, weight: edge.weight });
+          const edgeResults = await Promise.all(
+            validEdges.map(async (e) => {
+              const sourceNodeId = idMap.get(e.sourceNodeId) ?? e.sourceNodeId;
+              const targetNodeId = idMap.get(e.targetNodeId) ?? e.targetNodeId;
+              if (sourceNodeId === targetNodeId) return null;
+              const edge = await this.fabric.bindEdge({ ...e, sourceNodeId, targetNodeId });
+              return { id: edge.id, sourceNodeId: edge.sourceNodeId, targetNodeId: edge.targetNodeId, relationshipType: edge.relationshipType, weight: edge.weight };
+            }),
+          );
+          for (const edge of edgeResults) {
+            if (edge) edges.push(edge);
           }
           onProgress?.({ stage: 'storing', progress: pct(0.95), detail: `Chunk ${chunkNum}/${chunks.length} stored — ${nodes.length} total nodes`, chunkIndex: chunkNum, chunkCount: chunks.length });
         } catch {
@@ -371,31 +381,41 @@ export class DocumentIngester {
         const { nodes: validNodes, edges: validEdges } = validateAndFilter(assembled.nodes, assembled.edges);
 
         const idMap = new Map<string, string>();
-        for (const n of validNodes) {
-          const originalId = n.id;
-          const entityNode = await this.fabric.createNode({
-            ...n,
-            sourceId,
-            sessionId: options.sessionId,
-            agentId: options.agentId,
-          });
+        const nodeResults = await Promise.all(
+          validNodes.map(async (n) => {
+            const originalId = n.id;
+            const entityNode = await this.fabric.createNode({
+              ...n,
+              sourceId,
+              sessionId: options.sessionId,
+              agentId: options.agentId,
+            });
+            // Link entity to its source chunk.
+            await this.fabric.bindEdge({
+              sourceNodeId: chunk.id,
+              targetNodeId: entityNode.id,
+              relationshipType: 'DESCRIBES',
+              weight: 0.9,
+            });
+            return { originalId, entityNode };
+          }),
+        );
+        for (const { originalId, entityNode } of nodeResults) {
           nodeCount++;
           if (originalId) idMap.set(originalId, entityNode.id);
-          // Link entity to its source chunk.
-          await this.fabric.bindEdge({
-            sourceNodeId: chunk.id,
-            targetNodeId: entityNode.id,
-            relationshipType: 'DESCRIBES',
-            weight: 0.9,
-          });
           edgeCount++;
         }
-        for (const e of validEdges) {
-          const sourceNodeId = idMap.get(e.sourceNodeId) ?? e.sourceNodeId;
-          const targetNodeId = idMap.get(e.targetNodeId) ?? e.targetNodeId;
-          if (sourceNodeId === targetNodeId) continue;
-          await this.fabric.bindEdge({ ...e, sourceNodeId, targetNodeId });
-          edgeCount++;
+        const edgeResults = await Promise.all(
+          validEdges.map(async (e) => {
+            const sourceNodeId = idMap.get(e.sourceNodeId) ?? e.sourceNodeId;
+            const targetNodeId = idMap.get(e.targetNodeId) ?? e.targetNodeId;
+            if (sourceNodeId === targetNodeId) return null;
+            const edge = await this.fabric.bindEdge({ ...e, sourceNodeId, targetNodeId });
+            return edge;
+          }),
+        );
+        for (const edge of edgeResults) {
+          if (edge) edgeCount++;
         }
       } catch (e) {
         options.onProgress?.({

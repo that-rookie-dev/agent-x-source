@@ -380,7 +380,7 @@ async function ensureChatSessionActive(chatSessionId: string): Promise<boolean> 
 
   const existingAgent = eng.agent;
   const keepAgent = !!existingAgent
-    && (existingAgent as unknown as { sessionId: string }).sessionId === chatSessionId
+    && existingAgent.sessionId === chatSessionId
     && !existingAgent.processing;
   if (keepAgent) return true;
 
@@ -397,10 +397,7 @@ async function resolveVoiceChatSessionId(preferred?: string): Promise<string | u
   const eng = getEngine();
   const active = eng.sessionManager.getActiveSession()?.id;
   if (active) return active;
-  const mgr = eng.sessionManager as unknown as {
-    findAgentXCoreSession?: () => { id: string } | null;
-  };
-  return mgr.findAgentXCoreSession?.()?.id;
+  return eng.sessionManager.findAgentXCoreSession()?.id;
 }
 
 async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {
@@ -901,9 +898,7 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
 
 function getLastAssistantInSession(sessionId: string): { id: string; content: string } | null {
   try {
-    const store = (getEngine().sessionManager as unknown as {
-      store?: { getMessages?: (sid: string) => Array<{ id?: string; role?: string; content?: string }> };
-    }).store;
+    const store = getEngine().sessionManager.getStorageAdapter();
     const msgs = store?.getMessages?.(sessionId) ?? [];
     for (let i = msgs.length - 1; i >= 0; i -= 1) {
       const msg = msgs[i];

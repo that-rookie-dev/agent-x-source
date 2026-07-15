@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, useMemo, useRef, useState, type ErrorInfo, type ReactNode, type RefObject } from 'react';
+import { Component, lazy, Suspense, memo, useMemo, useRef, useState, type ErrorInfo, type ReactNode, type RefObject } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -135,7 +135,7 @@ function resolveSpec(code: string, language?: string):
   return { ok: true, spec: parsed.spec, copyText: JSON.stringify(parsed.spec, null, 2) };
 }
 
-export function ChartBlock({ code, language }: { code: string; language?: string }) {
+export const ChartBlock = memo(function ChartBlock({ code, language }: { code: string; language?: string }) {
   const resolved = useMemo(() => resolveSpec(code, language), [code, language]);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -197,4 +197,4 @@ export function ChartBlock({ code, language }: { code: string; language?: string
       </CodeBlockBody>
     </CodeBlockChrome>
   );
-}
+});

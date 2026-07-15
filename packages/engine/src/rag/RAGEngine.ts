@@ -55,10 +55,14 @@ export class RAGEngine {
 
     const vectors: Array<{ id: string; vector: number[]; metadata?: Record<string, unknown> }> = [];
 
+    const embeddings = await Promise.all(
+      chunks.map((chunk) => this.embedder.embed(chunk)),
+    );
+
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i]!;
       const chunkId = `${docId}_chunk_${i}`;
-      const vector = await this.embedder.embed(chunk);
+      const vector = embeddings[i]!;
 
       vectors.push({
         id: chunkId,
@@ -85,10 +89,12 @@ export class RAGEngine {
    * Index multiple documents at once.
    */
   async indexDocuments(inputs: IndexDocumentInput[]): Promise<string[]> {
+    const results = await Promise.allSettled(
+      inputs.map((input) => this.indexDocument(input)),
+    );
     const ids: string[] = [];
-    for (const input of inputs) {
-      const id = await this.indexDocument(input);
-      if (id) ids.push(id);
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value) ids.push(result.value);
     }
     if (ids.length > 0) {
       this._indexedCount += ids.length;

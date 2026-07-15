@@ -195,8 +195,8 @@ export function ModelBenchmarkRunner({
       border: `1px solid ${running ? settingsTheme.border.hud : settingsTheme.border.default}`,
       bgcolor: settingsTheme.bg.inset,
       overflow: 'hidden',
-      boxShadow: running ? `0 0 40px ${alphaColor(settingsTheme.accent.hud, '22')}, inset 0 0 60px ${alphaColor(settingsTheme.accent.hud, '08')}` : 'none',
-      transition: 'box-shadow 0.3s, border-color 0.3s',
+      boxShadow: 'none',
+      transition: 'border-color 0.3s',
     }}>
       <Box sx={settingsScanlineSx} />
 
@@ -280,7 +280,6 @@ export function ModelBenchmarkRunner({
                 height: 4, borderRadius: 2, bgcolor: settingsTheme.bg.hud,
                 '& .MuiLinearProgress-bar': {
                   bgcolor: settingsTheme.accent.hud,
-                  boxShadow: `0 0 8px ${settingsTheme.accent.hud}`,
                 },
               }}
             />
@@ -298,11 +297,10 @@ export function ModelBenchmarkRunner({
             mb: 2.5, p: 2, borderRadius: '6px', textAlign: 'center',
             border: `1px solid ${alphaColor(gradeMeta.color, '55')}`,
             bgcolor: `${alphaColor(gradeMeta.color, '0d')}`,
-            boxShadow: `0 0 30px ${alphaColor(gradeMeta.color, '22')}, inset 0 0 40px ${alphaColor(gradeMeta.color, '08')}`,
           }}>
             <Typography sx={{
               ...settingsMonoSx, fontSize: embedded ? '1.4rem' : '2rem', fontWeight: 800,
-              color: gradeMeta.color, letterSpacing: '6px', textShadow: `0 0 20px ${alphaColor(gradeMeta.color, '88')}`,
+              color: gradeMeta.color, letterSpacing: '6px',
             }}>
               {gradeMeta.label}
             </Typography>

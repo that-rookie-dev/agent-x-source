@@ -59,6 +59,8 @@ export const chatMessageSchema = z.object({
   priorUserMessages: z.array(z.string()).optional(),
   /** Globe toggle in chat — force web search on this turn. */
   forceWebSearch: z.boolean().optional(),
+  /** Crew-suggestion toggle in chat — explicitly request crew evaluation for this turn. */
+  crewSuggestionRequested: z.boolean().optional(),
   resumeCrewIntake: z.object({
     originalUserText: z.string(),
     intakeAnswer: z.string(),

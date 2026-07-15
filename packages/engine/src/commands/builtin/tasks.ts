@@ -1,18 +1,26 @@
+import { getLogger } from '@agentx/shared';
 import type { CommandInterface, CommandContext, CommandResult } from '../CommandInterface.js';
 import type { TaskManager } from '../../agent/TaskManager.js';
 import { BackgroundQueue } from '../../session/BackgroundQueue.js';
 
 let taskManagerInstance: TaskManager | null = null;
 let backgroundQueueInstance: BackgroundQueue | null = null;
+let backgroundQueueWarned = false;
 
 export function setTaskManagerInstance(tm: TaskManager): void {
   taskManagerInstance = tm;
 }
 
+/** @deprecated Use IJobQueue instead. */
 export function setBackgroundQueueInstance(queue: BackgroundQueue): void {
   backgroundQueueInstance = queue;
+  if (!backgroundQueueWarned) {
+    backgroundQueueWarned = true;
+    getLogger().warn('BACKGROUND_QUEUE', 'BackgroundQueue is deprecated; use IJobQueue instead.');
+  }
 }
 
+/** @deprecated Use IJobQueue instead. */
 export function getBackgroundQueueInstance(): BackgroundQueue | null {
   return backgroundQueueInstance;
 }
@@ -54,9 +62,14 @@ export const bgCommand: CommandInterface = {
         context.emit('No background tasks.');
         return { success: false, action: 'none' };
       }
-      const ok = backgroundQueueInstance.cancel(id);
-      context.emit(ok ? `Task ${id.slice(0, 8)} cancelled.` : `Task not found or already completed.`);
-      return { success: true, action: 'none' };
+      try {
+        const ok = await backgroundQueueInstance.cancel(id);
+        context.emit(ok ? `Task ${id.slice(0, 8)} cancelled.` : `Task not found or already completed.`);
+        return { success: true, action: 'none' };
+      } catch (err) {
+        context.emit(`Failed to cancel task: ${err instanceof Error ? err.message : String(err)}`);
+        return { success: false, action: 'none' };
+      }
     }
 
     // /bg result <id> — show full output of a completed/failed task
@@ -107,9 +120,14 @@ export const bgCommand: CommandInterface = {
       backgroundQueueInstance = new BackgroundQueue();
       setBackgroundQueueInstance(backgroundQueueInstance);
     }
-    const task = backgroundQueueInstance.enqueue(command);
-    context.emit(`Background task ${task.id.slice(0, 8)} queued: "${command.slice(0, 60)}"`);
-    return { success: true, action: 'none' };
+    try {
+      const task = await backgroundQueueInstance.enqueue(command);
+      context.emit(`Background task ${task.id.slice(0, 8)} queued: "${command.slice(0, 60)}"`);
+      return { success: true, action: 'none' };
+    } catch (err) {
+      context.emit(`Failed to queue task: ${err instanceof Error ? err.message : String(err)}`);
+      return { success: false, action: 'none' };
+    }
   },
 };
 

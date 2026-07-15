@@ -24,41 +24,36 @@ export function WorkflowEntryCard({ stepCount, hasReasoning, onOpen }: Props) {
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       sx={{
-        mt: 1.25,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 0.5,
+        mt: 0.75,
+        px: 0.75,
+        py: 0.25,
         border: `1px solid ${alphaColor(accent, '30')}`,
-        borderLeft: `3px solid ${accent}`,
-        borderRadius: '8px',
+        borderRadius: '6px',
         bgcolor: colors.bg.secondary,
-        px: 1.25,
-        py: 1,
         cursor: 'pointer',
-        transition: 'border-color 0.2s, box-shadow 0.2s',
+        transition: 'border-color 0.2s, background 0.2s',
         '&:hover': {
           borderColor: alphaColor(accent, '65'),
-          boxShadow: `0 4px 16px ${alphaColor(accent, '12')}`,
+          bgcolor: alphaColor(accent, '8'),
         },
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-        <AccountTreeOutlinedIcon sx={{ fontSize: 15, color: accent, flexShrink: 0 }} />
-        <Typography sx={{
-          fontSize: '0.65rem',
-          fontWeight: 600,
-          color: colors.text.primary,
-          flex: 1,
-        }}>
-          View workflow
-        </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, color: colors.text.dim, flexShrink: 0 }}>
-          <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace" }}>
-            {summary}
-          </Typography>
-          <ChevronRightIcon sx={{ fontSize: 14, opacity: 0.7 }} />
-        </Box>
-      </Box>
-      <Typography sx={{ fontSize: '0.48rem', color: colors.text.dim, mt: 0.5, opacity: 0.8, pl: 2.75 }}>
-        Tools, deep search, and reasoning for this turn
+      <AccountTreeOutlinedIcon sx={{ fontSize: 13, color: accent, flexShrink: 0 }} />
+      <Typography sx={{
+        fontSize: '0.6rem',
+        fontWeight: 600,
+        color: colors.text.primary,
+        whiteSpace: 'nowrap',
+      }}>
+        Workflow
       </Typography>
+      <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'nowrap' }}>
+        {summary}
+      </Typography>
+      <ChevronRightIcon sx={{ fontSize: 12, opacity: 0.6, color: colors.text.dim }} />
     </Box>
   );
 }

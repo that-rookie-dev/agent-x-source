@@ -106,14 +106,23 @@ export class RenderScheduler {
   private readonly heartbeatMinMs: number;
   private readonly tokenMinMs: number;
   private lastTokenDelivered = 0;
+  // Throttle loading-step updates to avoid re-rendering the whole panel every frame.
+  private readonly loadingStepMinMs: number;
+  private lastLoadingStepDelivered = 0;
+  private pendingLoadingStep: TelemetryEvent | null = null;
+  // Throttle per-worker progress updates so the crew panel only refreshes periodically.
+  private readonly crewWorkerProgressMinMs: number;
+  private readonly lastCrewWorkerProgressDelivered = new Map<string, number>();
 
   constructor(
     deliver: (ev: TelemetryEvent) => void,
-    options?: { heartbeatMinMs?: number; tokenMinMs?: number },
+    options?: { heartbeatMinMs?: number; tokenMinMs?: number; loadingStepMinMs?: number; crewWorkerProgressMinMs?: number },
   ) {
     this.deliver = deliver;
     this.heartbeatMinMs = options?.heartbeatMinMs ?? 1500;
     this.tokenMinMs = options?.tokenMinMs ?? 500;
+    this.loadingStepMinMs = options?.loadingStepMinMs ?? 120;
+    this.crewWorkerProgressMinMs = options?.crewWorkerProgressMinMs ?? 120;
     ensureRenderInstrumentation();
   }
 
@@ -146,6 +155,13 @@ export class RenderScheduler {
     if (ev.type === 'crew_worker_progress') {
       const workerId = String((ev as { workerId?: string }).workerId ?? 'unknown');
       this.p3ByWorker.set(workerId, ev);
+      recordTelemetryCoalesced();
+      this.scheduleFlush();
+      return;
+    }
+
+    if (ev.type === 'loading_step_update') {
+      this.pendingLoadingStep = { ...ev };
       recordTelemetryCoalesced();
       this.scheduleFlush();
       return;
@@ -210,6 +226,13 @@ export class RenderScheduler {
       recordTelemetryDelivered();
     }
 
+    if (this.pendingLoadingStep && now - this.lastLoadingStepDelivered >= this.loadingStepMinMs) {
+      this.deliver(this.pendingLoadingStep);
+      this.pendingLoadingStep = null;
+      this.lastLoadingStepDelivered = now;
+      recordTelemetryDelivered();
+    }
+
     const p2 = this.p2Queue.splice(0);
     for (const ev of p2) {
       if (ev.type === 'turn_heartbeat') {
@@ -224,11 +247,18 @@ export class RenderScheduler {
     }
 
     if (this.p3ByWorker.size > 0) {
-      for (const ev of this.p3ByWorker.values()) {
+      for (const [key, ev] of this.p3ByWorker.entries()) {
+        if (ev.type === 'crew_worker_progress') {
+          const last = this.lastCrewWorkerProgressDelivered.get(key) ?? 0;
+          if (now - last < this.crewWorkerProgressMinMs) {
+            continue;
+          }
+          this.lastCrewWorkerProgressDelivered.set(key, now);
+        }
         this.deliver(ev);
         recordTelemetryDelivered();
+        this.p3ByWorker.delete(key);
       }
-      this.p3ByWorker.clear();
     }
 
     const hasPending = this.p0Queue.length > 0 || this.p1Queue.length > 0 || this.p2Queue.length > 0

@@ -7,7 +7,7 @@ export function estimateTokens(text: string): number {
 }
 
 export function estimateMessagesTokens(
-  messages: Array<{ content: string; toolCalls?: unknown; metadata?: Record<string, unknown> }>,
+  messages: Array<{ content: string; toolCalls?: unknown; metadata?: unknown }>,
 ): number {
   let total = 0;
   for (const msg of messages) {

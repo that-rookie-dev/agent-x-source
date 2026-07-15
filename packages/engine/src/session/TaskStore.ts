@@ -9,12 +9,19 @@ export interface TaskStore {
 }
 
 interface StoredEvent {
+  id?: string;
   type: string;
   payload: string;
   sessionId: string;
   sequence: number;
   created_at: string;
 }
+
+/** Storage adapter extended with the session-event log methods used by this store. */
+type TaskStoreAdapter = Omit<StorageAdapter, 'insertSessionEvent' | 'getSessionEvents'> & {
+  insertSessionEvent?: (event: StoredEvent) => void;
+  getSessionEvents?: (sessionId: string) => StoredEvent[];
+};
 
 /**
  * TaskStore implementation backed by the session store's JSON event log.
@@ -30,7 +37,7 @@ export class SessionTaskStore implements TaskStore {
   }
 
   async save(plan: TaskPlan): Promise<void> {
-    (this.store as any).insertSessionEvent({
+    (this.store as TaskStoreAdapter).insertSessionEvent?.({
       id: crypto.randomUUID(),
       sessionId: SessionTaskStore.TASK_SESSION_ID,
       sequence: Date.now(),
@@ -41,8 +48,8 @@ export class SessionTaskStore implements TaskStore {
   }
 
   async load(taskId: string): Promise<TaskPlan | null> {
-    const events = (this.store as any).getSessionEvents(SessionTaskStore.TASK_SESSION_ID);
-    const stored = events as unknown as StoredEvent[];
+    const events = (this.store as TaskStoreAdapter).getSessionEvents?.(SessionTaskStore.TASK_SESSION_ID) ?? [];
+    const stored = events;
     for (let i = stored.length - 1; i >= 0; i--) {
       const ev = stored[i]!;
       if (ev.type === 'task_plan') {
@@ -58,8 +65,8 @@ export class SessionTaskStore implements TaskStore {
   }
 
   async list(): Promise<TaskPlan[]> {
-    const events = (this.store as any).getSessionEvents(SessionTaskStore.TASK_SESSION_ID);
-    const stored = events as unknown as StoredEvent[];
+    const events = (this.store as TaskStoreAdapter).getSessionEvents?.(SessionTaskStore.TASK_SESSION_ID) ?? [];
+    const stored = events;
     const plans: TaskPlan[] = [];
     const seen = new Set<string>();
     for (let i = stored.length - 1; i >= 0; i--) {
@@ -80,7 +87,7 @@ export class SessionTaskStore implements TaskStore {
   }
 
   async delete(taskId: string): Promise<void> {
-    (this.store as any).insertSessionEvent({
+    (this.store as TaskStoreAdapter).insertSessionEvent?.({
       id: crypto.randomUUID(),
       sessionId: SessionTaskStore.TASK_SESSION_ID,
       sequence: Date.now(),

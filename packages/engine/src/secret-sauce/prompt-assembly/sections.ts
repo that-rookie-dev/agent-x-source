@@ -370,8 +370,17 @@ export function createQuestionnaireGuideSection(): PromptSection<string> {
 // Crew roster — in-conversation specialist discovery (fallback to modal)
 // ─────────────────────────────────────────────────────────────
 
-export function createCrewRosterGuideSection(): PromptSection<string> {
-  const GUIDE = [
+export function createCrewRosterGuideSection(compact = false): PromptSection<string> {
+  const GUIDE = compact ? [
+    `[CREW_ROSTER]`,
+    `When the user needs specialists/skills/workforce:`,
+    `1. Check [CREW_ROSTER_HINT] if present — lists catalog/roster matches.`,
+    `2. Call search_crew_hub to search by skills, certifications, or role keywords.`,
+    `3. Offer matches via ask_clarification (max 5) or brief inline @callsign mentions.`,
+    `4. If [CREW_ROSTER_HINT] says user skipped modal, do NOT re-offer crew — handle as Agent-X.`,
+    `5. If no fits, proceed as Agent-X without apologizing.`,
+    `[/CREW_ROSTER]`,
+  ].join('\n') : [
     `[CREW_ROSTER]`,
     `When the user needs specialists, skills, workforce, or hiring help:`,
     `1. Check [CREW_ROSTER_HINT] if present this turn — it lists catalog/roster matches when the popup did not appear.`,

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
@@ -7,6 +7,7 @@ import type { VisibleMessageItem, UIMessage } from '../../chat/types';
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { ChatMessageList } from '../../chat/ChatMessageList';
 import { PlanModeContext } from '../../chat/PlanModeContext';
+import { ThinkingIndicator } from './ThinkingIndicator';
 import { colors } from '../../theme';
 
 const ESTIMATED_ROW_PX = 120;
@@ -68,8 +69,7 @@ export interface ChatThreadViewProps {
   agentMode: AgentMode;
   messagesContainerRef: React.RefObject<HTMLDivElement | null>;
   sessionRestoring: boolean;
-  visibleMessagesWithFlags: VisibleMessageItem[];
-  visibleMessages: UIMessage[];
+  messages: UIMessage[];
   streaming: boolean;
   loadingOlderMessages: boolean;
   hasOlderMessages: boolean;
@@ -94,8 +94,7 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
     agentMode,
     messagesContainerRef,
     sessionRestoring,
-    visibleMessagesWithFlags,
-    visibleMessages,
+    messages,
     streaming,
     loadingOlderMessages,
     hasOlderMessages,
@@ -115,8 +114,26 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
     onSaveMarkdown,
   } = props;
 
+  const visibleMessagesWithFlags = useMemo(() => {
+    const visible = messages.filter((m) => {
+      if (m.role === 'system' && !m.isModeChange) return false;
+      if (m.role === 'assistant' && !m.content && !m.thinking && (!m.toolCalls || m.toolCalls.length === 0) && (!m.subAgents || m.subAgents.length === 0) && (!m.parts || m.parts.length === 0)) return false;
+      return true;
+    });
+    let lastUserIdx = -1;
+    for (let i = visible.length - 1; i >= 0; i--) {
+      if (visible[i]!.role === 'user') { lastUserIdx = i; break; }
+    }
+    return visible.map((msg, idx) => ({ msg, isLastUser: idx === lastUserIdx }));
+  }, [messages]);
+
+  const deferredVisibleMessagesWithFlags = useDeferredValue(visibleMessagesWithFlags);
+  const threadMessagesWithFlags = streaming ? visibleMessagesWithFlags : deferredVisibleMessagesWithFlags;
+  const visibleMessages = useMemo(() => threadMessagesWithFlags.map(item => item.msg), [threadMessagesWithFlags]);
+  const turnStreaming = streaming && visibleMessages.length > 0 && visibleMessages[visibleMessages.length - 1]?.role === 'assistant';
+
   const { visibleItems, topSpacerPx, bottomSpacerPx } = useVirtualMessageWindow(
-    visibleMessagesWithFlags,
+    threadMessagesWithFlags,
     messagesContainerRef,
     !freezeMessageLayout && !loadingOlderMessages,
   );
@@ -137,7 +154,7 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
         </Box>
       )}
 
-      {visibleMessagesWithFlags.length === 0 && !streaming && !sessionRestoring && (
+      {threadMessagesWithFlags.length === 0 && !streaming && !sessionRestoring && (
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
           <Box sx={{ textAlign: 'center', maxWidth: 300 }}>
             <SmartToyIcon sx={{ fontSize: 36, color: colors.border.strong, mb: 1 }} />
@@ -149,7 +166,7 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
         </Box>
       )}
 
-      {(loadingOlderMessages || hasOlderMessages) && visibleMessagesWithFlags.length > 0 && (
+      {(loadingOlderMessages || hasOlderMessages) && threadMessagesWithFlags.length > 0 && (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 0.75 }}>
           {loadingOlderMessages ? (
             <CircularProgress size={14} sx={{ color: colors.text.dim }} />
@@ -175,10 +192,13 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
           onTurnFeedback={onTurnFeedback}
           onSaveMarkdown={onSaveMarkdown}
           feedbackSubmitting={feedbackSubmitting}
-          turnStreaming={streaming && visibleMessages.length > 0 && visibleMessages[visibleMessages.length - 1]?.role === 'assistant'}
+          turnStreaming={turnStreaming}
           turnActivityLabel={turnActivityStage}
           freezeLayout={freezeMessageLayout || loadingOlderMessages}
         />
+        {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
+          <ThinkingIndicator label={turnActivityStage ?? loadingSteps?.[0]?.label} />
+        )}
         {bottomSpacerPx > 0 ? <Box sx={{ height: bottomSpacerPx, flexShrink: 0 }} aria-hidden /> : null}
       </PlanModeContext.Provider>
     </>
@@ -188,7 +208,7 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
 function threadPropsEqual(a: ChatThreadViewProps, b: ChatThreadViewProps): boolean {
   return a.agentMode === b.agentMode
     && a.sessionRestoring === b.sessionRestoring
-    && a.visibleMessagesWithFlags === b.visibleMessagesWithFlags
+    && a.messages === b.messages
     && a.streaming === b.streaming
     && a.loadingOlderMessages === b.loadingOlderMessages
     && a.hasOlderMessages === b.hasOlderMessages

@@ -305,7 +305,7 @@ export async function memoryFabricSearch(args: Record<string, unknown>, context:
             ? ''
             : ` AND session_id = $2`;
           const params: unknown[] = isSuper ? [newIds] : [newIds, sessionFilter];
-          const { rows } = await (fabric as any)['pool'].query(
+          const { rows } = await fabric.getPool().query(
             `SELECT id, label, category, content, source_id AS "sourceId"
              FROM memory_nodes WHERE id = ANY($1::uuid[]) AND status = 'active'${sessionClause}`,
             params,

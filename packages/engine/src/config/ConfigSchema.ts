@@ -91,6 +91,10 @@ export const agentXConfigSchema = z.object({
   maxRetries: z.number().int().min(0).max(10).optional(),
   maxOutputTokens: z.number().int().min(256).max(32768).optional(),
   useSandbox: z.boolean().optional(),
+  postgres: z.object({
+    connectionString: z.string().optional(),
+    poolSize: z.number().int().min(1).max(100).optional(),
+  }).optional(),
   permissions: z.record(z.enum(['allow', 'deny', 'ask'])).optional(),
   agents: z.record(z.object({
     model: z.string().optional(),
