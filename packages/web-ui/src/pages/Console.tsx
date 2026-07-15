@@ -13,6 +13,7 @@ import { useApp } from '../store/AppContext';
 import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 
 const ChatPanel = lazy(() => import('../components/ChatPanel').then((m) => ({ default: m.ChatPanel })));
+const BentoDashboardPanel = lazy(() => import('../components/BentoDashboard').then((m) => ({ default: m.BentoDashboard })));
 
 function ChatPanelFallback() {
   return (
@@ -37,7 +38,7 @@ const McpStorePage = lazy(() => import('../components/integrations/McpStorePage'
 const NotificationsPanel = lazy(() => import('../components/NotificationsPanel').then(m => ({ default: m.NotificationsPanel })));
 const MarkdownPanel = lazy(() => import('../components/MarkdownPanel').then(m => ({ default: m.MarkdownPanel })));
 
-export type PanelId = 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'markdown';
+export type PanelId = 'dashboard' | 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'markdown';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null; stack: string | null }> {
@@ -97,7 +98,7 @@ export function Console() {
   const navigate = useNavigate();
   const { unreadNotificationCount } = useApp();
   const neuralBrainSupported = useNeuralBrainSupported();
-  const activePanel = (sessionId ? 'chat' : (panel || 'agent-x')) as PanelId;
+  const activePanel = (sessionId ? 'chat' : (panel || 'dashboard')) as PanelId;
   useEffect(() => {
     if (panel === 'health') navigate('/console/agent-x', { replace: true });
     if (panel === 'rag-studio' && !neuralBrainSupported) navigate('/console/agent-x', { replace: true });
@@ -196,6 +197,7 @@ export function Console() {
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
             <PanelErrorBoundary key={activePanel}>
               <Suspense fallback={<ChatPanelFallback />}>
+                {activePanel === 'dashboard' && <BentoDashboardPanel />}
                 {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
                 {activePanel === 'agent-x' && <AgentXCoreChat />}
                 {activePanel === 'tools' && <ToolsPanel />}

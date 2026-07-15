@@ -165,7 +165,7 @@ export function DockingStation() {
   }, [healthData, catalogSeed, rosterCrews]);
 
   const handleLaunch = useCallback(() => {
-    navigate('/console/agent-x');
+    navigate('/console/dashboard');
   }, [navigate]);
 
   useEffect(() => {

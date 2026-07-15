@@ -3,6 +3,7 @@ import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Divider from '@mui/material/Divider';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 import ChatIcon from '@mui/icons-material/Chat';
 import { IconSparkles, tablerNavProps } from '../icons/tabler';
 // Hidden until wired — see source/MILESTONE.md
@@ -39,6 +40,7 @@ interface Props {
 }
 
 const NAV_ITEMS: { id: PanelId; icon: ReactNode; label: string }[] = [
+  { id: 'dashboard', icon: <DashboardIcon sx={{ fontSize: 16 }} />, label: 'Dashboard' },
   { id: 'agent-x', icon: <IconSparkles {...tablerNavProps} />, label: 'Agent-X' },
   { id: 'chat', icon: <ChatIcon sx={{ fontSize: 16 }} />, label: 'Chat' },
   { id: 'notifications', icon: <NotificationsNoneIcon sx={{ fontSize: 16 }} />, label: 'Notifications' },

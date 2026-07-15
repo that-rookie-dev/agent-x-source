@@ -4,40 +4,32 @@ import { useNavigate } from 'react-router-dom';
 import { useColorScheme } from '@mui/material/styles';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import CircularProgress from '@mui/material/CircularProgress';
-import AddIcon from '@mui/icons-material/Add';
 import ChatIcon from '@mui/icons-material/Chat';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
 import ForumIcon from '@mui/icons-material/Forum';
-import SettingsIcon from '@mui/icons-material/Settings';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import TelegramIcon from '@mui/icons-material/Telegram';
 import HeadphonesIcon from '@mui/icons-material/Headphones';
 import SlackIcon from '@mui/icons-material/Forum';
 import EmailIcon from '@mui/icons-material/Email';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import ScheduleIcon from '@mui/icons-material/Schedule';
-import GroupsIcon from '@mui/icons-material/Groups';
 import StorageIcon from '@mui/icons-material/Storage';
-import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import ContrastIcon from '@mui/icons-material/Contrast';
 import { useApp } from '../store/AppContext';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { PanelHeader } from './PanelHeader';
-import { Footer } from './Footer';
 import { colors, alphaColor, MONO } from '../theme';
-import { resolveDefaultWorkspace } from '../utils/default-workspace';
 import {
   sessions as sessionsApi,
   bridges,
   automation,
   agent,
   webuiActive,
-  system,
 } from '../api';
 import type { SessionInfo, BridgeStatus, AutomationTaskRecord, AgentVitals } from '../api';
 
@@ -162,7 +154,6 @@ export function BentoDashboard() {
   const [channels, setChannels] = useState<ChannelDef[]>(CHANNELS);
   const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
   const [vitals, setVitals] = useState<AgentVitals | null>(null);
-  const [creating, setCreating] = useState(false);
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -247,25 +238,8 @@ export function BentoDashboard() {
     return () => clearInterval(id);
   }, [visible, serverOnline, loadSessions, loadChannels, loadTasks, loadVitals]);
 
-  const handleNewChat = useCallback(async () => {
-    if (!serverOnline || creating) return;
-    setCreating(true);
-    try {
-      const scopePath = await resolveDefaultWorkspace();
-      try { await system.setCwd(scopePath); } catch { /* best effort */ }
-      const { sessionId } = await sessionsApi.create(scopePath);
-      navigate(`/console/chat/${sessionId}`);
-    } catch {
-      setCreating(false);
-    }
-  }, [navigate, serverOnline, creating]);
-
   const openSession = useCallback((id: string) => {
     navigate(`/console/chat/${id}`);
-  }, [navigate]);
-
-  const handleNavigate = useCallback((path: string) => {
-    navigate(path);
   }, [navigate]);
 
   const currentMode = mode ?? 'system';
@@ -283,7 +257,7 @@ export function BentoDashboard() {
   const topTasks = tasks.slice(0, 3);
 
   return (
-    <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: colors.bg.primary }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: colors.bg.primary }}>
       <Box sx={{
         flexShrink: 0,
         px: 2, py: 1.5,
@@ -323,11 +297,7 @@ export function BentoDashboard() {
               {modeIcon}
             </IconButton>
           </Tooltip>
-          <Tooltip title="Settings">
-            <IconButton onClick={() => handleNavigate('/console/settings')} sx={{ color: colors.text.dim, '&:hover': { color: colors.text.primary } }}>
-              <SettingsIcon sx={{ fontSize: 16 }} />
-            </IconButton>
-          </Tooltip>
+
         </Box>
       </Box>
 
@@ -340,48 +310,13 @@ export function BentoDashboard() {
         }}>
           <BentoCard title="Quick start" icon={<RocketLaunchIcon sx={{ fontSize: 18, color: colors.accent.blue }} />}>
             <Typography sx={{ fontSize: '0.7rem', color: colors.text.tertiary, lineHeight: 1.45 }}>
-              Start a fresh conversation or jump back into the console.
+              Dashboard overview for Agent-X. Use the left sidebar to open chat, crews, automation, and settings.
             </Typography>
-            <Button
-              fullWidth
-              variant="contained"
-              disabled={!serverOnline || creating}
-              startIcon={creating ? <CircularProgress size={14} sx={{ color: colors.bg.primary }} /> : <AddIcon sx={{ fontSize: 16 }} />}
-              onClick={handleNewChat}
-              sx={{
-                mt: 'auto',
-                bgcolor: colors.accent.blue,
-                color: colors.bg.primary,
-                fontFamily: MONO,
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                '&:hover': { bgcolor: alphaColor(colors.accent.blue, 0.85) },
-                '&.Mui-disabled': { bgcolor: colors.bg.tertiary, color: colors.text.dim },
-              }}
-            >
-              {creating ? 'Creating…' : 'New chat'}
-            </Button>
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<ChatIcon sx={{ fontSize: 16 }} />}
-              onClick={() => handleNavigate('/console/agent-x')}
-              sx={{ borderColor: colors.border.strong, color: colors.text.secondary, fontFamily: MONO, fontSize: '0.7rem', '&:hover': { borderColor: colors.text.dim, color: colors.text.primary } }}
-            >
-              Open console
-            </Button>
           </BentoCard>
 
           <BentoCard
             title="Recent conversations"
             icon={<ChatIcon sx={{ fontSize: 18, color: colors.accent.purple }} />}
-            action={
-              <Tooltip title="Open chat">
-                <IconButton onClick={() => handleNavigate('/console/chat')} sx={{ color: colors.text.dim, p: 0.25, '&:hover': { color: colors.text.primary } }}>
-                  <ForumIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
-            }
             colSpan={2}
           >
             {sessions.length === 0 ? (
@@ -441,13 +376,6 @@ export function BentoDashboard() {
           <BentoCard
             title="Channels"
             icon={<StorageIcon sx={{ fontSize: 18, color: colors.accent.cyan }} />}
-            action={
-              <Tooltip title="Configure channels">
-                <IconButton onClick={() => handleNavigate('/console/channels')} sx={{ color: colors.text.dim, p: 0.25, '&:hover': { color: colors.text.primary } }}>
-                  <SettingsIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
-            }
           >
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.25 }}>
               {channels.map((ch) => {
@@ -486,13 +414,6 @@ export function BentoDashboard() {
           <BentoCard
             title="Background tasks"
             icon={<ScheduleIcon sx={{ fontSize: 18, color: colors.accent.orange }} />}
-            action={
-              <Tooltip title="Open automation">
-                <IconButton onClick={() => handleNavigate('/console/automation')} sx={{ color: colors.text.dim, p: 0.25, '&:hover': { color: colors.text.primary } }}>
-                  <RocketLaunchIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
-            }
           >
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
               <StatusBadge color={activeTaskCount > 0 ? colors.accent.green : colors.text.dim} label={`${activeTaskCount} active`} />
@@ -531,32 +452,9 @@ export function BentoDashboard() {
             <StatRow label="Experiences" value={vitals?.totalExperiences ?? '—'} />
           </BentoCard>
 
-          <BentoCard title="Shortcuts" icon={<RocketLaunchIcon sx={{ fontSize: 18, color: colors.accent.orange }} />}>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-              <Button size="small" variant="outlined" startIcon={<ChatIcon sx={{ fontSize: 14 }} />} onClick={() => handleNavigate('/console/agent-x')} sx={{ fontSize: '0.65rem', fontFamily: MONO, borderColor: colors.border.strong, color: colors.text.secondary, '&:hover': { borderColor: colors.text.dim, color: colors.text.primary } }}>
-                Console
-              </Button>
-              <Button size="small" variant="outlined" startIcon={<GroupsIcon sx={{ fontSize: 14 }} />} onClick={() => handleNavigate('/console/crews')} sx={{ fontSize: '0.65rem', fontFamily: MONO, borderColor: colors.border.strong, color: colors.text.secondary, '&:hover': { borderColor: colors.text.dim, color: colors.text.primary } }}>
-                Crews
-              </Button>
-              <Button size="small" variant="outlined" startIcon={<ScheduleIcon sx={{ fontSize: 14 }} />} onClick={() => handleNavigate('/console/automation')} sx={{ fontSize: '0.65rem', fontFamily: MONO, borderColor: colors.border.strong, color: colors.text.secondary, '&:hover': { borderColor: colors.text.dim, color: colors.text.primary } }}>
-                Automation
-              </Button>
-              <Button size="small" variant="outlined" startIcon={<StorageIcon sx={{ fontSize: 14 }} />} onClick={() => handleNavigate('/console/rag-studio')} sx={{ fontSize: '0.65rem', fontFamily: MONO, borderColor: colors.border.strong, color: colors.text.secondary, '&:hover': { borderColor: colors.text.dim, color: colors.text.primary } }}>
-                RAG
-              </Button>
-              <Button size="small" variant="outlined" startIcon={<ArticleOutlinedIcon sx={{ fontSize: 14 }} />} onClick={() => handleNavigate('/console/markdown')} sx={{ fontSize: '0.65rem', fontFamily: MONO, borderColor: colors.border.strong, color: colors.text.secondary, '&:hover': { borderColor: colors.text.dim, color: colors.text.primary } }}>
-                Markdown
-              </Button>
-              <Button size="small" variant="outlined" startIcon={<SettingsIcon sx={{ fontSize: 14 }} />} onClick={() => handleNavigate('/console/settings')} sx={{ fontSize: '0.65rem', fontFamily: MONO, borderColor: colors.border.strong, color: colors.text.secondary, '&:hover': { borderColor: colors.text.dim, color: colors.text.primary } }}>
-                Settings
-              </Button>
-            </Box>
-          </BentoCard>
+
         </Box>
       </Box>
-
-      <Footer />
     </Box>
   );
 }
