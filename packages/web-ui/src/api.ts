@@ -1826,12 +1826,14 @@ export interface EmbeddingModelProgress {
 
 export const embeddingModels = {
   status: () =>
-    request<{ models: EmbeddingModelStatus[]; allDownloaded: boolean }>('/embedding-models/status'),
+    request<{ models: EmbeddingModelStatus[]; allDownloaded: boolean; neuralBrainSupported: boolean }>('/embedding-models/status'),
   download: (opts?: { force?: boolean }) =>
     request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/embedding-models/download', {
       method: 'POST',
       body: JSON.stringify({ force: opts?.force === true }),
     }),
+  purge: () =>
+    request<{ ok: boolean; message: string; freedMB: number }>('/embedding-models', { method: 'DELETE' }),
   /**
    * Opens an SSE connection for download progress. Returns a cleanup function.
    */
