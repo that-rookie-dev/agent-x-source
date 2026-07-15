@@ -71,11 +71,13 @@ interface ModelProgressState {
 
 interface EmbeddingModelDownloadProps {
   onComplete: () => void;
+  /** Called when the user skips the download. Defaults to onComplete if not supplied. */
+  onSkip?: () => void;
   /** When true, bypass the neuralBrainSupported check (user opted in on low-RAM). */
   forceEnabled?: boolean;
 }
 
-export function EmbeddingModelDownload({ onComplete, forceEnabled }: EmbeddingModelDownloadProps) {
+export function EmbeddingModelDownload({ onComplete, onSkip, forceEnabled }: EmbeddingModelDownloadProps) {
   const neuralBrainSupported = useNeuralBrainSupported();
   const enabled = neuralBrainSupported || forceEnabled === true;
   const [models, setModels] = useState<ModelProgressState[]>([
@@ -88,14 +90,14 @@ export function EmbeddingModelDownload({ onComplete, forceEnabled }: EmbeddingMo
   const usedMessageIndices = useRef<Set<number>>(new Set([0]));
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Low-RAM machines skip embedding downloads entirely.
+  // Low-RAM machines skip embedding downloads entirely unless forceEnabled is set.
   useEffect(() => {
     if (enabled) return;
     void (async () => {
       try { await configApi.update({ neuralBrain: false }); } catch { /* best effort */ }
-      onComplete();
+      (onSkip ?? onComplete)();
     })();
-  }, [enabled, onComplete]);
+  }, [enabled, onComplete, onSkip]);
 
   // ── Starfield animation ──────────────────────────────────────────────────
   useEffect(() => {
@@ -208,8 +210,8 @@ export function EmbeddingModelDownload({ onComplete, forceEnabled }: EmbeddingMo
     try {
       await configApi.update({ neuralBrain: false });
     } catch { /* best effort — proceed anyway */ }
-    onComplete();
-  }, [onComplete]);
+    (onSkip ?? onComplete)();
+  }, [onComplete, onSkip]);
 
   // Auto-start on mount.
   useEffect(() => {

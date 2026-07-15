@@ -80,6 +80,7 @@ export const agentXConfigSchema = z.object({
   channels: notificationChannelsConfigSchema,
   voice: voiceConfigSchema,
   localModel: localModelConfigSchema,
+  neuralBrain: z.boolean().optional(),
   featureRouting: featureRoutingConfigSchema,
   runtime: z.object({
     cpuBudgetPercent: z.number().int().min(10).max(80).optional(),

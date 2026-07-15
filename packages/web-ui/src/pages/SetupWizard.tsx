@@ -174,7 +174,8 @@ export function SetupWizard() {
   const [voiceCalibrated, setVoiceCalibrated] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [telegramLinked, setTelegramLinked] = useState(false);
-  const [neuralBrainOptIn, setNeuralBrainOptIn] = useState(false);
+  // Track the explicit enable/disable decision from the Neural Core step.
+  const [neuralBrainEnabled, setNeuralBrainEnabled] = useState(neuralBrainSupported);
 
   const resetPgTest = () => {
     setPgTestResult(null);
@@ -512,9 +513,7 @@ export function SetupWizard() {
       if (!localModelSupported) {
         setupPatch.localModel = { enabled: false };
       }
-      if (!neuralBrainSupported && !neuralBrainOptIn) {
-        setupPatch.neuralBrain = false;
-      }
+      setupPatch.neuralBrain = neuralBrainEnabled;
       await config.completeSetup(callsign.trim());
       await config.update(setupPatch);
         clearWizardProgress();
@@ -1037,8 +1036,7 @@ export function SetupWizard() {
                 <WizardNeuralStep
                   neuralBrainSupported={neuralBrainSupported}
                   totalMemoryGB={systemCaps?.totalMemoryGB}
-                  onComplete={next}
-                  onOptInChange={setNeuralBrainOptIn}
+                  onComplete={(enabled) => { setNeuralBrainEnabled(enabled); next(); }}
                 />
               )}
 
@@ -1081,11 +1079,7 @@ export function SetupWizard() {
                     {localModelSupported && (
                       <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
                     )}
-                    {neuralBrainSupported || neuralBrainOptIn ? (
-                      <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Neural Core: Embedding models downloaded</Typography>
-                    ) : (
-                      <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Neural Core: Skipped (low-RAM opt-out)</Typography>
-                    )}
+                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Neural Core: {neuralBrainEnabled ? 'Embedding models enabled' : 'Skipped'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: voiceCalibrated ? wizardTheme.accentOk : wizardTheme.textDim }}>Voice Comms: {voiceCalibrated ? 'Calibrated' : 'Skipped'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: telegramLinked ? wizardTheme.accentOk : wizardTheme.textDim }}>Telegram Relay: {telegramLinked ? 'Linked' : 'Skipped'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Callsign: {callsign || '(not set)'}</Typography>

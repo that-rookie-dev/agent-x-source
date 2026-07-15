@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
 import MicIcon from '@mui/icons-material/Mic';
 import { colors } from '../theme';
-import { health, config as configApi } from '../api';
+import { health } from '../api';
 import { cachedApiCall } from '../perf/api-cache';
-import { useNeuralBrainSupported, useCapabilitiesReady } from '../hooks/useSystemCapabilities';
+import { useCapabilitiesReady } from '../hooks/useSystemCapabilities';
 import { useVoiceOptional } from './voice/VoiceProvider';
+import { useApp } from '../store/AppContext';
 
 const NEURON_URL = (import.meta.env.VITE_NEURON_URL as string) || '/neuron';
 
@@ -24,12 +25,15 @@ export interface FooterProps {
 export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const [version, setVersion] = useState('');
   const [zoomHint] = useState(getZoomShortcutHint);
-  const neuralBrainSupported = useNeuralBrainSupported();
   const capabilitiesReady = useCapabilitiesReady();
-  const [neuralBrainDisabled, setNeuralBrainDisabled] = useState(true);
+  const { config: appConfig } = useApp();
   const voice = useVoiceOptional();
   const showFooterMic = Boolean(voice?.voiceReady && !voice.wakeWordEnabled);
   const showWakeIndicator = Boolean(voice?.voiceReady && voice.wakeWordEnabled);
+
+  // Neural brain is shown when it's enabled in config (regardless of hardware
+  // support — the user may have opted in on a low-RAM system).
+  const neuralBrainDisabled = appConfig ? appConfig.neuralBrain !== true : true;
 
   const footerMicColor = !voice
     ? colors.text.dim
@@ -55,16 +59,7 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
     cachedApiCall('health', () => health.check(), 30_000)
       .then((h) => setVersion(h.version))
       .catch(() => {});
-    if (!capabilitiesReady) return;
-    if (!neuralBrainSupported) {
-      setNeuralBrainDisabled(true);
-      return;
-    }
-    cachedApiCall('config', () => configApi.get(), 60_000)
-      .then((cfg) => setNeuralBrainDisabled(cfg.neuralBrain === false)).catch(() => {
-      setNeuralBrainDisabled(false);
-    });
-  }, [neuralBrainSupported, capabilitiesReady]);
+  }, []);
 
   const handleBrainClick = () => {
     const agentx = (window as Window & { agentx?: { openInternalWindow?: (url: string) => Promise<boolean> } }).agentx;

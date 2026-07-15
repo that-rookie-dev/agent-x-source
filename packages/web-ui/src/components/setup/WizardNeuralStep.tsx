@@ -5,7 +5,7 @@
  * On low-RAM systems: shows a warning panel with an opt-in checkbox
  * and a confirmation modal before enabling the download.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
@@ -30,18 +30,16 @@ export interface WizardNeuralStepProps {
   neuralBrainSupported: boolean;
   /** Total system RAM in GB (for display). */
   totalMemoryGB?: number;
-  /** Called when the user proceeds past this step (download complete or skipped). */
-  onComplete: () => void;
-  /** Fired when the user's opt-in state changes (low-RAM systems only). */
-  onOptInChange?: (optedIn: boolean) => void;
+  /**
+   * Called when the user proceeds past this step.
+   * `enabled` indicates whether the user wants the neural brain enabled.
+   */
+  onComplete: (enabled: boolean) => void;
 }
 
-export function WizardNeuralStep({ neuralBrainSupported, totalMemoryGB, onComplete, onOptInChange }: WizardNeuralStepProps) {
+export function WizardNeuralStep({ neuralBrainSupported, totalMemoryGB, onComplete }: WizardNeuralStepProps) {
   const [optedIn, setOptedIn] = useState(false);
   const [warningOpen, setWarningOpen] = useState(false);
-
-  // Notify parent when opt-in state changes.
-  useEffect(() => { onOptInChange?.(optedIn); }, [optedIn, onOptInChange]);
 
   const headerEl = (
     <WizardStepHeader
@@ -51,12 +49,13 @@ export function WizardNeuralStep({ neuralBrainSupported, totalMemoryGB, onComple
     />
   );
 
-  // Compatible systems: render the download directly.
+  // Compatible systems: render the download directly. onComplete means enabled,
+  // onSkip means the user chose to disable the neural core.
   if (neuralBrainSupported) {
     return (
       <Box>
         {headerEl}
-        <EmbeddingModelDownload onComplete={onComplete} />
+        <EmbeddingModelDownload onComplete={() => onComplete(true)} onSkip={() => onComplete(false)} />
       </Box>
     );
   }
@@ -66,7 +65,7 @@ export function WizardNeuralStep({ neuralBrainSupported, totalMemoryGB, onComple
     return (
       <Box>
         {headerEl}
-        <EmbeddingModelDownload onComplete={onComplete} forceEnabled />
+        <EmbeddingModelDownload onComplete={() => onComplete(true)} onSkip={() => onComplete(false)} forceEnabled />
       </Box>
     );
   }
@@ -139,7 +138,7 @@ export function WizardNeuralStep({ neuralBrainSupported, totalMemoryGB, onComple
 
       {/* Skip button */}
       <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-        <Button onClick={onComplete} sx={wizardSkipBtnSx}>
+        <Button onClick={() => onComplete(false)} sx={wizardSkipBtnSx}>
           Skip Neural Core →
         </Button>
       </Box>
