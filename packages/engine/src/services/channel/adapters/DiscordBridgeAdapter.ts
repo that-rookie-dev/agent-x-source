@@ -46,6 +46,20 @@ export class DiscordBridgeAdapter implements IChannelBridge {
     if (!channelId) {
       throw new Error('Discord channel id is required to send a message');
     }
+    if (message.attachments && message.attachments.length > 0) {
+      for (let i = 0; i < message.attachments.length; i++) {
+        const att = message.attachments[i]!;
+        const caption = i === 0 ? message.text : undefined;
+        if (att.content && Buffer.isBuffer(att.content)) {
+          await this.bridge.sendFile(channelId, { name: att.name ?? 'attachment', content: att.content }, caption);
+        } else if (att.url) {
+          await this.bridge.sendMessage(channelId, `${caption ? `${caption}\n` : ''}${att.url}\n${att.name ?? ''}`);
+        } else {
+          throw new Error('Discord attachment must include content or url');
+        }
+      }
+      return;
+    }
     await this.bridge.sendMessage(channelId, message.text);
   }
 

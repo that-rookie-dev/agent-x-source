@@ -38,6 +38,8 @@ export { ResponseFormatter } from './agent/ResponseFormatter.js';
 export type { FormattedSegment } from './agent/ResponseFormatter.js';
 export { SubAgentManager } from './agent/SubAgentManager.js';
 export type { SubAgentTask } from './agent/SubAgentManager.js';
+export { SubAgentService, getSubAgentServiceInstance, setSubAgentServiceInstance } from './agent/SubAgentService.js';
+export type { SubAgentRecord } from './agent/SubAgentService.js';
 export { SubAgentCache } from './agent/SubAgentCache.js';
 export { SmartSubAgent } from './agent/SmartSubAgent.js';
 export type { SmartSubAgentOptions, SmartSubAgentResult } from './agent/SmartSubAgent.js';
@@ -50,7 +52,7 @@ export type { EventBus, EngineEvent, EventHandler, SessionEvent } from './events
 export type { AgentEvent } from './events/AgentEvent.js';
 
 export type { ServiceContext } from './services/ServiceContext.js';
-export { createServiceContext } from './services/ServiceContext.js';
+export { createServiceContext, getChannelServiceInstance, setChannelServiceInstance } from './services/ServiceContext.js';
 
 export { ToolService } from './services/tool/ToolService.js';
 export { ToolCacheService } from './services/tool/ToolCacheService.js';

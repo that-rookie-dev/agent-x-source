@@ -692,21 +692,30 @@ export class TelegramBridge {
    * Send a file (document) to a specific chat.
    * Uses multipart/form-data to upload the file to Telegram.
    */
-  async sendDocumentToChat(chatId: number, filePath: string, caption?: string): Promise<{ ok: boolean; description?: string }> {
+  async sendDocumentToChat(chatId: number, file: string | { name: string; content: Buffer }, caption?: string): Promise<{ ok: boolean; description?: string }> {
     const { statSync, readFileSync } = await import('node:fs');
     const { basename } = await import('node:path');
 
-    // Verify file exists and is reasonable size (Telegram limit: 50MB)
-    const stat = statSync(filePath);
-    if (stat.size > 50 * 1024 * 1024) {
-      return { ok: false, description: 'File exceeds Telegram 50MB limit' };
+    let fileName: string;
+    let fileBuffer: Buffer;
+
+    if (typeof file === 'string') {
+      const stat = statSync(file);
+      if (stat.size > 50 * 1024 * 1024) {
+        return { ok: false, description: 'File exceeds Telegram 50MB limit' };
+      }
+      fileName = basename(file);
+      fileBuffer = readFileSync(file);
+    } else {
+      if (file.content.length > 50 * 1024 * 1024) {
+        return { ok: false, description: 'File exceeds Telegram 50MB limit' };
+      }
+      fileName = file.name || 'attachment';
+      fileBuffer = file.content;
     }
 
-    const fileName = basename(filePath);
     const url = `https://api.telegram.org/bot${this.config.botToken}/sendDocument`;
-
-    const fileBuffer = readFileSync(filePath);
-    const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
+    const blob = new Blob([fileBuffer.buffer as ArrayBuffer], { type: 'application/octet-stream' });
 
     const formData = new FormData();
     formData.append('chat_id', String(chatId));
@@ -734,7 +743,7 @@ export class TelegramBridge {
 
     const url = `https://api.telegram.org/bot${this.config.botToken}/sendVoice`;
     const fileBuffer = readFileSync(filePath);
-    const blob = new Blob([fileBuffer], { type: 'audio/ogg' });
+    const blob = new Blob([fileBuffer.buffer as ArrayBuffer], { type: 'audio/ogg' });
     const formData = new FormData();
     formData.append('chat_id', String(chatId));
     formData.append('voice', blob, basename(filePath));

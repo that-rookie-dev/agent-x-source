@@ -273,7 +273,7 @@ export class EmailBridge extends EventEmitter {
     this.senderAgents.clear();
   }
 
-  async sendEmail(to: string, subject: string, body: string): Promise<void> {
+  async sendEmail(to: string, subject: string, body: string, attachments?: EmailAttachment[]): Promise<void> {
     if (!this.smtpTransporter || !this.config) {
       throw new Error('SMTP not configured');
     }
@@ -283,6 +283,7 @@ export class EmailBridge extends EventEmitter {
       to,
       subject,
       text: body,
+      attachments: attachments?.map((att) => ({ filename: att.filename, content: att.content })),
     });
 
     this.emitTyped('email_sent', {
@@ -291,7 +292,7 @@ export class EmailBridge extends EventEmitter {
     });
   }
 
-  async replyTo(originalMessageId: string, to: string, subject: string, body: string): Promise<void> {
+  async replyTo(originalMessageId: string, to: string, subject: string, body: string, attachments?: EmailAttachment[]): Promise<void> {
     if (!this.smtpTransporter || !this.config) {
       throw new Error('SMTP not configured');
     }
@@ -303,6 +304,7 @@ export class EmailBridge extends EventEmitter {
       text: body,
       inReplyTo: originalMessageId,
       references: [originalMessageId],
+      attachments: attachments?.map((att) => ({ filename: att.filename, content: att.content })),
     });
 
     this.emitTyped('email_sent', {

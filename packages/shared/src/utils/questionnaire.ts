@@ -10,12 +10,12 @@ import type {
   QuestionnaireResponseState,
 } from '../types/questionnaire.js';
 
-export const MESSAGING_CHANNEL_IDS = ['telegram', 'slack', 'discord'] as const;
+export const MESSAGING_CHANNEL_IDS = ['telegram', 'slack', 'discord', 'email'] as const;
 export type MessagingChannelId = (typeof MESSAGING_CHANNEL_IDS)[number];
 
-/** True when inbound traffic is from a messaging channel (Telegram, Slack, Discord). */
+/** True when inbound traffic is from a messaging channel (Telegram, Slack, Discord, Email). */
 export function isMessagingChannel(channel: string | null | undefined): channel is MessagingChannelId {
-  return channel === 'telegram' || channel === 'slack' || channel === 'discord';
+  return channel === 'telegram' || channel === 'slack' || channel === 'discord' || channel === 'email';
 }
 
 /** Whether the questionnaire includes structured choice inputs. */

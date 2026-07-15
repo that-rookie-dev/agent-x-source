@@ -103,6 +103,7 @@ const {
     spawn: vi.fn(),
     setParentAgent: vi.fn(),
     setMaxConcurrent: vi.fn(),
+    ingestBackgroundResultsForSession: vi.fn(),
   });
 
   const createTaskMgr = () => ({

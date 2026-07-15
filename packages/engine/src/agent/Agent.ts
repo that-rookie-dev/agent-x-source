@@ -470,7 +470,7 @@ export class Agent {
   public get runStateMgr(): RunStateManager { if (!this._runStateMgr) this._runStateMgr = new RunStateManager(); return this._runStateMgr; }
   private _telegramConnected = false;
   private _telegramChatId: number | null = null;
-  /** Active inbound messaging channel for the current turn (telegram/slack/discord). */
+  /** Active inbound messaging channel for the current turn (telegram/slack/discord/email). */
   private activeInboundChannel: string | null = null;
   /** Desktop session linked for context when this agent is the channel super-session. */
   private linkedContextSessionId: string | null = null;
@@ -843,6 +843,7 @@ export class Agent {
     this.tokenTracker = new TokenTracker(this.getContextWindow());
     this.subAgents = new SubAgentManager(this.eventBus);
     this.subAgents.setParentAgent(this);
+    this.subAgents.ingestBackgroundResultsForSession(this.sessionId);
     setSubAgentManagerInstance(this.subAgents);
 
     setCrewDelegator(async (crewName: string, taskDescription: string) => {
@@ -1524,7 +1525,7 @@ export class Agent {
     timeout: number,
     background?: boolean,
   ): Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }> {
-    const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents);
+    const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents, undefined, !!background);
     if (background) {
       this.emit({ type: 'task_backgrounded', taskId: task.id } as EngineEvent);
       return {
@@ -1769,7 +1770,7 @@ export class Agent {
     return trimmed;
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string }; clientSituation?: ClientSituation | null }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; sourceMessageId?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string }; clientSituation?: ClientSituation | null }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1784,6 +1785,7 @@ export class Agent {
     this.scope = new Scope();
     this.clarificationStale = false;
     this.userCancelledTurn = false;
+    this.subAgents.ingestBackgroundResultsForSession(this.sessionId);
     this.toolExecutor?.setTurnAborted(false);
 
     // ─── UNIFIED: Ensure single session run + enqueue for concurrency ───
@@ -1859,10 +1861,13 @@ export class Agent {
 
     const messagingChannelInbound = options?.sourceChannel === 'telegram'
       || options?.sourceChannel === 'slack'
-      || options?.sourceChannel === 'discord';
+      || options?.sourceChannel === 'discord'
+      || options?.sourceChannel === 'email';
     this.activeInboundChannel = messagingChannelInbound ? (options?.sourceChannel ?? null) : null;
     this.toolExecutor?.setMessagingPermissionMode(messagingChannelInbound);
     this.toolExecutor?.setInboundSourceChannel(messagingChannelInbound ? (options?.sourceChannel ?? null) : null);
+    this.toolExecutor?.setInboundSourceThreadId(messagingChannelInbound ? (options?.channelId ?? null) : null);
+    this.toolExecutor?.setInboundSourceMessageId(messagingChannelInbound ? (options?.sourceMessageId ?? null) : null);
     this.toolExecutor?.setPermissionPromptHook((details) => {
       this.emit({
         type: 'permission_required',
@@ -2452,6 +2457,8 @@ export class Agent {
       this.activeInboundChannel = null;
       this.toolExecutor?.setMessagingPermissionMode(false);
       this.toolExecutor?.setInboundSourceChannel(null);
+      this.toolExecutor?.setInboundSourceThreadId(null);
+      this.toolExecutor?.setInboundSourceMessageId(null);
       this.toolExecutor?.setPermissionPromptHook(undefined);
       this.turnWebSearchPolicy = 'off';
       this.forcedWebSearchToolName = null;
@@ -3851,6 +3858,7 @@ export class Agent {
   setSessionManager(sm: SessionManager): void {
     this.sessionManager = sm;
     this.restoreSessionPermissions();
+    this.subAgents.ingestBackgroundResultsForSession(this.sessionId);
     if (this.options.channelSession) {
       registerChannelPermissionBridge(this.sessionId, {
         list: () => this.formatChannelToolPermissions(),

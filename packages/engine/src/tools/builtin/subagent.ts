@@ -1,5 +1,6 @@
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import type { SubAgentManager } from '../../agent/SubAgentManager.js';
+import { getSubAgentServiceInstance } from '../../agent/SubAgentService.js';
 
 let subAgentManagerInstance: SubAgentManager | null = null;
 
@@ -52,17 +53,17 @@ export async function subAgentStatus(
   args: Record<string, unknown>,
   _context: ToolExecutionContext,
 ): Promise<ToolResult> {
+  const service = getSubAgentServiceInstance();
   const manager = subAgentManagerInstance;
-  if (!manager) {
-    return { success: false, output: 'Sub-agent manager not available', error: 'NOT_CONFIGURED' };
-  }
-
   const agentId = args['agent_id'] as string | undefined;
 
-  // List all active sub-agents (running + queued)
-  const active = manager.getAll().filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'pending');
+  // Use the global service so background sub-agents are visible even when the
+  // spawning Agent instance has been replaced (e.g. page navigation).
+  const all = service.listTasks();
+  const running = all.filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'pending');
+
   if (agentId) {
-    const task = active.find((t) => t.id === agentId) ?? manager.getAllIncludingCompleted().find((t) => t.id === agentId);
+    const task = service.getTask(agentId) ?? manager?.getAllIncludingCompleted().find((t) => t.id === agentId);
     if (task) {
       return {
         success: true,
@@ -72,11 +73,11 @@ export async function subAgentStatus(
     return { success: false, output: `No agent with ID: ${agentId}`, error: 'NOT_FOUND' };
   }
 
-  if (active.length === 0) {
+  if (running.length === 0) {
     return { success: true, output: 'No sub-agents currently running or queued.' };
   }
 
-  const lines = active.map((t) => `• ${t.id} | "${t.instruction.slice(0, 60)}" | ${t.status}`);
+  const lines = running.map((t) => `• ${t.id} | "${t.instruction.slice(0, 60)}" | ${t.status}`);
   return { success: true, output: `Active sub-agents:\n${lines.join('\n')}` };
 }
 

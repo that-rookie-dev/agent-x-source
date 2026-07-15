@@ -66,6 +66,28 @@ export class TelegramBridgeAdapter implements IChannelBridge {
     if (!Number.isFinite(chatId)) {
       throw new Error(`Invalid Telegram chat id: ${rawId}`);
     }
+
+    if (message.attachments && message.attachments.length > 0) {
+      for (let i = 0; i < message.attachments.length; i++) {
+        const att = message.attachments[i]!;
+        const caption = i === 0 ? message.text : undefined;
+        if (att.content && Buffer.isBuffer(att.content)) {
+          const result = await this.bridge.sendDocumentToChat(chatId, { name: att.name ?? 'attachment', content: att.content }, caption);
+          if (!result.ok) {
+            throw new Error(result.description ?? 'Failed to send Telegram file');
+          }
+        } else if (att.url) {
+          const result = await this.bridge.sendDocumentToChat(chatId, att.url, caption);
+          if (!result.ok) {
+            throw new Error(result.description ?? 'Failed to send Telegram file');
+          }
+        } else {
+          throw new Error('Telegram attachment must include content or url');
+        }
+      }
+      return;
+    }
+
     await this.bridge.sendMessage(chatId, message.text);
   }
 

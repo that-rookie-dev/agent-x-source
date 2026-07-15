@@ -60,6 +60,27 @@ export const COMPACT_TOOL_IDS = new Set([
   'web_fetch',
   'todo_read',
   'todo_write',
+  // Native channel send tools for messaging sessions
+  'telegram_send_message',
+  'telegram_send_file',
+  'slack_send_message',
+  'slack_send_file',
+  'discord_send_message',
+  'discord_send_file',
+  'email_send_message',
+  'email_send_file',
+  // Document creation tools for generating files to send back
+  'pdf_create',
+  'docx_create',
+  'xlsx_create',
+  'pptx_create',
+  'csv_create',
+  'doc_markdown',
+  'doc_html',
+  'doc_json',
+  'doc_yaml',
+  'doc_diagram',
+  'doc_latex',
 ]);
 
 export function isCompactToolAllowed(toolId: string, planMode: boolean): boolean {

@@ -319,13 +319,24 @@ export class SlackBridge extends EventEmitter {
     });
   }
 
-  async sendFile(channel: string, filePath: string, title?: string, threadTs?: string): Promise<void> {
+  async sendFile(channel: string, file: string | { name: string; content: Buffer }, title?: string, threadTs?: string): Promise<void> {
     if (!this.app) throw new Error('Slack bridge not started');
-    const { createReadStream } = await import('node:fs');
+    let fileStreamOrBuffer: import('node:fs').ReadStream | Buffer;
+    let filename: string;
+    if (typeof file === 'string') {
+      const { createReadStream } = await import('node:fs');
+      const { basename } = await import('node:path');
+      fileStreamOrBuffer = createReadStream(file);
+      filename = title || basename(file);
+    } else {
+      fileStreamOrBuffer = file.content;
+      filename = title || file.name || 'attachment';
+    }
     const args = {
       channel_id: channel,
-      file: createReadStream(filePath),
-      title: title || filePath,
+      file: fileStreamOrBuffer,
+      filename,
+      title: filename,
       ...(threadTs ? { thread_ts: threadTs } : {}),
     };
     // @ts-expect-error — runtime API accepts these args; types are overly strict for optional thread_ts

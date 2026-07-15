@@ -60,6 +60,8 @@ export class ToolExecutor implements ToolPermissionHost {
   /** When true, route permission prompts through the channel handler (Telegram-bound super-sessions). */
   private messagingPermissionMode = false;
   private inboundSourceChannel: string | null = null;
+  private inboundSourceThreadId: string | null = null;
+  private inboundSourceMessageId: string | null = null;
   private onToolOutput?: (output: string) => void;
   private toolCache: Map<string, ReturnType<ToolRegistry['get']>> = new Map();
   private beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null = null;
@@ -176,6 +178,22 @@ export class ToolExecutor implements ToolPermissionHost {
     this.inboundSourceChannel = channel;
   }
 
+  setInboundSourceThreadId(threadId: string | null): void {
+    this.inboundSourceThreadId = threadId;
+  }
+
+  getInboundSourceThreadId(): string | null {
+    return this.inboundSourceThreadId;
+  }
+
+  setInboundSourceMessageId(messageId: string | null): void {
+    this.inboundSourceMessageId = messageId;
+  }
+
+  getInboundSourceMessageId(): string | null {
+    return this.inboundSourceMessageId;
+  }
+
   getPermissionRequestHandler(): PermissionRequestHandler | undefined {
     return this.permissionRequestHandler;
   }
@@ -241,6 +259,9 @@ export class ToolExecutor implements ToolPermissionHost {
       beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null;
       safetyAuditor: SafetyAuditor | null;
       policyEngine: PolicyEngine | null;
+      inboundSourceChannel: string | null;
+      inboundSourceThreadId: string | null;
+      inboundSourceMessageId: string | null;
     };
     if (src.permissionRequestHandler) {
       this.setPermissionRequestHandler(src.permissionRequestHandler);
@@ -256,6 +277,9 @@ export class ToolExecutor implements ToolPermissionHost {
     if (src.beforeToolHook) this.setBeforeToolHook(src.beforeToolHook);
     if (src.safetyAuditor) this.setSafetyAuditor(src.safetyAuditor);
     if (src.policyEngine) this.setPolicyEngine(src.policyEngine);
+    this.setInboundSourceChannel(src.inboundSourceChannel ?? null);
+    this.setInboundSourceThreadId(src.inboundSourceThreadId ?? null);
+    this.setInboundSourceMessageId(src.inboundSourceMessageId ?? null);
   }
 
   setToolOutputHandler(handler: (output: string) => void): void {
@@ -444,6 +468,8 @@ export class ToolExecutor implements ToolPermissionHost {
       voiceTurn: this.voiceTurnActive,
       mode: this.mode,
       ...(this.inboundSourceChannel ? { sourceChannel: this.inboundSourceChannel } : {}),
+      ...(this.inboundSourceThreadId ? { sourceThreadId: this.inboundSourceThreadId } : {}),
+      ...(this.inboundSourceMessageId ? { sourceMessageId: this.inboundSourceMessageId } : {}),
       onOutput: onToolOutput,
       signal: abortController.signal,
     };

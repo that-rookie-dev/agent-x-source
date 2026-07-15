@@ -50,10 +50,21 @@ export class EmailBridgeAdapter implements IChannelBridge {
       throw new Error('Email recipient (to) is required to send a message');
     }
     const subject = message.subject ?? 'No subject';
+    const attachments = message.attachments
+      ?.map((att) => {
+        const content = att.content && Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content ? String(att.content) : '');
+        return {
+          filename: att.name ?? 'attachment',
+          content,
+          contentType: att.contentType ?? 'application/octet-stream',
+          size: content.length,
+        };
+      })
+      .filter((att) => att.content.length > 0);
     if (message.replyTo) {
-      await this.bridge.replyTo(message.replyTo, message.to, subject, message.text);
+      await this.bridge.replyTo(message.replyTo, message.to, subject, message.text, attachments);
     } else {
-      await this.bridge.sendEmail(message.to, subject, message.text);
+      await this.bridge.sendEmail(message.to, subject, message.text, attachments);
     }
   }
 

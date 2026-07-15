@@ -54,9 +54,10 @@ export class ChannelWorker {
       return;
     }
     const response = await agent.sendMessage(payload.text, {
-      channelId: payload.channel,
+      channelId: payload.threadId ?? payload.sender.id,
       userId: payload.sender.id,
       sourceChannel: payload.channel,
+      sourceMessageId: payload.messageId,
     });
     if (this.channelService && response) {
       const message = this.buildResponseMessage(payload, response);

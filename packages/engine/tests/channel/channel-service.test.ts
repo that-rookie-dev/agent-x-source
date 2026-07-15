@@ -100,6 +100,7 @@ describe('ChannelService', () => {
       channel: 'discord',
       sender: { id: 'u1', name: 'User' },
       text: 'hi',
+      threadId: 'discord',
       raw: {},
       timestamp: new Date().toISOString(),
     };
@@ -109,7 +110,7 @@ describe('ChannelService', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(sendMessage).toHaveBeenCalledWith('hi', expect.objectContaining({ channelId: 'discord', userId: 'u1' }));
-    expect(bridge.lastOutbound).toEqual({ text: 'reply', threadId: undefined, replyTo: undefined });
+    expect(bridge.lastOutbound).toEqual({ text: 'reply', threadId: 'discord', replyTo: undefined });
 
     await service.stop();
   });

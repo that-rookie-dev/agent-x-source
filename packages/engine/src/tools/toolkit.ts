@@ -9,6 +9,7 @@ import * as documents from './builtin/documents.js';
 import * as automation from './builtin/automation.js';
 import * as agentXOverview from './builtin/agent-x-overview.js';
 import * as channelPermissions from './builtin/channel-permissions.js';
+import * as channelSend from './builtin/channel-send.js';
 import * as renderChannelResponse from './builtin/render-channel-response.js';
 import * as subagent from './builtin/subagent.js';
 import * as crewdelegate from './builtin/delegate-to-crew.js';
@@ -298,9 +299,15 @@ const CORE_TOOLS: ToolDefinition[] = [
   { id: 'chart_generate', name: 'Generate Chart', description: 'Generate a chart/plot as image', modelDescription: 'Create a chart or plot as an image file (bar, line, pie) from data.', category: 'media_image', riskLevel: 'medium', schema: { type: 'object', properties: { file: { type: 'string', description: 'Output file path (.png)' }, type: { type: 'string', description: 'Chart type: bar, line, pie' }, title: { type: 'string', description: 'Chart title' }, labels: { type: 'array', description: 'X-axis labels' }, datasets: { type: 'array', description: 'Array of {label, data, color} objects' }, width: { type: 'number', description: 'Chart width (default: 800)' }, height: { type: 'number', description: 'Chart height (default: 600)' } }, required: ['file', 'type', 'labels', 'datasets'] }, composable: true, source: 'builtin' },
   { id: 'qr_generate', name: 'Generate QR Code', description: 'Generate a QR code image', modelDescription: 'Create a QR code PNG image from text/URL data.', category: 'media_image', riskLevel: 'low', schema: { type: 'object', properties: { file: { type: 'string', description: 'Output file path (.png)' }, data: { type: 'string', description: 'Data to encode in QR code' }, size: { type: 'number', description: 'QR code size in pixels (default: 256)' } }, required: ['file', 'data'] }, composable: true, source: 'builtin' },
 
-  // ═══ TELEGRAM ═══
-  { id: 'telegram_send_message', name: 'Send Message via Telegram', description: 'Send a text message or progress update to the user on Telegram', modelDescription: 'Send a message to the user via Telegram. Use this to notify the user of progress, ask a quick question, or send a status update when the user is not actively watching the terminal or web UI. Only use if the user previously agreed to receive Telegram updates.', category: 'communication', riskLevel: 'low', schema: { type: 'object', properties: { message: { type: 'string', description: 'The message text to send to the user' } }, required: ['message'] }, composable: true, source: 'builtin' },
-  { id: 'telegram_send_file', name: 'Send File via Telegram', description: 'Upload and send a file to the user via Telegram', modelDescription: 'Send/upload a file to the user via Telegram. Use this when the user asks you to share, send, or upload a file. The file must exist on disk.', category: 'communication', riskLevel: 'medium', schema: { type: 'object', properties: { path: { type: 'string', description: 'Path to the file to send' }, caption: { type: 'string', description: 'Optional caption/description for the file' } }, required: ['path'] }, composable: true, source: 'builtin' },
+  // ═══ CHANNEL SEND (first-class native messaging) ═══
+  { id: 'telegram_send_message', name: 'Send Telegram Message', description: 'Send a text message back to the active Telegram chat', modelDescription: 'Send a text message to the user on the active Telegram chat. Use this for replies, progress updates, or follow-up questions during a Telegram session. The chat_id can be omitted when replying to an active inbound message.', category: 'communication', riskLevel: 'low', schema: { type: 'object', properties: { message: { type: 'string', description: 'The message text to send' }, chat_id: { type: 'string', description: 'Optional Telegram chat id (defaults to the active inbound chat)' } }, required: ['message'] }, composable: true, source: 'builtin' },
+  { id: 'telegram_send_file', name: 'Send Telegram File', description: 'Upload and send a file to the active Telegram chat', modelDescription: 'Upload and send a file to the active Telegram chat. Use this when the user asks for a file, report, PDF, document, etc. The file must exist on disk. The chat_id can be omitted when replying to an active inbound message.', category: 'communication', riskLevel: 'medium', schema: { type: 'object', properties: { path: { type: 'string', description: 'Path to the file to send' }, caption: { type: 'string', description: 'Optional caption/description for the file' }, chat_id: { type: 'string', description: 'Optional Telegram chat id (defaults to the active inbound chat)' } }, required: ['path'] }, composable: true, source: 'builtin' },
+  { id: 'slack_send_message', name: 'Send Slack Message', description: 'Send a text message back to the active Slack channel or DM', modelDescription: 'Send a text message to the active Slack channel, thread, or DM. Use this for replies, progress updates, or follow-up questions during a Slack session. The channel can be omitted when replying to an active inbound message.', category: 'communication', riskLevel: 'low', schema: { type: 'object', properties: { message: { type: 'string', description: 'The message text to send' }, channel: { type: 'string', description: 'Optional Slack channel id or name (defaults to the active inbound channel/thread)' } }, required: ['message'] }, composable: true, source: 'builtin' },
+  { id: 'slack_send_file', name: 'Send Slack File', description: 'Upload and send a file to the active Slack channel or DM', modelDescription: 'Upload and send a file to the active Slack channel, thread, or DM. Use this when the user asks for a file, report, PDF, document, etc. The file must exist on disk. The channel can be omitted when replying to an active inbound message.', category: 'communication', riskLevel: 'medium', schema: { type: 'object', properties: { path: { type: 'string', description: 'Path to the file to send' }, title: { type: 'string', description: 'Optional title/caption for the file' }, channel: { type: 'string', description: 'Optional Slack channel id or name (defaults to the active inbound channel/thread)' } }, required: ['path'] }, composable: true, source: 'builtin' },
+  { id: 'discord_send_message', name: 'Send Discord Message', description: 'Send a text message back to the active Discord channel or DM', modelDescription: 'Send a text message to the active Discord channel or DM. Use this for replies, progress updates, or follow-up questions during a Discord session. The channel_id can be omitted when replying to an active inbound message.', category: 'communication', riskLevel: 'low', schema: { type: 'object', properties: { message: { type: 'string', description: 'The message text to send' }, channel_id: { type: 'string', description: 'Optional Discord channel id (defaults to the active inbound channel)' } }, required: ['message'] }, composable: true, source: 'builtin' },
+  { id: 'discord_send_file', name: 'Send Discord File', description: 'Upload and send a file to the active Discord channel or DM', modelDescription: 'Upload and send a file to the active Discord channel or DM. Use this when the user asks for a file, report, PDF, document, etc. The file must exist on disk. The channel_id can be omitted when replying to an active inbound message.', category: 'communication', riskLevel: 'medium', schema: { type: 'object', properties: { path: { type: 'string', description: 'Path to the file to send' }, message: { type: 'string', description: 'Optional message text to include with the file' }, channel_id: { type: 'string', description: 'Optional Discord channel id (defaults to the active inbound channel)' } }, required: ['path'] }, composable: true, source: 'builtin' },
+  { id: 'email_send_message', name: 'Send Email Message', description: 'Send an email reply or message via the active email channel', modelDescription: 'Send an email message via the active email session. Use this for replies, reports, or follow-ups. The to address can be omitted when replying to an active inbound email.', category: 'communication', riskLevel: 'low', schema: { type: 'object', properties: { message: { type: 'string', description: 'The plain-text email body' }, subject: { type: 'string', description: 'Email subject' }, to: { type: 'string', description: 'Optional recipient address (defaults to the active inbound sender)' } }, required: ['message'] }, composable: true, source: 'builtin' },
+  { id: 'email_send_file', name: 'Send Email Attachment', description: 'Send an email with an attachment via the active email channel', modelDescription: 'Send an email with an attachment via the active email session. Use this when the user asks for a file, report, PDF, document, etc. The file must exist on disk. The to address can be omitted when replying to an active inbound email.', category: 'communication', riskLevel: 'medium', schema: { type: 'object', properties: { path: { type: 'string', description: 'Path to the file to send' }, body: { type: 'string', description: 'Optional plain-text email body' }, subject: { type: 'string', description: 'Email subject' }, to: { type: 'string', description: 'Optional recipient address (defaults to the active inbound sender)' } }, required: ['path'] }, composable: true, source: 'builtin' },
 
   // ═══ AGENT META-TOOLS ═══
   { id: 'todo_write', name: 'Write Todos', description: 'Create or update session task list', modelDescription: 'Update the TASKS panel. merge:false replaces all; merge:true updates by id. Status: pending, in_progress, completed.', category: 'agent_meta', riskLevel: 'low', schema: { type: 'object', properties: { merge: { type: 'boolean', description: 'Merge with existing (default: false)' }, todos: { type: 'array', description: 'Array of {id?, content, status?}' } }, required: ['todos'] }, composable: false, source: 'builtin' },
@@ -607,56 +614,15 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('node_rpc', script.nodeRpc);
   executor.registerHandler('python_rpc', script.pythonRpc);
 
-  // ═══ Telegram ═══
-  // Uses global TelegramBridge instance if active (set by daemon on bridge creation)
-  // Falls back to NOT_AVAILABLE if no bridge is running
-  executor.registerHandler('telegram_send_message', async (args) => {
-    const { getActiveTelegramBridge } = await import('../telegram/index.js');
-    const bridge = getActiveTelegramBridge();
-    if (!bridge || !bridge.isRunning()) {
-      return {
-        success: false,
-        output: 'Telegram is not active. Start it with /telegram start in daemon mode.',
-        error: 'NOT_AVAILABLE',
-      };
-    }
-    const message = args['message'] as string | undefined;
-    if (!message) {
-      return { success: false, output: 'No message provided.', error: 'MISSING_ARG' };
-    }
-    try {
-      // Bridge remembers the last active chat internally
-      await bridge.sendMessage(0, message);
-      return { success: true, output: 'Message sent via Telegram' };
-    } catch (err) {
-      return { success: false, output: `Telegram send failed: ${err instanceof Error ? err.message : String(err)}`, error: 'SEND_FAILED' };
-    }
-  });
-
-  executor.registerHandler('telegram_send_file', async (args) => {
-    // Dynamic import to avoid circular dependency
-    const { getActiveTelegramBridge } = await import('../telegram/index.js');
-    const bridge = getActiveTelegramBridge();
-    if (!bridge || !bridge.isRunning()) {
-      return {
-        success: false,
-        output: 'Telegram is not active. Start it with /telegram start in daemon mode.',
-        error: 'NOT_AVAILABLE',
-      };
-    }
-    const filePath = args['path'] as string | undefined;
-    const chatId = args['chatId'] as string | undefined;
-    if (!filePath) {
-      return { success: false, output: 'No file path provided.', error: 'MISSING_ARG' };
-    }
-    try {
-      const targetChatId = chatId ? Number(chatId) : 0;
-      const result = await bridge.sendDocumentToChat(targetChatId, filePath);
-      return { success: result.ok, output: result.ok ? `File sent via Telegram` : (result.description ?? 'Failed to send file') };
-    } catch (err) {
-      return { success: false, output: `Telegram send failed: ${err instanceof Error ? err.message : String(err)}`, error: 'SEND_FAILED' };
-    }
-  });
+  // ═══ Channel Send (native messaging bridges) ═══
+  executor.registerHandler('telegram_send_message', channelSend.telegramSendMessage);
+  executor.registerHandler('telegram_send_file', channelSend.telegramSendFile);
+  executor.registerHandler('slack_send_message', channelSend.slackSendMessage);
+  executor.registerHandler('slack_send_file', channelSend.slackSendFile);
+  executor.registerHandler('discord_send_message', channelSend.discordSendMessage);
+  executor.registerHandler('discord_send_file', channelSend.discordSendFile);
+  executor.registerHandler('email_send_message', channelSend.emailSendMessage);
+  executor.registerHandler('email_send_file', channelSend.emailSendFile);
 
   return { registry, executor };
 }

@@ -39,6 +39,16 @@ export interface ServiceContext {
   channelService?: IChannelService;
 }
 
+let _channelServiceInstance: IChannelService | null = null;
+
+export function getChannelServiceInstance(): IChannelService | null {
+  return _channelServiceInstance;
+}
+
+export function setChannelServiceInstance(instance: IChannelService | null): void {
+  _channelServiceInstance = instance;
+}
+
 /**
  * Build a ServiceContext, wiring in RedisCache when REDIS_URL is set and
  * falling back to LocalCache otherwise.
@@ -58,5 +68,6 @@ export function createServiceContext(
   ctx.channelService = partial.channelService ?? new ChannelService(ctx, {
     agentFactory: (channelId) => resolveChannelInboundAgent(channelId, null),
   });
+  setChannelServiceInstance(ctx.channelService);
   return ctx;
 }

@@ -1,6 +1,7 @@
 import { getEngine, awaitEngineStorageReady } from '../engine.js';
 import type { EngineState } from '../engine.js';
-import { MemoryService, getPerfTracker } from '@agentx/engine';
+import { MemoryService, getPerfTracker, getSubAgentServiceInstance } from '@agentx/engine';
+import type { SubAgentService, SubAgentRecord } from '@agentx/engine';
 import type { Agent, ConfigManager, SessionManager, CrewManager, IJobQueue, ChannelStatus } from '@agentx/engine';
 import type { AgentXConfig } from '@agentx/shared';
 import { getLogger, VERSION } from '@agentx/shared';
@@ -62,6 +63,11 @@ export class ApiService {
   /** Return the durable job queue. */
   getJobQueue(): IJobQueue {
     return this.getEngine().jobQueue;
+  }
+
+  /** Return the global sub-agent registry. */
+  getSubAgentService(): SubAgentService {
+    return getSubAgentServiceInstance();
   }
 
   /** Return the memory service (lazily initialized from the engine pg pool). */

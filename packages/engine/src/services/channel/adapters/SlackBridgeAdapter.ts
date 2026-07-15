@@ -48,6 +48,21 @@ export class SlackBridgeAdapter implements IChannelBridge {
     if (!channel) {
       throw new Error('Slack channel is required to send a message');
     }
+    if (message.attachments && message.attachments.length > 0) {
+      for (const att of message.attachments) {
+        if (att.content && Buffer.isBuffer(att.content)) {
+          await this.bridge.sendFile(channel, { name: att.name ?? 'attachment', content: att.content }, att.name ?? message.text, message.replyTo);
+        } else if (att.url) {
+          await this.bridge.sendMessage(channel, `${att.url}\n${att.name ?? ''}`, message.replyTo);
+        } else {
+          throw new Error('Slack attachment must include content or url');
+        }
+      }
+      if (message.text) {
+        await this.bridge.sendMessage(channel, message.text, message.replyTo);
+      }
+      return;
+    }
     await this.bridge.sendMessage(channel, message.text, message.replyTo);
   }
 

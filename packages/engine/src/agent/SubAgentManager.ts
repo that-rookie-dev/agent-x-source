@@ -14,6 +14,7 @@ import { Deferred } from '../concurrency/Deferred.js';
 import { Semaphore } from '../concurrency/Semaphore.js';
 import type { SubAgentType } from './subagent-types.js';
 import { SUBAGENT_TYPES } from './subagent-types.js';
+import { getSubAgentServiceInstance, type SubAgentService } from './SubAgentService.js';
 
 /** Default concurrent sub-agent slots (virtual fibers; queue when full). */
 const DEFAULT_MAX_CONCURRENT = 8;
@@ -30,6 +31,10 @@ export interface SubAgentTask {
   abortController?: AbortController;
   workDir?: string;
   deniedTools?: string[];
+  parentSessionId?: string;
+  childSessionId?: string;
+  background?: boolean;
+  consumed?: boolean;
   // Resource monitoring
   resourceUsage?: {
     cpuTime?: number; // milliseconds
@@ -55,6 +60,8 @@ export class SubAgentManager {
   private runningCount = 0;
   private idleDeferred: Deferred<void> | null = null;
   private taskCompletions: Map<string, Deferred<void>> = new Map();
+  private service: SubAgentService = getSubAgentServiceInstance();
+  private parentSessionId: string | null = null;
   /** Virtual concurrency pool — queues when at capacity instead of failing. */
   private concurrencyPool = new Semaphore(DEFAULT_MAX_CONCURRENT);
 
@@ -67,6 +74,7 @@ export class SubAgentManager {
    */
   setParentAgent(agent: Agent): void {
     this.parentAgent = agent;
+    this.parentSessionId = agent.sessionId ?? null;
   }
 
   setCache(cache: SubAgentCache): void {
@@ -143,7 +151,7 @@ export class SubAgentManager {
    * Spawn a sub-agent that will actually execute an LLM completion in the background.
    * When at maxConcurrent, the task is queued (virtual concurrency) — never rejected.
    */
-  spawn(instruction: string, tools: string[] = [], timeout = 60_000, maxConcurrent = DEFAULT_MAX_CONCURRENT, typeId?: string): SubAgentTask {
+  spawn(instruction: string, tools: string[] = [], timeout = 60_000, maxConcurrent = DEFAULT_MAX_CONCURRENT, typeId?: string, background = false): SubAgentTask {
     let effectiveTools = tools;
     let deniedTools: string[] | undefined;
     if (typeId) {
@@ -169,8 +177,13 @@ export class SubAgentManager {
         startTime: Date.now() - (cached.resourceUsage.cpuTime ?? 0),
         endTime: Date.now(),
         resourceUsage: { ...cached.resourceUsage },
+        parentSessionId: this.parentSessionId ?? undefined,
+        childSessionId: generateId(),
+        background,
+        consumed: !background,
       };
       this.completedAgents.set(task.id, task);
+      this.service.registerTask(task);
       return task;
     }
 
@@ -187,11 +200,16 @@ export class SubAgentManager {
       abortController: new AbortController(),
       workDir,
       deniedTools,
+      parentSessionId: this.parentSessionId ?? undefined,
+      childSessionId: generateId(),
+      background,
+      consumed: !background,
     };
 
     this.agents.set(task.id, task);
     this.runningCount++;
     this.taskCompletions.set(task.id, new Deferred<void>());
+    this.service.registerTask(task);
 
     this.eventBus.emit({
       type: 'agent_spawned',
@@ -344,7 +362,7 @@ export class SubAgentManager {
   spawnParallel(tasks: Array<{ instruction: string; tools?: string[] }>, maxConcurrent = DEFAULT_MAX_CONCURRENT): SubAgentTask[] {
     const spawned: SubAgentTask[] = [];
     for (const t of tasks) {
-      const task = this.spawn(t.instruction, t.tools ?? [], 60_000, maxConcurrent);
+      const task = this.spawn(t.instruction, t.tools ?? [], 60_000, maxConcurrent, undefined, false);
       if (task) spawned.push(task);
     }
     return spawned;
@@ -361,12 +379,23 @@ export class SubAgentManager {
       // Store in cache
       const cacheKey = this.cache.deriveKey(task.instruction, task.tools, this.systemPromptHash);
       this.cache.set(cacheKey, result, task.resourceUsage ?? {});
+      this.service.updateTask(agentId, { status: 'completed', result, endTime: task.endTime, consumed: !task.background });
       this.eventBus.emit({
         type: 'agent_complete',
         agentId,
         summary: result.slice(0, 200),
         elapsed,
       } as EngineEvent);
+      if (task.background) {
+        const tokensUsed = (task.resourceUsage?.tokenUsage?.input ?? 0) + (task.resourceUsage?.tokenUsage?.output ?? 0);
+        this.eventBus.emit({
+          type: 'background_task_complete',
+          taskId: task.id,
+          childSessionId: task.childSessionId ?? task.id,
+          tokensUsed,
+          elapsedMs: elapsed,
+        } as EngineEvent);
+      }
       this.finalizeTask(agentId);
     }
   }
@@ -378,6 +407,7 @@ export class SubAgentManager {
       task.result = error;
       task.endTime = Date.now();
       if (task.workDir) this.cleanupWorkDir(task.workDir);
+      this.service.updateTask(agentId, { status: 'failed', result: error, endTime: task.endTime, consumed: true });
       this.eventBus.emit({
         type: 'agent_complete',
         agentId,
@@ -416,6 +446,7 @@ export class SubAgentManager {
       task.status = 'cancelled';
       task.endTime = Date.now();
       task.abortController?.abort();
+      this.service.updateTask(agentId, { status: 'cancelled', endTime: task.endTime, consumed: true });
     }
   }
 
@@ -426,33 +457,30 @@ export class SubAgentManager {
         task.status = 'cancelled';
         task.endTime = Date.now();
         task.abortController?.abort();
+        this.service.updateTask(task.id, { status: 'cancelled', endTime: task.endTime, consumed: true });
       }
     }
   }
 
-  promoteResult(subAgentId: string, result: string): void {
-    const task = this.agents.get(subAgentId);
-    if (!task) return;
+  /**
+   * Pull any completed background sub-agent results for a session into the
+   * current parent agent's history. This lets background tasks outlive the
+   * Agent instance that spawned them and report back after navigation.
+   */
+  ingestBackgroundResultsForSession(sessionId: string): void {
+    const results = this.service.consumeResults(sessionId);
+    if (!this.parentAgent || results.length === 0) return;
 
-    const tokensUsed = (task.resourceUsage?.tokenUsage?.input ?? 0) + (task.resourceUsage?.tokenUsage?.output ?? 0);
-    const elapsedMs = (task.endTime ?? Date.now()) - (task.startTime ?? Date.now());
-
-    const syntheticMessage = {
-      role: 'assistant' as const,
-      content: `[task_result]\ntaskId: ${task.id}\nchildSessionId: ${task.id}\ntokensUsed: ${tokensUsed}\nelapsedMs: ${elapsedMs}\n[/task_result]\n${result}`,
-    };
-
-    if (this.parentAgent) {
+    for (const task of results) {
+      const tokensUsed = (task.resourceUsage?.tokenUsage?.input ?? 0) + (task.resourceUsage?.tokenUsage?.output ?? 0);
+      const elapsedMs = (task.endTime ?? Date.now()) - (task.startTime ?? Date.now());
+      const output = task.result ?? '';
+      const syntheticMessage = {
+        role: 'assistant' as const,
+        content: `[task_result]\ntaskId: ${task.id}\nchildSessionId: ${task.childSessionId ?? task.id}\ntokensUsed: ${tokensUsed}\nelapsedMs: ${elapsedMs}\n[/task_result]\n${output}`,
+      };
       (this.parentAgent as unknown as { addToHistory(msg: { role: 'user' | 'assistant'; content: string }): void }).addToHistory(syntheticMessage);
     }
-
-    this.eventBus.emit({
-      type: 'background_task_complete',
-      taskId: task.id,
-      childSessionId: task.id,
-      tokensUsed,
-      elapsedMs,
-    } as EngineEvent);
   }
 
   getRunning(): SubAgentTask[] {

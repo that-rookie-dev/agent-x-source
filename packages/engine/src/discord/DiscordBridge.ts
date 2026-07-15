@@ -8,6 +8,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  AttachmentBuilder,
   type Interaction,
   type Message,
   type TextChannel,
@@ -298,6 +299,29 @@ export class DiscordBridge {
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Failed to send message';
+      this.emitError(errMsg);
+    }
+  }
+
+  async sendFile(channelId: string, file: string | { name: string; content: Buffer }, messageText?: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (!channel || !channel.isTextBased()) {
+        throw new Error('Discord channel not found or not text-based');
+      }
+      let attachment: AttachmentBuilder;
+      if (typeof file === 'string') {
+        const { readFileSync } = await import('node:fs');
+        const { basename } = await import('node:path');
+        const data = readFileSync(file);
+        attachment = new AttachmentBuilder(data, { name: basename(file) });
+      } else {
+        attachment = new AttachmentBuilder(file.content, { name: file.name || 'attachment' });
+      }
+      await (channel as TextChannel).send({ content: messageText || '', files: [attachment] });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Failed to send file';
       this.emitError(errMsg);
     }
   }

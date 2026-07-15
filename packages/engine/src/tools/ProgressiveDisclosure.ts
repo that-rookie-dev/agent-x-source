@@ -34,6 +34,10 @@ const CORE_TOOL_PATTERNS = [
   // Agent meta / charts / todos
   /^ask_clarification/, /^delegate_to/, /^sub_agent/, /^todo/,
   /^search_crew_hub/, /^render_chart$/, /^spawn_crew/, /^save_to_markdown$/,
+  // Native channel send (Telegram/Slack/Discord/Email) — must be available on messaging sessions
+  /^(telegram|slack|discord|email)_send_/,
+  // Document creation tools — needed to build files (PDFs, spreadsheets, etc.) to send back to users
+  /^(pdf|docx|xlsx|pptx|csv)_create$/, /^doc_(markdown|html|json|yaml|diagram|latex)$/,
 ];
 
 const DISCLOSURE_THRESHOLD = 40;

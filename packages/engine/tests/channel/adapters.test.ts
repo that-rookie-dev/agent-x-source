@@ -313,7 +313,7 @@ describe('EmailBridgeAdapter', () => {
     const adapter = new EmailBridgeAdapter({ bridge: bridge as any });
 
     await adapter.send({ text: 'body', to: 'recipient@test.com', subject: 'Subject' });
-    expect(bridge.sendEmail).toHaveBeenCalledWith('recipient@test.com', 'Subject', 'body');
+    expect(bridge.sendEmail).toHaveBeenCalledWith('recipient@test.com', 'Subject', 'body', undefined);
   });
 
   it('send uses default subject when none provided', async () => {
@@ -321,7 +321,7 @@ describe('EmailBridgeAdapter', () => {
     const adapter = new EmailBridgeAdapter({ bridge: bridge as any });
 
     await adapter.send({ text: 'body', to: 'recipient@test.com' });
-    expect(bridge.sendEmail).toHaveBeenCalledWith('recipient@test.com', 'No subject', 'body');
+    expect(bridge.sendEmail).toHaveBeenCalledWith('recipient@test.com', 'No subject', 'body', undefined);
   });
 
   it('send replies when replyTo is set', async () => {
@@ -329,7 +329,7 @@ describe('EmailBridgeAdapter', () => {
     const adapter = new EmailBridgeAdapter({ bridge: bridge as any });
 
     await adapter.send({ text: 'body', to: 'r@test.com', subject: 'Re: Subject', replyTo: 'orig-msg-id' });
-    expect(bridge.replyTo).toHaveBeenCalledWith('orig-msg-id', 'r@test.com', 'Re: Subject', 'body');
+    expect(bridge.replyTo).toHaveBeenCalledWith('orig-msg-id', 'r@test.com', 'Re: Subject', 'body', undefined);
   });
 
   it('send throws when no recipient', async () => {

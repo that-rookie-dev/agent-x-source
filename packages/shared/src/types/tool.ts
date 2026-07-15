@@ -83,6 +83,10 @@ export interface ToolExecutionContext {
   voiceTurn?: boolean;
   /** Originating messaging channel for this turn (telegram, slack, etc.). */
   sourceChannel?: string;
+  /** Originating channel thread / chat / recipient id (e.g. Telegram chat_id, Slack channel, email address). */
+  sourceThreadId?: string;
+  /** Originating channel message id (e.g. Slack thread_ts, email Message-Id) used for threaded replies. */
+  sourceMessageId?: string;
   onOutput?: (output: string) => void;
   /** Abort signal that should be checked by long-running tool handlers. */
   signal?: AbortSignal;
