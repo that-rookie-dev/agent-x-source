@@ -242,8 +242,8 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
       icon={<MicIcon sx={{ fontSize: 26 }} />}
     >
       <Box sx={{ position: 'relative', zIndex: 1 }}>
-        <WizardStatusLine label="STT ENGINE" value="faster-whisper base.en" />
-        <WizardStatusLine label="TTS ENGINE" value="Kokoro 82M (lightweight)" />
+        <WizardStatusLine label="STT ENGINE" value="faster-distil-whisper small.en" />
+        <WizardStatusLine label="TTS ENGINE" value="Kokoro ONNX (FP32)" />
         <WizardStatusLine label="EST. PAYLOAD" value="~480 MB download" />
         <WizardStatusLine label="SECURITY" value="LOCAL ONLY · ENCRYPTED AT REST" ok />
 

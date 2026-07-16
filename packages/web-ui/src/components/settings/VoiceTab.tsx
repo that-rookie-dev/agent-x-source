@@ -14,9 +14,11 @@ import { voice, type VoiceCapabilityStatus, type VoiceConfig, type VoiceSetupSta
 import {
   applyVoicePreset,
   isVoiceKitReady,
+  KOKORO_VOICE_PROFILES,
   mergeVoiceConfig,
   VOICE_DEPLOY_STEPS,
 } from '../../voice/voice-config';
+import { randomTestLine } from '../../voice/test-lines';
 import { VOICE_WARMUP_MIN_RAM_GB } from '@agentx/shared/browser';
 import { markVoiceOutputUnlocked } from '../../voice/support';
 import { useVoiceWarmupSupported, useSystemCapabilities, useCapabilitiesReady } from '../../hooks/useSystemCapabilities';
@@ -76,6 +78,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState<VoiceSetupStatus | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [lastTestLine, setLastTestLine] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -89,7 +92,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const kitReady = isVoiceKitReady(installedAssetIds, capabilities);
   const sysStatus = voiceSysStatus(loading, kitReady, deploying, capabilities);
   const ttsEngine = voiceConfig.tts?.engine ?? 'kokoro';
-  const kokoroInstalled = installedAssetIds.has('kokoro-82m');
+  const kokoroInstalled = installedAssetIds.has('kokoro-onnx');
 
   const load = async () => {
     setLoading(true);
@@ -218,11 +221,11 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     setError(null);
     markVoiceOutputUnlocked();
     try {
-      // Generate a random greeting from the LLM, then speak it
-      const greeting = await voice.greeting();
+      const line = randomTestLine(lastTestLine);
+      setLastTestLine(line);
       const defaultVoiceId = 'kokoro-af';
       const result = await voice.preview(
-        greeting.text,
+        line,
         ttsEngine,
         voiceConfig.tts?.voiceId ?? defaultVoiceId,
         voiceConfig.tts?.style,
@@ -230,7 +233,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
       await audio.play();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Speaker test failed — deploy the voice kit first.');
+      setError(err instanceof Error ? err.message : 'Voice test failed — deploy the voice kit first.');
     } finally {
       setPreviewing(false);
     }
@@ -245,6 +248,18 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
         ...voiceConfig.tts,
         engine,
         voiceId: 'kokoro-af',
+      },
+    });
+  };
+
+  const selectVoiceProfile = async (voiceId: string) => {
+    if (voiceId === voiceConfig.tts?.voiceId) return;
+    setError(null);
+    await persistVoice({
+      ...voiceConfig,
+      tts: {
+        ...voiceConfig.tts,
+        voiceId,
       },
     });
   };
@@ -291,7 +306,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
         ) : kitReady ? (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
-              STT · {voiceConfig.stt?.modelId ?? 'faster-whisper-base.en'}
+              STT · {voiceConfig.stt?.modelId ?? 'faster-distil-whisper-small.en'}
             </Typography>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: settingsTheme.text.dim }}>·</Typography>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
@@ -403,7 +418,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
             <Switch
               size="small"
               checked={Boolean(voiceConfig.enabled)}
-              onChange={(e) => { void persistVoice({ ...voiceConfig, enabled: e.target.checked }); }}
+              onChange={(e) => { void persistVoice({ ...voiceConfig, enabled: e.target.checked, mode: { ...voiceConfig.mode, web: e.target.checked ? 'push-to-talk' : 'off' } }); }}
               disabled={!kitReady}
             />
           )}
@@ -498,13 +513,82 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
           onDownload={() => {}}
         />
 
+        <Box sx={{ mt: 2, mb: 1 }}>
+          <Typography sx={{ ...settingsOverlineSx, mb: 1 }}>Voice Profile</Typography>
+          {Array.from(new Set(KOKORO_VOICE_PROFILES.map((p) => p.language))).map((language) => (
+            <Box key={language} sx={{ mb: 1.5 }}>
+              <Typography sx={{ ...settingsHelperSx, fontSize: '0.58rem', color: settingsTheme.text.dim, mb: 0.5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {language}
+              </Typography>
+              <Box sx={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+                gap: 0.75,
+              }}>
+                {KOKORO_VOICE_PROFILES.filter((p) => p.language === language).map((profile) => {
+                  const isSelected = (voiceConfig.tts?.voiceId ?? 'kokoro-af') === profile.id;
+                  return (
+                    <Box
+                      key={profile.id}
+                      onClick={() => { if (kitReady) void selectVoiceProfile(profile.id); }}
+                      sx={{
+                        cursor: kitReady ? 'pointer' : 'default',
+                        opacity: kitReady ? 1 : 0.5,
+                        p: 1,
+                        borderRadius: 1,
+                        border: `1px solid ${isSelected ? settingsTheme.accent.hud : settingsTheme.border.default}`,
+                        bgcolor: isSelected ? `${alphaColor(settingsTheme.accent.hud, '0a')}` : 'transparent',
+                        transition: 'border-color 0.15s, background-color 0.15s',
+                        '&:hover': kitReady && !isSelected ? {
+                          borderColor: settingsTheme.accent.hud + '88',
+                        } : {},
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.25 }}>
+                        <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
+                          {profile.name}
+                        </Typography>
+                        <Box sx={{
+                          ...settingsMonoSx,
+                          fontSize: '0.5rem',
+                          px: 0.4,
+                          py: 0.05,
+                          borderRadius: 0.5,
+                          bgcolor: profile.gender === 'F' ? `${settingsTheme.accent.hud}22` : `${settingsTheme.accent.signal}22`,
+                          color: profile.gender === 'F' ? settingsTheme.accent.hud : settingsTheme.accent.signal,
+                        }}>
+                          {profile.gender}
+                        </Box>
+                        <Box sx={{
+                          ...settingsMonoSx,
+                          fontSize: '0.5rem',
+                          px: 0.4,
+                          py: 0.05,
+                          borderRadius: 0.5,
+                          bgcolor: settingsTheme.border.default,
+                          color: settingsTheme.text.dim,
+                        }}>
+                          {profile.grade}
+                        </Box>
+                      </Box>
+                      <Typography sx={{ ...settingsHelperSx, fontSize: '0.58rem', mt: 0.25 }}>
+                        {profile.description}
+                      </Typography>
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Box>
+          ))}
+        </Box>
+
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 2, mb: 2 }}>
           <Button
             onClick={() => { void previewVoice(); }}
             disabled={previewing || !kitReady}
             sx={settingsBtnGhostSx}
           >
-            {previewing ? 'Generating…' : 'Test speaker'}
+            {previewing ? 'Generating…' : 'Test Voice'}
           </Button>
         </Box>
         <VoiceMicTestPanel compact />

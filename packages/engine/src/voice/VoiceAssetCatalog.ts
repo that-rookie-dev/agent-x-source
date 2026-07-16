@@ -8,7 +8,7 @@ export const DEFAULT_VOICE_CONFIG: Required<Pick<VoiceConfig, 'enabled' | 'mode'
   },
   stt: {
     engine: 'faster-whisper',
-    modelId: 'faster-whisper-base.en',
+    modelId: 'faster-distil-whisper-small.en',
     computeType: 'int8',
     device: 'auto',
   },
@@ -30,45 +30,25 @@ export const DEFAULT_VOICE_CONFIG: Required<Pick<VoiceConfig, 'enabled' | 'mode'
 
 export const VOICE_ASSET_CATALOG: VoiceAssetCatalogEntry[] = [
   {
-    id: 'faster-whisper-tiny.en',
+    id: 'faster-distil-whisper-small.en',
     kind: 'stt-model',
     engine: 'faster-whisper',
-    displayName: 'faster-whisper tiny.en',
-    description: 'Smallest English STT model for low-resource devices and fastest transcription.',
-    sizeMB: 75,
-    downloadUrl: 'hf://Systran/faster-whisper-tiny.en',
-    license: 'MIT',
-  },
-  {
-    id: 'faster-whisper-base.en',
-    kind: 'stt-model',
-    engine: 'faster-whisper',
-    displayName: 'faster-whisper base.en',
-    description: 'Recommended English STT model balancing accuracy and latency.',
-    sizeMB: 145,
-    downloadUrl: 'hf://Systran/faster-whisper-base.en',
+    displayName: 'faster-distil-whisper small.en',
+    description: 'Distilled Whisper small.en — 5.6x faster than base.en, within 1% WER. Recommended for duplex voice.',
+    sizeMB: 166,
+    downloadUrl: 'hf://Systran/faster-distil-whisper-small.en',
     deliveryTier: 'download',
     license: 'MIT',
     recommended: true,
   },
   {
-    id: 'faster-whisper-small.en',
-    kind: 'stt-model',
-    engine: 'faster-whisper',
-    displayName: 'faster-whisper small.en',
-    description: 'Higher-accuracy English STT model with a larger memory and latency footprint.',
-    sizeMB: 465,
-    downloadUrl: 'hf://Systran/faster-whisper-small.en',
-    license: 'MIT',
-  },
-  {
-    id: 'kokoro-82m',
+    id: 'kokoro-onnx',
     kind: 'tts-model',
     engine: 'kokoro',
-    displayName: 'Kokoro 82M',
-    description: 'Fast, natural local TTS model. Also used for low-latency spoken fillers.',
-    sizeMB: 330,
-    downloadUrl: 'hf://hexgrad/Kokoro-82M',
+    displayName: 'Kokoro ONNX FP32',
+    description: 'Kokoro 82M in ONNX format. 2-3x faster than PyTorch Kokoro, identical quality.',
+    sizeMB: 312,
+    downloadUrl: 'github-release://thewh1teagle/kokoro-onnx/model-files-v1.0',
     deliveryTier: 'download',
     license: 'Apache-2.0',
     recommended: true,
@@ -80,7 +60,7 @@ export const VOICE_ASSET_CATALOG: VoiceAssetCatalogEntry[] = [
     displayName: 'Kokoro AF Voice',
     description: 'Default English Kokoro voice for final replies and progress fillers.',
     sizeMB: 1,
-    downloadUrl: 'hf://hexgrad/Kokoro-82M',
+    downloadUrl: 'github-release://thewh1teagle/kokoro-onnx/model-files-v1.0',
     deliveryTier: 'download',
     license: 'Apache-2.0',
     recommended: true,
@@ -99,10 +79,18 @@ export const VOICE_ASSET_CATALOG: VoiceAssetCatalogEntry[] = [
 ];
 
 export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
+  const enabled = input?.enabled ?? false;
+  // When voice is enabled, web mode must not be 'off' — otherwise voice UI stays hidden.
+  // Default to 'push-to-talk' if the persisted config has enabled=true but mode.web='off'.
+  const inputWebMode = input?.mode?.web;
+  const webMode = enabled && (!inputWebMode || inputWebMode === 'off')
+    ? 'push-to-talk'
+    : (inputWebMode ?? 'off');
   return {
     ...DEFAULT_VOICE_CONFIG,
     ...input,
-    mode: { ...DEFAULT_VOICE_CONFIG.mode, ...input?.mode },
+    enabled,
+    mode: { web: webMode, channels: input?.mode?.channels ?? 'off' },
     stt: { ...DEFAULT_VOICE_CONFIG.stt, ...input?.stt },
     tts: { ...DEFAULT_VOICE_CONFIG.tts, ...input?.tts },
     sidecar: { ...DEFAULT_VOICE_CONFIG.sidecar, ...input?.sidecar },

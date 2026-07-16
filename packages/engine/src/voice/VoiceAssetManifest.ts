@@ -9,7 +9,7 @@ import { isVoiceAssetInstalled } from './VoiceAssetCatalog.js';
 export type VoiceAssetTier = 'bundled' | 'download' | 'optional';
 
 export interface VoiceModelSource {
-  type: 'hf' | 'github' | 'mirror';
+  type: 'hf' | 'github' | 'mirror' | 'github-release';
   repo?: string;
   revision?: string;
   ref?: string;
@@ -19,6 +19,12 @@ export interface VoiceModelSource {
   allowPatterns?: string[];
   /** Flatten subdirectory structure after download (move all files to root) */
   flatten?: boolean;
+  /** github-release: release tag (e.g. "model-files-v1.0") */
+  tag?: string;
+  /** github-release: single asset filename */
+  asset?: string;
+  /** github-release: multiple asset filenames */
+  assets?: string[];
 }
 
 export interface VoiceModelManifestEntry {

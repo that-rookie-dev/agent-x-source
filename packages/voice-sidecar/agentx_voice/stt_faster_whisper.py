@@ -29,7 +29,7 @@ class FasterWhisperStt:
         self._last_partial_decode_at = 0.0
 
     def warm(self, request: dict[str, Any]) -> None:
-        model_id = str(request.get("sttModelId") or request.get("modelId") or "faster-whisper-base.en")
+        model_id = str(request.get("sttModelId") or request.get("modelId") or "faster-distil-whisper-small.en")
         device = str(request.get("sttDevice") or request.get("device") or "auto")
         compute_type = str(request.get("sttComputeType") or request.get("computeType") or "int8")
         self._load(model_id, device, compute_type)
@@ -39,7 +39,7 @@ class FasterWhisperStt:
         if not isinstance(audio_path, str) or not audio_path:
             raise ValueError("audioPath is required")
 
-        model_id = str(request.get("modelId") or request.get("sttModelId") or "faster-whisper-base.en")
+        model_id = str(request.get("modelId") or request.get("sttModelId") or "faster-distil-whisper-small.en")
         device = str(request.get("device") or request.get("sttDevice") or "auto")
         compute_type = str(request.get("computeType") or request.get("sttComputeType") or "int8")
         model = self._load(model_id, device, compute_type)
@@ -198,7 +198,7 @@ class FasterWhisperStt:
         if not pcm:
             return {"text": "", "segments": [], "language": None, "confidence": None}
 
-        model_id = str(request.get("modelId") or request.get("sttModelId") or "faster-whisper-base.en")
+        model_id = str(request.get("modelId") or request.get("sttModelId") or "faster-distil-whisper-small.en")
         device = str(request.get("device") or request.get("sttDevice") or "auto")
         compute_type = str(request.get("computeType") or request.get("sttComputeType") or "int8")
         model = self._load(model_id, device, compute_type)

@@ -16,20 +16,35 @@ describe('voice speech normalization', () => {
     expect(out.length).toBeLessThan(5000);
     expect(out).toContain('continue');
   });
+
+  it('strips XML/HTML tags', () => {
+    const out = normalizeTextForSpeech('<voice>Hello</voice> world');
+    expect(out).not.toContain('<voice>');
+    expect(out).not.toContain('</voice>');
+    expect(out).toContain('Hello');
+    expect(out).toContain('world');
+  });
+
+  it('strips Unicode angle bracket tags', () => {
+    const out = normalizeTextForSpeech('⟨voice⟩Hello there.⟨/voice⟩');
+    expect(out).not.toContain('⟨voice⟩');
+    expect(out).not.toContain('⟨/voice⟩');
+    expect(out).toContain('Hello there');
+  });
 });
 
 describe('voice config helpers', () => {
   it('merges disabled defaults', () => {
     const cfg = mergeVoiceConfig(undefined);
     expect(cfg.enabled).toBe(false);
-    expect(cfg.stt?.modelId).toBe('faster-whisper-base.en');
+    expect(cfg.stt?.modelId).toBe('faster-distil-whisper-small.en');
   });
 
   it('detects installed assets from config', () => {
     const cfg = mergeVoiceConfig({
-      downloadedAssets: [{ assetId: 'kokoro-82m', kind: 'tts-model', installedAt: new Date().toISOString() }],
+      downloadedAssets: [{ assetId: 'kokoro-onnx', kind: 'tts-model', installedAt: new Date().toISOString() }],
     });
-    expect(isVoiceAssetInstalled(cfg, 'kokoro-82m')).toBe(true);
+    expect(isVoiceAssetInstalled(cfg, 'kokoro-onnx')).toBe(true);
   });
 });
 

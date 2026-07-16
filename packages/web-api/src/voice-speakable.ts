@@ -5,9 +5,14 @@ export const VOICE_BLOCK_CLOSE = '⟨/voice⟩';
 
 /** Drop LLM token bleed before the voice opener (e.g. stray CJK characters). */
 export function normalizeVoiceAssistantContent(content: string): string {
-  const idx = content.indexOf(VOICE_BLOCK_OPEN);
-  if (idx > 0) return content.slice(idx);
-  return content;
+  // Normalize ASCII <voice> variants to Unicode ⟨voice⟩ — LLMs sometimes use
+  // regular angle brackets instead of the Unicode ones we instruct.
+  const normalized = content
+    .replace(/<voice>/g, VOICE_BLOCK_OPEN)
+    .replace(/<\/voice>/g, VOICE_BLOCK_CLOSE);
+  const idx = normalized.indexOf(VOICE_BLOCK_OPEN);
+  if (idx > 0) return normalized.slice(idx);
+  return normalized;
 }
 
 const VOICE_BLOCK_RE = /⟨voice⟩([\s\S]*?)⟨\/voice⟩/i;

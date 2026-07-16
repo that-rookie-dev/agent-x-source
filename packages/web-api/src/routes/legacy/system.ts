@@ -13,6 +13,7 @@ import type { AgentXConfig } from '@agentx/shared';
 import { getEngine, destroyAgent, clearEngine, applyRuntimeSettings, setCurrentClientSituation, getCurrentClientSituation } from '../../engine.js';
 import { setIngestionAppVisible, getIngestionGovernorState } from '../../ingestion-governor.js';
 import { redactConfigForClient, mergeConfigPreservingSecrets } from '../../config-redaction.js';
+import { mergeVoiceConfig } from '@agentx/engine';
 import { refreshIngestionWorkerGenerator } from '../../ingestion-worker-ref.js';
 import { applyChannelsConfig } from '../../channels-sync.js';
 import { getBackgroundTaskPool, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, getLogCollector } from '@agentx/engine';
@@ -86,7 +87,11 @@ export function createSystemRouter(): Router {
   r.get('/api/config', (_req, res) => {
     const eng = getEngine();
     try {
-      res.json(redactConfigForClient(eng.configManager.load()));
+      const raw = eng.configManager.load();
+      // Merge voice config so enabled=true with mode.web='off' (legacy configs)
+      // gets upgraded to mode.web='push-to-talk' automatically.
+      const withMergedVoice = { ...raw, voice: mergeVoiceConfig(raw.voice) };
+      res.json(redactConfigForClient(withMergedVoice));
     } catch (e) {
       getLogger().error('GET_API_CONFIG', e instanceof Error ? e : String(e));    res.status(400).json({ error: 'Agent-X is not configured. Configure a provider and model first.' });
     }
@@ -151,6 +156,8 @@ export function createSystemRouter(): Router {
           // used to wipe installed assets here.
           downloadedAssets: existing.voice?.downloadedAssets ?? [],
         };
+        // Apply mergeVoiceConfig to fix legacy configs where enabled=true but mode.web='off'.
+        merged.voice = mergeVoiceConfig(merged.voice);
         const voiceParse = voiceConfigSchema.safeParse(merged.voice);
         if (!voiceParse.success) {
           res.status(400).json({

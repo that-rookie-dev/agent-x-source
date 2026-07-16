@@ -125,11 +125,11 @@ export function useVoiceCommsSession({
   }, [session, beginVoice]);
 
   useVoiceKeyboard({
-    enabled: pttEnabled && active,
+    enabled: active,
     globalSpace: active,
     composerFocused: false,
     composerEmpty: true,
-    pushToTalk: !isDuplex,
+    pushToTalk: !isDuplex && pttEnabled,
     pushToTalkBlocked,
     onBeginPushToTalk: handleBeginPushToTalk,
     onEndPushToTalk: () => { void endVoice(); },

@@ -42,8 +42,8 @@ function createVoiceRoutesRouter(): Router {
       catalog: VOICE_ASSET_CATALOG,
       installed: cfg.downloadedAssets ?? [],
       recommended: {
-        stt: 'faster-whisper-base.en',
-        tts: 'kokoro-82m',
+        stt: 'faster-distil-whisper-small.en',
+        tts: 'kokoro-onnx',
         vad: 'silero-vad',
       },
     });
@@ -79,7 +79,7 @@ function createVoiceRoutesRouter(): Router {
     })
       .then(async (installed) => {
         addDownloadedAsset(installed);
-        // Register alias assets (e.g. kokoro-af for kokoro-82m)
+        // Register alias assets (e.g. kokoro-af for kokoro-onnx)
         try {
           const manifest = loadVoiceModelsManifest();
           await registerAliasAssets(manifest, assetId, voiceDataDir(), getVoiceConfig, addDownloadedAsset);

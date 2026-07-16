@@ -40,7 +40,7 @@ function resolveSetupAssetIds(): string[] {
     const manifest = loadVoiceModelsManifest();
     return [...getBundledAssetIds(manifest), ...getDefaultDownloadAssetIds(manifest)];
   } catch {
-    return ['silero-vad', 'faster-whisper-base.en', 'kokoro-82m', 'kokoro-af'];
+    return ['silero-vad', 'faster-distil-whisper-small.en', 'kokoro-onnx', 'kokoro-af'];
   }
 }
 
@@ -76,8 +76,12 @@ async function buildVoiceCapabilities(config: VoiceConfig): Promise<VoiceCapabil
   const selectedVoiceId = config.tts?.voiceId;
 
   const sttInstalled = selectedSttModelId ? isVoiceAssetInstalled(config, selectedSttModelId) : false;
-  const kokoroInstalled = isVoiceAssetInstalled(config, 'kokoro-82m');
-  const selectedVoiceInstalled = selectedVoiceId ? isVoiceAssetInstalled(config, selectedVoiceId) : false;
+  const kokoroInstalled = isVoiceAssetInstalled(config, 'kokoro-onnx');
+  // All 54 Kokoro voices are bundled inside voices-v1.0.bin (part of the kokoro-onnx asset).
+  // So any voice ID is installed as long as kokoro-onnx is installed.
+  // Only the legacy "kokoro-af" alias is a separate downloaded asset.
+  const selectedVoiceInstalled = kokoroInstalled
+    || (selectedVoiceId ? isVoiceAssetInstalled(config, selectedVoiceId) : false);
   const selectedTtsInstalled = kokoroInstalled && selectedVoiceInstalled;
   const vadInstalled = isVoiceAssetInstalled(config, 'silero-vad');
   const sidecarDepsInstalled = kokoroInstalled || sttInstalled || vadInstalled;

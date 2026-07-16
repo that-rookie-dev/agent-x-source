@@ -74,4 +74,12 @@ describe('voice interactive flow helpers', () => {
     expect(extractVoiceSpeakable(raw).voice).toBe('Good morning.');
     expect(extractVoiceSpeakable(raw).chat).toBe('');
   });
+
+  it('normalizes ASCII <voice> tags to Unicode ⟨voice⟩', async () => {
+    const { normalizeVoiceAssistantContent, extractVoiceSpeakable } = await import('../src/voice-speakable.js');
+    const raw = '<voice>Hello there.</voice>';
+    const normalized = normalizeVoiceAssistantContent(raw);
+    expect(normalized.startsWith(VOICE_BLOCK_OPEN)).toBe(true);
+    expect(extractVoiceSpeakable(raw).voice).toBe('Hello there.');
+  });
 });

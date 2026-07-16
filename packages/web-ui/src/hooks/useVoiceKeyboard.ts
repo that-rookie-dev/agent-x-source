@@ -44,9 +44,17 @@ export function useVoiceKeyboard(options: {
       if (event.key === ' ') {
         if (event.repeat) return;
 
+        // When globalSpace is active (dashboard voice card / inline voice),
+        // always prevent default to avoid page scrolling — even if push-to-talk
+        // is blocked or the engine is still warming up.
+        if (opts.globalSpace) {
+          event.preventDefault();
+        }
+
         const now = Date.now();
         if (opts.onDoubleTapSpace && now - lastSpaceDownRef.current < DOUBLE_TAP_SPACE_MS) {
           event.preventDefault();
+          event.stopPropagation();
           lastSpaceDownRef.current = 0;
           opts.onDoubleTapSpace();
           return;
@@ -70,8 +78,7 @@ export function useVoiceKeyboard(options: {
           return;
         }
 
-        if (opts.onDoubleTapSpace && opts.globalSpace) {
-          event.preventDefault();
+        if (opts.globalSpace) {
           event.stopPropagation();
         }
         return;
@@ -80,9 +87,9 @@ export function useVoiceKeyboard(options: {
 
     const onKeyUp = (event: KeyboardEvent) => {
       const opts = optionsRef.current;
+      if (event.key !== ' ') return;
       if (
         opts.pushToTalk &&
-        event.key === ' ' &&
         spacePttHeldRef.current &&
         shouldEndPushToTalkOnSpace({
           globalSpace: opts.globalSpace,
@@ -93,6 +100,9 @@ export function useVoiceKeyboard(options: {
         event.stopPropagation();
         spacePttHeldRef.current = false;
         opts.onEndPushToTalk();
+      } else if (opts.globalSpace) {
+        // Prevent page scroll on keyup too when globalSpace is active.
+        event.preventDefault();
       }
     };
 

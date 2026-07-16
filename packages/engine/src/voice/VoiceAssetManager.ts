@@ -74,7 +74,7 @@ export class VoiceAssetManager {
     if (this.jobs.get(asset.id)?.status === 'running') {
       throw new Error(`Download already running for ${asset.id}`);
     }
-    if (!asset.downloadUrl?.match(/^(hf|github):\/\//)) {
+    if (!asset.downloadUrl?.match(/^(hf|github|github-release):\/\//)) {
       throw new Error(`Voice asset ${asset.id} does not have a downloadable source`);
     }
 
@@ -160,7 +160,7 @@ export class VoiceAssetManager {
       case 'tts-voice': {
         // Voice aliases resolve to their parent model directory.
         const voiceParentMap: Record<string, string> = {
-          'kokoro-af': 'kokoro-82m',
+          'kokoro-af': 'kokoro-onnx',
         };
         const parentId = voiceParentMap[asset.id] ?? asset.id;
         return join(this.dataDir, 'models', 'tts', asset.engine ?? 'kokoro', parentId);

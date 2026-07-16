@@ -14,7 +14,7 @@ import TelegramIcon from '@mui/icons-material/Telegram';
 import HeadphonesIcon from '@mui/icons-material/Headphones';
 import SlackIcon from '@mui/icons-material/Forum';
 import EmailIcon from '@mui/icons-material/Email';
-import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import MicIcon from '@mui/icons-material/Mic';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import StorageIcon from '@mui/icons-material/Storage';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
@@ -27,6 +27,7 @@ import { useApp } from '../store/AppContext';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { useLocationPermission } from '../hooks/useLocationPermission';
 import { PanelHeader } from './PanelHeader';
+import { VoiceAgentCard } from './voice/VoiceAgentCard';
 import { colors, alphaColor, MONO } from '../theme';
 import {
   sessions as sessionsApi,
@@ -415,10 +416,8 @@ export function BentoDashboard() {
           gap: 2,
           alignItems: 'stretch',
         }}>
-          <BentoCard title="Quick start" icon={<RocketLaunchIcon sx={{ fontSize: 18, color: colors.accent.blue }} />}>
-            <Typography sx={{ fontSize: '0.7rem', color: colors.text.tertiary, lineHeight: 1.45 }}>
-              Dashboard overview for Agent-X. Use the left sidebar to open chat, crews, automation, and settings.
-            </Typography>
+          <BentoCard title="Voice agent" icon={<MicIcon sx={{ fontSize: 18, color: colors.accent.blue }} />}>
+            <VoiceAgentCard />
           </BentoCard>
 
           <BentoCard
