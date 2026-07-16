@@ -8,9 +8,9 @@ import CircularProgress from '@mui/material/CircularProgress';
 import MicIcon from '@mui/icons-material/Mic';
 import KeyboardIcon from '@mui/icons-material/Keyboard';
 import { colors, alphaColor } from '../../theme';
-import { hyperdrive } from '../../styles/brands';
-import { sessionSettings, models, providers, type AgentMode, type ModelInfo } from '../../api';
+import { models, providers, type ModelInfo } from '../../api';
 import { ExecutionStatusChip } from '../../chat/ExecutionStatusChip';
+import { BypassPermissionsToggle } from './BypassPermissionsToggle';
 
 export interface ProviderProfile {
   id: string;
@@ -19,12 +19,10 @@ export interface ProviderProfile {
 }
 
 export interface ChatToolbarProps {
-  hyperdriveMode: boolean;
   isCrewPrivateSession: boolean;
-  agentMode: AgentMode;
-  modeMenuAnchor: HTMLElement | null;
-  setModeMenuAnchor: (el: HTMLElement | null) => void;
-  setAgentMode: (mode: AgentMode) => void;
+  bypassPermissions: boolean;
+  toggleBypassPermissions: () => void;
+  revokeSessionPermissions: () => void;
   providerList: ProviderProfile[];
   currentProvider: string;
   providerMenuAnchor: HTMLElement | null;
@@ -45,14 +43,11 @@ export interface ChatToolbarProps {
   composerMode: 'text' | 'voice';
   setComposerMode: (fn: (m: 'text' | 'voice') => 'text' | 'voice') => void;
   voiceReady: boolean;
-  handleHyperdriveToggle: () => void;
-  hyperdriveShimmer: boolean;
 }
 
 export function ChatToolbar(props: ChatToolbarProps) {
   const {
-    hyperdriveMode, isCrewPrivateSession, agentMode,
-    modeMenuAnchor, setModeMenuAnchor, setAgentMode,
+    isCrewPrivateSession, bypassPermissions, toggleBypassPermissions, revokeSessionPermissions,
     providerList, currentProvider,
     providerMenuAnchor, setProviderMenuAnchor,
     setCurrentProvider, setCurrentModel, setModelList,
@@ -61,78 +56,32 @@ export function ChatToolbar(props: ChatToolbarProps) {
     setTokenTotal, setTokenReserved,
     streaming, turnActivity,
     composerMode, setComposerMode, voiceReady,
-    handleHyperdriveToggle, hyperdriveShimmer,
   } = props;
 
   return (
     <>
-      {/* Hyperdrive */}
+      {/* Bypass permissions & revoke controls */}
       {!isCrewPrivateSession && (
-      <Tooltip title={hyperdriveMode ? 'HYPERDRIVE ENGAGED — Full autonomous mode. All permissions bypassed.' : 'Engage Hyperdrive — full autonomous mode (no permission prompts)'} arrow>
-        <Chip
-          size="small"
-          label={hyperdriveMode ? 'hyperdriving' : 'Hyperdrive'}
-          onClick={handleHyperdriveToggle}
-          sx={{
-            fontSize: '0.55rem', height: 20, cursor: 'pointer',
-            bgcolor: hyperdriveMode ? alphaColor(hyperdrive.magenta, '12') : colors.bg.tertiary,
-            border: `1px solid ${hyperdriveMode ? alphaColor(hyperdrive.magenta, '30') : colors.border.default}`,
-            borderRadius: '10px',
-            color: hyperdriveMode ? hyperdrive.magenta : colors.text.secondary,
-            position: 'relative', overflow: 'hidden',
-            ...(hyperdriveShimmer ? {
-              '&::after': {
-                content: '""',
-                position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                background: 'linear-gradient(120deg, transparent 35%, rgba(255,0,255,0.25) 45%, rgba(255,0,255,0.35) 50%, rgba(255,0,255,0.25) 55%, transparent 65%)',
-                backgroundSize: '200% 100%',
-                animation: 'agentx-shimmer 0.8s ease-in-out',
+        <>
+          <BypassPermissionsToggle enabled={bypassPermissions} onToggle={toggleBypassPermissions} />
+          <Tooltip title="Clear all session-level Allow Always / Deny overrides and turn Bypass off" arrow>
+            <Chip
+              size="small"
+              label="Revoke all permissions"
+              onClick={revokeSessionPermissions}
+              sx={{
+                fontSize: '0.55rem', height: 20, cursor: 'pointer',
+                bgcolor: colors.bg.tertiary,
+                border: `1px solid ${colors.border.default}`,
                 borderRadius: '10px',
-                pointerEvents: 'none',
-              },
-            } : {}),
-            '&:hover': { bgcolor: hyperdriveMode ? alphaColor(hyperdrive.magenta, '20') : colors.bg.primary },
-          }}
-        />
-      </Tooltip>
+                color: colors.text.secondary,
+                '&:hover': { bgcolor: colors.bg.primary },
+                '& .MuiChip-label': { px: 1 },
+              }}
+            />
+          </Tooltip>
+        </>
       )}
-
-      {/* Agent Mode — hidden for crew private and while hyperdriving */}
-      {!hyperdriveMode && !isCrewPrivateSession && (
-      <Tooltip title={agentMode === 'agent' ? 'Agent — full access, executes tools freely' : 'Plan — outlines steps, no write access'} arrow>
-        <Chip
-          size="small"
-          label={agentMode === 'agent' ? 'Agent' : 'Plan'}
-          onClick={(e) => setModeMenuAnchor(e.currentTarget)}
-          sx={{
-            fontSize: '0.55rem', height: 20, cursor: 'pointer',
-            bgcolor: agentMode === 'agent' ? alphaColor(colors.accent.orange, '12') : colors.bg.tertiary,
-            border: `1px solid ${agentMode === 'agent' ? alphaColor(colors.accent.orange, '30') : colors.border.default}`,
-            borderRadius: '10px',
-            color: agentMode === 'agent' ? colors.accent.orange : colors.text.secondary,
-            '&:hover': { bgcolor: agentMode === 'agent' ? alphaColor(colors.accent.orange, '20') : colors.bg.primary },
-          }}
-        />
-      </Tooltip>
-      )}
-
-      <Menu anchorEl={modeMenuAnchor} open={Boolean(modeMenuAnchor)} onClose={() => setModeMenuAnchor(null)}
-        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 220 } }}>
-        <MenuItem onClick={() => { setAgentMode('agent'); sessionSettings.setMode('agent').catch(() => {}); setModeMenuAnchor(null); }}
-          selected={agentMode === 'agent'} sx={{ fontSize: '0.7rem', py: 0.75, borderLeft: agentMode === 'agent' ? `3px solid ${colors.accent.orange}` : '3px solid transparent' }}>
-          <Box>
-            <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: colors.accent.orange }}>Agent</Typography>
-            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Full access — executes tools freely</Typography>
-          </Box>
-        </MenuItem>
-        <MenuItem onClick={() => { setAgentMode('plan'); sessionSettings.setMode('plan').catch(() => {}); setModeMenuAnchor(null); }}
-          selected={agentMode === 'plan'} sx={{ fontSize: '0.7rem', py: 0.75, borderLeft: agentMode === 'plan' ? `3px solid ${colors.text.secondary}` : '3px solid transparent' }}>
-          <Box>
-            <Typography sx={{ fontSize: '0.7rem', fontWeight: 600, color: colors.text.secondary }}>Plan</Typography>
-            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim }}>Outlines steps — no write access</Typography>
-          </Box>
-        </MenuItem>
-      </Menu>
 
       {/* Provider Profile */}
       <Tooltip title="Provider Profile" arrow>

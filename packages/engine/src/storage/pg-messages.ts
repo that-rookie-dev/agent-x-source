@@ -1,10 +1,12 @@
 import type { Pool } from 'pg';
-import { generateId } from '@agentx/shared';
+import { generateId, getLogger } from '@agentx/shared';
 import type {
   StorableMessage,
   StorableMessageInput,
 } from '@agentx/shared';
 import type { CacheState } from './pg-helpers.js';
+
+const _logger = getLogger();
 
 /**
  * Context required by the message storage helpers. Mirrors the relevant
@@ -72,6 +74,17 @@ export function insertMessage(
     platformChatId?: number | null;
   },
 ): void {
+  // Session existence guard — prevent FK violations before they reach the DB.
+  // If the session is not in the cache, it was never created (or was deleted).
+  // Skip the write and log a warning so the caller can investigate.
+  if (!ctx.cache.sessions.has(msg.sessionId)) {
+    _logger.warn('PG_INSERT_MESSAGE_SKIP', `Skipping message INSERT — session ${msg.sessionId.slice(0, 12)} not in cache (never created or deleted)`, {
+      sessionId: msg.sessionId,
+      role: msg.role,
+      contentPreview: msg.content?.slice(0, 60),
+    });
+    return;
+  }
   const msgs = ctx.cache.messages.get(msg.sessionId) ?? [];
   const id = msg.id ?? crypto.randomUUID();
   const now = new Date().toISOString();
@@ -187,6 +200,15 @@ export function insertPart(
     usage?: { inputTokens: number; outputTokens: number };
   },
 ): void {
+  // Session existence guard — prevent FK violations before they reach the DB.
+  if (!ctx.cache.sessions.has(sessionId)) {
+    _logger.warn('PG_INSERT_PART_SKIP', `Skipping part INSERT — session ${sessionId.slice(0, 12)} not in cache (never created or deleted)`, {
+      sessionId,
+      partType: part.type,
+      toolName: part.toolName,
+    });
+    return;
+  }
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const messageId = part.messageId ?? null;

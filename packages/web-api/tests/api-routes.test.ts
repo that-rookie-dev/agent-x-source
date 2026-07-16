@@ -60,7 +60,7 @@ vi.mock('@agentx/engine', () => ({
   MemoryConsolidator: vi.fn(),
 }));
 
-vi.mock('@huggingface/transformers', () => ({ pipeline: vi.fn() }));
+vi.mock('@huggingface/transformers', () => ({ pipeline: vi.fn(), env: { allowLocalModels: false } }));
 
 vi.mock('@agentx/shared', () => ({
   getLogger: vi.fn(() => ({

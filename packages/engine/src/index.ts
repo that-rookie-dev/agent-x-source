@@ -151,7 +151,6 @@ export { MODEL_CATALOG, getModelById, getModelsByTier, getCompatibleModels, getR
 export type { ModelOption, ModelCapability } from './neural/ModelCatalog.js';
 export { UnifiedLocalModelProvider, createUnifiedModelProvider } from './neural/UnifiedLocalModelProvider.js';
 export type { UnifiedModelConfig } from './neural/UnifiedLocalModelProvider.js';
-export type { PlasticityOptions, PlasticityResult } from './neural/SynapticPlasticity.js';
 export { MemoryPipeline } from './neural/MemoryPipeline.js';
 export type { PipelineOptions, PipelineResult, DistillFn } from './neural/MemoryPipeline.js';
 export { WebCrawler } from './neural/WebCrawler.js';
@@ -288,7 +287,7 @@ export { DefaultTelemetryBus } from './telemetry/index.js';
 export type { TelemetryBus, TelemetryEvent, TelemetryConfig } from '@agentx/shared';
 
 // Phase 0: Storage adapter
-export { PostgresStorageAdapter } from './storage/index.js';
+export { PostgresStorageAdapter, SessionPermissionStore } from './storage/index.js';
 export type { PostgresConfig } from './storage/PostgresStorageAdapter.js';
 export type { StorageAdapter, StorableSession, StorableMessage, StorableTokenLog, StorablePermission } from '@agentx/shared';
 
@@ -455,3 +454,9 @@ export { SlackBridgeAdapter } from './services/channel/adapters/SlackBridgeAdapt
 export { EmailBridgeAdapter } from './services/channel/adapters/EmailBridgeAdapter.js';
 export { TelegramBridgeAdapter } from './services/channel/adapters/TelegramBridgeAdapter.js';
 export { getPerfTracker } from './benchmark/index.js';
+
+// System metrics, location, and weather
+export { SystemMetricsService, getSystemMetricsService, resetSystemMetricsService } from './system/SystemMetricsService.js';
+export type { SystemMetricsSnapshot } from './system/SystemMetricsService.js';
+export { WeatherService, getWeatherService, resetWeatherService } from './system/WeatherService.js';
+export type { WeatherResponse, WeatherConditions } from './system/WeatherService.js';

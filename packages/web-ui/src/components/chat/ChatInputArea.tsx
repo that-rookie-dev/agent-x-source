@@ -7,7 +7,6 @@ import AddIcon from '@mui/icons-material/Add';
 import CloseIcon from '@mui/icons-material/Close';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import { colors, alphaColor } from '../../theme';
-import { hyperdrive } from '../../styles/brands';
 import { ActionPreviewCard } from '../integrations/ActionPreviewCard';
 import { ChatInputBar } from '../ChatInputBar';
 import { ChatVoicePanel } from '../voice/ChatVoicePanel';
@@ -21,13 +20,11 @@ import {
   useChatSessionIdentityContext,
   useChatSessionPrivacyContext,
   useChatCrewListContext,
-  useChatAgentModeContext,
   useChatModelDataContext,
   useChatModelMenuContext,
   useChatInputGateContext,
   useChatComposerContext,
-  useChatHyperdriveModeContext,
-  useChatHyperdriveUIContext,
+  useChatBypassPermissionsContext,
   useChatSessionSettersContext,
   useChatInputHandlersContext,
 } from './ChatSessionProvider';
@@ -40,38 +37,36 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
   // Session identity and privacy.
   const { currentSessionId, coreSession } = useChatSessionIdentityContext();
   const { isCrewPrivateSession, crewPrivateHost } = useChatSessionPrivacyContext();
-  // Crew list and agent mode.
+  // Crew list and bypass permissions.
   const { crewList } = useChatCrewListContext();
-  const { agentMode } = useChatAgentModeContext();
+  const { bypassPermissions } = useChatBypassPermissionsContext();
   // Model / provider data.
   const {
     currentModel, currentProvider, currentProviderId, providerList, modelList,
     loadingModels,
   } = useChatModelDataContext();
   // Model / provider menu anchors.
-  const { modeMenuAnchor, providerMenuAnchor, modelMenuAnchor } = useChatModelMenuContext();
+  const { providerMenuAnchor, modelMenuAnchor } = useChatModelMenuContext();
   // Input gate and composer.
   const { questionnairePending, sendBlocked, sendBlockedReason } = useChatInputGateContext();
   const {
     attachments, composerMode, inputClearSignal, voiceAutoStart, webSearchAvailable,
     webSearchForce, crewSuggestionRequested, voiceCtx,
   } = useChatComposerContext();
-  // Hyperdrive.
-  const { hyperdriveMode } = useChatHyperdriveModeContext();
-  const { hyperdriveShimmer } = useChatHyperdriveUIContext();
   // Stable dispatch values — refs, handlers, setters.
   const {
     setPermissionPrompt, setPendingPermissionCount, setVoiceAutoStart,
-    setModeMenuAnchor, setProviderMenuAnchor, setCurrentProvider, setCurrentModel,
-    setModelList, setModelMenuAnchor, setAgentMode, setTokenTotal, setTokenReserved,
+    setProviderMenuAnchor, setCurrentProvider, setCurrentModel,
+    setModelList, setModelMenuAnchor, setTokenTotal, setTokenReserved,
     setComposerMode, fileInputRef, inputBarRef, tokenReservedRef,
+    toggleBypassPermissions, revokeSessionPermissions,
   } = useChatSessionSettersContext();
   // Input handlers.
   const {
     handleSend, handleCancel, handleStopAndSend, handleAddToQueue, handleSteer,
     handleFileSelect, handleRemoveAttachment,
     handlePermissionRespond, handlePermissionRespondBatch,
-    handleHyperdriveToggle, handleWebSearchToggle, handleCrewSuggestionToggle,
+    handleWebSearchToggle, handleCrewSuggestionToggle,
     handleVoiceUserPending, handleVoiceUserDiscarded, handleVoiceTranscript, handleVoiceTiming,
   } = useChatInputHandlersContext();
 
@@ -109,14 +104,14 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
       <Box sx={{
         position: 'relative',
         zIndex: 1,
-        border: `1px solid ${hyperdriveMode ? alphaColor(hyperdrive.magenta, '60') : agentMode === 'agent' ? alphaColor(colors.accent.orange, '60') : colors.border.default}`,
+        border: `1px solid ${bypassPermissions ? alphaColor(colors.accent.orange, '60') : colors.border.default}`,
         borderRadius: '14px',
         bgcolor: colors.bg.tertiary,
-        backgroundImage: hyperdriveMode ? `linear-gradient(${alphaColor(hyperdrive.magenta, '08')}, ${alphaColor(hyperdrive.magenta, '08')})` : agentMode === 'agent' ? `linear-gradient(${alphaColor(colors.accent.orange, '08')}, ${alphaColor(colors.accent.orange, '08')})` : 'none',
+        backgroundImage: bypassPermissions ? `linear-gradient(${alphaColor(colors.accent.orange, '08')}, ${alphaColor(colors.accent.orange, '08')})` : 'none',
         transition: 'border-color 0.2s, background-color 0.2s, opacity 0.2s ease',
         opacity: questionnairePending || sessionRestoring ? 0.42 : 1,
         pointerEvents: questionnairePending || sessionRestoring ? 'none' : 'auto',
-        '&:focus-within': questionnairePending ? {} : { borderColor: hyperdriveMode ? alphaColor(hyperdrive.magenta, '90') : agentMode === 'agent' ? alphaColor(colors.accent.orange, '90') : colors.border.strong },
+        '&:focus-within': questionnairePending ? {} : { borderColor: bypassPermissions ? alphaColor(colors.accent.orange, '90') : colors.border.strong },
       }}>
         {/* Permission banner above input */}
         {permissionPrompt && (
@@ -204,12 +199,10 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
           )}
 
           <ChatToolbar
-            hyperdriveMode={hyperdriveMode}
             isCrewPrivateSession={isCrewPrivateSession}
-            agentMode={agentMode}
-            modeMenuAnchor={modeMenuAnchor}
-            setModeMenuAnchor={setModeMenuAnchor}
-            setAgentMode={setAgentMode}
+            bypassPermissions={bypassPermissions}
+            toggleBypassPermissions={toggleBypassPermissions}
+            revokeSessionPermissions={revokeSessionPermissions}
             providerList={providerList}
             currentProvider={currentProvider}
             providerMenuAnchor={providerMenuAnchor}
@@ -230,8 +223,6 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
             composerMode={composerMode}
             setComposerMode={setComposerMode}
             voiceReady={!!voiceCtx?.voiceReady}
-            handleHyperdriveToggle={handleHyperdriveToggle}
-            hyperdriveShimmer={hyperdriveShimmer}
           />
         </Box>
       </Box>

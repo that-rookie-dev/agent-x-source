@@ -62,7 +62,7 @@ vi.mock('@agentx/engine', () => ({
   })),
   configureBackgroundTaskPool: vi.fn(),
   setOnnxThreadConfig: vi.fn(),
-  MarkdownDocumentStore: { ensureSchema: vi.fn().mockResolvedValue(undefined) },
+  MarkdownDocumentStore: vi.fn(),
   setMarkdownDocumentStoreInstance: vi.fn(),
   InMemoryQueue: vi.fn().mockImplementation(() => ({
     start: vi.fn().mockResolvedValue(undefined),

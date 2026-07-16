@@ -21,7 +21,6 @@ export interface SmartSubAgentOptions {
   /** Override the default sub-agent mission prompt with crew persona, etc. */
   systemPromptOverride?: string;
   displayName?: string;
-  planMode?: boolean;
   crewPermissions?: PermissionRule[];
   missionContext?: CrewMissionContext;
   childSessionKind?: 'sub_agent' | 'crew_worker';
@@ -47,11 +46,9 @@ export class SmartSubAgent {
   private parentAgent: Agent;
   private instruction: string;
   private allowedTools: string[];
-  private timeout: number;
   private config: AgentXConfig;
   private sessionId: string;
   private systemPromptOverride?: string;
-  private planMode: boolean;
   private crewPermissions: PermissionRule[];
   private missionContext?: CrewMissionContext;
   private displayName?: string;
@@ -59,7 +56,6 @@ export class SmartSubAgent {
   private inboundChannel?: string;
   private inboundThreadId?: string;
   private inboundMessageId?: string;
-  private abortController = new AbortController();
   private toolCallsLog: Array<{ name: string; args: Record<string, unknown>; result: ToolResult; elapsed: number }> = [];
   private startTime = 0;
 
@@ -73,13 +69,11 @@ export class SmartSubAgent {
       : options.instruction;
 
     this.allowedTools = options.tools ? this.deriveAllowedTools(options.tools) : [];
-    this.timeout = options.timeout ?? 120_000;
 
     const parentConfig = (options.parentAgent as unknown as { config: AgentXConfig }).config;
     this.config = options.config ? { ...parentConfig, ...options.config } : parentConfig;
     this.sessionId = options.sessionId ?? generateSubSessionId();
     this.systemPromptOverride = options.systemPromptOverride;
-    this.planMode = options.planMode ?? false;
     this.crewPermissions = options.crewPermissions ?? [];
     this.missionContext = options.missionContext;
     this.displayName = options.displayName;
@@ -127,7 +121,6 @@ export class SmartSubAgent {
             const baseRules = (childExecutor as unknown as { sessionRules: PermissionRule[] }).sessionRules ?? [];
             childExecutor.setSessionRules([...baseRules, ...this.crewPermissions]);
           }
-          if (this.planMode) childExecutor.setMode('plan');
           toolExecutor = childExecutor;
         } else {
           toolRegistry = parentRegistry;
@@ -159,9 +152,6 @@ export class SmartSubAgent {
           : undefined,
       });
 
-      subAgent.autoApproveTools = this.parentAgent.autoApproveTools;
-      if (this.planMode) subAgent.setPlanMode(true);
-
       // Wire up session-based persistence so the child session is replayable
       const sessionManager = (this.parentAgent as unknown as { sessionManager?: { store?: { insertMessage?: (msg: Record<string, unknown>) => void; insertPart?: (sid: string, part: Record<string, unknown>) => void } } }).sessionManager;
       const childStore = sessionManager?.store;
@@ -184,78 +174,66 @@ export class SmartSubAgent {
             const toolCallId = (event as { callId?: string; toolCallId?: string }).callId
               || (event as { toolCallId?: string }).toolCallId
               || '';
-            const result = (event as { result?: unknown; output?: string }).result
-              ?? (event as { output?: string }).output
-              ?? '';
-            const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? '');
-            childStore.insertPart(this.sessionId, { type: 'tool-result', toolName, toolCallId, toolResult: resultStr, toolSuccess: true });
+            const result = (event as { result?: { success?: boolean; output?: string } }).result ?? {};
+            childStore.insertPart(this.sessionId, {
+              type: 'tool-result',
+              toolName,
+              toolCallId,
+              toolResult: result.output ?? '',
+              toolSuccess: result.success ?? false,
+            });
           }
         }
 
-        this.parentAgent.events.emit({
-          type: 'subagent_event',
-          subagentId: this.sessionId,
-          parentEvent: event,
-        });
+        // Forward completion events to parent UI
+        if (evType === 'message_received' || evType === 'tool_executing' || evType === 'tool_complete') {
+          (this.parentAgent as unknown as { emit?: (event: unknown) => void }).emit?.(event);
+        }
+
+        // Capture tool calls for the result
+        if (evType === 'tool_complete') {
+          const toolName = ((event as { tool?: string }).tool) ?? '';
+          const args = (event as { args?: Record<string, unknown> }).args ?? {};
+          const result = (event as { result?: ToolResult }).result ?? { success: false, output: '' };
+          const elapsed = (event as { elapsed?: number }).elapsed ?? 0;
+          this.toolCallsLog.push({ name: toolName, args, result, elapsed });
+        }
       });
 
-      const timeoutId = setTimeout(() => {
-        this.abortController.abort();
-        subAgent?.cancel();
-      }, this.timeout);
+      await subAgent.sendMessage(this.instruction);
 
-      const result = await subAgent.sendMessage(this.instruction);
-
-      clearTimeout(timeoutId);
-
-      if (childStore?.insertMessage) {
-        const messages = subAgent.getMessageHistory();
-        for (const msg of messages) {
-          if (msg.role === 'system') continue;
-          childStore.insertMessage({
-            sessionId: this.sessionId,
-            role: msg.role,
-            content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-            toolCalls: (msg as { toolCalls?: unknown }).toolCalls,
-            tokenCount: (msg as { tokenCount?: number }).tokenCount,
-          });
-        }
-      }
-
-      const subTracker = (subAgent as unknown as { tokenTracker?: { inputTokenCount: number; outputTokenCount: number } }).tokenTracker;
-      const tokenUsage = {
-        input: subTracker?.inputTokenCount ?? 0,
-        output: subTracker?.outputTokenCount ?? 0,
-      };
-
-      const output = result.content ?? '';
-      const aborted = this.abortController.signal.aborted;
-      const logicalFailure = !output.trim()
-        || /\[Error:|failed to|could not complete|no scope path/i.test(output);
+      const lastMessage = subAgent.getMessageHistory().find((m) => m.role === 'assistant');
+      const output = lastMessage?.content ?? '';
 
       return {
-        success: !aborted && !logicalFailure,
-        output: aborted ? `Sub-agent timed out after ${this.timeout}ms` : output,
+        success: true,
+        output,
         toolCalls: this.toolCallsLog,
         elapsed: Date.now() - this.startTime,
-        tokenUsage,
+        tokenUsage: {
+          input: (subAgent as unknown as { tokenTracker?: { inputTokenCount: number } }).tokenTracker?.inputTokenCount ?? 0,
+          output: (subAgent as unknown as { tokenTracker?: { outputTokenCount: number } }).tokenTracker?.outputTokenCount ?? 0,
+        },
       };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Sub-agent failed';
-      logger.error('SMART_SUBAGENT', msg);
+      logger.error('SmartSubAgent', `Sub-agent failed: ${error instanceof Error ? error.message : String(error)}`);
       return {
         success: false,
-        output: msg,
+        output: `Sub-agent failed: ${error instanceof Error ? error.message : String(error)}`,
         toolCalls: this.toolCallsLog,
         elapsed: Date.now() - this.startTime,
         tokenUsage: { input: 0, output: 0 },
       };
+    } finally {
+      subAgent?.dispose();
+      this.toolCallsLog = [];
     }
   }
 
   private resolveParentScopePath(parentExecutor?: ToolExecutor): string {
-    if (parentExecutor instanceof EnhancedToolExecutor) {
-      return parentExecutor.getScopePath();
+    if (parentExecutor && 'getScopePath' in parentExecutor) {
+      const fromExecutor = (parentExecutor as { getScopePath(): string }).getScopePath();
+      if (fromExecutor) return fromExecutor;
     }
     const fromAgent = this.parentAgent.getScopePath();
     if (fromAgent) return fromAgent;
@@ -268,14 +246,8 @@ export class SmartSubAgent {
   }
 
   private buildSubAgentPrompt(): string {
-    const planModeNote = this.planMode
-      ? `\nPLAN MODE: Reads, search, new file creation, scripts, and notifications are allowed. Do NOT edit or delete existing files (blocked).
-If an edit would help, describe the change in your markdown response instead.
-Always finish with a complete markdown answer — never wait for user approval.`
-      : '';
-
     if (this.systemPromptOverride) {
-      return `${this.systemPromptOverride}\n\n[MISSION RULES]\nExecute the assigned task. Use available tools. Return a concise markdown summary of results.${planModeNote}\n[/MISSION RULES]`;
+      return `${this.systemPromptOverride}\n\n[MISSION RULES]\nExecute the assigned task. Use available tools. Return a concise markdown summary of results.\n[/MISSION RULES]`;
     }
     const restrictedNote = `\nIMPORTANT: You cannot delegate to sub-agents or manage tasks.`;
     return `[MISSION]
@@ -283,10 +255,10 @@ Focus ONLY on completing the assigned task.
 
 Rules:
 1. Do NOT greet the user or ask unnecessary questions.
-2. Use tools aggressively to complete the task (avoid edit/delete of existing files in plan mode).
+2. Use tools aggressively to complete the task.
 3. If you encounter errors, try alternative approaches.
 4. Return a CONCISE markdown summary of what you did and the final result.
-${restrictedNote}${planModeNote}
+${restrictedNote}
 
 ${this.allowedTools.length > 0 ? `Available tools: ${this.allowedTools.join(', ')}` : 'All tools available.'}
 [/MISSION]`;

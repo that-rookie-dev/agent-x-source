@@ -6,7 +6,6 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import type { VisibleMessageItem, UIMessage } from '../../chat/types';
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { ChatMessageList } from '../../chat/ChatMessageList';
-import { PlanModeContext } from '../../chat/PlanModeContext';
 import { ThinkingIndicator } from './ThinkingIndicator';
 import { colors } from '../../theme';
 
@@ -63,10 +62,7 @@ export function useVirtualMessageWindow(
   };
 }
 
-import type { AgentMode } from '../../api';
-
 export interface ChatThreadViewProps {
-  agentMode: AgentMode;
   messagesContainerRef: React.RefObject<HTMLDivElement | null>;
   sessionRestoring: boolean;
   messages: UIMessage[];
@@ -91,7 +87,6 @@ export interface ChatThreadViewProps {
 
 function ChatThreadViewComponent(props: ChatThreadViewProps) {
   const {
-    agentMode,
     messagesContainerRef,
     sessionRestoring,
     messages,
@@ -116,7 +111,7 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
 
   const visibleMessagesWithFlags = useMemo(() => {
     const visible = messages.filter((m) => {
-      if (m.role === 'system' && !m.isModeChange) return false;
+      if (m.role === 'system') return false;
       if (m.role === 'assistant' && !m.content && !m.thinking && (!m.toolCalls || m.toolCalls.length === 0) && (!m.subAgents || m.subAgents.length === 0) && (!m.parts || m.parts.length === 0)) return false;
       return true;
     });
@@ -176,38 +171,35 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
         </Box>
       )}
 
-      <PlanModeContext.Provider value={agentMode === 'plan'}>
-        {topSpacerPx > 0 ? <Box sx={{ height: topSpacerPx, flexShrink: 0 }} aria-hidden /> : null}
-        <ChatMessageList
-          items={visibleItems}
-          loadingSteps={loadingSteps}
-          onResend={onResend}
-          bottomRef={bottomRef}
-          onOpenChildSession={onOpenChildSession}
-          onQuestionnaireRespond={onQuestionnaireRespond}
-          onCrewRosterPickerSubmit={onCrewRosterPickerSubmit}
-          onCrewRosterPickerSkip={onCrewRosterPickerSkip}
-          onViewCrewDossier={onViewCrewDossier}
-          pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
-          onTurnFeedback={onTurnFeedback}
-          onSaveMarkdown={onSaveMarkdown}
-          feedbackSubmitting={feedbackSubmitting}
-          turnStreaming={turnStreaming}
-          turnActivityLabel={turnActivityStage}
-          freezeLayout={freezeMessageLayout || loadingOlderMessages}
-        />
-        {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
-          <ThinkingIndicator label={turnActivityStage ?? loadingSteps?.[0]?.label} />
-        )}
-        {bottomSpacerPx > 0 ? <Box sx={{ height: bottomSpacerPx, flexShrink: 0 }} aria-hidden /> : null}
-      </PlanModeContext.Provider>
+      {topSpacerPx > 0 ? <Box sx={{ height: topSpacerPx, flexShrink: 0 }} aria-hidden /> : null}
+      <ChatMessageList
+        items={visibleItems}
+        loadingSteps={loadingSteps}
+        onResend={onResend}
+        bottomRef={bottomRef}
+        onOpenChildSession={onOpenChildSession}
+        onQuestionnaireRespond={onQuestionnaireRespond}
+        onCrewRosterPickerSubmit={onCrewRosterPickerSubmit}
+        onCrewRosterPickerSkip={onCrewRosterPickerSkip}
+        onViewCrewDossier={onViewCrewDossier}
+        pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
+        onTurnFeedback={onTurnFeedback}
+        onSaveMarkdown={onSaveMarkdown}
+        feedbackSubmitting={feedbackSubmitting}
+        turnStreaming={turnStreaming}
+        turnActivityLabel={turnActivityStage}
+        freezeLayout={freezeMessageLayout || loadingOlderMessages}
+      />
+      {streaming && (visibleMessages.length === 0 || (visibleMessages[visibleMessages.length - 1]?.role !== 'assistant')) && (
+        <ThinkingIndicator label={turnActivityStage ?? loadingSteps?.[0]?.label} />
+      )}
+      {bottomSpacerPx > 0 ? <Box sx={{ height: bottomSpacerPx, flexShrink: 0 }} aria-hidden /> : null}
     </>
   );
 }
 
 function threadPropsEqual(a: ChatThreadViewProps, b: ChatThreadViewProps): boolean {
-  return a.agentMode === b.agentMode
-    && a.sessionRestoring === b.sessionRestoring
+  return a.sessionRestoring === b.sessionRestoring
     && a.messages === b.messages
     && a.streaming === b.streaming
     && a.loadingOlderMessages === b.loadingOlderMessages

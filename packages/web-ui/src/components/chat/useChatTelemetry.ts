@@ -15,7 +15,7 @@ import {
   dedupeToolParts,
   type MessagePart,
 } from '@agentx/shared/browser';
-import { chat, sessionSettings, type TelemetryEvent, type Crew, type AgentMode, type ConnectionState, type CrewSuggestionEvaluation, type IntegrationActionPreview } from '../../api';
+import { chat, type TelemetryEvent, type Crew, type ConnectionState, type CrewSuggestionEvaluation, type IntegrationActionPreview } from '../../api';
 import type { UIMessage, PartEntry, ToolCall, SubAgent } from '../../chat/types';
 import { upsertDeepSearchPartEntry } from '../../chat/types';
 import { updateLastMessage, attachChildSessionToAssistant, isTimeoutWarning, replaceWarning, clearTimeoutWarnings } from './message-helpers';
@@ -63,7 +63,6 @@ export interface UseChatTelemetryParams {
   setTokenUsed: React.Dispatch<React.SetStateAction<number>>;
   setLoadingSteps: React.Dispatch<React.SetStateAction<Array<{ id: string; label: string; status: string }> | null>>;
   setWarnings: React.Dispatch<React.SetStateAction<string[]>>;
-  setModeEscalation: React.Dispatch<React.SetStateAction<{ tool: string; reason: string } | null>>;
   setStepCapPrompt: React.Dispatch<React.SetStateAction<{ currentSteps: number; maxSteps: number } | null>>;
   setPermissionPrompt: React.Dispatch<React.SetStateAction<{ requestId: string; tool: string; path: string; riskLevel: string; integrationPreview?: IntegrationActionPreview; forAutomation?: boolean } | null>>;
   setPendingPermissionCount: React.Dispatch<React.SetStateAction<number>>;
@@ -79,7 +78,7 @@ export interface UseChatTelemetryParams {
   setToolEnablePrompt: React.Dispatch<React.SetStateAction<{ toolId: string; toolName: string } | null>>;
   setConnState: React.Dispatch<React.SetStateAction<ConnectionState>>;
   setLastEventAt: React.Dispatch<React.SetStateAction<number | null>>;
-  setAgentMode: React.Dispatch<React.SetStateAction<AgentMode>>;
+  setBypassPermissionsState: React.Dispatch<React.SetStateAction<boolean>>;
 
   // Shared callbacks
   endTurnUi: () => void;
@@ -135,7 +134,6 @@ interface EventHandlerContext {
   setTokenUsed: React.Dispatch<React.SetStateAction<number>>;
   setLoadingSteps: React.Dispatch<React.SetStateAction<Array<{ id: string; label: string; status: string }> | null>>;
   setWarnings: React.Dispatch<React.SetStateAction<string[]>>;
-  setModeEscalation: React.Dispatch<React.SetStateAction<{ tool: string; reason: string } | null>>;
   setStepCapPrompt: React.Dispatch<React.SetStateAction<{ currentSteps: number; maxSteps: number } | null>>;
   setPermissionPrompt: React.Dispatch<React.SetStateAction<{ requestId: string; tool: string; path: string; riskLevel: string; integrationPreview?: IntegrationActionPreview; forAutomation?: boolean } | null>>;
   setPendingPermissionCount: React.Dispatch<React.SetStateAction<number>>;
@@ -145,7 +143,7 @@ interface EventHandlerContext {
   setCrewInterMessages: React.Dispatch<React.SetStateAction<CrewInterMessage[]>>;
   setTokenTotal: React.Dispatch<React.SetStateAction<number>>;
   setCompactionCount: React.Dispatch<React.SetStateAction<number>>;
-  setAgentMode: React.Dispatch<React.SetStateAction<AgentMode>>;
+  setBypassPermissionsState: React.Dispatch<React.SetStateAction<boolean>>;
 
   // Callbacks & helpers
   isCrewEventForCurrentSession: () => boolean;
@@ -620,41 +618,10 @@ const handlePermissionRequired = (ev: TelemetryEvent, ctx: EventHandlerContext):
   });
 };
 
-/** Insert a system message marking entry into plan mode. */
-const handlePlanModeEntered = (_ev: TelemetryEvent, ctx: EventHandlerContext): void => {
-  ctx.setMessages((prev) => {
-    if (prev.length === 0) return prev; // skip default mode on fresh session
-    return [...prev, {
-      id: crypto.randomUUID(), role: 'system' as const, content: '',
-      timestamp: new Date().toISOString(),
-      isModeChange: { from: 'Agent', to: 'Plan' },
-    }];
-  });
+/** Update the bypass permissions toggle state when the engine broadcasts a change. */
+const handleBypassPermissionsChanged = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
+  ctx.setBypassPermissionsState(ev.enabled === true);
 };
-
-/** Insert a system message marking exit from plan mode. */
-const handlePlanModeExited = (_ev: TelemetryEvent, ctx: EventHandlerContext): void => {
-  ctx.setMessages((prev) => [...prev, {
-    id: crypto.randomUUID(), role: 'system' as const, content: '',
-    timestamp: new Date().toISOString(),
-    isModeChange: { from: 'Plan', to: 'Agent' },
-  }]);
-};
-
-/** Warn when plan mode is violated by write operations. */
-const handlePlanModeViolation = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
-  ctx.setMessages((prev) => {
-    const rolledBack = (ev as { rolledBack?: boolean }).rolledBack;
-    const count = ((ev as { violations?: unknown[] }).violations ?? []).length;
-    ctx.setWarnings(prev => replaceWarning(prev, rolledBack
-      ? `Plan mode violation: ${count} write operation(s) detected — session rolled back to checkpoint.`
-      : `Plan mode violation: ${count} write operation(s) detected.`));
-    return prev;
-  });
-};
-
-/** No-op — ModeEscalationModal handles user choice. */
-const handleModeRestricted = (_ev: TelemetryEvent, _ctx: EventHandlerContext): void => {};
 
 /** Show the crew suggestion / roster picker when the engine recommends a crew. */
 const handleCrewSuggestion = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
@@ -669,41 +636,6 @@ const handleCrewSuggestion = (ev: TelemetryEvent, ctx: EventHandlerContext): voi
     if (ev.type === 'crew_suggestion_required') ctx.setStreaming(false);
     ctx.crewSuggestionHandledRef.current = true;
     void ctx.attachCrewRosterPickerRef.current?.(message, evaluation);
-    return prev;
-  });
-};
-
-/** Prompt the user to escalate from plan mode to agent mode for a blocked tool. */
-const handleModeEscalationRequired = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
-  ctx.setMessages((prev) => {
-    if (ctx.isCrewPrivateRef.current) return prev;
-    const tool = (ev as { tool?: string }).tool ?? 'tool';
-    const reason = (ev as { reason?: string }).reason ?? 'Plan mode blocks this operation.';
-    ctx.setModeEscalation({ tool, reason });
-    return prev;
-  });
-};
-
-/** User accepted mode escalation — switch to agent mode and insert system message. */
-const handleModeEscalationAccepted = (_ev: TelemetryEvent, ctx: EventHandlerContext): void => {
-  ctx.setMessages((prev) => {
-    if (ctx.isCrewPrivateRef.current) return prev;
-    ctx.setAgentMode('agent');
-    sessionSettings.setMode('agent').catch(() => {});
-    ctx.setModeEscalation(null);
-    return [...prev, {
-      id: crypto.randomUUID(), role: 'system' as const, content: '',
-      timestamp: new Date().toISOString(),
-      isModeChange: { from: 'Plan', to: 'Agent' },
-    }];
-  });
-};
-
-/** User declined mode escalation — clear prompt and stop streaming. */
-const handleModeEscalationDeclined = (_ev: TelemetryEvent, ctx: EventHandlerContext): void => {
-  ctx.setMessages((prev) => {
-    ctx.setModeEscalation(null);
-    ctx.setStreaming(false);
     return prev;
   });
 };
@@ -1031,32 +963,6 @@ const handleAgentSpawned = (ev: TelemetryEvent, ctx: EventHandlerContext): void 
   });
 };
 
-/** Insert a system message marking entry into hyperdrive mode. */
-const handleHyperdriveEntered = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
-  ctx.setMessages((prev) => {
-    ctx.setAgentMode('agent');
-    return [...prev, {
-      id: crypto.randomUUID(), role: 'system' as const, content: '',
-      timestamp: new Date().toISOString(),
-      isModeChange: { from: Boolean(ev.wasPlan) ? 'Plan' : 'Agent', to: 'Hyperdrive' },
-    }];
-  });
-};
-
-/** Insert a system message marking exit from hyperdrive mode. */
-const handleHyperdriveExited = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
-  ctx.setMessages((prev) => {
-    ctx.setAgentMode(ev.mode as AgentMode);
-    return [...prev, {
-      id: crypto.randomUUID(), role: 'system' as const, content: '',
-      timestamp: new Date().toISOString(),
-      isModeChange: { from: 'Hyperdrive', to: Boolean(ev.wasPlan) ? 'Plan' : 'Agent' },
-    }];
-  });
-};
-
-// ─── Misc handlers ───
-
 /** Handle command actions (e.g. model switched — update context window). */
 const handleCommandAction = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
   ctx.setMessages((prev) => {
@@ -1104,15 +1010,9 @@ const telemetryDispatch: Record<string, (ev: TelemetryEvent, ctx: EventHandlerCo
 
   // Permission & mode
   permission_required: handlePermissionRequired,
-  plan_mode_entered: handlePlanModeEntered,
-  plan_mode_exited: handlePlanModeExited,
-  plan_mode_violation: handlePlanModeViolation,
-  mode_restricted: handleModeRestricted,
+  bypass_permissions_changed: handleBypassPermissionsChanged,
   crew_suggestion: handleCrewSuggestion,
   crew_suggestion_required: handleCrewSuggestion,
-  mode_escalation_required: handleModeEscalationRequired,
-  mode_escalation_accepted: handleModeEscalationAccepted,
-  mode_escalation_declined: handleModeEscalationDeclined,
   step_cap_reached: handleStepCapReached,
 
   // Reasoning
@@ -1154,8 +1054,6 @@ const telemetryDispatch: Record<string, (ev: TelemetryEvent, ctx: EventHandlerCo
   // Agent & session
   child_session_started: handleChildSessionStarted,
   agent_spawned: handleAgentSpawned,
-  hyperdrive_entered: handleHyperdriveEntered,
-  hyperdrive_exited: handleHyperdriveExited,
 
   // Misc
   command_action: handleCommandAction,
@@ -1174,11 +1072,11 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
     attachCrewRosterPickerRef, rateLimitSeenRef, tokenInputRef, tokenOutputRef, tokenReservedRef,
     refreshContextRef,
     setMessages, setStreaming, setTurnActivity, setCurrentStep, setTokenStreaming, setTokenUsed,
-    setLoadingSteps, setWarnings, setModeEscalation, setStepCapPrompt, setPermissionPrompt,
+    setLoadingSteps, setWarnings, setStepCapPrompt, setPermissionPrompt,
     setPendingPermissionCount, setCrewWorkers, setCrewMissionActive, setCrewMissionId,
     setCrewInterMessages, setTokenInput, setTokenOutput, setTokenReserved, setTokenTotal,
     setCompactionCount, setToolEnablePrompt, setConnState,
-    setLastEventAt, setAgentMode,
+    setLastEventAt, setBypassPermissionsState,
     endTurnUi, isCrewEventForCurrentSession,
   } = params;
 
@@ -1458,9 +1356,9 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
       streamChunkRAFRef, streamChunkPendingRef, thinkingPendingRef, thinkingFlushRef,
       providerErrorTimerRef, toolBatchRef, toolFlushRef,
       setMessages, setStreaming, setTurnActivity, setCurrentStep, setTokenStreaming,
-      setTokenUsed, setLoadingSteps, setWarnings, setModeEscalation, setStepCapPrompt,
-      setPermissionPrompt, setPendingPermissionCount, setCrewWorkers, setCrewMissionActive,
-      setCrewMissionId, setCrewInterMessages, setTokenTotal, setCompactionCount, setAgentMode,
+      setTokenUsed, setLoadingSteps, setWarnings, setStepCapPrompt, setPermissionPrompt,
+      setPendingPermissionCount, setCrewWorkers, setCrewMissionActive,
+      setCrewMissionId, setCrewInterMessages, setTokenTotal, setCompactionCount, setBypassPermissionsState,
       isCrewEventForCurrentSession, stopTurnIndicator, ensureOutgoingTurnMessages,
       isAgentRecentlyActive, applyToolEvent, applySubagentToolEvent, applyTokenUsageEvent,
     };

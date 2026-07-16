@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { INTEGRATION_PROVIDERS, INTEGRATION_CATALOG, getCatalogStats } from '../packages/engine/src/integrations/catalog/providers.ts';
+import { INTEGRATION_PROVIDERS, INTEGRATION_CATALOG, getCatalogStats } from '../packages/engine/src/integrations/catalog/registry.ts';
 
 const KNOWN_PACKAGES = new Set([
   '@modelcontextprotocol/server-github',

@@ -19,8 +19,8 @@ import { getEngine } from './state.js';
 import { ensureChannelAgent, rewireTelegramChannelPermissions } from './channels.js';
 import { resolveCrewPrivateHostForAgent } from '../host-crew-session.js';
 import { persistClarificationResumeFromAgent } from '../clarification-resume.js';
-import { sessionSettings } from '../chat-helpers.js';
 import { unsubscribeAgent } from '../ws.js';
+import { registerOrphanedEventBus, connectToOrphanedBus, unregisterOrphanedEventBus } from './background-task-bridge.js';
 
 export function createAgent(
   config: AgentXConfig | undefined,
@@ -83,7 +83,6 @@ export function createAgent(
 
   const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
   const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
-  const isAgentXCore = (session.contextKind ?? 'agent_x') === 'agent_x_core';
   const isAutomationRun = (session.contextKind ?? 'agent_x') === 'automation'
     || session.id.startsWith('automation:');
   const hostCrewId = session.hostCrewId;
@@ -122,25 +121,6 @@ export function createAgent(
     contextKind: session.contextKind ?? 'agent_x',
   });
 
-  // Apply session mode immediately so the agent starts in the correct mode
-  if (isChannelSessionId(session.id)) {
-    agent.setPlanMode(false);
-    if (session.mode !== 'agent' || session.hyperdrive) {
-      try {
-        eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false });
-      } catch { /* best-effort */ }
-    }
-  } else if (isAgentXCore || session.mode === 'plan') {
-    agent.setPlanMode(true);
-    if (isAgentXCore && session.mode !== 'plan') {
-      try {
-        eng.sessionManager.updateSession({ mode: 'plan', hyperdrive: false });
-      } catch { /* best-effort */ }
-    }
-  } else {
-    agent.setPlanMode(false);
-  }
-
   const sessionCtx = Number((session as { tokenAvailable?: number }).tokenAvailable ?? 0);
   if (activeModelId && sessionCtx > 0) {
     agent.switchModel(activeModelId, sessionCtx);
@@ -157,12 +137,6 @@ export function createAgent(
       modelId: cfg.provider.activeModel,
     });
   } catch { /* best-effort */ }
-
-  // Keep in-memory sessionSettings aligned when Telegram or UI toggles mode.
-  agent.events.on((event) => {
-    if (event.type === 'plan_mode_exited') sessionSettings.mode = 'agent';
-    if (event.type === 'plan_mode_entered') sessionSettings.mode = 'plan';
-  });
 
   // Watchdog: auto-resume interrupted task on startup (Agent-X sessions only).
   // Skip channel super-session — it must stay idle for inbound Telegram/Slack messages.
@@ -220,6 +194,11 @@ export function createAgent(
 
   if (options?.attachToEngine !== false) {
     eng.agent = agent;
+    // Connect the new agent's event bus to any orphaned event bus from a
+    // previous agent instance that had running background tasks. This allows
+    // background_task_complete and other events from still-running tasks to
+    // be forwarded to the new WS subscriber.
+    connectToOrphanedBus(session.id, agent.events);
   }
 
   const sessionLogger = new SessionLogger(session.id);
@@ -434,8 +413,16 @@ export function destroyAgent(): void {
   const eng = getEngine();
   unsubscribeAgent();
   if (eng.agent) {
+    const sessionId = eng.agent.sessionId;
+    const hasRunningBgTasks = eng.agent.agents?.getRunning().length > 0;
     eng.agent?.sessionLogger?.close();
     eng.agent.endSession();
+    // If the agent has running background sub-agents, register its event bus
+    // so events from those tasks can be forwarded to the new agent when the
+    // user returns to this session.
+    if (hasRunningBgTasks && sessionId) {
+      registerOrphanedEventBus(sessionId, eng.agent.events);
+    }
     eng.agent = null;
   }
 }

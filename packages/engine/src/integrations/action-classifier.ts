@@ -80,7 +80,6 @@ export function integrationToolRiskLevel(
 
 /** Prefix for provider-safe tool IDs (Anthropic/OpenAI: ^[a-zA-Z0-9_-]{1,128}$). */
 export const INTEGRATION_TOOL_PREFIX = 'integration__';
-const LEGACY_INTEGRATION_TOOL_PREFIX = 'integration:';
 const PROVIDER_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
 
 function sanitizeIntegrationSegment(value: string): string {
@@ -88,7 +87,7 @@ function sanitizeIntegrationSegment(value: string): string {
 }
 
 export function isIntegrationToolId(toolId: string): boolean {
-  return toolId.startsWith(INTEGRATION_TOOL_PREFIX) || toolId.startsWith(LEGACY_INTEGRATION_TOOL_PREFIX);
+  return toolId.startsWith(INTEGRATION_TOOL_PREFIX);
 }
 
 export function integrationToolId(providerId: string, toolName: string): string {
@@ -115,23 +114,14 @@ export function parseIntegrationToolId(toolId: string): { providerId: string; to
     };
   }
 
-  if (toolId.startsWith(LEGACY_INTEGRATION_TOOL_PREFIX)) {
-    const parts = toolId.split(':');
-    if (parts.length < 3) return null;
-    return {
-      providerId: parts[1]!,
-      toolName: parts.slice(2).join(':'),
-    };
-  }
-
   return null;
 }
 
-/** Prefixes for unregistering integration tools from the registry (includes legacy colon IDs). */
+/** Prefixes for unregistering integration tools from the registry. */
 export function integrationToolUnregisterPrefixes(providerId?: string): string[] {
   if (providerId) {
     const safeProvider = sanitizeIntegrationSegment(providerId);
-    return [`${INTEGRATION_TOOL_PREFIX}${safeProvider}__`, `${LEGACY_INTEGRATION_TOOL_PREFIX}${providerId}:`];
+    return [`${INTEGRATION_TOOL_PREFIX}${safeProvider}__`];
   }
-  return [LEGACY_INTEGRATION_TOOL_PREFIX, INTEGRATION_TOOL_PREFIX];
+  return [INTEGRATION_TOOL_PREFIX];
 }

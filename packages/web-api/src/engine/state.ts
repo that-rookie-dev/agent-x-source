@@ -37,6 +37,7 @@ import {
   ChannelService,
   type IJobQueue,
   type ServiceContext,
+  getSubAgentServiceInstance,
 } from '@agentx/engine';
 import type { AgentXConfig, TelemetryBus, StorageAdapter, ChannelBindingId, ChannelSessionBinding, ClientSituation } from '@agentx/shared';
 import { resolveRuntimeSettings, getDataDir, getLogger, isNeuralBrainSupported } from '@agentx/shared';
@@ -267,6 +268,10 @@ export function getEngine(): EngineState {
       reportStorageProgress('Verifying schema and Crew Hub catalog…');
       await healDatabaseStore(store, reportStorageProgress);
       startPeriodicDatabaseHeal(store);
+      reportStorageProgress('Initializing background task store…');
+      const backgroundTaskStore = pgAdapter.getBackgroundTaskStore();
+      getSubAgentServiceInstance().setStore(backgroundTaskStore);
+      await getSubAgentServiceInstance().loadFromStore();
       reportStorageProgress('Starting durable job queue…');
       await jobQueue.start();
       registerNoOpJobWorkers(jobQueue);
@@ -348,7 +353,6 @@ export function getEngine(): EngineState {
     .then(async () => {
       if (!store) return;
       if (state?.pgPool) {
-        await MarkdownDocumentStore.ensureSchema(state.pgPool);
         setMarkdownDocumentStoreInstance(new MarkdownDocumentStore(state.pgPool));
       }
       if (state) state.crewManager.refresh();

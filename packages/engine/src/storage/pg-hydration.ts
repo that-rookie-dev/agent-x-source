@@ -3,7 +3,6 @@ import type {
   StorableSession,
   StorableMessage,
   StorableTokenLog,
-  StorablePermission,
 } from '@agentx/shared';
 import type { SessionEvent, Crew, AgentPersonaConfig } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
@@ -21,7 +20,7 @@ export interface HydrationContext {
   hydratedSessions: Set<string>;
   lazyHydrate: boolean;
   crewFromRow: (row: Record<string, unknown>) => Crew;
-  writeQueue: Array<{ sql: string; params: unknown[] }>;
+  writeQueue: Array<{ sql: string; params: unknown[]; retries: number }>;
   drainPromise: Promise<void> | null;
   scheduleWriteDrain: () => void;
 }
@@ -36,7 +35,7 @@ export async function hydrateEssentialCache(ctx: HydrationContext): Promise<void
               host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
               host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
               host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
-              mode,parent_id as "parentId",hyperdrive,created_at as "createdAt",updated_at as "updatedAt"
+              parent_id as "parentId",created_at as "createdAt",updated_at as "updatedAt"
        FROM sessions`,
     );
     for (const row of sessions.rows) {
@@ -101,7 +100,7 @@ export async function hydrateCache(ctx: HydrationContext): Promise<void> {
               host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
               host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
               host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
-              mode,parent_id as "parentId",hyperdrive,created_at as "createdAt",updated_at as "updatedAt"
+              parent_id as "parentId",created_at as "createdAt",updated_at as "updatedAt"
        FROM sessions`,
     );
     for (const row of sessions.rows) {
@@ -193,13 +192,6 @@ export async function hydrateCache(ctx: HydrationContext): Promise<void> {
       const arr = ctx.cache.tokenLogs.get(r.sessionId) ?? [];
       arr.push(r);
       ctx.cache.tokenLogs.set(r.sessionId, arr);
-    }
-    const permissions = await ctx.pool.query('SELECT id,session_id as "sessionId",tool_name as "toolName",target_path as "targetPath",decision,created_at as "createdAt" FROM permissions ORDER BY created_at ASC');
-    for (const row of permissions.rows) {
-      const r = row as StorablePermission;
-      const arr = ctx.cache.permissions.get(r.sessionId) ?? [];
-      arr.push(r);
-      ctx.cache.permissions.set(r.sessionId, arr);
     }
     const crewFeedback = await ctx.pool.query('SELECT * FROM crew_feedback ORDER BY created_at ASC');
     for (const row of crewFeedback.rows) {
@@ -316,7 +308,6 @@ export function purgeSessionCache(ctx: HydrationContext, id: string): void {
   ctx.cache.crewStates.delete(id);
   ctx.cache.sessionEvents.delete(id);
   ctx.cache.tokenLogs.delete(id);
-  ctx.cache.permissions.delete(id);
   ctx.cache.permissionRules.delete(id);
   ctx.cache.taskSnapshots.delete(id);
   ctx.cache.turnFeedback.delete(id);

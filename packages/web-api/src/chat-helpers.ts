@@ -26,27 +26,8 @@ export function getForceWebSearchError(cfg: AgentXConfig, forceWebSearch?: boole
   return null;
 }
 
-export const sessionSettings: { mode: 'agent' | 'plan' } = { mode: 'plan' };
-
 export function isCrewPrivateSessionRecord(session: { contextKind?: string } | null | undefined): boolean {
   return (session?.contextKind ?? 'agent_x') === 'crew_private';
-}
-
-/** Sync global sessionSettings from active session record (per-session mode). */
-export function applySessionModeToAgent(agent: Agent): 'agent' | 'plan' {
-  // Hyperdrive is an overlay — keep agent in build mode and use agent instructions
-  if (agent.hyperdriveMode) {
-    return 'agent';
-  }
-  const eng = getEngine();
-  try {
-    const sess = eng.sessionManager.getActiveSession?.() as { mode?: string; contextKind?: string } | null | undefined;
-    if (sess?.mode === 'agent' || sess?.mode === 'plan') {
-      sessionSettings.mode = sess.mode;
-    }
-  } catch { /* best-effort */ }
-  agent.setPlanMode(sessionSettings.mode === 'plan');
-  return sessionSettings.mode;
 }
 
 export function buildFullText(text: string, attachments?: { name: string; content: string }[]): string {
@@ -56,44 +37,19 @@ export function buildFullText(text: string, attachments?: { name: string; conten
   return safeText + attachmentSection;
 }
 
-export function buildPlanInstruction(): string {
-  return `🔒 PLAN MODE
-
-Plan mode allows reads, web search, new file creation, shell/scripts, notifications, and automation scheduling.
-
-REQUIRES AGENT MODE OR HYPERDRIVE (edits/deletes only):
-- Editing existing files (file_edit, code_replace, apply_patch, json_set, …)
-- Deleting files, folders, or todos
-- Destructive git operations (reset, rebase, merge, stash)
-
-AVAILABLE IN PLAN MODE:
-- file_read, glob, grep, web_search, deep_web_search, automation_register, bash, file_write (new files), doc_markdown, notify_desktop, memory_store, and most create/execute tools
-
-SCHEDULING:
-- For reminders or "at <time>" / "in X minutes" tasks: call automation_register FIRST — do NOT research now.
-- automation_register works in Plan mode without switching modes.
-
-IF USER ASKS TO EDIT OR DELETE EXISTING FILES:
-1. Acknowledge the request
-2. Explain that edit/delete requires Agent mode or Hyperdrive
-3. Offer to plan the steps in chat, or ask them to switch modes for the edit
-
-Do NOT ask to switch modes for: web search, scheduling, new file creation, scripts, or read-only analysis.`;
-}
-
-export function buildCrewPrivatePlanInstruction(): string {
+function buildCrewPrivateInstruction(): string {
   return `CREW PRIVATE CHAT — conversational specialist mode.
 
 - Deliver complete plans, itineraries, analysis, and expertise as rich markdown IN THIS CHAT.
 - Planning is internal reasoning between you and the system — NEVER ask the user to approve a plan in a modal.
-- Do NOT tell the user to switch to Agent mode for conversational deliverables (travel plans, advice, outlines, questionnaires).
+- Do NOT tell the user to switch tools for conversational deliverables (travel plans, advice, outlines, questionnaires).
 - After the last questionnaire answer, include the FULL plan or response in the same turn — never stop at a transition phrase.
 - Use read/analysis tools when they genuinely help your domain expertise.
-- Only mention Agent mode if they explicitly asked you to write files or run commands on their machine.`;
+- Only mention tool execution if they explicitly asked you to write files or run commands on their machine.`;
 }
 
-export function buildAgentInstruction(): string {
-  return `🛡️ AUTONOMOUS DIAGNOSTICS PROTOCOL (Agent Mode)
+function buildAgentInstruction(): string {
+  return `🛡️ AUTONOMOUS DIAGNOSTICS PROTOCOL
 
 You have access to an intelligent file resolution system that automatically handles file path errors:
 
@@ -129,14 +85,11 @@ export function applyClientSituation(agent: Agent, situation: unknown): ClientSi
   return normalized;
 }
 
-export function buildInstructionForMode(
-  mode: 'agent' | 'plan',
-  opts?: { crewPrivate?: boolean },
-): string | undefined {
+export function buildTurnInstruction(opts?: { crewPrivate?: boolean }): string | undefined {
   if (opts?.crewPrivate) {
-    return mode === 'plan' ? buildCrewPrivatePlanInstruction() : undefined;
+    return buildCrewPrivateInstruction();
   }
-  return mode === 'plan' ? buildPlanInstruction() : buildAgentInstruction();
+  return buildAgentInstruction();
 }
 
 export function persistToolLedger(agent: Agent, sessionId: string): void {

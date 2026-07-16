@@ -569,6 +569,33 @@ export const permissions = {
     request<{ ok: boolean }>('/permission/respond-batch', { method: 'POST', body: JSON.stringify({ choice }) }),
 };
 
+export interface SessionPermissionDecision {
+  toolName: string;
+  targetPath: string | null;
+  decision: string;
+}
+
+export interface SessionPermissions {
+  bypassPermissions: boolean;
+  decisions: SessionPermissionDecision[];
+}
+
+export const sessionPermissions = {
+  get: (sessionId: string) => request<SessionPermissions>(`/sessions/${sessionId}/permissions`),
+  setBypass: (sessionId: string, enabled: boolean) =>
+    request<{ bypassPermissions: boolean }>(`/sessions/${sessionId}/permissions/bypass`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  revoke: (sessionId: string) =>
+    request<{ bypassPermissions: boolean; ok: boolean }>(`/sessions/${sessionId}/permissions/revoke`, { method: 'POST' }),
+  setTool: (sessionId: string, toolName: string, decision: 'allow_always' | 'deny' | 'revoke') =>
+    request<{ ok: boolean }>(`/sessions/${sessionId}/permissions/tool`, { method: 'POST', body: JSON.stringify({ toolName, decision }) }),
+};
+
+export const settingsPermissions = {
+  get: () => request<{ permissions: Record<string, 'allow' | 'deny' | 'ask'> }>('/settings/permissions'),
+  update: (permissions: Record<string, 'allow' | 'deny' | 'ask'>) =>
+    request<{ ok: boolean }>('/settings/permissions', { method: 'POST', body: JSON.stringify({ permissions }) }),
+};
+
 // ─── System ───
 export const system = {
   cwd: () => request<{ cwd: string | null }>('/cwd'),
@@ -581,14 +608,6 @@ export const system = {
 export const clientSituation = {
   set: (situation: ClientSituation) => request<{ ok: boolean; situation: ClientSituation | null }>('/client-situation', { method: 'POST', body: JSON.stringify({ situation }) }),
   get: () => request<{ situation: ClientSituation | null }>('/client-situation'),
-};
-
-// ─── Session Settings ───
-export type AgentMode = 'agent' | 'plan';
-
-export const sessionSettings = {
-  get: () => request<{ mode: AgentMode }>('/session/settings'),
-  setMode: (mode: AgentMode) => request<{ ok: boolean; mode: AgentMode }>('/session/mode', { method: 'POST', body: JSON.stringify({ mode }) }),
 };
 
 // ─── Tools ───
@@ -1125,6 +1144,7 @@ export interface AgentXConfig {
     lazyStorageCache?: boolean;
     backgroundConcurrency?: number;
   };
+  permissions?: Record<string, 'allow' | 'deny' | 'ask'>;
   channels?: {
     telegram?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; botToken?: string; chatId?: string };
     slack?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; webhookUrl?: string; botToken?: string; appToken?: string };
@@ -1464,7 +1484,7 @@ export interface SessionInfo {
   hostCrewColor?: string;
   hostCrewCatalogId?: string;
   hostCrewCategoryId?: string;
-  mode?: 'agent' | 'plan';
+  bypassPermissions?: boolean;
   messageCount: number;
   status?: string;
   tokensUsed: number;
@@ -1475,7 +1495,6 @@ export interface SessionInfo {
   crewCount?: number;
   crewCallsigns?: string[];
   totalCostUsd?: number;
-  hyperdrive?: boolean;
   createdAt: string;
   updatedAt?: string;
   title?: string;
@@ -1582,6 +1601,7 @@ export interface HealthStatus {
   telegramConnected: boolean;
   telegramBot?: string | null;
   memory: { rss: number; heapUsed: number; heapTotal?: number; external?: number };
+  cpu?: number;
   config?: { provider?: string; model?: string; user?: string };
   gateway?: {
     focus?: string | null;
@@ -1604,8 +1624,7 @@ export interface HealthStatus {
     contextTokens: number;
     contextWindow: number;
     compactionCount: number;
-    planMode: boolean;
-    hyperdriveMode: boolean;
+    bypassPermissions?: boolean;
     neuralConfidenceAvg: number;
     costHistory?: Array<{ ts: number; cost: number; errors: number }>;
   } | null;
@@ -2385,6 +2404,49 @@ export interface AgentVitals {
   status: string;
 }
 
+export interface SubAgentTaskInfo {
+  id: string;
+  parentSessionId?: string;
+  childSessionId?: string;
+  instruction: string;
+  status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  background?: boolean;
+  startTime?: number;
+  endTime?: number;
+  result?: string;
+  error?: string;
+}
+
+export interface SystemMetrics {
+  timestamp: string;
+  uptime: number;
+  cpu: { process: number; system: number };
+  memory: { used: number; total: number; percent: number; rss: number; heapUsed: number; heapTotal: number; external: number };
+}
+
+export interface SystemTime {
+  timestamp: string;
+  date: string;
+  time: string;
+  timezone: string;
+  utcOffset: number;
+}
+
+export interface WeatherConditions {
+  temperature: number;
+  windSpeed: number;
+  windDirection: number;
+  weatherCode: number;
+  isDay: boolean;
+  time: string;
+}
+
+export interface Weather {
+  location: { latitude: number; longitude: number };
+  current: WeatherConditions;
+  url: string;
+}
+
 export const agent = {
   vitals: () => request<AgentVitals>('/agent/vitals'),
   autonomyStatus: () => request<AutonomyStatus>('/agent/autonomy-status'),
@@ -2395,11 +2457,22 @@ export const agent = {
       method: 'POST',
       body: JSON.stringify({ response, ...(sessionId ? { sessionId } : {}) }),
     }),
-  respondToModeEscalation: (accepted: boolean) =>
-    request<{ ok: boolean }>('/agent/mode-escalation', { method: 'POST', body: JSON.stringify({ accepted }) }),
   respondToStepCap: (continueRun: boolean) =>
     request<{ ok: boolean }>('/agent/step-cap/respond', { method: 'POST', body: JSON.stringify({ continueRun }) }),
   getTurnState: () => request<{ phase: string; stage?: string; step?: number }>('/agent/turn-state'),
+};
+
+export const subagents = {
+  list: () => request<{ tasks: SubAgentTaskInfo[] }>('/subagents').then((r) => r.tasks),
+  get: (id: string) => request<{ task: SubAgentTaskInfo }>(`/subagents/${id}`).then((r) => r.task),
+  bySession: (sessionId: string) => request<{ tasks: SubAgentTaskInfo[] }>(`/subagents/session/${sessionId}`).then((r) => r.tasks),
+  cancel: (id: string) => request<{ ok: boolean }>(`/subagents/${id}/cancel`, { method: 'POST' }),
+};
+
+export const runtime = {
+  metrics: () => request<SystemMetrics>('/system/metrics'),
+  time: () => request<SystemTime>('/system/time'),
+  weather: (lat: number, lon: number) => request<Weather>(`/weather?lat=${lat}&lon=${lon}`),
 };
 
 // ─── Factory Reset ───

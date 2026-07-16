@@ -25,11 +25,6 @@ export function getMarkdownDocumentsDir(): string {
   return join(getDataDir(), 'markdown');
 }
 
-/** @deprecated Legacy storage path — used for reading older installs. */
-export function getLegacyMarkdownDocumentsDir(): string {
-  return join(getDataDir(), 'canvases');
-}
-
 export function isWithinScope(targetPath: string, scopePath: string): boolean {
   const normalizedTarget = join(targetPath);
   const normalizedScope = join(scopePath);

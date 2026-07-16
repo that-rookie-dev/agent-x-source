@@ -10,7 +10,6 @@ const GLOBAL_TELEMETRY_EVENT_TYPES = new Set([
   'automation_run_ended',
   'crew_suggestion',
   'crew_suggestion_required',
-  'mode_escalation_required',
   'permission_required',
   'permission_batch_required',
 ]);
@@ -56,14 +55,8 @@ const CHAT_HOT_EVENT_TYPES = new Set([
   'agent_spawned',
   'decision_made',
   'provider_error',
-  'plan_mode_violation',
-  'mode_restricted',
-  'mode_escalation_accepted',
-  'mode_escalation_declined',
   'step_cap_reached',
   'task_aborted',
-  'hyperdrive_entered',
-  'hyperdrive_exited',
   'command_action',
   'compaction_complete',
 ]);

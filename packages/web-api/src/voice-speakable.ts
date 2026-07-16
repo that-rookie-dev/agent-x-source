@@ -70,11 +70,6 @@ Rules:
 - Answer thoroughly with sources where applicable.`;
 }
 
-/** @deprecated Use buildVoiceChatReportPhaseInstruction */
-export function buildVoiceChatBodyPhaseInstruction(): string {
-  return buildVoiceChatReportPhaseInstruction();
-}
-
 export function isVoiceSummaryOnlyMessage(content: string): boolean {
   const { voice, chat } = extractVoiceSpeakable(content);
   if (!voice.trim()) return false;

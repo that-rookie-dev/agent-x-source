@@ -50,8 +50,8 @@ export interface UseChatSessionLifecycleInputs {
   setCrewPrivateHost: React.Dispatch<React.SetStateAction<{ name: string; callsign: string; title?: string } | null>>;
   setPrivateHostCrewId: React.Dispatch<React.SetStateAction<string | null>>;
   setParentSessionId: React.Dispatch<React.SetStateAction<string | null>>;
-  setAgentMode: React.Dispatch<React.SetStateAction<any>>;
   setCrewWorkers: React.Dispatch<React.SetStateAction<any[]>>;
+  setBypassPermissionsState: React.Dispatch<React.SetStateAction<boolean>>;
   // Refs
   currentSessionIdRef: React.MutableRefObject<string | null>;
   cwdRef: React.MutableRefObject<string>;
@@ -109,8 +109,8 @@ export function useChatSessionLifecycle({
   setCrewPrivateHost,
   setPrivateHostCrewId,
   setParentSessionId,
-  setAgentMode,
   setCrewWorkers,
+  setBypassPermissionsState,
   currentSessionIdRef,
   cwdRef,
   chatReturnToRef,
@@ -218,8 +218,8 @@ export function useChatSessionLifecycle({
     setIsCrewPrivateSession(shell.crewPrivate);
     setCrewPrivateHost(shell.privateHost);
     setPrivateHostCrewId(shell.privateHostCrewId);
-    if (shell.agentMode) setAgentMode(shell.agentMode);
     setCurrentSessionTitle(shell.title);
+    setBypassPermissionsState(shell.bypassPermissions ?? false);
     if (shell.crewPrivate) {
       const navState = locationRef.current.state as { fromCrews?: boolean } | null;
       chatReturnToRef.current = navState?.fromCrews ? '/console/crews' : 'crew_tab';
@@ -271,7 +271,7 @@ export function useChatSessionLifecycle({
         } catch { /* best-effort */ }
       })();
     }
-  }, [currentSessionIdRef, navigate, setMessages, setHasOlderMessages, setIsCrewPrivateSession, setCrewPrivateHost, setPrivateHostCrewId, setAgentMode, setCurrentSessionTitle, setParentSessionId, setCurrentSessionId, setShowJumpPill, jumpSuppressScrollTopRef, setTokenTotal, setTokenUsed, setCompactionCount, setTokenInput, setTokenOutput, tokenInputRef, tokenOutputRef, setCwd, loadTodos, generateTitle, setCrewList, setCrewWorkers, crewMissionSessionIdRef, isAtBottomRef, messagesContainerRef, setSessionRestoring, sessionRestoringRef, isInitialLoadRef, setChildSessionDrawer, coreSessionRef, locationRef, crewListRef]);
+  }, [currentSessionIdRef, navigate, setMessages, setHasOlderMessages, setIsCrewPrivateSession, setCrewPrivateHost, setPrivateHostCrewId, setCurrentSessionTitle, setParentSessionId, setCurrentSessionId, setShowJumpPill, jumpSuppressScrollTopRef, setTokenTotal, setTokenUsed, setCompactionCount, setTokenInput, setTokenOutput, tokenInputRef, tokenOutputRef, setCwd, loadTodos, generateTitle, setCrewList, setCrewWorkers, crewMissionSessionIdRef, isAtBottomRef, messagesContainerRef, setSessionRestoring, sessionRestoringRef, isInitialLoadRef, setChildSessionDrawer, coreSessionRef, locationRef, crewListRef]);
 
   // ─── Session-restore effect (mount/URL change) ───
   useEffect(() => {
@@ -298,8 +298,8 @@ export function useChatSessionLifecycle({
         setIsCrewPrivateSession(shell.crewPrivate);
         setCrewPrivateHost(shell.privateHost);
         setPrivateHostCrewId(shell.privateHostCrewId);
-        if (shell.agentMode) setAgentMode(shell.agentMode);
         setCurrentSessionTitle(shell.title);
+        setBypassPermissionsState(shell.bypassPermissions ?? false);
         if (shell.crewPrivate) {
           const navState = location.state as { fromCrews?: boolean } | null;
           chatReturnToRef.current = navState?.fromCrews ? '/console/crews' : 'crew_tab';
@@ -337,7 +337,7 @@ export function useChatSessionLifecycle({
     setIsCrewPrivateSession(previewShell.crewPrivate);
     setCrewPrivateHost(previewShell.privateHost);
     setPrivateHostCrewId(previewShell.privateHostCrewId);
-    if (previewShell.agentMode) setAgentMode(previewShell.agentMode);
+    setBypassPermissionsState(previewShell.bypassPermissions ?? false);
     setCurrentSessionTitle(previewShell.title);
     if (previewShell.crewPrivate) chatReturnToRef.current = 'crew_tab';
     try {
@@ -349,7 +349,7 @@ export function useChatSessionLifecycle({
       isInitialLoadRef.current = false;
       setWarnings([`Failed to restore session: ${e instanceof Error ? e.message : 'Unknown error'}`]);
     }
-  }, [setWarnings, rateLimitSeenRef, setStreaming, resetScrollState, setSessionRestoring, sessionRestoringRef, isInitialLoadRef, setPendingFeedbackMessageId, lastTurnFeedbackCandidateRef, setMessages, setIsCrewPrivateSession, setCrewPrivateHost, setPrivateHostCrewId, setAgentMode, setCurrentSessionTitle, chatReturnToRef, restoreSessionData, navigate]);
+  }, [setWarnings, rateLimitSeenRef, setStreaming, resetScrollState, setSessionRestoring, sessionRestoringRef, isInitialLoadRef, setPendingFeedbackMessageId, lastTurnFeedbackCandidateRef, setMessages, setIsCrewPrivateSession, setCrewPrivateHost, setPrivateHostCrewId, setCurrentSessionTitle, chatReturnToRef, restoreSessionData, navigate]);
 
   // ─── handleShowSessions ───
   const handleShowSessions = useCallback(() => {

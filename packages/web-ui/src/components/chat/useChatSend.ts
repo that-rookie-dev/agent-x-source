@@ -4,11 +4,10 @@
 // High coupling: needs many state values, setters, and refs from the orchestrator.
 
 import React, { useCallback, useEffect, useRef } from 'react';
-import { chat, crews, crewSuggestions, sessionSettings, agent, type Crew, type CrewSuggestionEvaluation, type CrewMatchCandidate, type AgentMode } from '../../api';
+import { chat, agent, crews, crewSuggestions, type Crew, type CrewSuggestionEvaluation, type CrewMatchCandidate } from '../../api';
 import { collectClientSituation } from '../../client-situation.js';
 import { sanitizeForJson } from '../../chat/utils';
 import { replaceWarning } from './message-helpers';
-import { DISMISS_KEY, shouldSuggestMode } from '../ModeSuggestionModal';
 import {
   createCrewSuggestionEvalMessage,
   mergeCrewRosterPickerIntoMessages,
@@ -22,7 +21,6 @@ export interface UseChatSendInputs {
   messages: UIMessage[];
   streaming: boolean;
   attachments: FileAttachment[];
-  agentMode: AgentMode;
   currentProvider: string;
   currentModel: string;
   isCrewPrivateSession: boolean;
@@ -35,9 +33,7 @@ export interface UseChatSendInputs {
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
   setAttachments: React.Dispatch<React.SetStateAction<FileAttachment[]>>;
   setWarnings: React.Dispatch<React.SetStateAction<string[]>>;
-  setAgentMode: React.Dispatch<React.SetStateAction<AgentMode>>;
   setCrewList: React.Dispatch<React.SetStateAction<Crew[]>>;
-  setModeSuggestOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setTurnActivity: React.Dispatch<React.SetStateAction<{ stage: string; step: number; elapsedMs: number } | null>>;
   setLoadingSteps: React.Dispatch<React.SetStateAction<Array<{ id: string; label: string; status: string }> | null>>;
   setStreaming: React.Dispatch<React.SetStateAction<boolean>>;
@@ -60,11 +56,11 @@ export interface UseChatSendInputs {
 }
 
 export function useChatSend({
-  messages, streaming, attachments, agentMode, currentProvider, currentModel,
+  messages, streaming, attachments, currentProvider, currentModel,
   isCrewPrivateSession, webSearchAvailable, webSearchForce, crewSuggestionRequested, currentSessionId,
   coreSession,
-  setMessages, setAttachments, setWarnings, setAgentMode, setCrewList,
-  setModeSuggestOpen, setTurnActivity, setLoadingSteps, setStreaming, setCrewSuggestionRequested,
+  setMessages, setAttachments, setWarnings, setCrewList,
+  setTurnActivity, setLoadingSteps, setStreaming, setCrewSuggestionRequested,
   beginTurnUi, endTurnUi, ensureSession, scrollMessagesToBottom,
   rateLimitSeenRef,
   outgoingTurnRef, activeTurnIdRef, resendInProgressRef,
@@ -346,30 +342,15 @@ export function useChatSend({
     messagesRef, attachmentsRef, attachCrewRosterPickerRef, crewSuggestionRequestedRef,
   ]);
 
-  // ─── sendAfterModeChoice ───
-  const sendAfterModeChoice = useCallback(async (text: string, switchToAgent: boolean) => {
-    if (switchToAgent) {
-      setAgentMode('agent');
-      await sessionSettings.setMode('agent').catch(() => {});
-    }
-    if (await runCrewSuggestionGate(text)) return;
-    await executeSend(text, undefined, { crewSuggestionResolved: true });
-  }, [runCrewSuggestionGate, executeSend, setAgentMode]);
-
   // ─── handleSend ───
   const handleSend = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if ((!trimmed && attachmentsRef.current.length === 0)) return;
     crewSuggestionHandledRef.current = false;
-    if (agentMode === 'plan' && shouldSuggestMode(trimmed) && !localStorage.getItem(DISMISS_KEY)) {
-      pendingSendTextRef.current = trimmed;
-      setModeSuggestOpen(true);
-      return;
-    }
 
     if (await runCrewSuggestionGate(trimmed)) return;
     await executeSend(trimmed);
-  }, [agentMode, executeSend, runCrewSuggestionGate, crewSuggestionHandledRef, pendingSendTextRef, setModeSuggestOpen, attachmentsRef]);
+  }, [executeSend, runCrewSuggestionGate, crewSuggestionHandledRef, pendingSendTextRef, attachmentsRef]);
 
   // ─── handleResend ───
   const handleResend = useCallback(async (text: string) => {
@@ -694,7 +675,6 @@ export function useChatSend({
     attachCrewRosterPicker,
     executeSend,
     runCrewSuggestionGate,
-    sendAfterModeChoice,
     handleSend,
     handleResend,
     handleStopAndSend,

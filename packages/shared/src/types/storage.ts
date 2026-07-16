@@ -17,7 +17,6 @@ export interface StorableSession extends RecordMeta {
   providerId: string;
   modelId: string;
   scopePath: string;
-  mode?: string;
   parentId?: string | null;
   contextKind?: SessionContextKind;
   hostCrewId?: string | null;
@@ -28,7 +27,6 @@ export interface StorableSession extends RecordMeta {
   hostCrewColor?: string | null;
   hostCrewCatalogId?: string | null;
   hostCrewCategoryId?: string | null;
-  hyperdrive?: boolean;
   tokenUsed: number;
   tokenAvailable: number;
   compactionCount?: number;
@@ -168,10 +166,6 @@ export interface StorageAdapter {
 
   addTokenLog(sessionId: string, log: Omit<StorableTokenLog, 'id' | 'createdAt'>): void;
   getTokenLogs(sessionId: string): StorableTokenLog[] | Promise<StorableTokenLog[]>;
-
-  addPermission(sessionId: string, perm: Omit<StorablePermission, 'id' | 'createdAt' | 'sessionId'>): void;
-  getPermissions(sessionId: string): StorablePermission[];
-  removePermissions?(sessionId: string, toolName?: string): void;
 
   listCrews(): Crew[];
   getCrew(id: string): Crew | undefined;

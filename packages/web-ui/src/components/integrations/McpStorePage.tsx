@@ -5,7 +5,7 @@ import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import InputAdornment from '@mui/material/InputAdornment';
 import SearchIcon from '@mui/icons-material/Search';
-import { settingsTheme, settingsGridBgSx, settingsMonoSx, settingsTextFieldSx } from '../../styles/settings-theme';
+import { settingsTheme, settingsMonoSx, settingsTextFieldSx } from '../../styles/settings-theme';
 import { StoreProviderCard } from './StoreProviderCard';
 import { ProviderDetailModal } from './ProviderDetailModal';
 import { IntegrationAuditPanel } from './IntegrationAuditPanel';
@@ -108,7 +108,6 @@ export function McpStorePage() {
       flexDirection: 'column',
       overflow: 'hidden',
       bgcolor: settingsTheme.bg.void,
-      ...settingsGridBgSx,
     }}>
       <Box sx={{ px: 3, pt: 3, pb: 1, flexShrink: 0 }}>
         <Typography sx={{

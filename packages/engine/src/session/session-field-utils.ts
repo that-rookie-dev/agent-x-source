@@ -104,11 +104,3 @@ export function hostCrewSnapshotPatch(
 
   return patch;
 }
-
-/** @deprecated Use hostCrewSnapshotPatch */
-export function missingHostCrewSnapshotPatch(
-  existing: Parameters<typeof hostCrewSnapshotPatch>[0],
-  crew: HostCrewSnapshotSource,
-): Record<string, string | null> {
-  return hostCrewSnapshotPatch(existing, crew);
-}

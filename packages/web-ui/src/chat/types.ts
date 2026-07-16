@@ -74,7 +74,6 @@ export interface UIMessage extends ChatMessage {
     reasons?: string[];
   };
   parts?: PartEntry[];
-  isModeChange?: { from: string; to: string };
   turnFeedback?: { rating: import('@agentx/shared/browser').TurnFeedbackRating };
 }
 

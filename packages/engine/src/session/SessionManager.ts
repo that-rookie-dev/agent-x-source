@@ -31,11 +31,6 @@ export class SessionManager {
     return this.store;
   }
 
-  /** Legacy handle accessor — always returns null because SQLite is removed. */
-  getDb(): null {
-    return null;
-  }
-
   private createSessionRecord(session: Session): void {
     this.store.createSession({
       id: session.id,
@@ -44,9 +39,7 @@ export class SessionManager {
       providerId: session.providerId,
       modelId: session.modelId,
       scopePath: session.scopePath,
-      mode: session.mode,
       parentId: session.parentId,
-      hyperdrive: session.hyperdrive,
       tokenUsed: session.tokenUsed,
       tokenAvailable: session.tokenAvailable,
       contextKind: session.contextKind ?? 'agent_x',
@@ -68,7 +61,6 @@ export class SessionManager {
   private castSession(raw: StorableSession): Session {
     return {
       ...raw,
-      mode: raw.mode === 'plan' ? 'plan' : 'agent',
       updatedAt: raw.updatedAt ?? raw.createdAt,
       status: raw.status as SessionStatus,
     } as Session;
@@ -114,7 +106,6 @@ export class SessionManager {
         session = {
           ...this.buildSessionRecord(providerId, modelId, scopePath, sessionId, undefined, title),
           contextKind: 'automation',
-          mode: 'agent',
         };
         this.createSessionRecord(session);
       }
@@ -153,10 +144,6 @@ export class SessionManager {
   ): Session {
     const existing = this.findAgentXCoreSession();
     if (existing) {
-      if (existing.mode !== 'plan') {
-        this.patchSession(existing.id, { mode: 'plan' } as Partial<Session>);
-        return { ...existing, mode: 'plan' };
-      }
       return existing;
     }
 
@@ -174,7 +161,6 @@ export class SessionManager {
         'Agent-X',
       );
       session.contextKind = 'agent_x_core';
-      session.mode = 'plan';
       this.createSessionRecord(session);
       return session;
     } finally {
@@ -223,7 +209,6 @@ export class SessionManager {
     );
     session.contextKind = 'crew_private';
     session.hostCrewId = crew.id;
-    session.mode = 'plan';
     Object.assign(session, hostCrewSnapshotFromInput(crew));
     this.createSessionRecord(session);
     return session;
@@ -290,9 +275,9 @@ export class SessionManager {
       providerId,
       modelId,
       scopePath: scopePath!,
-      mode: 'plan',
       tokenUsed: 0,
       tokenAvailable: contextWindow,
+      bypassPermissions: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -351,8 +336,8 @@ export class SessionManager {
     this.updateSessionRecord(this.activeSession.id, updates);
   }
 
-  /** Keep the active session row aligned with the global runtime provider/model/mode. */
-  syncActiveSessionRuntime(updates: Partial<Pick<Session, 'providerId' | 'modelId' | 'mode'>>): void {
+  /** Keep the active session row aligned with the global runtime provider/model. */
+  syncActiveSessionRuntime(updates: Partial<Pick<Session, 'providerId' | 'modelId'>>): void {
     if (!this.activeSession) return;
     const patch: Partial<Session> = {};
     if (updates.providerId && updates.providerId !== this.activeSession.providerId) {
@@ -360,9 +345,6 @@ export class SessionManager {
     }
     if (updates.modelId && updates.modelId !== this.activeSession.modelId) {
       patch.modelId = updates.modelId;
-    }
-    if (updates.mode && updates.mode !== this.activeSession.mode) {
-      patch.mode = updates.mode;
     }
     if (Object.keys(patch).length === 0) return;
     this.updateSession(patch);

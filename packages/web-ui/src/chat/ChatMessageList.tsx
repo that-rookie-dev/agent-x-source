@@ -7,7 +7,6 @@ import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { ChatMessageTurn } from './ChatMessageTurn';
 import { AgentTurnLoader } from './AgentTurnLoader';
 import { ChatUserMessage } from './ChatUserMessage';
-import { ChatModeChangeChip } from './ChatModeChangeChip';
 
 interface ChatMessageListProps {
   items: VisibleMessageItem[];
@@ -39,9 +38,6 @@ export const ChatMessageList = memo(function ChatMessageList({ items, loadingSte
     const hasCrewPicker = msg.parts?.some((p) => p.type === 'crew_roster_picker');
     const showLoading = isLast && msg.streaming && !hasText && !hasQuestionnaire && !hasCrewPicker;
 
-    if (msg.isModeChange) {
-      return <ChatModeChangeChip from={msg.isModeChange.from} to={msg.isModeChange.to} />;
-    }
     if (msg.role === 'user') {
       return <ChatUserMessage message={msg} />;
     }

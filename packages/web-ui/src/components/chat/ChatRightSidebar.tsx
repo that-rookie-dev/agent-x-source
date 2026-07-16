@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -16,10 +16,12 @@ import SearchIcon from '@mui/icons-material/Search';
 import ChecklistIcon from '@mui/icons-material/Checklist';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { CheckCircle } from '../CheckCircle';
-import { colors } from '../../theme';
+import { colors, alphaColor } from '../../theme';
 import { crewTheme } from '../../styles/crew-theme';
 import { copyToClipboard } from '../../utils/clipboard';
+import { subagents, type SubAgentTaskInfo } from '../../api';
 import { CrewMissionCard } from '../CrewMissionCard';
 import type { SxProps } from '@mui/material/styles';
 import {
@@ -75,6 +77,26 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
   const { handleCrewAddSearch, handleCrewAddSelect, handleCrewRemove, handleRebuildContext } = useChatCrewHandlersContext();
   // Navigation handlers.
   const { openChildSession } = useChatNavigationHandlersContext();
+
+  // Background sub-agents for the active session.
+  const [subAgents, setSubAgents] = useState<SubAgentTaskInfo[]>([]);
+  const [subAgentsExpanded, setSubAgentsExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!currentSessionId) { setSubAgents([]); return; }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const list = await subagents.bySession(currentSessionId);
+        if (!cancelled) setSubAgents(list);
+      } catch {
+        if (!cancelled) setSubAgents([]);
+      }
+    };
+    load();
+    const id = setInterval(load, 2500);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [currentSessionId]);
 
   return (
     <Box sx={{
@@ -308,6 +330,60 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
             <Typography sx={{ fontSize: '0.52rem', color: colors.text.dim, fontStyle: 'italic', textAlign: 'center', py: 1, fontFamily: "'JetBrains Mono', monospace" }}>
               No crew assigned — use + to add a specialist
             </Typography>
+          )}
+        </Box>
+        )}
+      </Box>
+      )}
+
+      {/* ─── Sub-agents ─── */}
+      {currentSessionId && (
+      <Box>
+        <Box
+          onClick={() => setSubAgentsExpanded(!subAgentsExpanded)}
+          sx={sidebarSectionHeaderWithDividerSx(subAgentsExpanded)}
+        >
+          <SmartToyIcon sx={{ fontSize: 12, color: colors.accent.blue }} />
+          <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
+            {subAgentsExpanded ? '▾' : '▸'} SUB-AGENTS
+          </Typography>
+          {subAgents.length > 0 && (
+            <Chip size="small" label={`${subAgents.filter((a) => a.status === 'running').length}/${subAgents.length}`} sx={{ fontSize: '0.45rem', height: 15 }} />
+          )}
+        </Box>
+        {subAgentsExpanded && (
+        <Box sx={sidebarSectionContentSx}>
+          {subAgents.length === 0 ? (
+            <Typography sx={{ fontSize: '0.55rem', color: colors.text.tertiary, py: 1 }}>
+              No active sub-agents for this session.
+            </Typography>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              {subAgents.map((a) => {
+                const isRunning = a.status === 'running';
+                const color = isRunning ? colors.accent.green : a.status === 'failed' || a.status === 'cancelled' ? colors.accent.red : a.status === 'completed' ? colors.text.dim : colors.accent.orange;
+                return (
+                  <Tooltip key={a.id} title={a.instruction || ''} placement="left" arrow>
+                    <Box
+                      onClick={() => a.childSessionId && openChildSession?.({ childSessionId: a.childSessionId, label: a.instruction?.slice(0, 40) || a.id.slice(0, 8), kind: 'sub_agent' })}
+                      sx={{
+                        display: 'flex', alignItems: 'center', gap: 0.5, py: 0.4, px: 0.5, borderRadius: '4px',
+                        cursor: a.childSessionId ? 'pointer' : 'default',
+                        '&:hover': a.childSessionId ? { bgcolor: alphaColor(colors.bg.primary, 0.5) } : undefined,
+                      }}
+                    >
+                      <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: color, flexShrink: 0 }} />
+                      <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {a.instruction?.slice(0, 40) || a.id.slice(0, 8)}
+                      </Typography>
+                      <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, textTransform: 'uppercase' }}>
+                        {a.status}
+                      </Typography>
+                    </Box>
+                  </Tooltip>
+                );
+              })}
+            </Box>
           )}
         </Box>
         )}

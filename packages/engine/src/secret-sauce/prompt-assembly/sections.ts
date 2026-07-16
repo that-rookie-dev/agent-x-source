@@ -13,7 +13,6 @@ export interface SectionContext {
   getModelId(): string;
   buildIdentityBlock(): string;
   scopePath: string;
-  hyperdriveMode: boolean;
   telegramConnected: boolean;
   userCallsign: string | undefined;
   getUserTimezone(): string;
@@ -312,11 +311,11 @@ export function createCrewPrivateConductSection(): PromptSection<string> {
     `- Say plainly and warmly that it's not your specialty, deliver only the part you ARE qualified for, and hand off to a fitting crew member or Agent-X for the rest.`,
     `- Do not fake expertise or run tools to wing unrelated topics.`,
     ``,
-    `TOOLS & MODES:`,
+    `TOOLS:`,
     `- You have Agent-X tools, but you are NOT the main orchestrator.`,
     `- Use tools only when an in-domain request needs them — not for simple conversation.`,
-    `- Deliver plans, itineraries, and expertise as markdown IN CHAT. Never ask the user to approve a plan in a modal or switch to Agent mode for conversational deliverables.`,
-    `- Agent mode is only relevant when the user explicitly needs filesystem writes or shell execution on their machine.`,
+    `- Deliver plans, itineraries, and expertise as markdown IN CHAT. Never ask the user to approve a plan in a modal for conversational deliverables.`,
+    `- Tool execution is only relevant when the user explicitly needs filesystem writes or shell execution on their machine.`,
     ``,
     `CLARIFICATION (STRICT):`,
     `- Open-ended / custom-text questions → plain assistant message text. End your turn and wait for the reply. NEVER call ask_clarification.`,
@@ -586,7 +585,7 @@ export function createThirdPartyServicesSection(): PromptSection<string> {
 export function createSchedulingSection(): PromptSection<string> {
   const SCHEDULING = [
     `[SCHEDULING]`,
-    `All scheduling — reminders, pings, recurring checks, research, reports — uses automation tools (available in Plan and Agent mode):`,
+    `All scheduling — reminders, pings, recurring checks, research, reports — uses automation tools:`,
     ``,
     `CRITICAL — future / reminder / "at <time>" / "in X minutes" requests:`,
     `- Do NOT run web_search, deep_web_search, or other research NOW.`,
@@ -674,28 +673,6 @@ export function createFormalSkillsSection(ctx: SectionContext): PromptSection<Ar
 }
 
 // ─────────────────────────────────────────────────────────────
-// Hyperdrive mode — dynamic toggle
-// ─────────────────────────────────────────────────────────────
-
-export function createHyperdriveSection(ctx: SectionContext): PromptSection<boolean> {
-  return {
-    key: 'core/hyperdrive',
-    load: () => ctx.hyperdriveMode,
-    render: (enabled) => {
-      if (!enabled) return '';
-      return `[HYPERDRIVE]\nYOU ARE IN HYPERDRIVE MODE — FULL AUTONOMOUS ACCELERATION.\n- ALL tools are enabled and available.\n- ALL permissions are PRE-GRANTED. You DO NOT need to ask, confirm, or wait.\n- ALL shell commands, file operations, network access are AUTHORIZED.\n- You have MAXIMUM AGENCY. Execute tasks to completion without hesitation.\n- Do NOT describe — DO IT.\n- If a tool fails, try the next approach without asking.\n- SPEED is paramount. Parallelize where possible.\n[/HYPERDRIVE]`;
-    },
-    diff: (prev, current) => {
-      if (prev === current) return null;
-      if (current) {
-        return `[HYPERDRIVE — ACTIVATED]\nFULL AUTONOMOUS ACCELERATION ENABLED.\n- ALL permissions are PRE-GRANTED.\n- MAXIMUM AGENCY. Execute without hesitation.\n- SPEED is paramount.\n[/HYPERDRIVE]`;
-      }
-      return `[HYPERDRIVE — DEACTIVATED]\nNormal operational mode restored. Standard permission rules apply.\n[/HYPERDRIVE]`;
-    },
-  };
-}
-
-// ─────────────────────────────────────────────────────────────
 // Channel focus — Telegram connection awareness
 // ─────────────────────────────────────────────────────────────
 
@@ -757,11 +734,6 @@ export function buildClarificationPolicyInstruction(onMessagingChannel = false):
   return lines.join('\n');
 }
 
-/** @deprecated Use buildClarificationPolicyInstruction */
-export function buildMessagingClarificationInstruction(): string {
-  return buildClarificationPolicyInstruction(true);
-}
-
 export function createChannelMessagingSection(): PromptSection<null> {
   return {
     key: 'core/channel-messaging',
@@ -769,7 +741,7 @@ export function createChannelMessagingSection(): PromptSection<null> {
     render: () => [
       '[CHANNEL_MESSAGING]',
       'You are responding on a messaging channel. Keep replies concise and mobile-friendly (markdown ok).',
-      'Plan Mode and Hyperdrive are NOT available — always operate in normal Agent execution mode.',
+      'You are in normal Agent execution mode. Tools are gated by the session permission rules; very high-risk actions may surface an inline permission request.',
       'You are a first-class Agent-X client: you have access to the full tool catalog, connected MCP integrations, web search, file creation, and automations.',
       'Use tools directly to satisfy the request. Only very high-risk actions may surface an inline permission request.',
       '',
@@ -1012,28 +984,10 @@ export function createSessionNarrativeSection(ctx: SectionContext): PromptSectio
   };
 }
 
-/** @deprecated Use createSessionNarrativeSection. */
-export function createSessionContextSection(ctx: SectionContext): PromptSection<string> {
-  return createSessionNarrativeSection(ctx);
-}
-
 export function createTurnFeedbackSection(ctx: SectionContext): PromptSection<string> {
   return {
     key: 'core/turn-feedback',
     load: () => ctx.turnFeedbackService?.buildPromptContext() ?? '',
-    render: (text) => text || '',
-    diff: (prev, current) => {
-      if (prev === current || !current) return null;
-      return current;
-    },
-  };
-}
-
-/** @deprecated Chat-style history removed — narrative replaces this. */
-export function createRecentHistorySection(ctx: SectionContext): PromptSection<string> {
-  return {
-    key: 'core/current-focus',
-    load: () => ctx.contextTracker?.getRecentHistory() ?? '',
     render: (text) => text || '',
     diff: (prev, current) => {
       if (prev === current || !current) return null;

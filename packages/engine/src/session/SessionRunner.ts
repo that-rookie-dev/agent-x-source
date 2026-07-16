@@ -24,8 +24,6 @@ export interface SessionRunnerOptions {
   onSessionEvent?: (event: SessionEvent) => void;
   modelName?: string;
   maxSteps?: number;
-  /** Dynamic plan-mode flag — read at each agentic step */
-  planMode?: () => boolean;
   /** If provided, collect tool call/result entries for the agent's reflection loop */
   toolCallLog?: Array<{ name: string; success: boolean; output: string; elapsed: number }>;
 }
@@ -74,8 +72,7 @@ export class SessionRunner {
 
       emit({ type: 'step_started', step: stepCount } as unknown as EngineEvent);
 
-      const planMode = this.options.planMode?.() ?? false;
-      const tools = createAiSdkTools(toolRegistry, toolExecutor, sessionId, emit, waitForClarification, runSubAgent, planMode);
+      const tools = createAiSdkTools(toolRegistry, toolExecutor, sessionId, emit, waitForClarification, runSubAgent);
       const model = createAiSdkModel(config, apiKey);
       const contextWindow = (config as unknown as Record<string, number>)['contextWindow'] ?? 128000;
 

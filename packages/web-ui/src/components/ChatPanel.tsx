@@ -4,7 +4,6 @@ import { ChatSession } from './chat/ChatSession';
 
 // ─── CSS Keyframes (injected once) ───
 import { colors, alphaColor } from '../theme';
-import { hyperdrive } from '../styles/brands';
 
 const styleId = 'agentx-chat-keyframes';
 if (!document.getElementById(styleId)) {
@@ -14,25 +13,6 @@ if (!document.getElementById(styleId)) {
     @keyframes agentx-pulse { 0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1.1); } }
     @keyframes agentx-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
     @keyframes agentx-fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes agentx-scanlines {
-      0% { transform: translateY(0); }
-      100% { transform: translateY(4px); }
-    }
-    @keyframes agentx-flicker {
-      0%, 100% { opacity: 0.2; }
-      15% { opacity: 0.7; }
-      30% { opacity: 0.1; }
-      45% { opacity: 0.8; }
-      60% { opacity: 0.2; }
-      75% { opacity: 0.6; }
-      90% { opacity: 0.3; }
-    }
-    @keyframes agentx-hyperdrive-glow {
-      0%, 100% { box-shadow: 0 0 5px ${alphaColor(hyperdrive.magenta, '40')}; border-color: ${alphaColor(hyperdrive.magenta, '30')}; }
-      25% { box-shadow: 0 0 12px ${alphaColor(hyperdrive.magenta, '60')}, 0 0 20px ${alphaColor(hyperdrive.magenta, '20')}; border-color: ${alphaColor(hyperdrive.magenta, '50')}; }
-      50% { box-shadow: 0 0 8px ${alphaColor(hyperdrive.magenta, '40')}, 0 0 15px ${alphaColor(hyperdrive.cyan, '20')}; border-color: ${alphaColor(hyperdrive.magenta, '30')}; }
-      75% { box-shadow: 0 0 14px ${alphaColor(hyperdrive.magenta, '50')}, 0 0 25px ${alphaColor(hyperdrive.magenta, '30')}; border-color: ${alphaColor(hyperdrive.magenta, '60')}; }
-    }
     @keyframes agentx-spin {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }

@@ -268,7 +268,6 @@ export class CrewOrchestrator {
     userMessage: string,
     _mainSystemPrompt: string,
     contextText?: string,
-    planMode = false,
     onChunk?: (delta: string) => void,
     shouldAbort?: () => boolean,
   ): Promise<{ content: string; elapsed: number }> {
@@ -314,7 +313,7 @@ export class CrewOrchestrator {
 
     if (this.toolRegistry && this.toolExecutor && this.config) {
       try {
-        return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit, planMode, onChunk, shouldAbort);
+        return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit, onChunk, shouldAbort);
       } catch (err) {
         // Fall through to legacy path on error
       }
@@ -368,13 +367,12 @@ export class CrewOrchestrator {
     systemPrompt: string,
     startTime: number,
     emit: (e: EngineEvent) => void,
-    planMode = false,
     onChunk?: (delta: string) => void,
     shouldAbort?: () => boolean,
   ): Promise<{ content: string; elapsed: number }> {
     const { ToolRegistry: TR } = await import('../tools/ToolRegistry.js');
     const filteredRegistry = new TR();
-    const allowedToolIds = resolveCrewToolIds(member.crew, planMode);
+    const allowedToolIds = resolveCrewToolIds(member.crew);
     const enabledPrefs = member.crew.toolPreferences?.enabled;
     const disabledPrefs = member.crew.toolPreferences?.disabled;
 
@@ -403,6 +401,7 @@ export class CrewOrchestrator {
         }
       },
       isTurnAborted: () => baseExecutor.isTurnAborted(),
+      setToolOutputHandler: (handler: (output: string) => void) => baseExecutor.setToolOutputHandler(handler),
     } : baseExecutor;
 
     const tools = createAiSdkTools(
@@ -417,7 +416,6 @@ export class CrewOrchestrator {
         return this.waitForClarification(questionnaire);
       },
       () => Promise.resolve({ success: false as const, output: 'Sub-agents not supported in crew mode.', elapsed: 0 }),
-      planMode,
     );
 
     const interCrewTool = tool<Record<string, unknown>, string>({
@@ -908,7 +906,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     return responses;
   }
 
-  async interCrewMessage(fromId: string, toId: string, message: string, mainSystemPrompt: string, planMode = false): Promise<string> {
+  async interCrewMessage(fromId: string, toId: string, message: string, mainSystemPrompt: string): Promise<string> {
     const from = this.members.find(m => m.crew.id === fromId);
     const to = this.members.find(m => m.crew.id === toId);
     if (!from || !to) return '[Member not found]';
@@ -928,7 +926,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     const systemPrompt = `${mainSystemPrompt}\n\n[CREW MEMBER: ${to.crew.name}]\n${to.crew.systemPrompt}\n\n[CONVERSATION CONTEXT]\n${context}\n\n[NOTE: ${from.crew.name} is asking you a question. Respond directly.]`;
 
     try {
-      const { content } = await this.callCrew(to, `[From ${from.crew.name}]: ${message}`, systemPrompt, undefined, planMode);
+      const { content } = await this.callCrew(to, `[From ${from.crew.name}]: ${message}`, systemPrompt, undefined);
 
       this.conversation.push({
         id: generateMessageId(),
@@ -997,7 +995,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
   ): Promise<{ content: string; elapsed: number; inputTokens: number; outputTokens: number; costUsd: number }> {
     const member = this.members.find((m) => m.crew.id === crewId) ?? this.members[0];
     if (!member) throw new Error('crew-not-loaded');
-    const result = await this.callCrew(member, userMessage, '', contextText, false, opts?.onChunk, opts?.shouldAbort);
+    const result = await this.callCrew(member, userMessage, '', contextText, opts?.onChunk, opts?.shouldAbort);
     if (opts?.shouldAbort?.()) throw new Error('crew-chat-cancelled');
     const inputTokens = countInputTokens((contextText ?? '') + userMessage);
     const outputTokens = estimateOutputTokens(result.content);

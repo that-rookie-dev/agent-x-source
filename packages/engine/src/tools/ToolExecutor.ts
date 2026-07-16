@@ -5,8 +5,6 @@ import { ScopeGuard } from './permissions/ScopeGuard.js';
 import { ToolRegistry } from './ToolRegistry.js';
 import type { SafetyAuditor } from '../safety/SafetyAuditor.js';
 import type { PolicyEngine } from '../enterprise/PolicyEngine.js';
-import type { AgentInfo } from '../agent/AgentInfo.js';
-import { isPlanDeniedTool } from '../agent/plan-mode-utils.js';
 import type { ThirdPartyTurnPolicy } from '../integrations/third-party-access.js';
 import {
   blockCredentialScavenger,
@@ -69,8 +67,6 @@ export class ToolExecutor implements ToolPermissionHost {
   private onExecutionPersist: ((entry: ToolExecutionEntry) => void) | null = null;
   private policyEngine: PolicyEngine | null = null;
   private executionHistory: ToolExecutionEntry[] = [];
-  private mode: 'agent' | 'plan' = 'agent';
-  private currentAgent: AgentInfo | null = null;
   private alwaysPromptPermissions = false;
   private sessionRules: PermissionRule[] = [];
   private agentPermissions: PermissionRule[] = [];
@@ -87,15 +83,6 @@ export class ToolExecutor implements ToolPermissionHost {
     this.permissionManager = new PermissionManager();
     this.scopeGuard = new ScopeGuard(scopePath);
     this.permissionService = new ToolPermissionService();
-  }
-
-  setMode(mode: 'agent' | 'plan'): void {
-    this.mode = mode;
-  }
-
-  setAgent(agent: AgentInfo): void {
-    this.currentAgent = agent;
-    this.setAgentPermissions(agent.permissions ?? []);
   }
 
   setAlwaysPromptPermissions(enabled: boolean): void {
@@ -222,10 +209,6 @@ export class ToolExecutor implements ToolPermissionHost {
     return this.inboundSourceChannel;
   }
 
-  getMode(): 'agent' | 'plan' {
-    return this.mode;
-  }
-
   getSessionRules(): PermissionRule[] {
     return this.sessionRules;
   }
@@ -238,24 +221,18 @@ export class ToolExecutor implements ToolPermissionHost {
     return this.userConfigRules;
   }
 
-  getCurrentAgent(): AgentInfo | null {
-    return this.currentAgent;
-  }
-
   getRegistry(): ToolRegistry {
     return this.registry;
   }
 
-  /** Copy permission policy, mode, and hooks from another executor (e.g. parent → crew worker). */
+  /** Copy permission policy and hooks from another executor (e.g. parent → crew worker). */
   copyExecutionPolicyFrom(source: ToolExecutor): void {
     const src = source as unknown as {
       permissionRequestHandler?: PermissionRequestHandler;
       channelPermissionRequestHandler?: PermissionRequestHandler;
-      mode: 'agent' | 'plan';
       sessionRules: PermissionRule[];
       agentPermissions: PermissionRule[];
       userConfigRules: PermissionRule[];
-      currentAgent: AgentInfo | null;
       beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null;
       safetyAuditor: SafetyAuditor | null;
       policyEngine: PolicyEngine | null;
@@ -269,11 +246,9 @@ export class ToolExecutor implements ToolPermissionHost {
     if (src.channelPermissionRequestHandler) {
       this.setChannelPermissionRequestHandler(src.channelPermissionRequestHandler);
     }
-    this.setMode(src.mode);
     this.setSessionRules([...src.sessionRules]);
     this.setAgentPermissions([...src.agentPermissions]);
     this.setUserConfigRules([...src.userConfigRules]);
-    if (src.currentAgent) this.setAgent(src.currentAgent);
     if (src.beforeToolHook) this.setBeforeToolHook(src.beforeToolHook);
     if (src.safetyAuditor) this.setSafetyAuditor(src.safetyAuditor);
     if (src.policyEngine) this.setPolicyEngine(src.policyEngine);
@@ -394,16 +369,6 @@ export class ToolExecutor implements ToolPermissionHost {
       }
     }
 
-    // Plan mode: block edit/delete tools only
-    if (this.mode === 'plan' && isPlanDeniedTool(toolId)) {
-      const modeLabel = this.currentAgent?.name ?? 'Plan';
-      return {
-        success: false,
-        output: `The "${toolId}" tool cannot be executed in ${modeLabel} mode. Editing or deleting existing resources requires Agent Mode or Hyperdrive. Reads, new file creation, scripts, web search, and scheduling work in Plan mode.`,
-        error: 'MODE_RESTRICTED',
-      };
-    }
-
     if (this.turnAborted || options?.signal?.aborted) {
       return {
         success: false,
@@ -466,7 +431,6 @@ export class ToolExecutor implements ToolPermissionHost {
       contextKind: this.sessionContextKind,
       timeout: this.voiceTurnActive ? 22_000 : 30_000,
       voiceTurn: this.voiceTurnActive,
-      mode: this.mode,
       ...(this.inboundSourceChannel ? { sourceChannel: this.inboundSourceChannel } : {}),
       ...(this.inboundSourceThreadId ? { sourceThreadId: this.inboundSourceThreadId } : {}),
       ...(this.inboundSourceMessageId ? { sourceMessageId: this.inboundSourceMessageId } : {}),

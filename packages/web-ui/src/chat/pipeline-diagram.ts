@@ -244,11 +244,6 @@ export function normalizeHorizontalPipelineBody(body: string): string {
   return formatHorizontalPipelineForCopy(diagram);
 }
 
-/** @deprecated Use normalizeFlowBody */
-export function normalizePipelineBody(body: string): string {
-  return normalizeFlowBody(body);
-}
-
 /** Re-tag plain ``` fences that contain flow arrows as ```flow / ```pipeline blocks. */
 export function repairPlainPipelineFences(content: string): string {
   if (!content || !content.includes('```')) return content;

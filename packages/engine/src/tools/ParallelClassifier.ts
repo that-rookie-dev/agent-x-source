@@ -208,7 +208,7 @@ export class ParallelClassifier {
       return ParallelMode.PATH_SCOPED;
     }
 
-    if (tool.tool.id.startsWith('integration__') || tool.tool.id.startsWith('integration:')) {
+    if (tool.tool.id.startsWith('integration__')) {
       return ParallelMode.INTEGRATION_CHECK;
     }
 

@@ -1,5 +1,4 @@
 import type { ProviderId } from '@agentx/shared';
-import { isToolAllowedInPlanMode } from './plan-mode-utils.js';
 
 const LOCAL_PROVIDERS = new Set<ProviderId>(['ollama', 'lmstudio']);
 
@@ -20,75 +19,6 @@ export function isCompactContextProfile(
   const model = modelId.toLowerCase();
   if (LARGE_LOCAL_MODEL.test(model)) return false;
   if (contextWindow != null && contextWindow > 16_384) return false;
-  return true;
-}
-
-/** Core tools exposed to compact-context models (plan mode still filters writes). */
-export const COMPACT_TOOL_IDS = new Set([
-  'file_read',
-  'read_file',
-  'read',
-  'file_write',
-  'write_file',
-  'file_edit',
-  'file_patch',
-  'apply_patch',
-  'glob',
-  'grep',
-  'code_grep',
-  'code_search',
-  'list_dir',
-  'folder_list',
-  'shell_exec',
-  'bash',
-  'script_run',
-  'project_detect',
-  'build',
-  'build_run',
-  'test_run',
-  'git_status',
-  'git_diff',
-  'git_log',
-  'gh_pr_view',
-  'gh_pr_list',
-  'memory_fabric_search',
-  'memory_search',
-  'rag_search',
-  'ask_clarification',
-  'delegate_to_subagent',
-  'web_search',
-  'web_fetch',
-  'todo_read',
-  'todo_write',
-  // Native channel send tools for messaging sessions
-  'telegram_send_message',
-  'telegram_send_file',
-  'slack_send_message',
-  'slack_send_file',
-  'discord_send_message',
-  'discord_send_file',
-  'email_send_message',
-  'email_send_file',
-  // Document creation tools for generating files to send back
-  'pdf_create',
-  'docx_create',
-  'xlsx_create',
-  'pptx_create',
-  'csv_create',
-  'doc_markdown',
-  'doc_html',
-  'doc_json',
-  'doc_yaml',
-  'doc_diagram',
-  'doc_latex',
-]);
-
-export function isCompactToolAllowed(toolId: string, planMode: boolean): boolean {
-  if (toolId.startsWith('integration__')) {
-    return planMode ? isToolAllowedInPlanMode(toolId) : true;
-  }
-  if (!COMPACT_TOOL_IDS.has(toolId)) return false;
-  if (planMode) return isToolAllowedInPlanMode(toolId);
   return true;
 }
 

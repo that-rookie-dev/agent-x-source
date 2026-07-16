@@ -26,6 +26,7 @@ import type { ToolExecutor } from '../tools/ToolExecutor.js';
 import type { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
 import type { AgentOptions } from './Agent.js';
 import { isFailureAssistantContent } from './agent-helpers.js';
+import type { SessionPermissionStore } from '../storage/SessionPermissionStore.js';
 
 /** Slice of AgentFacade required by the persistence helpers. */
 export interface PersistenceContext {
@@ -36,6 +37,7 @@ export interface PersistenceContext {
   linkedContextSessionId: string | null;
   toolExecutor: ToolExecutor | EnhancedToolExecutor | undefined;
   options: Readonly<AgentOptions>;
+  sessionPermissionStore: SessionPermissionStore;
   getPersistStore(): StorageAdapter | null;
 }
 
@@ -261,20 +263,17 @@ export function persistPermissionGrant(
   toolName: string,
   decision: PermissionDecision,
 ): void {
-  const store = ctx.getPersistStore();
-  if (!store?.addPermission) return;
   try {
-    store.addPermission(ctx.sessionId, { toolName, targetPath: null, decision });
+    ctx.sessionPermissionStore.recordGrant(toolName, decision, null);
   } catch { /* best-effort */ }
 }
 
 export function restoreSessionPermissions(ctx: PersistenceContext): void {
-  if (!ctx.sessionManager || !ctx.toolExecutor) return;
-  const store = ctx.getPersistStore();
-  if (!store?.getPermissions) return;
+  if (!ctx.toolExecutor) return;
   try {
-    const rows = store.getPermissions(ctx.sessionId);
     const pm = ctx.toolExecutor.getPermissionManager();
+    pm.setBypassPermissions(ctx.sessionPermissionStore.getBypassPermissions());
+    const rows = ctx.sessionPermissionStore.getDecisions();
     const seen = new Set<string>();
     for (const row of rows) {
       const decision = row.decision as PermissionDecision;
@@ -314,11 +313,10 @@ export function revokeChannelToolPermissions(
 ): string {
   const pm = ctx.toolExecutor?.getPermissionManager();
   if (!pm) return '🔐 No permission state available.';
-  const store = ctx.getPersistStore();
 
   if (revokeAll) {
     pm.revokeAll();
-    store?.removePermissions?.(ctx.sessionId);
+    ctx.sessionPermissionStore.revokeAll();
     return '🗑 All remembered tool permissions revoked for this channel session.';
   }
 
@@ -326,7 +324,7 @@ export function revokeChannelToolPermissions(
   if (!names.length) return '❌ Specify at least one tool name to revoke.';
   for (const name of names) {
     pm.revoke(name);
-    store?.removePermissions?.(ctx.sessionId, name);
+    ctx.sessionPermissionStore.removeGrant(name, null);
   }
   return `🗑 Revoked permissions for: ${names.join(', ')}`;
 }

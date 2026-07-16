@@ -101,20 +101,6 @@ export function createBenchmarkRouter(): Router {
     }
   });
 
-  r.post('/memory/plasticity', async (req: Request, res: Response) => {
-    const { SynapticPlasticity } = await import('@agentx/engine');
-    const fabric = getFabric();
-    if (!fabric) return handleFabricUnavailable(res);
-    try {
-      const plasticity = new SynapticPlasticity(fabric);
-      const result = await plasticity.run(req.body);
-      res.json(result);
-    } catch (e) {
-      logger.error('MEMORY_API', e instanceof Error ? e.message : e);
-      res.status(500).json({ error: 'Failed to run plasticity' });
-    }
-  });
-
   r.post('/memory/wipe-benchmark', async (_req: Request, res: Response) => {
     const fabric = getFabric();
     if (!fabric) return handleFabricUnavailable(res);

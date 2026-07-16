@@ -85,7 +85,7 @@ export class TurnOrchestrator implements ITurnOrchestrator {
 
     const emit = (e: EngineEvent) => this.host.emit(e);
     const registry = this.host.toolRegistry;
-    const executor = this.host.toolService;
+    const executor = this.host.toolExecutor;
     if (!registry) throw new Error('Tool registry not initialized');
     if (!executor) throw new Error('Tool executor not initialized');
 
@@ -121,10 +121,6 @@ export class TurnOrchestrator implements ITurnOrchestrator {
       },
       async (instruction, toolsList, timeout, background) =>
         this.host.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
-      this.host.planMode,
-      this.host.options.promptProfile === 'crew_private' || this.host.options.channelSession
-        ? undefined
-        : (toolId, reason) => this.host.waitForModeEscalation(toolId, reason),
       (toolId, success, output, elapsed, args) => {
         const path = typeof args?.path === 'string' ? args.path : undefined;
         this.host.toolLedger.record({ name: toolId, success, output, elapsed, path });
@@ -137,8 +133,6 @@ export class TurnOrchestrator implements ITurnOrchestrator {
           this.host.ingestWebSearchResult(toolId, args, output).catch(() => {});
         }
       },
-      this.host.options.promptProfile ?? 'default',
-      compact,
     );
 
     if (this.host.options.promptProfile === 'crew_private') {
@@ -208,7 +202,7 @@ export class TurnOrchestrator implements ITurnOrchestrator {
       );
 
       // Log tool setup for debugging
-      getLogger().info('AGENT', `Starting streamText with ${toolCount} tools, model: ${this.host.config.provider.activeModel}, mode: ${this.host.planMode ? 'plan' : 'agent'}, maxOutputTokens: ${turnMaxOutputTokens}`);
+      getLogger().info('AGENT', `Starting streamText with ${toolCount} tools, model: ${this.host.config.provider.activeModel}, maxOutputTokens: ${turnMaxOutputTokens}`);
 
       let stepCapContinuations = 0;
       const stepBudget = this.host.completionStepBudget();
@@ -360,17 +354,12 @@ export class TurnOrchestrator implements ITurnOrchestrator {
               : {
                 tools: createAiSdkTools(
                   this.host.toolRegistry!,
-                  this.host.toolService!,
+                  this.host.toolExecutor!,
                   sessionId,
                   (e) => this.host.emit(e),
                   async () => 'continue',
                   (instruction, toolsList, timeout, background) =>
                     this.host.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
-                  this.host.planMode,
-                  undefined,
-                  undefined,
-                  'default',
-                  compact,
                 ),
                 stopWhen: stepCountIs(50),
                 toolChoice: 'auto' as const,
@@ -426,20 +415,6 @@ export class TurnOrchestrator implements ITurnOrchestrator {
       });
       return assistantMessage;
     } catch (error) {
-      if (error instanceof Error && error.message === 'MODE_ESCALATION_DECLINED') {
-        const declinedMessage: Message = {
-          id: generateMessageId(),
-          sessionId,
-          role: 'assistant',
-          content: '⏹ Stopped — staying in Plan mode. Switch to Agent mode when you\'re ready to execute write operations.',
-          toolCalls: null,
-          createdAt: new Date().toISOString(),
-          tokenCount: 0,
-        };
-        emit({ type: 'message_received', message: declinedMessage, elapsed: Date.now() - startTime });
-        assistantMessage = declinedMessage;
-        return assistantMessage;
-      }
       if (error instanceof Error && error.message === 'STEP_CAP_STOP') {
         const capMessage: Message = {
           id: generateMessageId(),

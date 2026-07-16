@@ -183,19 +183,3 @@ export function QuestionnaireMessage({ record, onRespond }: QuestionnaireMessage
     </Box>
   );
 }
-
-/** @deprecated Use QuestionnaireMessage inside chat turns */
-export function QuestionnairePanel({
-  payload,
-  onRespond,
-}: {
-  payload: import('./types').QuestionnairePayload;
-  onRespond: (response: string) => void;
-}) {
-  return (
-    <QuestionnaireMessage
-      record={{ payload, status: 'pending' }}
-      onRespond={onRespond}
-    />
-  );
-}

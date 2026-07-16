@@ -23,7 +23,6 @@ export interface CrewMissionOptions {
   userMessage: string;
   sessionContext?: string;
   maxRetries?: number;
-  planMode?: boolean;
   sessionId?: string;
   mainSystemPrompt?: string;
   crewOrchestrator?: CrewOrchestrator;
@@ -96,7 +95,6 @@ export class CrewMissionOrchestrator {
               toId,
               message,
               opts.mainSystemPrompt ?? '',
-              opts.planMode ?? false,
             )
         : undefined,
     });
@@ -361,7 +359,6 @@ export class CrewMissionOrchestrator {
         task,
         missionContext: context,
         eventBus: this.eventBus,
-        planMode: opts.planMode,
         missionId: context.missionId,
       });
       return await worker.execute();

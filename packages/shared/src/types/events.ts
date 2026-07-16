@@ -103,13 +103,6 @@ export type EngineEvent =
   | { type: 'plan_approved'; planId: string }
   | { type: 'plan_rejected'; planId: string }
   | { type: 'plan_cancelled'; planId: string; reason: string }
-  | { type: 'plan_mode_entered' }
-  | { type: 'plan_mode_exited' }
-  | { type: 'mode_restricted'; tool: string; error: string; message: string }
-  | { type: 'mode_escalation_required'; tool: string; reason: string; pendingAction?: string }
-  | { type: 'mode_escalation_accepted'; tool: string }
-  | { type: 'mode_escalation_declined'; tool: string }
-  | { type: 'plan_mode_violation'; violations: Array<{ tool: string; path?: string; output: string }>; checkpointId?: string; rolledBack: boolean }
   | { type: 'turn_heartbeat'; stage: string; step: number; elapsedMs: number; tool?: string }
   | { type: 'step_cap_reached'; currentSteps: number; maxSteps: number }
   | { type: 'step_cap_continue'; continued: boolean }
@@ -123,8 +116,6 @@ export type EngineEvent =
   | { type: 'operation_list_files'; directory: string; fileCount: number; files: string[] }
   | { type: 'operation_command_executed'; command: string; success: boolean; stdout: string; stderr: string }
   | { type: 'turn_state'; phase: string; stage: string; step: number }
-  | { type: 'hyperdrive_entered'; mode: 'agent' | 'plan'; wasPlan: boolean }
-  | { type: 'hyperdrive_exited'; mode: 'agent' | 'plan'; wasPlan: boolean }
   | { type: 'indexing_start'; totalFiles: number }
   | { type: 'indexing_progress'; indexed: number; total: number; currentFile?: string }
   | { type: 'indexing_complete'; indexed: number; total: number; chunks: number }
@@ -160,10 +151,10 @@ export type EngineEvent =
   | { type: 'decomposition_fallback'; task: string }
   | { type: 'reflection_complete'; result: Record<string, unknown> }
   | { type: 'decision_made'; messageClass: string; executionPath: string; confidence: number; reasoning: string }
+  | { type: 'bypass_permissions_changed'; enabled: boolean; sessionId: string }
   | { type: 'token_usage'; totalTokens: number; contextWindow: number; turnTokens?: number; costUsd?: number; inputTokens?: number; outputTokens?: number; reservedTokens?: number; streamingTokens?: number; estimated?: boolean }
   | { type: 'thinking_delta'; content?: string; text?: string }
   | { type: 'reasoning_delta'; content: string }
-  | { type: 'agent_switched'; agent: { id: string; name: string; mode: string; color?: string } }
   | { type: 'context_warning'; currentTokens: number; threshold: number; percentage: number }
   | { type: 'crew_activity'; crewId: string; crewName?: string; activity: 'speaking' | 'thinking' | 'done'; content?: string }
   | { type: 'crew_feedback'; crewId: string; positive: boolean }

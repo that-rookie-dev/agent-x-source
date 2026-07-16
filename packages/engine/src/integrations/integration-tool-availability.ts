@@ -86,7 +86,7 @@ function buildDegradedActiveToolsetHint(label: string): string {
 }
 
 /**
- * Final pass after plan-mode / compact-context filtering: align turn hints with tools
+ * Final pass after tool permission / compact-context filtering: align turn hints with tools
  * the model can actually call. Works for any MCP server.
  */
 export function reconcileIntegrationHintWithActiveTools(

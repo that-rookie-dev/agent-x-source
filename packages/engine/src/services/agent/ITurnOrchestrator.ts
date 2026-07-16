@@ -10,7 +10,7 @@ import type { SessionLogger } from '../../session/SessionLogger.js';
 import type { TokenTracker } from '../../session/TokenTracker.js';
 import type { GitManager } from '../../session/GitManager.js';
 import type { ToolRegistry } from '../../tools/ToolRegistry.js';
-import type { ToolService } from '../tool/ToolService.js';
+import type { ToolExecutor } from '../../tools/ToolExecutor.js';
 import type { ThirdPartyTurnPolicy } from '../../integrations/third-party-access.js';
 import type { PartPersistFn } from '../../agent/AiSdkStreamHandler.js';
 import type { TurnStateManager } from '../../agent/TurnStateManager.js';
@@ -48,7 +48,6 @@ export interface TurnOrchestratorHost {
   readonly sessionId: string;
   readonly config: AgentXConfig;
   readonly options: TurnHostOptions;
-  readonly planMode: boolean;
   readonly isDelegatedWorker: boolean;
   readonly abortSignal: AbortSignal | undefined;
   readonly maxCompletionSteps: number;
@@ -73,7 +72,7 @@ export interface TurnOrchestratorHost {
 
   // ── Services / components ─────────────────────────────────────────────
   readonly toolRegistry: ToolRegistry | undefined;
-  readonly toolService: ToolService | undefined;
+  readonly toolExecutor: ToolExecutor | undefined;
   readonly gitManager: GitManager | null;
   readonly sessionLogger: SessionLogger | null;
   readonly onPart: PartPersistFn | undefined;
@@ -91,7 +90,6 @@ export interface TurnOrchestratorHost {
   completionStepBudget(): number;
   setThirdPartyTurnPolicy(policy: ThirdPartyTurnPolicy | null): void;
   waitForQuestionnaireResponse(questionnaire: QuestionnairePayload): Promise<string>;
-  waitForModeEscalation(toolId: string, reason: string): Promise<boolean>;
   waitForStepCap(currentSteps: number): Promise<boolean>;
   runDelegatedSubAgent(
     instruction: string,

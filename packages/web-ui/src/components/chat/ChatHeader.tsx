@@ -13,14 +13,13 @@ import DownloadIcon from '@mui/icons-material/Download';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import BoltIcon from '@mui/icons-material/Bolt';
 import { colors, alphaColor } from '../../theme';
-import { hyperdrive } from '../../styles/brands';
 import { ConnectionHealthDot } from '../ChatEnhancements';
 import { sessions } from '../../api';
 import type { SxProps } from '@mui/material/styles';
 import {
   useChatConnectionContext,
   useChatSessionIdentityContext,
-  useChatHyperdriveModeContext,
+  useChatBypassPermissionsContext,
   useChatSessionSettersContext,
   useChatNavigationHandlersContext,
 } from './ChatSessionProvider';
@@ -36,8 +35,8 @@ export const ChatHeader = React.memo(function ChatHeader({ panelHeaderRowSx }: C
   const {
     currentSessionTitle, currentSessionId, coreSession, parentSessionId,
   } = useChatSessionIdentityContext();
-  // Hyperdrive mode.
-  const { hyperdriveMode } = useChatHyperdriveModeContext();
+  // Bypass permissions.
+  const { bypassPermissions } = useChatBypassPermissionsContext();
   // Stable dispatch values.
   const {
     navigate, setSearchOpen, setCheckpointsOpen, setClearSessionModalOpen, setPaletteOpen,
@@ -48,7 +47,7 @@ export const ChatHeader = React.memo(function ChatHeader({ panelHeaderRowSx }: C
   return (
     <Box sx={{
       ...panelHeaderRowSx,
-      borderBottom: `1px solid ${hyperdriveMode ? alphaColor(hyperdrive.magenta, '20') : colors.border.default}`,
+      borderBottom: `1px solid ${bypassPermissions ? alphaColor(colors.accent.orange, '20') : colors.border.default}`,
       position: 'relative',
       zIndex: 1,
       transition: 'border-color 0.6s ease',

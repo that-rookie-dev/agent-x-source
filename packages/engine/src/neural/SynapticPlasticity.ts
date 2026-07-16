@@ -10,18 +10,6 @@
  */
 import type { MemoryFabric } from './MemoryFabric.js';
 
-export interface PlasticityOptions {
-  successIncrement?: number;
-  weightCap?: number;
-}
-
-export interface PlasticityResult {
-  strengthened: number;
-  decayed: number;
-  deletedEdges: number;
-  archivedNodes: number;
-}
-
 export class SynapticPlasticity {
   constructor(private fabric: MemoryFabric) {}
 
@@ -34,13 +22,5 @@ export class SynapticPlasticity {
        WHERE target_node_id = $1 OR source_node_id = $1`,
       [nodeId],
     );
-  }
-
-  /**
-   * No-op — decay and edge deletion have been removed.
-   * Kept for backward compatibility with any callers that still invoke run().
-   */
-  async run(_options: PlasticityOptions = {}): Promise<PlasticityResult> {
-    return { strengthened: 0, decayed: 0, deletedEdges: 0, archivedNodes: 0 };
   }
 }

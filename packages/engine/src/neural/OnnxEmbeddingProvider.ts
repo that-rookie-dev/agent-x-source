@@ -74,10 +74,8 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
   private pending: Promise<LoadedModel> | null = null;
   private ngramFallback: LocalEmbeddingProvider | null = null;
 
-  constructor(modelName?: string, cacheDir?: string) {
-    // modelName is accepted for backward compatibility but ignored —
-    // the provider auto-selects the best model.
-    this.model = modelName ?? BGE_M3_MODEL_ID;
+  constructor(cacheDir?: string) {
+    this.model = BGE_M3_MODEL_ID;
     this.cacheDir = cacheDir || defaultEmbeddingCacheDir;
 
     // Ensure ONNX thread count is propagated to the runtime environment.

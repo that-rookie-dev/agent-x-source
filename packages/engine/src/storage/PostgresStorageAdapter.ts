@@ -6,7 +6,6 @@ import type {
   StorableMessage,
   StorableMessageInput,
   StorableTokenLog,
-  StorablePermission,
   RecordMeta,
 } from '@agentx/shared';
 import type { SessionEvent, Crew, CrewCreateInput, AgentPersonaConfig, SessionListKpis, Session } from '@agentx/shared';
@@ -15,6 +14,8 @@ import { normalizeSessionUpdates } from '../session/session-field-utils.js';
 import { estimateTokensFromMessages } from '../session/session-token-utils.js';
 import { createPgCrewCatalogStore } from '../crew/postgres-crew-catalog.js';
 import type { CrewCatalogStore } from '../crew/CrewSuggestionService.js';
+import { PostgresBackgroundTaskStore } from '../agent/background/BackgroundTaskStore.js';
+import type { BackgroundTaskStore } from '../agent/background/BackgroundTaskStore.js';
 import {
   getEnvInt,
   getEnvBool,
@@ -58,13 +59,6 @@ import {
   getMessagesPage as getMessagesPageImpl,
   type MessageContext,
 } from './pg-messages.js';
-import {
-  addPermission as addPermissionImpl,
-  getPermissions as getPermissionsImpl,
-  getPermissionsAsync as getPermissionsAsyncImpl,
-  removePermissions as removePermissionsImpl,
-  type PermissionContext,
-} from './pg-permissions.js';
 import {
   addTokenLog as addTokenLogImpl,
   getTokenLogs as getTokenLogsImpl,
@@ -116,7 +110,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
   private lazyHydrate: boolean;
   private onProgress?: (line: string) => void;
   private hydratedSessions = new Set<string>();
-  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
+  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
 
   constructor(config: PostgresConfig) {
     const poolConfig = {
@@ -225,9 +219,17 @@ export class PostgresStorageAdapter implements StorageAdapter {
     return createPgCrewCatalogStore(this.pool, (row) => this.crewFromRow(row), () => this.flushWriteQueue());
   }
 
-  private writeQueue: Array<{ sql: string; params: unknown[] }> = [];
+  getBackgroundTaskStore(): BackgroundTaskStore {
+    return new PostgresBackgroundTaskStore({
+      pool: this.pool,
+      write: (sql, params) => this.write(sql, params ?? []),
+    });
+  }
+
+  private writeQueue: Array<{ sql: string; params: unknown[]; retries: number }> = [];
   private drainPromise: Promise<void> | null = null;
   private static readonly MAX_WRITE_QUEUE = 10_000;
+  private static readonly MAX_WRITE_RETRIES = 3;
 
   private scheduleWriteDrain(): void {
     if (this.drainPromise) return;
@@ -237,14 +239,49 @@ export class PostgresStorageAdapter implements StorageAdapter {
     });
   }
 
+  /**
+   * Classify a PG error as transient (retryable) or permanent (drop).
+   * Transient: connection issues, timeouts, server crashes.
+   * Permanent: FK violations, duplicate keys, syntax errors, permission errors.
+   */
+  private isTransientPgError(error: unknown): boolean {
+    if (error && typeof error === 'object' && 'code' in error) {
+      const code = (error as { code?: string }).code ?? '';
+      // Class 08: Connection exception
+      // Class 53: Insufficient resources
+      // Class 57: Operator intervention (server restart)
+      // Class 40: Transaction rollback
+      // 40001: serialization_failure
+      // 40P01: deadlock_detected
+      return code.startsWith('08') || code.startsWith('53') || code.startsWith('57')
+        || code.startsWith('40') || code === '40001' || code === '40P01';
+    }
+    // Network errors, timeouts, EPIPE, etc. — retry
+    return true;
+  }
+
   private async drainWriteQueue(): Promise<void> {
     await this.connect();
     while (this.writeQueue.length > 0) {
-      const { sql, params } = this.writeQueue.shift()!;
+      const item = this.writeQueue.shift()!;
       try {
-        await this.pool.query(sql, params);
+        await this.pool.query(item.sql, item.params);
       } catch (error) {
-        logger.error('PG_WRITE_ERROR', error, { sql: sql.slice(0, 100) });
+        const isTransient = this.isTransientPgError(error);
+        const shouldRetry = isTransient && item.retries < PostgresStorageAdapter.MAX_WRITE_RETRIES;
+        if (shouldRetry) {
+          // Re-enqueue at the front to preserve ordering
+          this.writeQueue.unshift({ sql: item.sql, params: item.params, retries: item.retries + 1 });
+          logger.warn('PG_WRITE_RETRY', `Retrying write (attempt ${item.retries + 1}/${PostgresStorageAdapter.MAX_WRITE_RETRIES})`, {
+            sql: item.sql.slice(0, 100),
+            error: error instanceof Error ? error.message : String(error),
+          });
+          // Brief backoff before next drain cycle
+          await new Promise((r) => setTimeout(r, 100 * (item.retries + 1)));
+          // Re-schedule drain to process the re-enqueued item
+          return;
+        }
+        logger.error('PG_WRITE_ERROR', error, { sql: item.sql.slice(0, 100), retries: item.retries, dropped: true });
       }
     }
   }
@@ -254,7 +291,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       logger.warn('PG_WRITE_QUEUE_FULL', 'Dropping write — queue at capacity', { sql: sql.slice(0, 80) });
       return;
     }
-    this.writeQueue.push({ sql, params });
+    this.writeQueue.push({ sql, params, retries: 0 });
     this.scheduleWriteDrain();
   }
 
@@ -308,15 +345,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   /** Build the MessageContext snapshot used by the extracted message helpers. */
   private messageCtx(): MessageContext {
-    return {
-      pool: this.pool,
-      cache: this.cache,
-      write: (sql, params) => this.write(sql, params),
-    };
-  }
-
-  /** Build the PermissionContext snapshot used by the extracted permission helpers. */
-  private permissionCtx(): PermissionContext {
     return {
       pool: this.pool,
       cache: this.cache,
@@ -386,7 +414,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
     const now = new Date().toISOString();
     const session: StorableSession = {
       id, ...input,
-      mode: (inputAny['mode'] as string) ?? 'plan',
       parentId: (inputAny['parentId'] as string) ?? null,
       contextKind: (inputAny['contextKind'] as StorableSession['contextKind']) ?? 'agent_x',
       hostCrewId: (inputAny['hostCrewId'] as string | null) ?? null,
@@ -396,15 +423,31 @@ export class PostgresStorageAdapter implements StorageAdapter {
       hostCrewColor: (inputAny['hostCrewColor'] as string | null) ?? null,
       hostCrewCatalogId: (inputAny['hostCrewCatalogId'] as string | null) ?? null,
       hostCrewCategoryId: (inputAny['hostCrewCategoryId'] as string | null) ?? null,
-      hyperdrive: !!(inputAny['hyperdrive']),
       createdAt: now, updatedAt: now,
     };
     this.cache.sessions.set(id, session);
     this.write(
-      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,mode,parent_id,token_used,token_available,context_kind,host_crew_id,host_crew_name,host_crew_callsign,host_crew_title,host_crew_color,host_crew_catalog_id,host_crew_category_id,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,parent_id,token_used,token_available,context_kind,host_crew_id,host_crew_name,host_crew_callsign,host_crew_title,host_crew_color,host_crew_catalog_id,host_crew_category_id,created_at,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       ON CONFLICT (id) DO UPDATE SET
+         title = EXCLUDED.title,
+         status = EXCLUDED.status,
+         provider_id = EXCLUDED.provider_id,
+         model_id = EXCLUDED.model_id,
+         scope_path = EXCLUDED.scope_path,
+         parent_id = EXCLUDED.parent_id,
+         token_available = EXCLUDED.token_available,
+         context_kind = EXCLUDED.context_kind,
+         host_crew_id = EXCLUDED.host_crew_id,
+         host_crew_name = EXCLUDED.host_crew_name,
+         host_crew_callsign = EXCLUDED.host_crew_callsign,
+         host_crew_title = EXCLUDED.host_crew_title,
+         host_crew_color = EXCLUDED.host_crew_color,
+         host_crew_catalog_id = EXCLUDED.host_crew_catalog_id,
+         host_crew_category_id = EXCLUDED.host_crew_category_id,
+         updated_at = NOW()`,
       [id, input.title, input.status, input.providerId, input.modelId, input.scopePath,
-       session.mode, session.parentId, input.tokenUsed, input.tokenAvailable,
+       session.parentId, input.tokenUsed, input.tokenAvailable,
        session.contextKind ?? 'agent_x', session.hostCrewId ?? null,
        session.hostCrewName ?? null, session.hostCrewCallsign ?? null, session.hostCrewTitle ?? null,
        session.hostCrewColor ?? null, session.hostCrewCatalogId ?? null, session.hostCrewCategoryId ?? null,
@@ -430,7 +473,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       modelId: 'model_id', scopePath: 'scope_path',
       tokenUsed: 'token_used', tokenAvailable: 'token_available',
       compactionCount: 'compaction_count',
-      mode: 'mode', parentId: 'parent_id',
+      parentId: 'parent_id',
       contextKind: 'context_kind', hostCrewId: 'host_crew_id',
       hostCrewName: 'host_crew_name', hostCrewCallsign: 'host_crew_callsign',
       hostCrewTitle: 'host_crew_title', hostCrewColor: 'host_crew_color',
@@ -441,10 +484,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
         fields.push(`${col} = $${idx++}`);
         values.push(normalized[key]);
       }
-    }
-    if ('hyperdrive' in normalized) {
-      fields.push(`hyperdrive = $${idx++}`);
-      values.push(normalized['hyperdrive'] ? 1 : 0);
     }
     if (fields.length === 0) return;
     fields.push('updated_at = NOW()');
@@ -753,27 +792,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
     return getTokenLogsAsyncImpl(this.tokenLogCtx(), sessionId);
   }
 
-  // ─── Permissions ───────────────────────────────────────────────
-
-  addPermission(
-    sessionIdOrPerm: string | StorablePermission,
-    perm?: Omit<StorablePermission, 'id' | 'createdAt' | 'sessionId'>,
-  ): void {
-    addPermissionImpl(this.permissionCtx(), sessionIdOrPerm, perm);
-  }
-
-  getPermissions(sessionId: string): StorablePermission[] {
-    return getPermissionsImpl(this.permissionCtx(), sessionId);
-  }
-
-  async getPermissionsAsync(sessionId: string): Promise<StorablePermission[]> {
-    return getPermissionsAsyncImpl(this.permissionCtx(), sessionId);
-  }
-
-  removePermissions(sessionId: string, toolName?: string): void {
-    removePermissionsImpl(this.permissionCtx(), sessionId, toolName);
-  }
-
   // ─── Tool Executions ───────────────────────────────────────────
 
   addToolExecution(exec: {
@@ -971,7 +989,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.crewStates.clear();
     this.cache.sessionEvents.clear();
     this.cache.tokenLogs.clear();
-    this.cache.permissions.clear();
     this.cache.crewFeedback.clear();
     this.cache.turnFeedback.clear();
     this.cache.permissionRules.clear();

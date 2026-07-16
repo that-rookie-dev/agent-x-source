@@ -8,7 +8,8 @@ import { Router } from 'express';
 import { join } from 'node:path';
 import { readdir, stat, rm } from 'node:fs/promises';
 import { getLogger, getDataDir, getConfigDir, getCacheDir } from '@agentx/shared';
-import { getEngine, clearEngine, setStorageProgressCallback } from '../../engine.js';
+import type { AgentXConfig, PermissionRule } from '@agentx/shared';
+import { getEngine, clearEngine, setStorageProgressCallback, applyRuntimeSettings } from '../../engine.js';
 import {
   validateWebSearchProvider,
   isWebSearchAvailableForChat,
@@ -178,6 +179,57 @@ export function createSettingsRouter(): Router {
     } catch (e: unknown) {
       getLogger().error('GET_API_SETTINGS_DB', e instanceof Error ? e : String(e));
       res.status(500).json({ error: e instanceof Error ? e.message : 'settings-db-failed' });
+    }
+  });
+
+  function permissionsToRules(permissions: Record<string, 'allow' | 'deny' | 'ask'>): PermissionRule[] {
+    return Object.entries(permissions).map(([key, effect]) => {
+      const colonIdx = key.indexOf(':');
+      if (colonIdx >= 0) {
+        return { action: key.slice(0, colonIdx), pattern: key.slice(colonIdx + 1), effect };
+      }
+      return { action: `tool:${key}`, pattern: '*', effect };
+    });
+  }
+
+  r.get('/api/settings/permissions', (_req, res) => {
+    try {
+      const eng = getEngine();
+      const cfg = eng.configManager.load();
+      res.json({ permissions: cfg.permissions ?? {} });
+    } catch (e: unknown) {
+      getLogger().error('GET_API_SETTINGS_PERMISSIONS', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'permissions-load-failed' });
+    }
+  });
+
+  r.post('/api/settings/permissions', (req, res) => {
+    try {
+      const { permissions } = req.body as { permissions?: Record<string, unknown> };
+      if (!permissions || typeof permissions !== 'object') {
+        res.status(400).json({ error: 'permissions object is required' }); return;
+      }
+      const validatedPermissions: Record<string, 'allow' | 'deny' | 'ask'> = {};
+      for (const [key, value] of Object.entries(permissions)) {
+        if (typeof value !== 'string' || !['allow', 'deny', 'ask'].includes(value)) {
+          res.status(400).json({ error: `invalid effect for ${key}: must be 'allow', 'deny', or 'ask'` }); return;
+        }
+        validatedPermissions[key] = value as 'allow' | 'deny' | 'ask';
+      }
+      const eng = getEngine();
+      const current = eng.configManager.load();
+      const merged: AgentXConfig = { ...current, permissions: validatedPermissions };
+      eng.configManager.save(merged);
+      eng.configManager.reload();
+      applyRuntimeSettings(merged);
+      const executor = eng.toolkit?.executor;
+      if (executor && typeof (executor as { setUserConfigRules?: (rules: PermissionRule[]) => void }).setUserConfigRules === 'function') {
+        (executor as { setUserConfigRules: (rules: PermissionRule[]) => void }).setUserConfigRules(permissionsToRules(validatedPermissions));
+      }
+      res.json({ ok: true });
+    } catch (e: unknown) {
+      getLogger().error('POST_API_SETTINGS_PERMISSIONS', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'permissions-save-failed' });
     }
   });
 

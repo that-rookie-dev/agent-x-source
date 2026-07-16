@@ -17,7 +17,6 @@ export interface CrewWorkerOptions {
   missionContext: CrewMissionContext;
   eventBus: AgentEventBus;
   timeout?: number;
-  planMode?: boolean;
   missionId?: string;
 }
 
@@ -44,7 +43,6 @@ export class CrewWorker {
   async execute(): Promise<CrewWorkerResult> {
     const { parentAgent, crew, task, missionContext, eventBus } = this.opts;
     const start = Date.now();
-    const planMode = this.opts.planMode ?? parentAgent.planModeEnabled ?? false;
 
     registerWorker(this.workerId, this.opts.missionId ?? missionContext.missionId);
 
@@ -66,8 +64,8 @@ export class CrewWorker {
     });
 
     const sharedContext = missionContext.getSharedContextBlock();
-    const systemPrompt = buildCrewWorkerSystemPrompt(crew, sharedContext, planMode);
-    const toolIds = resolveCrewToolIds(crew, planMode);
+    const systemPrompt = buildCrewWorkerSystemPrompt(crew, sharedContext);
+    const toolIds = resolveCrewToolIds(crew);
 
     let configOverride: Partial<AgentXConfig> | undefined;
     if (crew.model) {
@@ -93,7 +91,6 @@ export class CrewWorker {
       systemPromptOverride: systemPrompt,
       displayName: crew.name,
       childSessionKind: 'crew_worker',
-      planMode,
       crewPermissions: crew.permissions ?? [],
       missionContext,
     });

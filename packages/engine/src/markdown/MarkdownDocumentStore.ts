@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import {
   generateId,
   getMarkdownDocumentsDir,
-  getLegacyMarkdownDocumentsDir,
   deriveMarkdownTitle,
   extractMarkdownFromLegacyTsx,
   normalizeMarkdownDocumentInput,
@@ -49,27 +48,22 @@ function rowToRecord(row: Record<string, unknown>): MarkdownDocumentRecord {
   };
 }
 
-function documentDirs(id: string): string[] {
-  return [
-    join(getMarkdownDocumentsDir(), id),
-    join(getLegacyMarkdownDocumentsDir(), id),
-  ];
+function documentDir(id: string): string {
+  return join(getMarkdownDocumentsDir(), id);
 }
 
 function readMarkdownFromRecord(record: MarkdownDocumentRecord): string | null {
-  for (const absDir of documentDirs(record.id)) {
-    const mdPath = join(absDir, MD_FILE);
-    if (existsSync(mdPath)) {
-      return readFileSync(mdPath, 'utf8');
-    }
+  const absDir = documentDir(record.id);
+  const mdPath = join(absDir, MD_FILE);
+  if (existsSync(mdPath)) {
+    return readFileSync(mdPath, 'utf8');
+  }
 
-    const tsxPath = join(absDir, TSX_FILE);
-    if (!existsSync(tsxPath)) continue;
-
+  const tsxPath = join(absDir, TSX_FILE);
+  if (existsSync(tsxPath)) {
     const tsx = readFileSync(tsxPath, 'utf8');
     const extracted = extractMarkdownFromLegacyTsx(tsx);
     if (extracted) return extracted;
-
     return [
       `# ${record.title}`,
       '',
@@ -85,12 +79,6 @@ function readMarkdownFromRecord(record: MarkdownDocumentRecord): string | null {
 
 export class MarkdownDocumentStore {
   constructor(private pool: MarkdownDocumentDbPool) {}
-
-  static async ensureSchema(pool: MarkdownDocumentDbPool): Promise<void> {
-    // Schema is now managed by versioned migrations (V005__markdown_canvases.sql).
-    // This method is kept for backward compatibility — it's a no-op.
-    void pool;
-  }
 
   async create(input: CreateMarkdownDocumentInput): Promise<MarkdownDocumentRecord> {
     const id = generateId('mdoc');
@@ -188,10 +176,9 @@ export class MarkdownDocumentStore {
   async delete(id: string): Promise<boolean> {
     const record = await this.get(id);
     if (!record) return false;
-    for (const absDir of documentDirs(record.id)) {
-      if (existsSync(absDir)) {
-        try { rmSync(absDir, { recursive: true, force: true }); } catch { /* ignore */ }
-      }
+    const absDir = documentDir(record.id);
+    if (existsSync(absDir)) {
+      try { rmSync(absDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
     await this.pool.query(`DELETE FROM canvases WHERE id = $1`, [id]);
     return true;

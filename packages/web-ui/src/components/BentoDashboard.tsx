@@ -20,8 +20,12 @@ import StorageIcon from '@mui/icons-material/Storage';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import ContrastIcon from '@mui/icons-material/Contrast';
+import SensorsIcon from '@mui/icons-material/Sensors';
+import CloudIcon from '@mui/icons-material/Cloud';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { useApp } from '../store/AppContext';
 import { usePageVisible } from '../hooks/usePageVisible';
+import { useLocationPermission } from '../hooks/useLocationPermission';
 import { PanelHeader } from './PanelHeader';
 import { colors, alphaColor, MONO } from '../theme';
 import {
@@ -30,8 +34,10 @@ import {
   automation,
   agent,
   webuiActive,
+  subagents,
+  runtime,
 } from '../api';
-import type { SessionInfo, BridgeStatus, AutomationTaskRecord, AgentVitals } from '../api';
+import type { SessionInfo, BridgeStatus, AutomationTaskRecord, AgentVitals, SubAgentTaskInfo, SystemMetrics, Weather } from '../api';
 
 interface ChannelDef {
   id: string;
@@ -143,6 +149,51 @@ function taskColor(status: AutomationTaskRecord['status']): string {
   }
 }
 
+function subagentColor(status: SubAgentTaskInfo['status']): string {
+  switch (status) {
+    case 'running': return colors.accent.green;
+    case 'queued': return colors.accent.orange;
+    case 'pending': return colors.accent.blue;
+    case 'completed': return colors.text.dim;
+    case 'failed': return colors.accent.red;
+    case 'cancelled': return colors.accent.red;
+    default: return colors.text.dim;
+  }
+}
+
+function formatBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function weatherDescription(code: number): string {
+  // WMO Weather interpretation codes (Open-Meteo)
+  if (code === 0) return 'Clear sky';
+  if ([1, 2, 3].includes(code)) return 'Partly cloudy';
+  if ([45, 48].includes(code)) return 'Foggy';
+  if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return 'Rain';
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return 'Snow';
+  if ([95, 96, 99].includes(code)) return 'Thunderstorm';
+  return 'Unknown';
+}
+
+function formatClientDateTime(timezone: string): { time: string; date: string } {
+  const now = new Date();
+  try {
+    const time = now.toLocaleTimeString('en-US', { timeZone: timezone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const date = now.toLocaleDateString('en-US', { timeZone: timezone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    return { time, date };
+  } catch {
+    return { time: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }), date: now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) };
+  }
+}
+
 export function BentoDashboard() {
   const navigate = useNavigate();
   const { healthData, serverOnline, refreshHealth, username } = useApp();
@@ -154,6 +205,13 @@ export function BentoDashboard() {
   const [channels, setChannels] = useState<ChannelDef[]>(CHANNELS);
   const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
   const [vitals, setVitals] = useState<AgentVitals | null>(null);
+
+  const [subagentTasks, setSubagentTasks] = useState<SubAgentTaskInfo[]>([]);
+  const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
+  const [weather, setWeather] = useState<Weather | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+
+  const location = useLocationPermission(true);
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -207,6 +265,53 @@ export function BentoDashboard() {
     }
   }, []);
 
+  const loadSubagents = useCallback(async () => {
+    try {
+      const list = await subagents.list();
+      if (!mounted.current) return;
+      setSubagentTasks(list);
+    } catch {
+      if (!mounted.current) return;
+      setSubagentTasks([]);
+    }
+  }, []);
+
+  const loadMetrics = useCallback(async () => {
+    try {
+      const m = await runtime.metrics();
+      if (!mounted.current) return;
+      setMetrics(m);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Fetch weather once location is resolved, and refresh on focus/visibility.
+  useEffect(() => {
+    if (!visible) return;
+    const coords = location.clientSituation;
+    if (!coords || coords.latitude == null || coords.longitude == null) {
+      setWeather(null);
+      setWeatherLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const fetchWeather = async () => {
+      try {
+        setWeatherLoading(true);
+        const w = await runtime.weather(coords.latitude!, coords.longitude!);
+        if (!cancelled) setWeather(w);
+      } catch {
+        if (!cancelled) setWeather(null);
+      } finally {
+        if (!cancelled) setWeatherLoading(false);
+      }
+    };
+    fetchWeather();
+    const id = setInterval(fetchWeather, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [visible, location.clientSituation]);
+
   useEffect(() => {
     if (!visible) return;
     const register = async () => { try { await webuiActive.register(); } catch { /* ignore */ } };
@@ -232,11 +337,13 @@ export function BentoDashboard() {
       void loadChannels();
       void loadTasks();
       void loadVitals();
+      void loadSubagents();
+      void loadMetrics();
     };
     loadAll();
     const id = setInterval(loadAll, 10000);
     return () => clearInterval(id);
-  }, [visible, serverOnline, loadSessions, loadChannels, loadTasks, loadVitals]);
+  }, [visible, serverOnline, loadSessions, loadChannels, loadTasks, loadVitals, loadSubagents, loadMetrics]);
 
   const openSession = useCallback((id: string) => {
     navigate(`/console/chat/${id}`);
@@ -412,7 +519,7 @@ export function BentoDashboard() {
           </BentoCard>
 
           <BentoCard
-            title="Background tasks"
+            title="Automation tasks"
             icon={<ScheduleIcon sx={{ fontSize: 18, color: colors.accent.orange }} />}
           >
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -422,7 +529,7 @@ export function BentoDashboard() {
             </Box>
             {topTasks.length === 0 ? (
               <Typography sx={{ fontSize: '0.65rem', color: colors.text.tertiary, mt: 1 }}>
-                No background tasks running.
+                No automation tasks running.
               </Typography>
             ) : (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 1 }}>
@@ -440,6 +547,88 @@ export function BentoDashboard() {
                   </Typography>
                 )}
               </Box>
+            )}
+          </BentoCard>
+
+          <BentoCard
+            title="Sub-agents"
+            icon={<SmartToyIcon sx={{ fontSize: 18, color: colors.accent.blue }} />}
+          >
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              <StatusBadge color={subagentTasks.filter((t) => t.status === 'running').length > 0 ? colors.accent.green : colors.text.dim} label={`${subagentTasks.filter((t) => t.status === 'running').length} running`} />
+              <StatusBadge color={colors.accent.orange} label={`${subagentTasks.filter((t) => t.status === 'queued' || t.status === 'pending').length} queued`} />
+              <StatusBadge color={colors.text.dim} label={`${subagentTasks.length} total`} />
+            </Box>
+            {subagentTasks.length === 0 ? (
+              <Typography sx={{ fontSize: '0.65rem', color: colors.text.tertiary, mt: 1 }}>
+                No active sub-agents.
+              </Typography>
+            ) : (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 1 }}>
+                {subagentTasks.slice(0, 3).map((t) => (
+                  <Box
+                    key={t.id}
+                    onClick={() => t.parentSessionId && openSession(t.parentSessionId)}
+                    sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: t.parentSessionId ? 'pointer' : 'default' }}
+                  >
+                    <Typography sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '60%' }}>
+                      {t.instruction?.slice(0, 40) || t.id.slice(0, 8)}
+                    </Typography>
+                    <StatusBadge color={subagentColor(t.status)} label={t.status} />
+                  </Box>
+                ))}
+                {subagentTasks.length > 3 && (
+                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: MONO, mt: 0.25 }}>
+                    +{subagentTasks.length - 3} more
+                  </Typography>
+                )}
+              </Box>
+            )}
+          </BentoCard>
+
+          <BentoCard title="System metrics" icon={<SensorsIcon sx={{ fontSize: 18, color: colors.accent.green }} />}>
+            <StatRow label="CPU (process)" value={metrics ? `${metrics.cpu.process}%` : '—'} color={metrics && metrics.cpu.process > 80 ? colors.accent.red : colors.text.secondary} />
+            <StatRow label="CPU (system)" value={metrics ? `${metrics.cpu.system}%` : '—'} />
+            <StatRow label="Memory used" value={metrics ? `${formatBytes(metrics.memory.used)} / ${formatBytes(metrics.memory.total)}` : '—'} />
+            <StatRow label="Memory %" value={metrics ? `${metrics.memory.percent}%` : '—'} color={metrics && metrics.memory.percent > 85 ? colors.accent.red : colors.text.secondary} />
+            <StatRow label="Heap used" value={metrics ? formatBytes(metrics.memory.heapUsed) : '—'} />
+            <StatRow label="Uptime" value={metrics ? formatUptime(metrics.uptime) : '—'} />
+          </BentoCard>
+
+          <BentoCard title="Time & location" icon={<AccessTimeIcon sx={{ fontSize: 18, color: colors.accent.cyan }} />}>
+            {(() => {
+              const { time, date } = formatClientDateTime(location.timezone);
+              return (
+                <>
+                  <StatRow label="Time" value={time} />
+                  <StatRow label="Date" value={date} />
+                  <StatRow label="Timezone" value={location.timezone} />
+                  <StatRow
+                    label="Location"
+                    value={location.label || '—'}
+                    loading={location.state === 'checking'}
+                  />
+                </>
+              );
+            })()}
+          </BentoCard>
+
+          <BentoCard title="Weather" icon={<CloudIcon sx={{ fontSize: 18, color: colors.accent.purple }} />}>
+            {weatherLoading ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+                <CircularProgress size={14} sx={{ color: colors.text.dim }} />
+              </Box>
+            ) : weather ? (
+              <>
+                <StatRow label="Conditions" value={weatherDescription(weather.current.weatherCode)} />
+                <StatRow label="Temperature" value={`${weather.current.temperature}°C`} color={colors.accent.orange} />
+                <StatRow label="Wind" value={`${weather.current.windSpeed} km/h`} />
+                <StatRow label="Updated" value={new Date(weather.current.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
+              </>
+            ) : (
+              <Typography sx={{ fontSize: '0.65rem', color: colors.text.tertiary, mt: 1 }}>
+                Weather unavailable. Enable location access or wait for location detection.
+              </Typography>
             )}
           </BentoCard>
 

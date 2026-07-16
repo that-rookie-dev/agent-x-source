@@ -20,7 +20,7 @@ export function createChannelPolicySection(): PromptSection<null> {
     load: () => null,
     render: () => [
       '[CHANNEL_POLICY]',
-      'Plan Mode and Hyperdrive are NOT available — always operate in normal Agent execution mode.',
+      'You are in normal Agent execution mode. Tools are gated by the session permission rules and may require inline user approval.',
       'Every tool use requires explicit user approval via inline buttons: Allow Once, Always Allow, or Deny.',
       'Remembered permissions persist for this channel session until revoked.',
       'When the user asks to see permissions, call channel_permissions with action "list".',

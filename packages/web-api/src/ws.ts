@@ -623,6 +623,32 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
             state: agent.lifecycle.getState(),
           }));
         }
+        // Emit any unconsumed completed background task results so the UI
+        // sees them immediately on reconnect (the tasks may have completed
+        // while the WS client was disconnected).
+        try {
+          const { getSubAgentServiceInstance } = await import('@agentx/engine');
+          const subAgentService = getSubAgentServiceInstance();
+          const unconsumed = subAgentService.getUnconsumedResults(sessionId);
+          for (const task of unconsumed) {
+            const tokensUsed = (task.resourceUsage?.tokenUsage?.input ?? 0) + (task.resourceUsage?.tokenUsage?.output ?? 0);
+            const elapsedMs = (task.endTime ?? Date.now()) - (task.startTime ?? Date.now());
+            ws.send(JSON.stringify({
+              type: 'engine_event',
+              event: 'background_task_complete',
+              data: {
+                type: 'background_task_complete',
+                taskId: task.id,
+                childSessionId: task.childSessionId ?? task.id,
+                tokensUsed,
+                elapsedMs,
+                summary: (task.result ?? '').slice(0, 200),
+                instruction: task.instruction?.slice(0, 300),
+                success: true,
+              },
+            }));
+          }
+        } catch { /* best-effort */ }
       } catch {
         // best-effort
       }
@@ -681,11 +707,17 @@ export function unsubscribeAgent(): void {
   subscribedAgent = null;
 }
 
-export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) => () => void } }): void {
+export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) => () => void }; sessionId?: string }): void {
   // Unsubscribe from previous agent to prevent memory leak
   unsubscribeAgent();
   if (subscribedAgent === agent) return;
   subscribedAgent = agent;
+
+  // Capture the agent's session ID at subscription time — use this for ALL
+  // persistence calls instead of getActiveSession(). This prevents message/part
+  // writes from going to the wrong session after the user navigates to a
+  // different session (which changes the active session pointer).
+  const subscribedSessionId = agent.sessionId ?? '';
 
   // Accumulate rich metadata during a turn so it can be persisted with the message_received record
   let accumulatedThinking = '';
@@ -763,13 +795,9 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
     });
 
     // Accumulate thinking deltas
-    // Fetch session ID early for part-level persistence
-    let currentSessionId = '';
-    try {
-      const eng0 = getEngine();
-      const sess0 = eng0.sessionManager.getActiveSession();
-      currentSessionId = sess0?.id || '';
-    } catch { /* ignore */ }
+    // Use the session ID captured at subscription time — NOT getActiveSession().
+    // This prevents persistence to the wrong session after navigation.
+    const currentSessionId = subscribedSessionId;
 
     if (event.type === 'thinking_delta' || event.type === 'reasoning_delta') {
       if (thinkingStartedAt == null) thinkingStartedAt = Date.now();
@@ -911,15 +939,19 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
     // Persist conversation to session context files
     try {
       const eng = getEngine();
-      const sess = eng.sessionManager.getActiveSession();
+      // Use the subscribed session ID (captured at subscription time) instead of
+      // getActiveSession() — the active session may have changed if the user
+      // navigated to a different session while this agent's turn was still running.
       const msgObj = event.type === 'message_sent' || event.type === 'message_received' ? event.message : undefined;
-      const sessionId = sess?.id || msgObj?.sessionId || '';
+      const sessionId = subscribedSessionId || msgObj?.sessionId || '';
+      const sess = eng.sessionManager.getActiveSession();
+      const isActiveSession = sess?.id === sessionId;
 
       if (event.type === 'message_sent') {
         // Reset first — new user turn must not inherit prior turn parts
         resetAccumulators();
         const rawMsg = event.message?.content;
-        if (sess && typeof rawMsg === 'string' && sess.title === 'New Session') {
+        if (isActiveSession && sess && typeof rawMsg === 'string' && sess.title === 'New Session') {
           const firstLine = String(rawMsg).split('\n')[0] || '';
           const title = firstLine.slice(0, 80).trim();
           if (title.length > 0) eng.sessionManager.updateSession({ title });

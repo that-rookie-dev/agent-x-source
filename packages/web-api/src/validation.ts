@@ -49,7 +49,7 @@ export const chatMessageSchema = z.object({
   })).max(MAX_ATTACHMENTS).optional(),
   retry: z.boolean().optional(),
   delegateCrewIds: z.array(z.string()).optional(),
-  /** Set after user skips/deploys from CrewSuggestionModal — prevents server re-prompt. */
+  /** Set after user resolves a crew suggestion — prevents server re-prompt. */
   crewSuggestionResolved: z.boolean().optional(),
   /** After in-chat crew roster picker — lead crew asks intake question first. */
   crewIntakeFromPicker: z.boolean().optional(),
@@ -186,7 +186,6 @@ export const permissionRespondBatchSchema = z.object({
 export const createSessionSchema = z.object({
   scopePath: z.string().optional(),
   parentId: z.string().optional(),
-  mode: z.enum(['agent', 'plan']).optional(),
 });
 
 export const createCheckpointSchema = z.object({
@@ -206,7 +205,6 @@ export const turnFeedbackSchema = z.object({
 
 export const updateSessionSchema = z.object({
   title: z.string().optional(),
-  mode: z.enum(['agent', 'plan']).optional(),
 });
 
 export const providerValidateSchema = z.object({

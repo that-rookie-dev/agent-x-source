@@ -78,7 +78,6 @@ export interface ToolExecutionContext {
   /** Drives memory fabric read/write scoping for tools. */
   contextKind?: SessionContextKind;
   timeout: number;
-  mode?: 'agent' | 'plan';
   /** Voice comms turn — tighter tool time budgets. */
   voiceTurn?: boolean;
   /** Originating messaging channel for this turn (telegram, slack, etc.). */

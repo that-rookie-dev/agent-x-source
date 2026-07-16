@@ -9,7 +9,7 @@ import type {
   TelemetryEvent,
 } from '@agentx/shared';
 import { generateAxId, generateId, getLogger } from '@agentx/shared';
-import { effectiveAutomationNotifyChannels, getNotificationChannelStatus, inferAutomationSourceChannel, normalizeAutomationTaskOrigin } from '@agentx/engine';
+import { effectiveAutomationNotifyChannels, getNotificationChannelStatus, inferAutomationSourceChannel, normalizeAutomationTaskOrigin, SessionPermissionStore } from '@agentx/engine';
 import { broadcast } from '../ws.js';
 import { getEngine } from '../engine.js';
 import { getTelegramRuntimeHints } from '../channels-sync.js';
@@ -366,15 +366,14 @@ export class AutomationService {
     let permissionSnapshot = input.permissionSnapshot;
     if (!permissionSnapshot) {
       try {
-        const { rows } = await this.pool.query<{ tool_name: string; decision: string; target_path: string | null }>(
-          `SELECT tool_name, decision, target_path FROM permissions WHERE session_id = $1 AND decision = 'allow_always'`,
-          [input.sourceSessionId],
-        );
-        permissionSnapshot = rows.map((r) => ({
-          toolName: r.tool_name,
-          decision: r.decision,
-          targetPath: r.target_path,
-        }));
+        const store = new SessionPermissionStore(input.sourceSessionId);
+        permissionSnapshot = store.getDecisions()
+          .filter((d) => d.decision === 'allow_always')
+          .map((d) => ({
+            toolName: d.toolName,
+            decision: d.decision,
+            targetPath: d.targetPath,
+          }));
       } catch { /* best-effort */ }
     }
 

@@ -17,11 +17,23 @@ import { markdownToBlocks } from './markdown-parser.js';
 const MAX_LENGTH = 4096;
 
 /** Characters that must be escaped in Telegram MarkdownV2. */
-const ESCAPE_CHARS = /([_*\[\]()~`>#+\-=|{}.!\\])/g;
+const ESCAPE_CHARS = new Set(['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!', '\\']);
+
+const MARKERS = {
+  code: String.fromCharCode(0),
+  bold: String.fromCharCode(1),
+  italic: String.fromCharCode(2),
+  underline: String.fromCharCode(3),
+  strikethrough: String.fromCharCode(4),
+};
 
 /** Escape text for Telegram MarkdownV2. */
 function escapeMd(text: string): string {
-  return text.replace(ESCAPE_CHARS, '\\$1');
+  let out = '';
+  for (const ch of text) {
+    out += ESCAPE_CHARS.has(ch) ? '\\' + ch : ch;
+  }
+  return out;
 }
 
 /** Escape text but preserve intentional markdown formatting. */
@@ -30,32 +42,33 @@ function escapeMdPreserveFormat(text: string): string {
   const codeSpans: string[] = [];
   let processed = text.replace(/`([^`]+)`/g, (_m, code: string) => {
     codeSpans.push(code);
-    return `\x00${codeSpans.length - 1}\x00`;
+    return `${MARKERS.code}${codeSpans.length - 1}${MARKERS.code}`;
   });
 
   // Protect bold/italic markers
   processed = processed
-    .replace(/\*\*([^*]+)\*\*/g, '\x01$1\x01') // bold
-    .replace(/\*([^*]+)\*/g, '\x02$1\x02')     // italic
-    .replace(/_([^_]+)_/g, '\x03$1\x03')       // underline
-    .replace(/~~([^~]+)~~/g, '\x04$1\x04');    // strikethrough
+    .replace(/\*\*([^*]+)\*\*/g, `${MARKERS.bold}$1${MARKERS.bold}`)
+    .replace(/\*([^*]+)\*/g, `${MARKERS.italic}$1${MARKERS.italic}`)
+    .replace(/_([^_]+)_/g, `${MARKERS.underline}$1${MARKERS.underline}`)
+    .replace(/~~([^~]+)~~/g, `${MARKERS.strikethrough}$1${MARKERS.strikethrough}`);
 
   // Escape everything else
-  processed = processed.replace(ESCAPE_CHARS, '\\$1');
+  processed = escapeMd(processed);
 
   // Restore formatting markers
   processed = processed
-    .replace(/\x01/g, '*')
-    .replace(/\x02/g, '*')
-    .replace(/\x03/g, '_')
-    .replace(/\x04/g, '~');
+    .replaceAll(MARKERS.bold, '*')
+    .replaceAll(MARKERS.italic, '*')
+    .replaceAll(MARKERS.underline, '_')
+    .replaceAll(MARKERS.strikethrough, '~');
 
   // Restore code spans (code content doesn't need escaping inside `)
-  processed = processed.replace(/\x00(\d+)\x00/g, (_m, idx: string) => {
-    return '`' + codeSpans[Number(idx)]! + '`';
-  });
-
-  return processed;
+  const parts = processed.split(MARKERS.code);
+  for (let i = 1; i < parts.length; i += 2) {
+    const idx = Number(parts[i]);
+    parts[i] = '`' + codeSpans[idx]! + '`';
+  }
+  return parts.join('');
 }
 
 /** Render a single block to MarkdownV2 text. */

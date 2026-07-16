@@ -121,8 +121,6 @@ export interface HealthContext {
   config: { provider: { activeModel: string; activeProvider: string } };
   getContextWindow(): number;
   _compactionCount: number;
-  planMode: boolean;
-  _hyperdriveMode: boolean;
 }
 
 /**
@@ -158,8 +156,6 @@ export function getHealth(ctx: HealthContext): Record<string, unknown> {
     contextTokens: ctx.tokenTracker.tokensUsed,
     contextWindow: ctx.getContextWindow(),
     compactionCount: ctx._compactionCount,
-    planMode: ctx.planMode,
-    hyperdriveMode: ctx._hyperdriveMode,
     neuralConfidenceAvg: Math.round(neuralAvg * 100),
   };
 }

@@ -51,12 +51,6 @@ function toTsQuery(query: string): string {
   return buildPostgresHubTsQuery(query);
 }
 
-// Schema migration is now handled by versioned SQL migrations (V003__crew_catalog_and_fts.sql).
-// runPgCrewCatalogMigration is kept as a no-op for backward compatibility.
-export async function runPgCrewCatalogMigration(pool: Pool): Promise<void> {
-  void pool;
-}
-
 export async function seedPgCatalog(
   pool: Pool,
   manifest: CatalogManifest,

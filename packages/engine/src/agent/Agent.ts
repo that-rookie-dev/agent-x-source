@@ -7,7 +7,6 @@ import type {
   AgentXConfig,
   AgentPersonaConfig,
   RemediationAction,
-  Plan,
   PermissionRule,
   PermissionDecision,
   QuestionnairePayload,
@@ -27,6 +26,7 @@ import { AgentLifecycle } from './AgentLifecycle.js';
 import { AgentEventBus } from '../EventBus.js';
 import { TokenTracker } from '../session/TokenTracker.js';
 import type { SessionManager } from '../session/SessionManager.js';
+import { SessionPermissionStore } from '../storage/SessionPermissionStore.js';
 import { estimateOutputTokens } from '../session/tokenCount.js';
 import { SubAgentManager } from './SubAgentManager.js';
 import { TaskManager } from './TaskManager.js';
@@ -125,10 +125,6 @@ import { CommandQueue } from '../communication/CommandQueue.js';
 import { RunStateManager } from '../agent/RunStateManager.js';
 import { TurnStateManager, type TurnPhase } from './TurnStateManager.js';
 import { ToolLedger } from './ToolLedger.js';
-import {
-  shouldEscalateForExecution,
-  shouldUseInteractivePlanGates,
-} from './plan-mode-utils.js';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
 import { reconcileIntegrationHintWithActiveTools } from '../integrations/integration-tool-availability.js';
 import type { ThirdPartyTurnPolicy } from '../integrations/third-party-access.js';
@@ -145,13 +141,8 @@ import {
   type WebSearchTurnPolicy,
 } from '../search/web-search-policy.js';
 import { SessionRunner } from '../session/SessionRunner.js';
-import { BUILTIN_AGENTS } from './agent-configs.js';
 import { getLoadingSteps, generateDiff, modelMessageContentToText as modelMessageContentToTextHelper, estimateToolSchemaChars as estimateToolSchemaCharsHelper, toFriendlyError as toFriendlyErrorHelper, detectTaskType as detectTaskTypeHelper, checkConnectivity as checkConnectivityHelper, buildIdentityBlock as buildIdentityBlockHelper, simpleComplete as simpleCompleteHelper, endSession as endSessionHelper, runSummarization as runSummarizationHelper, getHealth as getHealthHelper, initializeDiagnosticsAsync as initializeDiagnosticsAsyncHelper, research as researchHelper, compactContext as compactContextHelper, tagCrewPrivateAssistant as tagCrewPrivateAssistantHelper, buildLinkedContextPromptBlock as buildLinkedContextPromptBlockHelper, getProviderCredentials as getProviderCredentialsHelper, getUserTimezone as getUserTimezoneHelper, getUtcOffset as getUtcOffsetHelper, type ConnectivityContext, type IdentityContext, type SimpleCompleteContext, type SessionLifecycleContext, type HealthContext, type DiagnosticsContext, type ResearchContext, type CompactContext, type CrewPrivateContext, type LinkedContextContext, type ProviderCredentialsContext, type TimezoneContext } from './agent-helpers.js';
-import {
-  enforcePlanModeViolations,
-  validateModeRestrictionTransparency,
-  refactorResponseForTransparency,
-} from './plan-mode-validation.js';
+
 import {
   superviseCrewMission as superviseCrewMissionHelper,
   publishCrewMissionResponses as publishCrewMissionResponsesHelper,
@@ -233,7 +224,7 @@ export interface AgentOptions {
   promptProfile?: 'default' | 'crew_worker' | 'crew_private';
   /** Host crew for 1:1 private chat sessions. */
   crewPrivateHost?: import('@agentx/shared').Crew;
-  /** Background worker (sub-agent / crew) — skip interactive plan approval & mode escalation UI gates. */
+  /** Background worker (sub-agent / crew) — skip interactive permission prompts. */
   delegatedWorker?: boolean;
   /** Ephemeral scheduled automation run — must not clobber shared executor permissions or UI handlers. */
   automationRun?: boolean;
@@ -294,16 +285,10 @@ export class Agent {
   private pendingPermissions = new Map<string, { resolve: (choice: PermissionHandlerResult) => void; toolName: string; path: string; riskLevel: string }>();
   private turnApprovedAll = false;
   private _onPart?: PartPersistFn;
-  autoApproveTools = false;
-  private _hyperdriveMode = false;
-  private _preHyperdrivePlanMode = true;
   private options: Readonly<AgentOptions>;
   private promptAssembly: PromptAssembly;
   private promptSnapshot: Record<string, SourceSnapshot> | null = null;
-
-  // ─── Execution Modes
-  private planMode: boolean = false;
-  private currentPlan: Plan | null = null;
+  private sessionPermissionStore: SessionPermissionStore;
 
   // ─── Agent Management
   private agentBus: AgentBus;
@@ -385,7 +370,6 @@ export class Agent {
   private missionContextProvider?: () => { revision: number; block: string };
   private lastMissionContextRevision = -1;
   private pendingStepApproval: ((stepId: string, approved: boolean, description?: string) => void) | null = null;
-  private pendingModeEscalation: ((accepted: boolean) => void) | null = null;
   private pendingStepCap: ((continueRun: boolean) => void) | null = null;
   /** Set when the user hits Stop — stream/tools must halt immediately. */
   private userCancelledTurn = false;
@@ -421,31 +405,26 @@ export class Agent {
     return this._skillRegistry;
   }
 
-  get hyperdriveMode(): boolean {
-    return this._hyperdriveMode;
+  get bypassPermissions(): boolean {
+    return this.toolExecutor?.getPermissionManager().isAllAllowed() ?? false;
   }
 
-  toggleHyperdriveMode(): boolean {
-    if (this.options.channelSession) return false;
-    const wasPlan = this.planMode;
-    this._hyperdriveMode = !this._hyperdriveMode;
-    this.autoApproveTools = this._hyperdriveMode;
-    if (this._hyperdriveMode) {
-      this._preHyperdrivePlanMode = wasPlan;
-      if (wasPlan) {
-        this.switchAgent('build');
-      }
-      this.rebuildSystemPrompt();
-      this.emit({ type: 'hyperdrive_entered', mode: 'agent', wasPlan });
-    } else {
-      const restorePlan = this._preHyperdrivePlanMode;
-      if (restorePlan && !this.planMode) {
-        this.switchAgent('plan');
-      }
-      this.rebuildSystemPrompt();
-      this.emit({ type: 'hyperdrive_exited', mode: restorePlan ? 'plan' : 'agent', wasPlan: restorePlan });
-    }
-    return this._hyperdriveMode;
+  setBypassPermissions(enabled: boolean): void {
+    this.toolExecutor?.getPermissionManager().setBypassPermissions(enabled);
+    this.sessionPermissionStore.setBypass(enabled);
+    this.emit({ type: 'bypass_permissions_changed', enabled, sessionId: this.sessionId });
+  }
+
+  toggleBypassPermissions(): boolean {
+    const enabled = !this.bypassPermissions;
+    this.setBypassPermissions(enabled);
+    return enabled;
+  }
+
+  revokeSessionPermissions(): void {
+    this.toolExecutor?.getPermissionManager().revokeAll();
+    this.sessionPermissionStore.revokeAll();
+    this.emit({ type: 'bypass_permissions_changed', enabled: false, sessionId: this.sessionId });
   }
 
   // Anti-duplicate: prevents double message_received within a single turn
@@ -590,6 +569,7 @@ export class Agent {
       linkedContextSessionId: this.linkedContextSessionId,
       toolExecutor: this.toolExecutor,
       options: this.options,
+      sessionPermissionStore: this.sessionPermissionStore,
       getPersistStore: () => this.getPersistStore(),
     };
   }
@@ -599,7 +579,6 @@ export class Agent {
       toolExecutor: this.toolExecutor as unknown as PermissionContext['toolExecutor'],
       options: this.options,
       isDelegatedWorker: this.isDelegatedWorker,
-      autoApproveTools: this.autoApproveTools,
       turnApprovedAll: this.turnApprovedAll,
       userCancelledTurn: this.userCancelledTurn,
       pendingPermissions: this.pendingPermissions,
@@ -826,6 +805,7 @@ export class Agent {
       this.secretSauce.identity.seedFromPersona(this.persona);
     }
     this.sessionId = options.sessionId;
+    this.sessionPermissionStore = new SessionPermissionStore(this.sessionId);
     this.scopePath = normalize(resolve(options.scopePath!));
     this._pgPool = options.pgPool ?? null;
     const crewHost = options.crewPrivateHost;
@@ -1031,7 +1011,6 @@ export class Agent {
       gitManager: this.gitManager ?? undefined,
       onSessionEvent: this.onSessionEvent ?? undefined,
       modelName: this.config.provider.activeModel,
-      planMode: () => this.planMode,
     });
 
     // Reset permissions for each new session — automation runs reuse the shared executor snapshot.
@@ -1393,8 +1372,6 @@ export class Agent {
       config: this.config,
       getContextWindow: () => this.getContextWindow(),
       _compactionCount: this._compactionCount,
-      planMode: this.planMode,
-      _hyperdriveMode: this._hyperdriveMode,
     } as HealthContext);
   }
   resolveCheckpoint(checkpointId: string, action: string): boolean {
@@ -1454,12 +1431,6 @@ export class Agent {
         entry.resolve('deny');
       } catch { /* ignore */ }
       this.pendingPermissions.delete(requestId);
-    }
-
-    if (this.pendingModeEscalation) {
-      const resolve = this.pendingModeEscalation;
-      this.pendingModeEscalation = null;
-      resolve(false);
     }
 
     if (this.pendingStepCap) {
@@ -1554,10 +1525,6 @@ export class Agent {
     };
   }
 
-  get planModeEnabled(): boolean {
-    return this.planMode;
-  }
-
   /** Sub-agents and crew workers run without blocking on parent-session approval modals. */
   private get isDelegatedWorker(): boolean {
     return this.options.delegatedWorker === true;
@@ -1567,33 +1534,6 @@ export class Agent {
     const engine = getRAGEngineInstance();
     if (!engine) return { indexedCount: 0, indexedAt: null };
     return { indexedCount: engine.indexedCount, indexedAt: engine.indexedAt };
-  }
-
-  setPlanMode(enabled: boolean): void {
-    if (this.options.channelSession && enabled) return;
-    if (enabled === this.planMode) return;
-    if (this._hyperdriveMode && enabled) return;
-    if (enabled) {
-      this.switchAgent('plan');
-      this.contextTracker.record('assistant', '[Mode switched to Plan — read/analysis tools only, no writes or execution]');
-      this.emit({ type: 'plan_mode_entered' });
-    } else {
-      this.currentPlan = null;
-      this.switchAgent('build');
-      this.contextTracker.record('assistant', '[Mode switched to Agent — full tool access and execution enabled]');
-      this.emit({ type: 'plan_mode_exited' });
-    }
-  }
-
-  switchAgent(agentId: string): boolean {
-    const agent = BUILTIN_AGENTS.find(a => a.id === agentId);
-    if (!agent) return false;
-    this.planMode = agent.mode === 'plan';
-    this.toolExecutor?.setMode(agent.mode);
-    this.toolExecutor?.setAgent(agent);
-    this.rebuildSystemPrompt();
-    this.emit({ type: 'agent_switched', agent: { id: agent.id, name: agent.name, mode: agent.mode, color: agent.color } });
-    return true;
   }
 
   setFallbackModel(model: string): void {
@@ -1614,21 +1554,6 @@ export class Agent {
       setScopePath: (path) => { this.scopePath = path; },
       toolExecutor: this.toolExecutor,
     } as DiagnosticsContext);
-  }
-
-  getCurrentPlan(): Plan | null {
-    return this.currentPlan;
-  }
-
-  respondToModeEscalation(accepted: boolean): void {
-    if (this.pendingModeEscalation) {
-      if (accepted) {
-        this.setPlanMode(false);
-      }
-      this.pendingModeEscalation(accepted);
-      this.pendingModeEscalation = null;
-      this.turnState.setPhase(accepted ? 'running' : 'cancelled', accepted ? 'mode_escalated' : 'mode_declined');
-    }
   }
 
   respondToStepCap(continueRun: boolean): void {
@@ -1670,7 +1595,7 @@ export class Agent {
     this.heartbeatTimer = setInterval(() => {
       const snap = this.turnState.getSnapshot();
       if (snap.phase === 'awaiting_permission' || snap.phase === 'awaiting_plan'
-        || snap.phase === 'awaiting_mode' || snap.phase === 'awaiting_step_cap') {
+        || snap.phase === 'awaiting_step_cap') {
         return;
       }
       const elapsedMs = this.turnState.getElapsedMs();
@@ -1694,19 +1619,6 @@ export class Agent {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
-  }
-
-  private waitForModeEscalation(toolId: string, _reason: string): Promise<boolean> {
-    this.turnState.setPhase('awaiting_mode', `blocked:${toolId}`);
-    return new Promise((resolve) => {
-      this.pendingModeEscalation = (accepted) => {
-        if (this.userCancelledTurn) {
-          resolve(false);
-          return;
-        }
-        resolve(accepted);
-      };
-    });
   }
 
   private waitForStepCap(currentSteps: number): Promise<boolean> {
@@ -1823,6 +1735,15 @@ export class Agent {
     this.partialTurnContent = '';
     this.stepCapExtra = 0;
     this.startTurnHeartbeat('receiving');
+
+    // ─── UNIFIED: Hydrate storage cache for this session before any persistence ───
+    try {
+      const store = this.getPersistStore();
+      if (this.sessionId && store && typeof (store as { ensureSessionHydrated?: (sessionId: string) => Promise<void> }).ensureSessionHydrated === 'function') {
+        await (store as { ensureSessionHydrated: (sessionId: string) => Promise<void> }).ensureSessionHydrated(this.sessionId);
+      }
+    } catch { /* best-effort — persistence will guard against FK violations */ }
+
     // Per-turn token snapshot for delta + cost emissions
     // ─── UNIFIED: Start telemetry for this turn ───
     this.telemetry.startTurn(`turn-${startTime}`, this.sessionId, this.config.provider.activeProvider, this.config.provider.activeModel);
@@ -1889,11 +1810,6 @@ export class Agent {
         integrationPreview: details.integrationPreview,
       });
     });
-    if (messagingChannelInbound && this.planMode) {
-      this.setPlanMode(false);
-      this.syncSessionRuntimeRecord({ mode: 'agent' });
-    }
-
     if (!options?.retry) {
       const clarificationBlock = buildClarificationPolicyInstruction(this.isMessagingChannelContext() || messagingChannelInbound);
       this.pendingInstruction = this.pendingInstruction
@@ -2309,54 +2225,12 @@ export class Agent {
         return assistantMessage;
       }
 
-      // Proactive mode escalation (Agent-X only): optional UI prompt before write-capable work.
-      // Plans are never user-approved in a modal — the completion loop delivers markdown in chat.
-      if (
-        shouldUseInteractivePlanGates(this.planMode, this.isDelegatedWorker, this.options.promptProfile ?? 'default')
-        && shouldEscalateForExecution(content, decision.messageClass)
-      ) {
-        this.emit({
-          type: 'mode_escalation_required',
-          tool: 'execution_intent',
-          reason: 'This request requires write, build, or execute capabilities that Plan mode blocks.',
-          pendingAction: content.slice(0, 160),
-        });
-        const accepted = await this.waitForModeEscalation('execution_intent', content);
-        if (!accepted) {
-          const declinedMessage: Message = {
-            id: generateMessageId(),
-            sessionId: this.sessionId,
-            role: 'assistant',
-            content: '⏹ Stopped — staying in Plan mode. Switch to Agent mode when you\'re ready to execute this request.',
-            toolCalls: null,
-            createdAt: new Date().toISOString(),
-            tokenCount: 0,
-          };
-          this.stopTurnHeartbeat();
-          this.turnState.complete();
-          this.emitTurnState('done');
-          this.emit({ type: 'loading_end' });
-          this.emit({ type: 'message_received', message: declinedMessage, elapsed: Date.now() - startTime });
-          return declinedMessage;
-        }
-      }
-
        // Normal mode: run completion loop directly
        if (!this.options.channelSession && !(await this.checkConnectivity())) {
          throw new Error('Cannot reach LLM provider. Check your internet connection.');
        }
-       let assistantMessage = await this.runCompletionLoop(startTime);
+       const assistantMessage = await this.runCompletionLoop(startTime);
        this.noteTurnOutcome(assistantMessage.content);
-
-       // ─── CRITICAL: Server-side validation for mode restriction transparency ───
-       if (this.planMode && this.options.promptProfile !== 'crew_private') {
-         const validationResult = this.validateModeRestrictionTransparency(assistantMessage.content, this.toolCallLogForReflection);
-         if (!validationResult.isTransparent) {
-           getLogger().warn('AGENT', `Detected fabricated success in plan mode. Triggering refactored response.`);
-           assistantMessage = await this.refactorResponseForTransparency(assistantMessage, validationResult);
-         }
-         await this.enforcePlanModeViolations(startTime);
-       }
 
        // Advance loading step: execution complete
        const stepExec = loadSteps[2];
@@ -2566,10 +2440,6 @@ export class Agent {
       },
       async (instruction, toolsList, timeout, background) =>
         this.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
-      this.planMode,
-      this.options.promptProfile === 'crew_private' || this.options.channelSession
-        ? undefined
-        : (toolId, reason) => this.waitForModeEscalation(toolId, reason),
       (toolId, success, output, elapsed, args) => {
         const path = typeof args?.path === 'string' ? args.path : undefined;
         this.toolLedger.record({ name: toolId, success, output, elapsed, path });
@@ -2582,8 +2452,6 @@ export class Agent {
           this.ingestWebSearchResult(toolId, args, output).catch(() => {});
         }
       },
-      this.options.promptProfile ?? 'default',
-      compact,
     );
 
     if (this.options.promptProfile === 'crew_private') {
@@ -2645,7 +2513,7 @@ export class Agent {
       this.emit({ type: 'loading_start', stage: 'thinking' });
 
       // Log tool setup for debugging
-      getLogger().info('AGENT', `Starting streamText with ${toolCount} tools, model: ${this.config.provider.activeModel}, mode: ${this.planMode ? 'plan' : 'agent'}, maxOutputTokens: ${turnMaxOutputTokens}`);
+      getLogger().info('AGENT', `Starting streamText with ${toolCount} tools, model: ${this.config.provider.activeModel}, maxOutputTokens: ${turnMaxOutputTokens}`);
 
       let stepCapContinuations = 0;
       const stepBudget = this.completionStepBudget();
@@ -2801,11 +2669,6 @@ export class Agent {
                   async () => 'continue',
                   (instruction, toolsList, timeout, background) =>
                     this.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
-                  this.planMode,
-                  undefined,
-                  undefined,
-                  'default',
-                  compact,
                 ),
                 stopWhen: stepCountIs(50),
                 toolChoice: 'auto' as const,
@@ -2859,19 +2722,6 @@ export class Agent {
         tokenCount,
       });
     } catch (error) {
-      if (error instanceof Error && error.message === 'MODE_ESCALATION_DECLINED') {
-        const declinedMessage: Message = {
-          id: generateMessageId(),
-          sessionId: this.sessionId,
-          role: 'assistant',
-          content: '⏹ Stopped — staying in Plan mode. Switch to Agent mode when you\'re ready to execute write operations.',
-          toolCalls: null,
-          createdAt: new Date().toISOString(),
-          tokenCount: 0,
-        };
-        emit({ type: 'message_received', message: declinedMessage, elapsed: Date.now() - startTime });
-        return declinedMessage;
-      }
       if (error instanceof Error && error.message === 'STEP_CAP_STOP') {
         const capMessage: Message = {
           id: generateMessageId(),
@@ -3011,7 +2861,6 @@ export class Agent {
       getModelId: () => this.config.provider.activeModel,
       buildIdentityBlock: () => this.buildIdentityBlock(),
       scopePath: this.scopePath,
-      hyperdriveMode: this._hyperdriveMode,
       telegramConnected: this._telegramConnected,
       userCallsign: this.config.user?.callsign,
       getUserTimezone: () => this.getUserTimezone(),
@@ -3120,7 +2969,6 @@ export class Agent {
   private syncSessionRuntimeRecord(patch: {
     providerId?: string;
     modelId?: string;
-    mode?: 'agent' | 'plan';
   }): void {
     try {
       this.sessionManager?.syncActiveSessionRuntime?.(patch);
@@ -3728,7 +3576,6 @@ export class Agent {
       members,
       userMessage,
       sessionContext,
-      planMode: this.planMode,
       sessionId: this.sessionId,
       mainSystemPrompt: typeof systemMsg?.content === 'string' ? systemMsg.content : '',
       crewOrchestrator: this.crewOrchestrator ?? undefined,
@@ -3877,6 +3724,7 @@ export class Agent {
 
   setSessionManager(sm: SessionManager): void {
     this.sessionManager = sm;
+    this.sessionPermissionStore = new SessionPermissionStore(this.sessionId);
     this.restoreSessionPermissions();
     this.subAgents.ingestBackgroundResultsForSession(this.sessionId);
     if (this.options.channelSession) {
@@ -3919,35 +3767,6 @@ export class Agent {
 
   private detectAtMentions(content: string): string[] {
     return detectAtMentionsHelper(this, content);
-  }
-
-  /**
-   * Detect plan-mode violations (successful write tools) and rollback via latest checkpoint.
-   */
-  private async enforcePlanModeViolations(turnStart: number): Promise<void> {
-    return enforcePlanModeViolations(this, turnStart);
-  }
-
-  /**
-   * Detect if agent response claims success for restricted operations while in plan mode.
-   * Returns whether response is transparent about mode restrictions.
-   */
-  private validateModeRestrictionTransparency(
-    responseContent: string,
-    toolExecutions: Array<{ name: string; success: boolean; output: string; elapsed: number }>
-  ): { isTransparent: boolean; issues: string[] } {
-    return validateModeRestrictionTransparency(this, responseContent, toolExecutions);
-  }
-
-  /**
-   * Send the fabricated response back to LLM with context about the restriction,
-   * and request a refactored honest response.
-   */
-  private async refactorResponseForTransparency(
-    originalMessage: Message,
-    validation: { isTransparent: boolean; issues: string[] }
-  ): Promise<Message> {
-    return refactorResponseForTransparency(this, originalMessage, validation);
   }
 
   /**

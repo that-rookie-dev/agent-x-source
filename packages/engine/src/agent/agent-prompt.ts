@@ -21,7 +21,6 @@ import {
   createLearningsSection,
   createSkillsSection,
   createFormalSkillsSection,
-  createHyperdriveSection,
   createChannelFocusSection,
   createChannelSuperSessionSection,
   createChannelLinkedContextSection,
@@ -165,7 +164,6 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createLearningsSection(secCtx))
       .register(createSkillsSection(secCtx))
       .register(createFormalSkillsSection(secCtx))
-      .register(createHyperdriveSection(secCtx))
       .register(createChannelFocusSection(secCtx))
       .register(createMultiCrewSection(secCtx))
       .register(createCrewRosterGuideSection())

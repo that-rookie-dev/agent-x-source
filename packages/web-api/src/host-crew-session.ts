@@ -371,6 +371,3 @@ export async function resolveCrewPrivateHostForSession(
 
   return crewFromSessionSnapshot(session);
 }
-
-/** @deprecated Use resolveCrewPrivateHostForSession — private chat no longer recruits to roster. */
-export const ensureCrewPrivateHostOnRoster = resolveCrewPrivateHostForSession;

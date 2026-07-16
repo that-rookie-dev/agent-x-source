@@ -1,7 +1,7 @@
 import { getEngine, awaitEngineStorageReady } from '../engine.js';
 import type { EngineState } from '../engine.js';
-import { MemoryService, getPerfTracker, getSubAgentServiceInstance } from '@agentx/engine';
-import type { SubAgentService, SubAgentRecord } from '@agentx/engine';
+import { MemoryService, getPerfTracker, getSubAgentServiceInstance, getSystemMetricsService, getWeatherService } from '@agentx/engine';
+import type { SubAgentService, SubAgentRecord, SystemMetricsSnapshot, WeatherResponse } from '@agentx/engine';
 import type { Agent, ConfigManager, SessionManager, CrewManager, IJobQueue, ChannelStatus } from '@agentx/engine';
 import type { AgentXConfig } from '@agentx/shared';
 import { getLogger, VERSION } from '@agentx/shared';
@@ -231,6 +231,16 @@ export class ApiService {
         dbStatus: { connected: false, deferred: false },
       };
     }
+  }
+
+  /** Return live system CPU / memory / uptime metrics. */
+  getSystemMetrics(): SystemMetricsSnapshot {
+    return getSystemMetricsService().getMetrics();
+  }
+
+  /** Fetch current weather for the given coordinates from Open-Meteo. */
+  async getWeather(latitude: number, longitude: number): Promise<WeatherResponse | null> {
+    return getWeatherService().getCurrentWeather(latitude, longitude);
   }
 
   /** Stop engine services and disconnect storage as part of graceful shutdown. */

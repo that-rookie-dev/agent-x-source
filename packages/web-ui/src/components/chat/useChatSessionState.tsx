@@ -7,14 +7,13 @@ import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import AddIcon from '@mui/icons-material/Add';
-import RouteIcon from '@mui/icons-material/Route';
 import SearchIcon from '@mui/icons-material/Search';
 import HistoryIcon from '@mui/icons-material/History';
 
 import {
   type PaletteAction,
 } from '../ChatEnhancements';
-import { chat, sessions, models, crews, crewSuggestions, providers, system, sessionSettings, settings, permissions, markdownDocuments, type TodoItem, type SessionInfo, type Crew, type AgentMode, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type IntegrationActionPreview } from '../../api';
+import { chat, sessions, models, crews, crewSuggestions, providers, system, settings, permissions, sessionPermissions, markdownDocuments, type TodoItem, type SessionInfo, type Crew, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type IntegrationActionPreview } from '../../api';
 import type { PrebuiltCrew } from '../crew/CrewHubDialog';
 import type { ChatInputBarHandle } from '../ChatInputBar';
 import { readWebSearchForcePreference, writeWebSearchForcePreference } from '../WebSearchGlobeToggle';
@@ -31,7 +30,6 @@ import { useChatScroll } from './useChatScroll';
 import { useChatTokens } from './useChatTokens';
 import { useChatCrew } from './useChatCrew';
 import { useChatVoice } from './useChatVoice';
-import { useChatHyperdrive } from './useChatHyperdrive';
 import { useChatSessionLifecycle } from './useChatSessionLifecycle';
 import { useChatSend } from './useChatSend';
 import { useChatTelemetry } from './useChatTelemetry';
@@ -120,7 +118,60 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     setPermissionPrompt(null);
     setPendingPermissionCount(0);
   }, []);
+
   const [toolEnablePrompt, setToolEnablePrompt] = useState<{ toolId: string; toolName: string } | null>(null);
+
+  // Unified permission state
+  const [bypassPermissions, setBypassPermissionsState] = useState(false);
+  const [toolPermissions, setToolPermissions] = useState<Record<string, { targetPath: string | null; decision: string }>>({});
+
+  const fetchSessionPermissions = useCallback(async (sessionId: string) => {
+    try {
+      const result = await sessionPermissions.get(sessionId);
+      setBypassPermissionsState(result.bypassPermissions);
+      const map: Record<string, { targetPath: string | null; decision: string }> = {};
+      for (const d of result.decisions) {
+        map[d.toolName] = { targetPath: d.targetPath, decision: d.decision };
+      }
+      setToolPermissions(map);
+    } catch { /* ignore */ }
+  }, []);
+
+  const setBypassPermissions = useCallback(async (enabled: boolean) => {
+    const sessionId = currentSessionIdRef.current ?? currentSessionId;
+    if (!sessionId) return;
+    try {
+      await sessionPermissions.setBypass(sessionId, enabled);
+      setBypassPermissionsState(enabled);
+    } catch { /* ignore */ }
+  }, [currentSessionId]);
+
+  const toggleBypassPermissions = useCallback(async () => {
+    await setBypassPermissions(!bypassPermissions);
+  }, [bypassPermissions, setBypassPermissions]);
+
+  const revokeSessionPermissions = useCallback(async () => {
+    const sessionId = currentSessionIdRef.current ?? currentSessionId;
+    if (!sessionId) return;
+    try {
+      await sessionPermissions.revoke(sessionId);
+      setBypassPermissionsState(false);
+      setToolPermissions({});
+    } catch { /* ignore */ }
+  }, [currentSessionId]);
+
+  const setToolPermission = useCallback(async (toolName: string, decision: 'allow_always' | 'deny' | 'revoke') => {
+    const sessionId = currentSessionIdRef.current ?? currentSessionId;
+    if (!sessionId) return;
+    try {
+      await sessionPermissions.setTool(sessionId, toolName, decision);
+      if (decision === 'revoke') {
+        setToolPermissions((prev) => { const next = { ...prev }; delete next[toolName]; return next; });
+      } else {
+        setToolPermissions((prev) => ({ ...prev, [toolName]: { targetPath: null, decision } }));
+      }
+    } catch { /* ignore */ }
+  }, [currentSessionId]);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [webSearchAvailable, setWebSearchAvailable] = useState(false);
   const [webSearchForce, setWebSearchForce] = useState(() => readWebSearchForcePreference());
@@ -182,16 +233,11 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
   const crewListRef = useRef(crewList);
   useEffect(() => { crewListRef.current = crewList; }, [crewList]);
 
-
-  // Agent mode — plan is default (especially for Agent-X super-session)
-  const [agentMode, setAgentMode] = useState<AgentMode>('plan');
-
   // CWD
   const [cwd, setCwd] = useState('');
   const cwdRef = useRef('');
 
   // Dropdown anchors
-  const [modeMenuAnchor, setModeMenuAnchor] = useState<null | HTMLElement>(null);
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<null | HTMLElement>(null);
   const [modelMenuAnchor, setModelMenuAnchor] = useState<null | HTMLElement>(null);
 
@@ -210,8 +256,7 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
   const [folderPickerLoading, setFolderPickerLoading] = useState(false);
   const pendingFolderActionRef = useRef<'newSession' | 'changeCwd' | null>(null);
 
-  // Agent gate modals (plan approval, mode escalation, step cap)
-  const [modeEscalation, setModeEscalation] = useState<{ tool: string; reason: string } | null>(null);
+  // Step cap prompt
   const [stepCapPrompt, setStepCapPrompt] = useState<{ currentSteps: number; maxSteps: number } | null>(null);
   const [turnActivity, setTurnActivity] = useState<{ stage: string; step: number; elapsedMs: number } | null>(null);
   const [pendingFeedbackMessageId, setPendingFeedbackMessageId] = useState<string | null>(null);
@@ -257,7 +302,6 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     handleVoiceUserPending, handleVoiceUserDiscarded, handleVoiceTranscript, handleVoiceTiming,
   } = useChatVoice({ setMessages, beginTurnUi, currentSessionId });
 
-  const [modeSuggestOpen, setModeSuggestOpen] = useState(false);
   const [crewDossierOpen, setCrewDossierOpen] = useState(false);
   const [crewDossierCrew, setCrewDossierCrew] = useState<PrebuiltCrew | null>(null);
   const pendingSendTextRef = useRef<string | null>(null);
@@ -326,7 +370,7 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     if (!candidate || sessionRestoringRef.current) return;
     const msg = messages.find((m) => m.id === candidate.messageId);
     lastTurnFeedbackCandidateRef.current = null;
-    if (!msg || msg.turnFeedback || msg.streaming || msg.isModeChange) return;
+    if (!msg || msg.turnFeedback || msg.streaming) return;
     if (isTurnFeedbackEligible({
       role: 'assistant',
       content: msg.content,
@@ -393,7 +437,7 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     setTokenUsed, setTokenInput, setTokenOutput, setTokenTotal, setCompactionCount,
     setShowJumpPill, setHasOlderMessages,
     setSessionRestoring, setIsCrewPrivateSession, setCrewPrivateHost, setPrivateHostCrewId,
-    setParentSessionId, setAgentMode, setCrewWorkers,
+    setParentSessionId, setCrewWorkers, setBypassPermissionsState,
     currentSessionIdRef, cwdRef, chatReturnToRef, skipRestoreRef, pendingFolderActionRef, titleGeneratedRef,
     sessionRestoringRef, isInitialLoadRef, lastTurnFeedbackCandidateRef, rateLimitSeenRef,
     crewMissionSessionIdRef, tokenInputRef, tokenOutputRef, isAtBottomRef, messagesContainerRef,
@@ -450,7 +494,7 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
       cwdRef.current = folder;
       await system.setCwd(folder).catch(() => {});
     }).catch(() => {});
-    sessionSettings.get().then((s) => { if (!sessionId && (s.mode === 'agent' || s.mode === 'plan')) setAgentMode(s.mode); }).catch(() => {});
+
     // Load configured provider profiles
     fetch('/api/providers', { credentials: 'include' })
       .then(r => r.json())
@@ -514,6 +558,12 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
 
   // Keep refs in sync so send handlers never capture stale session/cwd from closures.
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
+
+  // Fetch session permissions when active session changes
+  useEffect(() => {
+    if (currentSessionId) fetchSessionPermissions(currentSessionId);
+  }, [currentSessionId, fetchSessionPermissions]);
+
   useEffect(() => { viewSessionIdRef.current = sessionId ?? null; }, [sessionId]);
   useEffect(() => { cwdRef.current = cwd; }, [cwd]);
 
@@ -526,11 +576,11 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     attachCrewRosterPickerRef, rateLimitSeenRef, tokenInputRef, tokenOutputRef, tokenReservedRef,
     refreshContextRef,
     setMessages, setStreaming, setTurnActivity, setCurrentStep, setTokenStreaming, setTokenUsed,
-    setLoadingSteps, setWarnings, setModeEscalation, setStepCapPrompt, setPermissionPrompt,
+    setLoadingSteps, setWarnings, setStepCapPrompt, setPermissionPrompt,
     setPendingPermissionCount, setCrewWorkers, setCrewMissionActive, setCrewMissionId,
     setCrewInterMessages, setTokenInput, setTokenOutput, setTokenReserved, setTokenTotal,
     setCompactionCount, setToolEnablePrompt, setConnState,
-    setLastEventAt, setAgentMode,
+    setLastEventAt, setBypassPermissionsState,
     endTurnUi, isCrewEventForCurrentSession,
   });
 
@@ -574,16 +624,16 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
 
   // ─── Send/resend/steer/queue, crew suggestion gate, roster picker, questionnaire (extracted to useChatSend) ───
   const {
-    executeSend, runCrewSuggestionGate, sendAfterModeChoice,
+    executeSend, runCrewSuggestionGate,
     handleSend, handleResend, handleStopAndSend, handleAddToQueue, handleSteer,
     handleCrewRosterPickerSubmit, handleCrewRosterPickerSkip, handleQuestionnaireRespond,
     handleFileSelect, handleRemoveAttachment,
   } = useChatSend({
-    messages, streaming, attachments, agentMode, currentProvider, currentModel,
+    messages, streaming, attachments, currentProvider, currentModel,
     isCrewPrivateSession, webSearchAvailable, webSearchForce, crewSuggestionRequested, currentSessionId,
     coreSession,
-    setMessages, setAttachments, setWarnings, setAgentMode, setCrewList,
-    setModeSuggestOpen, setTurnActivity, setLoadingSteps, setStreaming,
+    setMessages, setAttachments, setWarnings, setCrewList,
+    setTurnActivity, setLoadingSteps, setStreaming,
     beginTurnUi, endTurnUi, ensureSession, scrollMessagesToBottom,
     rateLimitSeenRef,
     outgoingTurnRef, activeTurnIdRef, resendInProgressRef,
@@ -600,37 +650,12 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     try { await chat.cancel(); } catch { /* ignore */ }
   }, [endTurnUi]);
 
-  // ─── Slash command handler ───
-  // ─── Global keyboard shortcuts ───
-  // Tab key cycles mode when not typing in input
-  const handleToggleMode = useCallback(() => {
-    setAgentMode(prev => {
-      const next = prev === 'agent' ? 'plan' : 'agent';
-      sessionSettings.setMode(next).catch(() => {});
-      return next;
-    });
-  }, []);
-
-  // ─── Hyperdrive state, toggle, mount check, keyboard shortcuts (extracted to useChatHyperdrive) ───
-  const {
-    hyperdriveMode, setHyperdriveMode,
-    showDisclaimer, setShowDisclaimer,
-    hyperdriveShimmer,
-    handleHyperdriveToggle, confirmHyperdrive, engageHyperdrive,
-  } = useChatHyperdrive({
-    isCrewPrivateRef, isCrewPrivateSession, agentMode, setAgentMode,
-    currentSessionId, streaming, messages, view,
-    handleToggleMode, handleResend, handleCancel, setPaletteOpen, setSearchOpen,
-  });
-
   // ─── Command palette actions ───
   const paletteActions: PaletteAction[] = useMemo(() => [
     { id: 'new-session', label: 'New session', hint: 'N', icon: <AddIcon sx={{ fontSize: 14 }} />, run: () => handleNewSession() },
     { id: 'sessions', label: 'Show all sessions', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => handleShowSessions() },
     { id: 'search', label: 'Search sessions', hint: '⌘F', icon: <SearchIcon sx={{ fontSize: 14 }} />, run: () => setSearchOpen(true) },
     { id: 'checkpoints', label: 'Open checkpoints', icon: <HistoryIcon sx={{ fontSize: 14 }} />, run: () => setCheckpointsOpen(true) },
-    { id: 'mode-agent', label: 'Switch mode → Agent', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('agent'); sessionSettings.setMode('agent').catch(() => {}); } },
-    { id: 'mode-plan', label: 'Switch mode → Plan', icon: <RouteIcon sx={{ fontSize: 14 }} />, run: () => { setAgentMode('plan'); sessionSettings.setMode('plan').catch(() => {}); } },
   ], []);
 
 
@@ -676,17 +701,17 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     modelList, setModelList, loadingModels, setLoadingModels, configLoaded, setConfigLoaded,
 
     // Crew state
-    crewList, setCrewList, agentMode, setAgentMode,
+    crewList, setCrewList,
 
-    // Hyperdrive state
-    hyperdriveMode, setHyperdriveMode, showDisclaimer, setShowDisclaimer,
-    hyperdriveShimmer, handleHyperdriveToggle, confirmHyperdrive, engageHyperdrive,
+    // Unified permission state
+    bypassPermissions, toolPermissions,
+    setBypassPermissions, toggleBypassPermissions, revokeSessionPermissions, setToolPermission,
 
     // CWD
     cwd, setCwd,
 
     // Dropdown anchors
-    modeMenuAnchor, setModeMenuAnchor, providerMenuAnchor, setProviderMenuAnchor,
+    providerMenuAnchor, setProviderMenuAnchor,
     modelMenuAnchor, setModelMenuAnchor,
 
     // Connection/enhancement state
@@ -696,10 +721,7 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     folderConsentOpen, setFolderConsentOpen, folderPickerLoading, setFolderPickerLoading,
 
     // Agent gate modals
-    modeEscalation, setModeEscalation, stepCapPrompt, setStepCapPrompt,
-
-    // Mode suggestion
-    modeSuggestOpen, setModeSuggestOpen,
+    stepCapPrompt, setStepCapPrompt,
 
     // Crew dossier
     crewDossierOpen, setCrewDossierOpen, crewDossierCrew, setCrewDossierCrew,
@@ -737,7 +759,7 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     handleNewSession, handleArchiveSession, handleDeleteSessionContent, handleDeleteSession,
     handleFolderConsentConfirm, handleQuestionnaireRespond,
     handleCrewRosterPickerSubmit, handleCrewRosterPickerSkip,
-    handleToggleMode, handleCrewAddSearch, handleCrewAddSelect, handleCrewRemove,
+    handleCrewAddSearch, handleCrewAddSelect, handleCrewRemove,
     handleTurnFeedback, handleSaveMarkdown, handleViewCrewDossier,
     handleVoiceUserPending, handleVoiceUserDiscarded, handleVoiceTranscript, handleVoiceTiming,
     handleRebuildContext, openChildSession,
@@ -751,8 +773,9 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
 
     // Helper functions
     endTurnUi, beginTurnUi, ensureSession, ensureDefaultCwd,
-    executeSend, runCrewSuggestionGate, sendAfterModeChoice,
+    executeSend, runCrewSuggestionGate,
     startNewSession, resetSessionViewState, resetCrewMissionState,
     refreshContext, applyContextPayload, loadSessions, loadTodos, generateTitle,
+    fetchSessionPermissions,
   };
 }

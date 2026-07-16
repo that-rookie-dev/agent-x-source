@@ -6,7 +6,6 @@ import { ToolEnableBanner } from './ToolEnableBanner';
 import {
   useChatMessagesContext,
   useChatPromptsContext,
-  useChatAgentModeContext,
   useChatSessionSettersContext,
   useChatThreadHandlersContext,
   useChatNavigationHandlersContext,
@@ -22,8 +21,6 @@ export const ChatThreadArea = React.memo(function ChatThreadArea() {
   } = useChatMessagesContext();
   // Prompts — re-render only when a permission/tool prompt appears/dismisses.
   const { toolEnablePrompt } = useChatPromptsContext();
-  // Agent mode.
-  const { agentMode } = useChatAgentModeContext();
   // Stable dispatch values — refs, handlers, setters.
   const {
     messagesContainerRef, bottomRef,
@@ -63,7 +60,6 @@ export const ChatThreadArea = React.memo(function ChatThreadArea() {
       ref={messagesContainerRef}
     >
       <ChatThreadView
-        agentMode={agentMode}
         messagesContainerRef={messagesContainerRef}
         sessionRestoring={sessionRestoring}
         messages={messages}

@@ -118,13 +118,6 @@ export function ensureChannelAgent(channel: ChannelBindingId = 'telegram'): Agen
         session.scopePath = preferredScope;
       } catch { /* best-effort */ }
     }
-    if (session.mode !== 'agent' || session.hyperdrive) {
-      try {
-        eng.sessionManager.updateSession({ mode: 'agent', hyperdrive: false });
-      } catch { /* best-effort */ }
-      session.mode = 'agent';
-      session.hyperdrive = false;
-    }
   }
 
   const agent = createAgent(cfg, session, { attachToEngine: false });

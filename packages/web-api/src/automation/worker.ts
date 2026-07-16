@@ -154,7 +154,6 @@ async function runAutomationTurn(
     automationRun: true,
     delegatedWorker: true,
   });
-  agent.setPlanMode(false);
   await restorePermissionSnapshot(agent, task.permissionSnapshot as Array<{ toolName: string; decision: string }>);
 
   const runExecutor = agent.getToolExecutor();

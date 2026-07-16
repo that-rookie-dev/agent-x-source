@@ -866,10 +866,6 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         return 'Usage: /permissions [list|revoke <tool>|revoke-all]';
       }
 
-      case 'plan':
-      case 'hyperdrive':
-        return 'ℹ️ Plan Mode and Hyperdrive are not available on messaging channels. Every tool is approved individually via Allow Once, Always Allow, or Deny.';
-
       case 'profiles': {
         const cfg = this.agent.config;
         const profiles: Array<{ id: string; label: string; providerId: string }> = [];

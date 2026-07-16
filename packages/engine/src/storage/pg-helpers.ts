@@ -3,7 +3,6 @@ import type {
   StorableSession,
   StorableMessage,
   StorableTokenLog,
-  StorablePermission,
 } from '@agentx/shared';
 import type { SessionEvent, Crew, AgentPersonaConfig } from '@agentx/shared';
 
@@ -37,7 +36,6 @@ export interface CacheState {
   crewStates: Map<string, Array<Record<string, unknown>>>;
   sessionEvents: Map<string, SessionEvent[]>;
   tokenLogs: Map<string, StorableTokenLog[]>;
-  permissions: Map<string, StorablePermission[]>;
   crewFeedback: Map<string, Array<Record<string, unknown>>>;
   turnFeedback: Map<string, Array<Record<string, unknown>>>;
   resumeState: Map<string, Record<string, unknown>>;

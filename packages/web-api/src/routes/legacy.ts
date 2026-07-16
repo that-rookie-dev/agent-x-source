@@ -1,14 +1,10 @@
 import { Router } from 'express';
 import type { ApiContext } from '../services/ApiService.js';
-import { join, dirname } from 'node:path';
-import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getDataDir } from '@agentx/shared';
-import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 import { initChannelSessionBridge } from '../channel-session-bridge.js';
 import { createFilesRouter } from './legacy/files.js';
 import { createGatewayRouter } from './legacy/gateway.js';
-import { createModeRouter } from './legacy/mode.js';
 import { createOrchestratorRouter } from './legacy/orchestrator.js';
 import { createPermissionRouter } from './legacy/permission.js';
 import { createPluginsRouter } from './legacy/plugins.js';
@@ -29,21 +25,6 @@ import { createSubagentsRouter } from './legacy/subagents.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Embedding models are downloaded at runtime (during the setup wizard) to the
-// user's data directory. The embedding-model-api router sets the cache dir via
-// setDefaultEmbeddingCacheDir() on import. This bundled-dir fallback is kept
-// for backward compatibility with existing installs that bundled the models.
-const BUNDLED_EMBEDDING_MODEL_DIR = join(__dirname, 'models');
-if (existsSync(join(BUNDLED_EMBEDDING_MODEL_DIR, 'Xenova', 'all-MiniLM-L6-v2')) ||
-    existsSync(join(BUNDLED_EMBEDDING_MODEL_DIR, 'Xenova', 'bge-m3'))) {
-  // Only use bundled dir if the runtime-downloaded models aren't present yet.
-  const runtimeModelDir = join(getDataDir(), 'models');
-  if (!existsSync(join(runtimeModelDir, 'Xenova', 'bge-m3')) &&
-      !existsSync(join(runtimeModelDir, 'Xenova', 'all-MiniLM-L6-v2'))) {
-    setDefaultEmbeddingCacheDir(BUNDLED_EMBEDDING_MODEL_DIR);
-  }
-}
-
 export function router(ctx: ApiContext): Router {
   void ctx;
   // Wire the channel-to-session bridge once when the legacy API router is built.
@@ -54,7 +35,6 @@ export function router(ctx: ApiContext): Router {
   // over any legacy inline handlers for the same paths below.
   r.use(createFilesRouter());
   r.use(createGatewayRouter());
-  r.use(createModeRouter());
   r.use(createOrchestratorRouter());
   r.use(createPermissionRouter());
   r.use(createPluginsRouter());

@@ -4,52 +4,44 @@ import {
   SessionSearchModal,
   CheckpointDrawer,
 } from '../ChatEnhancements';
-import ModeEscalationModal from '../ModeEscalationModal';
 import StepCapModal from '../StepCapModal';
-import ModeSuggestionModal from '../ModeSuggestionModal';
 import { CrewProfileDialog } from '../crew/CrewProfileDialog';
 import { FolderPickerModal } from '../FolderPickerModal';
 import {
-  HyperdriveDisclaimerDialog,
   ClearSessionDialog,
   FolderConsentDialog,
   FolderPickerLoadingOverlay,
 } from './ChatDialogs';
-import { chat, sessionSettings, agent } from '../../api';
+import { chat, agent } from '../../api';
 import {
   useChatSessionIdentityContext,
-  useChatSessionPrivacyContext,
   useChatModalContext,
   useChatSessionSettersContext,
   useChatNavigationHandlersContext,
-  useChatModalActionsContext,
 } from './ChatSessionProvider';
 
 export const ChatModals = React.memo(function ChatModals() {
-  // Session identity and privacy.
+  // Session identity.
   const { currentSessionId } = useChatSessionIdentityContext();
-  const { isCrewPrivateSession } = useChatSessionPrivacyContext();
   // Modal state only — ChatModals does NOT re-render on streaming chunks.
   const {
     paletteOpen, paletteActions, searchOpen, checkpointsOpen,
-    folderPickerOpen, folderPickerCallback, modeEscalation,
-    crewDossierOpen, crewDossierCrew, modeSuggestOpen, stepCapPrompt,
-    showDisclaimer, clearSessionModalOpen, clearSessionBusy,
+    folderPickerOpen, folderPickerCallback,
+    crewDossierOpen, crewDossierCrew, stepCapPrompt,
+    clearSessionModalOpen, clearSessionBusy,
     folderConsentOpen, folderPickerLoading,
   } = useChatModalContext();
   // Stable dispatch values — setters, handlers, refs.
   const {
     navigate, setPaletteOpen, setSearchOpen, setCheckpointsOpen,
     setMessages, setTokenUsed, setTokenInput, setTokenOutput,
-    setFolderPickerOpen, setFolderPickerCallback, setModeEscalation,
-    setAgentMode, setStreaming, setCrewDossierOpen, setCrewDossierCrew,
-    setModeSuggestOpen, setStepCapPrompt, setShowDisclaimer,
-    setClearSessionModalOpen, setFolderConsentOpen, pendingSendTextRef,
+    setFolderPickerOpen, setFolderPickerCallback,
+    setStreaming, setCrewDossierOpen, setCrewDossierCrew,
+    setStepCapPrompt,
+    setClearSessionModalOpen, setFolderConsentOpen,
   } = useChatSessionSettersContext();
   // Navigation handlers.
   const { handleArchiveSession, handleDeleteSessionContent, handleFolderConsentConfirm } = useChatNavigationHandlersContext();
-  // Modal actions.
-  const { sendAfterModeChoice, confirmHyperdrive } = useChatModalActionsContext();
 
   return (
     <>
@@ -87,23 +79,6 @@ export const ChatModals = React.memo(function ChatModals() {
         }}
         onCancel={() => { setFolderPickerOpen(false); setFolderPickerCallback(null); }}
       />
-      <ModeEscalationModal
-        open={!!modeEscalation && !isCrewPrivateSession}
-        tool={modeEscalation?.tool ?? ''}
-        reason={modeEscalation?.reason ?? ''}
-        onSwitch={() => {
-          agent.respondToModeEscalation(true).then(() => {
-            setAgentMode('agent');
-            sessionSettings.setMode('agent').catch(() => {});
-          }).catch(() => {});
-          setModeEscalation(null);
-        }}
-        onSkip={() => {
-          agent.respondToModeEscalation(false).catch(() => {});
-          setModeEscalation(null);
-          setStreaming(false);
-        }}
-      />
       <CrewProfileDialog
         open={crewDossierOpen}
         crew={crewDossierCrew}
@@ -112,25 +87,6 @@ export const ChatModals = React.memo(function ChatModals() {
         onClose={() => { setCrewDossierOpen(false); setCrewDossierCrew(null); }}
         onImport={() => {}}
         onRemove={() => {}}
-      />
-      <ModeSuggestionModal
-        open={modeSuggestOpen}
-        onSwitch={() => {
-          setModeSuggestOpen(false);
-          const text = pendingSendTextRef.current;
-          pendingSendTextRef.current = null;
-          if (text) void sendAfterModeChoice(text, true);
-        }}
-        onStay={() => {
-          setModeSuggestOpen(false);
-          const text = pendingSendTextRef.current;
-          pendingSendTextRef.current = null;
-          if (text) void sendAfterModeChoice(text, false);
-        }}
-        onClose={() => {
-          setModeSuggestOpen(false);
-          pendingSendTextRef.current = null;
-        }}
       />
       <StepCapModal
         open={!!stepCapPrompt}
@@ -145,12 +101,6 @@ export const ChatModals = React.memo(function ChatModals() {
           setStepCapPrompt(null);
           setStreaming(false);
         }}
-      />
-      {/* Hyperdrive Disclaimer */}
-      <HyperdriveDisclaimerDialog
-        open={showDisclaimer}
-        onClose={() => setShowDisclaimer(false)}
-        onConfirm={confirmHyperdrive}
       />
       <ClearSessionDialog
         open={clearSessionModalOpen}

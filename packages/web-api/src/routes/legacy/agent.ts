@@ -9,7 +9,6 @@ import { getLogger } from '@agentx/shared';
 import { getEngine, awaitEngineStorageReady, getVitals, getAutonomyStatus } from '../../engine.js';
 import { EnhancedToolExecutor } from '@agentx/engine';
 import { turnRegistry } from '../../turn-registry.js';
-import { sessionSettings } from '../../chat-helpers.js';
 
 export function createAgentRouter(): Router {
   const r = Router();
@@ -67,20 +66,6 @@ export function createAgentRouter(): Router {
     }
   });
 
-  r.post('/api/agent/mode-escalation', (req, res) => {
-    try {
-      const { accepted } = req.body as { accepted: boolean };
-      const eng = getEngine();
-      const agent = eng.agent;
-      if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
-      agent.respondToModeEscalation(!!accepted);
-      res.json({ ok: true, accepted: !!accepted });
-    } catch (e) {
-      getLogger().error('MODE_ESCALATION', e instanceof Error ? e : String(e));
-      res.status(500).json({ error: 'mode-escalation-failed' });
-    }
-  });
-
   r.post('/api/agent/step-cap/respond', (req, res) => {
     try {
       const { continueRun } = req.body as { continueRun: boolean };
@@ -128,8 +113,7 @@ export function createAgentRouter(): Router {
       crew: { crewStates },
       model: { provider: session?.providerId, model: session?.modelId },
       processing: agent.lifecycle.isProcessing(),
-      planMode: agent.planModeEnabled,
-      sessionSettings,
+      bypassPermissions: agent.bypassPermissions,
     });
   });
 

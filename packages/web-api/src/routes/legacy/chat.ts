@@ -12,9 +12,8 @@ import {
   cancelActiveSessionTurn,
   getForceWebSearchError,
   isCrewPrivateSessionRecord,
-  applySessionModeToAgent,
   buildFullText,
-  buildInstructionForMode,
+  buildTurnInstruction,
 } from '../../chat-helpers.js';
 import { validate, chatMessageSchema, chatSteerSchema } from '../../validation.js';
 import { ensureSubscribed, persistMessageDirect } from '../../ws.js';
@@ -87,8 +86,6 @@ export function createChatRouter(): Router {
       sendEvent('connected', { timestamp: new Date().toISOString() });
 
       // Apply session mode from active session record
-      const mode = applySessionModeToAgent(agent);
-
       // ─── Retry: remove only the assistant reply being regenerated (keep user turn in DB) ───
       if (retry) {
         try {
@@ -105,6 +102,14 @@ export function createChatRouter(): Router {
       const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
       const sid = agent.sessionId;
 
+      // Ensure the session cache is hydrated before any message/tool persistence happens.
+      try {
+        const store = eng.sessionManager.getStorageAdapter?.();
+        if (sid && store && typeof (store as { ensureSessionHydrated?: (sessionId: string) => Promise<void> }).ensureSessionHydrated === 'function') {
+          await (store as { ensureSessionHydrated: (sessionId: string) => Promise<void> }).ensureSessionHydrated(sid);
+        }
+      } catch { /* best-effort — Agent.sendMessage also hydrates */ }
+
       if (sid) {
         const handoff = await handleChannelHandoffRequest({ eng, sessionId: sid, text: fullText });
         if (handoff.handled && handoff.reply) {
@@ -116,7 +121,7 @@ export function createChatRouter(): Router {
         }
       }
 
-      const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
+      const instruction = buildTurnInstruction({ crewPrivate: crewPrivateChat });
       const augmentedInstruction = sid
         ? maybeAugmentChatInstruction(eng, sid, fullText, instruction)
         : instruction;
@@ -245,8 +250,6 @@ export function createChatRouter(): Router {
         }
       }
 
-      const mode = applySessionModeToAgent(agent);
-
       // ─── Retry: remove only the assistant reply being regenerated (keep user turn in DB) ───
       if (retry) {
         try {
@@ -263,6 +266,14 @@ export function createChatRouter(): Router {
       const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
       const sid = agent.sessionId;
 
+      // Ensure the session cache is hydrated before any message/tool persistence happens.
+      try {
+        const store = eng.sessionManager.getStorageAdapter?.();
+        if (sid && store && typeof (store as { ensureSessionHydrated?: (sessionId: string) => Promise<void> }).ensureSessionHydrated === 'function') {
+          await (store as { ensureSessionHydrated: (sessionId: string) => Promise<void> }).ensureSessionHydrated(sid);
+        }
+      } catch { /* best-effort — Agent.sendMessage also hydrates */ }
+
       if (sid) {
         const handoff = await handleChannelHandoffRequest({ eng, sessionId: sid, text: fullText });
         if (handoff.handled && handoff.reply) {
@@ -273,7 +284,7 @@ export function createChatRouter(): Router {
         }
       }
 
-      const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
+      const instruction = buildTurnInstruction({ crewPrivate: crewPrivateChat });
       const augmentedInstruction = sid
         ? maybeAugmentChatInstruction(eng, sid, fullText, instruction)
         : instruction;
@@ -383,11 +394,10 @@ export function createChatRouter(): Router {
       agent.cancel();
       await waitForIdle(agent);
       ensureSubscribed();
-      const mode = applySessionModeToAgent(agent);
       const fullText = buildFullText(text, attachments);
       const activeSess = eng.sessionManager.getActiveSession?.();
       const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
-      const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
+      const instruction = buildTurnInstruction({ crewPrivate: crewPrivateChat });
       const sid = agent.sessionId;
       const turn = turnRegistry.create(sid);
       runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
@@ -436,15 +446,10 @@ export function createChatRouter(): Router {
       agent.cancel();
       await waitForIdle(agent);
       ensureSubscribed();
-      const mode = applySessionModeToAgent(agent);
       const fullText = buildFullText(text, attachments);
       const activeSess = eng.sessionManager.getActiveSession?.();
       const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
-      const instruction = crewPrivateChat
-        ? buildInstructionForMode(mode, { crewPrivate: true })
-        : (mode === 'plan'
-          ? 'Generate a detailed plan for this request. Do NOT execute the plan yet — only outline the steps.'
-          : buildInstructionForMode(mode));
+      const instruction = buildTurnInstruction({ crewPrivate: crewPrivateChat });
       const sid = agent.sessionId;
       const turn = turnRegistry.create(sid);
       runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {

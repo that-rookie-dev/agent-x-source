@@ -18,10 +18,9 @@ import {
 } from '@agentx/shared';
 import type { Crew, CompletionRequest, SessionEvent, SessionListKpis, StorableMessage } from '@agentx/shared';
 import { EMPTY_SESSION_KPIS } from '@agentx/shared';
-import { getEngine, createAgent, destroyAgent } from '../../engine.js';
-import { getMemoryFabricInstance, ProviderFactory } from '@agentx/engine';
+import { getEngine, createAgent, destroyAgent, getOrCreateBoundSessionAgent } from '../../engine.js';
+import { getMemoryFabricInstance, ProviderFactory, getSubAgentServiceInstance, type Agent } from '@agentx/engine';
 import {
-  sessionSettings,
   loadSessionMessagesPage,
   loadTurnFeedbackForSession,
   recordTurnFeedback,
@@ -47,51 +46,16 @@ import {
 } from '../../host-crew-session.js';
 import { getSessionDir, pathExists, ensureSessionDir, atomicWriteFileSync } from './shared.js';
 
-// Module-local state moved from legacy.ts (only used by session/mode routes).
-let _preHyperdriveMode: 'agent' | 'plan' = 'plan';
-
 export function createSessionsRouter(): Router {
   const r = Router();
 
-  r.get('/api/session/settings', (_req, res) => {
-    res.json(sessionSettings);
-  });
-
-  r.post('/api/session/mode', (req, res) => {
-    try {
-      const { mode } = req.body as { mode: 'agent' | 'plan' };
-      if (!['agent', 'plan'].includes(mode)) { res.status(400).json({ error: 'invalid-mode' }); return; }
-      const previousMode = sessionSettings.mode;
-      if (previousMode === mode) {
-        res.json({ ok: true, mode });
-        return;
-      }
-      const eng = getEngine();
-      if (eng.agent?.hyperdriveMode && mode === 'plan') {
-        res.status(409).json({ error: 'hyperdrive-active', message: 'Exit Hyperdrive before switching to Plan mode' });
-        return;
-      }
-      sessionSettings.mode = mode;
-      if (eng.agent) {
-        eng.agent.setPlanMode(mode === 'plan');
-      }
-      // Sync mode to toolkit executor for Plan mode tool restriction
-      try {
-        eng.toolkit?.executor?.setMode?.(mode);
-      } catch (e) { /* best-effort */ }
-      // Persist mode to session store so it survives restores
-      try {
-        const sess = eng.sessionManager.getActiveSession();
-        if (sess) {
-          eng.sessionManager.syncActiveSessionRuntime({ mode });
-        }
-      } catch (e) { /* best-effort */ }
-      res.json({ ok: true, mode });
-    } catch (e: unknown) {
-      getLogger().error('SESSION_MODE', e instanceof Error ? e : String(e));
-      res.status(500).json({ error: e instanceof Error ? e.message : 'mode-failed' });
-    }
-  });
+  function resolveSessionAgent(sessionId: string): Agent | null {
+    const eng = getEngine();
+    if (eng.agent?.sessionId === sessionId) return eng.agent;
+    const session = eng.sessionManager.getSessionById(sessionId);
+    if (!session) return null;
+    return getOrCreateBoundSessionAgent(session);
+  }
 
   r.post('/api/clarification/respond', validate(clarificationRespondSchema), async (req, res) => {
     try {
@@ -189,9 +153,7 @@ export function createSessionsRouter(): Router {
           status: s.status,
           provider: s.providerId,
           model: s.modelId,
-          mode: s.mode ?? 'plan',
           scopePath: s.scopePath,
-          hyperdrive: !!s.hyperdrive,
           parentId: s.parentId ?? null,
           createdAt: s.createdAt,
           updatedAt: s.updatedAt,
@@ -451,8 +413,6 @@ export function createSessionsRouter(): Router {
         cfg.provider.activeModel,
         resolve(body.scopePath),
       );
-      // Ensure new sessions start in Plan mode
-      sessionSettings.mode = 'plan';
       createAgent(undefined, session);
       ensureSubscribed();
       // Broadcast session creation to the neural frontend.
@@ -595,14 +555,6 @@ export function createSessionsRouter(): Router {
       }
       const session = eng.sessionManager.restoreSession(sessionId);
       if (!session) { res.status(404).json({ error: 'not-found' }); return; }
-      // Restore saved session mode (defaults to 'plan')
-      sessionSettings.mode = session.mode || 'plan';
-      if (isCrewPrivateSessionRecord(session) && session.hyperdrive) {
-        try {
-          eng.sessionManager.updateSession({ hyperdrive: false });
-          session.hyperdrive = false;
-        } catch { /* best-effort */ }
-      }
       if (isCrewPrivateSessionRecord(session) && session.hostCrewId) {
         const store = eng.sessionManager.getStorageAdapter?.();
         const crew = await resolveCrewPrivateHostForSession(eng.crewManager, session, store);
@@ -618,17 +570,6 @@ export function createSessionsRouter(): Router {
         createAgent(undefined, session);
       }
       const resumeState = loadSessionResumeState(sessionId);
-      // Restore hyperdrive overlay from DB (Agent-X sessions only — not crew private)
-      if (!isCrewPrivateSessionRecord(session) && session.hyperdrive) {
-        try {
-          _preHyperdriveMode = session.mode || 'plan';
-          sessionSettings.mode = 'agent';
-          const agent = eng.agent;
-          if (agent && !agent.hyperdriveMode) {
-            agent.toggleHyperdriveMode();
-          }
-        } catch (e) { /* best-effort */ }
-      }
       ensureSubscribed();
       // Check for interrupted task (task_started without task_completed)
       let interruptedTask: Record<string, unknown> | null = null;
@@ -684,6 +625,22 @@ export function createSessionsRouter(): Router {
 
       enrichSessionMessagesForUi(eng, messages, parts);
 
+      // Include background task status so the UI can show running/completed tasks
+      let backgroundTasks: Array<Record<string, unknown>> = [];
+      try {
+        const subAgentService = getSubAgentServiceInstance();
+        const allTasks = subAgentService.getTasksForSession(sessionId);
+        backgroundTasks = allTasks.map((t) => ({
+          id: t.id,
+          status: t.status,
+          instruction: t.instruction?.slice(0, 200),
+          background: t.background,
+          startTime: t.startTime,
+          endTime: t.endTime,
+          childSessionId: t.childSessionId,
+        }));
+      } catch { /* best-effort */ }
+
       res.json({
         session,
         messages,
@@ -693,6 +650,7 @@ export function createSessionsRouter(): Router {
         interruptedTask,
         turnFeedback: loadTurnFeedbackForSession(eng, sessionId),
         resumeState,
+        backgroundTasks,
         messagesMeta: perRole != null ? { total: messageTotal, truncated: messagesTruncated, perRole } : undefined,
       });
     } catch (e: unknown) {
@@ -972,6 +930,76 @@ export function createSessionsRouter(): Router {
       res.json({ ok: true });
     } catch (e: unknown) {
       getLogger().error('DELETE_API_SESSIONS_ID_CHECKPOINT_CHECKPOINTID', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'delete-failed' });
+    }
+  });
+
+  r.get('/api/sessions/:sessionId/permissions', (req, res) => {
+    try {
+      const sessionId = req.params['sessionId']!;
+      const agent = resolveSessionAgent(sessionId);
+      if (!agent) { res.status(404).json({ error: 'not-found' }); return; }
+      const pm = agent.getToolExecutor()?.getPermissionManager();
+      const decisions = (pm?.list() ?? [])
+        .filter((p) => p.toolName !== '*')
+        .map((p) => ({ toolName: p.toolName, targetPath: p.targetPath, decision: p.decision }));
+      res.json({ bypassPermissions: agent.bypassPermissions, decisions });
+    } catch (e: unknown) {
+      getLogger().error('GET_API_SESSIONS_PERMISSIONS', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'permissions-load-failed' });
+    }
+  });
+
+  r.post('/api/sessions/:sessionId/permissions/bypass', (req, res) => {
+    try {
+      const sessionId = req.params['sessionId']!;
+      const { enabled } = req.body as { enabled?: boolean };
+      if (typeof enabled !== 'boolean') { res.status(400).json({ error: 'enabled boolean required' }); return; }
+      const agent = resolveSessionAgent(sessionId);
+      if (!agent) { res.status(404).json({ error: 'not-found' }); return; }
+      agent.setBypassPermissions(enabled);
+      res.json({ bypassPermissions: agent.bypassPermissions });
+    } catch (e: unknown) {
+      getLogger().error('POST_API_SESSIONS_PERMISSIONS_BYPASS', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'bypass-update-failed' });
+    }
+  });
+
+  r.post('/api/sessions/:sessionId/permissions/revoke', (req, res) => {
+    try {
+      const sessionId = req.params['sessionId']!;
+      const agent = resolveSessionAgent(sessionId);
+      if (!agent) { res.status(404).json({ error: 'not-found' }); return; }
+      agent.revokeSessionPermissions();
+      res.json({ bypassPermissions: agent.bypassPermissions, ok: true });
+    } catch (e: unknown) {
+      getLogger().error('POST_API_SESSIONS_PERMISSIONS_REVOKE', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'revoke-failed' });
+    }
+  });
+
+  r.post('/api/sessions/:sessionId/permissions/tool', (req, res) => {
+    try {
+      const sessionId = req.params['sessionId']!;
+      const body = req.body as { toolName?: unknown; decision?: unknown };
+      if (typeof body.toolName !== 'string' || !body.toolName) {
+        res.status(400).json({ error: 'toolName is required' }); return;
+      }
+      const decision = String(body.decision);
+      if (!['allow_always', 'deny', 'revoke'].includes(decision)) {
+        res.status(400).json({ error: "decision must be 'allow_always', 'deny', or 'revoke'" }); return;
+      }
+      const agent = resolveSessionAgent(sessionId);
+      if (!agent) { res.status(404).json({ error: 'not-found' }); return; }
+      if (decision === 'revoke') {
+        const pm = agent.getToolExecutor()?.getPermissionManager();
+        if (pm) pm.revoke(body.toolName);
+      } else {
+        agent.recordToolPermissionDecision(body.toolName, decision as 'allow_always' | 'deny');
+      }
+      res.json({ ok: true });
+    } catch (e: unknown) {
+      getLogger().error('POST_API_SESSIONS_PERMISSIONS_TOOL', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'tool-permission-failed' });
     }
   });
 

@@ -1101,7 +1101,6 @@ export class IntegrationHub {
       sessionId: 'mcp-store',
       scopePath: '*',
       timeout: 600_000,
-      mode: 'agent',
     });
   }
 

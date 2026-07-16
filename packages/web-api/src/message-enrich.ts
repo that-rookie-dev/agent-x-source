@@ -21,14 +21,6 @@ export function selectRecentMessagesTail(
   };
 }
 
-/** @deprecated Use selectRecentMessagesTail — per-role slices leave gaps when paginating. */
-export function selectRecentMessagesPerRole(
-  messages: Array<Record<string, unknown>>,
-  perRole: number,
-): { messages: Array<Record<string, unknown>>; total: number; truncated: boolean } {
-  return selectRecentMessagesTail(messages, perRole * 2);
-}
-
 export function enrichSessionMessagesForUi(
   eng: MessageEnrichEngine,
   messages: Array<Record<string, unknown> | StorableMessage>,

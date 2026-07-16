@@ -37,7 +37,6 @@ import {
   resolvePublicUrl,
   shouldStartEmbeddedPostgresAtBoot,
   readConfiguredPostgresPreference,
-  ensureEmbeddedPgLibPath,
   createDesktopRuntimeOptions,
   createServerRuntimeOptions,
   resolveDefaultServerDataDir,
@@ -86,12 +85,6 @@ describe('resolvePublicUrl', () => {
   it('falls back to localhost or detected IP when no explicit url', () => {
     const url = resolvePublicUrl(3333);
     expect(url).toMatch(/^http:\/\/(localhost|[\d.]+):3333$/);
-  });
-});
-
-describe('ensureEmbeddedPgLibPath', () => {
-  it('is a no-op that does not throw', () => {
-    expect(() => ensureEmbeddedPgLibPath('/some/path')).not.toThrow();
   });
 });
 

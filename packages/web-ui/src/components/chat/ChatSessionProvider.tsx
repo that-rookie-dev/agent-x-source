@@ -101,7 +101,7 @@ type ModelData = Pick<ChatSessionStateReturn, ModelDataKey>;
 
 // ─── Model / provider menu keys ───
 const MODEL_MENU_KEYS = [
-  'modeMenuAnchor', 'providerMenuAnchor', 'modelMenuAnchor',
+  'providerMenuAnchor', 'modelMenuAnchor',
 ] as const;
 
 type ModelMenuKey = typeof MODEL_MENU_KEYS[number];
@@ -133,13 +133,13 @@ const CREW_LIST_KEYS = [
 type CrewListKey = typeof CREW_LIST_KEYS[number];
 type CrewList = Pick<ChatSessionStateReturn, CrewListKey>;
 
-// ─── Agent mode keys ───
-const AGENT_MODE_KEYS = [
-  'agentMode',
+// ─── Bypass permissions keys ───
+const BYPASS_PERMISSIONS_KEYS = [
+  'bypassPermissions', 'toolPermissions',
 ] as const;
 
-type AgentModeKey = typeof AGENT_MODE_KEYS[number];
-type AgentModeState = Pick<ChatSessionStateReturn, AgentModeKey>;
+type BypassPermissionsKey = typeof BYPASS_PERMISSIONS_KEYS[number];
+type BypassPermissions = Pick<ChatSessionStateReturn, BypassPermissionsKey>;
 
 // ─── Crew add / search keys ───
 const CREW_ADD_KEYS = [
@@ -163,32 +163,16 @@ type Sidebar = Pick<ChatSessionStateReturn, SidebarKey>;
 const MODAL_KEYS = [
   'paletteOpen', 'searchOpen', 'checkpointsOpen',
   'folderPickerOpen', 'folderPickerCallback', 'folderConsentOpen', 'folderPickerLoading',
-  'modeEscalation', 'stepCapPrompt',
-  'modeSuggestOpen',
+  'stepCapPrompt',
   'crewDossierOpen', 'crewDossierCrew',
   'clearSessionModalOpen', 'clearSessionBusy',
-  'showDisclaimer',
   'paletteActions',
 ] as const;
 
 type ModalKey = typeof MODAL_KEYS[number];
 type Modal = Pick<ChatSessionStateReturn, ModalKey>;
 
-// ─── Hyperdrive mode keys ───
-const HYPERDRIVE_MODE_KEYS = [
-  'hyperdriveMode',
-] as const;
 
-type HyperdriveModeKey = typeof HYPERDRIVE_MODE_KEYS[number];
-type HyperdriveMode = Pick<ChatSessionStateReturn, HyperdriveModeKey>;
-
-// ─── Hyperdrive UI keys ───
-const HYPERDRIVE_UI_KEYS = [
-  'hyperdriveShimmer',
-] as const;
-
-type HyperdriveUIKey = typeof HYPERDRIVE_UI_KEYS[number];
-type HyperdriveUI = Pick<ChatSessionStateReturn, HyperdriveUIKey>;
 
 // ─── Setter / stable ref keys (setters, refs, and UI-stable utilities) ───
 const SETTER_KEYS = [
@@ -206,15 +190,15 @@ const SETTER_KEYS = [
   'setFreezeMessageLayout', 'setInitialScrollDone',
   'setCurrentModel', 'setCurrentProvider', 'setCurrentProviderId',
   'setProviderList', 'setModelList', 'setLoadingModels', 'setConfigLoaded',
-  'setCrewList', 'setAgentMode',
-  'setHyperdriveMode', 'setShowDisclaimer',
+  'setCrewList',
+  'setBypassPermissions', 'toggleBypassPermissions', 'revokeSessionPermissions', 'setToolPermission',
   'setCwd',
-  'setModeMenuAnchor', 'setProviderMenuAnchor', 'setModelMenuAnchor',
+  'setProviderMenuAnchor', 'setModelMenuAnchor',
   'setConnState', 'setLastEventAt',
   'setPaletteOpen', 'setSearchOpen', 'setCheckpointsOpen',
   'setFolderPickerOpen', 'setFolderPickerCallback', 'setFolderConsentOpen', 'setFolderPickerLoading',
-  'setModeEscalation', 'setStepCapPrompt',
-  'setModeSuggestOpen', 'setCrewDossierOpen', 'setCrewDossierCrew',
+  'setStepCapPrompt',
+  'setCrewDossierOpen', 'setCrewDossierCrew',
   'setClearSessionModalOpen', 'setClearSessionBusy',
   'setWebSearchAvailable', 'setWebSearchForce', 'setCrewSuggestionRequested',
   'setComposerMode', 'setVoiceAutoStart',
@@ -236,7 +220,7 @@ const INPUT_HANDLER_KEYS = [
   'handleSend', 'handleCancel', 'handleStopAndSend', 'handleAddToQueue', 'handleSteer',
   'handleFileSelect', 'handleRemoveAttachment',
   'handlePermissionRespond', 'handlePermissionRespondBatch',
-  'handleHyperdriveToggle', 'handleWebSearchToggle', 'handleCrewSuggestionToggle',
+  'handleWebSearchToggle', 'handleCrewSuggestionToggle',
   'handleVoiceUserPending', 'handleVoiceUserDiscarded', 'handleVoiceTranscript', 'handleVoiceTiming',
 ] as const;
 
@@ -272,9 +256,7 @@ type NavigationHandlerKey = typeof NAVIGATION_HANDLER_KEYS[number];
 type NavigationHandlers = Pick<ChatSessionStateReturn, NavigationHandlerKey>;
 
 // ─── Modal action keys ───
-const MODAL_ACTION_KEYS = [
-  'sendAfterModeChoice', 'confirmHyperdrive', 'engageHyperdrive',
-] as const;
+const MODAL_ACTION_KEYS = [] as const;
 
 type ModalActionKey = typeof MODAL_ACTION_KEYS[number];
 type ModalActions = Pick<ChatSessionStateReturn, ModalActionKey>;
@@ -294,12 +276,10 @@ export const ChatModelMenuContext = createContext<ModelMenu | undefined>(undefin
 export const ChatInputGateContext = createContext<InputGate | undefined>(undefined);
 export const ChatComposerContext = createContext<Composer | undefined>(undefined);
 export const ChatCrewListContext = createContext<CrewList | undefined>(undefined);
-export const ChatAgentModeContext = createContext<AgentModeState | undefined>(undefined);
+export const ChatBypassPermissionsContext = createContext<BypassPermissions | undefined>(undefined);
 export const ChatCrewAddContext = createContext<CrewAdd | undefined>(undefined);
 export const ChatSidebarContext = createContext<Sidebar | undefined>(undefined);
 export const ChatModalContext = createContext<Modal | undefined>(undefined);
-export const ChatHyperdriveModeContext = createContext<HyperdriveMode | undefined>(undefined);
-export const ChatHyperdriveUIContext = createContext<HyperdriveUI | undefined>(undefined);
 export const ChatSessionSettersContext = createContext<Setters | undefined>(undefined);
 export const ChatInputHandlersContext = createContext<InputHandlers | undefined>(undefined);
 export const ChatThreadHandlersContext = createContext<ThreadHandlers | undefined>(undefined);
@@ -382,10 +362,10 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, CREW_LIST_KEYS.map((k) => state[k]));
 
-  const agentMode = useMemo(() => {
-    return Object.fromEntries(AGENT_MODE_KEYS.map((k) => [k, state[k]])) as AgentModeState;
+  const bypassPermissions = useMemo(() => {
+    return Object.fromEntries(BYPASS_PERMISSIONS_KEYS.map((k) => [k, state[k]])) as BypassPermissions;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, AGENT_MODE_KEYS.map((k) => state[k]));
+  }, BYPASS_PERMISSIONS_KEYS.map((k) => state[k]));
 
   const crewAdd = useMemo(() => {
     return Object.fromEntries(CREW_ADD_KEYS.map((k) => [k, state[k]])) as CrewAdd;
@@ -401,16 +381,6 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
     return Object.fromEntries(MODAL_KEYS.map((k) => [k, state[k]])) as Modal;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, MODAL_KEYS.map((k) => state[k]));
-
-  const hyperdriveMode = useMemo(() => {
-    return Object.fromEntries(HYPERDRIVE_MODE_KEYS.map((k) => [k, state[k]])) as HyperdriveMode;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, HYPERDRIVE_MODE_KEYS.map((k) => state[k]));
-
-  const hyperdriveUi = useMemo(() => {
-    return Object.fromEntries(HYPERDRIVE_UI_KEYS.map((k) => [k, state[k]])) as HyperdriveUI;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, HYPERDRIVE_UI_KEYS.map((k) => state[k]));
 
   // Dispatch slices
   const setters = useMemo(() => {
@@ -458,31 +428,27 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
                           <ChatInputGateContext.Provider value={inputGate}>
                             <ChatComposerContext.Provider value={composer}>
                               <ChatCrewListContext.Provider value={crewList}>
-                                <ChatAgentModeContext.Provider value={agentMode}>
+                                <ChatBypassPermissionsContext.Provider value={bypassPermissions}>
                                   <ChatCrewAddContext.Provider value={crewAdd}>
                                     <ChatSidebarContext.Provider value={sidebar}>
                                       <ChatModalContext.Provider value={modal}>
-                                        <ChatHyperdriveModeContext.Provider value={hyperdriveMode}>
-                                          <ChatHyperdriveUIContext.Provider value={hyperdriveUi}>
-                                            <ChatSessionSettersContext.Provider value={setters}>
-                                              <ChatInputHandlersContext.Provider value={inputHandlers}>
-                                                <ChatThreadHandlersContext.Provider value={threadHandlers}>
-                                                  <ChatCrewHandlersContext.Provider value={crewHandlers}>
-                                                    <ChatNavigationHandlersContext.Provider value={navigationHandlers}>
-                                                      <ChatModalActionsContext.Provider value={modalActions}>
-                                                        {children}
-                                                      </ChatModalActionsContext.Provider>
-                                                    </ChatNavigationHandlersContext.Provider>
-                                                  </ChatCrewHandlersContext.Provider>
-                                                </ChatThreadHandlersContext.Provider>
-                                              </ChatInputHandlersContext.Provider>
-                                            </ChatSessionSettersContext.Provider>
-                                          </ChatHyperdriveUIContext.Provider>
-                                        </ChatHyperdriveModeContext.Provider>
+                                        <ChatSessionSettersContext.Provider value={setters}>
+                                          <ChatInputHandlersContext.Provider value={inputHandlers}>
+                                            <ChatThreadHandlersContext.Provider value={threadHandlers}>
+                                              <ChatCrewHandlersContext.Provider value={crewHandlers}>
+                                                <ChatNavigationHandlersContext.Provider value={navigationHandlers}>
+                                                  <ChatModalActionsContext.Provider value={modalActions}>
+                                                    {children}
+                                                  </ChatModalActionsContext.Provider>
+                                                </ChatNavigationHandlersContext.Provider>
+                                              </ChatCrewHandlersContext.Provider>
+                                            </ChatThreadHandlersContext.Provider>
+                                          </ChatInputHandlersContext.Provider>
+                                        </ChatSessionSettersContext.Provider>
                                       </ChatModalContext.Provider>
                                     </ChatSidebarContext.Provider>
                                   </ChatCrewAddContext.Provider>
-                                </ChatAgentModeContext.Provider>
+                                </ChatBypassPermissionsContext.Provider>
                               </ChatCrewListContext.Provider>
                             </ChatComposerContext.Provider>
                           </ChatInputGateContext.Provider>
@@ -598,10 +564,10 @@ export function useChatCrewListContext() {
   return ctx;
 }
 
-/** Access agent mode value. */
-export function useChatAgentModeContext() {
-  const ctx = useContext(ChatAgentModeContext);
-  if (!ctx) throw new Error('useChatAgentModeContext must be used within ChatSessionProvider');
+/** Access bypass permissions state. */
+export function useChatBypassPermissionsContext() {
+  const ctx = useContext(ChatBypassPermissionsContext);
+  if (!ctx) throw new Error('useChatBypassPermissionsContext must be used within ChatSessionProvider');
   return ctx;
 }
 
@@ -623,20 +589,6 @@ export function useChatSidebarContext() {
 export function useChatModalContext() {
   const ctx = useContext(ChatModalContext);
   if (!ctx) throw new Error('useChatModalContext must be used within ChatSessionProvider');
-  return ctx;
-}
-
-/** Access hyperdrive mode. */
-export function useChatHyperdriveModeContext() {
-  const ctx = useContext(ChatHyperdriveModeContext);
-  if (!ctx) throw new Error('useChatHyperdriveModeContext must be used within ChatSessionProvider');
-  return ctx;
-}
-
-/** Access hyperdrive UI state. */
-export function useChatHyperdriveUIContext() {
-  const ctx = useContext(ChatHyperdriveUIContext);
-  if (!ctx) throw new Error('useChatHyperdriveUIContext must be used within ChatSessionProvider');
   return ctx;
 }
 

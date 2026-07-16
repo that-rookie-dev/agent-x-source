@@ -14,8 +14,6 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, QuestionnairePayload, ToolDefinition } from '@agentx/shared';
 import { normalizeAskClarificationArgs, shouldUseQuestionnaireClarification, TEXT_CLARIFICATION_REJECTED_MESSAGE } from '@agentx/shared';
-import { isToolAllowedInPlanMode, buildPlanModeRestrictedToolHint, type PlanGatePromptProfile } from './plan-mode-utils.js';
-import { isCompactToolAllowed } from './context-profile.js';
 import {
   shouldDisclose,
   getCoreTools,
@@ -263,23 +261,13 @@ export function createAiSdkTools(
   emit: (event: EngineEvent) => void,
   waitForClarification: (questionnaire: QuestionnairePayload) => Promise<string>,
   runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }>,
-  planMode: boolean = false,
-  waitForModeEscalation?: (toolId: string, reason: string) => Promise<boolean>,
   onToolExecuted?: (toolId: string, success: boolean, output: string, elapsed: number, args?: Record<string, unknown>) => void,
-  promptProfile: PlanGatePromptProfile = 'default',
-  compactContext = false,
 ): ToolSet {
   const allTools = toolRegistry.list();
   const tools: ToolSet = {};
+  let filteredTools = allTools;
 
-  // ─── Plan Mode: strict allowlist — read/explore only; plans stay in chat ───
-  let filteredTools = planMode
-    ? allTools.filter((t) => isToolAllowedInPlanMode(t.id))
-    : allTools;
-
-  if (compactContext) {
-    filteredTools = filteredTools.filter((t) => isCompactToolAllowed(t.id, planMode));
-  } else if ((toolExecutor.shouldDisclose?.(filteredTools.length) ?? shouldDisclose(filteredTools.length))) {
+  if (toolExecutor.shouldDisclose?.(filteredTools.length) ?? shouldDisclose(filteredTools.length)) {
     // Progressive disclosure: expose core tools + bridge (search/describe/call)
     const core = (toolExecutor.getCoreTools?.(filteredTools) ?? getCoreTools(filteredTools));
     const bridges = (toolExecutor.createBridgeTools?.() ?? createBridgeTools());
@@ -288,9 +276,7 @@ export function createAiSdkTools(
   }
 
   // Full catalog for tool_search / tool_describe / tool_call resolution
-  const discoveryCatalog = planMode
-    ? allTools.filter((t) => isToolAllowedInPlanMode(t.id))
-    : allTools;
+  const discoveryCatalog = allTools;
 
   // Wire real-time tool output streaming
   const activeOutputCalls = new Map<string, string>(); // callId -> tool name
@@ -405,8 +391,13 @@ export function createAiSdkTools(
           const resolved = (toolExecutor.resolveBridgeToolCall?.(toolDef.id, args as Record<string, unknown>, discoveryCatalog) ??
             resolveBridgeToolCall(toolDef.id, args as Record<string, unknown>, discoveryCatalog));
 
+          if (resolved.error) {
+            emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output: resolved.error }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+            return `[TOOL ERROR] ${resolved.error}`;
+          }
+
           if (toolDef.id === 'tool_call') {
-            if (resolved.error || !resolved.resolved) {
+            if (!resolved.resolved) {
               const output = resolved.error ?? 'Tool not found';
               emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
               return `[TOOL ERROR] ${output}`;
@@ -499,43 +490,6 @@ export function createAiSdkTools(
               });
 
                if (!result.success) {
-                 if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
-                   emit({ type: 'mode_restricted', tool: toolDef.id, error: result.error, message: result.output });
-
-                   if (result.error === 'MODE_RESTRICTED' && waitForModeEscalation) {
-                     emit({
-                       type: 'mode_escalation_required',
-                       tool: toolDef.id,
-                       reason: result.output,
-                       pendingAction: `${toolDef.id}(${argsStr})`,
-                     });
-                     const accepted = await waitForModeEscalation(toolDef.id, result.output);
-                     if (accepted) {
-                       emit({ type: 'mode_escalation_accepted', tool: toolDef.id });
-                       const retryResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId, { signal: options?.abortSignal });
-                       const retryElapsed = Date.now() - startTime;
-                       onToolExecuted?.(toolDef.id, retryResult.success, retryResult.output, retryElapsed, args as Record<string, unknown>);
-                        emit({
-                          type: 'tool_complete',
-                          tool: toolDef.id,
-                          result: retryResult,
-                          elapsed: retryElapsed,
-                          args: args as Record<string, unknown>,
-                          callId,
-                          message: retryResult.success ? `✅ ${toolDef.name} completed after mode switch` : `❌ ${toolDef.name} still failed`,
-                        });
-                       if (retryResult.success) return retryResult.output;
-                       return `[TOOL ERROR: ${retryResult.error || 'Unknown'}] ${retryResult.output}`;
-                     }
-                     emit({ type: 'mode_escalation_declined', tool: toolDef.id });
-                     throw new Error('MODE_ESCALATION_DECLINED');
-                   }
-
-                   if (result.error === 'MODE_RESTRICTED') {
-                     return buildPlanModeRestrictedToolHint(toolDef.id, result.output, promptProfile);
-                   }
-                   return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
-                 }
                  return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
                }
              return result.output;

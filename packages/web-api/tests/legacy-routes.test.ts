@@ -74,9 +74,7 @@ vi.mock('../src/turn-registry.js', () => ({
 
 vi.mock('../src/chat-helpers.js', () => ({
   sessionSettings: vi.fn().mockReturnValue({}),
-  applySessionModeToAgent: vi.fn(),
   buildFullText: vi.fn(),
-  buildInstructionForMode: vi.fn(),
   runAgentTurnAsync: vi.fn(),
   isCrewPrivateSessionRecord: vi.fn().mockReturnValue(false),
   loadTurnFeedbackForSession: vi.fn().mockReturnValue([]),

@@ -17,11 +17,11 @@ export interface PermissionContext {
       grant(toolId: string, decision: PermissionDecision): void;
       deny(toolId: string): void;
       allowAll(): void;
+      isAllAllowed(): boolean;
     };
   } | null | undefined;
   options: { automationRun?: boolean };
   isDelegatedWorker: boolean;
-  autoApproveTools: boolean;
   turnApprovedAll: boolean;
   userCancelledTurn: boolean;
   pendingPermissions: Map<string, { resolve: (choice: PermissionHandlerResult) => void; toolName: string; path: string; riskLevel: string }>;
@@ -34,7 +34,8 @@ export function bindPermissionHandler(ctx: PermissionContext): void {
   ctx.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel, context) => {
     if (isPermissionExemptTool(toolId)) return 'allow_once';
     if (ctx.userCancelledTurn || ctx.toolExecutor?.isTurnAborted()) return 'deny';
-    if (ctx.isDelegatedWorker || ctx.autoApproveTools || ctx.turnApprovedAll) return 'allow_once';
+    if (ctx.toolExecutor?.getPermissionManager().isAllAllowed()) return 'allow_once';
+    if (ctx.isDelegatedWorker || ctx.turnApprovedAll) return 'allow_once';
     const requestId = randomUUID();
     const { commandPreview, argsSummary } = summarizePermissionArgs(context?.args as Record<string, unknown> | undefined);
     if (ctx.userCancelledTurn) return 'deny';

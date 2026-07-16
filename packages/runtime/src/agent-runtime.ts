@@ -103,18 +103,6 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
   };
 }
 
-/**
- * Previously set process-wide DYLD/LD_LIBRARY_PATH for embedded Postgres.
- * That poisoned child processes like bundled ffmpeg: dyld preferred Postgres'
- * incomplete libiconv and failed with "Symbol not found: _iconv".
- *
- * Lib paths are applied only to postgres children in PostgresLifecycleManager.
- * Kept as a no-op so older call sites remain safe.
- */
-export function ensureEmbeddedPgLibPath(_installDir: string): void {
-  // intentionally no-op — do not set process-wide library paths
-}
-
 export function setupPythonEnv(paths: AgentRuntimePaths, isDev: boolean): void {
   if (existsSync(paths.pythonPath)) {
     process.env['AGENTX_PYTHON_PATH'] = paths.pythonPath;
@@ -619,7 +607,6 @@ export function createServerRuntimeOptions(params?: {
 
   process.env['AGENTX_INSTALL_DIR'] = installDir;
   process.env['AGENTX_DATA_DIR'] = dataDir;
-  ensureEmbeddedPgLibPath(installDir);
 
   const envPort = process.env['AGENTX_PORT'] ? Number(process.env['AGENTX_PORT']) : NaN;
   const port = params?.port

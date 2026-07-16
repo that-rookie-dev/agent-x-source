@@ -54,7 +54,7 @@ describe('integration-tool-availability', () => {
     expect(reconciled.policy?.hintKind).toBe('degraded');
   });
 
-  it('refreshes active tool list after plan-mode filtering', () => {
+  it('refreshes active tool list after permission filtering', () => {
     const hint = '[INTEGRATION SERVICE] Gmail MCP is connected. Active tools this turn: integration__gmail__send_email, integration__gmail__read_email.';
     const policy = {
       hintKind: 'service' as const,

@@ -72,6 +72,15 @@ export class ToolPermissionService {
       return { decision: 'deny', error: 'MODE_RESTRICTED' };
     }
 
+    const permissionManager = host.getPermissionManager();
+    const existingGrant = permissionManager.check(toolId, scopePath ?? undefined);
+    if (existingGrant === 'allow_always') {
+      return { decision: 'allow' };
+    }
+    if (existingGrant === 'deny') {
+      return { decision: 'deny', error: 'PERMISSION_DENIED' };
+    }
+
     const path = scopePath ?? '*';
     const ruleResult = evaluateRules(
       `tool:${toolId}`,
@@ -107,11 +116,6 @@ export class ToolPermissionService {
 
     if (!permissionHandler) {
       return { decision: 'deny', error: 'PERMISSION_DENIED' };
-    }
-
-    const existingGrant = host.getPermissionManager().check(toolId, scopePath ?? undefined);
-    if (existingGrant === 'allow_always') {
-      return { decision: 'allow' };
     }
 
     const integrationPreview = isIntegrationToolId(toolId)

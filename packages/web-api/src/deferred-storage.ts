@@ -3,7 +3,6 @@ import type {
   StorableSession,
   StorableMessage,
   StorableTokenLog,
-  StorablePermission,
   Crew,
   CrewCreateInput,
 } from '@agentx/shared';
@@ -52,11 +51,6 @@ export class DeferredStorageAdapter implements StorageAdapter {
 
   addTokenLog(): void {}
   getTokenLogs(): StorableTokenLog[] {
-    return [];
-  }
-
-  addPermission(): void {}
-  getPermissions(): StorablePermission[] {
     return [];
   }
 

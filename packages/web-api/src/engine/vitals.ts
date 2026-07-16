@@ -149,7 +149,7 @@ export function getAutonomyStatus(): Record<string, unknown> {
     } catch { /* */ }
 
     // Offline fallback status
-    let offlineFallback = { available: false, provider: '', model: '' };
+    const offlineFallback = { available: false, provider: '', model: '' };
 
     // DB backend mode
     const dbMode = 'postgres';

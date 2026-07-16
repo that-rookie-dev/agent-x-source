@@ -82,6 +82,9 @@ export class SubAgentManager {
   setParentAgent(agent: Agent): void {
     this.parentAgent = agent;
     this.parentSessionId = agent.sessionId ?? null;
+    if (this.parentSessionId) {
+      this.service.registerSessionEventBus(this.parentSessionId, this.eventBus);
+    }
   }
 
   setCache(cache: SubAgentCache): void {
@@ -267,7 +270,12 @@ export class SubAgentManager {
   private async execute(task: SubAgentTask): Promise<void> {
     task.status = 'running';
     task.startTime = Date.now();
+    this.service.taskStarted(task.id, task.startTime);
+    this.service.recordHeartbeat(task.id);
     const startMemory = process.memoryUsage().heapUsed;
+
+    // Keep the global service aware that this task is alive while it runs.
+    const heartbeatInterval = setInterval(() => this.service.recordHeartbeat(task.id), 5_000);
 
     this.eventBus.emit({
       type: 'agent_progress',
@@ -368,6 +376,8 @@ export class SubAgentManager {
       }
     } catch (error) {
       this.fail(task.id, error instanceof Error ? error.message : 'Sub-agent execution failed');
+    } finally {
+      clearInterval(heartbeatInterval);
     }
   }
 
@@ -382,6 +392,38 @@ export class SubAgentManager {
       if (task) spawned.push(task);
     }
     return spawned;
+  }
+
+  /**
+   * Persist the background task result as an assistant message in the PARENT
+   * session's store. This ensures the result is visible in the UI when the
+   * user returns to the session, even if the agent was destroyed and recreated.
+   */
+  private async persistBackgroundResultToParent(task: SubAgentTask, result: string, elapsedMs: number, tokensUsed: number): Promise<void> {
+    if (!this.parentAgent || !this.parentSessionId) return;
+    try {
+      const sessionManager = (this.parentAgent as unknown as { sessionManager?: { getStorageAdapter?: () => { insertMessage?: (msg: Record<string, unknown>) => void; ensureSessionHydrated?: (sessionId: string) => Promise<void> } } }).sessionManager;
+      const store = sessionManager?.getStorageAdapter?.();
+      if (!store?.insertMessage) return;
+      if (store.ensureSessionHydrated) {
+        await store.ensureSessionHydrated(this.parentSessionId);
+      }
+      const content = `[task_result]\ntaskId: ${task.id}\nchildSessionId: ${task.childSessionId ?? task.id}\ntokensUsed: ${tokensUsed}\nelapsedMs: ${elapsedMs}\n[/task_result]\n${result}`;
+      store.insertMessage({
+        sessionId: this.parentSessionId,
+        role: 'assistant',
+        content,
+        metadata: {
+          backgroundTaskId: task.id,
+          childSessionId: task.childSessionId ?? task.id,
+          backgroundTask: true,
+          tokensUsed,
+          elapsedMs,
+        },
+      });
+    } catch {
+      // best-effort — the result is also stored in SubAgentService for in-memory ingestion
+    }
   }
 
   /**
@@ -429,7 +471,7 @@ export class SubAgentManager {
       // Store in cache
       const cacheKey = this.cache.deriveKey(task.instruction, task.tools, this.systemPromptHash);
       this.cache.set(cacheKey, result, task.resourceUsage ?? {});
-      this.service.updateTask(agentId, { status: 'completed', result, endTime: task.endTime, consumed: !task.background });
+      this.service.taskCompleted(agentId, result, task.resourceUsage);
       this.eventBus.emit({
         type: 'agent_complete',
         agentId,
@@ -438,18 +480,13 @@ export class SubAgentManager {
       } as EngineEvent);
       if (task.background) {
         const tokensUsed = (task.resourceUsage?.tokenUsage?.input ?? 0) + (task.resourceUsage?.tokenUsage?.output ?? 0);
-        this.eventBus.emit({
-          type: 'background_task_complete',
-          taskId: task.id,
-          childSessionId: task.childSessionId ?? task.id,
-          tokensUsed,
-          elapsedMs: elapsed,
-          summary: result.slice(0, 200),
-          instruction: task.instruction.slice(0, 300),
-          inboundChannel: task.inboundChannel,
-          inboundThreadId: task.inboundThreadId,
-          success: true,
-        } as EngineEvent);
+        // Persist the background task result to the PARENT session's store so
+        // it is visible in the UI when the user returns, even if the agent was
+        // destroyed and recreated (ingestBackgroundResultsForSession handles
+        // in-memory ingestion, but DB persistence ensures it survives restarts).
+        this.persistBackgroundResultToParent(task, result, elapsed, tokensUsed).catch((err) => {
+          getLogger('SubAgentManager').warn('background-persist', `Failed to persist background result for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
         // Send the full result to the originating channel thread (thread-aware reply).
         // The notification system handles fan-out to all OTHER surfaces.
         this.notifyChannelOnCompletion(task, result, elapsed).catch((err) => {
@@ -467,27 +504,13 @@ export class SubAgentManager {
       task.result = error;
       task.endTime = Date.now();
       if (task.workDir) this.cleanupWorkDir(task.workDir);
-      this.service.updateTask(agentId, { status: 'failed', result: error, endTime: task.endTime, consumed: true });
+      this.service.taskFailed(agentId, error);
       this.eventBus.emit({
         type: 'agent_complete',
         agentId,
         summary: `Failed: ${error}`,
         elapsed: Date.now() - (task.startTime ?? Date.now()),
       } as EngineEvent);
-      if (task.background) {
-        const elapsed = Date.now() - (task.startTime ?? Date.now());
-        this.eventBus.emit({
-          type: 'background_task_complete',
-          taskId: task.id,
-          childSessionId: task.childSessionId ?? task.id,
-          elapsedMs: elapsed,
-          summary: `Failed: ${error}`.slice(0, 200),
-          instruction: task.instruction.slice(0, 300),
-          inboundChannel: task.inboundChannel,
-          inboundThreadId: task.inboundThreadId,
-          success: false,
-        } as EngineEvent);
-      }
       this.finalizeTask(agentId);
     }
   }
@@ -520,7 +543,7 @@ export class SubAgentManager {
       task.status = 'cancelled';
       task.endTime = Date.now();
       task.abortController?.abort();
-      this.service.updateTask(agentId, { status: 'cancelled', endTime: task.endTime, consumed: true });
+      this.service.taskCancelled(agentId);
     }
   }
 
@@ -531,7 +554,7 @@ export class SubAgentManager {
         task.status = 'cancelled';
         task.endTime = Date.now();
         task.abortController?.abort();
-        this.service.updateTask(task.id, { status: 'cancelled', endTime: task.endTime, consumed: true });
+        this.service.taskCancelled(task.id);
       }
     }
   }
@@ -554,6 +577,18 @@ export class SubAgentManager {
         content: `[task_result]\ntaskId: ${task.id}\nchildSessionId: ${task.childSessionId ?? task.id}\ntokensUsed: ${tokensUsed}\nelapsedMs: ${elapsedMs}\n[/task_result]\n${output}`,
       };
       (this.parentAgent as unknown as { addToHistory(msg: { role: 'user' | 'assistant'; content: string }): void }).addToHistory(syntheticMessage);
+      // Emit a background_task_complete event on the current agent's event bus
+      // so the WS subscriber can stream the result to the UI in real-time.
+      this.eventBus.emit({
+        type: 'background_task_complete',
+        taskId: task.id,
+        childSessionId: task.childSessionId ?? task.id,
+        tokensUsed,
+        elapsedMs,
+        summary: output.slice(0, 200),
+        instruction: task.instruction.slice(0, 300),
+        success: true,
+      } as EngineEvent);
     }
   }
 

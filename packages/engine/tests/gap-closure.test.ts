@@ -268,7 +268,6 @@ describe('Gap 1 — Neural Section key', () => {
       getModelId: () => 'gpt-4',
       buildIdentityBlock: () => 'Agent-X',
       scopePath: '/tmp',
-      hyperdriveMode: false,
       telegramConnected: false,
       userCallsign: undefined,
       getUserTimezone: () => 'UTC',

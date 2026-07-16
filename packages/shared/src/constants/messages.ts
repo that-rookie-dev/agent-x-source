@@ -9,7 +9,7 @@ export const TAGLINE = 'Your AI Wingman';
 export const GIMMICK_MESSAGES = [
   'Plotting trajectory...',
   'Scanning star charts...',
-  'Engaging hyperdrive...',
+  'Engaging warp drive...',
   'Querying the cosmic database...',
   'Decoding transmissions...',
   'Consulting the nebula...',

@@ -15,14 +15,14 @@ import HubIcon from '@mui/icons-material/Hub';
 import SpeedIcon from '@mui/icons-material/Speed';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import KeyboardVoiceIcon from '@mui/icons-material/KeyboardVoice';
+import SecurityIcon from '@mui/icons-material/Security';
 import { CheckCircle } from './CheckCircle';
-import { config, personaApi, type AgentXConfig, type AgentPersonaConfig } from '../api';
+import { config, personaApi, settingsPermissions, type AgentXConfig, type AgentPersonaConfig } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import {
   settingsTheme,
   settingsTabSx,
-  settingsGridBgSx,
   settingsHelperSx,
   settingsTextFieldSx,
   settingsMonoSx,
@@ -42,8 +42,9 @@ import { notifyVoiceConfigUpdated } from '../voice/support';
 import { ProvidersPanel } from './ProvidersPanel';
 import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 import { NeuralTab } from './settings/NeuralTab';
+import { PermissionsTab } from './settings/PermissionsTab';
 
-type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'neural' | 'channels' | 'runtime' | 'voice';
+type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'neural' | 'channels' | 'runtime' | 'voice' | 'permissions';
 
 const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 14 }} /> },
@@ -56,6 +57,7 @@ const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }>
   { id: 'channels', label: 'Channels', icon: <NotificationsIcon sx={{ fontSize: 14 }} /> },
   { id: 'tools', label: 'Search', icon: <BuildIcon sx={{ fontSize: 14 }} /> },
   { id: 'persistence', label: 'Storage', icon: <StorageIcon sx={{ fontSize: 14 }} /> },
+  { id: 'permissions', label: 'Permissions', icon: <SecurityIcon sx={{ fontSize: 14 }} /> },
   { id: 'appearance', label: 'Theme', icon: <PaletteOutlinedIcon sx={{ fontSize: 14 }} /> },
 ];
 
@@ -96,17 +98,19 @@ export function SettingsPanel() {
     }
     setSaving(true); setMessage('');
     try {
-      const payload: AgentXConfig = {
-        ...cfg,
+      const { permissions, ...rest } = cfg;
+      const payload: Partial<AgentXConfig> = {
+        ...rest,
         channels: mergeChannelsConfig(cfg.channels),
         tools: cfg.tools?.webSearch
           ? { ...cfg.tools, webSearch: mergeWebSearchConfig(cfg.tools.webSearch) }
           : cfg.tools,
         voice: mergeVoiceConfig(cfg.voice),
       };
+      await settingsPermissions.update(permissions ?? {});
       await config.update(payload);
-      setCfg(payload);
-      setConfig(payload);
+      setCfg({ ...cfg, ...payload });
+      setConfig({ ...cfg, ...payload });
       notifyVoiceConfigUpdated(payload.voice);
       if (persona) await personaApi.save(persona);
       window.dispatchEvent(new CustomEvent('agentx:persona-updated'));
@@ -133,7 +137,7 @@ export function SettingsPanel() {
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: settingsTheme.bg.void, ...settingsGridBgSx }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: settingsTheme.bg.void }}>
       <PanelHeader
         title="Settings"
         subtitle="Mission control · neural links · ops config"
@@ -213,6 +217,12 @@ export function SettingsPanel() {
         {activeTab === 'persistence' && <PersistenceTab />}
         {activeTab === 'runtime' && (
           <RuntimeTab cfg={cfg} onChange={setCfg} />
+        )}
+        {activeTab === 'permissions' && (
+          <PermissionsTab
+            value={cfg.permissions}
+            onChange={(permissions) => setCfg({ ...cfg, permissions })}
+          />
         )}
       </Box>
 

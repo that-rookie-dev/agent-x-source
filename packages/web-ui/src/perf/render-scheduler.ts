@@ -15,7 +15,6 @@ const P0_IMMEDIATE = new Set([
   'provider_error',
   'permission_required',
   'permission_batch_required',
-  'mode_escalation_required',
   'step_cap_reached',
   'notification_created',
 ]);
